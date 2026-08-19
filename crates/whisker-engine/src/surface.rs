@@ -3,10 +3,16 @@
 use std::{error::Error, fmt};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
-use whisker_protocol::{ElementTypeId, FramePacket, LayoutRect, NodeId, SurfaceId};
+use whisker_protocol::{
+    ElementTypeId, FramePacket, LayoutRect, MeasurementMetrics, MeasurementReady,
+    MeasurementResponse, MeasurementSpec, NodeId, SurfaceId,
+};
 use whisker_style::{ComputedLayoutStyle, PropertyImpactSet};
 
-use crate::{Scene, SceneError, SceneNode};
+use crate::{
+    DeferredMeasurementApply, LayoutProgress, MeasurementApply, MeasurementError, Scene,
+    SceneError, SceneNode, measurement::MeasurementCoordinator,
+};
 
 /// Result of requesting one layout pass.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -51,6 +57,8 @@ pub enum SurfaceError {
         /// Node whose rectangle was invalid.
         node: NodeId,
     },
+    /// Intrinsic measurement state or a Host response was invalid.
+    Measurement(MeasurementError),
 }
 
 impl fmt::Display for SurfaceError {
@@ -64,6 +72,7 @@ impl Error for SurfaceError {
         match self {
             Self::Scene(error) => Some(error),
             Self::Layout(error) => Some(error),
+            Self::Measurement(error) => Some(error),
             Self::SceneLayoutMismatch { .. } | Self::InvalidLayoutOutput { .. } => None,
         }
     }
@@ -78,6 +87,12 @@ impl From<SceneError> for SurfaceError {
 impl From<LayoutError> for SurfaceError {
     fn from(error: LayoutError) -> Self {
         Self::Layout(error)
+    }
+}
+
+impl From<MeasurementError> for SurfaceError {
+    fn from(error: MeasurementError) -> Self {
+        Self::Measurement(error)
     }
 }
 
@@ -99,6 +114,8 @@ pub struct SurfaceEngine {
     last_layout: Option<LayoutSnapshot>,
     last_inputs: Option<LayoutInputs>,
     layout_dirty: bool,
+    layout_provisional: bool,
+    measurements: MeasurementCoordinator,
 }
 
 impl SurfaceEngine {
@@ -110,6 +127,8 @@ impl SurfaceEngine {
             last_layout: None,
             last_inputs: None,
             layout_dirty: false,
+            layout_provisional: false,
+            measurements: MeasurementCoordinator::default(),
         }
     }
 
@@ -165,10 +184,15 @@ impl SurfaceEngine {
 
     /// Deletes a node and its complete subtree from both retained trees.
     pub fn delete_node(&mut self, node: NodeId) -> Result<(), SurfaceError> {
+        let mut removed = Vec::new();
+        collect_scene_subtree(&self.scene, node, &mut removed)?;
         self.scene.delete_node(node)?;
         self.layout
             .remove_subtree(node)
             .expect("scene and layout trees remain structurally synchronized");
+        for removed in removed {
+            self.measurements.remove_node(removed);
+        }
         self.layout_dirty = true;
         Ok(())
     }
@@ -243,6 +267,49 @@ impl SurfaceEngine {
         Ok(changed)
     }
 
+    /// Registers or clears Host-backed intrinsic measurement for one leaf.
+    ///
+    /// Element modules provide a semantic kind, complete content/style hashes,
+    /// a versioned payload, and an explicit pending policy. Ordinary boxes and
+    /// explicitly sized media should leave this unset.
+    pub fn set_measurement(
+        &mut self,
+        node: NodeId,
+        spec: Option<MeasurementSpec>,
+    ) -> Result<bool, SurfaceError> {
+        self.ensure_mutable()?;
+        let element_type = self
+            .scene
+            .node(node)
+            .ok_or(SceneError::UnknownNode { node })?
+            .element_type();
+        if !self.layout.contains(node) {
+            return Err(LayoutError::UnknownNode(node).into());
+        }
+        let measurable = spec.is_some();
+        let spec_changed = self.measurements.set_spec(node, element_type, spec)?;
+        let behavior_changed = self
+            .layout
+            .set_measurable(node, measurable)
+            .expect("scene-validated node remains in synchronized layout");
+        let changed = spec_changed || behavior_changed;
+        if changed {
+            self.layout
+                .invalidate_measurement(node)
+                .expect("configured measurement node remains in synchronized layout");
+            self.layout_dirty = true;
+        }
+        Ok(changed)
+    }
+
+    /// Returns the last final Host metrics retained for a node.
+    ///
+    /// Baselines, overflow, and prepared-content handles remain available for
+    /// later text and paint lowering even though Taffy consumes only the size.
+    pub fn last_measurement(&self, node: NodeId) -> Option<&MeasurementMetrics> {
+        self.measurements.last_ready(node)
+    }
+
     /// Applies invalidation categories for a changed node property.
     ///
     /// Paint-only changes do not schedule Taffy. Intrinsic-measure changes
@@ -280,32 +347,108 @@ impl SurfaceEngine {
         }
 
         let snapshot = self.layout.compute(root, viewport, measurer)?;
-        let entries = snapshot
-            .iter()
-            .map(|(node, rect)| (node, *rect))
-            .collect::<Vec<_>>();
-        validate_layout_entries(&self.scene, &entries)?;
+        let update = self.project_layout(snapshot, inputs)?;
+        self.layout_provisional = false;
+        Ok(update)
+    }
 
-        let changed = entries
-            .iter()
-            .copied()
-            .filter(|(node, rect)| {
-                self.last_layout
-                    .as_ref()
-                    .and_then(|previous| previous.get(*node))
-                    != Some(rect)
-            })
-            .collect::<Vec<_>>();
-        for (node, rect) in &changed {
-            self.scene
-                .set_layout(*node, *rect)
-                .expect("validated layout projection must enter a mutable synchronized scene");
+    /// Advances layout using retained, batched Host intrinsic measurement.
+    ///
+    /// A blocked result must not be presented. Provisional geometry is emitted
+    /// only when the element schema or provider supplied an explicit fallback.
+    /// Reinvoke after applying immediate or deferred responses until complete.
+    pub fn compute_layout_with_measurements(
+        &mut self,
+        root: NodeId,
+        viewport: LayoutSize,
+        environment_epoch: u64,
+    ) -> Result<LayoutProgress, SurfaceError> {
+        self.ensure_mutable()?;
+        for node in self.measurements.set_environment(environment_epoch) {
+            self.layout
+                .invalidate_measurement(node)
+                .expect("measurement specs remain synchronized with layout nodes");
+            self.layout_dirty = true;
+        }
+        let inputs = LayoutInputs { root, viewport };
+        if !self.layout_dirty && self.last_inputs == Some(inputs) {
+            return if self.layout_provisional {
+                Ok(LayoutProgress::Provisional {
+                    update: LayoutUpdate::default(),
+                    requests: self.measurements.outstanding_requests(),
+                    pending: self.measurements.pending_count(),
+                })
+            } else {
+                Ok(LayoutProgress::Complete(LayoutUpdate::default()))
+            };
         }
 
-        self.last_layout = Some(snapshot);
-        self.last_inputs = Some(inputs);
-        self.layout_dirty = false;
-        Ok(LayoutUpdate::computed(changed.len()))
+        for node in self.measurements.unresolved_nodes() {
+            self.layout
+                .invalidate_measurement(node)
+                .expect("measurement consumers remain synchronized with layout nodes");
+        }
+
+        self.measurements.begin_pass();
+        let snapshot = self
+            .layout
+            .compute(root, viewport, &mut self.measurements)?;
+        let pass = self.measurements.finish_pass()?;
+        if pass.blocking {
+            self.layout_dirty = true;
+            return Ok(LayoutProgress::Blocked {
+                requests: pass.requests,
+                pending: pass.pending,
+            });
+        }
+
+        let update = self.project_layout(snapshot, inputs)?;
+        if pass.provisional || !pass.requests.is_empty() || pass.pending != 0 {
+            self.layout_provisional = true;
+            Ok(LayoutProgress::Provisional {
+                update,
+                requests: pass.requests,
+                pending: pass.pending,
+            })
+        } else {
+            self.layout_provisional = false;
+            Ok(LayoutProgress::Complete(update))
+        }
+    }
+
+    /// Applies synchronous results from one Host measurement batch.
+    ///
+    /// Unknown and wrong-epoch responses are counted as stale and ignored.
+    /// Accepted results invalidate only their current Taffy consumers.
+    pub fn apply_measurement_responses(
+        &mut self,
+        responses: &[MeasurementResponse],
+    ) -> Result<MeasurementApply, SurfaceError> {
+        self.ensure_mutable()?;
+        let apply = self.measurements.apply_batch(responses)?;
+        for node in apply.invalidated_nodes() {
+            self.layout
+                .invalidate_measurement(*node)
+                .expect("response consumers remain synchronized with layout nodes");
+        }
+        self.layout_dirty |= !apply.invalidated_nodes().is_empty();
+        Ok(apply)
+    }
+
+    /// Applies a deferred Host-to-Rust measurement completion.
+    pub fn apply_measurement_ready(
+        &mut self,
+        ready: &MeasurementReady,
+    ) -> Result<DeferredMeasurementApply, SurfaceError> {
+        self.ensure_mutable()?;
+        let apply = self.measurements.apply_ready(ready)?;
+        for node in apply.invalidated_nodes() {
+            self.layout
+                .invalidate_measurement(*node)
+                .expect("deferred consumers remain synchronized with layout nodes");
+        }
+        self.layout_dirty |= !apply.invalidated_nodes().is_empty();
+        Ok(apply)
     }
 
     /// Prepares the next scene snapshot or delta frame.
@@ -338,6 +481,51 @@ impl SurfaceEngine {
             Ok(())
         }
     }
+
+    fn project_layout(
+        &mut self,
+        snapshot: LayoutSnapshot,
+        inputs: LayoutInputs,
+    ) -> Result<LayoutUpdate, SurfaceError> {
+        let entries = snapshot
+            .iter()
+            .map(|(node, rect)| (node, *rect))
+            .collect::<Vec<_>>();
+        validate_layout_entries(&self.scene, &entries)?;
+        let changed = entries
+            .iter()
+            .copied()
+            .filter(|(node, rect)| {
+                self.last_layout
+                    .as_ref()
+                    .and_then(|previous| previous.get(*node))
+                    != Some(rect)
+            })
+            .collect::<Vec<_>>();
+        for (node, rect) in &changed {
+            self.scene
+                .set_layout(*node, *rect)
+                .expect("validated layout projection must enter a mutable synchronized scene");
+        }
+        self.last_layout = Some(snapshot);
+        self.last_inputs = Some(inputs);
+        self.layout_dirty = false;
+        Ok(LayoutUpdate::computed(changed.len()))
+    }
+}
+
+fn collect_scene_subtree(
+    scene: &Scene,
+    node: NodeId,
+    output: &mut Vec<NodeId>,
+) -> Result<(), SurfaceError> {
+    let retained = scene.node(node).ok_or(SceneError::UnknownNode { node })?;
+    output.push(node);
+    for child in retained.children() {
+        collect_scene_subtree(scene, *child, output)
+            .expect("retained scene children remain live while their parent is live");
+    }
+    Ok(())
 }
 
 fn validate_layout_entries(
@@ -363,7 +551,12 @@ mod tests {
     use std::cell::Cell;
 
     use whisker_layout::{AvailableSpace, LayoutSize, MeasureRequest, UnsupportedLayoutFeature};
-    use whisker_protocol::{ApplyResult, ElementTypeId, FrameMode, NodeId, Operation, SurfaceId};
+    use whisker_protocol::{
+        ApplyResult, ElementTypeId, FrameMode, MeasuredSize, MeasurementKey, MeasurementKind,
+        MeasurementMetrics, MeasurementReady, MeasurementRequestId, MeasurementResponse,
+        MeasurementSpec, NodeId, Operation, PendingMeasurePolicy, ProtocolValue, SurfaceId,
+        UnsupportedMeasurementReason,
+    };
     use whisker_style::{Axes, ComputedLengthPercentage, ComputedSizeValue, PositionValue};
 
     use super::*;
@@ -393,6 +586,23 @@ mod tests {
 
     fn zero_measure(_: NodeId, _: MeasureRequest) -> LayoutSize {
         LayoutSize::default()
+    }
+
+    fn measurement_spec(
+        kind: MeasurementKind,
+        pending_policy: PendingMeasurePolicy,
+    ) -> MeasurementSpec {
+        MeasurementSpec {
+            kind,
+            content_hash: 1,
+            style_hash: 2,
+            payload: ProtocolValue::Null,
+            pending_policy,
+        }
+    }
+
+    fn measurement_metrics(width: f32, height: f32) -> MeasurementMetrics {
+        MeasurementMetrics::from_size(MeasuredSize::new(width, height))
     }
 
     fn present_and_accept(
@@ -670,6 +880,276 @@ mod tests {
     }
 
     #[test]
+    fn host_measurement_blocks_batches_caches_and_completes_layout() {
+        let mut surface = SurfaceEngine::new(surface_id());
+        let root = surface
+            .create_node(element_type(), ComputedLayoutStyle::default())
+            .unwrap();
+        assert_eq!(surface.last_measurement(root), None);
+        assert_eq!(
+            surface.set_measurement(node_id(99), None),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: node_id(99)
+            }))
+        );
+        assert!(
+            surface
+                .set_measurement(
+                    root,
+                    Some(measurement_spec(
+                        MeasurementKind::Text,
+                        PendingMeasurePolicy::Block,
+                    )),
+                )
+                .unwrap()
+        );
+        assert!(
+            !surface
+                .set_measurement(
+                    root,
+                    Some(measurement_spec(
+                        MeasurementKind::Text,
+                        PendingMeasurePolicy::Block,
+                    )),
+                )
+                .unwrap()
+        );
+
+        let blocked = surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 1)
+            .unwrap();
+        assert!(!blocked.has_layout());
+        assert_eq!(blocked.requests().len(), 1);
+        assert_eq!(surface.last_layout(), None);
+        let request = blocked.requests()[0].clone();
+
+        let repeated = surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 1)
+            .unwrap();
+        assert_eq!(repeated.requests(), std::slice::from_ref(&request));
+
+        let stale = surface
+            .apply_measurement_responses(&[MeasurementResponse::Ready {
+                key: MeasurementKey::new(99).expect("stale key"),
+                environment_epoch: 1,
+                metrics: measurement_metrics(1.0, 1.0),
+            }])
+            .unwrap();
+        assert_eq!(stale.applied(), 0);
+        assert_eq!(stale.stale(), 1);
+        assert!(surface.needs_layout());
+
+        let applied = surface
+            .apply_measurement_responses(&[MeasurementResponse::Ready {
+                key: request.key,
+                environment_epoch: 1,
+                metrics: measurement_metrics(24.0, 12.0),
+            }])
+            .unwrap();
+        assert_eq!(applied.applied(), 1);
+        let complete = surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 1)
+            .unwrap();
+        assert!(complete.has_layout());
+        assert!(complete.requests().is_empty());
+        assert_eq!(
+            complete,
+            LayoutProgress::Complete(LayoutUpdate::computed(1))
+        );
+        assert_eq!(
+            surface.last_measurement(root),
+            Some(&measurement_metrics(24.0, 12.0))
+        );
+
+        let idle = surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 1)
+            .unwrap();
+        assert_eq!(idle, LayoutProgress::Complete(LayoutUpdate::default()));
+        assert!(idle.requests().is_empty());
+        assert!(surface.set_measurement(root, None).unwrap());
+        assert!(!surface.set_measurement(root, None).unwrap());
+        assert_eq!(surface.last_measurement(root), None);
+    }
+
+    #[test]
+    fn provisional_resource_measurement_relayouts_after_deferred_completion() {
+        let mut surface = SurfaceEngine::new(surface_id());
+        let root = surface
+            .create_node(element_type(), ComputedLayoutStyle::default())
+            .unwrap();
+        surface
+            .set_measurement(
+                root,
+                Some(measurement_spec(
+                    MeasurementKind::ReplacedContent,
+                    PendingMeasurePolicy::Placeholder(MeasuredSize::new(16.0, 9.0)),
+                )),
+            )
+            .unwrap();
+
+        let provisional = surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 7)
+            .unwrap();
+        assert!(provisional.has_layout());
+        assert_eq!(provisional.requests().len(), 1);
+        let request = provisional.requests()[0].clone();
+        let idle = surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 7)
+            .unwrap();
+        assert_eq!(idle.requests(), std::slice::from_ref(&request));
+
+        let request_id = MeasurementRequestId::new(8).expect("pending request");
+        surface
+            .apply_measurement_responses(&[MeasurementResponse::Pending {
+                key: request.key,
+                environment_epoch: 7,
+                request_id,
+                provisional: Some(measurement_metrics(20.0, 10.0)),
+            }])
+            .unwrap();
+        let pending = surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 7)
+            .unwrap();
+        assert_eq!(
+            pending,
+            LayoutProgress::Provisional {
+                update: LayoutUpdate::computed(1),
+                requests: Vec::new(),
+                pending: 1,
+            }
+        );
+
+        let idle_pending = surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 7)
+            .unwrap();
+        assert_eq!(
+            idle_pending,
+            LayoutProgress::Provisional {
+                update: LayoutUpdate::default(),
+                requests: Vec::new(),
+                pending: 1,
+            }
+        );
+
+        let invalid_ready = MeasurementReady {
+            key: request.key,
+            request_id,
+            environment_epoch: 7,
+            metrics: measurement_metrics(f32::NAN, 1.0),
+        };
+        assert_eq!(
+            surface.apply_measurement_ready(&invalid_ready),
+            Err(SurfaceError::Measurement(
+                MeasurementError::InvalidMetrics { key: request.key }
+            ))
+        );
+
+        let stale = MeasurementReady {
+            key: MeasurementKey::new(request.key.get() + 1).expect("wrong key"),
+            request_id,
+            environment_epoch: 7,
+            metrics: measurement_metrics(32.0, 18.0),
+        };
+        assert_eq!(
+            surface.apply_measurement_ready(&stale).unwrap(),
+            DeferredMeasurementApply::IgnoredStale
+        );
+        assert!(!surface.needs_layout());
+
+        let ready = MeasurementReady {
+            key: request.key,
+            ..stale
+        };
+        assert_eq!(
+            surface.apply_measurement_ready(&ready).unwrap(),
+            DeferredMeasurementApply::Applied {
+                invalidated_nodes: vec![root]
+            }
+        );
+        assert!(surface.needs_layout());
+        assert_eq!(
+            surface
+                .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 7)
+                .unwrap(),
+            LayoutProgress::Complete(LayoutUpdate::computed(1))
+        );
+        assert_eq!(
+            surface.last_measurement(root),
+            Some(&measurement_metrics(32.0, 18.0))
+        );
+
+        let new_environment = surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 8)
+            .unwrap();
+        assert!(new_environment.has_layout());
+        assert_eq!(new_environment.requests().len(), 1);
+    }
+
+    #[test]
+    fn invalid_and_unsupported_measurement_surface_diagnostics() {
+        let mut surface = SurfaceEngine::new(surface_id());
+        let root = surface
+            .create_node(element_type(), ComputedLayoutStyle::default())
+            .unwrap();
+        let invalid = measurement_spec(
+            MeasurementKind::NativeControl,
+            PendingMeasurePolicy::Placeholder(MeasuredSize::new(f32::NAN, 1.0)),
+        );
+        assert_eq!(
+            surface.set_measurement(root, Some(invalid)),
+            Err(SurfaceError::Measurement(
+                MeasurementError::InvalidPlaceholder { node: root }
+            ))
+        );
+
+        surface
+            .set_measurement(
+                root,
+                Some(measurement_spec(
+                    MeasurementKind::NativeControl,
+                    PendingMeasurePolicy::Block,
+                )),
+            )
+            .unwrap();
+        let blocked = surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 1)
+            .unwrap();
+        let request = blocked.requests()[0].clone();
+        assert_eq!(
+            surface.apply_measurement_responses(&[MeasurementResponse::Ready {
+                key: request.key,
+                environment_epoch: 1,
+                metrics: measurement_metrics(f32::NAN, 1.0),
+            }]),
+            Err(SurfaceError::Measurement(
+                MeasurementError::InvalidMetrics { key: request.key }
+            ))
+        );
+        surface
+            .apply_measurement_responses(&[MeasurementResponse::Unsupported {
+                key: request.key,
+                environment_epoch: 1,
+                reason: UnsupportedMeasurementReason::Environment,
+            }])
+            .unwrap();
+        let error = surface
+            .compute_layout_with_measurements(root, LayoutSize::new(100.0, 100.0), 1)
+            .unwrap_err();
+        assert_eq!(
+            error,
+            SurfaceError::Measurement(MeasurementError::Unsupported {
+                node: root,
+                reason: UnsupportedMeasurementReason::Environment,
+            })
+        );
+        assert!(error.source().is_some());
+        assert_eq!(
+            format!("{}", MeasurementError::KeyExhausted),
+            "Whisker measurement error: KeyExhausted"
+        );
+    }
+
+    #[test]
     fn prepared_frame_blocks_every_layout_mutation_until_resolved() {
         let mut surface = SurfaceEngine::new(surface_id());
         let root = surface
@@ -690,11 +1170,33 @@ mod tests {
             Err(SurfaceError::Scene(SceneError::FramePending))
         );
         assert_eq!(
+            surface.set_measurement(root, None),
+            Err(SurfaceError::Scene(SceneError::FramePending))
+        );
+        assert_eq!(
             surface.invalidate_node(root, PropertyImpactSet::LAYOUT),
             Err(SurfaceError::Scene(SceneError::FramePending))
         );
         assert_eq!(
             surface.compute_layout(root, LayoutSize::new(1.0, 1.0), &mut zero_measure),
+            Err(SurfaceError::Scene(SceneError::FramePending))
+        );
+        assert_eq!(
+            surface.compute_layout_with_measurements(root, LayoutSize::new(1.0, 1.0), 1),
+            Err(SurfaceError::Scene(SceneError::FramePending))
+        );
+        assert_eq!(
+            surface.apply_measurement_responses(&[]),
+            Err(SurfaceError::Scene(SceneError::FramePending))
+        );
+        let fake_ready = MeasurementReady {
+            key: MeasurementKey::new(1).expect("key"),
+            request_id: MeasurementRequestId::new(1).expect("request"),
+            environment_epoch: 1,
+            metrics: measurement_metrics(1.0, 1.0),
+        };
+        assert_eq!(
+            surface.apply_measurement_ready(&fake_ready),
             Err(SurfaceError::Scene(SceneError::FramePending))
         );
         assert_eq!(
@@ -755,6 +1257,10 @@ mod tests {
         let mut missing_layout = SurfaceEngine::new(surface_id());
         let scene_only = missing_layout.scene.create_node(element_type()).unwrap();
         assert_eq!(
+            missing_layout.set_measurement(scene_only, None),
+            Err(SurfaceError::Layout(LayoutError::UnknownNode(scene_only)))
+        );
+        assert_eq!(
             missing_layout.invalidate_node(scene_only, PropertyImpactSet::TEXT_METRICS),
             Err(SurfaceError::Layout(LayoutError::UnknownNode(scene_only)))
         );
@@ -768,6 +1274,46 @@ mod tests {
             missing_scene
                 .compute_layout(layout_only, LayoutSize::new(1.0, 1.0), &mut zero_measure,),
             Err(SurfaceError::SceneLayoutMismatch { node: layout_only })
+        );
+
+        let mut missing_host_scene = SurfaceEngine::new(surface_id());
+        let host_layout_only = missing_host_scene
+            .create_node(element_type(), ComputedLayoutStyle::default())
+            .unwrap();
+        missing_host_scene
+            .scene
+            .delete_node(host_layout_only)
+            .unwrap();
+        assert_eq!(
+            missing_host_scene.compute_layout_with_measurements(
+                host_layout_only,
+                LayoutSize::new(1.0, 1.0),
+                1,
+            ),
+            Err(SurfaceError::SceneLayoutMismatch {
+                node: host_layout_only
+            })
+        );
+
+        let mut invalid_host_layout = SurfaceEngine::new(surface_id());
+        let host_root = invalid_host_layout
+            .create_node(element_type(), ComputedLayoutStyle::default())
+            .unwrap();
+        assert_eq!(
+            invalid_host_layout.compute_layout_with_measurements(
+                host_root,
+                LayoutSize::new(f32::NAN, 1.0),
+                1,
+            ),
+            Err(SurfaceError::Layout(LayoutError::InvalidViewport))
+        );
+        assert_eq!(
+            invalid_host_layout.compute_layout_with_measurements(
+                node_id(99),
+                LayoutSize::new(1.0, 1.0),
+                1,
+            ),
+            Err(SurfaceError::Layout(LayoutError::UnknownNode(node_id(99))))
         );
 
         let scene_error = SurfaceError::from(SceneError::NoPendingFrame);

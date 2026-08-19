@@ -13,7 +13,8 @@ use taffy::{
     Direction, Display, FlexDirection, FlexWrap, LengthPercentage, LengthPercentageAuto, Position,
     Rect, Size, Style, TaffyTree,
 };
-use whisker_protocol::{LayoutRect, NodeId};
+pub use whisker_protocol::AvailableSpace;
+use whisker_protocol::{LayoutRect, MeasureConstraints, NodeId};
 use whisker_style::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, BoxSizingValue, ComputedFlexBasis,
     ComputedLayoutStyle, ComputedLengthPercentage, ComputedLengthPercentageAuto, ComputedSizeValue,
@@ -41,25 +42,8 @@ impl LayoutSize {
     }
 }
 
-/// The constraint presented to an intrinsic measurer on one axis.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum AvailableSpace {
-    /// A finite logical-pixel constraint.
-    Definite(f32),
-    /// Measure the smallest unbreakable content size.
-    MinContent,
-    /// Measure the unconstrained content size.
-    MaxContent,
-}
-
 /// Inputs supplied when measuring an intrinsically sized leaf.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MeasureRequest {
-    /// Dimensions already fixed by the layout algorithm.
-    pub known_dimensions: [Option<f32>; 2],
-    /// Width and height constraints.
-    pub available_space: [AvailableSpace; 2],
-}
+pub type MeasureRequest = MeasureConstraints;
 
 /// Supplies intrinsic leaf sizes, normally by asking the Host text or media backend.
 pub trait IntrinsicMeasurer {

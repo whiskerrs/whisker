@@ -3,7 +3,7 @@
 //! [`Scene`] owns logical nodes and their current presentation state. Mutations
 //! update that retained state and append to a coalescing change journal. At a
 //! frame boundary the scene prepares either a complete snapshot or an
-//! incremental [`FramePacket`], then advances its accepted revision only after
+//! incremental [`whisker_protocol::FramePacket`], then advances its accepted revision only after
 //! the renderer confirms the complete transaction.
 //!
 //! [`SurfaceEngine`] pairs that scene with a retained Taffy layout tree. It
@@ -17,10 +17,14 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod measurement;
 mod recording;
 mod scene;
 mod surface;
 
+pub use measurement::{
+    DeferredMeasurementApply, LayoutProgress, MeasurementApply, MeasurementError,
+};
 pub use recording::{FrameSink, RecordedFrame, RecordingRenderer};
 pub use scene::{Scene, SceneError, SceneNode};
 pub use surface::{LayoutUpdate, SurfaceEngine, SurfaceError};

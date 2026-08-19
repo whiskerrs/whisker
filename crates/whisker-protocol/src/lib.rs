@@ -16,11 +16,20 @@
 
 mod frame;
 mod id;
+mod measurement;
 mod validation;
 
 pub use frame::{
     FrameHeader, FrameMode, FramePacket, HitTestBehavior, LayoutRect, Operation, PROTOCOL_MAJOR,
     PROTOCOL_MINOR, ProtocolValue, ProtocolVersion, Transform, Visibility,
 };
-pub use id::{CommandId, ElementTypeId, NodeId, PointerId, PropertyId, ResultId, SurfaceId};
+pub use id::{
+    CommandId, ElementTypeId, MeasurementKey, MeasurementRequestId, NodeId, PointerId,
+    PreparedContentId, PropertyId, ResultId, SurfaceId,
+};
+pub use measurement::{
+    AvailableSpace, MeasureConstraints, MeasuredSize, MeasurementKind, MeasurementMetrics,
+    MeasurementReady, MeasurementRequest, MeasurementResponse, MeasurementSpec,
+    PendingMeasurePolicy, UnsupportedMeasurementReason,
+};
 pub use validation::{ApplyResult, NodeProjection, SceneProjection, ValidationError};

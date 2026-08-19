@@ -1133,6 +1133,21 @@ DeferredResource size may become known after a resource event
 Custom           versioned element-specific measurement payload
 ```
 
+The request also carries a semantic provider category independent of the
+fallback policy:
+
+```text
+Text             shaped/wrapped text and inline attachments
+ReplacedContent  auto-sized images and other resource-backed content
+NativeControl    switches, progress indicators, pickers, and similar controls
+EmbeddedSurface  content-sized child Whisker surfaces
+Custom           versioned module-defined measurement
+```
+
+An explicitly sized image, video, WebView, or ordinary box does not enter this
+path. A module registers intrinsic measurement only when its size cannot be
+derived from style, children, or already available Rust-side metadata.
+
 ### Batch contract
 
 Rust sends all currently missing measurements in one `measure_batch` call. A
@@ -1179,6 +1194,12 @@ result of transport timing.
 
 The runtime detects repeated measure/layout oscillation for unchanged inputs
 and reports it as a provider error.
+
+The Host-independent semantic request/response types and retained engine state
+machine are implemented. `SurfaceEngine` currently exposes generated batches
+and accepts simulated or future renderer responses; the packed renderer ABI,
+typed built-in text payload, and platform Host implementations remain separate
+follow-up slices.
 
 ## Renderer events: Host to Rust
 

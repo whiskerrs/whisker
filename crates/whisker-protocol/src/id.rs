@@ -55,6 +55,21 @@ define_id!(
     u64,
     "Identifies one Host pointer stream for capture operations"
 );
+define_id!(
+    MeasurementKey,
+    u64,
+    "Correlates one intrinsic measurement request with its immediate response"
+);
+define_id!(
+    MeasurementRequestId,
+    u64,
+    "Correlates a deferred intrinsic measurement with its later completion"
+);
+define_id!(
+    PreparedContentId,
+    u64,
+    "Identifies Host-prepared content shared by measurement and painting"
+);
 
 #[cfg(test)]
 mod tests {
@@ -64,6 +79,9 @@ mod tests {
     fn zero_is_reserved_for_every_id_width() {
         assert_eq!(NodeId::new(0), None);
         assert_eq!(PropertyId::new(0), None);
+        assert_eq!(MeasurementKey::new(0), None);
+        assert_eq!(MeasurementRequestId::new(0), None);
+        assert_eq!(PreparedContentId::new(0), None);
     }
 
     #[test]
