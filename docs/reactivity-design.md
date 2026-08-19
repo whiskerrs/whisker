@@ -2,24 +2,22 @@
 
 Whisker's reactive layer is modelled on **Solid.js / Leptos**: components
 run **once** at mount, and dynamic UI is driven by `effect` subscriptions
-to signals. An update patches the Lynx element tree at exactly the
-affected property — there is no virtual DOM and no diff pass.
+to signals. An update writes the affected typed property into the retained
+Rust scene — there is no virtual DOM or component-tree diff pass.
 
 This doc is the *design* of the runtime — the "why" and "how it's built".
 For the user-facing "how to write components" side, see the guide on
 [whisker.rs/docs](https://whisker.rs/docs). The implementation lives in
 `crates/whisker-runtime/src/reactive/*` (primitives) and
-`crates/whisker-runtime/src/view/*` (the renderer that wires effects to
-Lynx handles).
+`crates/whisker-runtime/src/view/*` (renderer-independent operations that wire
+effects to the active surface).
 
 ## Why fine-grained
 
-1. **Lynx's `FiberElement::SetAttribute(name, value)` is already
-   per-property granular.** A fine-grained reactive model maps directly
-   onto it — there's no need to build a virtual DOM, diff it, and emit
-   patches that target individual attributes. The effect *is* the patch:
-   a dynamic `style` / `value` / text node is just an `effect` that calls
-   `SetAttribute` / `SetRawInlineStyles` when its dependency changes.
+1. **The retained scene is per-property granular.** A fine-grained reactive
+   model maps directly onto typed dirty slots, without building or diffing a
+   virtual DOM. The effect writes the changed property and frame preparation
+   later coalesces it into one transaction.
 2. **Mobile CPU sensitivity.** Whisker targets Android / iOS, where
    weaker per-core throughput makes virtual-DOM diffing more visible.
 3. **Smaller runtime.** No value-tree `Element` representation and no
@@ -27,9 +25,11 @@ Lynx handles).
 
 ## Primitives
 
-The reactive module is a single thread-local `ReactiveRuntime` (Whisker
-runs all reactive work on Lynx's TASM thread). Every primitive funnels
-through it. Public surface is re-exported from `whisker::prelude`.
+Each mounted `RuntimeInstance` owns an isolated `ReactiveRuntime` inside its
+`RuntimeContext`. Host callbacks temporarily activate that instance in a
+thread-local execution slot, allowing multiple surfaces to share one UI thread
+without sharing signals or owners. Every primitive funnels through the active
+slot. Public surface is re-exported from `whisker::prelude`.
 
 ### Signal
 
@@ -147,10 +147,10 @@ let stories = resource(|| async {
 });
 ```
 
-`resource(fetcher)` spawns the `async` fetcher on Whisker's
-single-threaded local pool (the TASM thread). Blocking IO inside the
+`resource(fetcher)` spawns the `async` fetcher on the instance's
+single-threaded local pool (the Host UI thread). Blocking IO inside the
 fetcher should be wrapped in `tasks::run_blocking`, which offloads to a
-worker thread and marshals the result back to the main thread.
+worker thread; the task waker requests that specific instance from the Host.
 
 `Resource<T>` is `Copy` and exposes `state() -> ResourceState<T>`
 (`Loading | Ready(T) | Error(String)`), plus the conveniences
@@ -241,9 +241,10 @@ do.
 
 ## Arena + Owner
 
-All reactive state lives in the thread-local `ReactiveRuntime`. Whisker
-runs on a single Lynx TASM thread, so single-threaded (no `Arc`, no
-locks) is both correct and borrow-checker-clean.
+All reactive state belongs to a `RuntimeContext`. While the Host executes one
+event or frame, that context occupies the UI thread's active slot. The arena
+itself remains single-threaded (no locks), while wake handles and
+`RuntimeDispatcher` are the narrow `Send + Sync` paths from workers.
 
 ```rust
 struct ReactiveRuntime {

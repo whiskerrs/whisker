@@ -580,6 +580,14 @@ pending layout, queued command, resource completion, or an explicitly requested
 continuous frame. Multiple requests before the next callback are coalesced by
 the Host.
 
+The implemented native Rust boundary represents this edge-triggered request as
+an any-thread `RuntimeWakeHandle`. The Host callback only posts or coalesces a
+drive of its UI event loop; it never enters application code inline. Each
+`RuntimeInstance` owns an isolated `RuntimeContext` containing its reactive
+arena, local future pool, view bookkeeping, and animation state. Entering a
+frame or event temporarily activates that context on the Host UI thread, so
+several surfaces may share one thread without sharing runtime state.
+
 The frame sequence is:
 
 ```text
@@ -607,6 +615,21 @@ Rust
 
 `Frame` is a scheduling callback, not permission for the Host to calculate
 animation values. Motion state remains in Rust.
+
+Background work may wake the same instance without polling while idle. Local
+future wakers retain the instance's `RuntimeWakeHandle`; arbitrary worker or
+Tokio tasks capture a `RuntimeDispatcher`, post an owned `Send` closure, and
+wake the Host. The closure runs only when the Host next enters that instance on
+the UI thread. Neither mechanism gives a worker direct access to the retained
+scene or UI-thread reactive arena.
+
+Pause closes the wake gate without destroying state: completions stay queued
+and cannot spin the Host until resume explicitly schedules a drive. Permanent
+unmount disposes the owner, local futures, queued input, and reactive/view
+state, then closes the dispatcher so handles retained by workers reject new
+posts instead of retaining callbacks after teardown. Host callbacks that occur
+synchronously during a Rust call are bounded and deferred to the current event
+boundary rather than re-entering application code.
 
 ### Web timing
 
@@ -1260,11 +1283,18 @@ and returns to the event boundary only for `Pending`. Plain UTF-8 Text v1 can
 now lower computed inherited text style into the shared measurement payload;
 the accepted prepared-content handle, shaping inputs, and resolved foreground
 paint are retained in final snapshot and delta `SetText` operations. The
-existing `render!` Text element and typed `css!` text declarations can populate
-this pipeline through the Rust-only `SurfaceRuntime`, including text
-inheritance and paint-only deltas without remeasurement. The packed/generated
-platform ABI and Android/UIKit/DOM/Desktop provider implementations remain
-follow-up slices.
+existing `render!` Text element and typed `css!` declarations populate this
+pipeline through `SurfaceRuntime`, including text inheritance, common box
+paint, overflow clips, and paint-only deltas without remeasurement.
+
+`RuntimeInstance` now implements the Host-driven mount, pause, resume, unmount,
+frame, deferred-measurement, and input boundaries. `RuntimeContext` isolates
+multiple instances on one UI thread. Instance-specific future wakers and
+`RuntimeDispatcher` cover idle async completion without a busy tick. Typed
+Host input is validated, hit-tested against the retained Rust scene, and routed
+through Rust capture and bubble listeners; synchronous re-entry is queued until
+the current event/frame boundary. The packed/generated platform ABI and the
+Android/UIKit/DOM/Desktop Host implementations remain follow-up slices.
 
 ## Renderer events: Host to Rust
 
@@ -1418,9 +1448,8 @@ how server-emitted presentation relates to Rust-resolved interactive styling.
 1. Introduce `NodeId`, the Rust retained scene, element schemas, and a
    `RecordingRenderer` without changing the shipped Lynx backend.
 2. Implement the frame encoder, validator, revision model, and Rust-only tests.
-3. Add a temporary Lynx-backed `RendererV1` adapter so the runtime stops
-   storing or directly calling Lynx elements before native replacement
-   renderers are complete.
+3. Connect `render!` directly to `SurfaceRuntime`, without a Lynx compatibility
+   renderer in the new path.
 4. Move signals and motion from complete inline-style strings to typed dirty
    property slots and one transaction per frame.
 5. Implement standard element factories, measurement, events, and packet
@@ -1434,8 +1463,9 @@ how server-emitted presentation relates to Rust-resolved interactive styling.
    Desktop render types into the common protocol.
 9. Migrate custom UI modules to versioned element schemas, generated Host
    factories, and typed commands.
-10. Remove the temporary Lynx renderer, C++ bridge, fork artifacts, and obsolete
-   distribution paths after conformance and visual parity are reached.
+10. Remove the separate legacy Lynx production path, C++ bridge, fork artifacts,
+   and obsolete distribution paths after Host conformance and visual parity are
+   reached. No Lynx adapter is introduced into the retained path.
 
 ## Invariants
 

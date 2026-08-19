@@ -6,8 +6,9 @@ use std::fmt;
 
 use whisker_protocol::{
     BoxClip, BoxPaint, CommandId, ElementTypeId, FrameHeader, FrameMode, FramePacket,
-    HitTestBehavior, LayoutRect, NodeId, Operation, PointerId, PropertyId, ProtocolValue,
-    ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError, Transform, Visibility,
+    HitTestBehavior, InputPoint, LayoutRect, NodeId, Operation, OverflowClip, PointerId,
+    PropertyId, ProtocolValue, ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError,
+    Transform, Visibility,
 };
 
 /// A retained logical node owned by a [`Scene`].
@@ -94,6 +95,16 @@ impl SceneNode {
     /// Returns retained sibling stacking key.
     pub const fn z_order(&self) -> Option<i32> {
         self.z_order
+    }
+
+    /// Returns retained event subscription bits.
+    pub const fn event_mask(&self) -> Option<u64> {
+        self.event_mask
+    }
+
+    /// Returns retained Host hit-test behavior.
+    pub const fn hit_test(&self) -> Option<HitTestBehavior> {
+        self.hit_test
     }
 }
 
@@ -287,6 +298,65 @@ impl Scene {
     /// Returns a retained node when it is live.
     pub fn node(&self, node: NodeId) -> Option<&SceneNode> {
         self.nodes.get(&node)
+    }
+
+    /// Finds the visually topmost node at one surface-space point.
+    pub fn hit_test(&self, root: NodeId, point: InputPoint) -> Result<Option<NodeId>, SceneError> {
+        self.require_node(root)?;
+        Ok(self.hit_test_node(root, point, 0.0, 0.0))
+    }
+
+    /// Returns the node currently retaining one pointer capture.
+    pub fn pointer_capture_target(&self, pointer: PointerId) -> Option<NodeId> {
+        self.nodes
+            .iter()
+            .find_map(|(node, state)| state.captured_pointers.contains(&pointer).then_some(*node))
+    }
+
+    fn hit_test_node(
+        &self,
+        node: NodeId,
+        point: InputPoint,
+        parent_x: f32,
+        parent_y: f32,
+    ) -> Option<NodeId> {
+        let state = self.nodes.get(&node)?;
+        if state.visibility == Some(Visibility::Hidden)
+            || state.hit_test == Some(HitTestBehavior::None)
+        {
+            return None;
+        }
+        let layout = state.layout?;
+        let x = parent_x + layout.x;
+        let y = parent_y + layout.y;
+        let contains_x = point.x >= x && point.x <= x + layout.width;
+        let contains_y = point.y >= y && point.y <= y + layout.height;
+        let contains = contains_x && contains_y;
+        let children_clipped = state.clip.is_some_and(|clip| {
+            (clip.horizontal == OverflowClip::Hidden && !contains_x)
+                || (clip.vertical == OverflowClip::Hidden && !contains_y)
+        });
+
+        if state.hit_test != Some(HitTestBehavior::BoxOnly) && !children_clipped {
+            let mut children: Vec<(usize, NodeId)> =
+                state.children.iter().copied().enumerate().collect();
+            children.sort_by_key(|(index, child)| {
+                (
+                    self.nodes
+                        .get(child)
+                        .and_then(|child| child.z_order)
+                        .unwrap_or(0),
+                    *index,
+                )
+            });
+            for (_, child) in children.into_iter().rev() {
+                if let Some(target) = self.hit_test_node(child, point, x, y) {
+                    return Some(target);
+                }
+            }
+        }
+
+        (contains && state.hit_test != Some(HitTestBehavior::DescendantsOnly)).then_some(node)
     }
 
     /// Returns whether a snapshot, mutation, command, or retry needs a frame.
@@ -1600,6 +1670,95 @@ mod tests {
                 expected: SurfaceId::new(2).expect("different recording surface"),
                 received: surface(),
             })
+        );
+    }
+
+    #[test]
+    fn hit_testing_respects_z_order_visibility_clip_and_pointer_capture() {
+        let mut scene = Scene::new(surface());
+        let root = scene.create_node(element_type(1)).unwrap();
+        let back = scene.create_node(element_type(1)).unwrap();
+        let front = scene.create_node(element_type(1)).unwrap();
+        scene.insert_child(root, back, 0).unwrap();
+        scene.insert_child(root, front, 1).unwrap();
+        scene
+            .set_layout(
+                root,
+                LayoutRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 100.0,
+                },
+            )
+            .unwrap();
+        for child in [back, front] {
+            scene
+                .set_layout(
+                    child,
+                    LayoutRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 50.0,
+                        height: 50.0,
+                    },
+                )
+                .unwrap();
+        }
+        scene.set_z_order(back, 1).unwrap();
+        scene.set_z_order(front, 2).unwrap();
+        let point = InputPoint { x: 10.0, y: 10.0 };
+        assert_eq!(scene.hit_test(root, point), Ok(Some(front)));
+
+        scene.set_visibility(front, Visibility::Hidden).unwrap();
+        assert_eq!(scene.hit_test(root, point), Ok(Some(back)));
+        scene
+            .set_hit_test(back, HitTestBehavior::DescendantsOnly)
+            .unwrap();
+        assert_eq!(scene.hit_test(root, point), Ok(Some(root)));
+
+        scene
+            .set_layout(
+                back,
+                LayoutRect {
+                    x: 120.0,
+                    y: 0.0,
+                    width: 50.0,
+                    height: 50.0,
+                },
+            )
+            .unwrap();
+        scene.set_hit_test(back, HitTestBehavior::Auto).unwrap();
+        scene
+            .set_clip(
+                root,
+                BoxClip {
+                    horizontal: OverflowClip::Hidden,
+                    vertical: OverflowClip::Visible,
+                },
+            )
+            .unwrap();
+        let outside = InputPoint { x: 130.0, y: 10.0 };
+        assert_eq!(scene.hit_test(root, outside), Ok(None));
+        scene
+            .set_clip(
+                root,
+                BoxClip {
+                    horizontal: OverflowClip::Visible,
+                    vertical: OverflowClip::Visible,
+                },
+            )
+            .unwrap();
+        assert_eq!(scene.hit_test(root, outside), Ok(Some(back)));
+
+        let pointer = pointer(9);
+        scene.set_pointer_capture(back, pointer).unwrap();
+        assert_eq!(scene.pointer_capture_target(pointer), Some(back));
+        scene.release_pointer_capture(back, pointer).unwrap();
+        assert_eq!(scene.pointer_capture_target(pointer), None);
+        assert_eq!(
+            scene.hit_test(node(999), point),
+            Err(SceneError::UnknownNode { node: node(999) })
         );
     }
 }

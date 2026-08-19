@@ -4,8 +4,9 @@ use std::{error::Error, fmt};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
-    ApplyResult, ElementTypeId, FramePacket, LayoutRect, MeasurementMetrics, MeasurementReady,
-    MeasurementResponse, MeasurementSpec, NodeId, SurfaceId, TextContent,
+    ApplyResult, ElementTypeId, FramePacket, HitTestBehavior, InputPoint, LayoutRect,
+    MeasurementMetrics, MeasurementReady, MeasurementResponse, MeasurementSpec, NodeId, PointerId,
+    SurfaceId, TextContent,
 };
 use whisker_style::{ComputedLayoutStyle, ComputedStyle, InheritedStyle, PropertyImpactSet};
 
@@ -190,6 +191,40 @@ impl SurfaceEngine {
     /// Returns a retained scene node when it is live.
     pub fn node(&self, node: NodeId) -> Option<&SceneNode> {
         self.scene.node(node)
+    }
+
+    /// Finds the visually topmost retained node at a surface-space point.
+    pub fn hit_test(
+        &self,
+        root: NodeId,
+        point: InputPoint,
+    ) -> Result<Option<NodeId>, SurfaceError> {
+        self.scene
+            .hit_test(root, point)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Returns the node currently retaining one pointer capture.
+    pub fn pointer_capture_target(&self, pointer: PointerId) -> Option<NodeId> {
+        self.scene.pointer_capture_target(pointer)
+    }
+
+    /// Replaces one node's event subscription mask.
+    pub fn set_event_mask(&mut self, node: NodeId, mask: u64) -> Result<(), SurfaceError> {
+        self.scene
+            .set_event_mask(node, mask)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Replaces one node's hit-test participation.
+    pub fn set_hit_test(
+        &mut self,
+        node: NodeId,
+        behavior: HitTestBehavior,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .set_hit_test(node, behavior)
+            .map_err(SurfaceError::Scene)
     }
 
     /// Creates one unattached node in both retained trees.

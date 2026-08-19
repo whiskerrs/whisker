@@ -1,30 +1,27 @@
 //! Single-threaded async task host.
 //!
-//! Whisker runs UI on Lynx's TASM thread. To let user code write
-//! plain `async fn` (HTTP, animation, debounce, etc.) without pulling
-//! in `tokio`, we host a thread-local
-//! [`futures_executor::LocalPool`] that's polled cooperatively from
-//! the runtime's tick callback.
+//! Whisker runs UI on a Host-owned UI thread. To let user code write plain
+//! `async fn` without pulling in Tokio, each [`RuntimeContext`](crate::RuntimeContext)
+//! owns a [`futures_executor::LocalPool`] that is activated and polled
+//! cooperatively from the Host's frame callback.
 //!
 //! - [`spawn_local`] queues a `Future<Output = ()>` for execution on
-//!   the next tick.
+//!   the next runtime drive.
 //! - [`run_until_stalled`] (crate-internal) drains pending tasks
-//!   until they're all blocked on something. The driver's
-//!   `whisker_tick` calls this after the reactive flush.
+//!   until they're all blocked on something. `RuntimeInstance` calls this
+//!   between reactive flushes.
 //! - [`run_blocking`] runs a *synchronous* closure on a fresh worker
 //!   thread and returns a `Future<Output = T>` that resolves on the
-//!   main thread once the closure finishes. Used by [`resource`] and
+//!   UI runtime once the closure finishes. Used by [`resource`] and
 //!   directly by user code that needs to call sync IO (`ureq`,
 //!   filesystem, …) from inside an `async fn`.
 //!
 //! ## Threading model
 //!
-//! Everything in this module assumes the local pool lives on the
-//! TASM thread. Spawning happens on the TASM thread (so the future
-//! itself need not be `Send`). The `Waker` side IS `Send + Sync`
-//! because the futures crate requires it, but our concrete wake
-//! implementation funnels through [`crate::host_wake::wake_runtime`]
-//! which is any-thread safe.
+//! The local pool is single-threaded and active only while its runtime context
+//! is entered, so spawned futures need not be `Send`. The `Waker` side is
+//! `Send + Sync`: it captures the instance's any-thread Host wake handle and
+//! never polls UI code on the waking thread.
 //!
 //! [`resource`]: crate::reactive::resource
 
@@ -38,16 +35,24 @@ use futures_executor::{LocalPool, LocalSpawner};
 use futures_util::task::{ArcWake, LocalSpawnExt, waker_ref};
 
 thread_local! {
-    /// The per-thread executor. Holds queued + ready tasks. Polled
-    /// to-stall by `run_until_stalled` on every tick.
-    ///
-    /// We hold `pool` and a cached `spawner` separately so callers of
-    /// [`spawn_local`] don't have to mutably borrow the whole pool —
-    /// `LocalSpawner` is `Clone` and cheap.
-    static POOL: RefCell<LocalPool> = RefCell::new(LocalPool::new());
-    static SPAWNER: RefCell<LocalSpawner> = RefCell::new({
-        POOL.with(|p| p.borrow().spawner())
-    });
+    static TASKS: RefCell<TaskState> = RefCell::new(TaskState::new());
+}
+
+pub(crate) struct TaskState {
+    pool: LocalPool,
+    spawner: LocalSpawner,
+}
+
+impl TaskState {
+    pub(crate) fn new() -> Self {
+        let pool = LocalPool::new();
+        let spawner = pool.spawner();
+        Self { pool, spawner }
+    }
+}
+
+pub(crate) fn swap_state(state: &mut TaskState) {
+    TASKS.with_borrow_mut(|active| std::mem::swap(active, state));
 }
 
 /// The "request a main-loop drive" hook invoked by a task's [`Waker`]
@@ -113,12 +118,17 @@ fn invoke_drive_hook() {
 /// any-thread-safe `run_on_main_thread`.
 struct DriveWaker {
     inner: std::task::Waker,
+    wake: Option<crate::host_wake::RuntimeWakeHandle>,
 }
 
 impl ArcWake for DriveWaker {
     fn wake_by_ref(arc_self: &Arc<Self>) {
         arc_self.inner.wake_by_ref();
-        invoke_drive_hook();
+        if let Some(wake) = &arc_self.wake {
+            wake.wake();
+        } else {
+            invoke_drive_hook();
+        }
     }
 }
 
@@ -143,6 +153,7 @@ impl<F: Future<Output = ()>> Future for DriveBridged<F> {
         let future = unsafe { self.map_unchecked_mut(|s| &mut s.future) };
         let drive_waker = Arc::new(DriveWaker {
             inner: cx.waker().clone(),
+            wake: crate::host_wake::current_wake_handle(),
         });
         let waker = waker_ref(&drive_waker);
         let mut cx = Context::from_waker(&waker);
@@ -152,7 +163,7 @@ impl<F: Future<Output = ()>> Future for DriveBridged<F> {
 
 /// Queue `future` for execution on Whisker's task pool.
 ///
-/// The future is polled on the TASM thread by the next tick after
+/// The future is polled on the Host UI thread by the next drive after
 /// either:
 /// - [`crate::host_wake::wake_runtime`] fires (the future's `Waker`
 ///   was woken from anywhere), or
@@ -174,8 +185,10 @@ pub fn spawn_local<F>(future: F)
 where
     F: Future<Output = ()> + 'static,
 {
-    SPAWNER.with(|s| {
-        s.borrow()
+    TASKS.with(|tasks| {
+        tasks
+            .borrow()
+            .spawner
             .spawn_local(DriveBridged { future })
             .expect("whisker tasks: local pool is shut down");
     });
@@ -190,8 +203,8 @@ where
 /// flush. Calling it from user code is OK but pointless — the
 /// runtime already drives it every tick.
 pub fn run_until_stalled() {
-    POOL.with(|p| {
-        p.borrow_mut().run_until_stalled();
+    TASKS.with(|tasks| {
+        tasks.borrow_mut().pool.run_until_stalled();
     });
 }
 
@@ -200,10 +213,10 @@ pub fn run_until_stalled() {
 ///
 /// Use this from inside an `async fn` (or `resource`'s fetcher) when
 /// you need to call blocking sync IO (`ureq`, `std::fs`, a sync DB
-/// driver) without freezing the TASM thread. The result is delivered
-/// back to the main thread via [`crate::main_thread::run_on_main_thread`]
-/// so the awaiting future resumes on the TASM thread, not on the
-/// worker.
+/// driver) without freezing the Host UI thread. Sending the result wakes the
+/// task's internal drive-aware waker, which
+/// requests the correct runtime instance from any thread; the future itself
+/// remains polled only on the Host UI thread.
 ///
 /// `T` must be `Send + 'static` so it can cross the thread boundary.
 /// `F` must be `Send + 'static` for the same reason.
@@ -227,14 +240,10 @@ where
     let (tx, rx) = futures_channel::oneshot::channel::<T>();
     std::thread::spawn(move || {
         let value = closure();
-        // Hop to the main thread before sending so the receiver wakes
-        // on the TASM thread, the same one the awaiting task polls on.
-        crate::main_thread::run_on_main_thread(move || {
-            // `send` fails only when the awaiting half was dropped
-            // because its owner was disposed mid-fetch — the documented
-            // `resource` cancel-on-dispose semantics, so drop silently.
-            let _ = tx.send(value);
-        });
+        // `send` fails only when the awaiting half was dropped because its
+        // owner was disposed mid-fetch. Waking is any-thread safe; polling
+        // still happens only when the Host next enters this runtime context.
+        let _ = tx.send(value);
     });
     BlockingResult { rx }
 }
@@ -269,12 +278,7 @@ impl<T> Future for BlockingResult<T> {
 /// doesn't bleed across.
 #[doc(hidden)]
 pub fn __reset_for_tests() {
-    POOL.with(|p| *p.borrow_mut() = LocalPool::new());
-    SPAWNER.with(|s| {
-        POOL.with(|p| {
-            *s.borrow_mut() = p.borrow().spawner();
-        });
-    });
+    TASKS.with_borrow_mut(|tasks| *tasks = TaskState::new());
 }
 
 #[cfg(test)]
@@ -436,11 +440,9 @@ mod tests {
     }
 
     #[test]
-    fn run_blocking_future_parks_when_no_dispatcher_registered() {
+    fn run_blocking_completion_does_not_require_legacy_dispatcher() {
         let _g = lock();
         reset_all();
-        // No dispatcher installed → `run_on_main_thread` drops the
-        // closure, so the sender never fires.
         let polled = Rc::new(Cell::new(false));
         let polled_for_task = polled.clone();
         spawn_local(async move {
@@ -452,9 +454,9 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(
-            !polled.get(),
-            "task body should NOT have completed without a dispatcher \
-             (cancel-on-dispose semantics)"
+            polled.get(),
+            "the result channel and task waker must work without the \
+             legacy Lynx main-thread dispatcher"
         );
     }
 

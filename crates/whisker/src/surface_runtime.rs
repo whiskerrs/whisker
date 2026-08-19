@@ -10,13 +10,16 @@ use crate::runtime::element::ElementTag;
 use crate::runtime::value::WhiskerValue;
 use crate::runtime::view::{BindType, DynRenderer, Element};
 use whisker_engine::whisker_layout::LayoutSize;
-use whisker_engine::whisker_protocol::{ElementTypeId, NodeId, SurfaceId};
+use whisker_engine::whisker_protocol::{
+    ElementTypeId, HitTestBehavior, InputEvent, InputEventError, MeasurementReady, NodeId,
+    ProtocolValue, SurfaceId,
+};
 use whisker_engine::whisker_style::{
     ResolvedNodeStyle, SpecifiedStyle, StyleEnvironment, StyleResolutionError, resolve_style,
 };
 use whisker_engine::{
-    FrameSink, HostLayoutError, HostLayoutOptions, LayoutProgress, MeasurementHost, PlainTextInput,
-    SurfaceEngine, SurfaceError, SurfacePresentError,
+    DeferredMeasurementApply, FrameSink, HostLayoutError, HostLayoutOptions, LayoutProgress,
+    MeasurementHost, PlainTextInput, SurfaceEngine, SurfaceError, SurfacePresentError,
 };
 
 /// A mutation emitted by `render!` that could not enter the retained surface.
@@ -52,13 +55,6 @@ pub enum RuntimeBindingError {
         element: Element,
         /// Requested parent.
         parent: Element,
-    },
-    /// An event has not yet been assigned a protocol bit.
-    UnsupportedEvent {
-        /// Target runtime handle.
-        element: Element,
-        /// Runtime event name.
-        name: String,
     },
     /// The runtime selected a virtual raw-text node as the surface root.
     InvalidRoot {
@@ -99,6 +95,62 @@ impl From<SurfaceError> for RuntimeBindingError {
     fn from(error: SurfaceError) -> Self {
         Self::Surface(error)
     }
+}
+
+/// Input rejected before or during Rust event routing.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RuntimeInputError {
+    /// Input targeted a different surface.
+    SurfaceMismatch {
+        /// Surface owned by this runtime.
+        expected: SurfaceId,
+        /// Surface named by the Host event.
+        received: SurfaceId,
+    },
+    /// Host timing or pointer geometry was invalid.
+    InvalidInput(InputEventError),
+    /// The Host named a node that is no longer live.
+    UnknownTarget {
+        /// Stale or invalid target.
+        node: NodeId,
+    },
+    /// An explicit Host target was live but not mounted under this surface root.
+    TargetOutsideRoot {
+        /// Unmounted target supplied by the Host.
+        target: NodeId,
+        /// Current mounted root.
+        root: NodeId,
+    },
+    /// Re-entrant Host delivery exceeded the bounded event queue.
+    InputQueueFull {
+        /// Maximum number of retained events.
+        limit: usize,
+    },
+    /// No root has been mounted.
+    MissingRoot,
+    /// Retained scene hit testing failed.
+    Binding(RuntimeBindingError),
+}
+
+impl fmt::Display for RuntimeInputError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "Whisker runtime input error: {self:?}")
+    }
+}
+
+impl Error for RuntimeInputError {}
+
+/// Summary of one routed Host event.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InputDispatch {
+    /// Hit-tested or explicitly addressed target.
+    pub target: Option<NodeId>,
+    /// Whether at least one listener received the event.
+    pub consumed: bool,
+    /// Number of callbacks fired across capture and bubble phases.
+    pub listener_count: usize,
+    /// Whether a re-entrant Host callback was queued for the event boundary.
+    pub queued: bool,
 }
 
 /// Failure while driving layout for a surface populated through `render!`.
@@ -197,6 +249,7 @@ impl SurfaceRuntime {
                 environment,
                 next_element: 0,
                 elements: HashMap::new(),
+                node_elements: HashMap::new(),
                 root: None,
                 error: None,
             })),
@@ -221,6 +274,70 @@ impl SurfaceRuntime {
     /// Returns the first rejected runtime mutation without clearing it.
     pub fn binding_error(&self) -> Option<RuntimeBindingError> {
         self.state.borrow().error.clone()
+    }
+
+    /// Hit-tests and routes one Host-normalized event through Rust listeners.
+    pub fn dispatch_input(&self, event: &InputEvent) -> Result<InputDispatch, RuntimeInputError> {
+        let (target, firings, body) = {
+            let state = self.state.borrow();
+            state.ensure_valid().map_err(RuntimeInputError::Binding)?;
+            if event.surface != state.surface.surface() {
+                return Err(RuntimeInputError::SurfaceMismatch {
+                    expected: state.surface.surface(),
+                    received: event.surface,
+                });
+            }
+            event.validate().map_err(RuntimeInputError::InvalidInput)?;
+            let root = state.root.ok_or(RuntimeInputError::MissingRoot)?;
+            let target = if let Some(target) = event.target {
+                if state.surface.node(target).is_none() {
+                    return Err(RuntimeInputError::UnknownTarget { node: target });
+                }
+                Some(target)
+            } else if let Some(pointer) = event.pointer {
+                if let Some(captured) = state.surface.pointer_capture_target(pointer.id) {
+                    Some(captured)
+                } else {
+                    state
+                        .surface
+                        .hit_test(root, pointer.position)
+                        .map_err(RuntimeBindingError::from)
+                        .map_err(RuntimeInputError::Binding)?
+                }
+            } else {
+                None
+            };
+            let Some(target) = target else {
+                return Ok(InputDispatch::default());
+            };
+            let event_name = event.kind.name(event.pointer.map(|pointer| pointer.kind));
+            let firings = state.plan_event(root, target, event_name)?;
+            (target, firings, input_body(event, target))
+        };
+
+        let listener_count = firings.len();
+        for (current_target, callback) in firings {
+            callback(with_current_target(&body, current_target));
+        }
+        Ok(InputDispatch {
+            target: Some(target),
+            consumed: listener_count > 0,
+            listener_count,
+            queued: false,
+        })
+    }
+
+    /// Applies one deferred Host measurement and invalidates its layout users.
+    pub fn apply_measurement_ready(
+        &self,
+        ready: &MeasurementReady,
+    ) -> Result<DeferredMeasurementApply, RuntimeBindingError> {
+        let mut state = self.state.borrow_mut();
+        state.ensure_valid()?;
+        state
+            .surface
+            .apply_measurement_ready(ready)
+            .map_err(RuntimeBindingError::from)
     }
 
     /// Runs Taffy and all synchronously available Host measurements.
@@ -295,13 +412,23 @@ struct BoundElement {
     resolved: Option<ResolvedNodeStyle>,
     text: Option<PlainTextInput>,
     raw_text: String,
+    listeners: HashMap<String, Vec<RuntimeListener>>,
 }
+
+#[derive(Clone)]
+struct RuntimeListener {
+    bind_type: BindType,
+    callback: Rc<dyn Fn(WhiskerValue) + 'static>,
+}
+
+type PlannedListener = (NodeId, Rc<dyn Fn(WhiskerValue) + 'static>);
 
 struct BindingState {
     surface: SurfaceEngine,
     environment: StyleEnvironment,
     next_element: u32,
     elements: HashMap<Element, BoundElement>,
+    node_elements: HashMap<NodeId, Element>,
     root: Option<NodeId>,
     error: Option<RuntimeBindingError>,
 }
@@ -315,10 +442,10 @@ impl BindingState {
     }
 
     fn record(&mut self, result: Result<(), RuntimeBindingError>) {
-        if let Err(error) = result
-            && self.error.is_none()
-        {
-            self.error = Some(error);
+        match result {
+            Ok(()) => crate::runtime::host_wake::wake_runtime(),
+            Err(error) if self.error.is_none() => self.error = Some(error),
+            Err(_) => {}
         }
     }
 
@@ -351,9 +478,85 @@ impl BindingState {
                 resolved,
                 text,
                 raw_text: String::new(),
+                listeners: HashMap::new(),
             },
         );
+        if let Some(node) = node {
+            self.node_elements.insert(node, handle);
+        }
         Ok(handle)
+    }
+
+    fn plan_event(
+        &self,
+        root: NodeId,
+        target: NodeId,
+        event_name: &str,
+    ) -> Result<Vec<PlannedListener>, RuntimeInputError> {
+        let mut chain = Vec::new();
+        let mut current = Some(target);
+        while let Some(node) = current {
+            chain.push(node);
+            current = self
+                .surface
+                .node(node)
+                .ok_or(RuntimeInputError::UnknownTarget { node })?
+                .parent();
+        }
+        if chain.last() != Some(&root) {
+            return Err(RuntimeInputError::TargetOutsideRoot { target, root });
+        }
+
+        let listeners_for = |node: NodeId| {
+            self.node_elements
+                .get(&node)
+                .and_then(|element| self.elements.get(element))
+                .and_then(|element| element.listeners.get(event_name))
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+        };
+        let mut firings = Vec::new();
+        let mut capture_caught = false;
+        for node in chain.iter().rev().copied() {
+            let mut stop = false;
+            for listener in listeners_for(node) {
+                match listener.bind_type {
+                    BindType::CaptureCatch => {
+                        firings.push((node, Rc::clone(&listener.callback)));
+                        capture_caught = true;
+                        stop = true;
+                    }
+                    BindType::CaptureBind => {
+                        firings.push((node, Rc::clone(&listener.callback)));
+                    }
+                    BindType::Bind | BindType::Catch => {}
+                }
+            }
+            if stop {
+                break;
+            }
+        }
+        if !capture_caught {
+            for node in chain {
+                let mut stop = false;
+                for listener in listeners_for(node) {
+                    match listener.bind_type {
+                        BindType::Catch => {
+                            firings.push((node, Rc::clone(&listener.callback)));
+                            stop = true;
+                        }
+                        BindType::Bind => {
+                            firings.push((node, Rc::clone(&listener.callback)));
+                        }
+                        BindType::CaptureBind | BindType::CaptureCatch => {}
+                    }
+                }
+                if stop {
+                    break;
+                }
+            }
+        }
+        Ok(firings)
     }
 
     fn element(&self, element: Element) -> Result<&BoundElement, RuntimeBindingError> {
@@ -532,6 +735,102 @@ impl BindingState {
     }
 }
 
+const EVENT_POINTER: u64 = 1 << 0;
+const EVENT_ACTIVATION: u64 = 1 << 1;
+const EVENT_NAMED: u64 = 1 << 2;
+
+fn event_class_mask(name: &str) -> u64 {
+    match name {
+        "touchstart" | "touchmove" | "touchend" | "touchcancel" | "pointerdown" | "pointermove"
+        | "pointerup" | "pointercancel" => EVENT_POINTER,
+        "tap" | "click" | "longpress" => EVENT_ACTIVATION,
+        _ => EVENT_NAMED,
+    }
+}
+
+fn input_body(event: &InputEvent, target: NodeId) -> WhiskerValue {
+    let pointer_kind = event.pointer.map(|pointer| match pointer.kind {
+        whisker_engine::whisker_protocol::PointerKind::Mouse => "mouse",
+        whisker_engine::whisker_protocol::PointerKind::Touch => "touch",
+        whisker_engine::whisker_protocol::PointerKind::Pen => "pen",
+        whisker_engine::whisker_protocol::PointerKind::Unknown => "unknown",
+    });
+    let detail = if let Some(pointer) = event.pointer {
+        WhiskerValue::map([
+            ("x", WhiskerValue::Float(f64::from(pointer.position.x))),
+            ("y", WhiskerValue::Float(f64::from(pointer.position.y))),
+        ])
+    } else {
+        protocol_value(&event.detail)
+    };
+    let mut entries = vec![
+        (
+            "type",
+            WhiskerValue::String(
+                event
+                    .kind
+                    .name(event.pointer.map(|pointer| pointer.kind))
+                    .to_owned(),
+            ),
+        ),
+        ("timestamp", WhiskerValue::Float(event.timestamp_ms)),
+        (
+            "target",
+            WhiskerValue::map([("uid", WhiskerValue::Int(target.get() as i64))]),
+        ),
+        (
+            "currentTarget",
+            WhiskerValue::map([("uid", WhiskerValue::Int(target.get() as i64))]),
+        ),
+        ("detail", detail),
+    ];
+    if let Some(pointer) = event.pointer {
+        entries.extend([
+            ("pointerId", WhiskerValue::Int(pointer.id.get() as i64)),
+            (
+                "pointerType",
+                WhiskerValue::String(pointer_kind.unwrap_or("unknown").to_owned()),
+            ),
+            ("buttons", WhiskerValue::Int(i64::from(pointer.buttons))),
+            (
+                "button",
+                WhiskerValue::Int(i64::from(pointer.changed_button)),
+            ),
+        ]);
+    }
+    WhiskerValue::map(entries)
+}
+
+fn with_current_target(body: &WhiskerValue, target: NodeId) -> WhiskerValue {
+    let mut body = body.clone();
+    if let WhiskerValue::Map(entries) = &mut body {
+        entries.insert(
+            "currentTarget".to_owned(),
+            WhiskerValue::map([("uid", WhiskerValue::Int(target.get() as i64))]),
+        );
+    }
+    body
+}
+
+fn protocol_value(value: &ProtocolValue) -> WhiskerValue {
+    match value {
+        ProtocolValue::Null => WhiskerValue::Null,
+        ProtocolValue::Bool(value) => WhiskerValue::Bool(*value),
+        ProtocolValue::I64(value) => WhiskerValue::Int(*value),
+        ProtocolValue::F64(value) => WhiskerValue::Float(*value),
+        ProtocolValue::String(value) => WhiskerValue::String(value.clone()),
+        ProtocolValue::Bytes(value) => WhiskerValue::Bytes(value.clone()),
+        ProtocolValue::Array(values) => {
+            WhiskerValue::Array(values.iter().map(protocol_value).collect())
+        }
+        ProtocolValue::Object(values) => WhiskerValue::map(
+            values
+                .iter()
+                .map(|(name, value)| (name.clone(), protocol_value(value))),
+        ),
+    }
+}
+
 impl DynRenderer for SurfaceRuntime {
     fn create_element(&self, tag: ElementTag) -> Element {
         let mut state = self.state.borrow_mut();
@@ -563,10 +862,11 @@ impl DynRenderer for SurfaceRuntime {
             {
                 parent_entry.children.retain(|child| *child != handle);
             }
-            if let Some(node) = entry.node
-                && state.surface.node(node).is_some()
-            {
-                state.surface.delete_node(node)?;
+            if let Some(node) = entry.node {
+                state.node_elements.remove(&node);
+                if state.surface.node(node).is_some() {
+                    state.surface.delete_node(node)?;
+                }
             }
             Ok(())
         })();
@@ -627,15 +927,34 @@ impl DynRenderer for SurfaceRuntime {
         &self,
         handle: Element,
         event_name: &str,
-        _bind_type: BindType,
+        bind_type: BindType,
         callback: Box<dyn Fn(WhiskerValue) + 'static>,
     ) {
-        drop(callback);
         let mut state = self.state.borrow_mut();
-        state.record(Err(RuntimeBindingError::UnsupportedEvent {
-            element: handle,
-            name: event_name.to_owned(),
-        }));
+        let result = (|| {
+            let node = state
+                .element(handle)?
+                .node
+                .ok_or(RuntimeBindingError::InvalidRoot { element: handle })?;
+            state
+                .element_mut(handle)?
+                .listeners
+                .entry(event_name.to_owned())
+                .or_default()
+                .push(RuntimeListener {
+                    bind_type,
+                    callback: Rc::from(callback),
+                });
+            let mask = state
+                .element(handle)?
+                .listeners
+                .keys()
+                .fold(0, |mask, name| mask | event_class_mask(name));
+            state.surface.set_event_mask(node, mask)?;
+            state.surface.set_hit_test(node, HitTestBehavior::Auto)?;
+            Ok(())
+        })();
+        state.record(result);
     }
 
     fn set_root(&self, page: Element) {

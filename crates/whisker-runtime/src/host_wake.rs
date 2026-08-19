@@ -1,18 +1,48 @@
-//! Host wake-up bridge — the C callback the iOS / Android shell
-//! registers so the runtime can ask the host to schedule another
-//! `whisker_tick`.
+//! Host wake-up boundary for both retained runtime instances and the legacy
+//! process-global C callback.
 //!
-//! Lives outside [`view`] / [`reactive`] because both crates need it:
+//! Lives outside [`crate::view`] / [`crate::reactive`] because both need it:
 //! - [`crate::reactive::scheduler`] calls [`wake_runtime`] on the
 //!   empty→non-empty edge of the pending queue so the host wakes
 //!   up to drain effects.
-//! - [`crate::whisker_dev_runtime`] (hot-reload receiver)
-//!   calls [`wake_runtime`] from its WebSocket thread after parking
-//!   a patch, so the host runs another tick that picks the patch
-//!   up.
+//! - the `whisker-dev-runtime` hot-reload receiver calls [`wake_runtime`]
+//!   after parking a patch.
 
+use std::cell::RefCell;
 use std::ffi::c_void;
+use std::sync::Arc;
 use std::sync::Mutex;
+
+/// Any-thread wake-up endpoint supplied by a Host for one runtime instance.
+pub trait RuntimeWake: Send + Sync + 'static {
+    /// Coalesces or posts a request to drive the owning UI event loop.
+    fn wake(&self);
+}
+
+impl<F> RuntimeWake for F
+where
+    F: Fn() + Send + Sync + 'static,
+{
+    fn wake(&self) {
+        self();
+    }
+}
+
+/// Cloneable wake-up capability captured by async task wakers.
+#[derive(Clone)]
+pub struct RuntimeWakeHandle(Arc<dyn RuntimeWake>);
+
+impl RuntimeWakeHandle {
+    /// Wraps one Host wake-up endpoint.
+    pub fn new(wake: impl RuntimeWake) -> Self {
+        Self(Arc::new(wake))
+    }
+
+    /// Requests one future runtime drive.
+    pub fn wake(&self) {
+        self.0.wake();
+    }
+}
 
 /// "Wake the host" callback. The host registers one of these during
 /// init via [`set_request_frame_callback`]; whenever the runtime
@@ -43,6 +73,18 @@ unsafe impl Sync for RequestFrameCb {}
 /// and locking is cheap on the rare path that uses it.
 static REMOTE_WAKE: Mutex<Option<RequestFrameCb>> = Mutex::new(None);
 
+thread_local! {
+    static ACTIVE_WAKE: RefCell<Option<RuntimeWakeHandle>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn swap_active_wake(wake: &mut Option<RuntimeWakeHandle>) {
+    ACTIVE_WAKE.with_borrow_mut(|active| std::mem::swap(active, wake));
+}
+
+pub(crate) fn current_wake_handle() -> Option<RuntimeWakeHandle> {
+    ACTIVE_WAKE.with_borrow(Clone::clone)
+}
+
 /// Register the host's wake-up callback. Pass `None` to clear.
 ///
 /// In production this is called once during
@@ -64,6 +106,10 @@ pub fn set_request_frame_callback(
 /// (signal writes during init may happen before bootstrap has wired
 /// anything up).
 pub fn wake_runtime() {
+    if let Some(wake) = current_wake_handle() {
+        wake.wake();
+        return;
+    }
     let cb = REMOTE_WAKE.lock().ok().and_then(|g| *g);
     if let Some(cb) = cb {
         (cb.func)(cb.user_data);
@@ -73,6 +119,7 @@ pub fn wake_runtime() {
 /// (Test only) clear the registered callback.
 #[doc(hidden)]
 pub fn __reset_for_tests() {
+    ACTIVE_WAKE.with_borrow_mut(|wake| *wake = None);
     if let Ok(mut guard) = REMOTE_WAKE.lock() {
         *guard = None;
     }

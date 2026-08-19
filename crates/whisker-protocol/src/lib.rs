@@ -16,6 +16,7 @@
 
 mod frame;
 mod id;
+mod input;
 mod measurement;
 mod validation;
 
@@ -28,6 +29,9 @@ pub use frame::{
 pub use id::{
     CommandId, ElementTypeId, MeasurementKey, MeasurementRequestId, NodeId, PointerId,
     PreparedContentId, PropertyId, ResultId, SurfaceId,
+};
+pub use input::{
+    InputEvent, InputEventError, InputEventKind, InputPoint, PointerInput, PointerKind,
 };
 pub use measurement::{
     AvailableSpace, CustomMeasurePayload, EmbeddedSurfaceMeasurePayload, MeasureConstraints,
