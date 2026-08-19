@@ -295,10 +295,45 @@ mod tests {
                 StyleProperty::BorderTopStyle,
                 StyleValue::BorderStyle(BorderStyleValue::Solid),
             )
+            .push(
+                StyleProperty::BorderTopColor,
+                StyleValue::Color(ColorValue::Named("top".into())),
+            )
+            .push(
+                StyleProperty::BorderRightColor,
+                StyleValue::Color(ColorValue::Named("right".into())),
+            )
+            .push(
+                StyleProperty::BorderBottomColor,
+                StyleValue::Color(ColorValue::Named("bottom".into())),
+            )
+            .push(
+                StyleProperty::BorderLeftColor,
+                StyleValue::Color(ColorValue::Named("left".into())),
+            )
+            .push(
+                StyleProperty::BorderRightStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Dashed),
+            )
+            .push(
+                StyleProperty::BorderBottomStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Dotted),
+            )
+            .push(
+                StyleProperty::BorderLeftStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Double),
+            )
             .push(StyleProperty::BorderTopLeftRadius, px(8.0))
+            .push(StyleProperty::BorderTopRightRadius, px(9.0))
+            .push(StyleProperty::BorderBottomRightRadius, px(10.0))
+            .push(StyleProperty::BorderBottomLeftRadius, px(11.0))
             .push(StyleProperty::Opacity, StyleValue::Number(number(2.0)))
             .push(
                 StyleProperty::OverflowX,
+                StyleValue::Overflow(OverflowValue::Hidden),
+            )
+            .push(
+                StyleProperty::OverflowY,
                 StyleValue::Overflow(OverflowValue::Hidden),
             )
             .push(
@@ -317,29 +352,58 @@ mod tests {
                 alpha: number(0.5),
             }
         );
-        assert_eq!(paint.border_colors.top, ColorValue::Named("current".into()));
+        assert_eq!(paint.border_colors.top, ColorValue::Named("top".into()));
+        assert_eq!(paint.border_colors.right, ColorValue::Named("right".into()));
+        assert_eq!(
+            paint.border_colors.bottom,
+            ColorValue::Named("bottom".into())
+        );
+        assert_eq!(paint.border_colors.left, ColorValue::Named("left".into()));
         assert_eq!(paint.border_styles.top, BorderStyleValue::Solid);
+        assert_eq!(paint.border_styles.right, BorderStyleValue::Dashed);
+        assert_eq!(paint.border_styles.bottom, BorderStyleValue::Dotted);
+        assert_eq!(paint.border_styles.left, BorderStyleValue::Double);
         assert_eq!(paint.border_radii.top_left.length(), 8.0);
+        assert_eq!(paint.border_radii.top_right.length(), 9.0);
+        assert_eq!(paint.border_radii.bottom_right.length(), 10.0);
+        assert_eq!(paint.border_radii.bottom_left.length(), 11.0);
         assert_eq!(paint.opacity.get(), 1.0);
         assert_eq!(paint.overflow_x, OverflowValue::Hidden);
+        assert_eq!(paint.overflow_y, OverflowValue::Hidden);
         assert_eq!(paint.visibility, VisibilityValue::Hidden);
         assert_eq!(paint.z_index, -3);
+
+        assert!(paint.changes_from(paint).is_empty());
+        let mut changed = paint.clone();
+        changed.opacity = number(0.5);
+        assert_eq!(changed.changes_from(paint), crate::PropertyImpactSet::PAINT);
     }
 
     #[test]
     fn invalid_paint_values_are_diagnostic() {
-        for (property, value) in [
-            (StyleProperty::BackgroundColor, StyleValue::Bool(true)),
-            (StyleProperty::BorderTopStyle, StyleValue::Bool(true)),
-            (StyleProperty::BorderTopLeftRadius, StyleValue::Bool(true)),
-            (StyleProperty::Opacity, StyleValue::Number(number(f32::NAN))),
-            (StyleProperty::Visibility, StyleValue::Bool(true)),
-            (StyleProperty::OverflowX, StyleValue::Bool(true)),
-            (StyleProperty::ZIndex, StyleValue::Integer(i64::MAX)),
+        for property in [
+            StyleProperty::BackgroundColor,
+            StyleProperty::BorderTopColor,
+            StyleProperty::BorderRightColor,
+            StyleProperty::BorderBottomColor,
+            StyleProperty::BorderLeftColor,
+            StyleProperty::BorderTopStyle,
+            StyleProperty::BorderRightStyle,
+            StyleProperty::BorderBottomStyle,
+            StyleProperty::BorderLeftStyle,
+            StyleProperty::BorderTopLeftRadius,
+            StyleProperty::BorderTopRightRadius,
+            StyleProperty::BorderBottomRightRadius,
+            StyleProperty::BorderBottomLeftRadius,
+            StyleProperty::Opacity,
+            StyleProperty::Visibility,
+            StyleProperty::OverflowX,
+            StyleProperty::OverflowY,
+            StyleProperty::ZIndex,
         ] {
             assert_eq!(
                 crate::resolve_style(
-                    &SpecifiedStyle::new().push(property, value),
+                    &SpecifiedStyle::new().push(property, StyleValue::Bool(true)),
                     None,
                     StyleEnvironment::default(),
                 ),
@@ -356,5 +420,23 @@ mod tests {
                 StyleProperty::BorderTopLeftRadius
             ))
         );
+        for (property, value) in [
+            (
+                StyleProperty::BackgroundColor,
+                StyleValue::Color(ColorValue::Named(String::new())),
+            ),
+            (StyleProperty::Opacity, StyleValue::Number(number(f32::NAN))),
+            (StyleProperty::ZIndex, StyleValue::Integer(i64::MAX)),
+            (StyleProperty::BorderTopLeftRadius, px(f32::NAN)),
+        ] {
+            assert_eq!(
+                crate::resolve_style(
+                    &SpecifiedStyle::new().push(property, value),
+                    None,
+                    StyleEnvironment::default(),
+                ),
+                Err(StyleResolutionError::InvalidPropertyValue(property))
+            );
+        }
     }
 }

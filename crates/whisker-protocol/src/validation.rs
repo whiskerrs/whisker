@@ -608,6 +608,40 @@ mod tests {
         ))
     }
 
+    fn box_paint() -> crate::BoxPaint {
+        let zero = crate::PaintLengthPercentage {
+            length: 0.0,
+            fraction: 0.0,
+        };
+        crate::BoxPaint {
+            background_color: crate::PaintColor::default(),
+            border_widths: crate::PaintEdges {
+                top: zero,
+                right: zero,
+                bottom: zero,
+                left: zero,
+            },
+            border_colors: crate::PaintEdges {
+                top: crate::PaintColor::default(),
+                right: crate::PaintColor::default(),
+                bottom: crate::PaintColor::default(),
+                left: crate::PaintColor::default(),
+            },
+            border_styles: crate::PaintEdges {
+                top: crate::BorderLineStyle::None,
+                right: crate::BorderLineStyle::None,
+                bottom: crate::BorderLineStyle::None,
+                left: crate::BorderLineStyle::None,
+            },
+            border_radii: crate::PaintCorners {
+                top_left: zero,
+                top_right: zero,
+                bottom_right: zero,
+                bottom_left: zero,
+            },
+        }
+    }
+
     #[test]
     fn snapshot_builds_a_retained_tree() {
         let (scene, root, child) = initial_tree();
@@ -890,6 +924,17 @@ mod tests {
                         height: 40.0,
                     },
                 },
+                Operation::SetBoxPaint {
+                    node: root,
+                    paint: box_paint(),
+                },
+                Operation::SetClip {
+                    node: root,
+                    clip: crate::BoxClip {
+                        horizontal: crate::OverflowClip::Hidden,
+                        vertical: crate::OverflowClip::Visible,
+                    },
+                },
                 Operation::SetTransform {
                     node: root,
                     transform: Transform::IDENTITY,
@@ -1021,6 +1066,17 @@ mod tests {
                 node: missing,
                 rect: LayoutRect::default(),
             },
+            Operation::SetBoxPaint {
+                node: missing,
+                paint: box_paint(),
+            },
+            Operation::SetClip {
+                node: missing,
+                clip: crate::BoxClip {
+                    horizontal: crate::OverflowClip::Visible,
+                    vertical: crate::OverflowClip::Visible,
+                },
+            },
             Operation::SetTransform {
                 node: missing,
                 transform: Transform::IDENTITY,
@@ -1051,6 +1107,22 @@ mod tests {
             assert_eq!(error, ValidationError::UnknownNode { node: missing });
             assert_eq!(scene.revision(), 1);
         }
+    }
+
+    #[test]
+    fn malformed_box_paint_is_rejected_transactionally() {
+        let (mut scene, root, _) = initial_tree();
+        let mut paint = box_paint();
+        paint.border_radii.bottom_left.length = -1.0;
+
+        let error = apply_next(
+            &mut scene,
+            vec![Operation::SetBoxPaint { node: root, paint }],
+        )
+        .expect_err("invalid box paint");
+
+        assert_eq!(error, ValidationError::InvalidBoxPaint);
+        assert_eq!(scene.revision(), 1);
     }
 
     #[test]

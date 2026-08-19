@@ -1326,11 +1326,15 @@ mod tests {
             |style| style.inset.bottom = ComputedLengthPercentageAuto::Value(MIXED),
             |style| style.inset.left = ComputedLengthPercentageAuto::Value(MIXED),
         ];
-        let length_setters: [fn(&mut ComputedLayoutStyle); 5] = [
+        let length_setters: [fn(&mut ComputedLayoutStyle); 9] = [
             |style| style.padding.top = MIXED,
             |style| style.padding.right = MIXED,
             |style| style.padding.bottom = MIXED,
             |style| style.padding.left = MIXED,
+            |style| style.border.top = MIXED,
+            |style| style.border.right = MIXED,
+            |style| style.border.bottom = MIXED,
+            |style| style.border.left = MIXED,
             |style| style.gap.height = MIXED,
         ];
         for setter in size_setters

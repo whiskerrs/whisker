@@ -564,6 +564,40 @@ mod tests {
         NodeId::new(value).expect("test node")
     }
 
+    fn length(length: f32, fraction: f32) -> PaintLengthPercentage {
+        PaintLengthPercentage { length, fraction }
+    }
+
+    fn box_paint() -> BoxPaint {
+        BoxPaint {
+            background_color: PaintColor::Named("transparent".into()),
+            border_widths: PaintEdges {
+                top: length(0.0, 0.0),
+                right: length(1.0, 0.0),
+                bottom: length(0.0, 0.5),
+                left: length(1.0, 0.5),
+            },
+            border_colors: PaintEdges {
+                top: PaintColor::default(),
+                right: PaintColor::Named("red".into()),
+                bottom: PaintColor::default(),
+                left: PaintColor::Named("blue".into()),
+            },
+            border_styles: PaintEdges {
+                top: BorderLineStyle::None,
+                right: BorderLineStyle::Solid,
+                bottom: BorderLineStyle::Dashed,
+                left: BorderLineStyle::Dotted,
+            },
+            border_radii: PaintCorners {
+                top_left: length(0.0, 0.0),
+                top_right: length(2.0, 0.0),
+                bottom_right: length(0.0, 0.25),
+                bottom_left: length(2.0, 0.25),
+            },
+        }
+    }
+
     #[test]
     fn paint_colors_validate_every_semantic_form_and_range() {
         assert!(PaintColor::Named("red".into()).is_valid());
@@ -638,6 +672,30 @@ mod tests {
     }
 
     #[test]
+    fn box_paint_validates_lengths_colors_and_short_circuit_paths() {
+        assert!(box_paint().validate());
+
+        for invalid in [
+            length(f32::NAN, 0.0),
+            length(-1.0, 0.0),
+            length(0.0, f32::NAN),
+            length(0.0, -1.0),
+        ] {
+            assert!(!invalid.is_valid());
+            let mut paint = box_paint();
+            paint.border_widths.top = invalid;
+            assert!(!paint.validate());
+        }
+
+        let mut paint = box_paint();
+        paint.background_color = PaintColor::Named(String::new());
+        assert!(!paint.validate());
+        let mut paint = box_paint();
+        paint.border_colors.left = PaintColor::Named(String::new());
+        assert!(!paint.validate());
+    }
+
+    #[test]
     fn target_node_covers_every_operation_group() {
         let target = node(1);
         let child = node(2);
@@ -669,6 +727,17 @@ mod tests {
             Operation::SetLayout {
                 node: target,
                 rect: LayoutRect::default(),
+            },
+            Operation::SetBoxPaint {
+                node: target,
+                paint: box_paint(),
+            },
+            Operation::SetClip {
+                node: target,
+                clip: BoxClip {
+                    horizontal: OverflowClip::Visible,
+                    vertical: OverflowClip::Hidden,
+                },
             },
             Operation::SetTransform {
                 node: target,

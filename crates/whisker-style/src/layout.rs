@@ -1094,6 +1094,22 @@ mod tests {
                 StyleValue::LengthPercentage(px(8.0)),
             )
             .push(
+                StyleProperty::BorderTopWidth,
+                StyleValue::LengthPercentage(px(1.0)),
+            )
+            .push(
+                StyleProperty::BorderRightWidth,
+                StyleValue::Length(length(2.0, LengthUnit::Px)),
+            )
+            .push(
+                StyleProperty::BorderBottomWidth,
+                StyleValue::LengthPercentage(percent(3.0)),
+            )
+            .push(
+                StyleProperty::BorderLeftWidth,
+                StyleValue::LengthPercentage(px(4.0)),
+            )
+            .push(
                 StyleProperty::FlexDirection,
                 StyleValue::FlexDirection(FlexDirectionValue::Column),
             )
@@ -1155,6 +1171,10 @@ mod tests {
         );
         assert_eq!(style.padding.right.length(), 6.0);
         assert_eq!(style.padding.bottom.fraction(), 0.07);
+        assert_eq!(style.border.top.length(), 1.0);
+        assert_eq!(style.border.right.length(), 2.0);
+        assert_eq!(style.border.bottom.fraction(), 0.03);
+        assert_eq!(style.border.left.length(), 4.0);
         assert_eq!(style.flex_direction, FlexDirectionValue::Column);
         assert_eq!(style.flex_wrap, FlexWrapValue::Wrap);
         assert_eq!(style.flex_grow.get(), 2.0);
@@ -1379,6 +1399,10 @@ mod tests {
             StyleProperty::PaddingRight,
             StyleProperty::PaddingBottom,
             StyleProperty::PaddingLeft,
+            StyleProperty::BorderTopWidth,
+            StyleProperty::BorderRightWidth,
+            StyleProperty::BorderBottomWidth,
+            StyleProperty::BorderLeftWidth,
             StyleProperty::Top,
             StyleProperty::Right,
             StyleProperty::Bottom,
@@ -1427,6 +1451,10 @@ mod tests {
             (
                 StyleProperty::PaddingTop,
                 StyleValue::LengthPercentage(px(f32::INFINITY)),
+            ),
+            (
+                StyleProperty::BorderTopWidth,
+                StyleValue::LengthPercentage(px(-1.0)),
             ),
             (StyleProperty::Order, StyleValue::Integer(i64::MAX)),
         ] {

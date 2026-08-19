@@ -135,27 +135,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn touch_pointer_names_preserve_existing_authoring_api() {
-        assert_eq!(
-            InputEventKind::PointerDown.name(Some(PointerKind::Touch)),
-            "touchstart"
-        );
-        assert_eq!(
-            InputEventKind::PointerDown.name(Some(PointerKind::Mouse)),
-            "pointerdown"
-        );
+    fn event_names_cover_pointer_sources_gestures_and_providers() {
+        for (kind, touch_name, pointer_name) in [
+            (InputEventKind::PointerDown, "touchstart", "pointerdown"),
+            (InputEventKind::PointerMove, "touchmove", "pointermove"),
+            (InputEventKind::PointerUp, "touchend", "pointerup"),
+            (
+                InputEventKind::PointerCancel,
+                "touchcancel",
+                "pointercancel",
+            ),
+        ] {
+            assert_eq!(kind.name(Some(PointerKind::Touch)), touch_name);
+            assert_eq!(kind.name(Some(PointerKind::Mouse)), pointer_name);
+        }
+        assert_eq!(InputEventKind::Click.name(None), "click");
+        assert_eq!(InputEventKind::Tap.name(None), "tap");
+        assert_eq!(InputEventKind::LongPress.name(None), "longpress");
+        assert_eq!(InputEventKind::Named("ready".into()).name(None), "ready");
     }
 
     #[test]
-    fn rejects_non_finite_host_values() {
-        let event = InputEvent {
+    fn validates_every_timestamp_and_pointer_geometry_path() {
+        let mut event = InputEvent {
             surface: SurfaceId::new(1).unwrap(),
-            timestamp_ms: f64::NAN,
+            timestamp_ms: 1.0,
             kind: InputEventKind::Click,
             pointer: None,
             target: None,
             detail: ProtocolValue::Null,
         };
+        assert_eq!(event.validate(), Ok(()));
+
+        event.timestamp_ms = f64::NAN;
         assert_eq!(event.validate(), Err(InputEventError::InvalidTimestamp));
+        event.timestamp_ms = 1.0;
+        event.pointer = Some(PointerInput {
+            id: PointerId::new(1).unwrap(),
+            kind: PointerKind::Pen,
+            position: InputPoint { x: 2.0, y: 3.0 },
+            buttons: 0,
+            changed_button: -1,
+        });
+        assert_eq!(event.validate(), Ok(()));
+
+        event.pointer.as_mut().unwrap().position.x = f32::NAN;
+        assert_eq!(event.validate(), Err(InputEventError::InvalidPosition));
+        event.pointer.as_mut().unwrap().position.x = 2.0;
+        event.pointer.as_mut().unwrap().position.y = f32::INFINITY;
+        assert_eq!(event.validate(), Err(InputEventError::InvalidPosition));
     }
 }

@@ -141,3 +141,155 @@ fn lower_overflow(value: OverflowValue) -> OverflowClip {
         OverflowValue::Hidden => OverflowClip::Hidden,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whisker_style::{Corners, Edges, StyleNumber};
+
+    fn color(name: &str) -> ColorValue {
+        ColorValue::Named(name.into())
+    }
+
+    fn paint_style() -> ComputedPaintStyle {
+        ComputedPaintStyle {
+            background_color: color("background"),
+            border_colors: Edges {
+                top: color("top"),
+                right: color("right"),
+                bottom: color("bottom"),
+                left: color("left"),
+            },
+            border_styles: Edges {
+                top: BorderStyleValue::Solid,
+                right: BorderStyleValue::Dashed,
+                bottom: BorderStyleValue::Dotted,
+                left: BorderStyleValue::Double,
+            },
+            border_radii: Corners {
+                top_left: ComputedLengthPercentage::new(1.0, 0.1),
+                top_right: ComputedLengthPercentage::new(2.0, 0.2),
+                bottom_right: ComputedLengthPercentage::new(3.0, 0.3),
+                bottom_left: ComputedLengthPercentage::new(4.0, 0.4),
+            },
+            opacity: StyleNumber::new(0.5),
+            visibility: VisibilityValue::Hidden,
+            overflow_x: OverflowValue::Visible,
+            overflow_y: OverflowValue::Hidden,
+            z_index: -3,
+        }
+    }
+
+    #[test]
+    fn lowers_complete_box_paint_clip_and_compositing_state() {
+        let layout = ComputedLayoutStyle {
+            border: Edges {
+                top: ComputedLengthPercentage::new(1.0, 0.0),
+                right: ComputedLengthPercentage::new(2.0, 0.1),
+                bottom: ComputedLengthPercentage::new(3.0, 0.2),
+                left: ComputedLengthPercentage::new(4.0, 0.3),
+            },
+            ..ComputedLayoutStyle::default()
+        };
+        let lowered = lower_paint(&paint_style(), &layout);
+
+        assert_eq!(
+            lowered.box_paint.background_color,
+            PaintColor::Named("background".into())
+        );
+        assert_eq!(lowered.box_paint.border_widths.left.length, 4.0);
+        assert_eq!(lowered.box_paint.border_widths.left.fraction, 0.3);
+        assert_eq!(lowered.box_paint.border_radii.bottom_left.length, 4.0);
+        assert_eq!(
+            lowered.box_paint.border_colors.top,
+            PaintColor::Named("top".into())
+        );
+        assert_eq!(
+            lowered.box_paint.border_styles.right,
+            BorderLineStyle::Dashed
+        );
+        assert_eq!(lowered.clip.horizontal, OverflowClip::Visible);
+        assert_eq!(lowered.clip.vertical, OverflowClip::Hidden);
+        assert_eq!(lowered.opacity, 0.5);
+        assert_eq!(lowered.visibility, Visibility::Hidden);
+        assert_eq!(lowered.z_order, -3);
+    }
+
+    #[test]
+    fn lowers_every_color_border_visibility_and_overflow_variant() {
+        assert_eq!(
+            lower_color(&ColorValue::Rgba {
+                red: 1,
+                green: 2,
+                blue: 3,
+                alpha: StyleNumber::new(0.4),
+            }),
+            PaintColor::Srgba {
+                red: 1,
+                green: 2,
+                blue: 3,
+                alpha: 0.4,
+            }
+        );
+        assert_eq!(
+            lower_color(&ColorValue::Hsla {
+                hue_degrees: StyleNumber::new(10.0),
+                saturation: StyleNumber::new(20.0),
+                lightness: StyleNumber::new(30.0),
+                alpha: StyleNumber::new(0.5),
+            }),
+            PaintColor::Hsla {
+                hue_degrees: 10.0,
+                saturation: 20.0,
+                lightness: 30.0,
+                alpha: 0.5,
+            }
+        );
+
+        for (source, expected) in [
+            (BorderStyleValue::None, BorderLineStyle::None),
+            (BorderStyleValue::Hidden, BorderLineStyle::Hidden),
+            (BorderStyleValue::Solid, BorderLineStyle::Solid),
+            (BorderStyleValue::Dashed, BorderLineStyle::Dashed),
+            (BorderStyleValue::Dotted, BorderLineStyle::Dotted),
+            (BorderStyleValue::Double, BorderLineStyle::Double),
+            (BorderStyleValue::Groove, BorderLineStyle::Groove),
+            (BorderStyleValue::Ridge, BorderLineStyle::Ridge),
+            (BorderStyleValue::Inset, BorderLineStyle::Inset),
+            (BorderStyleValue::Outset, BorderLineStyle::Outset),
+        ] {
+            assert_eq!(lower_border_style(&source), expected);
+        }
+
+        let transparent = PaintColor::Srgba {
+            red: 0,
+            green: 0,
+            blue: 0,
+            alpha: 0.0,
+        };
+        assert_eq!(
+            effective_border_color(&color("ignored"), BorderStyleValue::None),
+            transparent
+        );
+        assert_eq!(
+            effective_border_color(&color("ignored"), BorderStyleValue::Hidden),
+            transparent
+        );
+        assert_eq!(
+            effective_border_color(&color("kept"), BorderStyleValue::Solid),
+            PaintColor::Named("kept".into())
+        );
+        assert_eq!(
+            lower_overflow(OverflowValue::Visible),
+            OverflowClip::Visible
+        );
+        assert_eq!(lower_overflow(OverflowValue::Hidden), OverflowClip::Hidden);
+
+        let mut visible = paint_style();
+        visible.visibility = VisibilityValue::Visible;
+        assert_eq!(
+            lower_paint(&visible, &ComputedLayoutStyle::default()).visibility,
+            Visibility::Visible
+        );
+    }
+}

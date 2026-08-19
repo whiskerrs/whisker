@@ -313,6 +313,11 @@ impl Scene {
             .find_map(|(node, state)| state.captured_pointers.contains(&pointer).then_some(*node))
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_scene_epoch_for_tests(&mut self, scene_epoch: u32) {
+        self.scene_epoch = scene_epoch;
+    }
+
     fn hit_test_node(
         &self,
         node: NodeId,
@@ -320,7 +325,10 @@ impl Scene {
         parent_x: f32,
         parent_y: f32,
     ) -> Option<NodeId> {
-        let state = self.nodes.get(&node)?;
+        let state = self
+            .nodes
+            .get(&node)
+            .expect("hit-test traversal only visits retained nodes");
         if state.visibility == Some(Visibility::Hidden)
             || state.hit_test == Some(HitTestBehavior::None)
         {
@@ -1043,9 +1051,10 @@ mod tests {
     use super::*;
     use crate::{FrameSink, RecordingRenderer};
     use whisker_protocol::{
-        ApplyResult, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
-        MeasureTextOverflow, MeasureTextWrap, TextContentError, TextMeasurePayload,
-        TextMeasureStyle, ValidationError,
+        ApplyResult, BorderLineStyle, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+        MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, PaintColor, PaintCorners,
+        PaintEdges, PaintLengthPercentage, TextContentError, TextMeasurePayload, TextMeasureStyle,
+        ValidationError,
     };
 
     fn surface() -> SurfaceId {
@@ -1099,6 +1108,37 @@ mod tests {
         }
     }
 
+    fn box_paint(color: &str) -> BoxPaint {
+        let zero = PaintLengthPercentage::default();
+        BoxPaint {
+            background_color: PaintColor::Named(color.into()),
+            border_widths: PaintEdges {
+                top: zero,
+                right: zero,
+                bottom: zero,
+                left: zero,
+            },
+            border_colors: PaintEdges {
+                top: PaintColor::default(),
+                right: PaintColor::default(),
+                bottom: PaintColor::default(),
+                left: PaintColor::default(),
+            },
+            border_styles: PaintEdges {
+                top: BorderLineStyle::None,
+                right: BorderLineStyle::None,
+                bottom: BorderLineStyle::None,
+                left: BorderLineStyle::None,
+            },
+            border_radii: PaintCorners {
+                top_left: zero,
+                top_right: zero,
+                bottom_right: zero,
+                bottom_left: zero,
+            },
+        }
+    }
+
     fn prepared(scene: &mut Scene) -> FramePacket {
         scene
             .prepare_frame(7)
@@ -1144,6 +1184,13 @@ mod tests {
             height: 200.0,
         };
         scene.set_layout(root, rect).expect("layout");
+        let paint = box_paint("navy");
+        scene.set_box_paint(root, paint.clone()).expect("box paint");
+        let clip = BoxClip {
+            horizontal: OverflowClip::Hidden,
+            vertical: OverflowClip::Visible,
+        };
+        scene.set_clip(root, clip).expect("clip");
         scene
             .set_transform(root, Transform::IDENTITY)
             .expect("transform");
@@ -1178,6 +1225,13 @@ mod tests {
         assert_eq!(root_state.parent(), None);
         assert_eq!(root_state.children(), &[child]);
         assert_eq!(root_state.text(), Some(&text));
+        assert_eq!(root_state.box_paint(), Some(&paint));
+        assert_eq!(root_state.clip(), Some(clip));
+        assert_eq!(root_state.opacity(), Some(0.75));
+        assert_eq!(root_state.visibility(), Some(Visibility::Visible));
+        assert_eq!(root_state.z_order(), Some(-1));
+        assert_eq!(root_state.event_mask(), Some(3));
+        assert_eq!(root_state.hit_test(), Some(HitTestBehavior::BoxOnly));
         assert_eq!(scene.node(child).expect("child state").parent(), Some(root));
         assert_eq!(scene.node_count(), 2);
 
@@ -1209,6 +1263,23 @@ mod tests {
         scene.set_layout(root, first).expect("first layout");
         scene.set_layout(root, second).expect("second layout");
         scene.set_layout(root, second).expect("equal layout");
+        let first_paint = box_paint("red");
+        let second_paint = box_paint("blue");
+        scene
+            .set_box_paint(root, first_paint)
+            .expect("first box paint");
+        scene
+            .set_box_paint(root, second_paint.clone())
+            .expect("coalesced box paint");
+        scene
+            .set_box_paint(root, second_paint)
+            .expect("equal box paint");
+        let clip = BoxClip {
+            horizontal: OverflowClip::Visible,
+            vertical: OverflowClip::Hidden,
+        };
+        scene.set_clip(root, clip).expect("clip");
+        scene.set_clip(root, clip).expect("equal clip");
         scene
             .set_transform(root, Transform::IDENTITY)
             .expect("transform");
@@ -1549,6 +1620,14 @@ mod tests {
         let operations = [
             scene.delete_node(missing),
             scene.set_layout(missing, LayoutRect::default()),
+            scene.set_box_paint(missing, box_paint("missing")),
+            scene.set_clip(
+                missing,
+                BoxClip {
+                    horizontal: OverflowClip::Visible,
+                    vertical: OverflowClip::Visible,
+                },
+            ),
             scene.set_transform(missing, Transform::IDENTITY),
             scene.set_opacity(missing, 1.0),
             scene.set_visibility(missing, Visibility::Visible),
@@ -1579,6 +1658,12 @@ mod tests {
         assert_eq!(
             scene.set_layout(root, invalid_layout),
             Err(SceneError::NonFiniteNumber)
+        );
+        let mut invalid_paint = box_paint("invalid");
+        invalid_paint.border_widths.top.length = -1.0;
+        assert_eq!(
+            scene.set_box_paint(root, invalid_paint),
+            Err(SceneError::InvalidBoxPaint)
         );
         let mut invalid_text = text_content("invalid");
         invalid_text.payload.style.font_families.clear();
@@ -1681,6 +1766,10 @@ mod tests {
         let front = scene.create_node(element_type(1)).unwrap();
         scene.insert_child(root, back, 0).unwrap();
         scene.insert_child(root, front, 1).unwrap();
+        assert_eq!(
+            scene.hit_test(root, InputPoint { x: 0.0, y: 0.0 }),
+            Ok(None)
+        );
         scene
             .set_layout(
                 root,
@@ -1710,7 +1799,14 @@ mod tests {
         let point = InputPoint { x: 10.0, y: 10.0 };
         assert_eq!(scene.hit_test(root, point), Ok(Some(front)));
 
+        scene.set_hit_test(root, HitTestBehavior::BoxOnly).unwrap();
+        assert_eq!(scene.hit_test(root, point), Ok(Some(root)));
+        scene.set_hit_test(root, HitTestBehavior::Auto).unwrap();
+
         scene.set_visibility(front, Visibility::Hidden).unwrap();
+        assert_eq!(scene.hit_test(root, point), Ok(Some(back)));
+        scene.set_hit_test(front, HitTestBehavior::None).unwrap();
+        scene.set_visibility(front, Visibility::Visible).unwrap();
         assert_eq!(scene.hit_test(root, point), Ok(Some(back)));
         scene
             .set_hit_test(back, HitTestBehavior::DescendantsOnly)
@@ -1750,6 +1846,31 @@ mod tests {
             )
             .unwrap();
         assert_eq!(scene.hit_test(root, outside), Ok(Some(back)));
+
+        scene
+            .set_layout(
+                back,
+                LayoutRect {
+                    x: 0.0,
+                    y: 120.0,
+                    width: 50.0,
+                    height: 50.0,
+                },
+            )
+            .unwrap();
+        scene
+            .set_clip(
+                root,
+                BoxClip {
+                    horizontal: OverflowClip::Visible,
+                    vertical: OverflowClip::Hidden,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            scene.hit_test(root, InputPoint { x: 10.0, y: 130.0 }),
+            Ok(None)
+        );
 
         let pointer = pointer(9);
         scene.set_pointer_capture(back, pointer).unwrap();

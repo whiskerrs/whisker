@@ -337,11 +337,21 @@ impl SurfaceEngine {
                 || current.z_order() != Some(lowered.z_order)
         };
         let mut impacts = self.update_layout_style(node, style.layout().clone())?;
-        self.scene.set_box_paint(node, lowered.box_paint)?;
-        self.scene.set_clip(node, lowered.clip)?;
-        self.scene.set_opacity(node, lowered.opacity)?;
-        self.scene.set_visibility(node, lowered.visibility)?;
-        self.scene.set_z_order(node, lowered.z_order)?;
+        self.scene
+            .set_box_paint(node, lowered.box_paint)
+            .expect("lowered paint is valid and the scene is mutable");
+        self.scene
+            .set_clip(node, lowered.clip)
+            .expect("the retained scene node was validated above");
+        self.scene
+            .set_opacity(node, lowered.opacity)
+            .expect("computed opacity is valid and the scene node exists");
+        self.scene
+            .set_visibility(node, lowered.visibility)
+            .expect("the retained scene node was validated above");
+        self.scene
+            .set_z_order(node, lowered.z_order)
+            .expect("the retained scene node was validated above");
         if paint_changed {
             impacts |= PropertyImpactSet::PAINT;
         }
@@ -605,7 +615,7 @@ impl SurfaceEngine {
             Ok(result) => result,
             Err(error) => {
                 self.discard_pending()
-                    .map_err(SurfacePresentError::Surface)?;
+                    .expect("a sink error always follows successful frame preparation");
                 return Err(SurfacePresentError::Sink(error));
             }
         };
@@ -733,14 +743,17 @@ mod tests {
     use whisker_layout::{AvailableSpace, LayoutSize, MeasureRequest, UnsupportedLayoutFeature};
     use whisker_protocol::{
         ApplyResult, CustomMeasurePayload, ElementTypeId, EmbeddedSurfaceMeasurePayload, FrameMode,
-        MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
-        MeasureTextOverflow, MeasureTextWrap, MeasuredSize, MeasurementKey, MeasurementKind,
-        MeasurementMetrics, MeasurementPayload, MeasurementReady, MeasurementRequestId,
-        MeasurementResponse, MeasurementSpec, NativeControlMeasurePayload, NodeId, Operation,
-        PendingMeasurePolicy, ReplacedContentMeasurePayload, SurfaceId, TextMeasurePayload,
-        TextMeasureStyle, UnsupportedMeasurementReason,
+        HitTestBehavior, InputPoint, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+        MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasuredSize, MeasurementKey,
+        MeasurementKind, MeasurementMetrics, MeasurementPayload, MeasurementReady,
+        MeasurementRequestId, MeasurementResponse, MeasurementSpec, NativeControlMeasurePayload,
+        NodeId, Operation, PendingMeasurePolicy, PointerId, ReplacedContentMeasurePayload,
+        SurfaceId, TextMeasurePayload, TextMeasureStyle, UnsupportedMeasurementReason,
     };
-    use whisker_style::{Axes, ComputedLengthPercentage, ComputedSizeValue, PositionValue};
+    use whisker_style::{
+        Axes, ComputedLengthPercentage, ComputedSizeValue, PositionValue, SpecifiedStyle,
+        StyleEnvironment, resolve_style,
+    };
 
     use super::*;
     use crate::{FrameSink, RecordingRenderer};
@@ -927,6 +940,153 @@ mod tests {
         let delta = present_and_accept(&mut surface, &mut renderer, 2);
         assert_eq!(delta.header.mode, FrameMode::Delta);
         assert_eq!(layout_operation_count(&delta), 2);
+    }
+
+    #[test]
+    fn computed_paint_and_input_wrappers_share_the_retained_scene() {
+        let resolved = resolve_style(
+            &SpecifiedStyle::new(),
+            None,
+            StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+        )
+        .unwrap();
+        let style = resolved.computed();
+        let mut surface = SurfaceEngine::new(surface_id());
+        let root = surface
+            .create_node(element_type(), style.layout().clone())
+            .unwrap();
+        let missing = node_id(99);
+
+        assert_eq!(
+            surface.update_computed_style(missing, style),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        let first = surface.update_computed_style(root, style).unwrap();
+        assert!(first.contains(PropertyImpactSet::PAINT));
+        let lowered = lower_paint(style.paint(), style.layout());
+        let node = surface.node(root).unwrap();
+        assert_eq!(node.box_paint(), Some(&lowered.box_paint));
+        assert_eq!(node.clip(), Some(lowered.clip));
+        assert_eq!(node.opacity(), Some(lowered.opacity));
+        assert_eq!(node.visibility(), Some(lowered.visibility));
+        assert_eq!(node.z_order(), Some(lowered.z_order));
+        assert!(
+            surface
+                .update_computed_style(root, style)
+                .unwrap()
+                .is_empty()
+        );
+
+        let mut different_box = lowered.box_paint.clone();
+        different_box.background_color = whisker_protocol::PaintColor::Named("changed".into());
+        surface.scene.set_box_paint(root, different_box).unwrap();
+        assert!(
+            surface
+                .update_computed_style(root, style)
+                .unwrap()
+                .contains(PropertyImpactSet::PAINT)
+        );
+        surface
+            .scene
+            .set_clip(
+                root,
+                whisker_protocol::BoxClip {
+                    horizontal: whisker_protocol::OverflowClip::Hidden,
+                    vertical: whisker_protocol::OverflowClip::Hidden,
+                },
+            )
+            .unwrap();
+        assert!(
+            surface
+                .update_computed_style(root, style)
+                .unwrap()
+                .contains(PropertyImpactSet::PAINT)
+        );
+        surface.scene.set_opacity(root, 0.25).unwrap();
+        assert!(
+            surface
+                .update_computed_style(root, style)
+                .unwrap()
+                .contains(PropertyImpactSet::PAINT)
+        );
+        surface
+            .scene
+            .set_visibility(root, whisker_protocol::Visibility::Hidden)
+            .unwrap();
+        assert!(
+            surface
+                .update_computed_style(root, style)
+                .unwrap()
+                .contains(PropertyImpactSet::PAINT)
+        );
+        surface.scene.set_z_order(root, 7).unwrap();
+        assert!(
+            surface
+                .update_computed_style(root, style)
+                .unwrap()
+                .contains(PropertyImpactSet::PAINT)
+        );
+
+        let point = InputPoint { x: 5.0, y: 5.0 };
+        assert_eq!(surface.hit_test(root, point), Ok(None));
+        surface
+            .scene
+            .set_layout(
+                root,
+                whisker_protocol::LayoutRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 10.0,
+                    height: 10.0,
+                },
+            )
+            .unwrap();
+        assert_eq!(surface.hit_test(root, point), Ok(Some(root)));
+        assert_eq!(
+            surface.hit_test(missing, point),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+
+        surface.set_event_mask(root, 5).unwrap();
+        assert_eq!(surface.node(root).unwrap().event_mask(), Some(5));
+        assert_eq!(
+            surface.set_event_mask(missing, 1),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        surface.set_hit_test(root, HitTestBehavior::None).unwrap();
+        assert_eq!(surface.hit_test(root, point), Ok(None));
+        assert_eq!(
+            surface.set_hit_test(missing, HitTestBehavior::Auto),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        let pointer = PointerId::new(1).unwrap();
+        assert_eq!(surface.pointer_capture_target(pointer), None);
+        surface.scene.set_pointer_capture(root, pointer).unwrap();
+        assert_eq!(surface.pointer_capture_target(pointer), Some(root));
+
+        let unsupported = resolve_style(
+            &SpecifiedStyle::new().push(
+                whisker_style::StyleProperty::Position,
+                whisker_style::StyleValue::Position(PositionValue::Sticky),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            surface.update_computed_style(root, unsupported.computed()),
+            Err(SurfaceError::Layout(LayoutError::UnsupportedStyle(
+                UnsupportedLayoutFeature::StickyPosition
+            )))
+        );
     }
 
     #[test]
@@ -1398,6 +1558,9 @@ mod tests {
         let root = surface
             .create_node(element_type(), ComputedLayoutStyle::default())
             .unwrap();
+        let computed =
+            resolve_style(&SpecifiedStyle::new(), None, StyleEnvironment::default()).unwrap();
+        let lowered = lower_paint(computed.computed().paint(), computed.computed().layout());
         let pending = surface.prepare_frame(1).unwrap().unwrap().clone();
         assert!(surface.scene().has_prepared_frame());
         assert_eq!(
@@ -1407,6 +1570,18 @@ mod tests {
         assert_eq!(
             surface.update_layout_style(root, ComputedLayoutStyle::default()),
             Err(SurfaceError::Scene(SceneError::FramePending))
+        );
+        assert_eq!(
+            surface.update_computed_style(root, computed.computed()),
+            Err(SurfaceError::Scene(SceneError::FramePending))
+        );
+        assert_eq!(
+            surface.scene.set_box_paint(root, lowered.box_paint),
+            Err(SceneError::FramePending)
+        );
+        assert_eq!(
+            surface.scene.set_clip(root, lowered.clip),
+            Err(SceneError::FramePending)
         );
         assert_eq!(
             surface.set_measurable(root, true),
@@ -1581,13 +1756,44 @@ mod tests {
 
     #[test]
     fn present_applies_acknowledgements_recovery_and_retry() {
-        struct FailingSink;
+        enum SinkBehavior {
+            Record,
+            Fail,
+            WrongRevision,
+            NeedSnapshot,
+        }
 
-        impl FrameSink for FailingSink {
+        struct TestSink {
+            behavior: SinkBehavior,
+            renderer: RecordingRenderer,
+        }
+
+        impl TestSink {
+            fn new(surface: SurfaceId) -> Self {
+                Self {
+                    behavior: SinkBehavior::Record,
+                    renderer: RecordingRenderer::new(surface),
+                }
+            }
+        }
+
+        impl FrameSink for TestSink {
             type Error = &'static str;
 
-            fn present(&mut self, _packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
-                Err("transport")
+            fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
+                match self.behavior {
+                    SinkBehavior::Record => self
+                        .renderer
+                        .present(packet)
+                        .map_err(|_| "recording renderer rejected frame"),
+                    SinkBehavior::Fail => Err("transport"),
+                    SinkBehavior::WrongRevision => Ok(ApplyResult::Accepted {
+                        revision: packet.header.target_revision + 1,
+                    }),
+                    SinkBehavior::NeedSnapshot => {
+                        Ok(ApplyResult::NeedSnapshot { host_revision: 0 })
+                    }
+                }
             }
         }
 
@@ -1595,41 +1801,82 @@ mod tests {
         let root = surface
             .create_node(element_type(), ComputedLayoutStyle::default())
             .unwrap();
-        let mut renderer = RecordingRenderer::new(surface_id());
+        let mut sink = TestSink::new(surface_id());
+        let already_prepared = surface.prepare_frame(1).unwrap().unwrap().clone();
         assert_eq!(
-            surface.present(1, &mut renderer),
-            Ok(Some(ApplyResult::Accepted { revision: 1 }))
+            surface.present(1, &mut sink),
+            Err(SurfacePresentError::Surface(SurfaceError::Scene(
+                SceneError::FramePending
+            )))
         );
+        surface
+            .accept_pending(already_prepared.header.target_revision)
+            .unwrap();
+        assert_eq!(surface.present(1, &mut sink), Ok(None));
         assert_eq!(surface.scene().accepted_revision(), 1);
 
         surface
             .scene
             .set_visibility(root, whisker_protocol::Visibility::Hidden)
             .unwrap();
-        let mut empty_host = RecordingRenderer::new(surface_id());
+        sink.renderer = RecordingRenderer::new(surface_id());
         assert_eq!(
-            surface.present(1, &mut empty_host),
+            surface.present(1, &mut sink),
             Ok(Some(ApplyResult::NeedSnapshot { host_revision: 0 }))
         );
         assert_eq!(surface.scene().accepted_revision(), 1);
         assert_eq!(
-            surface.present(1, &mut empty_host),
+            surface.present(1, &mut sink),
             Ok(Some(ApplyResult::Accepted { revision: 2 }))
         );
         assert_eq!(
-            empty_host.frames()[1].packet.header.mode,
+            sink.renderer.frames()[1].packet.header.mode,
             FrameMode::Snapshot
         );
 
         surface.scene.set_z_order(root, 5).unwrap();
+        sink.behavior = SinkBehavior::Fail;
         assert_eq!(
-            surface.present(1, &mut FailingSink),
+            surface.present(1, &mut sink),
             Err(SurfacePresentError::Sink("transport"))
         );
         assert!(surface.has_pending_work());
+        sink.behavior = SinkBehavior::Record;
         assert_eq!(
-            surface.present(1, &mut empty_host),
+            surface.present(1, &mut sink),
             Ok(Some(ApplyResult::Accepted { revision: 3 }))
         );
+        assert_eq!(surface.present(1, &mut sink), Ok(None));
+
+        surface.scene.set_opacity(root, 0.4).unwrap();
+        sink.behavior = SinkBehavior::WrongRevision;
+        assert_eq!(
+            surface.present(1, &mut sink),
+            Err(SurfacePresentError::Surface(SurfaceError::Scene(
+                SceneError::AcceptedRevisionMismatch {
+                    expected: 4,
+                    received: 5,
+                }
+            )))
+        );
+        surface.discard_pending().unwrap();
+
+        surface.scene.set_scene_epoch_for_tests(u32::MAX);
+        surface.scene.set_opacity(root, 0.6).unwrap();
+        sink.behavior = SinkBehavior::NeedSnapshot;
+        assert_eq!(
+            surface.present(1, &mut sink),
+            Err(SurfacePresentError::Surface(SurfaceError::Scene(
+                SceneError::SceneEpochExhausted
+            )))
+        );
+
+        let display = SurfacePresentError::<std::io::Error>::Surface(SurfaceError::Scene(
+            SceneError::NoPendingFrame,
+        ));
+        assert!(display.source().is_some());
+        assert!(format!("{display}").starts_with("Whisker surface presentation error:"));
+        let sink = SurfacePresentError::Sink(std::io::Error::other("sink"));
+        assert!(sink.source().is_some());
     }
 }
