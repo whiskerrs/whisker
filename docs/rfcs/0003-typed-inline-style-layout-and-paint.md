@@ -676,8 +676,10 @@ testing. Visual snapshots supplement but do not replace semantic assertions.
    protocol, keyed cache, explicit block/placeholder/retain-previous policies,
    pending completion with epoch rejection, and `SurfaceEngine` integration
    into incremental scene/frame production are implemented. Typed built-in
-   text payloads, the renderer ABI, platform Host providers, and the explicitly
-   diagnosed backend gaps remain.
+   payloads, strict batch validation, the Rust `MeasurementHost` seam, and
+   synchronous drive-to-final-layout orchestration are also implemented. The
+   generated renderer ABI, UI-element lowering, platform Host providers, and
+   the explicitly diagnosed backend gaps remain.
 5. Resolve paint, clip, stacking, transforms, text, and semantics into typed
    renderer operations.
 6. Route signal and `whisker-motion` writes through the shared property slots

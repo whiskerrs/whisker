@@ -456,8 +456,8 @@ trait RendererV1 {
     fn measure_batch(
         &mut self,
         surface: SurfaceId,
-        requests: &[MeasureRequest],
-        responses: &mut Vec<MeasureResponse>,
+        requests: &[MeasurementRequest],
+        responses: &mut Vec<MeasurementResponse>,
     ) -> Result<(), RenderError>;
 
     fn present(
@@ -1167,6 +1167,17 @@ Pending { key, request_id, provisional_size? }
 Unsupported { key, reason }
 ```
 
+The semantic Rust contract uses a closed `MeasurementPayload` enum. Text
+contains UTF-8 content, an ordered font fallback list, logical font size,
+numeric weight, posture, line height, letter spacing, locale, direction,
+wrapping, maximum lines, and overflow behavior. Replaced content, native
+controls, and embedded surfaces have separate typed records. Only custom and
+provider-owned native-control state remains opaque, as versioned bytes.
+
+The Host must return exactly one response for every request. Rust accepts
+response reordering, but rejects duplicate, missing, unexpected, or
+wrong-environment keys before applying any result from the batch.
+
 Android, iOS, Web, and Desktop v1 are expected to provide synchronous `Ready`
 results for ordinary text measurement. Web may do synchronous browser text
 measurement during the WASM frame callback; requests are batched to avoid
@@ -1195,11 +1206,13 @@ result of transport timing.
 The runtime detects repeated measure/layout oscillation for unchanged inputs
 and reports it as a provider error.
 
-The Host-independent semantic request/response types and retained engine state
-machine are implemented. `SurfaceEngine` currently exposes generated batches
-and accepts simulated or future renderer responses; the packed renderer ABI,
-typed built-in text payload, and platform Host implementations remain separate
-follow-up slices.
+The Host-independent semantic request/response types, typed built-in payloads,
+strict batch validator, retained engine state machine, and Rust-facing
+`MeasurementHost::measure_batch` seam are implemented. `SurfaceEngine` can
+drive all synchronous batches to a final Taffy layout before frame preparation
+and returns to the event boundary only for `Pending`. The packed/generated
+platform ABI, `whisker-ui-text` lowering, and Android/UIKit/DOM/GPUI provider
+implementations remain separate follow-up slices.
 
 ## Renderer events: Host to Rust
 
@@ -1410,8 +1423,8 @@ The following must be resolved before this RFC becomes `Accepted`:
 - whether scene revisions acknowledge decoded state or completed visible
   platform application when a backend internally defers work;
 - the minimum standard element set every interactive renderer must provide;
-- exact text measurement inputs, baseline representation, and font fallback
-  identity;
+- rich-text run and inline-attachment representation beyond the current plain
+  UTF-8 Text v1 payload;
 - whether accessibility uses frame operations or a separately versioned but
   transaction-linked semantics packet;
 - command cancellation and result ordering when an element is deleted;

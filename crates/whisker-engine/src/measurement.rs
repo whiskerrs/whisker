@@ -9,9 +9,9 @@ use std::{
 use whisker_layout::{IntrinsicMeasurer, LayoutSize, MeasureRequest as LayoutMeasureRequest};
 use whisker_protocol::{
     AvailableSpace, ElementTypeId, MeasureConstraints, MeasuredSize, MeasurementKey,
-    MeasurementKind, MeasurementMetrics, MeasurementReady, MeasurementRequest,
-    MeasurementRequestId, MeasurementResponse, MeasurementSpec, NodeId, PendingMeasurePolicy,
-    UnsupportedMeasurementReason,
+    MeasurementKind, MeasurementMetrics, MeasurementPayloadError, MeasurementReady,
+    MeasurementRequest, MeasurementRequestId, MeasurementResponse, MeasurementSpec, NodeId,
+    PendingMeasurePolicy, UnsupportedMeasurementReason,
 };
 
 use crate::LayoutUpdate;
@@ -102,6 +102,13 @@ impl DeferredMeasurementApply {
 /// Failure while validating or resolving intrinsic measurement.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MeasurementError {
+    /// A typed provider payload violated its schema invariants.
+    InvalidPayload {
+        /// Node whose payload was rejected.
+        node: NodeId,
+        /// Stable validation category.
+        error: MeasurementPayloadError,
+    },
     /// A schema declared an invalid provisional placeholder.
     InvalidPlaceholder {
         /// Node whose schema was rejected.
@@ -281,6 +288,11 @@ impl MeasurementCoordinator {
         element_type: ElementTypeId,
         spec: Option<MeasurementSpec>,
     ) -> Result<bool, MeasurementError> {
+        if let Some(spec) = &spec {
+            spec.payload
+                .validate()
+                .map_err(|error| MeasurementError::InvalidPayload { node, error })?;
+        }
         if let Some(MeasurementSpec {
             pending_policy: PendingMeasurePolicy::Placeholder(size),
             ..
@@ -547,7 +559,7 @@ impl MeasurementCoordinator {
     fn cache_key(state: &SpecState, constraints: MeasureConstraints, epoch: u64) -> CacheKey {
         CacheKey {
             element_type: state.element_type,
-            kind: state.spec.kind,
+            kind: state.spec.payload.kind(),
             content_hash: state.spec.content_hash,
             style_hash: state.spec.style_hash,
             environment_epoch: epoch,
@@ -652,7 +664,6 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
             node,
             element_type: state.element_type,
             environment_epoch: epoch,
-            kind: state.spec.kind,
             constraints,
             payload: state.spec.payload.clone(),
         };
@@ -684,7 +695,12 @@ pub(crate) struct PassSummary {
 
 #[cfg(test)]
 mod tests {
-    use whisker_protocol::{LayoutRect, PreparedContentId, ProtocolValue};
+    use whisker_protocol::{
+        CustomMeasurePayload, EmbeddedSurfaceMeasurePayload, LayoutRect, MeasureFontFamily,
+        MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
+        MeasureTextWrap, MeasurementPayload, NativeControlMeasurePayload, PreparedContentId,
+        ReplacedContentMeasurePayload, SurfaceId, TextMeasurePayload, TextMeasureStyle,
+    };
 
     use super::*;
 
@@ -705,11 +721,53 @@ mod tests {
 
     fn spec(kind: MeasurementKind, policy: PendingMeasurePolicy) -> MeasurementSpec {
         MeasurementSpec {
-            kind,
             content_hash: 7,
             style_hash: 9,
-            payload: ProtocolValue::String("payload".into()),
+            payload: payload(kind),
             pending_policy: policy,
+        }
+    }
+
+    fn payload(kind: MeasurementKind) -> MeasurementPayload {
+        match kind {
+            MeasurementKind::Text => MeasurementPayload::Text(TextMeasurePayload {
+                text: "payload".into(),
+                style: TextMeasureStyle {
+                    font_families: vec![MeasureFontFamily::System],
+                    font_size: 14.0,
+                    font_weight: 400,
+                    font_style: MeasureFontStyle::Normal,
+                    line_height: MeasureLineHeight::Normal,
+                    letter_spacing: 0.0,
+                },
+                locale: None,
+                direction: MeasureTextDirection::Auto,
+                wrap: MeasureTextWrap::Wrap,
+                max_lines: None,
+                overflow: MeasureTextOverflow::Clip,
+            }),
+            MeasurementKind::ReplacedContent => {
+                MeasurementPayload::ReplacedContent(ReplacedContentMeasurePayload::default())
+            }
+            MeasurementKind::NativeControl => {
+                MeasurementPayload::NativeControl(NativeControlMeasurePayload {
+                    control_type: 1,
+                    version: 1,
+                    state: vec![1],
+                })
+            }
+            MeasurementKind::EmbeddedSurface => {
+                MeasurementPayload::EmbeddedSurface(EmbeddedSurfaceMeasurePayload {
+                    surface: SurfaceId::new(2).expect("child surface"),
+                    preferred_size: None,
+                })
+            }
+            MeasurementKind::Custom { version } => {
+                MeasurementPayload::Custom(CustomMeasurePayload {
+                    version,
+                    data: b"payload".to_vec(),
+                })
+            }
         }
     }
 
@@ -892,6 +950,19 @@ mod tests {
     fn policies_errors_and_stale_batches_are_explicit() {
         let mut coordinator = MeasurementCoordinator::default();
         coordinator.set_environment(1);
+        let mut invalid_payload = spec(MeasurementKind::NativeControl, PendingMeasurePolicy::Block);
+        invalid_payload.payload = MeasurementPayload::NativeControl(NativeControlMeasurePayload {
+            control_type: 1,
+            version: 0,
+            state: Vec::new(),
+        });
+        assert_eq!(
+            coordinator.set_spec(node(1), element(), Some(invalid_payload)),
+            Err(MeasurementError::InvalidPayload {
+                node: node(1),
+                error: MeasurementPayloadError::InvalidPayloadVersion,
+            })
+        );
         assert_eq!(
             coordinator.set_spec(
                 node(1),

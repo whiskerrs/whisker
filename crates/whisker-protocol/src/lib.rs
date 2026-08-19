@@ -28,8 +28,12 @@ pub use id::{
     PreparedContentId, PropertyId, ResultId, SurfaceId,
 };
 pub use measurement::{
-    AvailableSpace, MeasureConstraints, MeasuredSize, MeasurementKind, MeasurementMetrics,
-    MeasurementReady, MeasurementRequest, MeasurementResponse, MeasurementSpec,
-    PendingMeasurePolicy, UnsupportedMeasurementReason,
+    AvailableSpace, CustomMeasurePayload, EmbeddedSurfaceMeasurePayload, MeasureConstraints,
+    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
+    MeasureTextOverflow, MeasureTextWrap, MeasuredSize, MeasurementBatchError, MeasurementKind,
+    MeasurementMetrics, MeasurementPayload, MeasurementPayloadError, MeasurementReady,
+    MeasurementRequest, MeasurementResponse, MeasurementSpec, NativeControlMeasurePayload,
+    PendingMeasurePolicy, ReplacedContentMeasurePayload, TextMeasurePayload, TextMeasureStyle,
+    UnsupportedMeasurementReason, validate_measurement_batch,
 };
 pub use validation::{ApplyResult, NodeProjection, SceneProjection, ValidationError};

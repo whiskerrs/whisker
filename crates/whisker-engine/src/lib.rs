@@ -17,11 +17,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod host;
 mod measurement;
 mod recording;
 mod scene;
 mod surface;
 
+pub use host::{HostLayoutError, HostLayoutOptions, MeasurementHost};
 pub use measurement::{
     DeferredMeasurementApply, LayoutProgress, MeasurementApply, MeasurementError,
 };

@@ -552,10 +552,13 @@ mod tests {
 
     use whisker_layout::{AvailableSpace, LayoutSize, MeasureRequest, UnsupportedLayoutFeature};
     use whisker_protocol::{
-        ApplyResult, ElementTypeId, FrameMode, MeasuredSize, MeasurementKey, MeasurementKind,
-        MeasurementMetrics, MeasurementReady, MeasurementRequestId, MeasurementResponse,
-        MeasurementSpec, NodeId, Operation, PendingMeasurePolicy, ProtocolValue, SurfaceId,
-        UnsupportedMeasurementReason,
+        ApplyResult, CustomMeasurePayload, ElementTypeId, EmbeddedSurfaceMeasurePayload, FrameMode,
+        MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
+        MeasureTextOverflow, MeasureTextWrap, MeasuredSize, MeasurementKey, MeasurementKind,
+        MeasurementMetrics, MeasurementPayload, MeasurementReady, MeasurementRequestId,
+        MeasurementResponse, MeasurementSpec, NativeControlMeasurePayload, NodeId, Operation,
+        PendingMeasurePolicy, ReplacedContentMeasurePayload, SurfaceId, TextMeasurePayload,
+        TextMeasureStyle, UnsupportedMeasurementReason,
     };
     use whisker_style::{Axes, ComputedLengthPercentage, ComputedSizeValue, PositionValue};
 
@@ -593,11 +596,53 @@ mod tests {
         pending_policy: PendingMeasurePolicy,
     ) -> MeasurementSpec {
         MeasurementSpec {
-            kind,
             content_hash: 1,
             style_hash: 2,
-            payload: ProtocolValue::Null,
+            payload: measurement_payload(kind),
             pending_policy,
+        }
+    }
+
+    fn measurement_payload(kind: MeasurementKind) -> MeasurementPayload {
+        match kind {
+            MeasurementKind::Text => MeasurementPayload::Text(TextMeasurePayload {
+                text: "Hello, Whisker".into(),
+                style: TextMeasureStyle {
+                    font_families: vec![MeasureFontFamily::System],
+                    font_size: 14.0,
+                    font_weight: 400,
+                    font_style: MeasureFontStyle::Normal,
+                    line_height: MeasureLineHeight::Normal,
+                    letter_spacing: 0.0,
+                },
+                locale: Some("en-US".into()),
+                direction: MeasureTextDirection::LeftToRight,
+                wrap: MeasureTextWrap::Wrap,
+                max_lines: None,
+                overflow: MeasureTextOverflow::Clip,
+            }),
+            MeasurementKind::ReplacedContent => {
+                MeasurementPayload::ReplacedContent(ReplacedContentMeasurePayload::default())
+            }
+            MeasurementKind::NativeControl => {
+                MeasurementPayload::NativeControl(NativeControlMeasurePayload {
+                    control_type: 1,
+                    version: 1,
+                    state: Vec::new(),
+                })
+            }
+            MeasurementKind::EmbeddedSurface => {
+                MeasurementPayload::EmbeddedSurface(EmbeddedSurfaceMeasurePayload {
+                    surface: SurfaceId::new(2).expect("child surface"),
+                    preferred_size: None,
+                })
+            }
+            MeasurementKind::Custom { version } => {
+                MeasurementPayload::Custom(CustomMeasurePayload {
+                    version,
+                    data: Vec::new(),
+                })
+            }
         }
     }
 
@@ -1087,6 +1132,24 @@ mod tests {
 
     #[test]
     fn invalid_and_unsupported_measurement_surface_diagnostics() {
+        assert_eq!(
+            measurement_spec(
+                MeasurementKind::EmbeddedSurface,
+                PendingMeasurePolicy::Block
+            )
+            .payload
+            .kind(),
+            MeasurementKind::EmbeddedSurface
+        );
+        assert_eq!(
+            measurement_spec(
+                MeasurementKind::Custom { version: 1 },
+                PendingMeasurePolicy::Block
+            )
+            .payload
+            .kind(),
+            MeasurementKind::Custom { version: 1 }
+        );
         let mut surface = SurfaceEngine::new(surface_id());
         let root = surface
             .create_node(element_type(), ComputedLayoutStyle::default())

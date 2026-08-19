@@ -42,14 +42,15 @@ runs on iOS and Android by driving Lynx's element tree directly.
                                          subsecond::apply_patch)
 
    whisker-protocol
-   (Host-independent frame + intrinsic-measurement model and transactional
-    reference validator; not yet wired into the production Lynx path)
+   (Host-independent frame + typed intrinsic-measurement model, strict batch
+    validation, and transactional reference validator; not yet wired into Lynx)
 
    whisker-engine ──────────► whisker-layout + whisker-style
           │                  (surface orchestration + dirty layout)
           └────────────────► whisker-protocol
    (Host-independent retained scene + incremental frame journal + batched
-    measurement state machine; not yet wired into render! or Lynx)
+    measurement state machine + Rust-facing Host trait; not yet wired into
+    render! or a platform Host)
 
    whisker-layout ──────────► whisker-style + whisker-protocol
    (Host-independent retained Taffy tree + intrinsic-measurement boundary;
@@ -107,8 +108,8 @@ runs on iOS and Android by driving Lynx's element tree directly.
 | `whisker-build` | Lynx artifact fetch, cargo cross-compile, AAR/xcframework packaging. | `whisker-dev-server` |
 | `whisker-cng` | Continuous Native Generation: pure renderer of `gen/{android,ios}/` from Config, fingerprint-gated. No CLI surface, no side effects. | `whisker-cli` |
 | `whisker-plugin` | CNG plugin surface: `Plugin` trait, IR types, JSON envelope, subprocess runner shared by the engine and 3rd-party plugin binaries. | `whisker-cng`, 3rd-party plugins |
-| `whisker-protocol` | Host-independent semantic frame and intrinsic-measurement types, stable IDs, and transactional retained-tree validation. Measurement distinguishes text, replaced content, native controls, embedded surfaces, and versioned custom providers. It is currently a migration foundation and is not yet used by the production Lynx path. | future scene engine and renderer providers |
-| `whisker-engine` | Host-independent retained scene, coalescing mutation journal, snapshot/delta production, frame acceptance/recovery, and retained measurement coordination. `SurfaceEngine` batches cache misses, validates immediate and deferred results by key and environment epoch, applies explicit block/placeholder/retain-previous policies, reruns Taffy, and journals only changed rectangles. It is currently a migration foundation and is not yet connected to `render!` or a Host `RendererV1`. | future scene runtime |
+| `whisker-protocol` | Host-independent semantic frame and intrinsic-measurement types, stable IDs, strict batch validation, and transactional retained-tree validation. Built-in measurement payloads are typed for text, replaced content, native controls, and embedded surfaces; custom provider bytes carry an explicit schema version. It is currently a migration foundation and is not yet used by the production Lynx path. | future scene engine and renderer providers |
+| `whisker-engine` | Host-independent retained scene, coalescing mutation journal, snapshot/delta production, frame acceptance/recovery, and retained measurement coordination. `SurfaceEngine` batches cache misses, validates immediate and deferred results by key and environment epoch, applies explicit block/placeholder/retain-previous policies, reruns Taffy, and journals only changed rectangles. `MeasurementHost` and `drive_layout_with_host` now define and exercise the final semantic Rust-to-Host call seam; generated platform ABI bindings and providers are not implemented. | future scene runtime |
 | `whisker-layout` | Host-independent retained box layout. It privately owns Taffy, accepts `ComputedLayoutStyle` and stable `NodeId`s, calls an abstract intrinsic measurer using protocol-owned constraints, and returns deterministic logical-pixel snapshots. `whisker-engine::SurfaceEngine` owns its coordination with scene/frame production. | `whisker-engine`, future scene runtime |
 | `whisker-subsecond` | Whisker's fork of DioxusLabs `subsecond` — anchors the ASLR-slide lookup on `whisker_aslr_anchor` (emitted by `#[whisker::main]`) instead of `main`. `[lib] name = "subsecond"` keeps `use subsecond::*`. | `whisker`, `whisker-driver`, `whisker-dev-runtime` |
 
