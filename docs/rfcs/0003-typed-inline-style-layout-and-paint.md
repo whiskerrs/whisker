@@ -757,8 +757,10 @@ Visual snapshots supplement but do not replace semantic assertions.
    JavaScript DOM Web path, and the Whisker-owned native Rust Desktop path
    against the same case identifiers.
 8. Move the portable first macOS Host implementation to `platforms/desktop`
-   and keep OS crates as thin adapters. Add Desktop lowering conformance for
-   paint, text, clipping, compositing,
+   and keep OS crates as thin adapters. This extraction and the first
+   WPT-derived background/radius Host scenarios, real Desktop measurement,
+   and the recording input-sink contract are implemented. Continue Desktop
+   lowering conformance for paint, text, clipping, compositing,
    accessibility, and external surfaces without making Desktop render types
    part of the common protocol.
 9. Add the optional SSR serializer and hydration contract in a follow-up RFC.

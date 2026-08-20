@@ -313,3 +313,76 @@ fn render_box_paint_and_clip_reach_the_frame_sink() {
     ));
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
+
+#[test]
+fn wpt_border_radius_sum_of_radii_001_reaches_layout_and_frame_protocol() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(9).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(100))
+                    .height(px(100))
+                    .background_color(Color::rgba(0, 0, 0, 0.0))
+                    .border_top_width(px(10))
+                    .border_right_width(px(10))
+                    .border_bottom_width(px(10))
+                    .border_left_width(px(10))
+                    .border_top_color(Color::rgb(0, 0, 0))
+                    .border_right_color(Color::rgb(0, 0, 0))
+                    .border_bottom_color(Color::rgb(0, 0, 0))
+                    .border_left_color(Color::rgb(0, 0, 0))
+                    .border_top_style(BorderStyle::Solid)
+                    .border_right_style(BorderStyle::Solid)
+                    .border_bottom_style(BorderStyle::Solid)
+                    .border_left_style(BorderStyle::Solid)
+                    .border_top_left_radius(px(60))
+                    .border_top_right_radius(px(150))
+                    .border_bottom_right_radius(px(30))
+                    .border_bottom_left_radius(px(30)))
+            }
+        });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            HostLayoutOptions::default(),
+        )
+        .expect("WPT-derived rounded box frame");
+    assert!(host.calls.is_empty());
+
+    let root = surface.root().expect("surface root");
+    let packet = &renderer.frames()[0].packet;
+    assert!(packet.operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetLayout { node, geometry }
+            if *node == root
+                && geometry.border_box.width == 100.0
+                && geometry.border_box.height == 100.0
+    )));
+    assert!(packet.operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetBoxPaint { node, paint }
+            if *node == root
+                && paint.border_widths.top.length == 10.0
+                && paint.border_radii.top_left.length == 60.0
+                && paint.border_radii.top_right.length == 150.0
+                && paint.border_radii.bottom_right.length == 30.0
+                && paint.border_radii.bottom_left.length == 30.0
+    )));
+
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}

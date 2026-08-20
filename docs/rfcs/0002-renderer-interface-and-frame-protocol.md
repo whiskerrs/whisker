@@ -1334,18 +1334,19 @@ Lynx-free, minimal Android and UIKit applications that `whisker run` can build,
 install, and launch; these shells do not yet mount `RuntimeInstance` or consume
 frame packets. Initial DOM and macOS Host slices now provide CNG composition
 roots, Host-driven frame scheduling, measurement, and frame consumption; DOM
-covers the built-in box/text paint subset. The first Desktop implementation is
-currently located in `platforms/macos`: it retains accepted packets in a
-native Host projection, measures and shapes text with `cosmic-text`, reuses the
+cover the built-in box/text paint subset. The first Desktop implementation has
+been extracted to `platforms/desktop`: it retains accepted packets in a native
+Host projection, measures and shapes text with `cosmic-text`, reuses the
 resulting `PreparedContentId` for glyph paint, and submits common box, rounded
-background and border-outline, rectangular clip, and text draws through Metal
-via `wgpu`. Percentage corner radii resolve independently against both box
-axes and are normalized when adjacent radii exceed an edge. Its portable
-window, scene, measurement, and GPU code will move unchanged to
-`platforms/desktop`, leaving `platforms/macos` as the first thin OS adapter.
-Layout packets carry both border-box and content-box geometry so Hosts never
-reconstruct padding or borders from style inputs. Rounded descendant/path
-clips, exact non-solid borders, transforms, group compositing,
+background and border-outline, rectangular clip, and text draws through
+`wgpu`. `platforms/macos` is now the first thin OS adapter. Percentage corner
+radii resolve independently against both box axes and are normalized when
+adjacent radii exceed an edge. Layout packets carry both border-box and
+content-box geometry so Hosts never reconstruct padding or borders from style
+inputs. Shared Host scenarios now drive Desktop measurement and frame
+presentation without `RuntimeInstance`; the first WPT-derived background and
+radius cases include offscreen `wgpu` pixel checkpoints. Rounded
+descendant/path clips, exact non-solid borders, transforms, group compositing,
 ellipsis/forced-direction text behavior, input, and accessibility remain
 explicit Desktop conformance gaps.
 Each Host samples its current logical viewport and scale before a frame.
@@ -1584,7 +1585,7 @@ The shared corpus and per-Host runners live at predictable locations:
 tests/host-conformance/             # schemas, manifest, shared scenarios
   wpt/<upstream-path>/
 
-platforms/desktop/tests/conformance/
+platforms/desktop/tests/host_conformance/
 platforms/web/tests/conformance/
 platforms/android/.../androidTest/.../conformance/
 platforms/ios/Tests/WhiskerHostConformance/
