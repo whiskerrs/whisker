@@ -23,7 +23,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install software Vulkan renderer
+        run: sudo apt-get update && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
       - run: cargo test --workspace --all-targets
+        env:
+          RUST_TEST_THREADS: 1
+          WGPU_BACKEND: vulkan
       - run: cargo test --workspace --doc
 
   fmt:
@@ -134,6 +139,8 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install software Vulkan renderer
+        run: sudo apt-get update && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
 
       - name: Generate coverage
         # `--doctests` is nightly-only; stable runs doctest-free coverage.
@@ -142,6 +149,9 @@ jobs:
         run: |
           cargo llvm-cov --workspace --lcov --output-path lcov.info
           cargo llvm-cov report --summary-only | tee coverage-summary.txt
+        env:
+          RUST_TEST_THREADS: 1
+          WGPU_BACKEND: vulkan
 
       - name: Enforce coverage for the new Rust renderer foundation
         # Legacy crates are raised incrementally as they move onto the new

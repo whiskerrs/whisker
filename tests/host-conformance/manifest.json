@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "wpt_revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+  "cases": [
+    {
+      "id": "wpt.css2.backgrounds.background-color-129",
+      "feature": "background-color",
+      "fixture": "wpt/css/CSS2/backgrounds/background-color-129.json",
+      "required_hosts": ["desktop"],
+      "checkpoints": ["semantic-projection", "pixel"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.test1",
+      "feature": "border-radius",
+      "fixture": "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json",
+      "required_hosts": ["desktop"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel"]
+    },
+    {
+      "id": "host.measure.text.basic",
+      "feature": "text-measurement",
+      "fixture": "core/text-measure-basic.json",
+      "required_hosts": ["desktop"],
+      "checkpoints": ["measurement"]
+    },
+    {
+      "id": "host.input.pointer.basic",
+      "feature": "pointer-input",
+      "fixture": "core/pointer-input-basic.json",
+      "required_hosts": ["desktop"],
+      "checkpoints": ["input"]
+    }
+  ]
+}

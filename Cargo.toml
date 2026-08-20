@@ -24,8 +24,11 @@ members = [
     "crates/whisker-protocol",
     "crates/whisker-runtime",
     "crates/whisker-style",
+    "platforms/desktop",
     "crates/whisker-subsecond",
     "platforms/macos",
+    "platforms/windows",
+    "platforms/linux",
     "platforms/web",
     "examples/host-smoke",
     "examples/anim-smoke",
@@ -115,7 +118,10 @@ whisker-plugin = { path = "crates/whisker-plugin", version = "0.12.0" }
 whisker-protocol = { path = "crates/whisker-protocol", version = "0.12.0" }
 whisker-runtime = { path = "crates/whisker-runtime", version = "0.12.0" }
 whisker-style = { path = "crates/whisker-style", version = "0.12.0" }
+whisker-desktop = { path = "platforms/desktop", version = "0.12.0" }
 whisker-macos = { path = "platforms/macos", version = "0.12.0" }
+whisker-windows = { path = "platforms/windows", version = "0.12.0" }
+whisker-linux = { path = "platforms/linux", version = "0.12.0" }
 whisker-web = { path = "platforms/web", version = "0.12.0" }
 whisker-router = { path = "packages/whisker-router", version = "0.12.0" }
 whisker-router-macros = { path = "packages/whisker-router-macros", version = "0.12.0" }

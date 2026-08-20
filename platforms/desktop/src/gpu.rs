@@ -2,12 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::ops::Range;
-use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use glyphon::{
-    Cache, Color as TextColor, Resolution, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport,
-};
+use glyphon::{Cache, Resolution, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport};
 use wgpu::util::DeviceExt;
 use wgpu::{
     BlendState, Buffer, BufferUsages, ColorTargetState, ColorWrites, CommandEncoderDescriptor,
@@ -15,17 +12,15 @@ use wgpu::{
     LoadOp, MultisampleState, Operations, PipelineCompilationOptions, PresentMode, PrimitiveState,
     Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
     RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource, StoreOp,
-    Surface, SurfaceConfiguration, SurfaceError, TextureFormat, TextureUsages,
+    Surface, SurfaceConfiguration, SurfaceError, SurfaceTarget, TextureFormat, TextureUsages,
     TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
     VertexStepMode,
 };
-use whisker_protocol::{
-    BorderLineStyle, BoxPaint, LayoutRect, NodeId, PaintColor, PaintCorners, PaintLengthPercentage,
-};
-use winit::dpi::PhysicalSize;
-use winit::window::Window;
+use whisker_protocol::NodeId;
 
-use crate::scene::{LogicalClip, PaintCommand, is_transparent};
+use crate::paint::box_paint::{BoxPrimitive, lower_box};
+use crate::paint::color::text_color;
+use crate::scene::{LogicalClip, PaintCommand};
 use crate::text::NativeTextHost;
 
 const BOX_SHADER: &str = r#"
@@ -359,85 +354,25 @@ struct ViewportUniform {
     padding: [f32; 2],
 }
 
-enum DrawCommand {
-    Quads {
-        vertices: Range<u32>,
-        clip: LogicalClip,
-    },
-    Text {
-        index: usize,
-        node: NodeId,
-    },
-}
-
-pub(crate) struct GpuRenderer {
-    surface: Surface<'static>,
-    device: Device,
-    queue: Queue,
-    config: SurfaceConfiguration,
-    box_pipeline: RenderPipeline,
+struct BoxGpuPipeline {
+    pipeline: RenderPipeline,
     viewport_buffer: Buffer,
     viewport_bind_group: wgpu::BindGroup,
-    text_viewport: Viewport,
-    text_atlas: TextAtlas,
-    text_renderers: HashMap<NodeId, TextRenderer>,
 }
 
-impl GpuRenderer {
-    pub(crate) async fn new(window: Arc<Window>) -> Result<Self, GpuError> {
-        let size = window.inner_size();
-        let instance = Instance::new(&InstanceDescriptor::default());
-        let surface = instance
-            .create_surface(window)
-            .map_err(|error| GpuError(format!("create Metal surface: {error}")))?;
-        let adapter = instance
-            .request_adapter(&RequestAdapterOptions {
-                compatible_surface: Some(&surface),
-                ..RequestAdapterOptions::default()
-            })
-            .await
-            .map_err(|error| GpuError(format!("select Metal adapter: {error}")))?;
-        let (device, queue) = adapter
-            .request_device(&DeviceDescriptor::default())
-            .await
-            .map_err(|error| GpuError(format!("create Metal device: {error}")))?;
-        let capabilities = surface.get_capabilities(&adapter);
-        let format = capabilities
-            .formats
-            .iter()
-            .copied()
-            .find(TextureFormat::is_srgb)
-            .or_else(|| capabilities.formats.first().copied())
-            .ok_or_else(|| GpuError("Metal surface exposes no texture format".into()))?;
-        let present_mode = capabilities
-            .present_modes
-            .iter()
-            .copied()
-            .find(|mode| *mode == PresentMode::Fifo)
-            .unwrap_or(PresentMode::AutoVsync);
-        let config = SurfaceConfiguration {
-            usage: TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode,
-            alpha_mode: CompositeAlphaMode::Opaque,
-            view_formats: Vec::new(),
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &config);
-
+impl BoxGpuPipeline {
+    fn new(device: &Device, format: TextureFormat) -> Self {
         let viewport_uniform = ViewportUniform {
             logical_size: [1.0, 1.0],
             padding: [0.0; 2],
         };
         let viewport_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("whisker macOS logical viewport"),
+            label: Some("whisker Desktop logical viewport"),
             contents: bytemuck::bytes_of(&viewport_uniform),
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         });
         let viewport_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("whisker macOS viewport layout"),
+            label: Some("whisker Desktop viewport layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
@@ -450,7 +385,7 @@ impl GpuRenderer {
             }],
         });
         let viewport_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("whisker macOS viewport"),
+            label: Some("whisker Desktop viewport"),
             layout: &viewport_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -458,16 +393,16 @@ impl GpuRenderer {
             }],
         });
         let shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("whisker macOS box shader"),
+            label: Some("whisker Desktop box shader"),
             source: ShaderSource::Wgsl(BOX_SHADER.into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("whisker macOS box pipeline layout"),
+            label: Some("whisker Desktop box pipeline layout"),
             bind_group_layouts: &[&viewport_layout],
             push_constant_ranges: &[],
         });
-        let box_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("whisker macOS box pipeline"),
+        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("whisker Desktop box pipeline"),
             layout: Some(&pipeline_layout),
             vertex: VertexState {
                 module: &shader,
@@ -491,6 +426,94 @@ impl GpuRenderer {
             multiview: None,
             cache: None,
         });
+        Self {
+            pipeline,
+            viewport_buffer,
+            viewport_bind_group,
+        }
+    }
+
+    fn update_viewport(&self, queue: &Queue, logical_size: [f32; 2]) {
+        queue.write_buffer(
+            &self.viewport_buffer,
+            0,
+            bytemuck::bytes_of(&ViewportUniform {
+                logical_size,
+                padding: [0.0; 2],
+            }),
+        );
+    }
+}
+
+enum DrawCommand {
+    Quads {
+        vertices: Range<u32>,
+        clip: LogicalClip,
+    },
+    Text {
+        index: usize,
+        node: NodeId,
+    },
+}
+
+pub(crate) struct GpuRenderer {
+    surface: Surface<'static>,
+    device: Device,
+    queue: Queue,
+    config: SurfaceConfiguration,
+    box_gpu: BoxGpuPipeline,
+    text_viewport: Viewport,
+    text_atlas: TextAtlas,
+    text_renderers: HashMap<NodeId, TextRenderer>,
+}
+
+impl GpuRenderer {
+    pub(crate) async fn new(
+        target: impl Into<SurfaceTarget<'static>>,
+        physical_size: [u32; 2],
+    ) -> Result<Self, GpuError> {
+        let instance = Instance::new(&InstanceDescriptor::default());
+        let surface = instance
+            .create_surface(target)
+            .map_err(|error| GpuError(format!("create Desktop GPU surface: {error}")))?;
+        let adapter = instance
+            .request_adapter(&RequestAdapterOptions {
+                compatible_surface: Some(&surface),
+                ..RequestAdapterOptions::default()
+            })
+            .await
+            .map_err(|error| GpuError(format!("select Desktop GPU adapter: {error}")))?;
+        let (device, queue) = adapter
+            .request_device(&DeviceDescriptor::default())
+            .await
+            .map_err(|error| GpuError(format!("create Desktop GPU device: {error}")))?;
+        let capabilities = surface.get_capabilities(&adapter);
+        let format = capabilities
+            .formats
+            .iter()
+            .copied()
+            .find(TextureFormat::is_srgb)
+            .or_else(|| capabilities.formats.first().copied())
+            .ok_or_else(|| GpuError("Desktop GPU surface exposes no texture format".into()))?;
+        let present_mode = capabilities
+            .present_modes
+            .iter()
+            .copied()
+            .find(|mode| *mode == PresentMode::Fifo)
+            .unwrap_or(PresentMode::AutoVsync);
+        let config = SurfaceConfiguration {
+            usage: TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: physical_size[0].max(1),
+            height: physical_size[1].max(1),
+            present_mode,
+            alpha_mode: CompositeAlphaMode::Opaque,
+            view_formats: Vec::new(),
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &config);
+
+        let box_gpu = BoxGpuPipeline::new(&device, format);
 
         let text_cache = Cache::new(&device);
         let text_viewport = Viewport::new(&device, &text_cache);
@@ -500,21 +523,19 @@ impl GpuRenderer {
             device,
             queue,
             config,
-            box_pipeline,
-            viewport_buffer,
-            viewport_bind_group,
+            box_gpu,
             text_viewport,
             text_atlas,
             text_renderers: HashMap::new(),
         })
     }
 
-    pub(crate) fn resize(&mut self, size: PhysicalSize<u32>) {
-        if size.width == 0 || size.height == 0 {
+    pub(crate) fn resize(&mut self, physical_size: [u32; 2]) {
+        if physical_size[0] == 0 || physical_size[1] == 0 {
             return;
         }
-        self.config.width = size.width;
-        self.config.height = size.height;
+        self.config.width = physical_size[0];
+        self.config.height = physical_size[1];
         self.surface.configure(&self.device, &self.config);
     }
 
@@ -528,14 +549,7 @@ impl GpuRenderer {
         if self.config.width == 0 || self.config.height == 0 {
             return Ok(());
         }
-        self.queue.write_buffer(
-            &self.viewport_buffer,
-            0,
-            bytemuck::bytes_of(&ViewportUniform {
-                logical_size,
-                padding: [0.0; 2],
-            }),
-        );
+        self.box_gpu.update_viewport(&self.queue, logical_size);
         self.text_viewport.update(
             &self.queue,
             Resolution {
@@ -555,7 +569,9 @@ impl GpuRenderer {
                     opacity,
                 } => {
                     let start = vertices.len() as u32;
-                    lower_box(*rect, paint, *opacity, &mut vertices);
+                    lower_box(*rect, paint, *opacity, |primitive| {
+                        push_quad(&mut vertices, primitive);
+                    });
                     let end = vertices.len() as u32;
                     if start != end {
                         draws.push(DrawCommand::Quads {
@@ -638,7 +654,7 @@ impl GpuRenderer {
         let vertex_buffer = (!vertices.is_empty()).then(|| {
             self.device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("whisker macOS box vertices"),
+                    label: Some("whisker Desktop box vertices"),
                     contents: bytemuck::cast_slice(&vertices),
                     usage: BufferUsages::VERTEX,
                 })
@@ -649,21 +665,21 @@ impl GpuRenderer {
             Err(SurfaceError::Lost | SurfaceError::Outdated) => {
                 self.surface.configure(&self.device, &self.config);
                 self.surface.get_current_texture().map_err(|error| {
-                    GpuError(format!("acquire Metal frame after recovery: {error}"))
+                    GpuError(format!("acquire Desktop GPU frame after recovery: {error}"))
                 })?
             }
             Err(SurfaceError::Timeout) => return Ok(()),
-            Err(error) => return Err(GpuError(format!("acquire Metal frame: {error}"))),
+            Err(error) => return Err(GpuError(format!("acquire Desktop GPU frame: {error}"))),
         };
         let view = frame.texture.create_view(&TextureViewDescriptor::default());
         let mut encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("whisker macOS frame"),
+                label: Some("whisker Desktop frame"),
             });
         {
             let _clear = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("whisker macOS clear"),
+                label: Some("whisker Desktop clear"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -685,7 +701,7 @@ impl GpuRenderer {
                         continue;
                     };
                     let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                        label: Some("whisker macOS boxes"),
+                        label: Some("whisker Desktop boxes"),
                         color_attachments: &[Some(RenderPassColorAttachment {
                             view: &view,
                             resolve_target: None,
@@ -699,8 +715,8 @@ impl GpuRenderer {
                         occlusion_query_set: None,
                     });
                     pass.set_scissor_rect(x, y, width, height);
-                    pass.set_pipeline(&self.box_pipeline);
-                    pass.set_bind_group(0, &self.viewport_bind_group, &[]);
+                    pass.set_pipeline(&self.box_gpu.pipeline);
+                    pass.set_bind_group(0, &self.box_gpu.viewport_bind_group, &[]);
                     pass.set_vertex_buffer(
                         0,
                         vertex_buffer
@@ -715,7 +731,7 @@ impl GpuRenderer {
                         continue;
                     }
                     let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                        label: Some("whisker macOS text"),
+                        label: Some("whisker Desktop text"),
                         color_attachments: &[Some(RenderPassColorAttachment {
                             view: &view,
                             resolve_target: None,
@@ -755,165 +771,8 @@ impl GpuRenderer {
     }
 }
 
-fn lower_box(rect: LayoutRect, paint: &BoxPaint, opacity: f32, vertices: &mut Vec<BoxVertex>) {
-    let geometry = resolve_box_geometry(rect, paint);
-    if !is_transparent(&paint.background_color) {
-        push_quad(
-            vertices,
-            geometry,
-            linear_color(&paint.background_color, opacity),
-            -1.0,
-            [[0.0; 4]; 4],
-        );
-    }
-    let [top, right, bottom, left] = geometry.border_widths;
-    let border_colors = [
-        border_color(
-            paint.border_styles.top,
-            top,
-            &paint.border_colors.top,
-            opacity,
-        ),
-        border_color(
-            paint.border_styles.right,
-            right,
-            &paint.border_colors.right,
-            opacity,
-        ),
-        border_color(
-            paint.border_styles.bottom,
-            bottom,
-            &paint.border_colors.bottom,
-            opacity,
-        ),
-        border_color(
-            paint.border_styles.left,
-            left,
-            &paint.border_colors.left,
-            opacity,
-        ),
-    ];
-    if border_colors.iter().any(|color| color[3] > 0.0) {
-        push_quad(vertices, geometry, [0.0; 4], 1.0, border_colors);
-    }
-}
-
-fn paints_line(style: BorderLineStyle) -> bool {
-    !matches!(style, BorderLineStyle::None | BorderLineStyle::Hidden)
-}
-
-fn border_color(style: BorderLineStyle, width: f32, color: &PaintColor, opacity: f32) -> [f32; 4] {
-    if paints_line(style) && width > 0.0 {
-        linear_color(color, opacity)
-    } else {
-        [0.0; 4]
-    }
-}
-
-fn resolve_length(value: PaintLengthPercentage, axis: f32) -> f32 {
-    value.length + value.fraction * axis
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct ResolvedRadii {
-    horizontal: [f32; 4],
-    vertical: [f32; 4],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct BoxGeometry {
-    outer_rect: LayoutRect,
-    outer_radii: ResolvedRadii,
-    inner_rect: LayoutRect,
-    inner_radii: ResolvedRadii,
-    border_widths: [f32; 4],
-}
-
-fn resolve_box_geometry(rect: LayoutRect, paint: &BoxPaint) -> BoxGeometry {
-    let outer_radii = resolve_radii(&paint.border_radii, rect);
-    let top = resolve_length(paint.border_widths.top, rect.height).min(rect.height);
-    let right = resolve_length(paint.border_widths.right, rect.width).min(rect.width);
-    let bottom = resolve_length(paint.border_widths.bottom, rect.height).min(rect.height);
-    let left = resolve_length(paint.border_widths.left, rect.width).min(rect.width);
-    let inner_rect = LayoutRect {
-        x: rect.x + left,
-        y: rect.y + top,
-        width: (rect.width - left - right).max(0.0),
-        height: (rect.height - top - bottom).max(0.0),
-    };
-    let inner_radii = ResolvedRadii {
-        horizontal: [
-            (outer_radii.horizontal[0] - left).max(0.0),
-            (outer_radii.horizontal[1] - right).max(0.0),
-            (outer_radii.horizontal[2] - right).max(0.0),
-            (outer_radii.horizontal[3] - left).max(0.0),
-        ],
-        vertical: [
-            (outer_radii.vertical[0] - top).max(0.0),
-            (outer_radii.vertical[1] - top).max(0.0),
-            (outer_radii.vertical[2] - bottom).max(0.0),
-            (outer_radii.vertical[3] - bottom).max(0.0),
-        ],
-    };
-    BoxGeometry {
-        outer_rect: rect,
-        outer_radii,
-        inner_rect,
-        inner_radii,
-        border_widths: [top, right, bottom, left],
-    }
-}
-
-fn resolve_radii(radii: &PaintCorners<PaintLengthPercentage>, rect: LayoutRect) -> ResolvedRadii {
-    let values = [
-        radii.top_left,
-        radii.top_right,
-        radii.bottom_right,
-        radii.bottom_left,
-    ];
-    let mut horizontal = values.map(|radius| resolve_length(radius, rect.width));
-    let mut vertical = values.map(|radius| resolve_length(radius, rect.height));
-    let ratios = [
-        ratio(rect.width, horizontal[0] + horizontal[1]),
-        ratio(rect.width, horizontal[3] + horizontal[2]),
-        ratio(rect.height, vertical[0] + vertical[3]),
-        ratio(rect.height, vertical[1] + vertical[2]),
-    ];
-    let scale = ratios.into_iter().fold(1.0_f32, f32::min);
-    for radius in &mut horizontal {
-        *radius *= scale;
-    }
-    for radius in &mut vertical {
-        *radius *= scale;
-    }
-    ResolvedRadii {
-        horizontal,
-        vertical,
-    }
-}
-
-fn ratio(available: f32, required: f32) -> f32 {
-    if required > available && required > 0.0 {
-        available / required
-    } else {
-        1.0
-    }
-}
-
-fn push_quad(
-    vertices: &mut Vec<BoxVertex>,
-    geometry: BoxGeometry,
-    color: [f32; 4],
-    mode: f32,
-    border_colors: [[f32; 4]; 4],
-) {
-    let rect = geometry.outer_rect;
-    if rect.width <= 0.0
-        || rect.height <= 0.0
-        || (color[3] <= 0.0 && border_colors.iter().all(|color| color[3] <= 0.0))
-    {
-        return;
-    }
+fn push_quad(vertices: &mut Vec<BoxVertex>, primitive: BoxPrimitive) {
+    let rect = primitive.outer_rect;
     let left = rect.x;
     let top = rect.y;
     let right = rect.x + rect.width;
@@ -928,21 +787,21 @@ fn push_quad(
     ] {
         vertices.push(BoxVertex {
             position,
-            color,
+            color: primitive.color,
             outer_rect: [rect.x, rect.y, rect.width, rect.height],
-            outer_radii_x: geometry.outer_radii.horizontal,
-            outer_radii_y: geometry.outer_radii.vertical,
+            outer_radii_x: primitive.outer_radii_x,
+            outer_radii_y: primitive.outer_radii_y,
             inner_rect: [
-                geometry.inner_rect.x,
-                geometry.inner_rect.y,
-                geometry.inner_rect.width,
-                geometry.inner_rect.height,
+                primitive.inner_rect.x,
+                primitive.inner_rect.y,
+                primitive.inner_rect.width,
+                primitive.inner_rect.height,
             ],
-            inner_radii_x: geometry.inner_radii.horizontal,
-            inner_radii_y: geometry.inner_radii.vertical,
-            border_widths: geometry.border_widths,
-            mode,
-            border_colors,
+            inner_radii_x: primitive.inner_radii_x,
+            inner_radii_y: primitive.inner_radii_y,
+            border_widths: primitive.border_widths,
+            mode: primitive.kind.shader_mode(),
+            border_colors: primitive.border_colors,
         });
     }
 }
@@ -960,91 +819,160 @@ fn text_bounds(clip: LogicalClip, width: u32, height: u32, scale: f32) -> TextBo
     }
 }
 
-fn text_color(color: &PaintColor, opacity: f32) -> TextColor {
-    let [red, green, blue, alpha] = srgba(color, opacity);
-    TextColor::rgba(
-        (red * 255.0).round() as u8,
-        (green * 255.0).round() as u8,
-        (blue * 255.0).round() as u8,
-        (alpha * 255.0).round() as u8,
-    )
-}
-
-fn linear_color(color: &PaintColor, opacity: f32) -> [f32; 4] {
-    let [red, green, blue, alpha] = srgba(color, opacity);
-    [
-        srgb_to_linear(red),
-        srgb_to_linear(green),
-        srgb_to_linear(blue),
-        alpha,
-    ]
-}
-
-fn srgba(color: &PaintColor, opacity: f32) -> [f32; 4] {
-    let mut color = match color {
-        PaintColor::Named(name) => csscolorparser::parse(name)
-            .map(|color| color.to_array())
-            .unwrap_or([0.0, 0.0, 0.0, 0.0]),
-        PaintColor::Srgba {
-            red,
-            green,
-            blue,
-            alpha,
-        } => [
-            *red as f32 / 255.0,
-            *green as f32 / 255.0,
-            *blue as f32 / 255.0,
-            *alpha,
-        ],
-        PaintColor::Hsla {
-            hue_degrees,
-            saturation,
-            lightness,
-            alpha,
-        } => hsl_to_srgba(
-            *hue_degrees,
-            *saturation / 100.0,
-            *lightness / 100.0,
-            *alpha,
-        ),
-    };
-    color[3] *= opacity;
-    color
-}
-
-fn hsl_to_srgba(hue: f32, saturation: f32, lightness: f32, alpha: f32) -> [f32; 4] {
-    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
-    let sector = hue.rem_euclid(360.0) / 60.0;
-    let x = chroma * (1.0 - (sector.rem_euclid(2.0) - 1.0).abs());
-    let (red, green, blue) = match sector as u32 {
-        0 => (chroma, x, 0.0),
-        1 => (x, chroma, 0.0),
-        2 => (0.0, chroma, x),
-        3 => (0.0, x, chroma),
-        4 => (x, 0.0, chroma),
-        _ => (chroma, 0.0, x),
-    };
-    let match_value = lightness - chroma / 2.0;
-    [
-        red + match_value,
-        green + match_value,
-        blue + match_value,
-        alpha,
-    ]
-}
-
-fn srgb_to_linear(value: f32) -> f32 {
-    if value <= 0.04045 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
+#[cfg(test)]
+pub(crate) async fn render_box_primitives_offscreen(
+    primitives: &[BoxPrimitive],
+    logical_size: [u32; 2],
+) -> Result<Vec<u8>, GpuError> {
+    let [width, height] = logical_size;
+    if width == 0 || height == 0 {
+        return Err(GpuError(
+            "offscreen checkpoint has an empty viewport".into(),
+        ));
     }
+
+    let instance = Instance::new(&InstanceDescriptor::default());
+    let adapter = instance
+        .request_adapter(&RequestAdapterOptions::default())
+        .await
+        .map_err(|error| GpuError(format!("select offscreen Desktop GPU adapter: {error}")))?;
+    let (device, queue) = adapter
+        .request_device(&DeviceDescriptor::default())
+        .await
+        .map_err(|error| GpuError(format!("create offscreen Desktop GPU device: {error}")))?;
+    let format = TextureFormat::Rgba8UnormSrgb;
+    let box_gpu = BoxGpuPipeline::new(&device, format);
+    box_gpu.update_viewport(&queue, [width as f32, height as f32]);
+
+    let mut vertices = Vec::new();
+    for primitive in primitives {
+        push_quad(&mut vertices, *primitive);
+    }
+    let vertex_buffer = (!vertices.is_empty()).then(|| {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("whisker Desktop conformance box vertices"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: BufferUsages::VERTEX,
+        })
+    });
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("whisker Desktop conformance checkpoint"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&TextureViewDescriptor::default());
+    let unpadded_bytes_per_row = width * 4;
+    let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("whisker Desktop conformance readback"),
+        size: u64::from(padded_bytes_per_row) * u64::from(height),
+        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+        label: Some("whisker Desktop conformance encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("whisker Desktop conformance boxes"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        if let Some(vertex_buffer) = &vertex_buffer {
+            pass.set_pipeline(&box_gpu.pipeline);
+            pass.set_bind_group(0, &box_gpu.viewport_bind_group, &[]);
+            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            pass.draw(0..vertices.len() as u32, 0..1);
+        }
+    }
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit(Some(encoder.finish()));
+
+    let slice = readback.slice(..);
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = sender.send(result);
+    });
+    device
+        .poll(wgpu::PollType::wait())
+        .map_err(|error| GpuError(format!("wait for Desktop GPU checkpoint: {error}")))?;
+    receiver
+        .recv()
+        .map_err(|error| GpuError(format!("receive Desktop GPU checkpoint: {error}")))?
+        .map_err(|error| GpuError(format!("map Desktop GPU checkpoint: {error}")))?;
+
+    let mapped = slice.get_mapped_range();
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for row in mapped.chunks_exact(padded_bytes_per_row as usize) {
+        pixels.extend_from_slice(&row[..unpadded_bytes_per_row as usize]);
+    }
+    drop(mapped);
+    readback.unmap();
+    Ok(pixels)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whisker_protocol::{PaintCorners, PaintEdges};
+    use glyphon::Color as TextColor;
+    use whisker_protocol::{
+        BorderLineStyle, BoxPaint, LayoutRect, PaintColor, PaintCorners, PaintEdges,
+        PaintLengthPercentage,
+    };
+
+    use crate::paint::box_paint::{ResolvedRadii, resolve_box_geometry, resolve_radii};
+    use crate::paint::color::{srgb_to_linear, srgba};
+
+    fn lower_vertices(
+        rect: LayoutRect,
+        paint: &BoxPaint,
+        opacity: f32,
+        vertices: &mut Vec<BoxVertex>,
+    ) {
+        lower_box(rect, paint, opacity, |primitive| {
+            push_quad(vertices, primitive);
+        });
+    }
 
     fn paint(background_color: PaintColor) -> BoxPaint {
         let zero = PaintLengthPercentage::default();
@@ -1083,7 +1011,7 @@ mod tests {
     #[test]
     fn box_lowering_emits_background_and_visible_borders() {
         let mut vertices = Vec::new();
-        lower_box(
+        lower_vertices(
             LayoutRect {
                 x: 2.0,
                 y: 3.0,
@@ -1112,7 +1040,7 @@ mod tests {
         vertices.clear();
         let mut transparent = paint(PaintColor::Named("transparent".into()));
         transparent.border_styles.top = BorderLineStyle::None;
-        lower_box(LayoutRect::default(), &transparent, 1.0, &mut vertices);
+        lower_vertices(LayoutRect::default(), &transparent, 1.0, &mut vertices);
         assert!(vertices.is_empty());
     }
 
@@ -1164,7 +1092,7 @@ mod tests {
             bottom_left: PaintLengthPercentage::default(),
         };
         let mut vertices = Vec::new();
-        lower_box(
+        lower_vertices(
             LayoutRect {
                 x: 1.0,
                 y: 2.0,
@@ -1259,7 +1187,7 @@ mod tests {
         );
 
         let mut vertices = Vec::new();
-        lower_box(geometry.outer_rect, &bordered, 1.0, &mut vertices);
+        lower_vertices(geometry.outer_rect, &bordered, 1.0, &mut vertices);
         assert_eq!(vertices.len(), 12);
         assert_eq!(vertices[6].mode, 1.0);
         assert!(

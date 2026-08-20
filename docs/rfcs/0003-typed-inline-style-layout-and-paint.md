@@ -563,15 +563,16 @@ environment, retains the prepared glyph content under a
 engine can then finish Taffy layout and include that handle in the final paint
 packet without knowing the Host representation.
 
-Presentation is implemented from focused low-level Rust facilities for window
-events, GPU access, shaping/rasterization, atlas allocation, paths, and
-accessibility. These dependencies are owned exclusively by
-`platforms/desktop`; Whisker core never depends on the Desktop crate. The
-Desktop paint pass lowers the accepted Host projection into quads, shadows,
-paths, glyph/image sprites, clips, layers, and external surfaces, then submits
-GPU work. `platforms/macos`, `platforms/windows`, and `platforms/linux` are
-thin adapters for lifecycle, packaging hooks, and genuinely native services;
-they do not fork the common scene or renderer.
+Presentation is implemented from focused low-level Rust facilities for GPU
+access, shaping/rasterization, atlas allocation, paths, and accessibility.
+Those common dependencies are owned by `platforms/desktop`, while each OS
+shell owns its window-event dependency; Whisker core never depends on any
+Desktop Host crate. The Desktop paint pass lowers the accepted Host projection
+into quads, shadows, paths, glyph/image sprites, clips, layers, and external
+surfaces, then submits GPU work. `platforms/macos`, `platforms/windows`, and
+`platforms/linux` are symmetric window-lifecycle, frame-scheduling, and
+packaging shells over that common Host; they do not fork the common scene or
+renderer.
 
 Host source trees are organized by semantic capability rather than CSS
 spelling: measurement/text, paint/box, paint/text, clip, transform,
@@ -757,8 +758,10 @@ Visual snapshots supplement but do not replace semantic assertions.
    JavaScript DOM Web path, and the Whisker-owned native Rust Desktop path
    against the same case identifiers.
 8. Move the portable first macOS Host implementation to `platforms/desktop`
-   and keep OS crates as thin adapters. Add Desktop lowering conformance for
-   paint, text, clipping, compositing,
+   and keep OS crates as thin adapters. This extraction and the first
+   WPT-derived background/radius Host scenarios, real Desktop measurement,
+   and the recording input-sink contract are implemented. Continue Desktop
+   lowering conformance for paint, text, clipping, compositing,
    accessibility, and external surfaces without making Desktop render types
    part of the common protocol.
 9. Add the optional SSR serializer and hydration contract in a follow-up RFC.

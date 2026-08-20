@@ -1,9 +1,5 @@
-use std::sync::Arc;
-
 use whisker_engine::FrameSink;
 use whisker_protocol::{ApplyResult, FramePacket, SurfaceId, ValidationError};
-use winit::dpi::PhysicalSize;
-use winit::window::Window;
 
 use crate::gpu::{GpuError, GpuRenderer};
 use crate::scene::DesktopScene;
@@ -17,15 +13,19 @@ pub(crate) struct DesktopSurface {
 }
 
 impl DesktopSurface {
-    pub(crate) async fn new(window: Arc<Window>, surface: SurfaceId) -> Result<Self, GpuError> {
+    pub(crate) async fn new(
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        physical_size: [u32; 2],
+        surface: SurfaceId,
+    ) -> Result<Self, GpuError> {
         Ok(Self {
             scene: DesktopScene::new(surface),
-            gpu: GpuRenderer::new(window).await?,
+            gpu: GpuRenderer::new(target, physical_size).await?,
         })
     }
 
-    pub(crate) fn resize(&mut self, size: PhysicalSize<u32>) {
-        self.gpu.resize(size);
+    pub(crate) fn resize(&mut self, physical_size: [u32; 2]) {
+        self.gpu.resize(physical_size);
     }
 
     pub(crate) fn paint(

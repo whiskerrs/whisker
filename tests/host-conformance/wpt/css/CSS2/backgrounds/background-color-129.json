@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "id": "wpt.css2.backgrounds.background-color-129",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/CSS2/backgrounds/background-color-129.xht",
+    "reference_path": "css/CSS2/backgrounds/background-color-129-ref.xht",
+    "license": "BSD-3-Clause",
+    "assertion": "A background-color of aqua paints the box background aqua.",
+    "adaptation": "The WPT image reference is represented as an explicit sRGB reference box; instructional document content and margins are omitted."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [0.0, 0.0, 100.0, 100.0],
+        "background": { "kind": "named", "value": "aqua" }
+      },
+      { "type": "checkpoint", "name": "paint.box" }
+    ]
+  },
+  "reference": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [0.0, 0.0, 100.0, 100.0],
+        "background": { "kind": "srgba", "red": 0, "green": 255, "blue": 255, "alpha": 1.0 }
+      },
+      { "type": "checkpoint", "name": "paint.box" }
+    ]
+  }
+}
