@@ -17,4 +17,4 @@ whisker-desktop = { workspace = true }
 whisker-protocol = { workspace = true }
 whisker-style = { workspace = true }
 pollster = "0.4.0"
-winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "x11"] }
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "wayland-dlopen", "x11"] }
