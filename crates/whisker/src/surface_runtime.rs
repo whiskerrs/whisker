@@ -15,7 +15,8 @@ use whisker_engine::whisker_protocol::{
     ProtocolValue, SurfaceId,
 };
 use whisker_engine::whisker_style::{
-    ResolvedNodeStyle, SpecifiedStyle, StyleEnvironment, StyleResolutionError, resolve_style,
+    InheritedStyle, ResolvedNodeStyle, SpecifiedStyle, StyleEnvironment, StyleResolutionError,
+    resolve_style,
 };
 use whisker_engine::{
     DeferredMeasurementApply, FrameSink, HostLayoutError, HostLayoutOptions, LayoutProgress,
@@ -276,6 +277,24 @@ impl SurfaceRuntime {
         self.state.borrow().error.clone()
     }
 
+    /// Returns the environment used for viewport-relative style resolution.
+    pub fn environment(&self) -> StyleEnvironment {
+        self.state.borrow().environment
+    }
+
+    /// Re-resolves every retained style against current Host viewport metrics.
+    ///
+    /// The update is prepared against a cloned surface and committed only after
+    /// every node resolves successfully. This keeps a rejected Host environment
+    /// from partially changing layout, paint, or text measurement state.
+    pub fn update_environment(
+        &self,
+        environment: StyleEnvironment,
+    ) -> Result<bool, RuntimeBindingError> {
+        let mut state = self.state.borrow_mut();
+        state.update_environment(environment)
+    }
+
     /// Hit-tests and routes one Host-normalized event through Rust listeners.
     pub fn dispatch_input(&self, event: &InputEvent) -> Result<InputDispatch, RuntimeInputError> {
         let (target, firings, body) = {
@@ -433,6 +452,13 @@ struct BindingState {
     error: Option<RuntimeBindingError>,
 }
 
+struct EnvironmentStyleUpdate {
+    element: Element,
+    node: NodeId,
+    resolved: ResolvedNodeStyle,
+    text: Option<PlainTextInput>,
+}
+
 impl BindingState {
     fn ensure_valid(&self) -> Result<(), RuntimeBindingError> {
         match &self.error {
@@ -447,6 +473,81 @@ impl BindingState {
             Err(error) if self.error.is_none() => self.error = Some(error),
             Err(_) => {}
         }
+    }
+
+    fn update_environment(
+        &mut self,
+        environment: StyleEnvironment,
+    ) -> Result<bool, RuntimeBindingError> {
+        self.ensure_valid()?;
+        // Validate even an empty surface before accepting Host-owned metrics.
+        resolve_style(&SpecifiedStyle::new(), None, environment)?;
+        if environment == self.environment {
+            return Ok(false);
+        }
+
+        let roots = self
+            .elements
+            .iter()
+            .filter_map(|(element, entry)| {
+                (entry.node.is_some() && entry.parent.is_none()).then_some(*element)
+            })
+            .collect::<Vec<_>>();
+        let mut updates = Vec::with_capacity(self.node_elements.len());
+        for root in roots {
+            self.resolve_environment_subtree(root, None, environment, &mut updates)?;
+        }
+
+        let mut surface = self.surface.clone();
+        for update in &updates {
+            surface.update_computed_style(update.node, update.resolved.computed())?;
+            if let Some(text) = &update.text {
+                surface.set_plain_text(
+                    update.node,
+                    text,
+                    update.resolved.computed().inherited_text(),
+                )?;
+            }
+        }
+
+        self.surface = surface;
+        self.environment = environment;
+        for update in updates {
+            self.element_mut(update.element)?.resolved = Some(update.resolved);
+        }
+        Ok(true)
+    }
+
+    fn resolve_environment_subtree(
+        &self,
+        element: Element,
+        parent: Option<&InheritedStyle>,
+        environment: StyleEnvironment,
+        updates: &mut Vec<EnvironmentStyleUpdate>,
+    ) -> Result<(), RuntimeBindingError> {
+        let entry = self.element(element)?;
+        let Some(node) = entry.node else {
+            return Ok(());
+        };
+        let resolved = resolve_style(&entry.specified, parent, environment)?;
+        let children = entry.children.clone();
+        updates.push(EnvironmentStyleUpdate {
+            element,
+            node,
+            resolved: resolved.clone(),
+            text: entry.text.clone(),
+        });
+        for child in children {
+            if self.element(child)?.node.is_some() {
+                self.resolve_environment_subtree(
+                    child,
+                    Some(resolved.inherited_for_children()),
+                    environment,
+                    updates,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     fn allocate(&mut self, tag: ElementTag) -> Result<Element, RuntimeBindingError> {

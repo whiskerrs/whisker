@@ -7,14 +7,15 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use whisker::prelude::*;
-use whisker::{RuntimeInstance, RuntimeLifecycle, SurfaceRuntime};
-use whisker_engine::whisker_layout::LayoutSize;
-use whisker_engine::whisker_protocol::{
-    InputEvent, InputEventKind, InputPoint, MeasuredSize, MeasurementMetrics, MeasurementReady,
-    MeasurementRequest, MeasurementRequestId, MeasurementResponse, PointerId, PointerInput,
-    PointerKind, ProtocolValue, SurfaceId,
+use whisker::{
+    RuntimeBindingError, RuntimeDriveError, RuntimeInstance, RuntimeLifecycle, SurfaceRuntime,
 };
-use whisker_engine::whisker_style::StyleEnvironment;
+use whisker_engine::whisker_protocol::{
+    FrameMode, InputEvent, InputEventKind, InputPoint, MeasuredSize, MeasurementMetrics,
+    MeasurementPayload, MeasurementReady, MeasurementRequest, MeasurementRequestId,
+    MeasurementResponse, Operation, PointerId, PointerInput, PointerKind, ProtocolValue, SurfaceId,
+};
+use whisker_engine::whisker_style::{StyleEnvironment, StyleResolutionError};
 use whisker_engine::{HostLayoutOptions, MeasurementHost, RecordingRenderer};
 use whisker_runtime::RuntimeWakeHandle;
 
@@ -38,6 +39,38 @@ impl MeasurementHost for NoMeasurement {
 #[derive(Default)]
 struct PendingTextMeasurement {
     request: Option<MeasurementRequest>,
+}
+
+#[derive(Default)]
+struct ReadyTextMeasurement {
+    calls: Vec<Vec<MeasurementRequest>>,
+}
+
+impl MeasurementHost for ReadyTextMeasurement {
+    type Error = Infallible;
+
+    fn measure_batch(
+        &mut self,
+        _surface: SurfaceId,
+        requests: &[MeasurementRequest],
+        responses: &mut Vec<MeasurementResponse>,
+    ) -> Result<(), Self::Error> {
+        self.calls.push(requests.to_vec());
+        responses.extend(requests.iter().map(|request| {
+            let MeasurementPayload::Text(text) = &request.payload else {
+                panic!("test Host only supports Text measurement")
+            };
+            MeasurementResponse::Ready {
+                key: request.key,
+                environment_epoch: request.environment_epoch,
+                metrics: MeasurementMetrics::from_size(MeasuredSize::new(
+                    text.text.chars().count() as f32 * text.style.font_size * 0.5,
+                    text.style.font_size * 1.2,
+                )),
+            }
+        }));
+        Ok(())
+    }
 }
 
 impl MeasurementHost for PendingTextMeasurement {
@@ -92,7 +125,7 @@ fn host_drives_mount_frame_pause_resume_and_unmount() {
     let first = runtime
         .drive_frame(
             1.0,
-            LayoutSize::new(200.0, 100.0),
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
             1,
             1,
             &mut measurements,
@@ -109,7 +142,7 @@ fn host_drives_mount_frame_pause_resume_and_unmount() {
         runtime
             .drive_frame(
                 2.0,
-                LayoutSize::new(200.0, 100.0),
+                StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
                 1,
                 1,
                 &mut measurements,
@@ -122,6 +155,158 @@ fn host_drives_mount_frame_pause_resume_and_unmount() {
     assert_eq!(runtime.lifecycle(), RuntimeLifecycle::Running);
     runtime.unmount().unwrap();
     assert_eq!(runtime.lifecycle(), RuntimeLifecycle::Unmounted);
+}
+
+#[test]
+fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
+    let surface = surface(36);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime
+        .mount(|| {
+            render! {
+                view(style: css!(width: vw(50), height: vh(50))) {
+                    text(value: "viewport", style: css!(font_size: rpx(75)))
+                }
+            }
+        })
+        .unwrap();
+
+    let mut measurements = ReadyTextMeasurement::default();
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            HostLayoutOptions::default(),
+        )
+        .unwrap();
+    let root = surface.root().unwrap();
+    let first_call_count = measurements.calls.len();
+    assert!(first_call_count > 0);
+    assert!(matches!(
+        sink.frames()[0].packet.header.mode,
+        FrameMode::Snapshot
+    ));
+    assert!(
+        sink.frames()[0]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| matches!(
+                operation,
+                Operation::SetLayout { node, rect }
+                    if *node == root && rect.width == 100.0 && rect.height == 50.0
+            ))
+    );
+    let first_text_sizes = measurements
+        .calls
+        .iter()
+        .flatten()
+        .map(|request| match &request.payload {
+            MeasurementPayload::Text(text) => text.style.font_size,
+            _ => unreachable!(),
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        first_text_sizes
+            .iter()
+            .all(|size| (*size - 20.0).abs() < 0.001),
+        "unexpected initial text sizes: {first_text_sizes:?}"
+    );
+
+    runtime
+        .drive_frame(
+            2.0,
+            StyleEnvironment::new(400.0, 300.0, 2.0, 14.0),
+            2,
+            2,
+            &mut measurements,
+            &mut sink,
+            HostLayoutOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        surface.environment(),
+        StyleEnvironment::new(400.0, 300.0, 2.0, 14.0)
+    );
+    assert!(measurements.calls.len() > first_call_count);
+    assert!(
+        measurements.calls[first_call_count..]
+            .iter()
+            .flatten()
+            .all(|request| {
+                matches!(
+                    &request.payload,
+                    MeasurementPayload::Text(text) if (text.style.font_size - 40.0).abs() < 0.001
+                )
+            })
+    );
+    let resized_call_count = measurements.calls.len();
+    let delta = &sink.frames()[1].packet;
+    assert_eq!(delta.header.mode, FrameMode::Delta);
+    assert_eq!(delta.header.viewport_epoch, 2);
+    assert!(delta.operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetLayout { node, rect }
+            if *node == root && rect.width == 200.0 && rect.height == 150.0
+    )));
+    assert!(delta.operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetText { content, .. }
+            if (content.payload.style.font_size - 40.0).abs() < 0.001
+    )));
+
+    let idle = runtime
+        .drive_frame(
+            3.0,
+            StyleEnvironment::new(400.0, 300.0, 2.0, 14.0),
+            2,
+            2,
+            &mut measurements,
+            &mut sink,
+            HostLayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(idle.frame.presentation.is_none());
+    assert_eq!(measurements.calls.len(), resized_call_count);
+
+    let scale_changed = runtime
+        .drive_frame(
+            4.0,
+            StyleEnvironment::new(400.0, 300.0, 3.0, 14.0),
+            3,
+            3,
+            &mut measurements,
+            &mut sink,
+            HostLayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(measurements.calls.len() > resized_call_count);
+    assert!(scale_changed.frame.presentation.is_none());
+
+    let accepted_environment = surface.environment();
+    let accepted_frames = sink.frames().len();
+    let invalid = runtime.drive_frame(
+        5.0,
+        StyleEnvironment::new(f32::NAN, 300.0, 3.0, 14.0),
+        4,
+        4,
+        &mut measurements,
+        &mut sink,
+        HostLayoutOptions::default(),
+    );
+    assert!(matches!(
+        invalid,
+        Err(RuntimeDriveError::Environment(RuntimeBindingError::Style(
+            StyleResolutionError::InvalidEnvironment
+        )))
+    ));
+    assert_eq!(surface.environment(), accepted_environment);
+    assert_eq!(sink.frames().len(), accepted_frames);
 }
 
 #[test]
@@ -155,7 +340,7 @@ fn pointer_hit_test_routes_capture_target_and_bubble_in_rust() {
     runtime
         .drive_frame(
             1.0,
-            LayoutSize::new(200.0, 100.0),
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
             1,
             1,
             &mut measurements,
@@ -226,7 +411,7 @@ fn background_completion_parks_while_paused_and_resumes_on_host_drive() {
     runtime
         .drive_frame(
             1.0,
-            LayoutSize::new(200.0, 100.0),
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
             1,
             1,
             &mut measurements,
@@ -248,7 +433,7 @@ fn background_completion_parks_while_paused_and_resumes_on_host_drive() {
     runtime
         .drive_frame(
             2.0,
-            LayoutSize::new(200.0, 100.0),
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
             1,
             1,
             &mut measurements,
@@ -313,7 +498,7 @@ fn reentrant_host_input_is_queued_until_the_event_boundary() {
         .borrow()
         .drive_frame(
             1.0,
-            LayoutSize::new(200.0, 100.0),
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
             1,
             1,
             &mut measurements,
@@ -359,7 +544,7 @@ fn deferred_measurement_event_wakes_and_completes_the_next_frame() {
     let blocked = runtime
         .drive_frame(
             1.0,
-            LayoutSize::new(200.0, 100.0),
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
             1,
             1,
             &mut measurements,
@@ -390,7 +575,7 @@ fn deferred_measurement_event_wakes_and_completes_the_next_frame() {
     let complete = runtime
         .drive_frame(
             2.0,
-            LayoutSize::new(200.0, 100.0),
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
             1,
             1,
             &mut measurements,

@@ -14,6 +14,7 @@ use crate::runtime::view::{self, Element};
 use crate::{InputDispatch, RuntimeFrame, RuntimeFrameError, RuntimeInputError, SurfaceRuntime};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{ApplyResult, InputEvent, MeasurementReady};
+use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{DeferredMeasurementApply, FrameSink, HostLayoutOptions, MeasurementHost};
 
 /// Lifecycle of one Host-mounted runtime instance.
@@ -85,6 +86,8 @@ pub enum RuntimeDriveError<HostError, SinkError> {
     Frame(RuntimeFrameError<HostError, SinkError>),
     /// A queued Host event failed validation or routing.
     Input(RuntimeInputError),
+    /// Host viewport values could not be applied to the retained style environment.
+    Environment(crate::RuntimeBindingError),
 }
 
 impl<HostError: fmt::Debug, SinkError: fmt::Debug> fmt::Display
@@ -309,12 +312,17 @@ impl RuntimeInstance {
         Ok(apply)
     }
 
-    /// Processes ready tasks and reactive changes, then produces one frame.
+    /// Applies current Host viewport metrics, processes ready tasks and reactive
+    /// changes, then produces one frame.
+    ///
+    /// The logical layout viewport is derived from `environment`, preventing
+    /// viewport-relative style resolution and Taffy root constraints from using
+    /// different dimensions.
     #[allow(clippy::too_many_arguments)]
     pub fn drive_frame<Host: MeasurementHost, Sink: FrameSink>(
         &self,
         timestamp_ms: f64,
-        viewport: LayoutSize,
+        environment: StyleEnvironment,
         environment_epoch: u64,
         viewport_epoch: u32,
         measurement_host: &mut Host,
@@ -326,6 +334,9 @@ impl RuntimeInstance {
         let surface = self.surface.clone();
         self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
+                surface
+                    .update_environment(environment)
+                    .map_err(RuntimeDriveError::Environment)?;
                 crate::runtime::drain_runtime_dispatches();
                 self.drain_pending_input()
                     .map_err(RuntimeDriveError::Input)?;
@@ -337,7 +348,10 @@ impl RuntimeInstance {
 
                 let frame = surface
                     .render_frame(
-                        viewport,
+                        LayoutSize::new(
+                            environment.viewport_width(),
+                            environment.viewport_height(),
+                        ),
                         environment_epoch,
                         viewport_epoch,
                         measurement_host,
