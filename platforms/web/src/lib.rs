@@ -15,7 +15,6 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::{Element, RuntimeInstance, SurfaceRuntime};
-use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{FrameSink, HostLayoutOptions, MeasurementHost};
 use whisker_protocol::{
     ApplyResult, AvailableSpace, BorderLineStyle, FrameMode, FramePacket, MeasureFontFamily,
@@ -150,7 +149,7 @@ impl WebApplication {
             .runtime
             .drive_frame(
                 timestamp_ms,
-                LayoutSize::new(self.viewport.0, self.viewport.1),
+                StyleEnvironment::new(self.viewport.0, self.viewport.1, self.viewport.2, 16.0),
                 self.environment_epoch,
                 self.viewport_epoch,
                 &mut self.measurements,

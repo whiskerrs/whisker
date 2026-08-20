@@ -1310,7 +1310,12 @@ frame packets. Initial DOM and macOS Host slices now provide CNG composition
 roots, Host-driven frame scheduling, measurement, and frame consumption; DOM
 covers the built-in
 box/text paint subset, while macOS retains a recording sink until native GPU
-paint lands.
+paint lands. Each Host samples its current logical viewport and scale before a
+frame. `RuntimeInstance` applies that `StyleEnvironment`, transactionally
+re-resolves retained `vw`, `vh`, `rpx`, and other environment-dependent styles,
+derives the Taffy root constraints from the same values, and uses Host-owned
+environment and viewport epochs to invalidate measurements and identify the
+resulting packet.
 
 ## Renderer events: Host to Rust
 

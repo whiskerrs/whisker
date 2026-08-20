@@ -20,7 +20,6 @@ use std::time::Instant;
 
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::{Element, RuntimeInstance, SurfaceRuntime};
-use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{HostLayoutOptions, MeasurementHost, RecordingRenderer};
 use whisker_protocol::{
     AvailableSpace, MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
@@ -176,10 +175,16 @@ impl MacosApplication {
             return;
         };
         let logical = self.viewport.to_logical::<f32>(window.scale_factor());
+        let environment = StyleEnvironment::new(
+            logical.width,
+            logical.height,
+            window.scale_factor() as f32,
+            14.0,
+        );
         let timestamp_ms = self.started_at.elapsed().as_secs_f64() * 1000.0;
         match runtime.drive_frame(
             timestamp_ms,
-            LayoutSize::new(logical.width, logical.height),
+            environment,
             self.environment_epoch,
             self.viewport_epoch,
             &mut self.measurements,
