@@ -330,14 +330,10 @@ impl DomFrameSink {
 
     fn apply_operation(&mut self, operation: &Operation) -> Result<(), WebHostError> {
         match operation {
-            Operation::CreateNode { node, element_type } => {
+            Operation::CreateNode { node, .. } => {
                 let element = self
                     .document
-                    .create_element(if element_type.get() == 3 {
-                        "div"
-                    } else {
-                        "div"
-                    })
+                    .create_element("div")
                     .map_err(|error| js_error("create Whisker DOM node", error))?;
                 element
                     .set_attribute("data-whisker-node", &node.get().to_string())
