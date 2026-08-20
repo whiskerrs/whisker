@@ -302,6 +302,8 @@ struct DomFrameSink {
     projection: SceneProjection,
     nodes: HashMap<NodeId, web_sys::Element>,
     parents: HashMap<NodeId, NodeId>,
+    layouts: HashMap<NodeId, whisker_protocol::LayoutGeometry>,
+    text_nodes: HashMap<NodeId, web_sys::Element>,
 }
 
 impl DomFrameSink {
@@ -312,6 +314,8 @@ impl DomFrameSink {
             projection: SceneProjection::new(surface),
             nodes: HashMap::new(),
             parents: HashMap::new(),
+            layouts: HashMap::new(),
+            text_nodes: HashMap::new(),
         }
     }
 
@@ -320,6 +324,8 @@ impl DomFrameSink {
             self.root.set_inner_html("");
             self.nodes.clear();
             self.parents.clear();
+            self.layouts.clear();
+            self.text_nodes.clear();
         }
         for operation in &packet.operations {
             self.apply_operation(operation)?;
@@ -369,12 +375,17 @@ impl DomFrameSink {
                 }
                 self.parents.remove(child);
             }
-            Operation::SetLayout { node, rect } => {
+            Operation::SetLayout { node, geometry } => {
                 let element = self.node(*node)?;
+                let rect = geometry.border_box;
                 set_style(&element, "left", &px(rect.x))?;
                 set_style(&element, "top", &px(rect.y))?;
                 set_style(&element, "width", &px(rect.width))?;
                 set_style(&element, "height", &px(rect.height))?;
+                self.layouts.insert(*node, *geometry);
+                if let Some(text) = self.text_nodes.get(node) {
+                    position_text(text, geometry.content_box)?;
+                }
             }
             Operation::SetBoxPaint { node, paint } => {
                 let element = self.node(*node)?;
@@ -468,10 +479,28 @@ impl DomFrameSink {
                 set_style(&self.node(*node)?, "z-index", &z_order.to_string())?;
             }
             Operation::SetText { node, content } => {
-                let element = self.node(*node)?;
-                apply_text_metrics_style(&element, &content.payload)?;
-                set_style(&element, "color", &color(&content.paint.foreground))?;
-                element.set_text_content(Some(&content.payload.text));
+                let text = if let Some(text) = self.text_nodes.get(node) {
+                    text.clone()
+                } else {
+                    let text = self
+                        .document
+                        .create_element("span")
+                        .map_err(|error| js_error("create Whisker DOM text", error))?;
+                    text.set_attribute("data-whisker-text", "")
+                        .map_err(|error| js_error("mark Whisker DOM text", error))?;
+                    set_style(&text, "position", "absolute")?;
+                    self.node(*node)?
+                        .append_child(&text)
+                        .map_err(|error| js_error("attach Whisker DOM text", error))?;
+                    self.text_nodes.insert(*node, text.clone());
+                    text
+                };
+                if let Some(geometry) = self.layouts.get(node) {
+                    position_text(&text, geometry.content_box)?;
+                }
+                apply_text_metrics_style(&text, &content.payload)?;
+                set_style(&text, "color", &color(&content.paint.foreground))?;
+                text.set_text_content(Some(&content.payload.text));
             }
             Operation::SetHitTest { node, behavior } => {
                 let disabled = matches!(
@@ -520,8 +549,21 @@ impl DomFrameSink {
         for node in deleted {
             self.nodes.remove(&node);
             self.parents.remove(&node);
+            self.layouts.remove(&node);
+            self.text_nodes.remove(&node);
         }
     }
+}
+
+fn position_text(
+    element: &web_sys::Element,
+    rect: whisker_protocol::LayoutRect,
+) -> Result<(), WebHostError> {
+    set_style(element, "left", &px(rect.x))?;
+    set_style(element, "top", &px(rect.y))?;
+    set_style(element, "width", &px(rect.width))?;
+    set_style(element, "height", &px(rect.height))?;
+    set_style(element, "overflow", "hidden")
 }
 
 impl FrameSink for DomFrameSink {

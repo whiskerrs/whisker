@@ -22,9 +22,9 @@ mod validation;
 
 pub use frame::{
     BorderLineStyle, BoxClip, BoxPaint, FrameHeader, FrameMode, FramePacket, HitTestBehavior,
-    LayoutRect, Operation, OverflowClip, PROTOCOL_MAJOR, PROTOCOL_MINOR, PaintColor, PaintCorners,
-    PaintEdges, PaintLengthPercentage, ProtocolValue, ProtocolVersion, TextContent,
-    TextContentError, TextPaint, Transform, Visibility,
+    LayoutGeometry, LayoutRect, Operation, OverflowClip, PROTOCOL_MAJOR, PROTOCOL_MINOR,
+    PaintColor, PaintCorners, PaintEdges, PaintLengthPercentage, ProtocolValue, ProtocolVersion,
+    TextContent, TextContentError, TextPaint, Transform, Visibility,
 };
 pub use id::{
     CommandId, ElementTypeId, MeasurementKey, MeasurementRequestId, NodeId, PointerId,

@@ -288,6 +288,43 @@ pub struct LayoutRect {
     pub height: f32,
 }
 
+/// Complete box geometry needed by a Host to paint content without
+/// reconstructing layout-engine inputs.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LayoutGeometry {
+    /// Border box relative to the parent border-box origin.
+    pub border_box: LayoutRect,
+    /// Content box relative to this node's border-box origin.
+    pub content_box: LayoutRect,
+}
+
+impl LayoutGeometry {
+    /// Returns whether every coordinate is finite and every extent is
+    /// non-negative.
+    pub fn is_valid(self) -> bool {
+        [self.border_box, self.content_box].into_iter().all(|rect| {
+            [rect.x, rect.y, rect.width, rect.height]
+                .into_iter()
+                .all(f32::is_finite)
+                && rect.width >= 0.0
+                && rect.height >= 0.0
+        })
+    }
+}
+
+impl From<LayoutRect> for LayoutGeometry {
+    fn from(border_box: LayoutRect) -> Self {
+        Self {
+            content_box: LayoutRect {
+                width: border_box.width.max(0.0),
+                height: border_box.height.max(0.0),
+                ..LayoutRect::default()
+            },
+            border_box,
+        }
+    }
+}
+
 /// A column-major 4-by-4 transform matrix.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transform(pub [f32; 16]);
@@ -419,8 +456,8 @@ pub enum Operation {
     SetLayout {
         /// Target node.
         node: NodeId,
-        /// Resolved logical-pixel rectangle.
-        rect: LayoutRect,
+        /// Resolved border-box and content-box geometry.
+        geometry: LayoutGeometry,
     },
     /// Sets resolved background and border paint.
     SetBoxPaint {
@@ -696,6 +733,36 @@ mod tests {
     }
 
     #[test]
+    fn layout_geometry_validates_border_and_content_boxes() {
+        let border = LayoutRect {
+            x: -2.0,
+            y: 3.0,
+            width: 20.0,
+            height: 10.0,
+        };
+        let geometry = LayoutGeometry::from(border);
+        assert_eq!(geometry.border_box, border);
+        assert_eq!(geometry.content_box.width, 20.0);
+        assert_eq!(geometry.content_box.height, 10.0);
+        assert!(geometry.is_valid());
+
+        let negative_border = LayoutGeometry::from(LayoutRect {
+            width: -1.0,
+            height: -2.0,
+            ..LayoutRect::default()
+        });
+        assert_eq!(negative_border.content_box.width, 0.0);
+        assert_eq!(negative_border.content_box.height, 0.0);
+        assert!(!negative_border.is_valid());
+
+        let mut invalid_content = geometry;
+        invalid_content.content_box.height = f32::NAN;
+        assert!(!invalid_content.is_valid());
+        invalid_content.content_box.height = -1.0;
+        assert!(!invalid_content.is_valid());
+    }
+
+    #[test]
     fn target_node_covers_every_operation_group() {
         let target = node(1);
         let child = node(2);
@@ -726,7 +793,7 @@ mod tests {
             },
             Operation::SetLayout {
                 node: target,
-                rect: LayoutRect::default(),
+                geometry: LayoutGeometry::default(),
             },
             Operation::SetBoxPaint {
                 node: target,

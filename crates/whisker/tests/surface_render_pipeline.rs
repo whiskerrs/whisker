@@ -122,7 +122,7 @@ fn render_text_reaches_measured_frame_and_paint_only_delta() {
         |operation| matches!(operation, Operation::InsertChild { child, .. } if *child == text_node)
     ));
     assert!(snapshot.operations.iter().any(
-        |operation| matches!(operation, Operation::SetLayout { node, rect } if *node == text_node && rect.width == 50.0 && rect.height == 24.0)
+        |operation| matches!(operation, Operation::SetLayout { node, geometry } if *node == text_node && geometry.border_box.width == 50.0 && geometry.border_box.height == 24.0)
     ));
     with_installed_renderer(surface.renderer(), || {
         value.set(String::from("hello world"));
@@ -158,7 +158,7 @@ fn render_text_reaches_measured_frame_and_paint_only_delta() {
                 && content.prepared_content.is_some()
     )));
     assert!(text_delta.operations.iter().any(
-        |operation| matches!(operation, Operation::SetLayout { node, rect } if *node == text_node && rect.width == 110.0 && rect.height == 24.0)
+        |operation| matches!(operation, Operation::SetLayout { node, geometry } if *node == text_node && geometry.border_box.width == 110.0 && geometry.border_box.height == 24.0)
     ));
     let measurement_calls = host.calls.len();
 

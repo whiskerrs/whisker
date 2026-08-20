@@ -6,7 +6,7 @@ use std::fmt;
 
 use whisker_protocol::{
     BoxClip, BoxPaint, CommandId, ElementTypeId, FrameHeader, FrameMode, FramePacket,
-    HitTestBehavior, InputPoint, LayoutRect, NodeId, Operation, OverflowClip, PointerId,
+    HitTestBehavior, InputPoint, LayoutGeometry, NodeId, Operation, OverflowClip, PointerId,
     PropertyId, ProtocolValue, ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError,
     Transform, Visibility,
 };
@@ -17,7 +17,7 @@ pub struct SceneNode {
     element_type: ElementTypeId,
     parent: Option<NodeId>,
     children: Vec<NodeId>,
-    layout: Option<LayoutRect>,
+    layout: Option<LayoutGeometry>,
     box_paint: Option<BoxPaint>,
     clip: Option<BoxClip>,
     transform: Option<Transform>,
@@ -65,6 +65,11 @@ impl SceneNode {
     /// Returns children in logical presentation order.
     pub fn children(&self) -> &[NodeId] {
         &self.children
+    }
+
+    /// Returns the retained border-box and content-box geometry.
+    pub const fn layout(&self) -> Option<LayoutGeometry> {
+        self.layout
     }
 
     /// Returns retained plain-text presentation when this is a text node.
@@ -335,10 +340,10 @@ impl Scene {
             return None;
         }
         let layout = state.layout?;
-        let x = parent_x + layout.x;
-        let y = parent_y + layout.y;
-        let contains_x = point.x >= x && point.x <= x + layout.width;
-        let contains_y = point.y >= y && point.y <= y + layout.height;
+        let x = parent_x + layout.border_box.x;
+        let y = parent_y + layout.border_box.y;
+        let contains_x = point.x >= x && point.x <= x + layout.border_box.width;
+        let contains_y = point.y >= y && point.y <= y + layout.border_box.height;
         let contains = contains_x && contains_y;
         let children_clipped = state.clip.is_some_and(|clip| {
             (clip.horizontal == OverflowClip::Hidden && !contains_x)
@@ -516,23 +521,27 @@ impl Scene {
     }
 
     /// Sets resolved layout when it differs from retained state.
-    pub fn set_layout(&mut self, node: NodeId, rect: LayoutRect) -> Result<(), SceneError> {
+    pub fn set_layout(
+        &mut self,
+        node: NodeId,
+        geometry: impl Into<LayoutGeometry>,
+    ) -> Result<(), SceneError> {
         self.ensure_mutable()?;
-        if ![rect.x, rect.y, rect.width, rect.height]
-            .into_iter()
-            .all(f32::is_finite)
-        {
+        let geometry = geometry.into();
+        if !geometry.is_valid() {
             return Err(SceneError::NonFiniteNumber);
         }
-        if self.require_node(node)?.layout == Some(rect) {
+        if self.require_node(node)?.layout == Some(geometry) {
             return Ok(());
         }
         self.nodes
             .get_mut(&node)
             .expect("node checked above")
-            .layout = Some(rect);
-        self.journal
-            .push_coalesced(DirtySlot::Layout(node), Operation::SetLayout { node, rect });
+            .layout = Some(geometry);
+        self.journal.push_coalesced(
+            DirtySlot::Layout(node),
+            Operation::SetLayout { node, geometry },
+        );
         Ok(())
     }
 
@@ -968,8 +977,11 @@ impl Scene {
             }
         }
         for (node, state) in &self.nodes {
-            if let Some(rect) = state.layout {
-                operations.push(Operation::SetLayout { node: *node, rect });
+            if let Some(geometry) = state.layout {
+                operations.push(Operation::SetLayout {
+                    node: *node,
+                    geometry,
+                });
             }
             if let Some(paint) = &state.box_paint {
                 operations.push(Operation::SetBoxPaint {
@@ -1051,10 +1063,10 @@ mod tests {
     use super::*;
     use crate::{FrameSink, RecordingRenderer};
     use whisker_protocol::{
-        ApplyResult, BorderLineStyle, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
-        MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, PaintColor, PaintCorners,
-        PaintEdges, PaintLengthPercentage, TextContentError, TextMeasurePayload, TextMeasureStyle,
-        ValidationError,
+        ApplyResult, BorderLineStyle, LayoutRect, MeasureFontFamily, MeasureFontStyle,
+        MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, PaintColor,
+        PaintCorners, PaintEdges, PaintLengthPercentage, TextContentError, TextMeasurePayload,
+        TextMeasureStyle, ValidationError,
     };
 
     fn surface() -> SurfaceId {
@@ -1224,6 +1236,7 @@ mod tests {
         assert_eq!(root_state.element_type(), element_type(1));
         assert_eq!(root_state.parent(), None);
         assert_eq!(root_state.children(), &[child]);
+        assert_eq!(root_state.layout(), Some(rect.into()));
         assert_eq!(root_state.text(), Some(&text));
         assert_eq!(root_state.box_paint(), Some(&paint));
         assert_eq!(root_state.clip(), Some(clip));

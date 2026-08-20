@@ -6,31 +6,38 @@
 //! [`whisker::RuntimeInstance`] owns application state, layout, and frame
 //! production.
 //!
-//! The first implementation establishes the lifecycle boundary only. It
-//! accepts and validates frame packets and uses deterministic mock intrinsic
-//! text metrics. Native text shaping and GPU painting replace those two seams
-//! without changing application bootstrap or frame scheduling.
+//! The Host retains accepted semantic frames in a [`DesktopSurface`]-style
+//! projection, shapes text with the platform font collection, and paints the
+//! resulting display list through Metal via `wgpu`. Runtime state and Taffy
+//! remain above this crate; GPU resources and prepared glyph buffers remain
+//! below it.
 
 #![cfg(target_os = "macos")]
 #![warn(missing_docs)]
 
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 use std::time::Instant;
 
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::{Element, RuntimeInstance, SurfaceRuntime};
-use whisker_engine::{HostLayoutOptions, MeasurementHost, RecordingRenderer};
-use whisker_protocol::{
-    AvailableSpace, MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
-    MeasurementResponse, PreparedContentId, SurfaceId,
-};
+use whisker_engine::HostLayoutOptions;
+use whisker_protocol::SurfaceId;
 use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowAttributes, WindowId};
+
+mod gpu;
+mod scene;
+mod surface;
+mod text;
+
+use surface::DesktopSurface;
+use text::NativeTextHost;
 
 /// Configuration for one standalone macOS window.
 #[derive(Clone, Debug)]
@@ -91,10 +98,10 @@ struct MacosApplication {
     config: MacosAppConfig,
     application: fn() -> Element,
     proxy: EventLoopProxy<HostEvent>,
-    window: Option<Window>,
+    window: Option<Arc<Window>>,
     runtime: Option<RuntimeInstance>,
-    measurements: MockMeasurementHost,
-    frames: Option<RecordingRenderer>,
+    measurements: NativeTextHost,
+    surface: Option<DesktopSurface>,
     viewport: PhysicalSize<u32>,
     viewport_epoch: u32,
     environment_epoch: u64,
@@ -114,8 +121,8 @@ impl MacosApplication {
             proxy,
             window: None,
             runtime: None,
-            measurements: MockMeasurementHost,
-            frames: None,
+            measurements: NativeTextHost::new(),
+            surface: None,
             viewport: PhysicalSize::new(1, 1),
             viewport_epoch: 1,
             environment_epoch: 1,
@@ -131,9 +138,11 @@ impl MacosApplication {
         let attributes = WindowAttributes::default()
             .with_title(self.config.title.clone())
             .with_inner_size(LogicalSize::new(self.config.width, self.config.height));
-        let window = event_loop
-            .create_window(attributes)
-            .map_err(|error| MacosHostError(format!("create macOS window: {error}")))?;
+        let window = Arc::new(
+            event_loop
+                .create_window(attributes)
+                .map_err(|error| MacosHostError(format!("create macOS window: {error}")))?,
+        );
         self.viewport = window.inner_size();
         let scale = window.scale_factor() as f32;
         let logical = self.viewport.to_logical::<f32>(window.scale_factor());
@@ -150,7 +159,10 @@ impl MacosApplication {
         runtime
             .mount(self.application)
             .map_err(|error| MacosHostError(format!("mount Whisker application: {error}")))?;
-        self.frames = Some(RecordingRenderer::new(surface_id));
+        let desktop_surface =
+            pollster::block_on(DesktopSurface::new(window.clone(), surface_id))
+                .map_err(|error| MacosHostError(format!("initialize macOS renderer: {error}")))?;
+        self.surface = Some(desktop_surface);
         self.runtime = Some(runtime);
         self.window = Some(window);
         self.request_frame();
@@ -166,11 +178,11 @@ impl MacosApplication {
     }
 
     fn drive_frame(&mut self) {
-        if self.frame_failed {
+        if self.frame_failed || self.viewport.width == 0 || self.viewport.height == 0 {
             return;
         }
-        let (Some(window), Some(runtime), Some(frames)) =
-            (&self.window, &self.runtime, &mut self.frames)
+        let (Some(window), Some(runtime), Some(surface)) =
+            (&self.window, &self.runtime, &mut self.surface)
         else {
             return;
         };
@@ -188,11 +200,23 @@ impl MacosApplication {
             self.environment_epoch,
             self.viewport_epoch,
             &mut self.measurements,
-            frames,
+            surface,
             HostLayoutOptions::default(),
         ) {
-            Ok(drive) if drive.needs_frame => window.request_redraw(),
-            Ok(_) => {}
+            Ok(drive) => {
+                if let Err(error) = surface.paint(
+                    &mut self.measurements,
+                    [logical.width, logical.height],
+                    window.scale_factor() as f32,
+                ) {
+                    self.frame_failed = true;
+                    eprintln!("whisker macOS paint failed: {error}");
+                    return;
+                }
+                if drive.needs_frame {
+                    window.request_redraw();
+                }
+            }
             Err(error) => {
                 self.frame_failed = true;
                 eprintln!("whisker macOS frame failed: {error}");
@@ -221,7 +245,7 @@ impl ApplicationHandler<HostEvent> for MacosApplication {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        if self.window.as_ref().map(Window::id) != Some(window_id) {
+        if self.window.as_ref().map(|window| window.id()) != Some(window_id) {
             return;
         }
         match event {
@@ -233,6 +257,9 @@ impl ApplicationHandler<HostEvent> for MacosApplication {
             }
             WindowEvent::Resized(size) => {
                 self.viewport = size;
+                if let Some(surface) = &mut self.surface {
+                    surface.resize(size);
+                }
                 self.viewport_epoch = self.viewport_epoch.wrapping_add(1).max(1);
                 self.environment_epoch = self.environment_epoch.wrapping_add(1).max(1);
                 self.frame_failed = false;
@@ -242,6 +269,9 @@ impl ApplicationHandler<HostEvent> for MacosApplication {
                 if let Some(window) = &self.window {
                     self.viewport = window.inner_size();
                 }
+                if let Some(surface) = &mut self.surface {
+                    surface.resize(self.viewport);
+                }
                 self.viewport_epoch = self.viewport_epoch.wrapping_add(1).max(1);
                 self.environment_epoch = self.environment_epoch.wrapping_add(1).max(1);
                 self.frame_failed = false;
@@ -250,66 +280,5 @@ impl ApplicationHandler<HostEvent> for MacosApplication {
             WindowEvent::RedrawRequested => self.drive_frame(),
             _ => {}
         }
-    }
-}
-
-/// Deterministic placeholder for the native CoreText-backed provider.
-///
-/// Keeping this behind `MeasurementHost` lets the application reach final
-/// layout and frame generation today. The next renderer slice replaces only
-/// this type with shaped CoreText/cosmic-text metrics and retained glyph data.
-struct MockMeasurementHost;
-
-impl MeasurementHost for MockMeasurementHost {
-    type Error = std::convert::Infallible;
-
-    fn measure_batch(
-        &mut self,
-        _surface: SurfaceId,
-        requests: &[MeasurementRequest],
-        responses: &mut Vec<MeasurementResponse>,
-    ) -> Result<(), Self::Error> {
-        responses.extend(requests.iter().map(|request| {
-            let (mut width, mut height, baseline) = match &request.payload {
-                MeasurementPayload::Text(text) => {
-                    let line_height = match text.style.line_height {
-                        whisker_protocol::MeasureLineHeight::Normal => text.style.font_size * 1.2,
-                        whisker_protocol::MeasureLineHeight::LogicalPixels(value) => value,
-                    };
-                    let natural_width = text.text.chars().count() as f32
-                        * (text.style.font_size * 0.55 + text.style.letter_spacing);
-                    let available_width = match request.constraints.available_space[0] {
-                        AvailableSpace::Definite(value) => value.max(0.0),
-                        AvailableSpace::MinContent | AvailableSpace::MaxContent => natural_width,
-                    };
-                    let width = natural_width.min(available_width);
-                    let lines = if width > 0.0 {
-                        (natural_width / width).ceil().max(1.0)
-                    } else {
-                        1.0
-                    };
-                    (width, line_height * lines, Some(text.style.font_size * 0.8))
-                }
-                _ => (0.0, 0.0, None),
-            };
-            if let Some(known) = request.constraints.known_dimensions[0] {
-                width = known;
-            }
-            if let Some(known) = request.constraints.known_dimensions[1] {
-                height = known;
-            }
-            MeasurementResponse::Ready {
-                key: request.key,
-                environment_epoch: request.environment_epoch,
-                metrics: MeasurementMetrics {
-                    size: MeasuredSize::new(width.max(0.0), height.max(0.0)),
-                    first_baseline: baseline,
-                    last_baseline: baseline,
-                    overflow: None,
-                    prepared_content: PreparedContentId::new(request.key.get()),
-                },
-            }
-        }));
-        Ok(())
     }
 }

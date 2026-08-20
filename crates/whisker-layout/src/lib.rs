@@ -14,7 +14,7 @@ use taffy::{
     Rect, Size, Style, TaffyTree,
 };
 pub use whisker_protocol::AvailableSpace;
-use whisker_protocol::{LayoutRect, MeasureConstraints, NodeId};
+use whisker_protocol::{LayoutGeometry, LayoutRect, MeasureConstraints, NodeId};
 use whisker_style::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, BoxSizingValue, ComputedFlexBasis,
     ComputedLayoutStyle, ComputedLengthPercentage, ComputedLengthPercentageAuto, ComputedSizeValue,
@@ -63,17 +63,17 @@ where
 /// A deterministic immutable result of one layout pass.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LayoutSnapshot {
-    boxes: BTreeMap<NodeId, LayoutRect>,
+    boxes: BTreeMap<NodeId, LayoutGeometry>,
 }
 
 impl LayoutSnapshot {
     /// Returns the border box for a node relative to its parent content origin.
-    pub fn get(&self, node: NodeId) -> Option<&LayoutRect> {
+    pub fn get(&self, node: NodeId) -> Option<&LayoutGeometry> {
         self.boxes.get(&node)
     }
 
     /// Iterates in stable node-ID order.
-    pub fn iter(&self) -> impl Iterator<Item = (NodeId, &LayoutRect)> {
+    pub fn iter(&self) -> impl Iterator<Item = (NodeId, &LayoutGeometry)> {
         self.boxes.iter().map(|(node, rect)| (*node, rect))
     }
 
@@ -180,6 +180,9 @@ struct RetainedNode {
 #[derive(Clone, Debug)]
 pub struct LayoutTree {
     backend: TaffyTree<NodeId>,
+    surface_root: taffy::NodeId,
+    surface_child: Option<NodeId>,
+    surface_viewport: Option<LayoutSize>,
     nodes: BTreeMap<NodeId, RetainedNode>,
 }
 
@@ -194,8 +197,14 @@ impl LayoutTree {
     pub fn new() -> Self {
         let mut backend = TaffyTree::new();
         backend.disable_rounding();
+        let surface_root = backend
+            .new_leaf(surface_root_style(LayoutSize::default()))
+            .expect("valid private surface-root style");
         Self {
             backend,
+            surface_root,
+            surface_child: None,
+            surface_viewport: None,
             nodes: BTreeMap::new(),
         }
     }
@@ -422,11 +431,20 @@ impl LayoutTree {
             self.backend
                 .remove(retained.backend)
                 .expect("retained backend node");
+            if self.surface_child == Some(removed) {
+                self.surface_child = None;
+            }
         }
         Ok(())
     }
 
-    /// Computes a root subtree against a finite viewport and returns its snapshot.
+    /// Computes a root subtree inside a finite surface viewport and returns its snapshot.
+    ///
+    /// The viewport is represented by a private flex-column parent. It is not
+    /// included in the returned snapshot, but gives the application root normal
+    /// child semantics: cross-axis stretching, `flex-grow`, percentages, and
+    /// absolute positioning all resolve against the surface without rewriting
+    /// the application's own style.
     pub fn compute(
         &mut self,
         root: NodeId,
@@ -444,10 +462,22 @@ impl LayoutTree {
             return Err(LayoutError::RootHasParent { root, parent });
         }
         let backend_root = retained.backend;
+        if self.surface_viewport != Some(viewport) {
+            self.backend
+                .set_style(self.surface_root, surface_root_style(viewport))
+                .expect("retained surface root");
+            self.surface_viewport = Some(viewport);
+        }
+        if self.surface_child != Some(root) {
+            self.backend
+                .set_children(self.surface_root, &[backend_root])
+                .expect("retained surface and application roots");
+            self.surface_child = Some(root);
+        }
         let mut invalid_measurement = None;
         self.backend
             .compute_layout_with_measure(
-                backend_root,
+                self.surface_root,
                 Size {
                     width: TaffyAvailableSpace::Definite(viewport.width),
                     height: TaffyAvailableSpace::Definite(viewport.height),
@@ -528,16 +558,37 @@ impl LayoutTree {
             .expect("retained backend node");
         snapshot.boxes.insert(
             node,
-            LayoutRect {
-                x: layout.location.x,
-                y: layout.location.y,
-                width: layout.size.width,
-                height: layout.size.height,
+            LayoutGeometry {
+                border_box: LayoutRect {
+                    x: layout.location.x,
+                    y: layout.location.y,
+                    width: layout.size.width,
+                    height: layout.size.height,
+                },
+                content_box: LayoutRect {
+                    x: layout.border.left + layout.padding.left,
+                    y: layout.border.top + layout.padding.top,
+                    width: layout.content_box_width().max(0.0),
+                    height: layout.content_box_height().max(0.0),
+                },
             },
         );
         for child in &retained.children {
             self.collect_snapshot(*child, snapshot);
         }
+    }
+}
+
+fn surface_root_style(viewport: LayoutSize) -> Style {
+    Style {
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        align_items: Some(AlignItems::STRETCH),
+        size: Size {
+            width: Dimension::length(viewport.width),
+            height: Dimension::length(viewport.height),
+        },
+        ..Style::default()
     }
 }
 
@@ -822,9 +873,11 @@ mod tests {
             snapshot.iter().map(|(node, _)| node).collect::<Vec<_>>(),
             [root, first, second]
         );
-        assert_eq!(snapshot.get(root).unwrap().width, 100.5);
-        assert_eq!(snapshot.get(second).unwrap().x, 0.25);
-        assert_eq!(snapshot.get(first).unwrap().x, 10.25);
+        assert_eq!(snapshot.get(root).unwrap().border_box.width, 100.5);
+        assert_eq!(snapshot.get(root).unwrap().content_box.x, 0.25);
+        assert_eq!(snapshot.get(root).unwrap().content_box.width, 100.25);
+        assert_eq!(snapshot.get(second).unwrap().border_box.x, 0.25);
+        assert_eq!(snapshot.get(first).unwrap().border_box.x, 10.25);
         assert!(requests.len() >= 2);
         assert!(requests.iter().any(|(node, _)| *node == first));
         assert!(requests.iter().any(|(node, _)| *node == second));
@@ -856,13 +909,16 @@ mod tests {
         };
         tree.compute(root, LayoutSize::new(100.0, 100.0), &mut measure)
             .unwrap();
+        let first_pass_calls = calls.get();
+        assert!(first_pass_calls > 0);
         tree.compute(root, LayoutSize::new(100.0, 100.0), &mut measure)
             .unwrap();
-        assert_eq!(calls.get(), 1);
+        assert_eq!(calls.get(), first_pass_calls);
         tree.invalidate_measurement(root).unwrap();
         tree.compute(root, LayoutSize::new(100.0, 100.0), &mut measure)
             .unwrap();
-        assert_eq!(calls.get(), 2);
+        let invalidated_pass_calls = calls.get();
+        assert!(invalidated_pass_calls > first_pass_calls);
 
         tree.invalidate_measurement(root).unwrap();
         assert_eq!(
@@ -873,13 +929,108 @@ mod tests {
         );
         tree.compute(root, LayoutSize::new(100.0, 100.0), &mut measure)
             .unwrap();
-        assert_eq!(calls.get(), 3);
+        assert!(calls.get() > invalidated_pass_calls);
         tree.set_measurable(root, false).unwrap();
         tree.set_measurable(root, false).unwrap();
         let snapshot = tree
             .compute(root, LayoutSize::new(100.0, 100.0), &mut zero_measure)
             .unwrap();
-        assert_eq!(snapshot.get(root).unwrap().width, 0.0);
+        assert_eq!(snapshot.get(root).unwrap().border_box.width, 100.0);
+        assert_eq!(snapshot.get(root).unwrap().border_box.height, 0.0);
+    }
+
+    #[test]
+    fn private_surface_root_supplies_viewport_child_semantics() {
+        let root = id(1);
+        let mut tree = LayoutTree::new();
+        let style = ComputedLayoutStyle {
+            flex_grow: StyleNumber::new(1.0),
+            ..ComputedLayoutStyle::default()
+        };
+        tree.create_node(root, style).unwrap();
+
+        let first = tree
+            .compute(root, LayoutSize::new(320.0, 240.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            first.get(root).unwrap().border_box,
+            LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 320.0,
+                height: 240.0,
+            }
+        );
+
+        let resized = tree
+            .compute(root, LayoutSize::new(480.0, 300.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(
+            resized.get(root).unwrap().border_box,
+            LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 480.0,
+                height: 300.0,
+            }
+        );
+    }
+
+    #[test]
+    fn surface_root_is_the_containing_block_for_absolute_application_root() {
+        let root = id(1);
+        let mut tree = LayoutTree::new();
+        let mut style = ComputedLayoutStyle {
+            position: PositionValue::Absolute,
+            size: Axes {
+                width: ComputedSizeValue::Value(ComputedLengthPercentage::new(0.0, 0.5)),
+                height: ComputedSizeValue::Value(ComputedLengthPercentage::new(0.0, 0.25)),
+            },
+            ..ComputedLayoutStyle::default()
+        };
+        style.inset.left =
+            ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(10.0, 0.0));
+        style.inset.top =
+            ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(20.0, 0.0));
+        tree.create_node(root, style).unwrap();
+
+        let snapshot = tree
+            .compute(root, LayoutSize::new(320.0, 240.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(
+            snapshot.get(root).unwrap().border_box,
+            LayoutRect {
+                x: 10.0,
+                y: 20.0,
+                width: 160.0,
+                height: 60.0,
+            }
+        );
+    }
+
+    #[test]
+    fn surface_root_can_switch_and_reuse_application_node_ids() {
+        let first = id(1);
+        let second = id(2);
+        let mut tree = LayoutTree::new();
+        tree.create_node(first, sized(10.0, 10.0)).unwrap();
+        tree.create_node(second, sized(20.0, 20.0)).unwrap();
+
+        tree.compute(first, LayoutSize::new(100.0, 100.0), &mut zero_measure)
+            .unwrap();
+        let second_snapshot = tree
+            .compute(second, LayoutSize::new(100.0, 100.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(second_snapshot.len(), 1);
+        assert_eq!(second_snapshot.get(second).unwrap().border_box.width, 20.0);
+
+        tree.remove_subtree(second).unwrap();
+        tree.create_node(second, sized(30.0, 30.0)).unwrap();
+        let reused = tree
+            .compute(second, LayoutSize::new(100.0, 100.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(reused.get(second).unwrap().border_box.width, 30.0);
     }
 
     #[test]
@@ -1095,8 +1246,8 @@ mod tests {
         let snapshot = tree
             .compute(root, LayoutSize::new(30.0, 10.0), &mut zero_measure)
             .unwrap();
-        assert_eq!(snapshot.get(right).unwrap().x, 0.0);
-        assert_eq!(snapshot.get(left).unwrap().x, 10.0);
+        assert_eq!(snapshot.get(right).unwrap().border_box.x, 0.0);
+        assert_eq!(snapshot.get(left).unwrap().border_box.x, 10.0);
 
         let mut unsupported = sized(10.0, 10.0);
         unsupported.position = PositionValue::Fixed;

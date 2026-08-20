@@ -18,4 +18,9 @@ whisker-protocol = { workspace = true }
 whisker-style = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+csscolorparser = "0.7.2"
+glyphon = "0.9.0"
+pollster = "0.4.0"
+wgpu = { version = "25.0.2", default-features = false, features = ["metal", "wgsl"] }
 winit = { version = "0.30", default-features = false, features = ["rwh_06"] }

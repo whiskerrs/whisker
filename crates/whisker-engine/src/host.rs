@@ -300,12 +300,13 @@ mod tests {
 
         assert!(progress.has_layout());
         assert!(progress.requests().is_empty());
-        assert_eq!(host.calls.len(), 1);
-        assert_eq!(host.calls[0].0, surface.surface());
-        assert_eq!(
-            host.calls[0].1[0].payload.kind(),
-            whisker_protocol::MeasurementKind::Text
-        );
+        assert!(!host.calls.is_empty());
+        assert!(host.calls.iter().all(|(id, requests)| {
+            *id == surface.surface()
+                && requests.iter().all(|request| {
+                    request.payload.kind() == whisker_protocol::MeasurementKind::Text
+                })
+        }));
         assert_eq!(
             surface.last_measurement(root).map(|metrics| metrics.size),
             Some(MeasuredSize::new(48.0, 20.0))
@@ -364,17 +365,12 @@ mod tests {
             )
             .expect("measure and finalize first text layout");
         assert!(progress.has_layout());
-        assert_eq!(host.calls.len(), 1);
-        assert_eq!(
-            surface.last_measurement(root),
-            Some(&MeasurementMetrics {
-                size: MeasuredSize::new(45.0, 21.0),
-                first_baseline: Some(15.0),
-                last_baseline: Some(15.0),
-                overflow: None,
-                prepared_content: PreparedContentId::new(1),
-            })
-        );
+        let first_measure_batches = host.calls.len();
+        assert!(first_measure_batches > 0);
+        let first_prepared = surface
+            .last_measurement(root)
+            .and_then(|metrics| metrics.prepared_content)
+            .expect("final text measurement keeps prepared content");
 
         let first_packet = surface
             .prepare_frame(3)
@@ -390,11 +386,11 @@ mod tests {
                 .operations
                 .iter()
                 .find(|operation| matches!(operation, Operation::SetLayout { .. })),
-            Some(Operation::SetLayout { node, rect })
-                if *node == root && *rect == whisker_protocol::LayoutRect {
+            Some(Operation::SetLayout { node, geometry })
+                if *node == root && geometry.border_box == whisker_protocol::LayoutRect {
                     x: 0.0,
                     y: 0.0,
-                    width: 45.0,
+                    width: 200.0,
                     height: 21.0,
                 }
         ));
@@ -406,7 +402,7 @@ mod tests {
             Some(Operation::SetText { node, content })
                 if *node == root
                     && content.payload.text == "hello"
-                    && content.prepared_content == PreparedContentId::new(1)
+                    && content.prepared_content == Some(first_prepared)
         ));
 
         let mut renderer = RecordingRenderer::new(surface.surface());
@@ -432,7 +428,12 @@ mod tests {
                 HostLayoutOptions::default(),
             )
             .expect("measure and finalize changed text layout");
-        assert_eq!(host.calls.len(), 2);
+        let second_measure_batches = host.calls.len();
+        assert!(second_measure_batches > first_measure_batches);
+        let second_prepared = surface
+            .last_measurement(root)
+            .and_then(|metrics| metrics.prepared_content)
+            .expect("changed text keeps prepared content");
         let delta = surface
             .prepare_frame(3)
             .expect("prepare delta")
@@ -440,13 +441,10 @@ mod tests {
             .clone();
         assert!(matches!(
             delta.operations.as_slice(),
-            [Operation::SetText { node: text_node, content }, Operation::SetLayout { node: layout_node, rect }]
+            [Operation::SetText { node: text_node, content }]
                 if *text_node == root
-                    && *layout_node == root
                     && content.payload.text == "hello world"
-                    && content.prepared_content == PreparedContentId::new(2)
-                    && rect.width == 99.0
-                    && rect.height == 21.0
+                    && content.prepared_content == Some(second_prepared)
         ));
         assert_eq!(
             renderer.present(&delta),
@@ -468,7 +466,7 @@ mod tests {
                 HostLayoutOptions::default(),
             )
             .expect("equal text reuses retained layout");
-        assert_eq!(host.calls.len(), 2);
+        assert_eq!(host.calls.len(), second_measure_batches);
         assert_eq!(surface.prepare_frame(3).expect("idle prepare"), None);
     }
 
@@ -518,14 +516,12 @@ mod tests {
                 HostLayoutOptions::default(),
             )
             .expect("pending layout is valid");
+        assert_eq!(host.calls.len(), 1);
         assert!(matches!(
             progress,
-            LayoutProgress::Blocked {
-                ref requests,
-                pending: 1
-            } if requests.is_empty()
+            LayoutProgress::Blocked { requests, pending }
+                if requests.is_empty() && pending == host.calls[0].1.len()
         ));
-        assert_eq!(host.calls.len(), 1);
     }
 
     #[test]

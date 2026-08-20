@@ -38,7 +38,7 @@ impl MeasurementHost for NoMeasurement {
 
 #[derive(Default)]
 struct PendingTextMeasurement {
-    request: Option<MeasurementRequest>,
+    requests: Vec<(MeasurementRequest, MeasurementRequestId)>,
 }
 
 #[derive(Default)]
@@ -82,15 +82,16 @@ impl MeasurementHost for PendingTextMeasurement {
         requests: &[MeasurementRequest],
         responses: &mut Vec<MeasurementResponse>,
     ) -> Result<(), Self::Error> {
-        assert_eq!(requests.len(), 1);
-        let request = requests[0].clone();
-        responses.push(MeasurementResponse::Pending {
-            key: request.key,
-            environment_epoch: request.environment_epoch,
-            request_id: MeasurementRequestId::new(77).unwrap(),
-            provisional: None,
-        });
-        self.request = Some(request);
+        for request in requests {
+            let request_id = MeasurementRequestId::new(100 + request.key.get()).unwrap();
+            responses.push(MeasurementResponse::Pending {
+                key: request.key,
+                environment_epoch: request.environment_epoch,
+                request_id,
+                provisional: None,
+            });
+            self.requests.push((request.clone(), request_id));
+        }
         Ok(())
     }
 }
@@ -198,8 +199,10 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
             .iter()
             .any(|operation| matches!(
                 operation,
-                Operation::SetLayout { node, rect }
-                    if *node == root && rect.width == 100.0 && rect.height == 50.0
+                Operation::SetLayout { node, geometry }
+                    if *node == root
+                        && geometry.border_box.width == 100.0
+                        && geometry.border_box.height == 50.0
             ))
     );
     let first_text_sizes = measurements
@@ -251,8 +254,10 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
     assert_eq!(delta.header.viewport_epoch, 2);
     assert!(delta.operations.iter().any(|operation| matches!(
         operation,
-        Operation::SetLayout { node, rect }
-            if *node == root && rect.width == 200.0 && rect.height == 150.0
+        Operation::SetLayout { node, geometry }
+            if *node == root
+                && geometry.border_box.width == 200.0
+                && geometry.border_box.height == 150.0
     )));
     assert!(delta.operations.iter().any(|operation| matches!(
         operation,
@@ -307,6 +312,49 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
     ));
     assert_eq!(surface.environment(), accepted_environment);
     assert_eq!(sink.frames().len(), accepted_frames);
+}
+
+#[test]
+fn render_root_flex_grow_fills_host_viewport_without_a_protocol_node() {
+    let surface = surface(37);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime
+        .mount(|| render! { view(style: css!(flex_grow: 1.0)) })
+        .unwrap();
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(320.0, 240.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            HostLayoutOptions::default(),
+        )
+        .unwrap();
+
+    let root = surface.root().unwrap();
+    let packet = &sink.frames()[0].packet;
+    assert_eq!(
+        packet
+            .operations
+            .iter()
+            .filter(|operation| matches!(operation, Operation::CreateNode { .. }))
+            .count(),
+        1
+    );
+    assert!(packet.operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetLayout { node, geometry }
+            if *node == root
+                && geometry.border_box.x == 0.0
+                && geometry.border_box.y == 0.0
+                && geometry.border_box.width == 320.0
+                && geometry.border_box.height == 240.0
+    )));
 }
 
 #[test]
@@ -554,31 +602,34 @@ fn deferred_measurement_event_wakes_and_completes_the_next_frame() {
         .unwrap();
     assert!(!blocked.frame.layout.has_layout());
     assert!(blocked.frame.presentation.is_none());
-    let request = measurements.request.clone().unwrap();
+    assert!(!measurements.requests.is_empty());
     let before = wakes.load(Ordering::SeqCst);
-    runtime
-        .measurement_ready(&MeasurementReady {
-            key: request.key,
-            request_id: MeasurementRequestId::new(77).unwrap(),
-            environment_epoch: request.environment_epoch,
-            metrics: MeasurementMetrics {
-                size: MeasuredSize::new(64.0, 20.0),
-                first_baseline: Some(15.0),
-                last_baseline: Some(15.0),
-                overflow: None,
-                prepared_content: None,
-            },
-        })
-        .unwrap();
+    for (request, request_id) in &measurements.requests {
+        runtime
+            .measurement_ready(&MeasurementReady {
+                key: request.key,
+                request_id: *request_id,
+                environment_epoch: request.environment_epoch,
+                metrics: MeasurementMetrics {
+                    size: MeasuredSize::new(64.0, 20.0),
+                    first_baseline: Some(15.0),
+                    last_baseline: Some(15.0),
+                    overflow: None,
+                    prepared_content: None,
+                },
+            })
+            .unwrap();
+    }
     assert!(wakes.load(Ordering::SeqCst) > before);
 
+    let mut ready_measurements = ReadyTextMeasurement::default();
     let complete = runtime
         .drive_frame(
             2.0,
             StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
             1,
             1,
-            &mut measurements,
+            &mut ready_measurements,
             &mut sink,
             HostLayoutOptions::default(),
         )
