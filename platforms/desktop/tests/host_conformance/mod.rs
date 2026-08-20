@@ -1,4 +1,10 @@
 use serde::Deserialize;
+use whisker::SurfaceRuntime;
+use whisker::css::BorderStyle;
+use whisker::prelude::*;
+use whisker::runtime::reactive::{__reset_for_tests, Owner};
+use whisker::runtime::view::{set_root, with_installed_renderer};
+use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{FrameSink, MeasurementHost};
 use whisker_protocol::{
     AvailableSpace, BorderLineStyle, BoxPaint, ElementTypeId, FrameHeader, FrameMode, FramePacket,
@@ -9,9 +15,10 @@ use whisker_protocol::{
     PaintLengthPercentage, PointerId, PointerInput, PointerKind, ProtocolValue, ProtocolVersion,
     SurfaceId, TextMeasurePayload, TextMeasureStyle,
 };
+use whisker_style::StyleEnvironment;
 
 use crate::gpu::render_box_primitives_offscreen;
-use crate::paint::box_paint::{BoxPrimitive, lower_box};
+use crate::paint::box_paint::{BoxPrimitive, BoxPrimitiveKind, lower_box};
 use crate::scene::{DesktopScene, PaintCommand};
 use crate::text::NativeTextHost;
 
@@ -750,6 +757,95 @@ fn core_pointer_input_reaches_mock_runtime_sink() {
     Driver::new().execute(&ScenarioSide {
         commands: scenario.commands,
     });
+}
+
+#[test]
+fn render_taffy_protocol_and_desktop_box_paint_compose() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface_id = SurfaceId::new(17).expect("test surface");
+    let surface = SurfaceRuntime::new(surface_id, StyleEnvironment::new(100.0, 100.0, 1.0, 14.0));
+    let _root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(100))
+                    .height(px(100))
+                    .background_color(Color::rgb(0, 255, 255))
+                    .border_top_width(px(10))
+                    .border_right_width(px(10))
+                    .border_bottom_width(px(10))
+                    .border_left_width(px(10))
+                    .border_top_color(Color::rgb(0, 0, 0))
+                    .border_right_color(Color::rgb(0, 0, 0))
+                    .border_bottom_color(Color::rgb(0, 0, 0))
+                    .border_left_color(Color::rgb(0, 0, 0))
+                    .border_top_style(BorderStyle::Solid)
+                    .border_right_style(BorderStyle::Solid)
+                    .border_bottom_style(BorderStyle::Solid)
+                    .border_left_style(BorderStyle::Solid)
+                    .border_top_left_radius(px(60))
+                    .border_top_right_radius(px(150))
+                    .border_bottom_right_radius(px(30))
+                    .border_bottom_left_radius(px(30)))
+            }
+        });
+        set_root(root);
+        root
+    });
+
+    let mut measurement = NativeTextHost::new();
+    let mut scene = DesktopScene::new(surface_id);
+    let frame = surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut measurement,
+            &mut scene,
+            whisker_engine::HostLayoutOptions::default(),
+        )
+        .expect("render!, Taffy, protocol, and Desktop scene compose");
+    assert!(frame.layout.has_layout());
+    assert!(frame.presentation.is_some());
+
+    let mut primitives = Vec::new();
+    for command in scene.paint_commands() {
+        if let PaintCommand::Box {
+            rect,
+            paint,
+            opacity,
+            ..
+        } = command
+        {
+            assert_close(rect.width, 100.0, "Taffy border-box width");
+            assert_close(rect.height, 100.0, "Taffy border-box height");
+            lower_box(rect, paint, opacity, |primitive| {
+                primitives.push(primitive);
+            });
+        }
+    }
+    assert_eq!(primitives.len(), 2);
+    let border = primitives
+        .iter()
+        .find(|primitive| primitive.kind == BoxPrimitiveKind::Border)
+        .expect("solid border primitive");
+    assert_close(
+        border.outer_radii_x[0],
+        100.0 * 60.0 / 210.0,
+        "normalized top-left radius",
+    );
+    assert_close(
+        border.outer_radii_x[1],
+        100.0 * 150.0 / 210.0,
+        "normalized top-right radius",
+    );
+
+    let pixels = pollster::block_on(render_box_primitives_offscreen(&primitives, [100, 100]))
+        .expect("production Desktop box pipeline renders offscreen");
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] > 0));
+
+    with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
 #[test]
