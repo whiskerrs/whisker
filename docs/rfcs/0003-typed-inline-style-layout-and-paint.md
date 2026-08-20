@@ -396,6 +396,15 @@ reparent/reorder, style replacement, intrinsic-measure invalidation, and
 viewport computation. Fractional logical coordinates are preserved so that
 physical-pixel snapping remains a renderer concern.
 
+Viewport computation uses an internal fixed-size flex-column `SurfaceRoot`
+above the application root. The synthetic node supplies the viewport
+containing block and normal flex-parent semantics, but is excluded from the
+public retained tree and from every `LayoutSnapshot`. In particular,
+`flex-grow: 1` on the application root fills the logical viewport while a root
+with an explicit size keeps that size; percentage and absolute root geometry
+resolve against the same viewport. Resize updates only the synthetic root's
+constraints and then recomputes the user-authored subtree.
+
 This first slice explicitly rejects, rather than approximates, backend gaps:
 mixed non-zero length-plus-percentage values, intrinsic size keywords,
 `flex-basis: content`, and fixed/sticky positioning. `linear` currently lowers

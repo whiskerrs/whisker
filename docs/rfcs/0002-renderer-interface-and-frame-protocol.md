@@ -1323,6 +1323,16 @@ derives the Taffy root constraints from the same values, and uses Host-owned
 environment and viewport epochs to invalidate measurements and identify the
 resulting packet.
 
+Layout represents the viewport as a private `SurfaceRoot`: a fixed-size
+flex-column node whose only child is the application root produced by
+`render!`. The node is owned entirely by `whisker-layout`; it has no public
+`NodeId`, is never included in `LayoutSnapshot`, and therefore never appears in
+the frame protocol. This gives the application root ordinary child semantics:
+cross-axis stretch, `flex-grow`, percentage sizing, and absolute positioning
+resolve against the current viewport without mutating or overriding the
+application's computed style. A viewport change updates the private root and
+recomputes the application subtree before a packet is prepared.
+
 ## Renderer events: Host to Rust
 
 The reverse callback interface carries typed events:
