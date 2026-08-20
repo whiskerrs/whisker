@@ -11,6 +11,7 @@
 //! text metrics. Native text shaping and GPU painting replace those two seams
 //! without changing application bootstrap or frame scheduling.
 
+#![cfg(target_os = "macos")]
 #![warn(missing_docs)]
 
 use std::error::Error;

@@ -1,11 +1,17 @@
 //! `whisker build macos` — release build of the CNG-generated macOS project.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
 use clap::Args as ClapArgs;
 use std::path::PathBuf;
+
+#[cfg(target_os = "macos")]
+use anyhow::{Context, anyhow};
+#[cfg(target_os = "macos")]
 use whisker_build::Profile;
+#[cfg(target_os = "macos")]
 use whisker_dev_server::Target;
 
+#[cfg(target_os = "macos")]
 use crate::{manifest, platforms};
 
 #[derive(ClapArgs, Debug)]
@@ -16,10 +22,13 @@ pub struct Args {
     manifest_path: Option<PathBuf>,
 }
 
-pub fn run(args: Args) -> Result<()> {
-    #[cfg(not(target_os = "macos"))]
-    anyhow::bail!("`whisker build macos` must run on macOS");
+#[cfg(not(target_os = "macos"))]
+pub fn run(_args: Args) -> Result<()> {
+    anyhow::bail!("`whisker build macos` must run on macOS")
+}
 
+#[cfg(target_os = "macos")]
+pub fn run(args: Args) -> Result<()> {
     let manifest = manifest::resolve(args.manifest_path.as_deref())?;
     let workspace_root = crate::run::find_workspace_root(&manifest.crate_dir).ok_or_else(|| {
         anyhow!(

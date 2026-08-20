@@ -16,4 +16,6 @@ whisker = { workspace = true }
 whisker-engine = { workspace = true }
 whisker-protocol = { workspace = true }
 whisker-style = { workspace = true }
-winit = "0.30"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
