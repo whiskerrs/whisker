@@ -189,45 +189,72 @@ content in another declarative UI framework or run a competing inner layout.
 
 ### Desktop package and dependency policy
 
-Desktop presentation information and implementation are divided at the OS
-boundary under `platforms/macos`, `platforms/windows`, and `platforms/linux`.
-They are platform Host crates rather than a second cross-platform UI
-framework. Each owns its window/event loop, surface lifecycle, accepted Host
-projection, text shaping and rasterization, glyph and image atlases, GPU
-renderer and shaders, input/IME, accessibility, and native custom-element
-providers. Small implementation-only crates may be shared when semantics are
-actually identical, but there is no mandatory `platforms/desktop` facade.
+Desktop has one common native Host implementation under `platforms/desktop`.
+It owns the `winit` lifecycle shared by the supported desktop targets, surface
+lifecycle, accepted Host projection, text shaping and rasterization, glyph and
+image atlases, the `wgpu` renderer and shaders, common input translation, and
+the common accessibility projection. GPU backend selection is static and
+target-specific: Metal on macOS, Direct3D 12 on Windows, and Vulkan, with an
+explicit fallback only where required, on Linux.
+
+Thin crates under `platforms/macos`, `platforms/windows`, and
+`platforms/linux` are OS adapters. They own only behavior that is not actually
+portable: application activation and packaging hooks, target-specific window
+extensions, IME and clipboard integration, native menus, accessibility
+attachment, and other OS services. They must not copy the scene projection,
+paint lowering, shaders, batching, glyph preparation, or GPU resource
+lifetime code merely to preserve an OS directory boundary.
+
 Common semantic values remain in `whisker-protocol`; OS-native handles and
-render primitives must not leak back into protocol, engine, runtime, or
-application crates.
+Desktop render primitives must not leak back into protocol, engine, runtime,
+or application crates. Conversely, `platforms/desktop` is a Host crate and
+must not expose its GPU or window types to Whisker core.
 
 The intended internal ownership is:
 
 ```text
-platforms/macos/                 # corresponding crates for windows and linux
+platforms/desktop/
   Cargo.toml
   src/
     lib.rs
-    host.rs
+    app.rs
     surface.rs
-    window.rs
-    measurement.rs
-    input.rs
+    scene.rs
+    measurement/{mod.rs, text.rs}
+    paint/{mod.rs, box.rs, text.rs, clip.rs, transform.rs,
+           composite.rs, image.rs, effects.rs}
+    gpu/{mod.rs, renderer.rs, pipeline.rs, atlas.rs, shaders/...}
+    input/{mod.rs, pointer.rs, keyboard.rs, ime.rs}
     accessibility.rs
-    paint/{mod.rs, scene.rs, primitive.rs, batching.rs}
-    gpu/{mod.rs, renderer.rs, atlas.rs, shaders/...}
+
+platforms/macos/                 # thin OS adapters; same shape for peers
+platforms/windows/
+platforms/linux/
 ```
 
 This is a responsibility map rather than a permanently fixed module layout.
-Moving a file does not change the protocol, but moving a Desktop-native type
-into a common crate does change the architecture and requires review.
+The paint modules correspond to Host capabilities and protocol operations,
+not to individual CSS property spellings. Layout-only properties have no Host
+implementation, while shorthands and logical properties are normalized in
+Rust before a Host sees a frame. This keeps the Android, iOS, Web, and Desktop
+Host trees visually symmetric without introducing one object, trait call, or
+allocation per property.
+
+Source-file boundaries are not runtime boundaries. The Desktop frame hot path
+stays in one crate, uses an exhaustive static match over protocol operations,
+builds data-oriented paint batches, and submits them directly to `wgpu`.
+Dynamic dispatch between property handlers and per-operation calls through an
+OS adapter are prohibited. An OS adapter may be entered at lifecycle, native
+event, or whole-frame boundaries where the cost is not proportional to scene
+size.
 
 The dependency direction is one-way:
 
 ```text
 generated Desktop executable
   -> application and Whisker runtime/engine
-  -> selected platforms/{macos,windows,linux} Host
+  -> selected platforms/{macos,windows,linux} adapter
+       -> platforms/desktop common Host
        -> whisker-protocol and the narrow engine Host traits
        -> window, GPU, text, geometry, and accessibility libraries
 ```
@@ -1307,15 +1334,17 @@ Lynx-free, minimal Android and UIKit applications that `whisker run` can build,
 install, and launch; these shells do not yet mount `RuntimeInstance` or consume
 frame packets. Initial DOM and macOS Host slices now provide CNG composition
 roots, Host-driven frame scheduling, measurement, and frame consumption; DOM
-covers the built-in
-box/text paint subset. macOS now retains accepted packets in a native Host
-projection, measures and shapes text with `cosmic-text`, reuses the resulting
-`PreparedContentId` for glyph paint, and submits common box, rectangular clip,
-and text draws through Metal via `wgpu`. Layout packets carry both border-box
-and content-box geometry so Hosts never reconstruct padding or borders from
-style inputs. Rounded/path clips, exact non-solid borders, transforms, group
-compositing, ellipsis/forced-direction text behavior, input, and accessibility
-remain explicit macOS conformance gaps.
+covers the built-in box/text paint subset. The first Desktop implementation is
+currently located in `platforms/macos`: it retains accepted packets in a
+native Host projection, measures and shapes text with `cosmic-text`, reuses the
+resulting `PreparedContentId` for glyph paint, and submits common box,
+rectangular clip, and text draws through Metal via `wgpu`. Its portable window,
+scene, measurement, and GPU code will move unchanged to `platforms/desktop`,
+leaving `platforms/macos` as the first thin OS adapter. Layout packets carry
+both border-box and content-box geometry so Hosts never reconstruct padding or
+borders from style inputs. Rounded/path clips, exact non-solid borders,
+transforms, group compositing, ellipsis/forced-direction text behavior, input,
+and accessibility remain explicit Desktop conformance gaps.
 Each Host samples its current logical viewport and scale before a frame.
 `RuntimeInstance` applies that `StyleEnvironment`, transactionally
 re-resolves retained `vw`, `vh`, `rpx`, and other environment-dependent styles,
@@ -1449,10 +1478,120 @@ packets and can maintain a reference scene projection. Tests can assert:
 - custom element registration and command encoding;
 - full snapshot recovery after a simulated dropped packet.
 
-The protocol decoder should be fuzzed independently. Each Host backend gets a
-conformance suite that replays shared packet fixtures and reports its projected
-tree. Visual/platform tests remain necessary for text and paint fidelity but
-are not required to test engine or protocol correctness.
+The protocol decoder should be fuzzed independently.
+
+### Host-only conformance driver
+
+Every Host must also be executable as a system under test without mounting a
+Whisker application or starting `RuntimeInstance`. A test-only Host
+conformance driver replaces only the two peers at the Host boundary:
+
+- a scenario source stands in for Rust and supplies surface facts,
+  `MeasurementRequest` batches, accepted `FramePacket`s, clock advances, and
+  synthetic native input;
+- a recording event sink stands in for Rust in the reverse direction and
+  captures frame requests, viewport/resource notifications, and typed input
+  events.
+
+The driver must call the production surface attachment, measurement, packet
+application, paint, and native-event conversion paths. A second test renderer,
+test-only CSS interpreter, or alternate Host scene is not conforming because
+it could pass while the shipped path fails. Test fixture decoding and
+observation hooks are excluded from release builds and do not constrain the
+production transport.
+
+The information-level scenario API is:
+
+```text
+HostCommand
+  AttachSurface(surface facts and deterministic resources)
+  Resize(viewport, scale, environment epoch)
+  Measure(batch)
+  Present(frame packet)
+  AdvanceClock(timestamp)
+  InjectInput(platform-neutral or native fixture input)
+  Checkpoint(kind)
+  DetachSurface
+
+HostObservation
+  SurfaceInfo
+  MeasurementResponses
+  PresentResult
+  RequestedFrame
+  RendererEvents
+  SemanticProjection
+  PixelSnapshot
+```
+
+This is not a new production renderer interface. Each backend implements the
+smallest natural test entry point in its own environment:
+
+- Desktop uses direct Rust calls and either a real window surface or a `wgpu`
+  offscreen target. The common suite runs on macOS, Windows, and Linux; OS
+  adapters additionally test lifecycle, scale, and native input integration.
+- Web runs the same scenarios in a real browser against the production DOM
+  Host and captures DOM state, events, and screenshots.
+- Android runs instrumentation tests against the production View Host with a
+  mock Rust callback/event sink.
+- iOS runs XCTest against the production UIView Host with a mock Rust
+  callback/event sink.
+
+Portable fixture files are allowed to use a stable, readable test envelope
+even when the production binding uses direct Rust calls, JNI tables, a C ABI,
+or WASM memory. The envelope is decoded before the production Host entry point
+and must not become an extra serialization step in shipped frames.
+
+Measurement scenarios send the real request to the Host, record the real
+response, and may bind the returned `PreparedContentId` into later text paint
+steps. Absolute font metrics are not required to match across operating
+systems. Tests instead use platform-pinned fonts, same-platform reference
+rendering, or explicit metric relationships and tolerances. Event scenarios
+inject input below the Host adapter and assert the typed event emitted above
+it; Rust capture/bubble routing remains covered by the Rust-only suite.
+
+### WPT-derived corpus and three-layer composition
+
+Whisker uses selected Web Platform Tests as the authoritative behavioral
+source for standard CSS features. Native Hosts cannot execute WPT HTML and
+CSS directly, and Whisker deliberately has no browser cascade, so these cases
+are imported as a WPT-derived corpus rather than reported as unmodified WPT
+passes. Every imported case records the upstream path, pinned revision,
+license, test kind, required capabilities, and any deliberate adaptation.
+
+One case identifier is exercised at three independent layers:
+
+1. A Rust semantic test lowers typed style and layout input to the expected
+   measurement requests, geometry, and protocol operations.
+2. Each Host-only suite consumes the canonical request/frame scenario without
+   running the Rust runtime and checks measurement, retained projection,
+   event output, and test-versus-reference pixels.
+3. A smaller full-stack suite mounts the corresponding Whisker fixture and
+   verifies that the Rust output and real Host compose successfully.
+
+Canonical Host scenarios are authored from the specification or WPT
+reference, not recorded blindly from current Rust output. Otherwise the same
+Rust bug would be baked into every Host expectation. Reftests render the test
+and reference scenario on the same Host and compare them with a declared
+tolerance; semantic testharness cases assert structured observations instead
+of pixels.
+
+The shared corpus and per-Host runners live at predictable locations:
+
+```text
+tests/host-conformance/             # schemas, manifest, shared scenarios
+  wpt/<upstream-path>/
+
+platforms/desktop/tests/conformance/
+platforms/web/tests/conformance/
+platforms/android/.../androidTest/.../conformance/
+platforms/ios/Tests/WhiskerHostConformance/
+```
+
+The manifest maps every supported style feature to its Rust semantic tests,
+protocol capability, Host scenarios, and required backend runners. A feature
+is not marked supported until the semantic suite and all required Host suites
+pass. Visual/platform tests remain necessary for text and paint fidelity but
+are not used as a substitute for protocol, projection, or event assertions.
 
 ## SSR and headless renderers
 
@@ -1494,19 +1633,22 @@ how server-emitted presentation relates to Rust-resolved interactive styling.
    factories, measurement, events, and packet application. The launch-shell
    portion is complete; retained rendering remains.
 6. Implement the JavaScript DOM provider for Web.
-7. Scaffold the first OS Host at `platforms/macos` and its CNG-generated
-   `gen/macos` Cargo composition root. The direct `MeasurementHost` and
-   `FrameSink`, native font shaping/prepared glyphs, retained Host projection,
-   and first Metal/wgpu box/text paint pass are implemented. Add input and
-   accessibility, then Windows and Linux as peer Host crates and generated
-   projects rather than hiding lifecycle and packaging differences behind a
-   premature Desktop facade.
-8. Complete Desktop capability coverage for hierarchical accessibility, group
+7. Extract the portable implementation from the first macOS slice into
+   `platforms/desktop`. Keep `platforms/macos` as a thin adapter and add
+   equivalent Windows and Linux adapters plus CNG-generated `gen/<os>`
+   composition roots. Scene projection, measurement, paint lowering,
+   batching, shaders, and GPU resources remain common; lifecycle and native
+   services remain visible at the OS boundary.
+8. Establish the shared Host scenario schema, recording event sink, per-Host
+   conformance runners, and the pinned WPT-derived corpus before expanding
+   property support. The Host-only runner must exercise production
+   measurement, presentation, paint, and input paths without `RuntimeInstance`.
+9. Complete Desktop capability coverage for hierarchical accessibility, group
    compositing, filters, path clipping, and external surfaces without leaking
    Desktop render types into the common protocol.
-9. Migrate custom UI modules to versioned element schemas, generated Host
+10. Migrate custom UI modules to versioned element schemas, generated Host
    factories, and typed commands.
-10. Remove the separate legacy Lynx production path, C++ bridge, fork artifacts,
+11. Remove the separate legacy Lynx production path, C++ bridge, fork artifacts,
    and obsolete distribution paths after Host conformance and visual parity are
    reached. No Lynx adapter is introduced into the retained path.
 

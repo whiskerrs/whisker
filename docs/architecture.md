@@ -89,12 +89,16 @@ while that Host implementation is completed.
    whisker-cng         — Continuous Native Generation: renders
                          complete gen/<platform>/ projects from Config.
 
-   platforms/macos     — native Rust macOS Host: window/event loop, current
-                         viewport, cosmic-text measurement/prepared glyphs,
-                         retained FrameSink projection, and Metal/wgpu box +
-                         text paint. Input, accessibility, paths, and advanced
-                         compositing fill this Host out incrementally;
-                         Windows/Linux are peer OS Hosts.
+   platforms/desktop   — planned shared native Desktop Host extracted from the
+                         first macOS slice: winit lifecycle, current viewport,
+                         cosmic-text measurement/prepared glyphs, retained
+                         FrameSink projection, and wgpu paint. Scene, batching,
+                         shaders, and GPU resources are common to macOS,
+                         Windows, and Linux.
+   platforms/macos     — current implementation site and future thin macOS
+                         adapter. platforms/windows and platforms/linux use the
+                         same adapter boundary for lifecycle, packaging hooks,
+                         and genuinely OS-native services.
    platforms/web       — Rust/WASM browser Host: DOM text measurement,
                          requestAnimationFrame scheduling, and semantic frame
                          application to explicitly positioned DOM nodes.
@@ -119,7 +123,8 @@ while that Host implementation is completed.
 | `whisker-dev-server` | Host dev loop, manifest-agnostic. Android/iOS currently use explicit full rebuild → install → relaunch; the retained mobile ABI will re-enable Rust hot reload. | `whisker-cli` |
 | `whisker-build` | Per-platform builds and packaging, including generated mobile shell builds and native macOS `.app` assembly. Legacy artifact helpers remain until migration cleanup. | `whisker-cli`, `whisker-dev-server` |
 | `whisker-cng` | Continuous Native Generation: pure, fingerprint-gated renderer of complete `gen/<platform>/` projects from Config. No CLI surface. | `whisker-cli` |
-| `whisker-macos` | Native Rust macOS Host and direct runtime composition boundary. It owns lifecycle/frame scheduling, viewport/scale sampling, cosmic-text intrinsic measurement with reusable prepared content, a transactionally retained Host projection, and Metal/wgpu painting for common boxes, rectangular overflow clips, and text. Input, accessibility, rounded/path clips, exact non-solid borders, ellipsis/forced-direction text conformance, and complete group compositing remain incremental Host work. | generated `gen/macos` app |
+| `whisker-desktop` (planned extraction) | Common native Rust Desktop Host and direct runtime composition boundary. It owns shared lifecycle/frame scheduling, viewport/scale sampling, cosmic-text intrinsic measurement with reusable prepared content, the transactionally retained Host projection, and wgpu scene lowering, batching, shaders, and painting. It is currently implemented inside `whisker-macos` and will move without a behavior change. | thin macOS/Windows/Linux Host adapters |
+| `whisker-macos` | Current first Desktop implementation and future thin macOS adapter. After common extraction it owns only macOS lifecycle/packaging hooks and native services; the generated app remains the composition root. | generated `gen/macos` app |
 | `whisker-web` | Browser DOM Host. It drives `RuntimeInstance` from `requestAnimationFrame`, supplies current browser viewport/scale metrics, measures intrinsic text in the DOM, and applies layout/paint/text operations without making browser layout authoritative. | generated `gen/web` WASM app |
 | `whisker-plugin` | CNG plugin surface: `Plugin` trait, IR types, JSON envelope, subprocess runner shared by the engine and 3rd-party plugin binaries. | `whisker-cng`, 3rd-party plugins |
 | `whisker-protocol` | Host-independent semantic frame, intrinsic-measurement, and normalized input types; stable IDs; strict batch validation; and transactional retained-tree validation. Plain text and common box paint are retained semantic presentation, while pointer/provider events enter Rust through typed input values. The legacy production Lynx path does not consume this protocol. | scene engine and Host providers |
@@ -145,6 +150,23 @@ user crate would. They are *not* part of the framework core:
 
 `whisker-local-store` doubles as the documented template for writing a
 first-party module; see [`module-api-design.md`](module-api-design.md).
+
+## Host conformance boundary
+
+Every Host is testable without starting the Rust runtime. Shared scenarios
+under `tests/host-conformance` stand in for Rust by supplying intrinsic
+measurement requests, frame packets, viewport changes, clock advances, and
+input fixtures. A recording event sink captures the Host-to-Rust direction.
+Only those boundary peers are mocked: measurement, retained projection,
+painting, and native event conversion use the same code as the shipped Host.
+
+Each backend owns a runner beside its implementation. Desktop uses direct Rust
+calls and a real or offscreen `wgpu` surface, Web runs against a real browser,
+Android uses instrumentation tests, and iOS uses XCTest. Selected WPT cases
+are converted into attributed, revision-pinned shared scenarios. The same case
+identifier is checked by Rust semantic lowering, every required Host runner,
+and a smaller full-stack suite, so neither side can define conformance by
+recording the other side's current output.
 
 ## The runtime layers
 

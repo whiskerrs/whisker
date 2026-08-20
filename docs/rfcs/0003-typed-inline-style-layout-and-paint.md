@@ -569,7 +569,23 @@ accessibility. These dependencies are owned exclusively by
 `platforms/desktop`; Whisker core never depends on the Desktop crate. The
 Desktop paint pass lowers the accepted Host projection into quads, shadows,
 paths, glyph/image sprites, clips, layers, and external surfaces, then submits
-GPU work.
+GPU work. `platforms/macos`, `platforms/windows`, and `platforms/linux` are
+thin adapters for lifecycle, packaging hooks, and genuinely native services;
+they do not fork the common scene or renderer.
+
+Host source trees are organized by semantic capability rather than CSS
+spelling: measurement/text, paint/box, paint/text, clip, transform,
+compositing, image/effects, input, and accessibility. Android, iOS, Web, and
+Desktop use the same logical groups and operation names even when their
+implementation languages differ. Width, flex, margin, and other layout-only
+properties have no corresponding Host property handler because Rust has
+already resolved them to geometry. Shorthands and logical properties likewise
+never cross the Host boundary.
+
+This symmetry is an audit and testing property, not a reason to add runtime
+indirection. Desktop keeps an exhaustive static operation dispatcher and
+data-oriented batches within one crate. Hosts must not allocate a polymorphic
+handler per CSS property or route every draw through an OS adapter.
 
 The Desktop capability profile must track group opacity/compositing, general
 transforms, rounded or path clips, filters, blend modes, hierarchical
@@ -684,7 +700,19 @@ Rust-only tests must cover:
 
 Shared renderer conformance fixtures then verify Android, iOS, Web, and Desktop
 projection for geometry, text constraints, paint, clipping, stacking, and hit
-testing. Visual snapshots supplement but do not replace semantic assertions.
+testing. Each Host has a standalone runner that mocks the Rust-side scenario
+source and event sink while exercising the shipped Host measurement,
+presentation, paint, and native input paths. It must be possible to complete a
+Host scenario without mounting `RuntimeInstance`.
+
+Selected WPT CSS cases are adapted into this shared corpus with their upstream
+path, revision, license, and adaptation recorded. The same case identifier is
+used for a Rust style/layout-to-protocol assertion, every required Host-only
+run, and a smaller final full-stack test. Canonical Host packets are derived
+from the specification or WPT reference rather than recorded from the current
+Rust implementation. Same-platform reftest image comparisons use explicit
+tolerances; semantic cases assert retained projection and event observations.
+Visual snapshots supplement but do not replace semantic assertions.
 
 ## Migration
 
@@ -723,9 +751,13 @@ testing. Visual snapshots supplement but do not replace semantic assertions.
    borders, and group compositing remain Desktop conformance work.
 6. Route signal and `whisker-motion` writes through the shared property slots
    and incremental dirty classifier.
-7. Implement and conform Android, iOS, the JavaScript DOM Web path, and the
-   Whisker-owned native Rust Desktop path independently.
-8. Add Desktop lowering conformance for paint, text, clipping, compositing,
+7. Add the shared Host conformance scenario format, standalone runners, and
+   pinned WPT-derived property corpus. Implement and conform Android, iOS, the
+   JavaScript DOM Web path, and the Whisker-owned native Rust Desktop path
+   against the same case identifiers.
+8. Move the portable first macOS Host implementation to `platforms/desktop`
+   and keep OS crates as thin adapters. Add Desktop lowering conformance for
+   paint, text, clipping, compositing,
    accessibility, and external surfaces without making Desktop render types
    part of the common protocol.
 9. Add the optional SSR serializer and hydration contract in a follow-up RFC.
