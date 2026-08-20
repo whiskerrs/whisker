@@ -11,8 +11,7 @@
 //! │       ├── AndroidManifest.xml
 //! │       ├── jniLibs/                          (populated at build time)
 //! │       └── kotlin/<package-path>/
-//! │           ├── MainActivity.kt
-//! │           └── <AppName>Application.kt
+//! │           └── MainActivity.kt
 //! ├── build.gradle.kts
 //! ├── settings.gradle.kts
 //! ├── gradle.properties
@@ -45,7 +44,6 @@ const APP_BUILD_GRADLE_KTS: &str = include_str!("templates/android/app/build.gra
 const APP_MANIFEST_XML: &str = include_str!("templates/android/app/src/main/AndroidManifest.xml");
 const MAIN_ACTIVITY_KT: &str =
     include_str!("templates/android/app/src/main/kotlin/MainActivity.kt");
-const APPLICATION_KT: &str = include_str!("templates/android/app/src/main/kotlin/Application.kt");
 const ROOT_BUILD_GRADLE_KTS: &str = include_str!("templates/android/build.gradle.kts");
 const SETTINGS_GRADLE_KTS: &str = include_str!("templates/android/settings.gradle.kts");
 const GRADLE_PROPERTIES: &str = include_str!("templates/android/gradle.properties");
@@ -247,42 +245,36 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
         inputs
             .android_theme
             .clone()
-            .unwrap_or_else(|| "@style/Theme.AppCompat.NoActionBar".to_string()),
+            .unwrap_or_else(|| "@android:style/Theme.Material.Light.NoActionBar".to_string()),
     );
-    let (main_activity_imports, main_activity_body) = render_main_activity(
-        &inputs.main_activity_imports,
-        &inputs.main_activity_pre_super,
-        &inputs.main_activity_post_super,
-    );
+    let (main_activity_imports, main_activity_pre_super, main_activity_post_super) =
+        render_main_activity(
+            &inputs.main_activity_imports,
+            &inputs.main_activity_pre_super,
+            &inputs.main_activity_post_super,
+        );
     v.insert("main_activity_imports", main_activity_imports);
-    v.insert("main_activity_body", main_activity_body);
+    v.insert("main_activity_pre_super", main_activity_pre_super);
+    v.insert("main_activity_post_super", main_activity_post_super);
     v
 }
 
 /// Render `MainActivity.kt`'s extra imports + `onCreate` override body.
 ///
-/// Returns `(imports, body)`:
+/// Returns `(imports, pre_super, post_super)`:
 /// - `imports` — extra `import` lines to append after the baseline
-///   `WhiskerActivity` import (each prefixed with a leading `\n`), or
-///   empty. When a body is generated, `android.os.Bundle` is added
-///   automatically.
-/// - `body` — either empty (`class MainActivity : WhiskerActivity()`
-///   stays a one-liner) or ` { override fun onCreate(…) { … } }` when
-///   `pre_super`/`post_super` inject statements. `pre_super` runs before
-///   `super.onCreate`, `post_super` after.
+///   Android imports (each prefixed with a leading `\n`), or
+///   empty. `android.os.Bundle` is already part of the shell template.
+/// - `pre_super` / `post_super` — statements indented for the generated
+///   `onCreate`. The native shell always owns the method body.
 fn render_main_activity(
     imports: &[String],
     pre_super: &[String],
     post_super: &[String],
-) -> (String, String) {
-    let has_body = !pre_super.is_empty() || !post_super.is_empty();
-
+) -> (String, String, String) {
     let mut import_lines: Vec<String> = Vec::new();
-    if has_body {
-        import_lines.push("android.os.Bundle".to_string());
-    }
     for i in imports {
-        if !import_lines.contains(i) {
+        if i != "android.os.Bundle" && !import_lines.contains(i) {
             import_lines.push(i.clone());
         }
     }
@@ -291,22 +283,13 @@ fn render_main_activity(
         .map(|i| format!("\nimport {i}"))
         .collect::<String>();
 
-    if !has_body {
-        return (imports_str, String::new());
-    }
-
     let indent = |lines: &[String]| {
         lines
             .iter()
             .map(|l| format!("        {l}\n"))
             .collect::<String>()
     };
-    let body = format!(
-        " {{\n    override fun onCreate(savedInstanceState: Bundle?) {{\n{pre}        super.onCreate(savedInstanceState)\n{post}    }}\n}}",
-        pre = indent(pre_super),
-        post = indent(post_super),
-    );
-    (imports_str, body)
+    (imports_str, indent(pre_super), indent(post_super))
 }
 
 /// Render `apply_plugins` entries as Kotlin DSL lines inside the
@@ -491,8 +474,6 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
         .join("app/src/main/kotlin")
         .join(application_id_to_path(&inputs.application_id));
 
-    let app_class_filename = format!("{}.kt", application_class_name(&inputs.app_name));
-
     let text_files: &[(PathBuf, &str)] = &[
         (out_dir.join("app/build.gradle.kts"), APP_BUILD_GRADLE_KTS),
         (
@@ -500,7 +481,6 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
             APP_MANIFEST_XML,
         ),
         (kotlin_pkg.join("MainActivity.kt"), MAIN_ACTIVITY_KT),
-        (kotlin_pkg.join(&app_class_filename), APPLICATION_KT),
         (out_dir.join("build.gradle.kts"), ROOT_BUILD_GRADLE_KTS),
         (out_dir.join("settings.gradle.kts"), SETTINGS_GRADLE_KTS),
         (out_dir.join("gradle.properties"), GRADLE_PROPERTIES),
@@ -764,7 +744,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 14,
+        template_version: 15,
     })
 }
 
@@ -808,7 +788,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 14,
+            template_version: 15,
         }
     }
 
@@ -850,7 +830,7 @@ mod tests {
         let mut inputs = sample_inputs();
         assert_eq!(
             template_vars(&inputs)["android_theme"],
-            "@style/Theme.AppCompat.NoActionBar"
+            "@android:style/Theme.Material.Light.NoActionBar"
         );
         inputs.android_theme = Some("@style/Theme.App.Splash".into());
         assert_eq!(
@@ -860,27 +840,25 @@ mod tests {
     }
 
     #[test]
-    fn main_activity_stays_empty_without_injection() {
-        let (imports, body) = render_main_activity(&[], &[], &[]);
+    fn main_activity_has_no_injections_by_default() {
+        let (imports, pre, post) = render_main_activity(&[], &[], &[]);
         assert_eq!(imports, "");
-        assert_eq!(body, "");
+        assert_eq!(pre, "");
+        assert_eq!(post, "");
     }
 
     #[test]
     fn main_activity_injects_oncreate_with_pre_super() {
-        let (imports, body) = render_main_activity(
+        let (imports, pre, post) = render_main_activity(
             &["androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen".into()],
             &["installSplashScreen()".into()],
             &[],
         );
-        assert!(imports.contains("\nimport android.os.Bundle"));
         assert!(imports.contains(
             "\nimport androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen"
         ));
-        let pre = body.find("installSplashScreen()").unwrap();
-        let sup = body.find("super.onCreate(savedInstanceState)").unwrap();
-        assert!(pre < sup, "installSplashScreen must precede super.onCreate");
-        assert!(body.starts_with(" {\n    override fun onCreate("));
+        assert_eq!(pre, "        installSplashScreen()\n");
+        assert_eq!(post, "");
     }
 
     #[test]
@@ -916,7 +894,6 @@ mod tests {
             "app/build.gradle.kts",
             "app/src/main/AndroidManifest.xml",
             "app/src/main/kotlin/rs/whisker/examples/helloworld/MainActivity.kt",
-            "app/src/main/kotlin/rs/whisker/examples/helloworld/HelloWorldApplication.kt",
             "build.gradle.kts",
             "settings.gradle.kts",
             "gradle.properties",
@@ -940,7 +917,7 @@ mod tests {
 
         let manifest =
             std::fs::read_to_string(out.join("app/src/main/AndroidManifest.xml")).unwrap();
-        assert!(manifest.contains("android:name=\".HelloWorldApplication\""));
+        assert!(!manifest.contains("android:name=\".HelloWorldApplication\""));
         assert!(manifest.contains("android:label=\"HelloWorld\""));
         assert!(!manifest.contains("{{"));
         // The activity opts out of system keyboard avoidance — the app
@@ -952,6 +929,10 @@ mod tests {
         )
         .unwrap();
         assert!(main_activity.starts_with("package rs.whisker.examples.helloworld\n"));
+
+        let settings = std::fs::read_to_string(out.join("settings.gradle.kts")).unwrap();
+        assert!(!settings.contains("lynx"));
+        assert!(!settings.contains("rs.whisker"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

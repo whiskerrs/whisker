@@ -18,11 +18,9 @@ use whisker_build::CaptureShims;
 /// dependency-shaped changes (Cargo.toml edits) and as a fallback
 /// when hot reload errors.
 pub struct Builder {
-    workspace_root: PathBuf,
     /// User crate dir (= `Cargo.toml` parent). Needed to find
     /// `gen/android/` for gradle invocation.
     crate_dir: PathBuf,
-    package: String,
     target: Target,
     /// Cargo features forwarded to whichever step compiles the user
     /// crate. The dev loop turns on `whisker/hot-reload` here.
@@ -34,15 +32,13 @@ pub struct Builder {
 
 impl Builder {
     pub fn new(
-        workspace_root: PathBuf,
+        _workspace_root: PathBuf,
         crate_dir: PathBuf,
-        package: String,
+        _package: String,
         target: Target,
     ) -> Self {
         Self {
-            workspace_root,
             crate_dir,
-            package,
             target,
             features: Vec::new(),
             capture: None,
@@ -76,6 +72,12 @@ impl Builder {
         match self.target {
             Target::Android => self.build_android().await,
             Target::IosSimulator => self.build_ios_simulator().await,
+            Target::Macos => {
+                anyhow::bail!("macOS builds are driven through whisker_build::macos by whisker-cli")
+            }
+            Target::Web => {
+                anyhow::bail!("Web builds are driven by the CNG-generated Trunk project")
+            }
         }
     }
 
@@ -87,38 +89,15 @@ impl Builder {
     // ----- per-target build paths ------------------------------------------
 
     async fn build_android(&self) -> Result<()> {
-        // Dev loop only stages module Kotlin sources, then drives
-        // gradle. Gradle's own `whiskerBuildDebugArm64V8a` task runs
-        // `whisker build-android` (which runs cargo + stages the .so +
-        // libc++_shared.so into the generated jniLibs source dir AGP
-        // mergeJniLibFolders picks up), so a *second* pre-cargo build
-        // here would just produce the same `.so` twice and leak its
-        // output across the curated dev-loop UI.
-        //
-        // Mirrors what iOS already does: cargo runs only inside
-        // xcodebuild's Build Phase; the dev-server's `build_ios_simulator`
-        // is module-source-staging only. Aligning Android to the same
-        // shape halves the wall-clock of every full reload on a
-        // cache-warm cargo and removes one race against the TUI viewport.
-        let ws = self.workspace_root.clone();
+        // The bootstrap slice is a plain AGP application: no Rust dylib,
+        // module aggregator, SDK AAR, or Lynx artifacts are involved yet.
+        // Gradle only needs to assemble the generated native shell.
         let crate_dir = self.crate_dir.clone();
-        let pkg = self.package.clone();
         let features = self.features.clone();
         let capture = self.capture.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
             let gen_android = crate_dir.join("gen/android");
-            // Stage discovered Whisker modules' Android Kotlin
-            // sources before gradle runs. Empty when no module
-            // declares android.kotlin_sources.
-            let modules = whisker_build::modules::discover(&ws.join("Cargo.toml"), &pkg)?;
-            whisker_build::android::stage_module_kotlin_sources(&gen_android, &modules)?;
-            // The Settings plugin's module-report cache is keyed on
-            // Cargo.lock alone and can be stale (other apps in the
-            // workspace, metadata-only edits) — rewrite it fresh so
-            // gradle wires the module subprojects this app actually
-            // has. See refresh_gradle_module_cache docs.
-            whisker_build::modules::refresh_gradle_module_cache(&ws, &pkg)?;
             whisker_build::android::run_gradle_assemble(
                 &gen_android,
                 whisker_build::Profile::Debug,
@@ -132,32 +111,9 @@ impl Builder {
     }
 
     async fn build_ios_simulator(&self) -> Result<()> {
-        // Staging the module Swift sources for SwiftPM is all this
-        // does. The `.app` build — and the cargo cross-compile that
-        // produces `WhiskerDriver.framework` — runs during xcodebuild
-        // in `installer.rs::ios_install_and_launch`, through the
-        // cng-generated pbxproj's "Whisker Generate" Run Script Build
-        // Phase, which is also where the capture shims get applied as
-        // env vars on the xcodebuild Command.
-        let ws = self.workspace_root.clone();
-        let crate_dir = self.crate_dir.clone();
-        let pkg = self.package.clone();
-
-        tokio::task::spawn_blocking(move || -> Result<()> {
-            // Stage Whisker modules' iOS Swift sources before
-            // xcodebuild runs so the pbxproj's WhiskerModules SwiftPM
-            // ref resolves cleanly. Empty when no module declares
-            // `[ios].swift_sources` — the staging step still writes a
-            // no-op Package.swift + WhiskerModuleBehaviors.swift so
-            // AppDelegate's `import WhiskerModules` doesn't fail to
-            // resolve.
-            let modules = whisker_build::modules::discover(&ws.join("Cargo.toml"), &pkg)?;
-            let gen_ios = crate_dir.join("gen/ios");
-            whisker_build::ios::stage_module_swift_sources(&gen_ios, &modules)?;
-            Ok(())
-        })
-        .await
-        .context("spawn_blocking iOS module-source stage")?
+        // The bootstrap slice is pure UIKit. xcodebuild in the installer
+        // owns the whole build, so there is no Rust/module pre-step here.
+        Ok(())
     }
 }
 
@@ -167,7 +123,12 @@ mod tests {
 
     #[test]
     fn builder_can_be_constructed_for_each_target() {
-        for t in [Target::Android, Target::IosSimulator] {
+        for t in [
+            Target::Android,
+            Target::IosSimulator,
+            Target::Macos,
+            Target::Web,
+        ] {
             let b = Builder::new(
                 PathBuf::from("/tmp/ws"),
                 PathBuf::from("/tmp/ws/examples/x"),

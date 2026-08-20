@@ -1,0 +1,19 @@
+[package]
+name = "whisker-macos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Native macOS Host for Whisker applications."
+
+[dependencies]
+whisker = { workspace = true }
+whisker-engine = { workspace = true }
+whisker-protocol = { workspace = true }
+whisker-style = { workspace = true }
+winit = "0.30"

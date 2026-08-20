@@ -1,0 +1,12 @@
+[package]
+name = "host-smoke"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Minimal cross-platform Whisker Host smoke test."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }

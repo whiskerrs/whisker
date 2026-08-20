@@ -5,7 +5,7 @@
 //! constraints, runs each one with its user-supplied config (or the
 //! Config's default when the user didn't declare it), and returns
 //! the post-pipeline [`GenerateContext`] that the renderer writes
-//! `gen/{android,ios}/` from.
+//! `gen/<platform>/` from.
 //!
 //! ## Type erasure
 //!

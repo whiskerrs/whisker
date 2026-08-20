@@ -169,8 +169,9 @@ fn gradle_baseline_unchanged_when_no_plugin_declared() {
     let app = base_android_app();
     let gradle = sync_and_read_gradle(&app);
     assert!(gradle.contains("id(\"com.android.application\")"));
-    assert!(gradle.contains("id(\"rs.whisker.gradle\")"));
-    assert!(gradle.contains("implementation(\"rs.whisker:whisker-runtime-android:"));
+    assert!(!gradle.contains("rs.whisker.gradle"));
+    assert!(!gradle.contains("whisker-runtime-android"));
+    assert!(!gradle.contains("lynx"));
     assert!(!gradle.contains("com.google.gms.google-services"));
     assert!(!gradle.contains("firebase-analytics"));
 }
