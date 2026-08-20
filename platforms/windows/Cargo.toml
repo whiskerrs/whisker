@@ -1,5 +1,5 @@
 [package]
-name = "whisker-macos"
+name = "whisker-windows"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,9 +9,9 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Native macOS adapter for Whisker Desktop applications."
+description = "Native Windows application shell for Whisker."
 
-[dependencies]
+[target.'cfg(target_os = "windows")'.dependencies]
 whisker = { workspace = true }
 whisker-desktop = { workspace = true }
 whisker-protocol = { workspace = true }

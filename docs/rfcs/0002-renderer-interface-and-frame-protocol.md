@@ -190,25 +190,28 @@ content in another declarative UI framework or run a competing inner layout.
 ### Desktop package and dependency policy
 
 Desktop has one common native Host implementation under `platforms/desktop`.
-It owns the `winit` lifecycle shared by the supported desktop targets, surface
-lifecycle, accepted Host projection, text shaping and rasterization, glyph and
-image atlases, the `wgpu` renderer and shaders, common input translation, and
-the common accessibility projection. GPU backend selection is static and
-target-specific: Metal on macOS, Direct3D 12 on Windows, and Vulkan, with an
-explicit fallback only where required, on Linux.
+It owns GPU surface lifecycle, accepted Host projection, text shaping and
+rasterization, glyph and image atlases, the `wgpu` renderer and shaders,
+common frame driving, common input translation, and the common accessibility
+projection. GPU backend selection is static and target-specific: Metal on
+macOS, Direct3D 12 on Windows, and Vulkan, with an explicit fallback only
+where required, on Linux.
 
 Thin crates under `platforms/macos`, `platforms/windows`, and
-`platforms/linux` are OS adapters. They own only behavior that is not actually
-portable: application activation and packaging hooks, target-specific window
-extensions, IME and clipboard integration, native menus, accessibility
-attachment, and other OS services. They must not copy the scene projection,
-paint lowering, shaders, batching, glyph preparation, or GPU resource
-lifetime code merely to preserve an OS directory boundary.
+`platforms/linux` are application shells. Each owns its `winit` lifecycle,
+window creation, viewport and scale sampling, redraw scheduling, application
+activation and packaging hooks, target-specific window extensions, IME and
+clipboard integration, native menus, accessibility attachment, and other OS
+services. They must not copy the scene projection, paint lowering, shaders,
+batching, glyph preparation, or GPU resource lifetime code merely to preserve
+an OS directory boundary.
 
 Common semantic values remain in `whisker-protocol`; OS-native handles and
 Desktop render primitives must not leak back into protocol, engine, runtime,
 or application crates. Conversely, `platforms/desktop` is a Host crate and
-must not expose its GPU or window types to Whisker core.
+must not expose its GPU or window types to Whisker core. Its narrow
+surface-target constructor is only a contract with the three OS application
+shells.
 
 The intended internal ownership is:
 
@@ -217,7 +220,6 @@ platforms/desktop/
   Cargo.toml
   src/
     lib.rs
-    app.rs
     surface.rs
     scene.rs
     measurement/{mod.rs, text.rs}
@@ -227,9 +229,12 @@ platforms/desktop/
     input/{mod.rs, pointer.rs, keyboard.rs, ime.rs}
     accessibility.rs
 
-platforms/macos/                 # thin OS adapters; same shape for peers
+platforms/macos/                 # OS application shells; same shape for peers
+  src/{lib.rs, app.rs}
 platforms/windows/
+  src/{lib.rs, app.rs}
 platforms/linux/
+  src/{lib.rs, app.rs}
 ```
 
 This is a responsibility map rather than a permanently fixed module layout.
@@ -1339,8 +1344,10 @@ been extracted to `platforms/desktop`: it retains accepted packets in a native
 Host projection, measures and shapes text with `cosmic-text`, reuses the
 resulting `PreparedContentId` for glyph paint, and submits common box, rounded
 background and border-outline, rectangular clip, and text draws through
-`wgpu`. `platforms/macos` is now the first thin OS adapter. Percentage corner
-radii resolve independently against both box axes and are normalized when
+`wgpu`. Window lifecycle and scheduling now live in symmetric
+`platforms/macos`, `platforms/windows`, and `platforms/linux` application
+shells; only macOS is wired into CNG/build/run today. Percentage corner radii
+resolve independently against both box axes and are normalized when
 adjacent radii exceed an edge. Layout packets carry both border-box and
 content-box geometry so Hosts never reconstruct padding or borders from style
 inputs. Shared Host scenarios now drive Desktop measurement and frame
@@ -1638,11 +1645,12 @@ how server-emitted presentation relates to Rust-resolved interactive styling.
    portion is complete; retained rendering remains.
 6. Implement the JavaScript DOM provider for Web.
 7. Extract the portable implementation from the first macOS slice into
-   `platforms/desktop`. Keep `platforms/macos` as a thin adapter and add
-   equivalent Windows and Linux adapters plus CNG-generated `gen/<os>`
-   composition roots. Scene projection, measurement, paint lowering,
-   batching, shaders, and GPU resources remain common; lifecycle and native
-   services remain visible at the OS boundary.
+   `platforms/desktop`. Keep OS lifecycle in `platforms/macos` and add
+   equivalent Windows and Linux application shells plus CNG-generated
+   `gen/<os>` composition roots. The three shells now exist; CNG/build/run
+   wiring for Windows and Linux remains. Scene projection, measurement, paint
+   lowering, batching, shaders, and GPU resources remain common; lifecycle
+   and native services remain visible at the OS boundary.
 8. Establish the shared Host scenario schema, recording event sink, per-Host
    conformance runners, and the pinned WPT-derived corpus before expanding
    property support. The Host-only runner must exercise production

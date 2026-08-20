@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::ops::Range;
-use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use glyphon::{Cache, Resolution, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport};
@@ -13,13 +12,11 @@ use wgpu::{
     LoadOp, MultisampleState, Operations, PipelineCompilationOptions, PresentMode, PrimitiveState,
     Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
     RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource, StoreOp,
-    Surface, SurfaceConfiguration, SurfaceError, TextureFormat, TextureUsages,
+    Surface, SurfaceConfiguration, SurfaceError, SurfaceTarget, TextureFormat, TextureUsages,
     TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
     VertexStepMode,
 };
 use whisker_protocol::NodeId;
-use winit::dpi::PhysicalSize;
-use winit::window::Window;
 
 use crate::paint::box_paint::{BoxPrimitive, lower_box};
 use crate::paint::color::text_color;
@@ -471,11 +468,13 @@ pub(crate) struct GpuRenderer {
 }
 
 impl GpuRenderer {
-    pub(crate) async fn new(window: Arc<Window>) -> Result<Self, GpuError> {
-        let size = window.inner_size();
+    pub(crate) async fn new(
+        target: impl Into<SurfaceTarget<'static>>,
+        physical_size: [u32; 2],
+    ) -> Result<Self, GpuError> {
         let instance = Instance::new(&InstanceDescriptor::default());
         let surface = instance
-            .create_surface(window)
+            .create_surface(target)
             .map_err(|error| GpuError(format!("create Desktop GPU surface: {error}")))?;
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -505,8 +504,8 @@ impl GpuRenderer {
         let config = SurfaceConfiguration {
             usage: TextureUsages::RENDER_ATTACHMENT,
             format,
-            width: size.width.max(1),
-            height: size.height.max(1),
+            width: physical_size[0].max(1),
+            height: physical_size[1].max(1),
             present_mode,
             alpha_mode: CompositeAlphaMode::Opaque,
             view_formats: Vec::new(),
@@ -531,12 +530,12 @@ impl GpuRenderer {
         })
     }
 
-    pub(crate) fn resize(&mut self, size: PhysicalSize<u32>) {
-        if size.width == 0 || size.height == 0 {
+    pub(crate) fn resize(&mut self, physical_size: [u32; 2]) {
+        if physical_size[0] == 0 || physical_size[1] == 0 {
             return;
         }
-        self.config.width = size.width;
-        self.config.height = size.height;
+        self.config.width = physical_size[0];
+        self.config.height = physical_size[1];
         self.surface.configure(&self.device, &self.config);
     }
 

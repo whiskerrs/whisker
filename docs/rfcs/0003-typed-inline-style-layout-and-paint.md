@@ -563,15 +563,16 @@ environment, retains the prepared glyph content under a
 engine can then finish Taffy layout and include that handle in the final paint
 packet without knowing the Host representation.
 
-Presentation is implemented from focused low-level Rust facilities for window
-events, GPU access, shaping/rasterization, atlas allocation, paths, and
-accessibility. These dependencies are owned exclusively by
-`platforms/desktop`; Whisker core never depends on the Desktop crate. The
-Desktop paint pass lowers the accepted Host projection into quads, shadows,
-paths, glyph/image sprites, clips, layers, and external surfaces, then submits
-GPU work. `platforms/macos`, `platforms/windows`, and `platforms/linux` are
-thin adapters for lifecycle, packaging hooks, and genuinely native services;
-they do not fork the common scene or renderer.
+Presentation is implemented from focused low-level Rust facilities for GPU
+access, shaping/rasterization, atlas allocation, paths, and accessibility.
+Those common dependencies are owned by `platforms/desktop`, while each OS
+shell owns its window-event dependency; Whisker core never depends on any
+Desktop Host crate. The Desktop paint pass lowers the accepted Host projection
+into quads, shadows, paths, glyph/image sprites, clips, layers, and external
+surfaces, then submits GPU work. `platforms/macos`, `platforms/windows`, and
+`platforms/linux` are symmetric window-lifecycle, frame-scheduling, and
+packaging shells over that common Host; they do not fork the common scene or
+renderer.
 
 Host source trees are organized by semantic capability rather than CSS
 spelling: measurement/text, paint/box, paint/text, clip, transform,
