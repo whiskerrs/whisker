@@ -4,7 +4,7 @@ use std::{error::Error, fmt};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
-    ApplyResult, ElementTypeId, FramePacket, HitTestBehavior, InputPoint, LayoutRect,
+    ApplyResult, ElementTypeId, FramePacket, HitTestBehavior, InputPoint, LayoutGeometry,
     MeasurementMetrics, MeasurementReady, MeasurementResponse, MeasurementSpec, NodeId, PointerId,
     SurfaceId, TextContent,
 };
@@ -720,16 +720,13 @@ fn collect_scene_subtree(
 
 fn validate_layout_entries(
     scene: &Scene,
-    entries: &[(NodeId, LayoutRect)],
+    entries: &[(NodeId, LayoutGeometry)],
 ) -> Result<(), SurfaceError> {
-    for (node, rect) in entries {
+    for (node, geometry) in entries {
         if scene.node(*node).is_none() {
             return Err(SurfaceError::SceneLayoutMismatch { node: *node });
         }
-        if ![rect.x, rect.y, rect.width, rect.height]
-            .into_iter()
-            .all(f32::is_finite)
-        {
+        if !geometry.is_valid() {
             return Err(SurfaceError::InvalidLayoutOutput { node: *node });
         }
     }
@@ -743,12 +740,13 @@ mod tests {
     use whisker_layout::{AvailableSpace, LayoutSize, MeasureRequest, UnsupportedLayoutFeature};
     use whisker_protocol::{
         ApplyResult, CustomMeasurePayload, ElementTypeId, EmbeddedSurfaceMeasurePayload, FrameMode,
-        HitTestBehavior, InputPoint, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
-        MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasuredSize, MeasurementKey,
-        MeasurementKind, MeasurementMetrics, MeasurementPayload, MeasurementReady,
-        MeasurementRequestId, MeasurementResponse, MeasurementSpec, NativeControlMeasurePayload,
-        NodeId, Operation, PendingMeasurePolicy, PointerId, ReplacedContentMeasurePayload,
-        SurfaceId, TextMeasurePayload, TextMeasureStyle, UnsupportedMeasurementReason,
+        HitTestBehavior, InputPoint, LayoutRect, MeasureFontFamily, MeasureFontStyle,
+        MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap,
+        MeasuredSize, MeasurementKey, MeasurementKind, MeasurementMetrics, MeasurementPayload,
+        MeasurementReady, MeasurementRequestId, MeasurementResponse, MeasurementSpec,
+        NativeControlMeasurePayload, NodeId, Operation, PendingMeasurePolicy, PointerId,
+        ReplacedContentMeasurePayload, SurfaceId, TextMeasurePayload, TextMeasureStyle,
+        UnsupportedMeasurementReason,
     };
     use whisker_style::{
         Axes, ComputedLengthPercentage, ComputedSizeValue, PositionValue, SpecifiedStyle,
@@ -1658,9 +1656,12 @@ mod tests {
             height: 1.0,
             ..LayoutRect::default()
         };
-        assert_eq!(validate_layout_entries(&scene, &[(live, valid)]), Ok(()));
         assert_eq!(
-            validate_layout_entries(&scene, &[(node_id(99), valid)]),
+            validate_layout_entries(&scene, &[(live, valid.into())]),
+            Ok(())
+        );
+        assert_eq!(
+            validate_layout_entries(&scene, &[(node_id(99), valid.into())]),
             Err(SurfaceError::SceneLayoutMismatch { node: node_id(99) })
         );
         let invalid = LayoutRect {
@@ -1668,7 +1669,7 @@ mod tests {
             ..valid
         };
         assert_eq!(
-            validate_layout_entries(&scene, &[(live, invalid)]),
+            validate_layout_entries(&scene, &[(live, invalid.into())]),
             Err(SurfaceError::InvalidLayoutOutput { node: live })
         );
 

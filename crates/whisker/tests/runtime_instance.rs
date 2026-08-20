@@ -198,8 +198,10 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
             .iter()
             .any(|operation| matches!(
                 operation,
-                Operation::SetLayout { node, rect }
-                    if *node == root && rect.width == 100.0 && rect.height == 50.0
+                Operation::SetLayout { node, geometry }
+                    if *node == root
+                        && geometry.border_box.width == 100.0
+                        && geometry.border_box.height == 50.0
             ))
     );
     let first_text_sizes = measurements
@@ -251,8 +253,10 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
     assert_eq!(delta.header.viewport_epoch, 2);
     assert!(delta.operations.iter().any(|operation| matches!(
         operation,
-        Operation::SetLayout { node, rect }
-            if *node == root && rect.width == 200.0 && rect.height == 150.0
+        Operation::SetLayout { node, geometry }
+            if *node == root
+                && geometry.border_box.width == 200.0
+                && geometry.border_box.height == 150.0
     )));
     assert!(delta.operations.iter().any(|operation| matches!(
         operation,

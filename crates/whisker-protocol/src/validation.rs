@@ -302,12 +302,9 @@ impl SceneProjection {
                 child,
                 index,
             } => self.move_child(*parent, *child, *index)?,
-            Operation::SetLayout { node, rect } => {
+            Operation::SetLayout { node, geometry } => {
                 self.require_node(*node)?;
-                if ![rect.x, rect.y, rect.width, rect.height]
-                    .into_iter()
-                    .all(f32::is_finite)
-                {
+                if !geometry.is_valid() {
                     return Err(ValidationError::NonFiniteNumber);
                 }
             }
@@ -499,7 +496,7 @@ impl SceneProjection {
 mod tests {
     use super::*;
     use crate::{
-        CommandId, ElementTypeId, FrameHeader, HitTestBehavior, LayoutRect, MeasureFontFamily,
+        CommandId, ElementTypeId, FrameHeader, HitTestBehavior, MeasureFontFamily,
         MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
         MeasureTextWrap, Operation, PointerId, PropertyId, ProtocolValue, ProtocolVersion,
         ResultId, TextContent, TextContentError, TextMeasurePayload, TextMeasureStyle, Transform,
@@ -699,9 +696,12 @@ mod tests {
                     },
                     Operation::SetLayout {
                         node: child,
-                        rect: LayoutRect {
-                            width: f32::NAN,
-                            ..LayoutRect::default()
+                        geometry: crate::LayoutGeometry {
+                            border_box: crate::LayoutRect {
+                                width: f32::NAN,
+                                ..crate::LayoutRect::default()
+                            },
+                            ..crate::LayoutGeometry::default()
                         },
                     },
                 ],
@@ -917,11 +917,18 @@ mod tests {
             vec![
                 Operation::SetLayout {
                     node: root,
-                    rect: LayoutRect {
-                        x: -1.0,
-                        y: 2.0,
-                        width: 30.0,
-                        height: 40.0,
+                    geometry: crate::LayoutGeometry {
+                        border_box: crate::LayoutRect {
+                            x: -1.0,
+                            y: 2.0,
+                            width: 30.0,
+                            height: 40.0,
+                        },
+                        content_box: crate::LayoutRect {
+                            width: 30.0,
+                            height: 40.0,
+                            ..crate::LayoutRect::default()
+                        },
                     },
                 },
                 Operation::SetBoxPaint {
@@ -1064,7 +1071,7 @@ mod tests {
             Operation::DeleteNode { node: missing },
             Operation::SetLayout {
                 node: missing,
-                rect: LayoutRect::default(),
+                geometry: crate::LayoutGeometry::default(),
             },
             Operation::SetBoxPaint {
                 node: missing,

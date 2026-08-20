@@ -390,8 +390,8 @@ mod tests {
                 .operations
                 .iter()
                 .find(|operation| matches!(operation, Operation::SetLayout { .. })),
-            Some(Operation::SetLayout { node, rect })
-                if *node == root && *rect == whisker_protocol::LayoutRect {
+            Some(Operation::SetLayout { node, geometry })
+                if *node == root && geometry.border_box == whisker_protocol::LayoutRect {
                     x: 0.0,
                     y: 0.0,
                     width: 45.0,
@@ -440,13 +440,13 @@ mod tests {
             .clone();
         assert!(matches!(
             delta.operations.as_slice(),
-            [Operation::SetText { node: text_node, content }, Operation::SetLayout { node: layout_node, rect }]
+            [Operation::SetText { node: text_node, content }, Operation::SetLayout { node: layout_node, geometry }]
                 if *text_node == root
                     && *layout_node == root
                     && content.payload.text == "hello world"
                     && content.prepared_content == PreparedContentId::new(2)
-                    && rect.width == 99.0
-                    && rect.height == 21.0
+                    && geometry.border_box.width == 99.0
+                    && geometry.border_box.height == 21.0
         ));
         assert_eq!(
             renderer.present(&delta),

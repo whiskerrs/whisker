@@ -707,6 +707,11 @@ testing. Visual snapshots supplement but do not replace semantic assertions.
    opacity, visibility, z-order, and overflow clipping are implemented and
    exercised from `render!` through `FrameSink`. Shadows, images, general
    transforms, filters, blend/group compositing, and text decoration remain.
+   Layout frames now include border-box and content-box geometry, preventing
+   Hosts from reconstructing text origins from layout styles. The initial
+   macOS Host consumes the retained box/text/clip subset with native font
+   shaping and Metal/wgpu painting; rounded/path clipping, exact non-solid
+   borders, and group compositing remain Desktop conformance work.
 6. Route signal and `whisker-motion` writes through the shared property slots
    and incremental dirty classifier.
 7. Implement and conform Android, iOS, the JavaScript DOM Web path, and the

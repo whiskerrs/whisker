@@ -751,7 +751,7 @@ Tree
   MoveChild(parent, child, index)
 
 Geometry and compositing
-  SetLayout(node, x, y, width, height)
+  SetLayout(node, border_box, content_box)
   SetTransform(node, transform)
   SetOpacity(node, opacity)
   SetClip(node, clip)
@@ -759,8 +759,7 @@ Geometry and compositing
   SetZOrder(node, z_order)
 
 Paint and content
-  SetBackground(node, paint)
-  SetBorder(node, border)
+  SetBoxPaint(node, background, borders, radii)
   SetShadow(node, shadow)
   SetText(node, text_run)
   SetImage(node, resource)
@@ -891,8 +890,8 @@ A first frame might contain:
 ```text
 CreateNode(42, VIEW)
 InsertChild(10, 42, 0)
-SetLayout(42, 16, 24, 320, 80)
-SetBackground(42, white)
+SetLayout(42, border=(16, 24, 320, 80), content=(0, 0, 320, 80))
+SetBoxPaint(42, background=white, ...)
 SetEventMask(42, CLICK)
 ```
 
@@ -1309,9 +1308,16 @@ install, and launch; these shells do not yet mount `RuntimeInstance` or consume
 frame packets. Initial DOM and macOS Host slices now provide CNG composition
 roots, Host-driven frame scheduling, measurement, and frame consumption; DOM
 covers the built-in
-box/text paint subset, while macOS retains a recording sink until native GPU
-paint lands. Each Host samples its current logical viewport and scale before a
-frame. `RuntimeInstance` applies that `StyleEnvironment`, transactionally
+box/text paint subset. macOS now retains accepted packets in a native Host
+projection, measures and shapes text with `cosmic-text`, reuses the resulting
+`PreparedContentId` for glyph paint, and submits common box, rectangular clip,
+and text draws through Metal via `wgpu`. Layout packets carry both border-box
+and content-box geometry so Hosts never reconstruct padding or borders from
+style inputs. Rounded/path clips, exact non-solid borders, transforms, group
+compositing, ellipsis/forced-direction text behavior, input, and accessibility
+remain explicit macOS conformance gaps.
+Each Host samples its current logical viewport and scale before a frame.
+`RuntimeInstance` applies that `StyleEnvironment`, transactionally
 re-resolves retained `vw`, `vh`, `rpx`, and other environment-dependent styles,
 derives the Taffy root constraints from the same values, and uses Host-owned
 environment and viewport epochs to invalidate measurements and identify the
@@ -1479,11 +1485,12 @@ how server-emitted presentation relates to Rust-resolved interactive styling.
    portion is complete; retained rendering remains.
 6. Implement the JavaScript DOM provider for Web.
 7. Scaffold the first OS Host at `platforms/macos` and its CNG-generated
-   `gen/macos` Cargo composition root. Implement the Whisker-owned native Rust
-   Host using direct `MeasurementHost` and `FrameSink` calls plus focused
-   window, text, GPU, input, and accessibility libraries. Add Windows and
-   Linux as peer Host crates and generated projects rather than hiding their
-   lifecycle and packaging differences behind a premature Desktop facade.
+   `gen/macos` Cargo composition root. The direct `MeasurementHost` and
+   `FrameSink`, native font shaping/prepared glyphs, retained Host projection,
+   and first Metal/wgpu box/text paint pass are implemented. Add input and
+   accessibility, then Windows and Linux as peer Host crates and generated
+   projects rather than hiding lifecycle and packaging differences behind a
+   premature Desktop facade.
 8. Complete Desktop capability coverage for hierarchical accessibility, group
    compositing, filters, path clipping, and external surfaces without leaking
    Desktop render types into the common protocol.

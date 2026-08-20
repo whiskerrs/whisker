@@ -89,10 +89,12 @@ while that Host implementation is completed.
    whisker-cng         — Continuous Native Generation: renders
                          complete gen/<platform>/ projects from Config.
 
-   platforms/macos     — native Rust macOS Host: window/event loop and the
-                         MeasurementHost + FrameSink boundary. GPU paint,
-                         native text, input, and accessibility fill this Host
-                         out incrementally; Windows/Linux are peer OS Hosts.
+   platforms/macos     — native Rust macOS Host: window/event loop, current
+                         viewport, cosmic-text measurement/prepared glyphs,
+                         retained FrameSink projection, and Metal/wgpu box +
+                         text paint. Input, accessibility, paths, and advanced
+                         compositing fill this Host out incrementally;
+                         Windows/Linux are peer OS Hosts.
    platforms/web       — Rust/WASM browser Host: DOM text measurement,
                          requestAnimationFrame scheduling, and semantic frame
                          application to explicitly positioned DOM nodes.
@@ -117,12 +119,12 @@ while that Host implementation is completed.
 | `whisker-dev-server` | Host dev loop, manifest-agnostic. Android/iOS currently use explicit full rebuild → install → relaunch; the retained mobile ABI will re-enable Rust hot reload. | `whisker-cli` |
 | `whisker-build` | Per-platform builds and packaging, including generated mobile shell builds and native macOS `.app` assembly. Legacy artifact helpers remain until migration cleanup. | `whisker-cli`, `whisker-dev-server` |
 | `whisker-cng` | Continuous Native Generation: pure, fingerprint-gated renderer of complete `gen/<platform>/` projects from Config. No CLI surface. | `whisker-cli` |
-| `whisker-macos` | Native Rust macOS Host and direct runtime composition boundary. It currently owns lifecycle/frame scheduling and samples logical viewport/scale metrics on each requested frame, with deterministic measurement and a recording sink while native text/GPU/input are implemented. | generated `gen/macos` app |
+| `whisker-macos` | Native Rust macOS Host and direct runtime composition boundary. It owns lifecycle/frame scheduling, viewport/scale sampling, cosmic-text intrinsic measurement with reusable prepared content, a transactionally retained Host projection, and Metal/wgpu painting for common boxes, rectangular overflow clips, and text. Input, accessibility, rounded/path clips, exact non-solid borders, ellipsis/forced-direction text conformance, and complete group compositing remain incremental Host work. | generated `gen/macos` app |
 | `whisker-web` | Browser DOM Host. It drives `RuntimeInstance` from `requestAnimationFrame`, supplies current browser viewport/scale metrics, measures intrinsic text in the DOM, and applies layout/paint/text operations without making browser layout authoritative. | generated `gen/web` WASM app |
 | `whisker-plugin` | CNG plugin surface: `Plugin` trait, IR types, JSON envelope, subprocess runner shared by the engine and 3rd-party plugin binaries. | `whisker-cng`, 3rd-party plugins |
 | `whisker-protocol` | Host-independent semantic frame, intrinsic-measurement, and normalized input types; stable IDs; strict batch validation; and transactional retained-tree validation. Plain text and common box paint are retained semantic presentation, while pointer/provider events enter Rust through typed input values. The legacy production Lynx path does not consume this protocol. | scene engine and Host providers |
 | `whisker-engine` | Host-independent retained scene, coalescing mutation journal, snapshot/delta production, frame acceptance/recovery, and retained measurement coordination. `SurfaceEngine` is the core surface state machine, not a Lynx migration adapter: it pairs Scene and Taffy, batches Host measurements, lowers computed text/box paint and overflow clips, presents directly through `FrameSink`, and applies acknowledgements. Mobile cross-language bindings and providers are not implemented. | scene runtime and renderer providers |
-| `whisker-layout` | Host-independent retained box layout. It privately owns Taffy, accepts `ComputedLayoutStyle` and stable `NodeId`s, calls an abstract intrinsic measurer using protocol-owned constraints, and returns deterministic logical-pixel snapshots. `whisker-engine::SurfaceEngine` owns its coordination with scene/frame production. | `whisker-engine`, future scene runtime |
+| `whisker-layout` | Host-independent retained box layout. It privately owns Taffy, accepts `ComputedLayoutStyle` and stable `NodeId`s, calls an abstract intrinsic measurer using protocol-owned constraints, and returns deterministic logical-pixel border/content geometry. `whisker-engine::SurfaceEngine` owns its coordination with scene/frame production. | `whisker-engine`, future scene runtime |
 | `whisker-subsecond` | Whisker's fork of DioxusLabs `subsecond` — anchors the ASLR-slide lookup on `whisker_aslr_anchor` (emitted by `#[whisker::main]`) instead of `main`. `[lib] name = "subsecond"` keeps `use subsecond::*`. | `whisker`, `whisker-driver`, `whisker-dev-runtime` |
 
 ### Modules and the router (`packages/*`)

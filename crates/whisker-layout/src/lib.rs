@@ -14,7 +14,7 @@ use taffy::{
     Rect, Size, Style, TaffyTree,
 };
 pub use whisker_protocol::AvailableSpace;
-use whisker_protocol::{LayoutRect, MeasureConstraints, NodeId};
+use whisker_protocol::{LayoutGeometry, LayoutRect, MeasureConstraints, NodeId};
 use whisker_style::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, BoxSizingValue, ComputedFlexBasis,
     ComputedLayoutStyle, ComputedLengthPercentage, ComputedLengthPercentageAuto, ComputedSizeValue,
@@ -63,17 +63,17 @@ where
 /// A deterministic immutable result of one layout pass.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LayoutSnapshot {
-    boxes: BTreeMap<NodeId, LayoutRect>,
+    boxes: BTreeMap<NodeId, LayoutGeometry>,
 }
 
 impl LayoutSnapshot {
     /// Returns the border box for a node relative to its parent content origin.
-    pub fn get(&self, node: NodeId) -> Option<&LayoutRect> {
+    pub fn get(&self, node: NodeId) -> Option<&LayoutGeometry> {
         self.boxes.get(&node)
     }
 
     /// Iterates in stable node-ID order.
-    pub fn iter(&self) -> impl Iterator<Item = (NodeId, &LayoutRect)> {
+    pub fn iter(&self) -> impl Iterator<Item = (NodeId, &LayoutGeometry)> {
         self.boxes.iter().map(|(node, rect)| (*node, rect))
     }
 
@@ -528,11 +528,19 @@ impl LayoutTree {
             .expect("retained backend node");
         snapshot.boxes.insert(
             node,
-            LayoutRect {
-                x: layout.location.x,
-                y: layout.location.y,
-                width: layout.size.width,
-                height: layout.size.height,
+            LayoutGeometry {
+                border_box: LayoutRect {
+                    x: layout.location.x,
+                    y: layout.location.y,
+                    width: layout.size.width,
+                    height: layout.size.height,
+                },
+                content_box: LayoutRect {
+                    x: layout.border.left + layout.padding.left,
+                    y: layout.border.top + layout.padding.top,
+                    width: layout.content_box_width().max(0.0),
+                    height: layout.content_box_height().max(0.0),
+                },
             },
         );
         for child in &retained.children {
@@ -822,9 +830,11 @@ mod tests {
             snapshot.iter().map(|(node, _)| node).collect::<Vec<_>>(),
             [root, first, second]
         );
-        assert_eq!(snapshot.get(root).unwrap().width, 100.5);
-        assert_eq!(snapshot.get(second).unwrap().x, 0.25);
-        assert_eq!(snapshot.get(first).unwrap().x, 10.25);
+        assert_eq!(snapshot.get(root).unwrap().border_box.width, 100.5);
+        assert_eq!(snapshot.get(root).unwrap().content_box.x, 0.25);
+        assert_eq!(snapshot.get(root).unwrap().content_box.width, 100.25);
+        assert_eq!(snapshot.get(second).unwrap().border_box.x, 0.25);
+        assert_eq!(snapshot.get(first).unwrap().border_box.x, 10.25);
         assert!(requests.len() >= 2);
         assert!(requests.iter().any(|(node, _)| *node == first));
         assert!(requests.iter().any(|(node, _)| *node == second));
@@ -879,7 +889,7 @@ mod tests {
         let snapshot = tree
             .compute(root, LayoutSize::new(100.0, 100.0), &mut zero_measure)
             .unwrap();
-        assert_eq!(snapshot.get(root).unwrap().width, 0.0);
+        assert_eq!(snapshot.get(root).unwrap().border_box.width, 0.0);
     }
 
     #[test]
@@ -1095,8 +1105,8 @@ mod tests {
         let snapshot = tree
             .compute(root, LayoutSize::new(30.0, 10.0), &mut zero_measure)
             .unwrap();
-        assert_eq!(snapshot.get(right).unwrap().x, 0.0);
-        assert_eq!(snapshot.get(left).unwrap().x, 10.0);
+        assert_eq!(snapshot.get(right).unwrap().border_box.x, 0.0);
+        assert_eq!(snapshot.get(left).unwrap().border_box.x, 10.0);
 
         let mut unsupported = sized(10.0, 10.0);
         unsupported.position = PositionValue::Fixed;
