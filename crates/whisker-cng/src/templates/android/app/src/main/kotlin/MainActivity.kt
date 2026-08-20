@@ -1,14 +1,26 @@
 package {{android_application_id}}
 
-import rs.whisker.runtime.WhiskerActivity{{main_activity_imports}}
+import android.app.Activity
+import android.graphics.Color
+import android.os.Bundle
+import android.view.Gravity
+import android.widget.TextView{{main_activity_imports}}
 
 /**
- * Host Activity for the Whisker app.
- *
- * Empty by default — [WhiskerActivity] handles WhiskerView instantiation,
- * lifecycle forwarding, edge-to-edge window configuration, and system-bar
- * styling. A plugin may inject an `onCreate` override (e.g. to install a
- * SplashScreen before `super.onCreate`) via the manifest IR's
- * `main_activity_pre_super` / `main_activity_post_super`.
+ * Minimal native Host shell. The retained Rust renderer is attached in the
+ * next mobile slice; this launch path deliberately contains no Lynx runtime.
  */
-class MainActivity : WhiskerActivity(){{main_activity_body}}
+class MainActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+{{main_activity_pre_super}}        super.onCreate(savedInstanceState)
+
+        val content = TextView(this).apply {
+            setBackgroundColor(Color.rgb(32, 36, 42))
+            setTextColor(Color.rgb(245, 247, 250))
+            textSize = 18f
+            gravity = Gravity.CENTER
+            text = "{{app_name}}"
+        }
+        setContentView(content)
+{{main_activity_post_super}}    }
+}

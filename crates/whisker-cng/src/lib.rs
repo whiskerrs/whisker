@@ -1,6 +1,6 @@
 //! Whisker CNG (Continuous Native Generation).
 //!
-//! Renders the Android / iOS host projects under `gen/{android,ios}/`
+//! Renders platform Host projects under `gen/<platform>/`
 //! from the user's `whisker.rs` (= [`whisker_config::Config`]).
 //! Drift between the in-tree files and the current config is detected
 //! via a content-hashed fingerprint stored alongside each generated
@@ -15,7 +15,7 @@
 //!
 //! ## Public entry points
 //!
-//! - [`sync_android`] / [`sync_ios`] — render-or-skip for one
+//! - [`sync_android`] / [`sync_ios`] / [`sync_macos`] — render-or-skip for one
 //!   platform. Returns whether files were actually rewritten.
 //! - [`AndroidInputs`] / [`IosInputs`] — the renderer's input bundle.
 //!   Build them yourself for full control, or use
@@ -31,11 +31,15 @@ pub mod compose;
 pub mod discovery;
 mod fingerprint;
 pub mod ios;
+pub mod macos;
 pub mod plugins;
 mod render;
+pub mod web;
 
 pub use android::{AndroidInputs, sync as sync_android};
 pub use compose::{EnabledTargets, Engine, SubprocessPlugin};
 pub use discovery::{DiscoveredPlugin, discover_plugins};
 pub use ios::{IosInputs, sync as sync_ios};
+pub use macos::{MacosInputs, sync as sync_macos};
+pub use web::{WebInputs, sync as sync_web};
 pub use whisker_config::Config;

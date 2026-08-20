@@ -6,9 +6,10 @@ the **`whisker run` dev loop** wires them together.
 Whisker is a cross-platform UI framework for Rust migrating from its legacy
 Lynx C++ backend to a Rust-owned retained scene, layout, and scheduling model.
 App code remains plain Rust — a `#[whisker::main]` entry point and
-`render! { … }` views over fine-grained reactive signals. The legacy iOS and
-Android product path still drives Lynx while the new Host implementations are
-built against the retained protocol.
+`render! { … }` views over fine-grained reactive signals. CNG now generates
+Lynx-free Android and iOS launch shells. Connecting those shells to the retained
+frame protocol is the next mobile slice; the legacy bridge crates remain only
+while that Host implementation is completed.
 
 ## Crate graph
 
@@ -66,7 +67,7 @@ built against the retained protocol.
    ├── src/lib.rs   — `#[whisker::main] fn app() -> Element { render!{…} }`
    ├── whisker.rs   — `fn configure(&mut Config)` (app metadata)
    └── Cargo.toml   — depends on `whisker` (umbrella)
-       Native projects are GENERATED under gen/{android,ios}/ by CNG —
+       Platform projects are GENERATED under gen/<platform>/ by CNG —
        not committed.
 
    Host tooling (never in the shipped app)
@@ -77,17 +78,24 @@ built against the retained protocol.
    └── run.rs       — Config → dev_server::Config (flat)
         │
         ▼
-   whisker-dev-server  — the dev loop: file-watch → whisker-build →
-                         install/launch + subsecond hot-reload patches +
-                         WebSocket push. Manifest-agnostic (flat Config).
+   whisker-dev-server  — the mobile dev loop: file-watch → platform build →
+                         install/launch. Manifest-agnostic (flat Config).
         │
         ▼
-   whisker-build       — Lynx artifact fetch + per-platform cargo +
-                         NDK/Xcode packaging (Android jniLibs/AAR, iOS
-                         xcframework). Driven by whisker-dev-server.
+   whisker-build       — per-platform builds and packaging. The mobile
+                         bootstrap currently delegates to Gradle/Xcode; native
+                         Rust artifacts return when the retained ABI is wired.
 
    whisker-cng         — Continuous Native Generation: renders
-                         gen/{android,ios}/ from whisker.rs's Config.
+                         complete gen/<platform>/ projects from Config.
+
+   platforms/macos     — native Rust macOS Host: window/event loop and the
+                         MeasurementHost + FrameSink boundary. GPU paint,
+                         native text, input, and accessibility fill this Host
+                         out incrementally; Windows/Linux are peer OS Hosts.
+   platforms/web       — Rust/WASM browser Host: DOM text measurement,
+                         requestAnimationFrame scheduling, and semantic frame
+                         application to explicitly positioned DOM nodes.
    whisker-plugin      — CNG plugin trait + JSON envelope + subprocess
                          runner for 3rd-party plugins.
 ```
@@ -106,12 +114,14 @@ built against the retained protocol.
 | `whisker-dev-runtime` | App-side WebSocket receiver + log capture for hot patches. **Compiled only with `hot-reload`** — release builds drop it entirely. | `whisker-driver` (feature-gated) |
 | `whisker-macros` | `#[whisker::main]`, `#[component]`, `#[module_component]`, and the `render!` DSL. | `whisker` |
 | `whisker-cli` | The `whisker` / `cargo-whisker` binary: `run`, `doctor`, `new`, `new-module`. Resolves Config via the `whisker.rs` probe; hands a flat Config to dev-server. | (binary) |
-| `whisker-dev-server` | Host dev loop, manifest-agnostic. Owns watch → build → install → hot-reload patch → WebSocket push. | `whisker-cli` |
-| `whisker-build` | Lynx artifact fetch, cargo cross-compile, AAR/xcframework packaging. | `whisker-dev-server` |
-| `whisker-cng` | Continuous Native Generation: pure renderer of `gen/{android,ios}/` from Config, fingerprint-gated. No CLI surface, no side effects. | `whisker-cli` |
+| `whisker-dev-server` | Host dev loop, manifest-agnostic. Android/iOS currently use explicit full rebuild → install → relaunch; the retained mobile ABI will re-enable Rust hot reload. | `whisker-cli` |
+| `whisker-build` | Per-platform builds and packaging, including generated mobile shell builds and native macOS `.app` assembly. Legacy artifact helpers remain until migration cleanup. | `whisker-cli`, `whisker-dev-server` |
+| `whisker-cng` | Continuous Native Generation: pure, fingerprint-gated renderer of complete `gen/<platform>/` projects from Config. No CLI surface. | `whisker-cli` |
+| `whisker-macos` | Native Rust macOS Host and direct runtime composition boundary. It currently owns lifecycle/frame scheduling with deterministic measurement and a recording sink while native text/GPU/input are implemented. | generated `gen/macos` app |
+| `whisker-web` | Browser DOM Host. It drives `RuntimeInstance` from `requestAnimationFrame`, measures intrinsic text in the DOM, and applies layout/paint/text operations without making browser layout authoritative. | generated `gen/web` WASM app |
 | `whisker-plugin` | CNG plugin surface: `Plugin` trait, IR types, JSON envelope, subprocess runner shared by the engine and 3rd-party plugin binaries. | `whisker-cng`, 3rd-party plugins |
 | `whisker-protocol` | Host-independent semantic frame, intrinsic-measurement, and normalized input types; stable IDs; strict batch validation; and transactional retained-tree validation. Plain text and common box paint are retained semantic presentation, while pointer/provider events enter Rust through typed input values. The legacy production Lynx path does not consume this protocol. | scene engine and Host providers |
-| `whisker-engine` | Host-independent retained scene, coalescing mutation journal, snapshot/delta production, frame acceptance/recovery, and retained measurement coordination. `SurfaceEngine` is the core surface state machine, not a Lynx migration adapter: it pairs Scene and Taffy, batches Host measurements, lowers computed text/box paint and overflow clips, presents directly through `FrameSink`, and applies acknowledgements. Generated cross-language bindings and platform providers are not implemented. | scene runtime and renderer providers |
+| `whisker-engine` | Host-independent retained scene, coalescing mutation journal, snapshot/delta production, frame acceptance/recovery, and retained measurement coordination. `SurfaceEngine` is the core surface state machine, not a Lynx migration adapter: it pairs Scene and Taffy, batches Host measurements, lowers computed text/box paint and overflow clips, presents directly through `FrameSink`, and applies acknowledgements. Mobile cross-language bindings and providers are not implemented. | scene runtime and renderer providers |
 | `whisker-layout` | Host-independent retained box layout. It privately owns Taffy, accepts `ComputedLayoutStyle` and stable `NodeId`s, calls an abstract intrinsic measurer using protocol-owned constraints, and returns deterministic logical-pixel snapshots. `whisker-engine::SurfaceEngine` owns its coordination with scene/frame production. | `whisker-engine`, future scene runtime |
 | `whisker-subsecond` | Whisker's fork of DioxusLabs `subsecond` — anchors the ASLR-slide lookup on `whisker_aslr_anchor` (emitted by `#[whisker::main]`) instead of `main`. `[lib] name = "subsecond"` keeps `use subsecond::*`. | `whisker`, `whisker-driver`, `whisker-dev-runtime` |
 
@@ -172,12 +182,14 @@ versions stay in lockstep is covered in
 
 ## `hot-reload` feature flow
 
-The `hot-reload` feature is **off by default**. Release builds get a
-compact binary with no subsecond, no WebSocket, no tokio. `whisker run`
-flips it on for the dev build:
+The `hot-reload` feature is **off by default**. Release builds get a compact
+binary with no subsecond, no WebSocket, and no tokio. The subsecond pipeline
+still exists for the legacy Rust/mobile composition, but the generated
+Android/iOS bootstrap shells deliberately do not enable it: there is no Rust
+mobile library to patch until the retained renderer ABI is connected.
 
 ```
-$ whisker run android --hot-patch
+$ whisker run <legacy-mobile-composition>
             │
             ▼  (cli adds `--features whisker/hot-reload`)
 whisker = { features = ["hot-reload"] }
@@ -195,10 +207,18 @@ feature gates do everything.
 
 ## The `whisker run` dev loop
 
-`whisker run <platform>` is the developer's primary command. The cli is
+`whisker run <platform>` is the developer's primary command. The CLI is
 a thin wrapper: it probes `whisker.rs` into a `Config`, runs CNG to
-materialise `gen/{android,ios}/`, then hands a flat `Config` to
-`whisker-dev-server`, which owns the long-running loop:
+materialise `gen/<platform>/`, then starts the target's development loop. The
+mobile paths hand a flat `Config` to `whisker-dev-server`; the macOS path
+builds the same generated Cargo project used by `whisker build macos`, launches
+its `.app`, and automatically rebuilds/relaunches on source changes:
+
+The Web path emits a Cargo/Trunk project at `gen/web`. `whisker run web`
+starts Trunk, opens the browser, and uses Trunk's page reload as the initial
+remount-style hot reload implementation. Android and iOS generate plain AGP
+and Xcode/UIKit projects respectively, build them, install them on an emulator
+or Simulator, and launch them without downloading or embedding Lynx.
 
 ```
   edit src/lib.rs
@@ -207,22 +227,17 @@ materialise `gen/{android,ios}/`, then hands a flat `Config` to
   watcher (notify)  →  ChangeKind::{RustCode | CargoToml | Other}
         │
         ▼
-  decide_action
-   ├── Hot Reload (RustCode, on save): build a thin patch dylib from
-   │   the changed user crate (captured rustc + linker args + a host-
-   │   symbol jump stub), parse it into a subsecond JumpTable, push it
-   │   over the WebSocket to connected devices. ~½–1 s on a small app.
-   │
-   └── Full Reload (explicit `R` only; Cargo.toml changes prompt for it):
-       full whisker-build (cargo cross-compile + per-platform package)
-       → install/launch via adb / simctl.
+  platform loop
+   ├── Web: Trunk rebuild → browser remount
+   ├── macOS: Cargo rebuild → `.app` relaunch
+   └── Android/iOS bootstrap: save prompts for explicit Full Reload (`R`)
+       → Gradle/Xcode build → install/launch via adb/simctl
 ```
 
-On the device, `whisker-dev-runtime` receives a patch, writes the dylib
-to a cache path, and queues it. On the next Lynx TASM-thread tick,
-`whisker-driver` applies it via `subsecond::apply_patch` and re-drives
-the frame; `subsecond::call(move || app())` then dispatches into the
-patched function. Per-component remount preserves higher-owner state.
+After the mobile retained ABI is implemented, its Rust composition library can
+restore subsecond patch delivery without coupling scheduling to a Lynx thread.
+Until then, mobile source changes require the explicit full-reload path and the
+bootstrap screen does not execute user `render!` output.
 
 The end-to-end mechanics of both tiers — captured-args replay, the ASLR
 anchor, the jump-table math, and the per-component remount strategy —
@@ -242,8 +257,8 @@ are documented in
   from seconds to minutes (Lynx headers, whisker-runtime, …).
 
 - **Native projects are generated, not committed.** CNG (Expo-style)
-  treats `whisker.rs`'s `Config` as the source of truth and renders
-  `gen/{android,ios}/` on demand, fingerprint-gated so the fast path is
+  treats `whisker.rs`'s `Config` as the source of truth and renders complete
+  `gen/<platform>/` projects on demand, fingerprint-gated so the fast path is
   a single file read. Regeneration is implicit — the command that needs
   the native tree syncs it first.
 

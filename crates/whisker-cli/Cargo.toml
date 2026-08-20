@@ -57,7 +57,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 # depend on whisker-config — the cli translates the Config
 # into a flat `dev_server::Config` before handing it off.
 whisker-config = { workspace = true }
-# Continuous Native Generation — renders gen/{android,ios}/ from the
+# Continuous Native Generation — renders gen/<platform>/ from the
 # resolved Config before each run / build.
 whisker-cng = { workspace = true }
 # Cargo + gradle / xcodebuild orchestration. Shared with whisker-dev-server.

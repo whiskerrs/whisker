@@ -1,32 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <!-- Required by Whisker's hot-reload receiver: opens a WebSocket
-         to the dev server at 127.0.0.1:9876 (forwarded via `adb
-         reverse` in non-emulator setups). Harmless in release builds
-         since the dev-runtime is feature-gated out. -->
-    <uses-permission android:name="android.permission.INTERNET" />
 {{extra_uses_permissions}}
 
     <application
-        android:name=".{{android_application_class}}"
         android:label="{{app_name}}"
         android:usesCleartextTraffic="true"
         android:theme="{{android_theme}}"
 {{extra_application_attributes}}        >
 {{extra_application_meta_data}}
-        <!-- Keyboard avoidance is the app's job here: `WhiskerActivity`
-             forces edge-to-edge and `whisker-keyboard` surfaces the IME
-             inset to Rust for the content to lay out around. Left
-             unspecified, the system ALSO pans the window whenever the
-             focused field would be covered — the content jumps past the
-             app's own avoidance and eases back down, a full-screen slide
-             iOS has no counterpart for. `adjustResize` stops the pan
-             without resizing anything (an edge-to-edge window keeps its
-             size and just receives the inset); `adjustNothing` would
-             stop it too, but it would also leave pre-API-30 devices —
-             where `WindowInsetsCompat.Type.ime()` reports nothing —
-             with no keyboard avoidance at all. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

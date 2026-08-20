@@ -25,6 +25,9 @@ members = [
     "crates/whisker-runtime",
     "crates/whisker-style",
     "crates/whisker-subsecond",
+    "platforms/macos",
+    "platforms/web",
+    "examples/host-smoke",
     "examples/anim-smoke",
     "examples/asset-demo",
     "examples/aurora-wallet",
@@ -112,6 +115,8 @@ whisker-plugin = { path = "crates/whisker-plugin", version = "0.12.0" }
 whisker-protocol = { path = "crates/whisker-protocol", version = "0.12.0" }
 whisker-runtime = { path = "crates/whisker-runtime", version = "0.12.0" }
 whisker-style = { path = "crates/whisker-style", version = "0.12.0" }
+whisker-macos = { path = "platforms/macos", version = "0.12.0" }
+whisker-web = { path = "platforms/web", version = "0.12.0" }
 whisker-router = { path = "packages/whisker-router", version = "0.12.0" }
 whisker-router-macros = { path = "packages/whisker-router-macros", version = "0.12.0" }
 

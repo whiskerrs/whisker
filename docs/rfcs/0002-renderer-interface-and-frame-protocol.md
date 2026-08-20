@@ -189,19 +189,22 @@ content in another declarative UI framework or run a competing inner layout.
 
 ### Desktop package and dependency policy
 
-All Desktop-specific presentation information and implementation live below
-`platforms/desktop`, preferably as a private workspace crate named
-`whisker-platform-desktop`. This includes the window/event loop, surface
-lifecycle, accepted Host projection, native text shaping and rasterization,
-glyph and image atlases, GPU renderer and shaders, input/IME, accessibility,
-and native custom-element providers. Common semantic values remain in
-`whisker-protocol`; Desktop-only handles and render primitives must not leak
-back into protocol, engine, runtime, or application crates.
+Desktop presentation information and implementation are divided at the OS
+boundary under `platforms/macos`, `platforms/windows`, and `platforms/linux`.
+They are platform Host crates rather than a second cross-platform UI
+framework. Each owns its window/event loop, surface lifecycle, accepted Host
+projection, text shaping and rasterization, glyph and image atlases, GPU
+renderer and shaders, input/IME, accessibility, and native custom-element
+providers. Small implementation-only crates may be shared when semantics are
+actually identical, but there is no mandatory `platforms/desktop` facade.
+Common semantic values remain in `whisker-protocol`; OS-native handles and
+render primitives must not leak back into protocol, engine, runtime, or
+application crates.
 
 The intended internal ownership is:
 
 ```text
-platforms/desktop/
+platforms/macos/                 # corresponding crates for windows and linux
   Cargo.toml
   src/
     lib.rs
@@ -224,14 +227,20 @@ The dependency direction is one-way:
 ```text
 generated Desktop executable
   -> application and Whisker runtime/engine
-  -> platforms/desktop Host
+  -> selected platforms/{macos,windows,linux} Host
        -> whisker-protocol and the narrow engine Host traits
        -> window, GPU, text, geometry, and accessibility libraries
 ```
 
-Whisker core crates never depend on `platforms/desktop`. The generated native
-executable is the composition root that connects a `SurfaceRuntime` to a
-`DesktopSurface`. GPUI is not a Desktop framework or renderer dependency.
+Whisker core crates never depend on an OS Host crate. CNG emits a complete,
+Cargo-based platform project at `gen/macos`, `gen/windows`, or `gen/linux`.
+That generated executable is the composition root that links the application,
+`SurfaceRuntime`, and selected platform Host. The same generated project is
+consumed by both `whisker run` and `whisker build`; it is not a development-only
+launcher. macOS packaging produces an `.app` bundle from this Cargo project,
+with `Info.plist`, entitlements, resources, signing, and any optional Xcode
+integration treated as packaging concerns. GPUI is not a Desktop framework or
+renderer dependency.
 
 The initial implementation may assemble focused low-level Rust libraries such
 as `winit` for windows and events, `wgpu` for GPU access, `cosmic-text` and
@@ -1294,7 +1303,14 @@ multiple instances on one UI thread. Instance-specific future wakers and
 Host input is validated, hit-tested against the retained Rust scene, and routed
 through Rust capture and bubble listeners; synchronous re-entry is queued until
 the current event/frame boundary. The packed/generated platform ABI and the
-Android/UIKit/DOM/Desktop Host implementations remain follow-up slices.
+Android/UIKit retained renderers remain follow-up slices. CNG now produces
+Lynx-free, minimal Android and UIKit applications that `whisker run` can build,
+install, and launch; these shells do not yet mount `RuntimeInstance` or consume
+frame packets. Initial DOM and macOS Host slices now provide CNG composition
+roots, Host-driven frame scheduling, measurement, and frame consumption; DOM
+covers the built-in
+box/text paint subset, while macOS retains a recording sink until native GPU
+paint lands.
 
 ## Renderer events: Host to Rust
 
@@ -1452,12 +1468,17 @@ how server-emitted presentation relates to Rust-resolved interactive styling.
    renderer in the new path.
 4. Move signals and motion from complete inline-style strings to typed dirty
    property slots and one transaction per frame.
-5. Implement standard element factories, measurement, events, and packet
-   application for Android and iOS.
+5. Generate and launch minimal Lynx-free Android and iOS applications, then
+   connect their native Rust library ABI and implement standard element
+   factories, measurement, events, and packet application. The launch-shell
+   portion is complete; retained rendering remains.
 6. Implement the JavaScript DOM provider for Web.
-7. Scaffold `platforms/desktop` and implement the Whisker-owned native Rust
+7. Scaffold the first OS Host at `platforms/macos` and its CNG-generated
+   `gen/macos` Cargo composition root. Implement the Whisker-owned native Rust
    Host using direct `MeasurementHost` and `FrameSink` calls plus focused
-   window, text, GPU, input, and accessibility libraries.
+   window, text, GPU, input, and accessibility libraries. Add Windows and
+   Linux as peer Host crates and generated projects rather than hiding their
+   lifecycle and packaging differences behind a premature Desktop facade.
 8. Complete Desktop capability coverage for hierarchical accessibility, group
    compositing, filters, path clipping, and external surfaces without leaking
    Desktop render types into the common protocol.
@@ -1520,8 +1541,8 @@ The following must be resolved before this RFC becomes `Accepted`:
   and the binary-size and compile-time budgets they must satisfy;
 - the minimum Desktop shader, compositing, clip, accessibility, and external-
   surface feature set required by the conformance suite;
-- generated Desktop shell and embedded-region packaging while retaining
-  `platforms/desktop` as the Host implementation boundary;
+- generated OS shells and embedded-region packaging while retaining
+  `platforms/{macos,windows,linux}` as the Host implementation boundaries;
 - the binary ABI and generated Host representation of an
   `ApplicationDescriptor`, including collision-free selection when several
   independently built applications are linked into one Host;

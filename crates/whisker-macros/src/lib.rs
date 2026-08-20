@@ -84,6 +84,14 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ::whisker::__main_runtime::call_user_app(#fn_name)
         }
 
+        // Typed Rust entry used by the native Desktop composition root. The
+        // generated executable links the application rlib directly, so this
+        // path needs neither a C ABI nor an encoded bridge payload.
+        #[doc(hidden)]
+        pub fn __whisker_application() -> ::whisker::runtime::view::Element {
+            __whisker_app_dispatch()
+        }
+
         // Source-hash pair for the full-remount trigger. The dispatch
         // wrapper routes through `call_app_hash`, so after a patch the
         // runtime reads the *patch dylib's* hash. A changed value means
@@ -102,6 +110,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // `#[unsafe(no_mangle)]`, not bare `#[no_mangle]`: this macro
         // expands in the USER crate's edition, and a bare `#[no_mangle]`
         // is a hard error under edition 2024.
+        #[cfg(not(target_arch = "wasm32"))]
         #[unsafe(no_mangle)]
         pub extern "C" fn whisker_app_main(
             engine: *mut ::std::ffi::c_void,
@@ -119,6 +128,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             );
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         #[unsafe(no_mangle)]
         pub extern "C" fn whisker_tick(engine: *mut ::std::ffi::c_void) -> bool {
             ::whisker::__main_runtime::tick(engine)
@@ -139,6 +149,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         //
         // The stub never runs — it only needs to exist in the export
         // list at a known static address.
+        #[cfg(not(target_arch = "wasm32"))]
         #[unsafe(no_mangle)]
         pub extern "C" fn whisker_aslr_anchor() -> ::std::ffi::c_int { 0 }
     };
