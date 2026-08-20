@@ -1337,14 +1337,17 @@ roots, Host-driven frame scheduling, measurement, and frame consumption; DOM
 covers the built-in box/text paint subset. The first Desktop implementation is
 currently located in `platforms/macos`: it retains accepted packets in a
 native Host projection, measures and shapes text with `cosmic-text`, reuses the
-resulting `PreparedContentId` for glyph paint, and submits common box,
-rectangular clip, and text draws through Metal via `wgpu`. Its portable window,
-scene, measurement, and GPU code will move unchanged to `platforms/desktop`,
-leaving `platforms/macos` as the first thin OS adapter. Layout packets carry
-both border-box and content-box geometry so Hosts never reconstruct padding or
-borders from style inputs. Rounded/path clips, exact non-solid borders,
-transforms, group compositing, ellipsis/forced-direction text behavior, input,
-and accessibility remain explicit Desktop conformance gaps.
+resulting `PreparedContentId` for glyph paint, and submits common box, rounded
+background and border-outline, rectangular clip, and text draws through Metal
+via `wgpu`. Percentage corner radii resolve independently against both box
+axes and are normalized when adjacent radii exceed an edge. Its portable
+window, scene, measurement, and GPU code will move unchanged to
+`platforms/desktop`, leaving `platforms/macos` as the first thin OS adapter.
+Layout packets carry both border-box and content-box geometry so Hosts never
+reconstruct padding or borders from style inputs. Rounded descendant/path
+clips, exact non-solid borders, transforms, group compositing,
+ellipsis/forced-direction text behavior, input, and accessibility remain
+explicit Desktop conformance gaps.
 Each Host samples its current logical viewport and scale before a frame.
 `RuntimeInstance` applies that `StyleEnvironment`, transactionally
 re-resolves retained `vw`, `vh`, `rpx`, and other environment-dependent styles,
