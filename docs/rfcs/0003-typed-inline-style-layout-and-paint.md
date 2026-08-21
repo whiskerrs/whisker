@@ -300,21 +300,22 @@ The common style registry declares, for each property:
 - stable property ID and wire type;
 - accepted Rust value types and normalization;
 - initial value;
-- applicable `ElementTrait`s;
+- applicable closed element categories;
 - percentage and environment resolution rules;
 - interpolation support;
 - invalidation impacts;
 - backend capability requirements.
 
-An `ElementSchema` declares traits such as `Box`, `Container`, `TextContent`,
-`Replaced`, or `ScrollContainer`. It does not repeat every common style
+An `ElementSchema` declares presentation, children, content, measurement, and
+text-style-consumer categories as defined by RFC 0004. Its public module DSL
+does not expose a Rust `Trait` list, and it does not repeat every common style
 property. Invalid property/element combinations should be compile-time errors
 when statically known and deterministic runtime diagnostics otherwise.
 The seven inherited text properties are valid on containers because they also
 define the inherited context for descendants, even when that container does
 not paint text itself.
 
-Element-specific behavior stays in the versioned element schema. For example,
+Element-specific behavior stays in the canonical element schema. For example,
 `Video` uses common width, border, opacity, transform, and clip styles, while
 `src`, `autoplay`, `muted`, and playback commands are element properties. A
 third-party module that needs a truly custom visual parameter declares a typed
@@ -647,27 +648,26 @@ deliberately unsupported. Such exclusions require rationale in the coverage
 table. The goal is full useful Lynx visual capability, not implementation of a
 general-purpose web browser.
 
-## Rust module boundaries
+## Rust subsystem boundaries
 
-The implementation may be split into Rust-only crates while each remains an
-ordinary Whisker runtime module where runtime lifecycle or replaceability is
-needed:
+The implementation may be split into Rust-only crates. They remain internal
+subsystems by default rather than ordinary Whisker runtime modules:
 
 ```text
 whisker-style
   stable typed values, property IDs, declaration storage
   composition, applicability, inheritance, computed values, invalidation
 
-whisker-layout module
+whisker-layout
   retained Taffy tree, measurement requests, layout results
 
-whisker-motion module
+whisker-motion
   time, interpolation, springs, gestures, presentation updates
 
-whisker-engine module
+whisker-engine
   coordinates style/layout/motion and emits renderer operations
 
-whisker-renderer module
+whisker-renderer
   versioned Host boundary defined by RFC 0002
 ```
 
@@ -676,12 +676,16 @@ schema types, not on `whisker-engine`, a concrete layout engine, or a renderer.
 Style resolution is a deterministic Rust subsystem of `whisker-style`; the
 retained `whisker-engine` owns per-node state and decides when to invoke it.
 It does not require a separate `whisker-style-engine` crate or runtime module.
-At runtime, the Scene Runtime resolves replaceable providers through versioned
-module interfaces and coordinates them. A Rust-only crate can implement one of
-these interfaces and still be a `whisker-module` under RFC 0001.
+Whisker core coordinates these mechanisms directly. The module registry is
+used at stable extension boundaries such as the selected Host renderer,
+native services, and element providers; it is not inserted between core
+style, layout, motion, scene, and event algorithms. RFC 0004 defines this
+division.
 
-The exact crate split is not normative. The ownership boundaries, typed
-interfaces, and ability to substitute Rust-only recording/test providers are.
+The exact crate split is not normative. The ownership boundaries, internal
+typed interfaces, and ability to substitute Rust-only recording/test
+implementations are. Test substitution does not by itself imply a public
+runtime-provider compatibility promise.
 
 ## Test strategy
 
@@ -787,7 +791,7 @@ typed replacements for properties used by maintained Whisker packages.
     applies values sampled by Rust.
 11. Internal style interning or generated Web classes are unobservable
     optimizations.
-12. Third-party UI modules use common styles plus typed versioned element
+12. Third-party UI modules use common styles plus typed canonical element
     properties; they do not extend a global CSS language.
 13. Lynx compatibility is measured by semantic feature coverage, not CSS text
     compatibility.

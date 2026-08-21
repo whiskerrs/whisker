@@ -1,8 +1,9 @@
 use whisker_engine::FrameSink;
-use whisker_protocol::{ApplyResult, FramePacket, SurfaceId, ValidationError};
+use whisker_protocol::{ApplyResult, FramePacket, SurfaceId};
 
+use crate::element::DesktopElementRegistry;
 use crate::gpu::{GpuError, GpuRenderer};
-use crate::scene::DesktopScene;
+use crate::scene::{DesktopPresentError, DesktopScene};
 use crate::text::NativeTextHost;
 
 /// The complete Host-owned projection and presentation state for one native
@@ -17,9 +18,10 @@ impl DesktopSurface {
         target: impl Into<wgpu::SurfaceTarget<'static>>,
         physical_size: [u32; 2],
         surface: SurfaceId,
+        elements: DesktopElementRegistry,
     ) -> Result<Self, GpuError> {
         Ok(Self {
-            scene: DesktopScene::new(surface),
+            scene: DesktopScene::new(surface, elements),
             gpu: GpuRenderer::new(target, physical_size).await?,
         })
     }
@@ -40,7 +42,7 @@ impl DesktopSurface {
 }
 
 impl FrameSink for DesktopSurface {
-    type Error = ValidationError;
+    type Error = DesktopPresentError;
 
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
         self.scene.present(packet)

@@ -4,8 +4,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use whisker::runtime::RuntimeWakeHandle;
-use whisker::{Element, RuntimeInstance, SurfaceRuntime};
-use whisker_desktop::{DesktopFrameContext, DesktopHost};
+use whisker::{Element, ElementRegistry, RuntimeInstance, SurfaceRuntime};
+use whisker_desktop::{
+    DesktopElementFactory, DesktopElementModule, DesktopFrameContext, DesktopHost,
+    standard_desktop_element_modules,
+};
 use whisker_protocol::SurfaceId;
 use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
@@ -23,6 +26,9 @@ pub struct LinuxAppConfig {
     pub width: f64,
     /// Initial logical height in points.
     pub height: f64,
+    /// Element modules selected for this target.
+    pub element_modules: Vec<DesktopElementModule>,
+    element_factories: Vec<DesktopElementFactory>,
 }
 
 impl LinuxAppConfig {
@@ -32,7 +38,15 @@ impl LinuxAppConfig {
             title: title.into(),
             width: 1024.0,
             height: 720.0,
+            element_modules: Vec::new(),
+            element_factories: Vec::new(),
         }
+    }
+
+    /// Adds one Rust element definition with its matching Desktop factory.
+    pub fn with_element_module(mut self, module: DesktopElementModule) -> Self {
+        self.element_modules.push(module);
+        self
     }
 }
 
@@ -49,12 +63,26 @@ impl fmt::Display for LinuxHostError {
 impl Error for LinuxHostError {}
 
 /// Runs a standalone Whisker application in a native Linux window.
-pub fn run(config: LinuxAppConfig, application: fn() -> Element) -> Result<(), LinuxHostError> {
+pub fn run(mut config: LinuxAppConfig, application: fn() -> Element) -> Result<(), LinuxHostError> {
+    let mut element_modules = standard_desktop_element_modules();
+    element_modules.append(&mut config.element_modules);
+    let elements = ElementRegistry::builder()
+        .register_providers(
+            element_modules
+                .iter()
+                .map(|module| module.provider().clone()),
+        )
+        .build()
+        .map_err(|error| LinuxHostError(format!("build element registry: {error}")))?;
+    config.element_factories = element_modules
+        .iter()
+        .map(|module| module.factory().clone())
+        .collect();
     let event_loop = EventLoop::<HostEvent>::with_user_event()
         .build()
         .map_err(|error| LinuxHostError(format!("create Linux event loop: {error}")))?;
     let proxy = event_loop.create_proxy();
-    let mut application = LinuxApplication::new(config, application, proxy);
+    let mut application = LinuxApplication::new(config, elements, application, proxy);
     event_loop
         .run_app(&mut application)
         .map_err(|error| LinuxHostError(format!("run Linux event loop: {error}")))
@@ -67,6 +95,7 @@ enum HostEvent {
 
 struct LinuxApplication {
     config: LinuxAppConfig,
+    elements: ElementRegistry,
     application: fn() -> Element,
     proxy: EventLoopProxy<HostEvent>,
     window: Option<Arc<Window>>,
@@ -82,11 +111,13 @@ struct LinuxApplication {
 impl LinuxApplication {
     fn new(
         config: LinuxAppConfig,
+        elements: ElementRegistry,
         application: fn() -> Element,
         proxy: EventLoopProxy<HostEvent>,
     ) -> Self {
         Self {
             config,
+            elements,
             application,
             proxy,
             window: None,
@@ -116,24 +147,28 @@ impl LinuxApplication {
         let scale = window.scale_factor() as f32;
         let logical = self.viewport.to_logical::<f32>(window.scale_factor());
         let surface_id = SurfaceId::new(1).expect("the standalone surface id is non-zero");
-        let surface = SurfaceRuntime::new(
+        let surface = SurfaceRuntime::with_element_registry(
             surface_id,
             StyleEnvironment::new(logical.width, logical.height, scale, 14.0),
+            self.elements.clone(),
         );
+        let element_registrations = surface.element_registrations();
         let wake_proxy = self.proxy.clone();
         let wake = RuntimeWakeHandle::new(move || {
             let _ = wake_proxy.send_event(HostEvent::RequestFrame);
         });
-        let mut runtime = RuntimeInstance::new(surface, wake);
-        runtime
-            .mount(self.application)
-            .map_err(|error| LinuxHostError(format!("mount Whisker application: {error}")))?;
         let host = pollster::block_on(DesktopHost::new(
             window.clone(),
             [self.viewport.width, self.viewport.height],
             surface_id,
+            &element_registrations,
+            &self.config.element_factories,
         ))
         .map_err(|error| LinuxHostError(error.to_string()))?;
+        let mut runtime = RuntimeInstance::new(surface, wake);
+        runtime
+            .mount(self.application)
+            .map_err(|error| LinuxHostError(format!("mount Whisker application: {error}")))?;
         self.host = Some(host);
         self.runtime = Some(runtime);
         self.window = Some(window);

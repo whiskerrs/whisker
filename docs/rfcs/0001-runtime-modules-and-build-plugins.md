@@ -44,11 +44,15 @@ The current terms describe particular implementations:
   mutations.
 
 Those mechanisms are useful, but they are too narrow for the architecture
-after removing Lynx. Rendering, layout, motion, storage, routing, and the
-application entry point should be composable through the same runtime model.
-Likewise, Android, iOS, Web, and Desktop projects should be reproducibly
-assembled by build-time components instead of accumulating platform-specific
-special cases in the CLI.
+after removing Lynx. Native services, Host renderers, and Host-backed element
+types need one typed extension model. Internal scene mechanisms do not all
+need runtime replacement: style resolution, Taffy layout, frame generation,
+measurement coordination, and event propagation remain tightly coordinated
+Whisker core subsystems as refined by
+[RFC 0004](0004-native-modules-and-host-elements.md). Likewise, Android, iOS,
+Web, and Desktop projects should be reproducibly assembled by build-time
+components instead of accumulating platform-specific special cases in the
+CLI.
 
 The model must also avoid two misleading equivalences:
 
@@ -61,7 +65,9 @@ The model must also avoid two misleading equivalences:
   manager.
 - Make their identity, versioning, dependency resolution, and lifecycle
   explicit.
-- Allow core facilities such as a renderer to be ordinary typed modules.
+- Allow stable target and extension boundaries such as a Host renderer,
+  native service, or element provider to be ordinary typed modules without
+  requiring internal frame algorithms to become modules.
 - Allow a generated Xcode, Gradle, Web, or Desktop project to be the
   deterministic result of plugin composition.
 - Make the generated project contain all runtime providers, host code,
@@ -138,8 +144,12 @@ per-frame IPC in the Desktop architecture.
 
 The minimal runtime mechanism that makes modules possible: registry,
 interface resolution, instance handles, lifecycle dispatch, callback/event
-dispatch, memory ownership across transports, and frame transaction
-coordination. The kernel contains no renderer or platform policy.
+dispatch, memory ownership across transports, and surface transaction
+coordination. The module kernel contains no target renderer policy. “Whisker
+core” is broader than this module kernel: it also contains the scene, style,
+layout, measurement, scheduling, and event-routing mechanisms that must agree
+on one UI revision. Those mechanisms may use internal Rust traits and crates
+without becoming replaceable runtime modules.
 
 ### Project IR
 
@@ -246,6 +256,14 @@ Code becomes a module when it needs runtime discovery, replacement,
 capability resolution, managed lifecycle, or a stable boundary. Pure functions
 and internal implementation details remain ordinary library code.
 
+The initial public module boundary is intentionally narrower than the set of
+all possible runtime interfaces. Service modules expose addable native
+capabilities. Element-provider modules expose Host-backed element types.
+Built-in UI elements use the same element-provider contract as third-party
+elements, while Taffy layout, common style resolution, frame generation, and
+event propagation remain core. RFC 0004 defines that division and the
+Expo-like native authoring API.
+
 ### Consumers resolve interfaces
 
 Application code and framework modules depend on interface contracts:
@@ -283,14 +301,14 @@ optional typed handle. `Many` injects every compatible provider in a stable,
 deterministic order and is used for extension collections such as element or
 style-extension providers.
 
-For example, a scene runtime can require one renderer and collect multiple UI
+For example, Whisker core can resolve one renderer and collect multiple UI
 element providers without any UI module naming or depending on that renderer:
 
 ```text
-Application --requires exactly one--> SceneV1
+Application -------------------------> Whisker Core Scene API
 
-Scene Runtime --requires exactly one--> RendererV1
-Scene Runtime --requires many---------> ElementProviderV1
+Core bootstrap --requires exactly one--> RendererV1
+Core bootstrap --requires many---------> ElementProviderV1
 
 View Module ----provides--------------> ElementProviderV1
 Text Module ----provides--------------> ElementProviderV1
@@ -323,7 +341,7 @@ B --emits through sink----------> A
 ```
 
 This rule is particularly important for a renderer returning frame and input
-events to the scene runtime.
+events to the core scene through the sink supplied at surface attachment.
 
 ### Runtime dependencies are not package or plugin dependencies
 
@@ -733,13 +751,17 @@ The implementation must preserve these rules:
 12. Standalone and embedded startup create the same kind of `RuntimeInstance`;
     they differ only in whether a generated or existing Host owns the root
     `WhiskerView` container.
+13. A Rust crate or internal interface is not made a runtime module merely to
+    achieve source-code decomposition or test substitution.
+14. Built-in and third-party Host elements register through the same public
+    element-provider boundary, but neither may replace core scene semantics.
 
 ## Mapping from the current implementation
 
 | Current concept | Direction under this RFC |
 |---|---|
 | `PlatformModule` and `module!` | Raw dynamic transport; official APIs move to generated typed interface handles |
-| Kotlin/Swift `ModuleDefinition` | One source of Host provider descriptors and bindings |
+| Kotlin/Swift `ModuleDefinition` | Expo-like Host implementation DSL bound to generated service/element schemas under RFC 0004 |
 | `whisker-plugin::Plugin` | Seed for the versioned Build Plugin API |
 | `GenerateContext` with iOS/Android IR | Seed for a broader versioned Project IR including Web/Desktop and runtime composition |
 | `PluginRequest`/`PluginResponse` JSON | One possible transport for the Build Plugin API |

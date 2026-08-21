@@ -478,7 +478,7 @@ macro_rules! generic_element_methods {
 /// Imperative handle to any mounted element — the generic Lynx UI
 /// methods that work regardless of tag. Allocate with
 /// [`ElementHandle::new`], bind via `view(ref: handle.r())` (or `text`,
-/// `page`, …) in `render!`, then call the methods below.
+/// `scroll_view`, …) in `render!`, then call the methods below.
 ///
 /// `Copy` (the inner `ElementRef` is an arena handle), so it can be
 /// captured by value into multiple event closures.

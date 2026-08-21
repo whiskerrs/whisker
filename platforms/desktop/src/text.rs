@@ -6,25 +6,29 @@ use glyphon::{
 };
 use whisker_engine::MeasurementHost;
 use whisker_protocol::{
-    AvailableSpace, LayoutRect, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
-    MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
-    MeasurementResponse, PreparedContentId, SurfaceId, TextMeasurePayload,
+    AvailableSpace, ElementMeasurement, LayoutRect, MeasureFontFamily, MeasureFontStyle,
+    MeasureLineHeight, MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload,
+    MeasurementRequest, MeasurementResponse, PreparedContentId, SurfaceId, TextMeasurePayload,
     UnsupportedMeasurementReason,
 };
+
+use crate::element::DesktopElementRegistry;
 
 pub(crate) struct PreparedText {
     pub(crate) buffer: Buffer,
 }
 
 pub(crate) struct NativeTextHost {
+    elements: DesktopElementRegistry,
     pub(crate) font_system: FontSystem,
     pub(crate) swash_cache: SwashCache,
     pub(crate) prepared: HashMap<PreparedContentId, PreparedText>,
 }
 
 impl NativeTextHost {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(elements: DesktopElementRegistry) -> Self {
         Self {
+            elements,
             font_system: FontSystem::new(),
             swash_cache: SwashCache::new(),
             prepared: HashMap::new(),
@@ -143,8 +147,11 @@ impl MeasurementHost for NativeTextHost {
         responses: &mut Vec<MeasurementResponse>,
     ) -> Result<(), Self::Error> {
         for request in requests {
-            let response = match &request.payload {
-                MeasurementPayload::Text(payload) => {
+            let response = match (
+                self.elements.measurement(request.element_type),
+                &request.payload,
+            ) {
+                (Ok(ElementMeasurement::Text), MeasurementPayload::Text(payload)) => {
                     let (prepared, mut metrics) = self.prepare_text(payload, request);
                     let id = PreparedContentId::new(request.key.get())
                         .expect("measurement keys are always non-zero");
@@ -156,7 +163,12 @@ impl MeasurementHost for NativeTextHost {
                         metrics,
                     }
                 }
-                _ => MeasurementResponse::Unsupported {
+                (Err(_), _) => MeasurementResponse::Unsupported {
+                    key: request.key,
+                    environment_epoch: request.environment_epoch,
+                    reason: UnsupportedMeasurementReason::Element,
+                },
+                (Ok(_), _) => MeasurementResponse::Unsupported {
                     key: request.key,
                     environment_epoch: request.environment_epoch,
                     reason: UnsupportedMeasurementReason::Kind,
@@ -171,15 +183,33 @@ impl MeasurementHost for NativeTextHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use whisker::standard_element_registrations;
     use whisker_protocol::{
-        ElementTypeId, MeasureConstraints, MeasurementKey, NodeId, ReplacedContentMeasurePayload,
+        ElementContentKind, ElementTypeId, MeasureConstraints, MeasurementKey, NodeId,
+        ReplacedContentMeasurePayload,
     };
+
+    fn registry() -> DesktopElementRegistry {
+        DesktopElementRegistry::bind(
+            &standard_element_registrations(),
+            &crate::element::standard_desktop_element_factories(),
+        )
+        .unwrap()
+    }
+
+    fn text_element_type() -> ElementTypeId {
+        standard_element_registrations()
+            .into_iter()
+            .find(|registration| registration.content == ElementContentKind::Text)
+            .unwrap()
+            .element_type
+    }
 
     fn request(key: u64, payload: MeasurementPayload) -> MeasurementRequest {
         MeasurementRequest {
             key: MeasurementKey::new(key).unwrap(),
             node: NodeId::new(1).unwrap(),
-            element_type: ElementTypeId::new(1).unwrap(),
+            element_type: text_element_type(),
             environment_epoch: 3,
             constraints: MeasureConstraints {
                 known_dimensions: [None, None],
@@ -207,7 +237,7 @@ mod tests {
             max_lines: Some(2),
             overflow: whisker_protocol::MeasureTextOverflow::Clip,
         };
-        let mut host = NativeTextHost::new();
+        let mut host = NativeTextHost::new(registry());
         let mut responses = Vec::new();
         host.measure_batch(
             SurfaceId::new(1).unwrap(),
@@ -250,8 +280,10 @@ mod tests {
             max_lines: None,
             overflow: whisker_protocol::MeasureTextOverflow::Ellipsis,
         };
-        let mut host = NativeTextHost::new();
+        let mut host = NativeTextHost::new(registry());
         let mut responses = Vec::new();
+        let mut unknown_element = request(9, MeasurementPayload::Text(empty.clone()));
+        unknown_element.element_type = ElementTypeId::new(900).unwrap();
         host.measure_batch(
             SurfaceId::new(1).unwrap(),
             &[
@@ -260,11 +292,12 @@ mod tests {
                     8,
                     MeasurementPayload::ReplacedContent(ReplacedContentMeasurePayload::default()),
                 ),
+                unknown_element,
             ],
             &mut responses,
         )
         .unwrap();
-        assert_eq!(responses.len(), 2);
+        assert_eq!(responses.len(), 3);
         assert!(matches!(
             &responses[0],
             MeasurementResponse::Ready { metrics, .. }
@@ -274,6 +307,13 @@ mod tests {
             &responses[1],
             MeasurementResponse::Unsupported {
                 reason: UnsupportedMeasurementReason::Kind,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &responses[2],
+            MeasurementResponse::Unsupported {
+                reason: UnsupportedMeasurementReason::Element,
                 ..
             }
         ));

@@ -17,9 +17,9 @@
 //! }
 //! ```
 //!
-//! Whisker owns the root `page` element: it wraps whatever your app
-//! returns in a full-screen flex column, so app code just returns a
-//! `view` (give it `flex-grow: 1` to fill the screen).
+//! The legacy Lynx Host owns its required root `page` element and wraps
+//! whatever your app returns. Other Hosts mount the returned root element
+//! directly, so `page` is not part of Whisker's public element API.
 //!
 //! ## What's in this crate
 //!
@@ -165,20 +165,30 @@ pub use whisker_runtime::{RuntimeDispatcher, runtime_dispatcher};
 #[doc(hidden)]
 pub use whisker_runtime::tasks::run_until_stalled;
 mod control_flow;
+mod element_registry;
 mod runtime_instance;
+mod standard_ui;
 mod style;
 mod surface_runtime;
 
 pub mod attrs;
 
+pub use element_registry::{
+    ElementAuthoringBinding, ElementModuleDefinition, ElementProviderMetadata, ElementRegistry,
+    ElementRegistryBuilder, ElementRegistryError,
+};
 pub use runtime_instance::{
     RuntimeDrive, RuntimeDriveError, RuntimeEventError, RuntimeInstance, RuntimeLifecycle,
     RuntimeLifecycleError,
 };
+pub use standard_ui::{
+    SCROLL_VIEW_ELEMENT_NAME, TEXT_ELEMENT_NAME, VIEW_ELEMENT_NAME, standard_element_providers,
+    standard_ui_module_definition,
+};
 pub use style::{Style, apply_style};
 pub use surface_runtime::{
     InputDispatch, RuntimeBindingError, RuntimeFrame, RuntimeFrameError, RuntimeInputError,
-    RuntimeLayoutError, RuntimePresentError, SurfaceRuntime,
+    RuntimeLayoutError, RuntimePresentError, SurfaceRuntime, standard_element_registrations,
 };
 
 pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
@@ -835,32 +845,6 @@ pub mod __tags {
         #[doc(hidden)]
         fn __h(self) -> Element {
             self.__element()
-        }
-    }
-
-    /// `<page>` — top-level container Lynx mounts as the root of an
-    /// app. **Whisker-internal:** `page` is no longer a `render!`
-    /// built-in tag. The framework creates exactly one root `page`
-    /// during bootstrap (a full-screen flex column) and mounts whatever
-    /// your app returns as its child, so app code never writes `page` —
-    /// return a `view` (with `flex-grow: 1` to fill the screen) instead.
-    ///
-    /// Lynx keeps this root `page` fixed for the app's lifetime; it
-    /// cannot be hot-reloaded, which is why whisker owns it rather than
-    /// the user.
-    #[allow(non_camel_case_types)]
-    pub struct page {
-        handle: Element,
-    }
-    #[allow(non_snake_case)]
-    pub fn __page_ctor() -> page {
-        page {
-            handle: create_element(ElementTag::Page),
-        }
-    }
-    impl ElementBuilder for page {
-        fn __element(&self) -> Element {
-            self.handle
         }
     }
 
@@ -1883,7 +1867,7 @@ pub mod __hot {
 ///   numeric extension traits (`8.px()`, `45.deg()`, …), and the
 ///   `css!` macro.
 /// - **Built-in element tags** — `view`, `text`, `scroll_view`,
-///   `list`, `page`, `raw_text`, `fragment` (re-exported from the
+///   `list`, `raw_text`, `fragment` (re-exported from the
 ///   hidden [`__tags`] module so rust-analyzer
 ///   completes `vie|` → `view` inside `render!`).
 /// - **Typed attribute enums** — [`AccessibilityTrait`](crate::attrs::AccessibilityTrait),
@@ -1934,7 +1918,7 @@ pub mod prelude {
     // kwarg, so RA's macro-expansion completion path sees the
     // method-call shape regardless of what `view` resolves to.
     #[doc(hidden)]
-    pub use crate::__tags::{fragment, list, page, raw_text, scroll_view, text, view};
+    pub use crate::__tags::{fragment, list, raw_text, scroll_view, text, view};
     // A separate list-item builder is intentionally absent — the `list` render-props
     // builder auto-wraps every item internally.
 }

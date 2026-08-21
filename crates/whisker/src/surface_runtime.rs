@@ -6,13 +6,14 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
+use crate::ElementRegistry;
 use crate::runtime::element::ElementTag;
 use crate::runtime::value::WhiskerValue;
 use crate::runtime::view::{BindType, DynRenderer, Element};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
-    ElementTypeId, HitTestBehavior, InputEvent, InputEventError, MeasurementReady, NodeId,
-    ProtocolValue, SurfaceId,
+    ElementChildMount, ElementContentKind, ElementRegistration, HitTestBehavior, InputEvent,
+    InputEventError, MeasurementReady, NodeId, ProtocolValue, SurfaceId,
 };
 use whisker_engine::whisker_style::{
     InheritedStyle, ResolvedNodeStyle, SpecifiedStyle, StyleEnvironment, StyleResolutionError,
@@ -35,6 +36,18 @@ pub enum RuntimeBindingError {
     UnsupportedCustomElement {
         /// Requested element name.
         name: String,
+    },
+    /// A built-in authoring tag has no negotiated element registration.
+    MissingElementRegistration {
+        /// Tag that could not be mapped to a compact element type.
+        tag: ElementTag,
+    },
+    /// A leaf element was given an ordinary scene child.
+    ChildrenNotAllowed {
+        /// Parent element whose schema declares no child mount target.
+        parent: Element,
+        /// Child rejected before entering the retained scene.
+        child: Element,
     },
     /// A compatibility-only CSS string reached the typed renderer.
     UnsupportedRawStyle {
@@ -241,13 +254,35 @@ pub struct SurfaceRuntime {
     state: Rc<RefCell<BindingState>>,
 }
 
+/// Returns the built-in element contracts used by a default surface.
+///
+/// Hosts normally obtain the same values from
+/// [`SurfaceRuntime::element_registrations`]. This helper is useful for
+/// Host-only conformance tests that intentionally do not mount a runtime.
+pub fn standard_element_registrations() -> Vec<ElementRegistration> {
+    ElementRegistry::standard().registrations().to_vec()
+}
+
 impl SurfaceRuntime {
     /// Creates an empty renderer-backed surface for one style environment.
     pub fn new(surface: SurfaceId, environment: StyleEnvironment) -> Self {
+        Self::with_element_registry(surface, environment, ElementRegistry::standard())
+    }
+
+    /// Creates a surface with a registry normalized during application bootstrap.
+    ///
+    /// Built-in and module-provided elements in this registry share the same
+    /// compact-ID allocation and retained scene path.
+    pub fn with_element_registry(
+        surface: SurfaceId,
+        environment: StyleEnvironment,
+        registry: ElementRegistry,
+    ) -> Self {
         Self {
             state: Rc::new(RefCell::new(BindingState {
                 surface: SurfaceEngine::new(surface),
                 environment,
+                registry,
                 next_element: 0,
                 elements: HashMap::new(),
                 node_elements: HashMap::new(),
@@ -265,6 +300,15 @@ impl SurfaceRuntime {
     /// Returns the semantic surface identifier.
     pub fn surface(&self) -> SurfaceId {
         self.state.borrow().surface.surface()
+    }
+
+    /// Returns the element contracts negotiated by this surface runtime.
+    ///
+    /// A Host binds this snapshot before accepting the first frame. Built-in
+    /// and future module-provided elements use the same registration values;
+    /// `ElementTag` discriminants are not wire element IDs.
+    pub fn element_registrations(&self) -> Vec<ElementRegistration> {
+        self.state.borrow().registry.registrations().to_vec()
     }
 
     /// Returns the root selected by the runtime, when available.
@@ -423,7 +467,7 @@ impl SurfaceRuntime {
 
 #[derive(Clone)]
 struct BoundElement {
-    tag: ElementTag,
+    kind: BoundElementKind,
     node: Option<NodeId>,
     parent: Option<Element>,
     children: Vec<Element>,
@@ -432,6 +476,38 @@ struct BoundElement {
     text: Option<PlainTextInput>,
     raw_text: String,
     listeners: HashMap<String, Vec<RuntimeListener>>,
+}
+
+#[derive(Clone)]
+enum BoundElementKind {
+    RawText,
+    Registered {
+        content: ElementContentKind,
+        child_mount: ElementChildMount,
+    },
+}
+
+impl BoundElementKind {
+    fn is_raw_text(&self) -> bool {
+        matches!(self, Self::RawText)
+    }
+
+    fn is_text(&self) -> bool {
+        matches!(
+            self,
+            Self::Registered {
+                content: ElementContentKind::Text,
+                ..
+            }
+        )
+    }
+
+    fn child_mount(&self) -> Option<ElementChildMount> {
+        match self {
+            Self::RawText => None,
+            Self::Registered { child_mount, .. } => Some(*child_mount),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -445,6 +521,7 @@ type PlannedListener = (NodeId, Rc<dyn Fn(WhiskerValue) + 'static>);
 struct BindingState {
     surface: SurfaceEngine,
     environment: StyleEnvironment,
+    registry: ElementRegistry,
     next_element: u32,
     elements: HashMap<Element, BoundElement>,
     node_elements: HashMap<NodeId, Element>,
@@ -551,27 +628,61 @@ impl BindingState {
     }
 
     fn allocate(&mut self, tag: ElementTag) -> Result<Element, RuntimeBindingError> {
+        if tag == ElementTag::RawText {
+            return self.allocate_registration(None);
+        }
+        let registration = self
+            .registry
+            .registration_for_builtin(tag)
+            .cloned()
+            .ok_or(RuntimeBindingError::MissingElementRegistration { tag })?;
+        self.allocate_registration(Some(registration))
+    }
+
+    fn allocate_named(&mut self, name: &str) -> Result<Element, RuntimeBindingError> {
+        let registration = self
+            .registry
+            .registration_for_name(name)
+            .cloned()
+            .ok_or_else(|| RuntimeBindingError::UnsupportedCustomElement {
+                name: name.to_owned(),
+            })?;
+        self.allocate_registration(Some(registration))
+    }
+
+    fn allocate_registration(
+        &mut self,
+        registration: Option<ElementRegistration>,
+    ) -> Result<Element, RuntimeBindingError> {
         if self.next_element == u32::MAX {
             return Err(RuntimeBindingError::ElementIdExhausted);
         }
         let handle = Element::from_raw(self.next_element);
         self.next_element += 1;
-        let (node, resolved, text) = if tag == ElementTag::RawText {
-            (None, None, None)
-        } else {
+        let (kind, node, resolved, text) = if let Some(registration) = registration {
             let resolved = resolve_style(&SpecifiedStyle::new(), None, self.environment)?;
-            let element_type =
-                ElementTypeId::new(tag as u32).expect("built-in element tags are non-zero");
-            let node = self
-                .surface
-                .create_node(element_type, resolved.computed().layout().clone())?;
-            let text = (tag == ElementTag::Text).then(|| PlainTextInput::new(""));
-            (Some(node), Some(resolved), text)
+            let node = self.surface.create_node(
+                registration.element_type,
+                resolved.computed().layout().clone(),
+            )?;
+            let text =
+                (registration.content == ElementContentKind::Text).then(|| PlainTextInput::new(""));
+            (
+                BoundElementKind::Registered {
+                    content: registration.content,
+                    child_mount: registration.child_mount,
+                },
+                Some(node),
+                Some(resolved),
+                text,
+            )
+        } else {
+            (BoundElementKind::RawText, None, None, None)
         };
         self.elements.insert(
             handle,
             BoundElement {
-                tag,
+                kind,
                 node,
                 parent: None,
                 children: Vec::new(),
@@ -702,7 +813,7 @@ impl BindingState {
     }
 
     fn refresh_text(&mut self, text_element: Element) -> Result<(), RuntimeBindingError> {
-        if self.element(text_element)?.tag != ElementTag::Text {
+        if !self.element(text_element)?.kind.is_text() {
             return Err(RuntimeBindingError::InvalidRawTextParent {
                 element: text_element,
                 parent: text_element,
@@ -712,7 +823,7 @@ impl BindingState {
         let mut value = String::new();
         for child in children {
             let child = self.element(child)?;
-            if child.tag == ElementTag::RawText {
+            if child.kind.is_raw_text() {
                 value.push_str(&child.raw_text);
             }
         }
@@ -738,11 +849,16 @@ impl BindingState {
                 parent,
             });
         }
-        if child_entry.tag == ElementTag::RawText && parent_entry.tag != ElementTag::Text {
+        if child_entry.kind.is_raw_text() && !parent_entry.kind.is_text() {
             return Err(RuntimeBindingError::InvalidRawTextParent {
                 element: child,
                 parent,
             });
+        }
+        if !child_entry.kind.is_raw_text()
+            && parent_entry.kind.child_mount() == Some(ElementChildMount::None)
+        {
+            return Err(RuntimeBindingError::ChildrenNotAllowed { parent, child });
         }
         let position = match before {
             Some(reference) => self
@@ -805,15 +921,15 @@ impl BindingState {
         name: &str,
         value: &str,
     ) -> Result<(), RuntimeBindingError> {
-        let tag = self.element(element)?.tag;
-        if tag == ElementTag::RawText && name == "text" {
+        let kind = self.element(element)?.kind.clone();
+        if kind.is_raw_text() && name == "text" {
             self.element_mut(element)?.raw_text = value.to_owned();
             if let Some(parent) = self.element(element)?.parent {
                 self.refresh_text(parent)?;
             }
             return Ok(());
         }
-        if tag == ElementTag::Text && name == "text-maxline" {
+        if kind.is_text() && name == "text-maxline" {
             let max_lines = value.parse::<i32>().ok().and_then(|value| {
                 if value > 0 {
                     u32::try_from(value).ok()
@@ -946,10 +1062,13 @@ impl DynRenderer for SurfaceRuntime {
 
     fn create_element_by_name(&self, tag_name: &str) -> Element {
         let mut state = self.state.borrow_mut();
-        state.record(Err(RuntimeBindingError::UnsupportedCustomElement {
-            name: tag_name.to_owned(),
-        }));
-        Element::from_raw(u32::MAX)
+        match state.allocate_named(tag_name) {
+            Ok(element) => element,
+            Err(error) => {
+                state.record(Err(error));
+                Element::from_raw(u32::MAX)
+            }
+        }
     }
 
     fn release_element(&self, handle: Element) {
@@ -1058,15 +1177,15 @@ impl DynRenderer for SurfaceRuntime {
         state.record(result);
     }
 
-    fn set_root(&self, page: Element) {
+    fn set_root(&self, root: Element) {
         let mut state = self.state.borrow_mut();
-        let result = match state.element(page) {
+        let result = match state.element(root) {
             Ok(entry) => match entry.node {
                 Some(node) => {
                     state.root = Some(node);
                     Ok(())
                 }
-                None => Err(RuntimeBindingError::InvalidRoot { element: page }),
+                None => Err(RuntimeBindingError::InvalidRoot { element: root }),
             },
             Err(error) => Err(error),
         };

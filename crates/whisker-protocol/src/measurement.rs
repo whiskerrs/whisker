@@ -18,7 +18,7 @@ pub enum MeasurementKind {
     NativeControl,
     /// A child surface whose content determines its containing box.
     EmbeddedSurface,
-    /// A versioned element-specific measurement implemented by a module.
+    /// An element-specific measurement implemented by a module.
     Custom {
         /// Module-defined payload schema version.
         version: u16,

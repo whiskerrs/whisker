@@ -6,6 +6,7 @@
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ElementTag {
+    /// Legacy Lynx shell root. Not a public Whisker element registration.
     Page = 1,
     View = 2,
     Text = 3,

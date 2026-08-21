@@ -7,7 +7,7 @@
 //!
 //! #[whisker::main]
 //! fn app() -> Element {
-//!     render! { page { text { "Hello" } } }
+//!     render! { view { text(value: "Hello") } }
 //! }
 //! ```
 //!
@@ -22,8 +22,8 @@
 //! 3. We invoke `app()`. The user's body runs `render!`, which
 //!    populates the Lynx element tree and returns an `Element`
 //!    for the root.
-//! 4. We call `view::set_root(root)` and `view::flush()` to commit
-//!    the initial frame.
+//! 4. We attach that root beneath the Lynx-required shell `page`, then
+//!    call `view::set_root(page)` and `view::flush()` to commit the frame.
 //!
 //! ## What happens on tick
 //!

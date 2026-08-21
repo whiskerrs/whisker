@@ -272,7 +272,7 @@ pub trait DynRenderer {
         EventDispatchPlan::default()
     }
 
-    fn set_root(&self, page: Element);
+    fn set_root(&self, root: Element);
     fn flush(&self);
 
     /// Opaque platform pointer the C bridge associates with this
@@ -978,8 +978,8 @@ pub fn dispatch_event(target_sign: i32, event_name: &str, body: WhiskerValue) ->
     plan.consumed
 }
 
-pub fn set_root(page: Element) {
-    with_renderer(|r| r.set_root(page), ())
+pub fn set_root(root: Element) {
+    with_renderer(|renderer| renderer.set_root(root), ())
 }
 
 pub fn flush() {
