@@ -129,8 +129,6 @@ impl SurfaceEngine {
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error as _;
-
     use whisker_protocol::{
         ApplyResult, ElementTypeId, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
         MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasuredSize,
