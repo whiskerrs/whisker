@@ -14,9 +14,10 @@ use std::fmt;
 
 use whisker::RuntimeInstance;
 use whisker_engine::HostLayoutOptions;
-use whisker_protocol::SurfaceId;
+use whisker_protocol::{ElementRegistration, SurfaceId};
 use whisker_style::StyleEnvironment;
 
+mod element;
 mod gpu;
 mod paint;
 mod scene;
@@ -27,6 +28,11 @@ mod text;
 #[path = "../tests/host_conformance/mod.rs"]
 mod host_conformance_tests;
 
+use element::DesktopElementRegistry;
+pub use element::{
+    DesktopElementFactory, DesktopElementModule, standard_desktop_element_factories,
+    standard_desktop_element_modules,
+};
 use surface::DesktopSurface;
 use text::NativeTextHost;
 
@@ -86,12 +92,16 @@ impl DesktopHost {
         target: impl Into<wgpu::SurfaceTarget<'static>>,
         physical_size: [u32; 2],
         surface: SurfaceId,
+        elements: &[ElementRegistration],
+        element_factories: &[DesktopElementFactory],
     ) -> Result<Self, DesktopHostError> {
-        let surface = DesktopSurface::new(target, physical_size, surface)
+        let elements = DesktopElementRegistry::bind(elements, element_factories)
+            .map_err(|error| DesktopHostError(format!("bind Desktop elements: {error}")))?;
+        let surface = DesktopSurface::new(target, physical_size, surface, elements.clone())
             .await
             .map_err(|error| DesktopHostError(format!("initialize Desktop renderer: {error}")))?;
         Ok(Self {
-            measurements: NativeTextHost::new(),
+            measurements: NativeTextHost::new(elements),
             surface,
         })
     }

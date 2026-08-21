@@ -14,12 +14,17 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod element;
 mod frame;
 mod id;
 mod input;
 mod measurement;
 mod validation;
 
+pub use element::{
+    ElementChildMount, ElementContentKind, ElementMeasurement, ElementRegistration,
+    ElementRegistrationError, ElementSchema,
+};
 pub use frame::{
     BorderLineStyle, BoxClip, BoxPaint, FrameHeader, FrameMode, FramePacket, HitTestBehavior,
     LayoutGeometry, LayoutRect, Operation, OverflowClip, PROTOCOL_MAJOR, PROTOCOL_MINOR,

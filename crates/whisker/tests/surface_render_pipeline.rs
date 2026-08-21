@@ -1,15 +1,19 @@
 use std::convert::Infallible;
 
-use whisker::SurfaceRuntime;
 use whisker::css::{BorderStyle, Overflow};
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
-use whisker::runtime::view::{set_root, with_installed_renderer};
+use whisker::runtime::view::{create_element_by_name, set_root, with_installed_renderer};
+use whisker::{
+    ElementModuleDefinition, ElementProviderMetadata, ElementRegistry, ElementTag,
+    RuntimeBindingError, SurfaceRuntime,
+};
 use whisker_engine::RecordingRenderer;
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
-    MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse,
-    Operation, PaintColor, PreparedContentId, SurfaceId,
+    ElementChildMount, ElementContentKind, ElementMeasurement, ElementSchema, MeasuredSize,
+    MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse, Operation,
+    PaintColor, PreparedContentId, SurfaceId,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{HostLayoutOptions, MeasurementHost};
@@ -310,6 +314,124 @@ fn render_box_paint_and_clip_reach_the_frame_sink() {
                     blue: 230,
                     alpha: 1.0,
                 }
+    ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn frame_element_type_comes_from_the_surface_registry() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(10).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let scroll_type = surface
+        .element_registrations()
+        .into_iter()
+        .find(|registration| registration.canonical_name == "whisker.ui/ScrollView")
+        .expect("standard ScrollView registration")
+        .element_type;
+    assert_ne!(
+        scroll_type.get(),
+        ElementTag::ScrollView as u32,
+        "wire IDs must not depend on authoring-tag discriminants"
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| render! { scroll_view() });
+        set_root(root);
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            HostLayoutOptions::default(),
+        )
+        .expect("ScrollView frame");
+
+    assert!(renderer.frames()[0].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::CreateNode { element_type, .. } if *element_type == scroll_type)
+    ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn module_element_uses_the_same_retained_frame_path_as_builtins() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let registry = ElementRegistry::standard_builder()
+        .register_module(ElementModuleDefinition::new(
+            "example.maps",
+            [ElementProviderMetadata::named(
+                "map",
+                ElementSchema {
+                    canonical_name: "example.maps/Map".into(),
+                    content: ElementContentKind::None,
+                    child_mount: ElementChildMount::Presentation,
+                    measurement: ElementMeasurement::None,
+                    consumes_text_style: false,
+                },
+            )],
+        ))
+        .build()
+        .expect("valid module element registry");
+    let map_type = registry
+        .registration_for_name("map")
+        .expect("map authoring binding")
+        .element_type;
+    let surface = SurfaceRuntime::with_element_registry(
+        SurfaceId::new(12).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+        registry,
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| create_element_by_name("map"));
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            HostLayoutOptions::default(),
+        )
+        .expect("module element frame");
+
+    assert!(renderer.frames()[0].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::CreateNode { element_type, .. } if *element_type == map_type)
+    ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn text_leaf_contract_is_enforced_before_frame_generation() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(11).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        owner.with(|| render! { text { view() } });
+    });
+
+    assert!(matches!(
+        surface.binding_error(),
+        Some(RuntimeBindingError::ChildrenNotAllowed { .. })
     ));
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }

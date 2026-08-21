@@ -14,14 +14,14 @@ use std::fmt;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use whisker::runtime::RuntimeWakeHandle;
-use whisker::{Element, RuntimeInstance, SurfaceRuntime};
+use whisker::{Element, ElementProviderMetadata, ElementRegistry, RuntimeInstance, SurfaceRuntime};
 use whisker_engine::{FrameSink, HostLayoutOptions, MeasurementHost};
 use whisker_protocol::{
-    ApplyResult, AvailableSpace, BorderLineStyle, FrameMode, FramePacket, MeasureFontFamily,
-    MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextWrap, MeasuredSize,
-    MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse, NodeId,
-    Operation, OverflowClip, PaintColor, PaintLengthPercentage, PreparedContentId, SceneProjection,
-    SurfaceId,
+    ApplyResult, AvailableSpace, BorderLineStyle, ElementContentKind, ElementRegistration,
+    ElementTypeId, FrameMode, FramePacket, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+    MeasureTextDirection, MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload,
+    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintColor,
+    PaintLengthPercentage, PreparedContentId, SceneProjection, SurfaceId,
 };
 use whisker_style::StyleEnvironment;
 
@@ -37,6 +37,8 @@ pub struct WebAppConfig {
     pub title: String,
     /// DOM element id used as the surface root.
     pub root_id: String,
+    /// Element modules selected for this target.
+    pub element_modules: Vec<WebElementModule>,
 }
 
 impl WebAppConfig {
@@ -45,8 +47,82 @@ impl WebAppConfig {
         Self {
             title: title.into(),
             root_id: "whisker-root".to_string(),
+            element_modules: Vec::new(),
         }
     }
+
+    /// Adds one Rust element definition with its matching DOM factory.
+    pub fn with_element_module(mut self, module: WebElementModule) -> Self {
+        self.element_modules.push(module);
+        self
+    }
+}
+
+/// One Web element module's Rust schema and target factory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebElementModule {
+    provider: ElementProviderMetadata,
+    factory: WebElementFactory,
+}
+
+impl WebElementModule {
+    /// Joins a Rust provider to its DOM Host factory.
+    pub fn new(provider: ElementProviderMetadata, factory: WebElementFactory) -> Self {
+        Self { provider, factory }
+    }
+
+    /// Returns the Rust provider metadata.
+    pub fn provider(&self) -> &ElementProviderMetadata {
+        &self.provider
+    }
+
+    /// Returns the target-specific DOM factory.
+    pub fn factory(&self) -> &WebElementFactory {
+        &self.factory
+    }
+}
+
+/// DOM factory embedded for one element-provider module.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebElementFactory {
+    canonical_name: String,
+    tag_name: String,
+}
+
+impl WebElementFactory {
+    /// Creates a DOM factory joined to a Rust schema by canonical name.
+    pub fn new(canonical_name: impl Into<String>, tag_name: impl Into<String>) -> Self {
+        Self {
+            canonical_name: canonical_name.into(),
+            tag_name: tag_name.into(),
+        }
+    }
+}
+
+/// Returns the standard UI package as ordinary Web element modules.
+pub fn standard_web_element_modules() -> Vec<WebElementModule> {
+    whisker::standard_element_providers()
+        .into_iter()
+        .map(|provider| {
+            let factory = match provider.schema.canonical_name.as_str() {
+                whisker::VIEW_ELEMENT_NAME
+                | whisker::TEXT_ELEMENT_NAME
+                | whisker::SCROLL_VIEW_ELEMENT_NAME => {
+                    WebElementFactory::new(provider.schema.canonical_name.clone(), "div")
+                }
+                canonical_name => panic!("standard UI DOM factory missing for {canonical_name}"),
+            };
+            WebElementModule::new(provider, factory)
+        })
+        .collect()
+}
+
+/// Returns only the DOM factories from the standard UI package.
+pub fn standard_web_element_factories() -> Vec<WebElementFactory> {
+    standard_web_element_modules()
+        .into_iter()
+        .map(|module| module.factory)
+        .collect()
 }
 
 /// Failure while creating or driving the browser Host.
@@ -107,7 +183,13 @@ struct WebApplication {
 }
 
 impl WebApplication {
-    fn new(config: WebAppConfig) -> Result<Self, WebHostError> {
+    fn new(mut config: WebAppConfig) -> Result<Self, WebHostError> {
+        let mut element_modules = standard_web_element_modules();
+        element_modules.append(&mut config.element_modules);
+        let elements = ElementRegistry::builder()
+            .register_providers(element_modules.iter().map(|module| module.provider.clone()))
+            .build()
+            .map_err(|error| WebHostError(format!("build element registry: {error}")))?;
         let window = browser_window()?;
         let document = window
             .document()
@@ -123,15 +205,27 @@ impl WebApplication {
 
         let viewport = viewport(&window)?;
         let surface_id = SurfaceId::new(1).expect("the browser surface id is non-zero");
-        let surface = SurfaceRuntime::new(
+        let registrations = elements.registrations().to_vec();
+        let element_factories = element_modules
+            .iter()
+            .map(|module| module.factory.clone())
+            .collect::<Vec<_>>();
+        let surface = SurfaceRuntime::with_element_registry(
             surface_id,
             StyleEnvironment::new(viewport.0, viewport.1, viewport.2, 16.0),
+            elements,
         );
         let wake = RuntimeWakeHandle::new(request_frame);
         Ok(Self {
             runtime: RuntimeInstance::new(surface, wake),
             measurements: DomMeasurementHost::new(document.clone()),
-            frames: DomFrameSink::new(document, root, surface_id),
+            frames: DomFrameSink::new(
+                document,
+                root,
+                surface_id,
+                &registrations,
+                &element_factories,
+            )?,
             viewport,
             viewport_epoch: 1,
             environment_epoch: 1,
@@ -300,29 +394,148 @@ struct DomFrameSink {
     document: web_sys::Document,
     root: web_sys::Element,
     projection: SceneProjection,
+    elements: DomElementRegistry,
     nodes: HashMap<NodeId, web_sys::Element>,
+    node_types: HashMap<NodeId, ElementTypeId>,
     parents: HashMap<NodeId, NodeId>,
     layouts: HashMap<NodeId, whisker_protocol::LayoutGeometry>,
     text_nodes: HashMap<NodeId, web_sys::Element>,
 }
 
+#[derive(Clone, Debug)]
+struct DomElementRegistry {
+    bindings: HashMap<ElementTypeId, DomElementBinding>,
+}
+
+#[derive(Clone, Debug)]
+struct DomElementBinding {
+    content: ElementContentKind,
+    tag_name: String,
+}
+
+impl DomElementRegistry {
+    fn bind(
+        registrations: &[ElementRegistration],
+        factories: &[WebElementFactory],
+    ) -> Result<Self, WebHostError> {
+        let mut bindings = HashMap::with_capacity(registrations.len());
+        let mut canonical = HashMap::with_capacity(registrations.len());
+        let mut factories_by_name = HashMap::with_capacity(factories.len());
+        for factory in factories {
+            if factory.tag_name.trim().is_empty() {
+                return Err(WebHostError(format!(
+                    "DOM factory {} has an empty tag name",
+                    factory.canonical_name
+                )));
+            }
+            if factories_by_name
+                .insert(factory.canonical_name.clone(), factory.clone())
+                .is_some()
+            {
+                return Err(WebHostError(format!(
+                    "duplicate DOM factory {}",
+                    factory.canonical_name
+                )));
+            }
+        }
+        for registration in registrations {
+            registration.validate().map_err(|error| {
+                WebHostError(format!(
+                    "invalid DOM element {}: {error:?}",
+                    registration.canonical_name
+                ))
+            })?;
+            if bindings.contains_key(&registration.element_type) {
+                return Err(WebHostError(format!(
+                    "duplicate DOM element type {}",
+                    registration.element_type.get()
+                )));
+            }
+            if canonical
+                .insert(
+                    registration.canonical_name.clone(),
+                    registration.element_type,
+                )
+                .is_some()
+            {
+                return Err(WebHostError(format!(
+                    "duplicate DOM element {}",
+                    registration.canonical_name
+                )));
+            }
+            match registration.content {
+                ElementContentKind::None
+                | ElementContentKind::Text
+                | ElementContentKind::ScrollContainer => {}
+                ElementContentKind::Image
+                | ElementContentKind::EditableText
+                | ElementContentKind::Native => {
+                    return Err(WebHostError(format!(
+                        "DOM Host does not implement {} content {:?}",
+                        registration.canonical_name, registration.content
+                    )));
+                }
+            }
+            let factory = factories_by_name
+                .remove(&registration.canonical_name)
+                .ok_or_else(|| {
+                    WebHostError(format!(
+                        "missing DOM factory {}",
+                        registration.canonical_name
+                    ))
+                })?;
+            bindings.insert(
+                registration.element_type,
+                DomElementBinding {
+                    content: registration.content,
+                    tag_name: factory.tag_name,
+                },
+            );
+        }
+        if let Some(canonical_name) = factories_by_name.into_keys().next() {
+            return Err(WebHostError(format!(
+                "DOM factory {canonical_name} has no Rust element schema"
+            )));
+        }
+        Ok(Self { bindings })
+    }
+
+    fn binding(&self, element_type: ElementTypeId) -> Result<&DomElementBinding, WebHostError> {
+        self.bindings.get(&element_type).ok_or_else(|| {
+            WebHostError(format!(
+                "DOM Host received unknown element type {}",
+                element_type.get()
+            ))
+        })
+    }
+}
+
 impl DomFrameSink {
-    fn new(document: web_sys::Document, root: web_sys::Element, surface: SurfaceId) -> Self {
-        Self {
+    fn new(
+        document: web_sys::Document,
+        root: web_sys::Element,
+        surface: SurfaceId,
+        registrations: &[ElementRegistration],
+        factories: &[WebElementFactory],
+    ) -> Result<Self, WebHostError> {
+        Ok(Self {
             document,
             root,
             projection: SceneProjection::new(surface),
+            elements: DomElementRegistry::bind(registrations, factories)?,
             nodes: HashMap::new(),
+            node_types: HashMap::new(),
             parents: HashMap::new(),
             layouts: HashMap::new(),
             text_nodes: HashMap::new(),
-        }
+        })
     }
 
     fn apply(&mut self, packet: &FramePacket) -> Result<(), WebHostError> {
         if packet.header.mode == FrameMode::Snapshot {
             self.root.set_inner_html("");
             self.nodes.clear();
+            self.node_types.clear();
             self.parents.clear();
             self.layouts.clear();
             self.text_nodes.clear();
@@ -335,20 +548,25 @@ impl DomFrameSink {
 
     fn apply_operation(&mut self, operation: &Operation) -> Result<(), WebHostError> {
         match operation {
-            Operation::CreateNode { node, .. } => {
+            Operation::CreateNode { node, element_type } => {
+                let binding = self.elements.binding(*element_type)?.clone();
                 let element = self
                     .document
-                    .create_element("div")
+                    .create_element(&binding.tag_name)
                     .map_err(|error| js_error("create Whisker DOM node", error))?;
                 element
                     .set_attribute("data-whisker-node", &node.get().to_string())
                     .map_err(|error| js_error("mark Whisker DOM node", error))?;
+                element
+                    .set_attribute("data-whisker-content", content_name(binding.content))
+                    .map_err(|error| js_error("mark Whisker DOM element content", error))?;
                 set_style(&element, "position", "absolute")?;
                 set_style(&element, "box-sizing", "border-box")?;
                 self.root
                     .append_child(&element)
                     .map_err(|error| js_error("attach Whisker DOM node", error))?;
                 self.nodes.insert(*node, element);
+                self.node_types.insert(*node, *element_type);
             }
             Operation::DeleteNode { node } => self.delete_subtree(*node),
             Operation::InsertChild {
@@ -479,6 +697,15 @@ impl DomFrameSink {
                 set_style(&self.node(*node)?, "z-index", &z_order.to_string())?;
             }
             Operation::SetText { node, content } => {
+                let element_type = self.node_types.get(node).copied().ok_or_else(|| {
+                    WebHostError(format!("DOM projection is missing node {}", node.get()))
+                })?;
+                if self.elements.binding(element_type)?.content != ElementContentKind::Text {
+                    return Err(WebHostError(format!(
+                        "DOM Host received text for non-text node {}",
+                        node.get()
+                    )));
+                }
                 let text = if let Some(text) = self.text_nodes.get(node) {
                     text.clone()
                 } else {
@@ -548,10 +775,22 @@ impl DomFrameSink {
         }
         for node in deleted {
             self.nodes.remove(&node);
+            self.node_types.remove(&node);
             self.parents.remove(&node);
             self.layouts.remove(&node);
             self.text_nodes.remove(&node);
         }
+    }
+}
+
+fn content_name(content: ElementContentKind) -> &'static str {
+    match content {
+        ElementContentKind::None => "none",
+        ElementContentKind::Text => "text",
+        ElementContentKind::ScrollContainer => "scroll-container",
+        ElementContentKind::Image => "image",
+        ElementContentKind::EditableText => "editable-text",
+        ElementContentKind::Native => "native",
     }
 }
 
@@ -698,4 +937,56 @@ fn js_error(context: &str, value: wasm_bindgen::JsValue) -> WebHostError {
         "{context}: {}",
         value.as_string().unwrap_or_else(|| format!("{value:?}"))
     ))
+}
+
+#[cfg(test)]
+mod element_registry_tests {
+    use super::*;
+    use whisker::{ElementProviderMetadata, ElementRegistry};
+    use whisker_protocol::{ElementChildMount, ElementMeasurement, ElementSchema};
+
+    #[test]
+    fn standard_and_module_factories_use_the_same_dom_binding_path() {
+        let mut modules = standard_web_element_modules();
+        modules.push(WebElementModule::new(
+            ElementProviderMetadata::named(
+                "badge",
+                ElementSchema {
+                    canonical_name: "whisker.test/Badge".into(),
+                    content: ElementContentKind::None,
+                    child_mount: ElementChildMount::Presentation,
+                    measurement: ElementMeasurement::None,
+                    consumes_text_style: false,
+                },
+            ),
+            WebElementFactory::new("whisker.test/Badge", "span"),
+        ));
+        let elements = ElementRegistry::builder()
+            .register_providers(modules.iter().map(|module| module.provider().clone()))
+            .build()
+            .unwrap();
+        let factories = modules
+            .iter()
+            .map(|module| module.factory().clone())
+            .collect::<Vec<_>>();
+
+        let registry = DomElementRegistry::bind(elements.registrations(), &factories).unwrap();
+        let badge = elements.registration_for_name("badge").unwrap();
+        assert_eq!(
+            registry.binding(badge.element_type).unwrap().tag_name,
+            "span"
+        );
+    }
+
+    #[test]
+    fn missing_or_unmatched_dom_factories_fail_bootstrap() {
+        let registrations = ElementRegistry::standard().registrations().to_vec();
+        let missing = DomElementRegistry::bind(&registrations, &[]).unwrap_err();
+        assert!(missing.0.contains("missing DOM factory"));
+
+        let mut factories = standard_web_element_factories();
+        factories.push(WebElementFactory::new("whisker.test/Unknown", "div"));
+        let unknown = DomElementRegistry::bind(&registrations, &factories).unwrap_err();
+        assert!(unknown.0.contains("has no Rust element schema"));
+    }
 }
