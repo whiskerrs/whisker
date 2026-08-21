@@ -9,67 +9,67 @@ impl Css {
     /// Sets `grid-template-rows` — track-sizing along the block axis.
     /// <https://lynxjs.org/api/css/properties/grid-template-rows>
     pub fn grid_template_rows(self, v: GridTemplate) -> Self {
-        self.push("grid-template-rows", v)
+        self.push(crate::StyleProperty::GridTemplateRows, v)
     }
 
     /// Sets `grid-template-columns` — track-sizing along the inline axis.
     /// <https://lynxjs.org/api/css/properties/grid-template-columns>
     pub fn grid_template_columns(self, v: GridTemplate) -> Self {
-        self.push("grid-template-columns", v)
+        self.push(crate::StyleProperty::GridTemplateColumns, v)
     }
 
     /// Sets `grid-auto-rows`.
     /// <https://lynxjs.org/api/css/properties/grid-auto-rows>
     pub fn grid_auto_rows(self, v: GridTemplate) -> Self {
-        self.push("grid-auto-rows", v)
+        self.push(crate::StyleProperty::GridAutoRows, v)
     }
 
     /// Sets `grid-auto-columns`.
     /// <https://lynxjs.org/api/css/properties/grid-auto-columns>
     pub fn grid_auto_columns(self, v: GridTemplate) -> Self {
-        self.push("grid-auto-columns", v)
+        self.push(crate::StyleProperty::GridAutoColumns, v)
     }
 
     /// Sets `grid-auto-flow`.
     /// <https://lynxjs.org/api/css/properties/grid-auto-flow>
     pub fn grid_auto_flow(self, v: GridAutoFlow) -> Self {
-        self.push("grid-auto-flow", v)
+        self.push(crate::StyleProperty::GridAutoFlow, v)
     }
 
     /// Sets `grid-row-start`.
     /// <https://lynxjs.org/api/css/properties/grid-row-start>
     pub fn grid_row_start(self, v: GridLine) -> Self {
-        self.push("grid-row-start", v)
+        self.push(crate::StyleProperty::GridRowStart, v)
     }
 
     /// Sets `grid-row-end`.
     /// <https://lynxjs.org/api/css/properties/grid-row-end>
     pub fn grid_row_end(self, v: GridLine) -> Self {
-        self.push("grid-row-end", v)
+        self.push(crate::StyleProperty::GridRowEnd, v)
     }
 
     /// Sets `grid-column-start`.
     /// <https://lynxjs.org/api/css/properties/grid-column-start>
     pub fn grid_column_start(self, v: GridLine) -> Self {
-        self.push("grid-column-start", v)
+        self.push(crate::StyleProperty::GridColumnStart, v)
     }
 
     /// Sets `grid-column-end`.
     /// <https://lynxjs.org/api/css/properties/grid-column-end>
     pub fn grid_column_end(self, v: GridLine) -> Self {
-        self.push("grid-column-end", v)
+        self.push(crate::StyleProperty::GridColumnEnd, v)
     }
 
     /// Sets `grid-row-gap` (legacy alias for `row-gap`).
     /// <https://lynxjs.org/api/css/properties/grid-row-gap>
     pub fn grid_row_gap(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("grid-row-gap", v.into())
+        self.push_typed(crate::StyleProperty::GridRowGap, v.into())
     }
 
     /// Sets `grid-column-gap` (legacy alias for `column-gap`).
     /// <https://lynxjs.org/api/css/properties/grid-column-gap>
     pub fn grid_column_gap(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("grid-column-gap", v.into())
+        self.push_typed(crate::StyleProperty::GridColumnGap, v.into())
     }
 }
 

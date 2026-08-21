@@ -652,7 +652,7 @@ pub fn inputs_from_with_engine(
         // Bump on any template or renderer change: it feeds the sync
         // fingerprint, and without it existing `gen/ios/` trees keep
         // their stale output.
-        template_version: 15,
+        template_version: 16,
     })
 }
 
@@ -684,7 +684,7 @@ mod tests {
             extra_info_plist: BTreeMap::new(),
             extra_files: BTreeMap::new(),
             pbxproj_ops: Vec::new(),
-            template_version: 15,
+            template_version: 16,
         }
     }
 
@@ -717,17 +717,9 @@ mod tests {
             std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
         assert!(pbxproj.contains("PRODUCT_BUNDLE_IDENTIFIER = \"rs.whisker.examples.helloWorld\""));
         assert!(pbxproj.contains("IPHONEOS_DEPLOYMENT_TARGET = \"13.0\""));
-        assert!(pbxproj.contains("isa = XCRemoteSwiftPackageReference;"));
-        assert!(pbxproj.contains(&format!(
-            "repositoryURL = \"{}\"",
-            whisker_build::ios::WHISKER_IOS_SPM_URL
-        )));
-        assert!(pbxproj.contains(&format!(
-            "version = \"{}\"",
-            whisker_build::ios::WHISKER_IOS_SPM_VERSION
-        )));
-        assert!(pbxproj.contains("package = B25ED1A6F9E42E26D051E805"));
-        assert!(pbxproj.contains("relativePath = \"/abs/gen/ios/whisker_modules\""));
+        assert!(!pbxproj.contains("XCRemoteSwiftPackageReference"));
+        assert!(!pbxproj.contains("WhiskerRuntime"));
+        assert!(!pbxproj.contains("Lynx"));
         assert!(pbxproj.contains("name = \"HelloWorld\""));
         assert!(pbxproj.contains("productName = \"HelloWorld\""));
         assert!(!pbxproj.contains("{{"));

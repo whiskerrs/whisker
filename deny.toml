@@ -20,6 +20,13 @@ yanked = "deny"
 #     (whisker-credentials' file encryption). Build-time only — never
 #     compiled into shipped binaries. age has no feature to drop its
 #     localization layer; revisit when age moves off i18n-embed-fl.
+#   RUSTSEC-2026-0206  rustybuzz ← cosmic-text 0.14 / glyphon 0.9
+#   RUSTSEC-2026-0192  ttf-parser ← cosmic-text 0.14 / glyphon 0.9
+#     macOS text shaping and rasterization. Both advisories report
+#     unmaintained crates, not vulnerabilities. glyphon 0.10 moves to
+#     harfrust/skrifa through cosmic-text 0.15, but also requires wgpu 28
+#     (Rust 1.92), beyond the workspace's Rust 1.85 floor. Revisit when a
+#     compatible glyphon/wgpu release lets us remove both exceptions.
 #
 # Vulnerability accepted with rationale (no compatible fixed version):
 #   RUSTSEC-2026-0119  hickory-proto 0.24.4 ← atrium-identity's DoH TXT
@@ -34,6 +41,8 @@ ignore = [
     "RUSTSEC-2025-0119",
     "RUSTSEC-2026-0173",
     "RUSTSEC-2026-0119",
+    "RUSTSEC-2026-0206",
+    "RUSTSEC-2026-0192",
 ]
 
 [bans]

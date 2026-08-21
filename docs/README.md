@@ -41,13 +41,17 @@ Whisker itself**.
   and the monorepo-dev caveat.
 - [`comment-style.md`](comment-style.md) — the comment/doc convention.
   Cite it in code review.
+- [`rfcs/`](rfcs/README.md) — proposed and accepted architectural changes.
+  An accepted RFC records a decision; it does not describe shipped behavior
+  until its status is `Implemented` and the current-design docs are updated.
 - [`../.agents/skills/release-whisker/SKILL.md`](../.agents/skills/release-whisker/SKILL.md)
   — cutting a release: which of the four artifact streams a change
   needs, in what order, and how to recover one that stalled.
 
 ## Conventions
 
-- These docs describe the **current** design, not historical plans.
+- Except for [`rfcs/`](rfcs/README.md), these docs describe the **current**
+  design, not historical plans.
   When you change a system, update its doc in the same PR (or delete the
   doc if it no longer applies). Git history keeps the past.
 - User-facing material belongs on the website, not here.

@@ -12,97 +12,101 @@ impl Css {
     /// Sets `text-align`. **`justify` is not supported by Lynx**.
     /// <https://lynxjs.org/api/css/properties/text-align>
     pub fn text_align(self, v: TextAlign) -> Self {
-        self.push("text-align", v)
+        self.push(crate::StyleProperty::TextAlign, v)
     }
 
     /// Sets `text-decoration-line` (single value).
     /// <https://lynxjs.org/api/css/properties/text-decoration-line>
     pub fn text_decoration_line(self, v: TextDecorationLine) -> Self {
-        self.push("text-decoration-line", v)
+        self.push(crate::StyleProperty::TextDecorationLine, v)
     }
 
     /// Sets `text-decoration-style`.
     /// <https://lynxjs.org/api/css/properties/text-decoration-style>
     pub fn text_decoration_style(self, v: TextDecorationStyle) -> Self {
-        self.push("text-decoration-style", v)
+        self.push(crate::StyleProperty::TextDecorationStyle, v)
     }
 
     /// Sets `text-decoration-color`.
     /// <https://lynxjs.org/api/css/properties/text-decoration-color>
     pub fn text_decoration_color(self, v: Color) -> Self {
-        self.push("text-decoration-color", v)
+        self.push(crate::StyleProperty::TextDecorationColor, v)
     }
 
     /// Sets `text-decoration-thickness`.
     /// <https://lynxjs.org/api/css/properties/text-decoration-thickness>
     pub fn text_decoration_thickness(self, v: Length) -> Self {
-        self.push("text-decoration-thickness", v)
+        self.push_typed(crate::StyleProperty::TextDecorationThickness, v)
     }
 
     /// Sets `text-overflow`.
     /// <https://lynxjs.org/api/css/properties/text-overflow>
     pub fn text_overflow(self, v: TextOverflow) -> Self {
-        self.push("text-overflow", v)
+        self.push(crate::StyleProperty::TextOverflow, v)
     }
 
     /// Sets `text-transform`.
     /// <https://lynxjs.org/api/css/properties/text-transform>
     pub fn text_transform(self, v: TextTransform) -> Self {
-        self.push("text-transform", v)
+        self.push(crate::StyleProperty::TextTransform, v)
     }
 
     /// Sets `text-indent` — first-line indentation.
     /// <https://lynxjs.org/api/css/properties/text-indent>
     pub fn text_indent(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("text-indent", v.into())
+        self.push_typed(crate::StyleProperty::TextIndent, v.into())
     }
 
     /// Sets `vertical-align`.
     /// <https://lynxjs.org/api/css/properties/vertical-align>
     pub fn vertical_align(self, v: VerticalAlign) -> Self {
-        self.push("vertical-align", v)
+        self.push(crate::StyleProperty::VerticalAlign, v)
     }
 
     /// Sets `white-space`.
     /// <https://lynxjs.org/api/css/properties/white-space>
     pub fn white_space(self, v: WhiteSpace) -> Self {
-        self.push("white-space", v)
+        self.push(crate::StyleProperty::WhiteSpace, v)
     }
 
     /// Sets `word-break`.
     /// <https://lynxjs.org/api/css/properties/word-break>
     pub fn word_break(self, v: WordBreak) -> Self {
-        self.push("word-break", v)
+        self.push(crate::StyleProperty::WordBreak, v)
     }
 
     /// Sets `word-wrap` (also known as `overflow-wrap`).
     /// <https://lynxjs.org/api/css/properties/word-wrap>
     pub fn word_wrap(self, v: WordWrap) -> Self {
-        self.push("word-wrap", v)
+        self.push(crate::StyleProperty::WordWrap, v)
     }
 
     /// Sets `overflow-wrap` — synonym of `word-wrap`.
     /// <https://lynxjs.org/api/css/properties/overflow-wrap>
     pub fn overflow_wrap(self, v: WordWrap) -> Self {
-        self.push("overflow-wrap", v)
+        self.push(crate::StyleProperty::OverflowWrap, v)
     }
 
     /// Sets `-webkit-line-clamp` — limit the visible line count.
     /// <https://lynxjs.org/api/css/properties/-webkit-line-clamp>
     pub fn webkit_line_clamp(self, v: u32) -> Self {
-        self.push_raw("-webkit-line-clamp", v.to_string())
+        self.push_semantic(
+            crate::StyleProperty::WebkitLineClamp,
+            whisker_style::StyleValue::Integer(i64::from(v)),
+            v.to_string(),
+        )
     }
 
     /// Sets `text-stroke-width`.
     /// <https://lynxjs.org/api/css/properties/text-stroke-width>
     pub fn text_stroke_width(self, v: Length) -> Self {
-        self.push("text-stroke-width", v)
+        self.push_typed(crate::StyleProperty::TextStrokeWidth, v)
     }
 
     /// Sets `text-stroke-color`.
     /// <https://lynxjs.org/api/css/properties/text-stroke-color>
     pub fn text_stroke_color(self, v: Color) -> Self {
-        self.push("text-stroke-color", v)
+        self.push(crate::StyleProperty::TextStrokeColor, v)
     }
 }
 

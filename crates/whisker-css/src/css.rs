@@ -1,8 +1,8 @@
 //! The [`Css`] container and its internal [`CssProp`] entries.
 //!
-//! Every typed builder method on [`Css`] resolves its argument to
-//! CSS text via [`ToCss`] and pushes a [`CssProp`] onto an internal
-//! list. Shorthand methods expand to their constituent longhands so
+//! Every typed builder method on [`Css`] records a stable [`StyleProperty`]
+//! identity and temporarily resolves its argument to CSS text via [`ToCss`].
+//! Shorthand methods expand to their constituent longhands where possible, so
 //! the canonical last-write-wins rule applies per longhand
 //! property — calling `.padding(px(8)).padding_top(px(0))` leaves
 //! `padding-top: 0px; padding-right: 8px; padding-bottom: 8px;
@@ -10,7 +10,53 @@
 
 use core::fmt;
 
+use crate::style_value::ToStyleValue;
 use crate::to_css::ToCss;
+use whisker_style::{SpecifiedStyle, StyleProperty, StylePropertyId, StyleValue};
+
+/// A declaration still requiring the temporary Lynx CSS compatibility path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnmigratedStyleValue {
+    property: &'static str,
+}
+
+impl UnmigratedStyleValue {
+    /// Returns the compatibility property that has no semantic value yet.
+    pub const fn property(self) -> &'static str {
+        self.property
+    }
+}
+
+impl fmt::Display for UnmigratedStyleValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "style property `{}` still requires Lynx CSS compatibility",
+            self.property
+        )
+    }
+}
+
+impl std::error::Error for UnmigratedStyleValue {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum PropertyKey {
+    Known(StyleProperty),
+    Legacy(&'static str),
+}
+
+impl PropertyKey {
+    fn from_name(name: &'static str) -> Self {
+        StyleProperty::from_css_name(name).map_or(Self::Legacy(name), Self::Known)
+    }
+
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::Known(property) => property.css_name(),
+            Self::Legacy(name) => name,
+        }
+    }
+}
 
 /// One CSS declaration stored inside a [`Css`].
 ///
@@ -19,33 +65,78 @@ use crate::to_css::ToCss;
 /// switch to a typed enum without breaking callers.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CssProp {
-    name: &'static str,
-    value: String,
+    property: PropertyKey,
+    style_value: Option<StyleValue>,
+    lynx_value: String,
 }
 
 impl CssProp {
     /// Build a property from a CSS name and an already-serialized
     /// value. Crate-public; users should go through [`Css`].
-    pub(crate) fn new(name: &'static str, value: String) -> Self {
-        Self { name, value }
+    pub(crate) fn new(property: StyleProperty, value: String) -> Self {
+        Self {
+            property: PropertyKey::Known(property),
+            style_value: None,
+            lynx_value: value,
+        }
+    }
+
+    pub(crate) fn typed(
+        property: StyleProperty,
+        style_value: StyleValue,
+        lynx_value: String,
+    ) -> Self {
+        Self {
+            property: PropertyKey::Known(property),
+            style_value: Some(style_value),
+            lynx_value,
+        }
+    }
+
+    fn legacy(name: &'static str, value: String) -> Self {
+        Self {
+            property: PropertyKey::from_name(name),
+            style_value: None,
+            lynx_value: value,
+        }
     }
 
     /// The CSS property name (`"padding-top"`, `"background-color"`).
     pub fn name(&self) -> &'static str {
-        self.name
+        self.property.name()
+    }
+
+    /// The registered property identity, or `None` for an unknown name added
+    /// through the temporary [`Css::raw`] migration escape hatch.
+    pub fn property(&self) -> Option<StyleProperty> {
+        match self.property {
+            PropertyKey::Known(property) => Some(property),
+            PropertyKey::Legacy(_) => None,
+        }
+    }
+
+    /// The stable common-property ID, or `None` for an unknown legacy name.
+    pub fn property_id(&self) -> Option<StylePropertyId> {
+        self.property().map(StyleProperty::id)
+    }
+
+    /// The semantic value, or `None` while this declaration still uses the
+    /// compatibility-only Lynx CSS representation.
+    pub fn style_value(&self) -> Option<&StyleValue> {
+        self.style_value.as_ref()
     }
 
     /// The serialized CSS value (`"8px"`, `"rgb(26, 26, 46)"`).
     pub fn value(&self) -> &str {
-        &self.value
+        &self.lynx_value
     }
 }
 
 impl ToCss for CssProp {
     fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
-        dest.write_str(self.name)?;
+        dest.write_str(self.name())?;
         dest.write_str(": ")?;
-        dest.write_str(&self.value)?;
+        dest.write_str(&self.lynx_value)?;
         dest.write_char(';')
     }
 }
@@ -80,14 +171,39 @@ impl Css {
 
     /// Push a property, taking ownership of `self` to return it. All
     /// public builder methods funnel through this helper.
-    pub(crate) fn push(mut self, name: &'static str, value: impl ToCss) -> Self {
-        self.props.push(CssProp::new(name, value.to_css_string()));
+    pub(crate) fn push(mut self, property: StyleProperty, value: impl ToCss) -> Self {
+        self.props
+            .push(CssProp::new(property, value.to_css_string()));
+        self
+    }
+
+    /// Pushes a semantic value while retaining its temporary Lynx spelling.
+    pub(crate) fn push_typed<T>(mut self, property: StyleProperty, value: T) -> Self
+    where
+        T: ToCss + ToStyleValue,
+    {
+        let lynx_value = value.to_css_string();
+        self.props
+            .push(CssProp::typed(property, value.to_style_value(), lynx_value));
+        self
+    }
+
+    /// Pushes an already-normalized semantic value and its migration-only Lynx
+    /// spelling.
+    pub(crate) fn push_semantic(
+        mut self,
+        property: StyleProperty,
+        style_value: StyleValue,
+        lynx_value: impl Into<String>,
+    ) -> Self {
+        self.props
+            .push(CssProp::typed(property, style_value, lynx_value.into()));
         self
     }
 
     /// Push a property whose value is an already-serialized string.
-    pub(crate) fn push_raw(mut self, name: &'static str, value: impl Into<String>) -> Self {
-        self.props.push(CssProp::new(name, value.into()));
+    pub(crate) fn push_raw(mut self, property: StyleProperty, value: impl Into<String>) -> Self {
+        self.props.push(CssProp::new(property, value.into()));
         self
     }
 
@@ -100,7 +216,9 @@ impl Css {
     /// part of the CSS grammar, not runtime data. The value is taken
     /// verbatim and not validated.
     pub fn raw(self, name: &'static str, value: impl Into<String>) -> Self {
-        self.push_raw(name, value)
+        let mut this = self;
+        this.props.push(CssProp::legacy(name, value.into()));
+        this
     }
 
     /// True if no declarations have been added.
@@ -126,10 +244,10 @@ impl Css {
     /// only the final occurrence of each property name is yielded,
     /// in the position of that final occurrence.
     pub fn resolved(&self) -> Vec<&CssProp> {
-        let mut seen: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<PropertyKey> = std::collections::HashSet::new();
         let mut out: Vec<&CssProp> = Vec::new();
         for prop in self.props.iter().rev() {
-            if seen.insert(prop.name) {
+            if seen.insert(prop.property) {
                 out.push(prop);
             }
         }
@@ -143,6 +261,28 @@ impl Css {
     pub fn merge(mut self, other: Css) -> Self {
         self.props.extend(other.props);
         self
+    }
+
+    /// Converts this authoring fragment to renderer-independent typed storage.
+    ///
+    /// Migration-only declarations fail with the first property that still
+    /// depends on Lynx CSS text. No CSS parsing is performed.
+    pub fn to_specified_style(&self) -> Result<SpecifiedStyle, UnmigratedStyleValue> {
+        let mut style = SpecifiedStyle::new();
+        for property in &self.props {
+            let Some(value) = property.style_value.clone() else {
+                return Err(UnmigratedStyleValue {
+                    property: property.name(),
+                });
+            };
+            let Some(property_id) = property.property() else {
+                return Err(UnmigratedStyleValue {
+                    property: property.name(),
+                });
+            };
+            style = style.push(property_id, value);
+        }
+        Ok(style)
     }
 }
 
@@ -180,6 +320,10 @@ impl From<&Css> for String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        Color, Display, FlexDirection, FontStyle, FontWeight, Length, LineHeight, NamedColor,
+        Percentage,
+    };
 
     #[test]
     fn empty_style_serializes_to_empty_string() {
@@ -276,7 +420,130 @@ mod tests {
         let s = Css::new().raw("color", "red");
         let prop = s.entries().next().unwrap();
         assert_eq!(prop.name(), "color");
+        assert_eq!(prop.property(), Some(StyleProperty::Color));
+        assert_eq!(prop.property_id(), Some(StyleProperty::Color.id()));
+        assert_eq!(prop.style_value(), None);
         assert_eq!(prop.value(), "red");
         assert_eq!(prop.to_css_string(), "color: red;");
+    }
+
+    #[test]
+    fn unknown_raw_property_has_no_registered_identity() {
+        let s = Css::new().raw("future-property", "value");
+        let prop = s.entries().next().unwrap();
+        assert_eq!(prop.name(), "future-property");
+        assert_eq!(prop.property(), None);
+        assert_eq!(prop.property_id(), None);
+    }
+
+    #[test]
+    fn known_raw_and_typed_writes_share_the_same_slot() {
+        let s = Css::new()
+            .push(StyleProperty::Color, Token("red"))
+            .raw("color", "blue");
+        assert_eq!(s.resolved().len(), 1);
+        assert_eq!(s.to_css_string(), "color: blue;");
+    }
+
+    #[test]
+    fn typed_push_keeps_semantics_separate_from_lynx_text() {
+        let s = Css::new().push_typed(StyleProperty::PaddingTop, Length::Px(8.0));
+        let prop = s.entries().next().unwrap();
+        assert_eq!(
+            prop.style_value(),
+            Some(&StyleValue::Length(whisker_style::LengthValue::Dimension {
+                value: whisker_style::StyleNumber::new(8.0),
+                unit: whisker_style::LengthUnit::Px,
+            }))
+        );
+        assert_eq!(prop.value(), "8px");
+    }
+
+    #[test]
+    fn typed_fragment_converts_without_parsing_css() {
+        let css = Css::new().padding_top(Length::Px(8.0));
+        let style = css.to_specified_style().unwrap();
+        assert_eq!(style.len(), 1);
+        assert_eq!(style.resolved()[0].property(), StyleProperty::PaddingTop);
+    }
+
+    #[test]
+    fn compatibility_fragment_reports_the_blocking_property() {
+        let error = Css::new()
+            .raw("future-property", "value")
+            .to_specified_style()
+            .unwrap_err();
+        assert_eq!(error.property(), "future-property");
+        assert_eq!(
+            error.to_string(),
+            "style property `future-property` still requires Lynx CSS compatibility"
+        );
+    }
+
+    #[test]
+    fn inherited_text_fragment_resolves_entirely_in_rust() {
+        let css = Css::new()
+            .font_family("Inter")
+            .font_size(Length::Px(20.0))
+            .font_weight(FontWeight::Bold)
+            .font_style(FontStyle::Italic)
+            .line_height(LineHeight::Number(1.5))
+            .letter_spacing(Length::Px(1.0))
+            .color(Color::Named(NamedColor::Red));
+        let specified = css.to_specified_style().unwrap();
+        let resolved = whisker_style::resolve_text_style(
+            &specified,
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        let text = resolved.inherited_for_children();
+        assert_eq!(text.font_size(), 20.0);
+        assert_eq!(text.font_weight(), whisker_style::FontWeightValue::BOLD);
+        assert_eq!(text.font_style(), whisker_style::FontStyleValue::Italic);
+        assert_eq!(text.letter_spacing(), 1.0);
+        assert_eq!(
+            text.line_height(),
+            whisker_style::ComputedLineHeight::LogicalPixels(whisker_style::StyleNumber::new(30.0))
+        );
+    }
+
+    #[test]
+    fn box_and_flex_fragment_resolves_entirely_in_rust() {
+        let specified = Css::new()
+            .display(Display::Flex)
+            .flex_direction(FlexDirection::Column)
+            .width(Length::Px(120.0))
+            .row_gap(Percentage(10.0))
+            .to_specified_style()
+            .unwrap();
+        let resolved = whisker_style::resolve_style(
+            &specified,
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        let layout = resolved.computed().layout();
+        assert_eq!(layout.display, whisker_style::DisplayValue::Flex);
+        assert_eq!(
+            layout.flex_direction,
+            whisker_style::FlexDirectionValue::Column
+        );
+        assert_eq!(
+            layout.size.width,
+            whisker_style::ComputedSizeValue::Value(whisker_style::ComputedLengthPercentage::new(
+                120.0, 0.0
+            ))
+        );
+        assert_eq!(layout.gap.height.length(), 0.0);
+        assert_eq!(layout.gap.height.fraction(), 0.1);
+    }
+
+    struct Token(&'static str);
+
+    impl ToCss for Token {
+        fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+            dest.write_str(self.0)
+        }
     }
 }

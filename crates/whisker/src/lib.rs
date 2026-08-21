@@ -1,6 +1,6 @@
 //! # Whisker
 //!
-//! Cross-platform mobile UI framework for Rust, built on the Lynx C++ engine.
+//! Cross-platform native UI framework with a retained Rust rendering core.
 //!
 //! Most users only need [`prelude`]:
 //!
@@ -35,7 +35,9 @@
 //!   [`on_cleanup`], [`on_mount`], [`provide_context`], [`use_context`],
 //!   [`resource()`], and their handle types ([`Signal`], [`ReadSignal`],
 //!   [`RwSignal`], [`Resource`], …).
-//! - **Async** — [`spawn_local`], [`run_blocking`], [`run_on_main_thread`].
+//! - **Async** — [`spawn_local`], [`run_blocking`], and the instance-aware
+//!   [`runtime_dispatcher()`]. [`run_on_main_thread`] remains available to the
+//!   legacy Lynx host during migration.
 //! - **Control flow** — [`ForEach`] (keyed list), [`Show`] (conditional).
 //!   Both are written as ordinary `#[component]` functions.
 //! - **CSS** — the [`css`] type-safe builder + the `css!` macro.
@@ -158,15 +160,26 @@ pub use whisker_runtime::reactive::{flush_mounts, mount_component, unmount_compo
 pub use whisker_runtime::reactive::Owner;
 pub use whisker_runtime::reactive::owner;
 pub use whisker_runtime::tasks::{run_blocking, spawn_local};
+pub use whisker_runtime::{RuntimeDispatcher, runtime_dispatcher};
 // Frame-driving internal used by the host tick loop, not app code.
 #[doc(hidden)]
 pub use whisker_runtime::tasks::run_until_stalled;
 mod control_flow;
+mod runtime_instance;
 mod style;
+mod surface_runtime;
 
 pub mod attrs;
 
+pub use runtime_instance::{
+    RuntimeDrive, RuntimeDriveError, RuntimeEventError, RuntimeInstance, RuntimeLifecycle,
+    RuntimeLifecycleError,
+};
 pub use style::{Style, apply_style};
+pub use surface_runtime::{
+    InputDispatch, RuntimeBindingError, RuntimeFrame, RuntimeFrameError, RuntimeInputError,
+    RuntimeLayoutError, RuntimePresentError, SurfaceRuntime,
+};
 
 pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
 pub use whisker_runtime::view::Children;
@@ -1685,17 +1698,18 @@ pub mod __tags {
     }
 }
 
-/// Marshal a closure onto the main (Lynx) thread.
+/// Marshal a closure onto the legacy Lynx main thread.
 ///
-/// Reactive signals and the element tree are not `Sync` — every
-/// mutation has to happen on the main thread. Use `run_on_main_thread`
-/// to bounce a result computed off-thread (a blocking fetch, a
-/// heavy parse) back into a signal `set` / element method call.
+/// New retained-renderer integrations should capture
+/// [`runtime_dispatcher()`] while a [`RuntimeInstance`] is executing and post
+/// through that instance-aware handle. This process-global function remains
+/// for the Lynx host during migration.
 ///
 /// ```ignore
+/// let dispatcher = runtime_dispatcher().unwrap();
 /// std::thread::spawn(move || {
 ///     let result = blocking_fetch();
-///     run_on_main_thread(move || data.set(Some(result)));
+///     dispatcher.post(move || data.set(Some(result)));
 /// });
 /// ```
 pub use whisker_runtime::main_thread::run_on_main_thread;
@@ -1855,8 +1869,8 @@ pub mod __hot {
 ///   [`effect()`], [`on_cleanup`], [`on_mount`], context APIs,
 ///   [`resource()`] / [`resource_sync`], plus all the handle types
 ///   ([`Signal`], [`ReadSignal`], [`RwSignal`], …).
-/// - **Async** — [`spawn_local`], [`run_blocking`],
-///   [`run_on_main_thread`].
+/// - **Async** — [`spawn_local`], [`run_blocking`], and
+///   [`runtime_dispatcher()`].
 /// - **Control flow** — [`ForEach`], [`Show`], plus the
 ///   function-shaped prop types ([`EachFn`], [`KeyFn`], [`ItemFn`],
 ///   [`WhenFn`], [`Fallback`]).
@@ -1893,7 +1907,7 @@ pub mod prelude {
         ArcReadSignal, ArcRwSignal, ArcWriteSignal, Callback, ReadSignal, Resource, ResourceState,
         RwSignal, Signal, StoredValue, WriteSignal, arc_signal, computed, effect, on_cleanup,
         on_mount, provide_context, resource, resource_sync, run_blocking, run_on_main_thread,
-        signal, spawn_local, use_context, with_context,
+        runtime_dispatcher, signal, spawn_local, use_context, with_context,
     };
     pub use crate::{
         BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,

@@ -204,6 +204,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_run_web() {
+        let cli = parse(["whisker", "run", "web"]).unwrap();
+        match cli.command {
+            Command::Run(args) => assert_eq!(args.target, run::CliTarget::Web),
+            other => panic!("expected Run, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_run_with_explicit_target_and_flags() {
         // `target` moved from `--target <value>` to a positional
         // argument (`whisker run android`) — clap accepts it in any

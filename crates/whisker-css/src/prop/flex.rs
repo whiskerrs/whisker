@@ -10,63 +10,75 @@ impl Css {
     /// Sets `flex-direction`. Lynx default: `row`.
     /// <https://lynxjs.org/api/css/properties/flex-direction>
     pub fn flex_direction(self, v: FlexDirection) -> Self {
-        self.push("flex-direction", v)
+        self.push_typed(crate::StyleProperty::FlexDirection, v)
     }
 
     /// Sets `flex-wrap`. Lynx default: `nowrap`.
     /// <https://lynxjs.org/api/css/properties/flex-wrap>
     pub fn flex_wrap(self, v: FlexWrap) -> Self {
-        self.push("flex-wrap", v)
+        self.push_typed(crate::StyleProperty::FlexWrap, v)
     }
 
     /// Sets `flex-grow`. Lynx default: `0`. Negative values are
     /// clamped to zero.
     /// <https://lynxjs.org/api/css/properties/flex-grow>
     pub fn flex_grow(self, v: f32) -> Self {
-        self.push_raw("flex-grow", crate::to_css::number_to_string(v))
+        self.push_semantic(
+            crate::StyleProperty::FlexGrow,
+            whisker_style::StyleValue::Number(whisker_style::StyleNumber::new(v)),
+            crate::to_css::number_to_string(v),
+        )
     }
 
     /// Sets `flex-shrink`. Lynx default: `1`. Negative values are
     /// clamped to zero.
     /// <https://lynxjs.org/api/css/properties/flex-shrink>
     pub fn flex_shrink(self, v: f32) -> Self {
-        self.push_raw("flex-shrink", crate::to_css::number_to_string(v))
+        self.push_semantic(
+            crate::StyleProperty::FlexShrink,
+            whisker_style::StyleValue::Number(whisker_style::StyleNumber::new(v)),
+            crate::to_css::number_to_string(v),
+        )
     }
 
     /// Sets `flex-basis`. Lynx default: `auto`.
     /// <https://lynxjs.org/api/css/properties/flex-basis>
     pub fn flex_basis(self, v: impl Into<FlexBasis>) -> Self {
-        self.push("flex-basis", v.into())
+        self.push_typed(crate::StyleProperty::FlexBasis, v.into())
     }
 
     /// Sets `justify-content` — main-axis distribution.
     /// <https://lynxjs.org/api/css/properties/justify-content>
     pub fn justify_content(self, v: JustifyContent) -> Self {
-        self.push("justify-content", v)
+        self.push_typed(crate::StyleProperty::JustifyContent, v)
     }
 
     /// Sets `align-items` — cross-axis alignment for all items.
     /// <https://lynxjs.org/api/css/properties/align-items>
     pub fn align_items(self, v: AlignItems) -> Self {
-        self.push("align-items", v)
+        self.push_typed(crate::StyleProperty::AlignItems, v)
     }
 
     /// Sets `align-self` — cross-axis alignment for this item only.
     /// <https://lynxjs.org/api/css/properties/align-self>
     pub fn align_self(self, v: AlignSelf) -> Self {
-        self.push("align-self", v)
+        self.push_typed(crate::StyleProperty::AlignSelf, v)
     }
 
     /// Sets `align-content` — cross-axis distribution of wrapped lines.
     /// <https://lynxjs.org/api/css/properties/align-content>
     pub fn align_content(self, v: AlignContent) -> Self {
-        self.push("align-content", v)
+        self.push_typed(crate::StyleProperty::AlignContent, v)
     }
 
     /// Sets `order` — controls layout order among flex/grid siblings.
     /// <https://lynxjs.org/api/css/properties/order>
     pub fn order(self, v: i32) -> Self {
-        self.push_raw("order", v.to_string())
+        self.push_semantic(
+            crate::StyleProperty::Order,
+            whisker_style::StyleValue::Integer(i64::from(v)),
+            v.to_string(),
+        )
     }
 }
 

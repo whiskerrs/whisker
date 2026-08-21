@@ -180,10 +180,16 @@ pub struct IosParams {
 /// What kind of binary the dev server is rebuilding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
-    /// Android cdylib + APK + adb install + launch.
+    /// Android APK + adb install + launch.
     Android,
     /// iOS Simulator app + xcrun simctl install + launch.
     IosSimulator,
+    /// Native macOS executable. The CLI currently owns its automatic
+    /// rebuild/relaunch loop; this variant is also used for CNG dispatch.
+    Macos,
+    /// Browser WASM application. The CLI delegates its remount development
+    /// loop to the CNG-generated Trunk project.
+    Web,
 }
 
 /// How the dev loop reflects edits. Note that no mode rebuilds or
@@ -348,10 +354,10 @@ impl DevServer {
             self.config.crate_dir.clone(),
             self.config.package.clone(),
             self.config.target,
-        )
-        .with_features(vec!["whisker/hot-reload".into()]);
+        );
 
         let hot_reload_init = if self.config.hot_patch_mode == HotPatchMode::HotReload {
+            builder = builder.with_features(vec!["whisker/hot-reload".into()]);
             match prepare_hot_reload_capture(&self.config) {
                 Ok(prep) => {
                     builder = builder.with_capture(prep.capture.clone());
@@ -873,6 +879,8 @@ fn target_triple_for(config: &Config) -> Option<String> {
             };
             Some(triple.to_string())
         }
+        Target::Macos => None,
+        Target::Web => Some("wasm32-unknown-unknown".to_string()),
     }
 }
 
@@ -897,6 +905,8 @@ fn resolve_linker_for(config: &Config) -> Result<PathBuf> {
                 .with_context(|| format!("resolve NDK clang for ABI {abi} API {api}"))
         }
         Target::IosSimulator => Ok(hotpatch::wrapper::resolve_host_linker()),
+        Target::Macos => Ok(hotpatch::wrapper::resolve_host_linker()),
+        Target::Web => anyhow::bail!("Web builds are owned by the generated Trunk project"),
     }
 }
 
@@ -1017,6 +1027,12 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
             }
             Ok(dylib)
         }
+        Target::Macos => anyhow::bail!(
+            "macOS desktop hot-patch capture is not wired yet; use the automatic rebuild/relaunch loop"
+        ),
+        Target::Web => anyhow::bail!(
+            "Web hot-patch capture is not used; Trunk reloads and remounts the WASM application"
+        ),
     }
 }
 
@@ -1043,6 +1059,8 @@ fn target_os_for(target: Target) -> hotpatch::LinkerOs {
     match target {
         Target::Android => hotpatch::LinkerOs::Linux,
         Target::IosSimulator => hotpatch::LinkerOs::Macos,
+        Target::Macos => hotpatch::LinkerOs::Macos,
+        Target::Web => hotpatch::LinkerOs::Other,
     }
 }
 
@@ -1157,6 +1175,7 @@ mod tests {
                     device_override: None,
                 });
             }
+            Target::Macos | Target::Web => {}
         }
         cfg
     }

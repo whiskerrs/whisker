@@ -3,11 +3,12 @@
 //! loading / ready / error state through a [`ReadSignal`]-shaped
 //! handle.
 //!
-//! The fetcher runs on the TASM thread under
+//! The fetcher runs on the Host UI thread under
 //! [`futures_executor::LocalPool`]. For blocking sync IO (`ureq`,
 //! `std::fs`, …) inside the fetcher, wrap the call in
 //! [`crate::tasks::run_blocking`] which offloads to a fresh worker
-//! thread and marshals the result back via [`run_on_main_thread`]:
+//! thread. Completion wakes the owning runtime instance and the future is
+//! polled again on the next Host drive:
 //!
 //! ```ignore
 //! use whisker::runtime::tasks::run_blocking;

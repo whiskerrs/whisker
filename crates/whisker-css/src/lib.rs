@@ -49,6 +49,7 @@ pub mod ext;
 pub mod keyword;
 pub mod prop;
 pub mod shorthand;
+mod style_value;
 mod to_css;
 pub mod value;
 
@@ -58,7 +59,7 @@ pub mod value;
 // the macros crate directly.
 pub use whisker_macros::css;
 
-pub use crate::css::{Css, CssProp};
+pub use crate::css::{Css, CssProp, UnmigratedStyleValue};
 pub use crate::data_type::{
     Angle, CalcExpr, Color, ColorStop, CssString, FitContent, Gradient, Length, LengthPercentage,
     LinearDirection, MaxContent, NamedColor, Number, Percentage, RadialShape, StopPosition, Time,
@@ -73,3 +74,4 @@ pub use crate::to_css::ToCss;
 pub use crate::value::{
     BorderRadius, FlexBasis, GridLine, GridTemplate, ImageRef, LineHeight, Repeated, Size,
 };
+pub use whisker_style::{PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyId};

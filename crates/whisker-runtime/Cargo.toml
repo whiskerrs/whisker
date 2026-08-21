@@ -33,3 +33,4 @@ futures-channel = "0.3"
 # `WhiskerValue::deserialize_into::<T>()`.
 serde = { workspace = true }
 serde_json = { workspace = true }
+whisker-style = { workspace = true }

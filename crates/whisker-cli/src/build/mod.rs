@@ -13,6 +13,7 @@
 
 mod android;
 mod ios;
+mod macos;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -36,6 +37,8 @@ enum Cmd {
     /// Store Connect API key with Apple's cloud-managed distribution
     /// certificate. `--method ad-hoc` for device-limited distribution.
     Ipa(ios::Args),
+    /// Native macOS `.app` bundle built from the CNG-generated Cargo project.
+    Macos(macos::Args),
 }
 
 pub fn run(args: BuildArgs) -> Result<()> {
@@ -43,5 +46,6 @@ pub fn run(args: BuildArgs) -> Result<()> {
         Cmd::Appbundle(a) => android::run(ReleaseArtifact::AppBundle, a),
         Cmd::Apk(a) => android::run(ReleaseArtifact::Apk, a),
         Cmd::Ipa(a) => ios::run(a),
+        Cmd::Macos(a) => macos::run(a),
     }
 }

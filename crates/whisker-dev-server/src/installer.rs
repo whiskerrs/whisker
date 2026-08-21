@@ -103,6 +103,12 @@ impl Installer {
                 )
                 .await
             }
+            Target::Macos => {
+                anyhow::bail!("macOS launch is driven by whisker-cli's local process supervisor")
+            }
+            Target::Web => {
+                anyhow::bail!("Web launch is driven by the CNG-generated Trunk project")
+            }
         }
     }
 }

@@ -12,6 +12,8 @@ members = [
     "crates/whisker-dev-server",
     "crates/whisker-driver",
     "crates/whisker-driver-sys",
+    "crates/whisker-engine",
+    "crates/whisker-layout",
     "crates/whisker-macros",
     "crates/whisker-macro-syntax",
     "crates/whisker-fmt",
@@ -19,8 +21,16 @@ members = [
     "packages/whisker-asset-macros",
     "crates/whisker-css",
     "crates/whisker-plugin",
+    "crates/whisker-protocol",
     "crates/whisker-runtime",
+    "crates/whisker-style",
+    "platforms/desktop",
     "crates/whisker-subsecond",
+    "platforms/macos",
+    "platforms/windows",
+    "platforms/linux",
+    "platforms/web",
+    "examples/host-smoke",
     "examples/anim-smoke",
     "examples/asset-demo",
     "examples/aurora-wallet",
@@ -96,6 +106,8 @@ whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.12.0" 
 whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.12.0" }
 whisker-driver = { path = "crates/whisker-driver", version = "0.12.0" }
 whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.12.0" }
+whisker-engine = { path = "crates/whisker-engine", version = "0.12.0" }
+whisker-layout = { path = "crates/whisker-layout", version = "0.12.0" }
 whisker-macros = { path = "crates/whisker-macros", version = "0.12.0" }
 whisker-macro-syntax = { path = "crates/whisker-macro-syntax", version = "0.12.0" }
 whisker-fmt = { path = "crates/whisker-fmt", version = "0.12.0" }
@@ -103,7 +115,14 @@ whisker-asset = { path = "packages/whisker-asset", version = "0.12.0" }
 whisker-asset-macros = { path = "packages/whisker-asset-macros", version = "0.12.0" }
 whisker-css = { path = "crates/whisker-css", version = "0.12.0" }
 whisker-plugin = { path = "crates/whisker-plugin", version = "0.12.0" }
+whisker-protocol = { path = "crates/whisker-protocol", version = "0.12.0" }
 whisker-runtime = { path = "crates/whisker-runtime", version = "0.12.0" }
+whisker-style = { path = "crates/whisker-style", version = "0.12.0" }
+whisker-desktop = { path = "platforms/desktop", version = "0.12.0" }
+whisker-macos = { path = "platforms/macos", version = "0.12.0" }
+whisker-windows = { path = "platforms/windows", version = "0.12.0" }
+whisker-linux = { path = "platforms/linux", version = "0.12.0" }
+whisker-web = { path = "platforms/web", version = "0.12.0" }
 whisker-router = { path = "packages/whisker-router", version = "0.12.0" }
 whisker-router-macros = { path = "packages/whisker-router-macros", version = "0.12.0" }
 

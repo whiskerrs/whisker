@@ -8,44 +8,52 @@ impl Css {
     /// Sets `linear-orientation` — Lynx's analogue of `flex-direction`.
     /// <https://lynxjs.org/api/css/properties/linear-orientation>
     pub fn linear_orientation(self, v: LinearOrientation) -> Self {
-        self.push("linear-orientation", v)
+        self.push(crate::StyleProperty::LinearOrientation, v)
     }
 
     /// Sets `linear-direction` — direction the linear container flows.
     /// <https://lynxjs.org/api/css/properties/linear-direction>
     pub fn linear_direction(self, v: LinearOrientation) -> Self {
-        self.push("linear-direction", v)
+        self.push(crate::StyleProperty::LinearDirection, v)
     }
 
     /// Sets `linear-gravity` — main-axis alignment. **Deprecated**;
     /// switch to `display: flex` + `justify-content` when possible.
     /// <https://lynxjs.org/api/css/properties/linear-gravity>
     pub fn linear_gravity(self, v: LinearGravity) -> Self {
-        self.push("linear-gravity", v)
+        self.push(crate::StyleProperty::LinearGravity, v)
     }
 
     /// Sets `linear-cross-gravity` — cross-axis alignment for all items.
     /// <https://lynxjs.org/api/css/properties/linear-cross-gravity>
     pub fn linear_cross_gravity(self, v: LinearCrossGravity) -> Self {
-        self.push("linear-cross-gravity", v)
+        self.push(crate::StyleProperty::LinearCrossGravity, v)
     }
 
     /// Sets `linear-layout-gravity` — per-item cross-axis override.
     /// <https://lynxjs.org/api/css/properties/linear-layout-gravity>
     pub fn linear_layout_gravity(self, v: LinearLayoutGravity) -> Self {
-        self.push("linear-layout-gravity", v)
+        self.push(crate::StyleProperty::LinearLayoutGravity, v)
     }
 
     /// Sets `linear-weight` — relative size weight along the main axis.
     /// <https://lynxjs.org/api/css/properties/linear-weight>
     pub fn linear_weight(self, v: f32) -> Self {
-        self.push_raw("linear-weight", crate::to_css::number_to_string(v))
+        self.push_semantic(
+            crate::StyleProperty::LinearWeight,
+            whisker_style::StyleValue::Number(whisker_style::StyleNumber::new(v)),
+            crate::to_css::number_to_string(v),
+        )
     }
 
     /// Sets `linear-weight-sum` — denominator for weight calculations.
     /// <https://lynxjs.org/api/css/properties/linear-weight-sum>
     pub fn linear_weight_sum(self, v: f32) -> Self {
-        self.push_raw("linear-weight-sum", crate::to_css::number_to_string(v))
+        self.push_semantic(
+            crate::StyleProperty::LinearWeightSum,
+            whisker_style::StyleValue::Number(whisker_style::StyleNumber::new(v)),
+            crate::to_css::number_to_string(v),
+        )
     }
 }
 

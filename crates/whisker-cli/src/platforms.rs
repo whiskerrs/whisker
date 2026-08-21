@@ -6,7 +6,7 @@
 //!   on disk. No shelling out, no environment assumptions. Pure logic
 //!   so it stays unit-testable against tempdirs.
 //! - This module decides *where* the gen dirs live (always
-//!   `<crate_dir>/gen/{android,ios}`), resolves the Whisker native
+//!   `<crate_dir>/gen/<platform>`), resolves the Whisker native
 //!   runtime paths (`<workspace>/platforms/ios`), and handles the
 //!   side-effect bits a sync needs — pinning the SDK / Gradle plugin
 //!   versions and building the app's discovered CNG plugins.
@@ -35,6 +35,8 @@ pub fn sync_for_target(
     match target {
         Target::Android => sync_android(app_config, crate_dir, workspace_root, package),
         Target::IosSimulator => sync_ios(app_config, crate_dir, workspace_root, package),
+        Target::Macos => sync_macos(app_config, crate_dir, workspace_root, package),
+        Target::Web => sync_web(app_config, crate_dir, workspace_root, package),
     }
 }
 
@@ -136,6 +138,65 @@ fn sync_ios(
         gen_dir,
         regenerated,
         template_version: None,
+    })
+}
+
+fn sync_macos(
+    app_config: &Config,
+    crate_dir: &Path,
+    workspace_root: &Path,
+    package: &str,
+) -> Result<PlatformSync> {
+    let gen_dir = crate_dir.join("gen/macos");
+    // Inside the Whisker monorepo, point at the in-tree Host so examples
+    // exercise the current checkout. Installed projects use the published
+    // crate at the CLI's matching version.
+    let in_tree_host = workspace_root.join("platforms/macos");
+    let dependency = if in_tree_host.join("Cargo.toml").is_file() {
+        format!("{{ path = {:?} }}", in_tree_host.display().to_string())
+    } else {
+        format!("{:?}", env!("CARGO_PKG_VERSION"))
+    };
+    let inputs = whisker_cng::macos::inputs_from(
+        app_config,
+        package.to_string(),
+        crate_dir.to_path_buf(),
+        dependency,
+    )?;
+    let template_version = inputs.template_version;
+    let regenerated = whisker_cng::sync_macos(&gen_dir, &inputs).context("render gen/macos")?;
+    Ok(PlatformSync {
+        gen_dir,
+        regenerated,
+        template_version: Some(template_version),
+    })
+}
+
+fn sync_web(
+    app_config: &Config,
+    crate_dir: &Path,
+    workspace_root: &Path,
+    package: &str,
+) -> Result<PlatformSync> {
+    let gen_dir = crate_dir.join("gen/web");
+    let in_tree_host = workspace_root.join("platforms/web");
+    let dependency = if in_tree_host.join("Cargo.toml").is_file() {
+        format!("{{ path = {:?} }}", in_tree_host.display().to_string())
+    } else {
+        format!("{:?}", env!("CARGO_PKG_VERSION"))
+    };
+    let inputs = whisker_cng::web::inputs_from(
+        app_config,
+        package.to_string(),
+        crate_dir.to_path_buf(),
+        dependency,
+    )?;
+    let template_version = inputs.template_version;
+    let regenerated = whisker_cng::sync_web(&gen_dir, &inputs).context("render gen/web")?;
+    Ok(PlatformSync {
+        gen_dir,
+        regenerated,
+        template_version: Some(template_version),
     })
 }
 

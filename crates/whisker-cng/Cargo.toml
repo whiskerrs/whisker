@@ -1,6 +1,6 @@
 # Whisker CNG (Continuous Native Generation).
 #
-# Generates the Android / iOS host projects under `gen/{android,ios}/`
+# Generates complete platform projects under `gen/<platform>/`
 # from the user's `whisker.rs` (= `whisker_config::Config`).
 # Modelled on Expo's CNG: the source of truth is the declarative
 # config, the platforms directory are build artifacts, never committed.
@@ -19,7 +19,7 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Whisker Continuous Native Generation — declarative Android/iOS project generation from whisker.rs."
+description = "Whisker Continuous Native Generation — declarative platform project generation from whisker.rs."
 
 [dependencies]
 anyhow = { workspace = true }

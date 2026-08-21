@@ -176,7 +176,7 @@ impl Css {
     /// Sets the `background` shorthand.
     /// <https://lynxjs.org/api/css/properties/background>
     pub fn background(self, b: Background) -> Self {
-        self.push("background", b)
+        self.push(crate::StyleProperty::Background, b)
     }
 }
 
@@ -240,6 +240,26 @@ mod tests {
             .size(BackgroundSize::Cover);
         let s = Css::new().background(Background::new().layer(layer));
         assert_eq!(s.to_string(), "background: url(\"a.png\") center / cover;");
+    }
+
+    #[test]
+    fn background_layer_propagates_size_format_errors() {
+        struct RejectCover;
+
+        impl fmt::Write for RejectCover {
+            fn write_str(&mut self, value: &str) -> fmt::Result {
+                if value == "cover" {
+                    Err(fmt::Error)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let layer = BackgroundLayer::new(ImageRef::None)
+            .position(Position::Keyword(PositionKeyword::Center))
+            .size(BackgroundSize::Cover);
+        assert_eq!(layer.to_css(&mut RejectCover), Err(fmt::Error));
     }
 
     #[test]

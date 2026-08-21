@@ -3,6 +3,7 @@
 use crate::css::Css;
 use crate::data_type::{CssString, Length, LengthPercentage};
 use crate::keyword::{FontStyle, FontVariant, FontWeight};
+use crate::to_css::ToCss;
 use crate::value::LineHeight;
 
 impl Css {
@@ -13,44 +14,51 @@ impl Css {
     pub fn font_family(self, v: impl Into<String>) -> Self {
         // Lynx accepts either bare identifiers or quoted strings; quoting
         // unconditionally is always safe.
-        self.push("font-family", CssString::new(v))
+        let name = v.into();
+        self.push_semantic(
+            crate::StyleProperty::FontFamily,
+            whisker_style::StyleValue::FontFamily(whisker_style::FontFamilyValue::Named(
+                name.clone(),
+            )),
+            CssString::new(name).to_css_string(),
+        )
     }
 
     /// Sets `font-size`. Lynx default: `14px`.
     /// <https://lynxjs.org/api/css/properties/font-size>
     pub fn font_size(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("font-size", v.into())
+        self.push_typed(crate::StyleProperty::FontSize, v.into())
     }
 
     /// Sets `font-style`. Lynx default: `normal`.
     /// <https://lynxjs.org/api/css/properties/font-style>
     pub fn font_style(self, v: FontStyle) -> Self {
-        self.push("font-style", v)
+        self.push_typed(crate::StyleProperty::FontStyle, v)
     }
 
     /// Sets `font-weight`. Lynx default: `normal`. `bolder`/`lighter`
     /// are not supported.
     /// <https://lynxjs.org/api/css/properties/font-weight>
     pub fn font_weight(self, v: FontWeight) -> Self {
-        self.push("font-weight", v)
+        self.push_typed(crate::StyleProperty::FontWeight, v)
     }
 
     /// Sets `font-variant`.
     /// <https://lynxjs.org/api/css/properties/font-variant>
     pub fn font_variant(self, v: FontVariant) -> Self {
-        self.push("font-variant", v)
+        self.push(crate::StyleProperty::FontVariant, v)
     }
 
     /// Sets `letter-spacing`. Accepts `<length>`.
     /// <https://lynxjs.org/api/css/properties/letter-spacing>
     pub fn letter_spacing(self, v: Length) -> Self {
-        self.push("letter-spacing", v)
+        self.push_typed(crate::StyleProperty::LetterSpacing, v)
     }
 
     /// Sets `line-height`. Lynx default: `normal`.
     /// <https://lynxjs.org/api/css/properties/line-height>
     pub fn line_height(self, v: impl Into<LineHeight>) -> Self {
-        self.push("line-height", v.into())
+        self.push_typed(crate::StyleProperty::LineHeight, v.into())
     }
 }
 

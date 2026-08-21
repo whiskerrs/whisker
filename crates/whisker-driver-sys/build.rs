@@ -17,6 +17,15 @@ fn main() -> Result<()> {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=bridge");
 
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    // The browser Host uses the retained Rust scene directly and has no Lynx
+    // C++ bridge. Keeping this build script a no-op for wasm also avoids asking
+    // the `wasm32-unknown-unknown` target for a C++ standard library it does
+    // not provide.
+    if target_arch == "wasm32" {
+        return Ok(());
+    }
+
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     match target_os.as_str() {
         "android" => compile_android(),

@@ -25,6 +25,7 @@ use std::rc::Rc;
 use super::handle::Element;
 use crate::element::ElementTag;
 use crate::value::WhiskerValue;
+use whisker_style::SpecifiedStyle;
 
 /// Event-handler propagation type — a faithful 1:1 mapping to Lynx's
 /// four handler kinds (`bind` / `catch` / `capture-bind` /
@@ -132,6 +133,13 @@ pub trait DynRenderer {
         self.set_attribute(handle, key, &value.to_string());
     }
     fn set_inline_styles(&self, handle: Element, css: &str);
+
+    /// Applies renderer-independent typed style and reports whether it was
+    /// accepted. Renderers that still consume Lynx CSS use the default `false`
+    /// result so the caller can fall back to [`Self::set_inline_styles`].
+    fn set_specified_style(&self, _handle: Element, _style: &SpecifiedStyle) -> bool {
+        false
+    }
 
     /// Underlying Lynx sign (`impl_id`) for `handle`, or 0 if the
     /// renderer doesn't model signs (test renderers) or the handle
@@ -328,6 +336,34 @@ thread_local! {
     static NEXT_PHANTOM_ID: Cell<u32> = const { Cell::new(PHANTOM_BASE) };
 }
 
+pub(crate) struct ViewRuntimeState {
+    children: HashMap<Element, Vec<Element>>,
+    parents: HashMap<Element, Element>,
+    phantoms: HashSet<Element>,
+    next_phantom_id: u32,
+}
+
+impl ViewRuntimeState {
+    pub(crate) fn new() -> Self {
+        Self {
+            children: HashMap::new(),
+            parents: HashMap::new(),
+            phantoms: HashSet::new(),
+            next_phantom_id: PHANTOM_BASE,
+        }
+    }
+}
+
+pub(crate) fn swap_runtime_state(state: &mut ViewRuntimeState) {
+    CHILDREN_OF.with_borrow_mut(|active| std::mem::swap(active, &mut state.children));
+    PARENT_OF.with_borrow_mut(|active| std::mem::swap(active, &mut state.parents));
+    PHANTOM_ELEMENTS.with_borrow_mut(|active| std::mem::swap(active, &mut state.phantoms));
+    NEXT_PHANTOM_ID.with(|active| {
+        let current = active.replace(state.next_phantom_id);
+        state.next_phantom_id = current;
+    });
+}
+
 /// Phantom IDs occupy the high half of `u32`; real IDs start at 0
 /// from the bridge renderer's counter, so the two ranges stay
 /// disjoint without coordination.
@@ -357,12 +393,17 @@ pub fn uninstall_renderer(prev: Option<Box<dyn DynRenderer>>) {
 /// rendering.
 pub fn with_installed_renderer<R>(r: Box<dyn DynRenderer>, f: impl FnOnce() -> R) -> R {
     let prev = install_renderer(r);
-    let result = f();
-    let _new = CURRENT_RENDERER.with_borrow_mut(|slot| slot.take());
-    if let Some(p) = prev {
-        let _ = install_renderer(p);
+    struct Restore(Option<Option<Box<dyn DynRenderer>>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _current = CURRENT_RENDERER.with_borrow_mut(|slot| slot.take());
+            if let Some(previous) = self.0.take().flatten() {
+                let _ = install_renderer(previous);
+            }
+        }
     }
-    result
+    let _restore = Restore(Some(prev));
+    f()
 }
 
 /// Crate-internal sigil for "no renderer installed" diagnostics —
@@ -603,6 +644,20 @@ pub fn set_inline_styles(handle: Element, css: &str) {
         return;
     }
     with_renderer(|r| r.set_inline_styles(handle, css), ())
+}
+
+/// Attempts to apply renderer-independent typed style.
+///
+/// A `false` result asks the umbrella authoring layer to preserve its legacy
+/// CSS-string fallback for renderers that have not migrated yet.
+pub fn set_specified_style(handle: Element, style: &SpecifiedStyle) -> bool {
+    if is_phantom(handle) {
+        return true;
+    }
+    with_renderer(
+        |renderer| renderer.set_specified_style(handle, style),
+        false,
+    )
 }
 
 /// See [`DynRenderer::element_sign`]. Returns 0 when no renderer is
