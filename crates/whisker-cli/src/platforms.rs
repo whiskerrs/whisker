@@ -375,18 +375,16 @@ mod tests {
         let macos =
             sync_for_target(Target::Macos, &config, &crate_dir, workspace, "host-smoke").unwrap();
         let macos_source = std::fs::read_to_string(macos.gen_dir.join("src/main.rs")).unwrap();
-        assert!(macos_source.contains("mod __whisker_module_whisker_toggle;"));
+        assert!(macos_source.contains("whisker_toggle::__whisker_element_module_definition()"));
         assert!(
-            macos_source.contains("__whisker_module_whisker_toggle::__whisker_module_definition()")
+            macos_source.contains("whisker_toggle_desktop_host::__whisker_module_definition()")
         );
 
         let web =
             sync_for_target(Target::Web, &config, &crate_dir, workspace, "host-smoke").unwrap();
         let web_source = std::fs::read_to_string(web.gen_dir.join("src/lib.rs")).unwrap();
-        assert!(web_source.contains("mod __whisker_module_whisker_toggle;"));
-        assert!(
-            web_source.contains("__whisker_module_whisker_toggle::__whisker_module_definition()")
-        );
+        assert!(web_source.contains("whisker_toggle::__whisker_element_module_definition()"));
+        assert!(web_source.contains("whisker_toggle_web_host::__whisker_module_definition()"));
         std::fs::remove_dir_all(crate_dir).ok();
     }
 }
