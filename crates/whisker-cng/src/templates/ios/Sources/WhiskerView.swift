@@ -1,5 +1,9 @@
 import UIKit
+#if canImport(WhiskerModules)
 import WhiskerModules
+#else
+import WhiskerModule
+#endif
 
 private typealias WhiskerRequestFrame = @convention(c) (UnsafeMutableRawPointer?) -> Void
 private typealias WhiskerBootstrapHost = @convention(c) (
@@ -334,6 +338,15 @@ public final class WhiskerView: UIView {
         response.revision = revision
         return true
     }
+
+#if WHISKER_HOST_CONFORMANCE
+    func applyConformanceFrame(
+        _ frame: WhiskerMobileFrame,
+        response: inout WhiskerMobileApplyResponse
+    ) -> Bool {
+        applyFrame(frame, response: &response)
+    }
+#endif
 
     private func validate(_ operations: [WhiskerMobileOperation], snapshot: Bool) -> Bool {
         var existing = snapshot ? Set<UInt64>() : Set(nodes.keys)

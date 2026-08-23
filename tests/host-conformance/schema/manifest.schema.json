@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://whisker.rs/schema/host-conformance/manifest-v1.json",
+  "title": "Whisker Host conformance manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "wpt_revision", "cases"],
+  "properties": {
+    "schema": { "const": 1 },
+    "wpt_revision": { "type": "string", "minLength": 1 },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "feature", "fixture", "required_hosts", "checkpoints"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "feature": { "type": "string", "minLength": 1 },
+          "fixture": { "type": "string", "minLength": 1 },
+          "required_hosts": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["desktop", "web", "android", "ios"] }
+          },
+          "checkpoints": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "rust-layout-protocol",
+                "semantic-projection",
+                "pixel",
+                "measurement",
+                "input"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

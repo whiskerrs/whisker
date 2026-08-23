@@ -18,6 +18,7 @@ pub(crate) struct BoxPrimitive {
     pub(crate) border_widths: [f32; 4],
     pub(crate) color: [f32; 4],
     pub(crate) border_colors: [[f32; 4]; 4],
+    pub(crate) border_styles: [f32; 4],
     pub(crate) kind: BoxPrimitiveKind,
 }
 
@@ -51,7 +52,7 @@ pub(crate) fn lower_box(
     if !is_transparent(&paint.background_color) {
         let color = linear_color(&paint.background_color, opacity);
         if color[3] > 0.0 {
-            emit(geometry.primitive(color, [[0.0; 4]; 4], BoxPrimitiveKind::Fill));
+            emit(geometry.primitive(color, [[0.0; 4]; 4], [0.0; 4], BoxPrimitiveKind::Fill));
         }
     }
     let [top, right, bottom, left] = geometry.border_widths;
@@ -82,7 +83,31 @@ pub(crate) fn lower_box(
         ),
     ];
     if border_colors.iter().any(|color| color[3] > 0.0) {
-        emit(geometry.primitive([0.0; 4], border_colors, BoxPrimitiveKind::Border));
+        emit(geometry.primitive(
+            [0.0; 4],
+            border_colors,
+            [
+                border_style(paint.border_styles.top),
+                border_style(paint.border_styles.right),
+                border_style(paint.border_styles.bottom),
+                border_style(paint.border_styles.left),
+            ],
+            BoxPrimitiveKind::Border,
+        ));
+    }
+}
+
+fn border_style(style: BorderLineStyle) -> f32 {
+    match style {
+        BorderLineStyle::None | BorderLineStyle::Hidden => 0.0,
+        BorderLineStyle::Solid => 1.0,
+        BorderLineStyle::Dashed => 2.0,
+        BorderLineStyle::Dotted => 3.0,
+        BorderLineStyle::Double => 4.0,
+        BorderLineStyle::Groove => 5.0,
+        BorderLineStyle::Ridge => 6.0,
+        BorderLineStyle::Inset => 7.0,
+        BorderLineStyle::Outset => 8.0,
     }
 }
 
@@ -122,6 +147,7 @@ impl BoxGeometry {
         self,
         color: [f32; 4],
         border_colors: [[f32; 4]; 4],
+        border_styles: [f32; 4],
         kind: BoxPrimitiveKind,
     ) -> BoxPrimitive {
         BoxPrimitive {
@@ -134,6 +160,7 @@ impl BoxGeometry {
             border_widths: self.border_widths,
             color,
             border_colors,
+            border_styles,
             kind,
         }
     }

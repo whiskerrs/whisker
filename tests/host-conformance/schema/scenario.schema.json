@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://whisker.rs/schema/host-conformance/scenario-v1.json",
+  "title": "Whisker Host conformance scenario",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "test"],
+  "properties": {
+    "schema": { "const": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "upstream": { "$ref": "#/$defs/upstream" },
+    "test": { "$ref": "#/$defs/side" },
+    "reference": { "$ref": "#/$defs/side" }
+  },
+  "$defs": {
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "revision",
+        "path",
+        "reference_path",
+        "license",
+        "assertion",
+        "adaptation"
+      ],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "reference_path": { "type": ["string", "null"] },
+        "license": { "type": "string", "minLength": 1 },
+        "assertion": { "type": "string", "minLength": 1 },
+        "adaptation": { "type": "string", "minLength": 1 }
+      }
+    },
+    "side": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commands"],
+      "properties": {
+        "commands": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/command" }
+        }
+      }
+    },
+    "command": {
+      "oneOf": [
+        { "$ref": "#/$defs/attachSurface" },
+        { "$ref": "#/$defs/presentBox" },
+        { "$ref": "#/$defs/checkpoint" },
+        { "$ref": "#/$defs/measureText" },
+        { "$ref": "#/$defs/checkpointMeasurement" },
+        { "$ref": "#/$defs/emitPointer" },
+        { "$ref": "#/$defs/checkpointInput" }
+      ]
+    },
+    "attachSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "width", "height", "scale"],
+      "properties": {
+        "type": { "const": "attach_surface" },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "scale": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "presentBox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "revision", "rect", "background"],
+      "properties": {
+        "type": { "const": "present_box" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "rect": { "$ref": "#/$defs/quadNumber" },
+        "background": { "$ref": "#/$defs/color" },
+        "border": { "$ref": "#/$defs/border" }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "const": "checkpoint" },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "measureText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "key",
+        "text",
+        "font_size",
+        "line_height",
+        "available_width"
+      ],
+      "properties": {
+        "type": { "const": "measure_text" },
+        "key": { "type": "integer", "minimum": 1 },
+        "text": { "type": "string" },
+        "font_size": { "type": "number", "exclusiveMinimum": 0 },
+        "line_height": { "type": "number", "exclusiveMinimum": 0 },
+        "available_width": { "type": "number", "minimum": 0 }
+      }
+    },
+    "checkpointMeasurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "key",
+        "min_width",
+        "max_width",
+        "min_height",
+        "max_height",
+        "prepared_content"
+      ],
+      "properties": {
+        "type": { "const": "checkpoint_measurement" },
+        "key": { "type": "integer", "minimum": 1 },
+        "min_width": { "type": "number", "minimum": 0 },
+        "max_width": { "type": "number", "minimum": 0 },
+        "min_height": { "type": "number", "minimum": 0 },
+        "max_height": { "type": "number", "minimum": 0 },
+        "prepared_content": { "type": "boolean" }
+      }
+    },
+    "emitPointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "event",
+        "pointer_id",
+        "timestamp_ms",
+        "x",
+        "y",
+        "buttons",
+        "changed_button"
+      ],
+      "properties": {
+        "type": { "const": "emit_pointer" },
+        "event": { "$ref": "#/$defs/pointerEvent" },
+        "pointer_id": { "type": "integer", "minimum": 0 },
+        "timestamp_ms": { "type": "number", "minimum": 0 },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "buttons": { "type": "integer", "minimum": 0 },
+        "changed_button": { "type": "integer" }
+      }
+    },
+    "checkpointInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "event", "pointer_id", "x", "y"],
+      "properties": {
+        "type": { "const": "checkpoint_input" },
+        "event": { "$ref": "#/$defs/pointerEvent" },
+        "pointer_id": { "type": "integer", "minimum": 0 },
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "pointerEvent": { "enum": ["down", "move", "up", "cancel"] },
+    "border": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["widths", "colors", "styles", "radii"],
+      "properties": {
+        "widths": { "$ref": "#/$defs/quadNumber" },
+        "colors": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/color" }
+        },
+        "styles": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "enum": [
+              "none",
+              "hidden",
+              "solid",
+              "dashed",
+              "dotted",
+              "double",
+              "groove",
+              "ridge",
+              "inset",
+              "outset"
+            ]
+          }
+        },
+        "radii": { "$ref": "#/$defs/quadNumber" }
+      }
+    },
+    "quadNumber": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "type": "number" }
+    },
+    "color": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "named" },
+            "value": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "red", "green", "blue", "alpha"],
+          "properties": {
+            "kind": { "const": "srgba" },
+            "red": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "green": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "blue": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "alpha": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

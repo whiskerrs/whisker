@@ -1,4 +1,5 @@
 [alias]
+xtask = "run --package xtask --"
 # `cargo coverage` → HTML report opened in the browser.
 # Requires `cargo install cargo-llvm-cov` and `rustup component add
 # llvm-tools-preview` once. `--doctests` is nightly-only so we leave

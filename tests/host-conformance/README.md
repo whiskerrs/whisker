@@ -16,6 +16,41 @@ mounting `RuntimeInstance`. A recording input sink replaces the Rust runtime at
 the opposite boundary so normalized Host input can be checked independently;
 each Host runner connects its native-event adapter to the same sink contract.
 
+## Contract and runners
+
+`manifest.json` is the ordered coverage gate. A case is only mandatory for a
+Host after that Host appears in `required_hosts`; every listed fixture is still
+decoded and validated so pending coverage cannot silently rot. The language-
+neutral formats are documented by `schema/manifest.schema.json` and
+`schema/scenario.schema.json`. `whisker-host-conformance` is a test-only Rust
+decoder, not a second source of fixture semantics.
+
+Every runner injects commands at the Host boundary and uses production Host
+code. Desktop creates real protocol packets and performs offscreen wgpu pixel
+comparison. Web creates protocol packets and drives the real `DomFrameSink` in
+headless Chrome; its current checkpoint is semantic DOM projection because the
+DOM has no synchronous texture readback API. Android stages the generated
+production `WhiskerView.kt`, injects ABI-equivalent operations, and compares
+bitmaps on an emulator. iOS compiles the generated production
+`WhiskerView.swift`, injects the mobile C ABI frame, and compares UIKit layer
+captures in a Simulator.
+
+From the repository root, run one Host with:
+
+```sh
+cargo xtask host-conformance desktop
+cargo xtask host-conformance web
+cargo xtask host-conformance android
+cargo xtask host-conformance ios
+```
+
+Web requires `wasm-pack`, Chrome, and `curl`. `xtask` detects the installed Chrome
+version and caches a compatible ChromeDriver under `target/xtask`; set
+`GOOGLE_CHROME_BIN` for a non-standard Chrome location or `CHROMEDRIVER` to use
+an explicit driver. Android and iOS require a locally installed platform SDK.
+`xtask` uses the running Android emulator and boots an available iPhone
+Simulator. The same entry points are used by CI.
+
 `capabilities.json` is the cross-Host implementation checklist. Its property
 lists describe semantic ownership rather than one Host function per CSS
 spelling: shorthands are resolved in Rust, layout entries become `SetLayout`,

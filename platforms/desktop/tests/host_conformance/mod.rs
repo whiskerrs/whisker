@@ -1,4 +1,3 @@
-use serde::Deserialize;
 use whisker::css::BorderStyle;
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -6,6 +5,10 @@ use whisker::runtime::view::{set_root, with_installed_renderer};
 use whisker::{SurfaceRuntime, standard_element_registrations};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{FrameSink, MeasurementProvider};
+use whisker_host_conformance::{
+    BorderFixture, BorderStyleFixture, ColorFixture, Command, Host, LoadedCase,
+    PointerEventFixture, Scenario, ScenarioSide, load_required,
+};
 use whisker_protocol::{
     AvailableSpace, BorderLineStyle, BoxPaint, ElementTypeId, FrameHeader, FrameMode, FramePacket,
     InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect, MeasureConstraints,
@@ -23,197 +26,46 @@ use crate::paint::box_paint::{BoxPrimitive, BoxPrimitiveKind, lower_box};
 use crate::scene::{DesktopScene, PaintCommand};
 use crate::text::NativeTextHost;
 
-const BACKGROUND_COLOR_129: &str = include_str!(
-    "../../../../tests/host-conformance/wpt/css/CSS2/backgrounds/background-color-129.json"
-);
-const BORDER_RADIUS_SUM_001: &str = include_str!(
-    "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
-);
-const TEXT_MEASURE_BASIC: &str =
-    include_str!("../../../../tests/host-conformance/core/text-measure-basic.json");
-const POINTER_INPUT_BASIC: &str =
-    include_str!("../../../../tests/host-conformance/core/pointer-input-basic.json");
-const MANIFEST: &str = include_str!("../../../../tests/host-conformance/manifest.json");
 const CAPABILITIES: &str = include_str!("../../../../tests/host-conformance/capabilities.json");
 
-#[derive(Debug, Deserialize)]
-struct Manifest {
-    schema: u32,
-    wpt_revision: String,
-    cases: Vec<ManifestCase>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ManifestCase {
-    id: String,
-    feature: String,
-    fixture: String,
-    required_hosts: Vec<String>,
-    checkpoints: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Scenario {
-    schema: u32,
-    id: String,
-    upstream: Upstream,
-    test: ScenarioSide,
-    reference: ScenarioSide,
-}
-
-#[derive(Debug, Deserialize)]
-struct Upstream {
-    repository: String,
-    revision: String,
-    path: String,
-    reference_path: Option<String>,
-    license: String,
-    assertion: String,
-    adaptation: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ScenarioSide {
-    commands: Vec<Command>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CoreScenario {
-    schema: u32,
-    id: String,
-    commands: Vec<Command>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum Command {
-    AttachSurface {
-        width: f32,
-        height: f32,
-        scale: f32,
-    },
-    PresentBox {
-        revision: u64,
-        rect: [f32; 4],
-        background: ColorFixture,
-        #[serde(default)]
-        border: Option<BorderFixture>,
-    },
-    Checkpoint {
-        name: String,
-    },
-    MeasureText {
-        key: u64,
-        text: String,
-        font_size: f32,
-        line_height: f32,
-        available_width: f32,
-    },
-    CheckpointMeasurement {
-        key: u64,
-        min_width: f32,
-        max_width: f32,
-        min_height: f32,
-        max_height: f32,
-        prepared_content: bool,
-    },
-    EmitPointer {
-        event: PointerEventFixture,
-        pointer_id: u64,
-        timestamp_ms: f64,
-        x: f32,
-        y: f32,
-        buttons: u32,
-        changed_button: i16,
-    },
-    CheckpointInput {
-        event: PointerEventFixture,
-        pointer_id: u64,
-        x: f32,
-        y: f32,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum PointerEventFixture {
-    Down,
-    Move,
-    Up,
-    Cancel,
-}
-
-impl PointerEventFixture {
-    const fn protocol(self) -> InputEventKind {
-        match self {
-            Self::Down => InputEventKind::PointerDown,
-            Self::Move => InputEventKind::PointerMove,
-            Self::Up => InputEventKind::PointerUp,
-            Self::Cancel => InputEventKind::PointerCancel,
-        }
+const fn pointer_event_protocol(value: PointerEventFixture) -> InputEventKind {
+    match value {
+        PointerEventFixture::Down => InputEventKind::PointerDown,
+        PointerEventFixture::Move => InputEventKind::PointerMove,
+        PointerEventFixture::Up => InputEventKind::PointerUp,
+        PointerEventFixture::Cancel => InputEventKind::PointerCancel,
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum ColorFixture {
-    Named {
-        value: String,
-    },
-    Srgba {
-        red: u8,
-        green: u8,
-        blue: u8,
-        alpha: f32,
-    },
-}
-
-impl ColorFixture {
-    fn protocol(&self) -> PaintColor {
-        match self {
-            Self::Named { value } => PaintColor::Named(value.clone()),
-            Self::Srgba {
-                red,
-                green,
-                blue,
-                alpha,
-            } => PaintColor::Srgba {
-                red: *red,
-                green: *green,
-                blue: *blue,
-                alpha: *alpha,
-            },
-        }
+fn color_protocol(value: &ColorFixture) -> PaintColor {
+    match value {
+        ColorFixture::Named { value } => PaintColor::Named(value.clone()),
+        ColorFixture::Srgba {
+            red,
+            green,
+            blue,
+            alpha,
+        } => PaintColor::Srgba {
+            red: *red,
+            green: *green,
+            blue: *blue,
+            alpha: *alpha,
+        },
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct BorderFixture {
-    /// Top, right, bottom, left widths.
-    widths: [f32; 4],
-    /// Top, right, bottom, left colors.
-    colors: [ColorFixture; 4],
-    /// Top, right, bottom, left styles.
-    styles: [BorderStyleFixture; 4],
-    /// Top-left, top-right, bottom-right, bottom-left radii.
-    radii: [f32; 4],
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum BorderStyleFixture {
-    None,
-    Hidden,
-    Solid,
-}
-
-impl BorderStyleFixture {
-    const fn protocol(self) -> BorderLineStyle {
-        match self {
-            Self::None => BorderLineStyle::None,
-            Self::Hidden => BorderLineStyle::Hidden,
-            Self::Solid => BorderLineStyle::Solid,
-        }
+const fn border_style_protocol(value: BorderStyleFixture) -> BorderLineStyle {
+    match value {
+        BorderStyleFixture::None => BorderLineStyle::None,
+        BorderStyleFixture::Hidden => BorderLineStyle::Hidden,
+        BorderStyleFixture::Solid => BorderLineStyle::Solid,
+        BorderStyleFixture::Dashed => BorderLineStyle::Dashed,
+        BorderStyleFixture::Dotted => BorderLineStyle::Dotted,
+        BorderStyleFixture::Double => BorderLineStyle::Double,
+        BorderStyleFixture::Groove => BorderLineStyle::Groove,
+        BorderStyleFixture::Ridge => BorderLineStyle::Ridge,
+        BorderStyleFixture::Inset => BorderLineStyle::Inset,
+        BorderStyleFixture::Outset => BorderLineStyle::Outset,
     }
 }
 
@@ -508,7 +360,7 @@ impl Driver {
         self.input.dispatch(InputEvent {
             surface,
             timestamp_ms,
-            kind: kind.protocol(),
+            kind: pointer_event_protocol(kind),
             pointer: Some(PointerInput {
                 id: PointerId::new(pointer_id).expect("scenario pointer id is non-zero"),
                 kind: PointerKind::Mouse,
@@ -530,7 +382,7 @@ impl Driver {
             .events
             .last()
             .expect("input checkpoint follows event");
-        assert_eq!(event.kind, kind.protocol());
+        assert_eq!(event.kind, pointer_event_protocol(kind));
         assert_eq!(event.surface, self.surface.expect("attached surface"));
         assert_eq!(event.target, None);
         let pointer = event.pointer.expect("pointer checkpoint has pointer data");
@@ -554,7 +406,7 @@ fn box_paint(background: &ColorFixture, border: Option<&BorderFixture>) -> BoxPa
     let zero = PaintLengthPercentage::default();
     let Some(border) = border else {
         return BoxPaint {
-            background_color: background.protocol(),
+            background_color: color_protocol(background),
             border_widths: PaintEdges {
                 top: zero,
                 right: zero,
@@ -592,7 +444,7 @@ fn box_paint(background: &ColorFixture, border: Option<&BorderFixture>) -> BoxPa
         })
     });
     BoxPaint {
-        background_color: background.protocol(),
+        background_color: color_protocol(background),
         border_widths: PaintEdges {
             top: lengths[0],
             right: lengths[1],
@@ -600,16 +452,16 @@ fn box_paint(background: &ColorFixture, border: Option<&BorderFixture>) -> BoxPa
             left: lengths[3],
         },
         border_colors: PaintEdges {
-            top: border.colors[0].protocol(),
-            right: border.colors[1].protocol(),
-            bottom: border.colors[2].protocol(),
-            left: border.colors[3].protocol(),
+            top: color_protocol(&border.colors[0]),
+            right: color_protocol(&border.colors[1]),
+            bottom: color_protocol(&border.colors[2]),
+            left: color_protocol(&border.colors[3]),
         },
         border_styles: PaintEdges {
-            top: border.styles[0].protocol(),
-            right: border.styles[1].protocol(),
-            bottom: border.styles[2].protocol(),
-            left: border.styles[3].protocol(),
+            top: border_style_protocol(border.styles[0]),
+            right: border_style_protocol(border.styles[1]),
+            bottom: border_style_protocol(border.styles[2]),
+            left: border_style_protocol(border.styles[3]),
         },
         border_radii: PaintCorners {
             top_left: radii[0],
@@ -702,28 +554,13 @@ fn assert_primitive_shape_eq(test: &BoxPrimitive, reference: &BoxPrimitive) {
     }
 }
 
-fn run_reftest(json: &str) {
-    let scenario: Scenario = serde_json::from_str(json).expect("valid Host scenario JSON");
-    assert_eq!(scenario.schema, 1);
-    assert!(scenario.id.starts_with("wpt."));
-    assert_eq!(
-        scenario.upstream.repository,
-        "https://github.com/web-platform-tests/wpt"
-    );
-    assert_eq!(
-        scenario.upstream.revision,
-        "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d"
-    );
-    assert!(!scenario.upstream.path.is_empty());
-    assert_eq!(scenario.upstream.license, "BSD-3-Clause");
-    assert!(!scenario.upstream.assertion.is_empty());
-    assert!(!scenario.upstream.adaptation.is_empty());
-    if let Some(reference) = &scenario.upstream.reference_path {
-        assert!(!reference.is_empty());
-    }
-
+fn run_reftest(scenario: &Scenario) {
+    let reference_side = scenario
+        .reference
+        .as_ref()
+        .expect("reftest scenario has reference commands");
     let test = Driver::new().execute(&scenario.test);
-    let reference = Driver::new().execute(&scenario.reference);
+    let reference = Driver::new().execute(reference_side);
     assert_eq!(test.len(), 1, "one test checkpoint");
     assert_eq!(reference.len(), 1, "one reference checkpoint");
     assert_eq!(test[0].logical_size, reference[0].logical_size);
@@ -758,35 +595,23 @@ fn run_reftest(json: &str) {
 }
 
 #[test]
-fn wpt_background_color_129_matches_reference() {
-    run_reftest(BACKGROUND_COLOR_129);
-}
-
-#[test]
-fn wpt_border_radius_sum_of_radii_001_matches_reference() {
-    run_reftest(BORDER_RADIUS_SUM_001);
-}
-
-#[test]
-fn core_text_measurement_runs_without_runtime_instance() {
-    let scenario: CoreScenario =
-        serde_json::from_str(TEXT_MEASURE_BASIC).expect("valid core Host scenario JSON");
-    assert_eq!(scenario.schema, 1);
-    assert_eq!(scenario.id, "host.measure.text.basic");
-    Driver::new().execute(&ScenarioSide {
-        commands: scenario.commands,
-    });
-}
-
-#[test]
-fn core_pointer_input_reaches_mock_runtime_sink() {
-    let scenario: CoreScenario =
-        serde_json::from_str(POINTER_INPUT_BASIC).expect("valid core Host scenario JSON");
-    assert_eq!(scenario.schema, 1);
-    assert_eq!(scenario.id, "host.input.pointer.basic");
-    Driver::new().execute(&ScenarioSide {
-        commands: scenario.commands,
-    });
+fn every_manifest_case_required_by_desktop_executes() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/host-conformance");
+    let (_, cases) = load_required(&root, Host::Desktop).expect("load shared Desktop fixtures");
+    assert!(!cases.is_empty());
+    for LoadedCase { manifest, scenario } in cases {
+        if scenario.reference.is_some() {
+            assert!(
+                manifest.checkpoints.iter().any(|value| value == "pixel"),
+                "{} reftest must require a pixel checkpoint",
+                scenario.id
+            );
+            run_reftest(&scenario);
+        } else {
+            Driver::new().execute(&scenario.test);
+        }
+    }
 }
 
 #[test]
@@ -882,30 +707,6 @@ fn render_taffy_protocol_and_desktop_box_paint_compose() {
     assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] > 0));
 
     with_installed_renderer(surface.renderer(), || owner.dispose());
-}
-
-#[test]
-fn manifest_assigns_every_seed_case_to_desktop() {
-    let manifest: Manifest = serde_json::from_str(MANIFEST).expect("valid Host manifest JSON");
-    assert_eq!(manifest.schema, 1);
-    assert_eq!(
-        manifest.wpt_revision,
-        "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d"
-    );
-    let expected = [
-        "wpt.css2.backgrounds.background-color-129",
-        "wpt.css-backgrounds.border-radius-sum-of-radii-001.test1",
-        "host.measure.text.basic",
-        "host.input.pointer.basic",
-    ];
-    assert_eq!(manifest.cases.len(), expected.len());
-    for (case, expected) in manifest.cases.iter().zip(expected) {
-        assert_eq!(case.id, expected);
-        assert!(!case.feature.is_empty());
-        assert!(case.fixture.ends_with(".json"));
-        assert!(case.required_hosts.iter().any(|host| host == "desktop"));
-        assert!(!case.checkpoints.is_empty());
-    }
 }
 
 #[test]
