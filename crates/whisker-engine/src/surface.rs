@@ -1939,6 +1939,10 @@ mod tests {
             .create_node(element_type(), ComputedLayoutStyle::default())
             .unwrap();
         let mut sink = TestSink::new(surface_id());
+        assert_eq!(
+            sink.capabilities(),
+            whisker_protocol::RenderCapabilities::all_frame_native()
+        );
         let already_prepared = surface.prepare_frame(1).unwrap().unwrap().clone();
         assert_eq!(
             surface.present(1, &mut sink),

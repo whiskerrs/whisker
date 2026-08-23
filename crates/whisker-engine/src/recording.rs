@@ -89,6 +89,10 @@ mod tests {
     #[test]
     fn records_accepted_and_rejected_packets() {
         let mut renderer = RecordingRenderer::new(surface(1));
+        assert_eq!(
+            renderer.capabilities(),
+            RenderCapabilities::all_frame_native()
+        );
         let packet = FramePacket {
             header: FrameHeader {
                 version: ProtocolVersion::CURRENT,
