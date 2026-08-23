@@ -44,8 +44,13 @@ cargo xtask host-conformance android
 cargo xtask host-conformance ios
 ```
 
-Web requires `wasm-pack`, Chrome, and `curl`. `xtask` detects the installed Chrome
-version and caches a compatible ChromeDriver under `target/xtask`; set
+Desktop conformance is gated by the `whisker-desktop/host-conformance` feature,
+which only the `xtask` entry point enables. Ordinary workspace unit tests do
+not execute the offscreen GPU fixture suite; CI reports it as an independent
+Host check.
+
+Web requires `wasm-pack`, Chrome, and `curl`. `xtask` detects the installed
+Chrome version and caches a compatible ChromeDriver under `target/xtask`; set
 `GOOGLE_CHROME_BIN` for a non-standard Chrome location or `CHROMEDRIVER` to use
 an explicit driver. Android and iOS require a locally installed platform SDK.
 `xtask` uses the running Android emulator and boots an available iPhone

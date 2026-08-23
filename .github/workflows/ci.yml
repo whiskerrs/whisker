@@ -115,6 +115,19 @@ jobs:
             build
         working-directory: platforms/ios
 
+  host-conformance-desktop:
+    name: Host conformance (Desktop / wgpu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install software Vulkan renderer
+        run: sudo apt-get update && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+      - run: cargo xtask host-conformance desktop
+        env:
+          WGPU_BACKEND: vulkan
+
   host-conformance-web:
     name: Host conformance (Web / Chrome)
     runs-on: ubuntu-latest

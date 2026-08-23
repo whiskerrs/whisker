@@ -11,6 +11,11 @@ keywords.workspace = true
 categories.workspace = true
 description = "Shared native Desktop Host for Whisker applications."
 
+[features]
+# Keeps the relatively expensive offscreen GPU fixture suite out of ordinary
+# unit-test runs. `cargo xtask host-conformance desktop` is its entry point.
+host-conformance = []
+
 [dependencies]
 whisker = { workspace = true }
 whisker-engine = { workspace = true }

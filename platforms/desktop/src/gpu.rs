@@ -942,7 +942,7 @@ fn text_bounds(clip: LogicalClip, width: u32, height: u32, scale: f32) -> TextBo
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host-conformance"))]
 pub(crate) async fn render_box_primitives_offscreen(
     primitives: &[BoxPrimitive],
     logical_size: [u32; 2],
