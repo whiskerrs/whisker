@@ -189,5 +189,9 @@ mod tests {
         event.pointer.as_mut().unwrap().position.x = 2.0;
         event.pointer.as_mut().unwrap().position.y = f32::INFINITY;
         assert_eq!(event.validate(), Err(InputEventError::InvalidPosition));
+
+        event.pointer = None;
+        event.detail = WhiskerValue::Error("provider failed".into());
+        assert_eq!(event.validate(), Err(InputEventError::InvalidDetail));
     }
 }

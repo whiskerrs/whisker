@@ -69,7 +69,10 @@ pub struct ElementEventSchema {
 impl ElementEventSchema {
     /// Returns this event's bit in [`Operation::SetEventMask`](crate::Operation::SetEventMask).
     pub fn mask(&self) -> Option<u64> {
-        let shift = self.event.get().checked_sub(1)?;
+        // EventId reserves zero, so converting from its one-based wire ID cannot
+        // underflow. Keeping that invariant explicit also avoids suggesting that
+        // a zero ID can enter schema validation.
+        let shift = self.event.get() - 1;
         (shift < u64::BITS).then(|| 1_u64 << shift)
     }
 
@@ -331,6 +334,30 @@ pub enum ElementRegistrationError {
 mod tests {
     use super::*;
 
+    fn property(id: u32, name: &str) -> ElementPropertySchema {
+        ElementPropertySchema {
+            property: PropertyId::new(id).unwrap(),
+            name: name.into(),
+            value: ElementValueKind::Bool,
+        }
+    }
+
+    fn event(id: u32, name: &str) -> ElementEventSchema {
+        ElementEventSchema {
+            event: EventId::new(id).unwrap(),
+            name: name.into(),
+            detail: None,
+        }
+    }
+
+    fn command(id: u32, name: &str) -> ElementCommandSchema {
+        ElementCommandSchema {
+            command: CommandId::new(id).unwrap(),
+            name: name.into(),
+            arguments: ElementValueKind::Null,
+        }
+    }
+
     fn element() -> ElementRegistration {
         ElementRegistration {
             element_type: ElementTypeId::new(1).unwrap(),
@@ -362,6 +389,12 @@ mod tests {
         let mut registration = element();
         registration.child_policy = ChildPolicy::Elements;
         assert_eq!(registration.validate(), Ok(()));
+        assert!(registration.child_policy.accepts_elements());
+        assert!(!registration.child_policy.accepts_plain_text());
+        assert!(!ChildPolicy::None.accepts_elements());
+        assert!(!ChildPolicy::None.accepts_plain_text());
+        assert!(!ChildPolicy::PlainText.accepts_elements());
+        assert!(ChildPolicy::PlainText.accepts_plain_text());
     }
 
     #[test]
@@ -377,5 +410,163 @@ mod tests {
         event.detail = Some(ElementValueKind::Map);
         assert!(event.accepts_detail(&WhiskerValue::map([("checked", WhiskerValue::Bool(true),)])));
         assert!(!event.accepts_detail(&WhiskerValue::Bool(true)));
+    }
+
+    #[test]
+    fn value_kinds_accept_only_matching_transferable_data() {
+        let cases = [
+            (ElementValueKind::Null, WhiskerValue::Null),
+            (ElementValueKind::Bool, WhiskerValue::Bool(true)),
+            (ElementValueKind::Int, WhiskerValue::Int(1)),
+            (ElementValueKind::Float, WhiskerValue::Float(1.0)),
+            (
+                ElementValueKind::String,
+                WhiskerValue::String("value".into()),
+            ),
+            (ElementValueKind::Bytes, WhiskerValue::Bytes(vec![1])),
+            (
+                ElementValueKind::Array,
+                WhiskerValue::Array(vec![WhiskerValue::Null]),
+            ),
+            (
+                ElementValueKind::Map,
+                WhiskerValue::map([("value", WhiskerValue::Null)]),
+            ),
+        ];
+        for (kind, value) in cases {
+            assert!(kind.accepts(&value));
+        }
+        assert!(!ElementValueKind::Null.accepts(&WhiskerValue::Bool(false)));
+        assert!(!ElementValueKind::Null.accepts(&WhiskerValue::Error("failed".into())));
+    }
+
+    #[test]
+    fn event_masks_cover_the_complete_wire_range() {
+        assert_eq!(event(1, "first").mask(), Some(1));
+        assert_eq!(event(64, "last").mask(), Some(1_u64 << 63));
+        assert_eq!(event(65, "outside").mask(), None);
+    }
+
+    #[test]
+    fn registration_resolves_members_by_name_and_id() {
+        let mut registration = element();
+        registration.properties = vec![property(1, "disabled"), property(2, "checked")];
+        registration.events = vec![event(1, "focus"), event(2, "change")];
+        registration.commands = vec![command(1, "focus"), command(2, "blur")];
+
+        assert_eq!(
+            registration.property_named("checked"),
+            Some(&registration.properties[1])
+        );
+        assert_eq!(
+            registration.property(PropertyId::new(2).unwrap()),
+            Some(&registration.properties[1])
+        );
+        assert_eq!(registration.property_named("missing"), None);
+        assert_eq!(registration.property(PropertyId::new(3).unwrap()), None);
+
+        assert_eq!(
+            registration.event_named("change"),
+            Some(&registration.events[1])
+        );
+        assert_eq!(
+            registration.event(EventId::new(2).unwrap()),
+            Some(&registration.events[1])
+        );
+        assert_eq!(registration.event_named("missing"), None);
+        assert_eq!(registration.event(EventId::new(3).unwrap()), None);
+
+        assert_eq!(
+            registration.command_named("blur"),
+            Some(&registration.commands[1])
+        );
+        assert_eq!(
+            registration.command(CommandId::new(2).unwrap()),
+            Some(&registration.commands[1])
+        );
+        assert_eq!(registration.command_named("missing"), None);
+        assert_eq!(registration.command(CommandId::new(3).unwrap()), None);
+    }
+
+    #[test]
+    fn schema_validation_reports_every_contract_error() {
+        let mut schema = element().schema();
+        schema.name = " ".into();
+        assert_eq!(schema.validate(), Err(ElementRegistrationError::EmptyName));
+
+        let mut registration = element();
+        registration.name.clear();
+        assert_eq!(
+            registration.validate(),
+            Err(ElementRegistrationError::EmptyName)
+        );
+
+        let mut schema = element().schema();
+        schema.properties = vec![property(1, " ")];
+        assert_eq!(
+            schema.validate(),
+            Err(ElementRegistrationError::EmptyMemberName)
+        );
+
+        schema.properties = vec![property(1, "first"), property(1, "second")];
+        assert_eq!(
+            schema.validate(),
+            Err(ElementRegistrationError::DuplicatePropertyId)
+        );
+
+        schema.properties = vec![property(1, "same"), property(2, "same")];
+        assert_eq!(
+            schema.validate(),
+            Err(ElementRegistrationError::DuplicatePropertyName)
+        );
+
+        schema.properties.clear();
+        schema.events = vec![event(1, " ")];
+        assert_eq!(
+            schema.validate(),
+            Err(ElementRegistrationError::EmptyMemberName)
+        );
+
+        schema.events = vec![event(65, "outside")];
+        assert_eq!(
+            schema.validate(),
+            Err(ElementRegistrationError::EventIdOutsideMask)
+        );
+
+        schema.events = vec![event(1, "first"), event(1, "second")];
+        assert_eq!(
+            schema.validate(),
+            Err(ElementRegistrationError::DuplicateEventId)
+        );
+
+        schema.events = vec![event(1, "same"), event(2, "same")];
+        assert_eq!(
+            schema.validate(),
+            Err(ElementRegistrationError::DuplicateEventName)
+        );
+
+        schema.events.clear();
+        schema.commands = vec![command(1, " ")];
+        assert_eq!(
+            schema.validate(),
+            Err(ElementRegistrationError::EmptyMemberName)
+        );
+
+        schema.commands = vec![command(1, "first"), command(1, "second")];
+        assert_eq!(
+            schema.validate(),
+            Err(ElementRegistrationError::DuplicateCommandId)
+        );
+
+        schema.commands = vec![command(1, "same"), command(2, "same")];
+        assert_eq!(
+            schema.validate(),
+            Err(ElementRegistrationError::DuplicateCommandName)
+        );
+
+        schema.properties = vec![property(1, "checked")];
+        schema.events = vec![event(1, "change")];
+        schema.commands = vec![command(1, "focus")];
+        assert_eq!(schema.validate(), Ok(()));
     }
 }
