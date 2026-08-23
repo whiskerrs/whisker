@@ -23,3 +23,20 @@ dependencyResolutionManagement {
 
 rootProject.name = "{{android_project_name}}"
 include(":app")
+
+val whiskerWorkspace = file("{{whisker_workspace_path}}")
+val localModuleApi = whiskerWorkspace.resolve("platforms/android/module")
+if (localModuleApi.isDirectory) {
+    include(":whisker-module")
+    project(":whisker-module").projectDir = localModuleApi
+}
+val localKsp = whiskerWorkspace.resolve("platforms/android/ksp")
+if (localKsp.isDirectory) {
+    includeBuild(localKsp) {
+        dependencySubstitution {
+            substitute(module("rs.whisker:ksp")).using(project(":ksp"))
+        }
+    }
+}
+
+apply(from = "whisker_modules.settings.gradle.kts")

@@ -9,11 +9,12 @@
 // ## Syntax
 //
 // ```swift
+// @WhiskerModule
 // public final class VideoModule: Module {
 //     public override func definition() -> ModuleDefinition {
 //         Name("Video")
 //
-//         Constants(["maxResolution": "1080p"])
+//         Constants(["maxResolution": .string("1080p")])
 //
 //         View(WhiskerVideoView.self) {
 //             Prop("src") { (view: WhiskerVideoView, value: String) in
@@ -34,6 +35,7 @@
 // inner `View(...)` block:
 //
 // ```swift
+// @WhiskerModule
 // public final class LocalStoreModule: Module {
 //     public override func definition() -> ModuleDefinition {
 //         Name("WhiskerLocalStore")
@@ -49,7 +51,7 @@
 // ```
 //
 // The `Module` base class collects the `ModuleDefinition` at init
-// time; the `WhiskerModuleCodegen` plugin's `Module`-subclass
+// time; the `WhiskerModuleCodegen` plugin's `@WhiskerModule`
 // discovery wires it into Lynx's prop / method dispatch tables.
 
 import Foundation
@@ -78,8 +80,8 @@ public struct WhiskerNameComponent: WhiskerDefinitionComponent {
 /// Static constants component. Authors emit a dictionary that
 /// the framework exposes to the host. Dictionary form only.
 public struct WhiskerConstantsComponent: WhiskerDefinitionComponent {
-    public let values: [String: Any]
-    public init(_ values: [String: Any]) { self.values = values }
+    public let values: [String: WhiskerValue]
+    public init(_ values: [String: WhiskerValue]) { self.values = values }
 }
 
 /// View block — registers a Lynx UI subclass + its `Prop` /
@@ -89,11 +91,26 @@ public struct WhiskerViewComponent: WhiskerDefinitionComponent {
     /// Type-erased to AnyClass so the call site doesn't need to
     /// generic the parent struct. The concrete class is the Lynx
     /// UI subclass (typically a `LynxUI<UIView>` subclass).
-    public let viewClass: AnyClass
+    public let viewClass: AnyClass?
+    let factory: WhiskerElementFactory?
     public let components: [WhiskerDefinitionComponent]
-    public init(viewClass: AnyClass, components: [WhiskerDefinitionComponent]) {
+    public let elementName: String?
+    public init(
+        viewClass: AnyClass,
+        components: [WhiskerDefinitionComponent],
+        elementName: String? = nil
+    ) {
         self.viewClass = viewClass
+        self.factory = nil
         self.components = components
+        self.elementName = elementName
+    }
+
+    init(factory: WhiskerElementFactory, components: [WhiskerDefinitionComponent]) {
+        self.viewClass = nil
+        self.factory = factory
+        self.components = components
+        self.elementName = factory.name
     }
 }
 
@@ -104,13 +121,20 @@ public struct WhiskerViewComponent: WhiskerDefinitionComponent {
 /// is the raw `WhiskerValue` — no auto-deserialization, the author
 /// destructures it, e.g. `value.asString()`.
 public typealias WhiskerPropSetter = (_ view: AnyObject, _ value: WhiskerValue) -> Void
+public typealias WhiskerPropClearer = (_ view: AnyObject) -> Void
 
 /// Prop component — a single named setter on the view class.
 public struct WhiskerPropComponent: WhiskerDefinitionComponent {
     public let name: String
     public let setter: WhiskerPropSetter
-    public init(name: String, setter: @escaping WhiskerPropSetter) {
+    public let clearer: WhiskerPropClearer
+    public init(
+        name: String,
+        clearer: @escaping WhiskerPropClearer = { _ in },
+        setter: @escaping WhiskerPropSetter
+    ) {
         self.name = name
+        self.clearer = clearer
         self.setter = setter
     }
 }
@@ -165,7 +189,9 @@ public struct WhiskerAsyncFunctionComponent: WhiskerDefinitionComponent {
 /// let the module lazily attach / detach its underlying source.
 public struct WhiskerEventsComponent: WhiskerDefinitionComponent {
     public let names: [String]
-    public init(_ names: [String]) { self.names = names }
+    public init(_ names: [String]) {
+        self.names = names
+    }
 }
 
 /// `OnStartObserving("name") { ... }` — fires when the listener
@@ -265,7 +291,7 @@ public struct EmptyComponent: WhiskerDefinitionComponent {
 
 // MARK: - ModuleDefinition value
 
-/// The assembled definition the framework registers with Lynx at
+/// The assembled definition the framework registers with the active Host at
 /// module-init time. Immutable; collected from the
 /// `@WhiskerModuleDefinitionBuilder` body of `definition()`.
 public struct ModuleDefinition {
@@ -281,23 +307,26 @@ public struct ModuleDefinition {
 
     /// Module name. Returns `nil` if no `Name(...)` was declared.
     public var name: String? {
+        if let declared = view?.elementName { return declared }
         for c in components {
             if let n = c as? WhiskerNameComponent { return n.value }
         }
         return nil
     }
 
-    /// View block, if any.
+    /// First View block, retained for source compatibility.
     public var view: WhiskerViewComponent? {
-        for c in components {
-            if let v = c as? WhiskerViewComponent { return v }
-        }
-        return nil
+        views.first
+    }
+
+    /// Every Host View contributed by this module.
+    var views: [WhiskerViewComponent] {
+        components.compactMap { $0 as? WhiskerViewComponent }
     }
 
     /// Constants dictionary merged from all `Constants(...)` blocks.
-    public var constants: [String: Any] {
-        var merged: [String: Any] = [:]
+    public var constants: [String: WhiskerValue] {
+        var merged: [String: WhiskerValue] = [:]
         for c in components {
             if let cc = c as? WhiskerConstantsComponent {
                 for (k, v) in cc.values { merged[k] = v }
@@ -327,6 +356,16 @@ public struct ModuleDefinition {
     public var onStopObservingHooks: [WhiskerOnStopObservingComponent] {
         components.compactMap { $0 as? WhiskerOnStopObservingComponent }
     }
+
+    /// Validate declaration-local invariants before runtime negotiation.
+    public func validateElementDeclaration() {
+        for view in views {
+            let props = view.components.compactMap { ($0 as? WhiskerPropComponent)?.name }
+            precondition(Set(props).count == props.count, "duplicate Host property")
+            let events = view.components.compactMap { $0 as? WhiskerEventsComponent }.flatMap(\.names)
+            precondition(Set(events).count == events.count, "duplicate Host event")
+        }
+    }
 }
 
 // MARK: - Top-level factories — the DSL surface authors call
@@ -341,7 +380,7 @@ public func Name(_ value: String) -> WhiskerDefinitionComponent {
 
 /// `Constants([key: value, ...])` — static constants exposed to
 /// the host. Dictionary form only.
-public func Constants(_ values: [String: Any]) -> WhiskerDefinitionComponent {
+public func Constants(_ values: [String: WhiskerValue]) -> WhiskerDefinitionComponent {
     WhiskerConstantsComponent(values)
 }
 
@@ -352,6 +391,33 @@ public func View<V: AnyObject>(
     @WhiskerViewDefinitionBuilder _ body: () -> [WhiskerDefinitionComponent]
 ) -> WhiskerDefinitionComponent {
     WhiskerViewComponent(viewClass: viewClass, components: body())
+}
+
+/// Registers a Host factory through the same multi-View module DSL.
+public func View(_ factory: WhiskerElementFactory) -> WhiskerDefinitionComponent {
+    WhiskerViewComponent(factory: factory, components: [])
+}
+
+/// Registers a Host factory with the same Prop / Function / Events block used
+/// by class-backed views.
+public func View(
+    _ factory: WhiskerElementFactory,
+    @WhiskerViewDefinitionBuilder _ body: () -> [WhiskerDefinitionComponent]
+) -> WhiskerDefinitionComponent {
+    WhiskerViewComponent(factory: factory, components: body())
+}
+
+/// String-declared element identity, resolved to Rust IDs at bootstrap.
+public func View<V: AnyObject>(
+    _ elementName: String,
+    _ viewClass: V.Type,
+    @WhiskerViewDefinitionBuilder _ body: () -> [WhiskerDefinitionComponent]
+) -> WhiskerDefinitionComponent {
+    WhiskerViewComponent(
+        viewClass: viewClass,
+        components: body(),
+        elementName: elementName
+    )
 }
 
 /// `Events("a", "b", ...)` — declare event names this module
@@ -390,9 +456,13 @@ public func OnStopObserving(
 /// silently no-ops on a view-type mismatch (debug-build log).
 public func Prop<V: AnyObject>(
     _ name: String,
+    clear: @escaping (V) -> Void = { _ in },
     _ setter: @escaping (V, WhiskerValue) -> Void
 ) -> WhiskerDefinitionComponent {
-    WhiskerPropComponent(name: name) { uiAny, value in
+    WhiskerPropComponent(
+        name: name,
+        clearer: { uiAny in if let ui = uiAny as? V { clear(ui) } }
+    ) { uiAny, value in
         guard let ui = uiAny as? V else {
             #if DEBUG
             print("WhiskerModule: Prop(\"\(name)\") view type mismatch — expected \(V.self), got \(type(of: uiAny))")

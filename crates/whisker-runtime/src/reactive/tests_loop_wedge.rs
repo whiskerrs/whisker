@@ -3,7 +3,7 @@
 //! ## The wedge these guard against
 //!
 //! The render loop is wake-driven: `signal.set()` → `schedule()` pushes
-//! a node onto `rt.pending` and calls `host_wake::wake_runtime()` ONLY on
+//! a node onto `rt.pending` and calls `runtime_wake::wake_runtime()` ONLY on
 //! the empty→non-empty edge. The host's vsync loop (CADisplayLink) pauses
 //! whenever a frame reports idle. A native-view layout/measure callback
 //! can re-enter Rust DURING the final `renderer_flush` of a frame and
@@ -43,7 +43,7 @@ fn lock<'a>() -> MutexGuard<'a, ()> {
 //
 // Thread-locals modelling the host's vsync loop state and a wake counter.
 // The request-frame callback (CADisplayLink unpause) sets `VSYNC_RUNNING`
-// true and bumps `WAKE_COUNT`, exactly like the driver's host_wake →
+// true and bumps `WAKE_COUNT`, exactly like the driver's runtime_wake →
 // CADisplayLink.invalidate=false path.
 
 thread_local! {
@@ -59,13 +59,13 @@ extern "C" fn on_request_frame(_user_data: *mut c_void) {
 fn install_host() {
     VSYNC_RUNNING.with(|v| v.set(false));
     WAKE_COUNT.with(|c| c.set(0));
-    crate::host_wake::set_request_frame_callback(Some(on_request_frame), std::ptr::null_mut());
+    crate::runtime_wake::set_request_frame_callback(Some(on_request_frame), std::ptr::null_mut());
 }
 
 fn reset_all() {
     __reset_for_tests();
     tasks::__reset_for_tests();
-    crate::host_wake::__reset_for_tests();
+    crate::runtime_wake::__reset_for_tests();
     VSYNC_RUNNING.with(|v| v.set(false));
     WAKE_COUNT.with(|c| c.set(0));
 }

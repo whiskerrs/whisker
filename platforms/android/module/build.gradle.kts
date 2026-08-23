@@ -54,23 +54,7 @@ android {
     }
 }
 
-val whiskerSdkRelease = providers.gradleProperty("whiskerSdkRelease").orNull == "true"
-val lynxFork = providers.gradleProperty("lynxFork").getOrElse("v4.0.1-whisker.2").removePrefix("v")
-
 dependencies {
-    if (whiskerSdkRelease) {
-        api("rs.whisker:lynx-android:$lynxFork")
-        api("rs.whisker:lynx-base-android:$lynxFork")
-        api("rs.whisker:lynx-trace-android:$lynxFork")
-        api("rs.whisker:lynx-service-api-android:$lynxFork")
-    } else {
-        api(":LynxAndroid@aar")
-        api(":LynxBase@aar")
-        api(":LynxTrace@aar")
-        api(":ServiceAPI@aar")
-    }
-    api("org.lynxsdk.lynx:primjs:4.0.0")
-
     // `WhiskerInsetsDispatcher` exposes `WindowInsetsCompat` in its
     // public API and calls `ViewCompat.setOnApplyWindowInsetsListener` /
     // `getRootWindowInsets`. `api` (not `implementation`) so consuming

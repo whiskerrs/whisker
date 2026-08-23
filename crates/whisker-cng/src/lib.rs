@@ -43,3 +43,104 @@ pub use ios::{IosInputs, sync as sync_ios};
 pub use macos::{MacosInputs, sync as sync_macos};
 pub use web::{WebInputs, sync as sync_web};
 pub use whisker_config::Config;
+
+/// One Cargo module crate and target definition wired into a generated Rust Host.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RustElementModuleInput {
+    /// Cargo package name of the platform-neutral element crate.
+    pub package: String,
+    /// Absolute platform-neutral module crate directory.
+    pub crate_path: std::path::PathBuf,
+    /// Cargo package name of the target Host library.
+    pub host_package: String,
+    /// Cargo source of the target Host library.
+    pub host_dependency: RustHostDependency,
+}
+
+/// Cargo dependency source selected for a Rust Host contribution.
+#[derive(Clone, Debug, serde::Serialize)]
+pub enum RustHostDependency {
+    /// Nested package available in a local path or git checkout.
+    Path(std::path::PathBuf),
+    /// Separately published Host package at the common module's version.
+    Registry { version: String },
+}
+
+fn rust_element_module_dependencies(modules: &[RustElementModuleInput]) -> String {
+    modules
+        .iter()
+        .map(|module| {
+            let host_dependency = match &module.host_dependency {
+                RustHostDependency::Path(path) => {
+                    format!("path = {:?}", path.display().to_string())
+                }
+                RustHostDependency::Registry { version } => {
+                    format!("version = {:?}", format!("={version}"))
+                }
+            };
+            format!(
+                "{} = {{ package = {:?}, path = {:?} }}\n{} = {{ package = {:?}, {} }}",
+                module.package,
+                module.package,
+                module.crate_path.display().to_string(),
+                module.host_package,
+                module.host_package,
+                host_dependency,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn rust_element_module_config(modules: &[RustElementModuleInput]) -> String {
+    modules
+        .iter()
+        .map(|module| {
+            format!(
+                "\n            .with_element_module({}::__whisker_element_module_definition())\
+                 \n            .with_module_definition({}::__whisker_module_definition())",
+                rust_crate_name(&module.package),
+                rust_crate_name(&module.host_package),
+            )
+        })
+        .collect()
+}
+
+fn rust_crate_name(package: &str) -> String {
+    package
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod rust_host_dependency_tests {
+    use super::*;
+
+    #[test]
+    fn registry_host_dependency_is_pinned_to_the_common_module_version() {
+        let dependencies = rust_element_module_dependencies(&[RustElementModuleInput {
+            package: "whisker-toggle".into(),
+            crate_path: "/cargo/registry/whisker-toggle-1.2.3".into(),
+            host_package: "whisker-toggle-web-host".into(),
+            host_dependency: RustHostDependency::Registry {
+                version: "1.2.3".into(),
+            },
+        }]);
+
+        assert!(dependencies.contains(
+            "whisker-toggle-web-host = { package = \"whisker-toggle-web-host\", version = \"=1.2.3\" }"
+        ));
+        assert!(
+            !dependencies.contains(
+                "whisker-toggle-web-host = { package = \"whisker-toggle-web-host\", path ="
+            )
+        );
+    }
+}

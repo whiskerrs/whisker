@@ -18,10 +18,9 @@
 //!
 //! ## Children-block restriction
 //!
-//! Every item in a `{ … }` children block MUST be node-shaped
-//! (`IDENT(kwargs?) { … }?`). Bare string literals and bare `{expr}`
-//! blocks are rejected with a hard parser error, which keeps the block
-//! on rust-analyzer's completion happy-path.
+//! Children may be node-shaped, string literals, or `{expr}` values. The
+//! latter two become React-like text/element `View` values; the Rust renderer
+//! validates them against the parent element's negotiated child policy.
 
 use proc_macro2::TokenStream as TokenStream2;
 use syn::{
@@ -51,6 +50,10 @@ impl Parse for Root {
 pub enum Node {
     Element(ElementNode),
     UserComponent(UserComponentNode),
+    /// A static plain-text child.
+    TextLiteral(LitStr),
+    /// A dynamic child converted through `IntoView`.
+    Expression(Expr),
     /// `children()` — the lone special-cased ident in the children
     /// grammar. Lowers (in `whisker-macros`) to
     /// `::whisker::runtime::view::mount_children(&children)`.
@@ -88,26 +91,17 @@ pub struct Kwarg {
 
 impl Parse for Node {
     fn parse(input: ParseStream) -> Result<Self> {
-        // Every node starts with an ident. A targeted error at this
-        // position is the only way to give a useful hint when the user
-        // writes bare `"hi"` or `{ count }` as a child.
         if input.peek(LitStr) {
-            let lit: LitStr = input.parse()?;
-            return Err(syn::Error::new(
-                lit.span(),
-                "bare string literals are not allowed in render!; \
-                 use `text(value: \"…\")` to render text content",
-            ));
+            return Ok(Node::TextLiteral(input.parse()?));
         }
         if input.peek(token::Brace) {
-            // The brace's own span gives a clean diagnostic arrow.
             let body;
-            let _ = braced!(body in input);
-            let _ = body; // discard contents — we're erroring out
-            return Err(input.error(
-                "bare `{expr}` blocks are not allowed in render!; \
-                 use `text(value: <expr>)` to render dynamic text",
-            ));
+            braced!(body in input);
+            let expression = body.parse()?;
+            if !body.is_empty() {
+                return Err(body.error("a dynamic child block must contain one Rust expression"));
+            }
+            return Ok(Node::Expression(expression));
         }
 
         let tag: Ident = input.parse()?;

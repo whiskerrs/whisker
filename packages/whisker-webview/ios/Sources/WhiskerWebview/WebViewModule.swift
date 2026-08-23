@@ -16,6 +16,7 @@
 
 import WhiskerModule
 
+@WhiskerModule
 public final class WebViewModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {

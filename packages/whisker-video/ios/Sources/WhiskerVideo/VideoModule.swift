@@ -6,13 +6,14 @@
 
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
-/// DSL-driven module. Subclassing `Module` is the registration signal:
-/// the SwiftPM codegen plugin scans the target's sources for concrete
-/// `Module` subclasses and emits a registration block in
+/// DSL-driven module. `@WhiskerModule` is the registration signal:
+/// the SwiftPM codegen plugin scans the target's sources for annotated
+/// module declarations and emits a registration block in
 /// `<Target>+Generated.swift` that registers
 /// `definitionLazy.view!.viewClass` with `LynxComponentRegistry` under
 /// "whisker-video:Video", then calls `module.registerWithLynx()` so the
 /// props and functions install via the Obj-C-runtime path.
+@WhiskerModule
 public final class VideoModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {

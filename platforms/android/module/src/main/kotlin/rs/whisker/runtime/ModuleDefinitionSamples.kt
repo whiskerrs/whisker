@@ -22,7 +22,7 @@ internal object ModuleDefinitionSamples {
     internal fun videoModuleDefinition(): ModuleDefinition = ModuleDefinition {
         Name("Video")
 
-        Constants("maxResolution" to "1080p")
+        Constants("maxResolution" to WhiskerValue.Str("1080p"))
 
         View(FakeVideoView::class.java) {
             Prop("src") { view: FakeVideoView, value ->
@@ -55,6 +55,7 @@ internal object ModuleDefinitionSamples {
 
     // ---- Module subclass shape -----------------------------------------
 
+    @WhiskerModule
     internal class StubModule : Module() {
         override fun definition(): ModuleDefinition = videoModuleDefinition()
     }

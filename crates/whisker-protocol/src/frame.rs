@@ -2,7 +2,7 @@
 
 use crate::{
     CommandId, ElementTypeId, MeasurementPayloadError, NodeId, PointerId, PreparedContentId,
-    PropertyId, ResultId, SurfaceId, TextMeasurePayload,
+    PropertyId, ResultId, SurfaceId, TextMeasurePayload, WhiskerValue,
 };
 
 /// Backend-independent color used by semantic paint operations.
@@ -358,31 +358,6 @@ pub enum HitTestBehavior {
     DescendantsOnly,
 }
 
-/// An owned typed value in the semantic model.
-///
-/// The packed protocol will store repeated and variable-sized values in
-/// tables. This recursive owned form exists for engine tests and does not
-/// prescribe a per-property wire allocation.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ProtocolValue {
-    /// Absence of a value where a schema permits it.
-    Null,
-    /// Boolean value.
-    Bool(bool),
-    /// Signed integer value.
-    I64(i64),
-    /// Floating-point value.
-    F64(f64),
-    /// UTF-8 string value.
-    String(String),
-    /// Opaque binary value interpreted by its declared schema.
-    Bytes(Vec<u8>),
-    /// Ordered homogeneous or heterogeneous values.
-    Array(Vec<Self>),
-    /// Ordered named fields.
-    Object(Vec<(String, Self)>),
-}
-
 /// Plain-text presentation selected after intrinsic measurement.
 ///
 /// `payload` repeats the semantic shaping inputs used for measurement so a
@@ -515,7 +490,7 @@ pub enum Operation {
         /// Negotiated property identifier.
         property: PropertyId,
         /// Typed property payload.
-        value: ProtocolValue,
+        value: WhiskerValue,
     },
     /// Restores a property to its schema-defined absence/default state.
     ClearProperty {
@@ -559,7 +534,7 @@ pub enum Operation {
         /// Negotiated command identifier.
         command: CommandId,
         /// Typed command arguments.
-        arguments: ProtocolValue,
+        arguments: WhiskerValue,
         /// Optional asynchronous result correlation.
         result: Option<ResultId>,
     },
@@ -848,7 +823,7 @@ mod tests {
             Operation::SetProperty {
                 node: target,
                 property,
-                value: ProtocolValue::Null,
+                value: WhiskerValue::Null,
             },
             Operation::ClearProperty {
                 node: target,
@@ -873,7 +848,7 @@ mod tests {
             Operation::InvokeCommand {
                 node: target,
                 command,
-                arguments: ProtocolValue::Null,
+                arguments: WhiskerValue::Null,
                 result: None,
             },
         ];
@@ -887,14 +862,14 @@ mod tests {
     #[test]
     fn semantic_values_represent_every_owned_value_shape() {
         let values = [
-            ProtocolValue::Null,
-            ProtocolValue::Bool(true),
-            ProtocolValue::I64(-1),
-            ProtocolValue::F64(0.5),
-            ProtocolValue::String("value".into()),
-            ProtocolValue::Bytes(vec![1, 2]),
-            ProtocolValue::Array(vec![ProtocolValue::Null]),
-            ProtocolValue::Object(vec![("key".into(), ProtocolValue::Bool(false))]),
+            WhiskerValue::Null,
+            WhiskerValue::Bool(true),
+            WhiskerValue::Int(-1),
+            WhiskerValue::Float(0.5),
+            WhiskerValue::String("value".into()),
+            WhiskerValue::Bytes(vec![1, 2]),
+            WhiskerValue::Array(vec![WhiskerValue::Null]),
+            WhiskerValue::map([("key", WhiskerValue::Bool(false))]),
         ];
 
         assert_eq!(values.len(), 8);

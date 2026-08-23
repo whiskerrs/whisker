@@ -300,7 +300,7 @@ pub fn default_linker_cache_dir(workspace_root: &Path) -> PathBuf {
 /// Returns the resolved path. Caller should `.canonicalize()` if
 /// they want absolute, but the shim only needs an executable name
 /// the OS can find.
-pub fn resolve_host_linker() -> PathBuf {
+pub fn resolve_linker() -> PathBuf {
     if let Some(cc) = std::env::var_os("CC") {
         return PathBuf::from(cc);
     }
@@ -834,7 +834,7 @@ mod tests {
         assert!(m.contains_key("_unknown"));
     }
 
-    // ----- default_linker_cache_dir + resolve_host_linker --------------
+    // ----- default_linker_cache_dir + resolve_linker --------------
 
     #[test]
     fn default_linker_cache_dir_lives_under_target_dot_whisker() {
@@ -843,8 +843,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_host_linker_returns_something_executable_or_a_path() {
-        let p = resolve_host_linker();
+    fn resolve_linker_returns_something_executable_or_a_path() {
+        let p = resolve_linker();
         // We don't `which` here — just sanity that it isn't empty.
         assert!(!p.as_os_str().is_empty());
     }

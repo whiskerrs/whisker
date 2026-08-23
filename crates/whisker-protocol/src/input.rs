@@ -1,6 +1,6 @@
 //! Host-normalized input delivered to the Rust event router.
 
-use crate::{NodeId, PointerId, ProtocolValue, SurfaceId};
+use crate::{NodeId, PointerId, SurfaceId, WhiskerValue};
 
 /// Logical point in surface coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -102,7 +102,7 @@ pub struct InputEvent {
     /// normally leave this empty so Rust performs retained-scene hit testing.
     pub target: Option<NodeId>,
     /// Provider-specific typed detail.
-    pub detail: ProtocolValue,
+    pub detail: WhiskerValue,
 }
 
 /// Invalid Host input rejected before listener lookup.
@@ -112,6 +112,8 @@ pub enum InputEventError {
     InvalidTimestamp,
     /// Pointer coordinates were NaN or infinite.
     InvalidPosition,
+    /// Provider detail contained a module-dispatch error marker.
+    InvalidDetail,
 }
 
 impl InputEvent {
@@ -125,6 +127,9 @@ impl InputEvent {
             .is_some_and(|pointer| !pointer.position.is_valid())
         {
             return Err(InputEventError::InvalidPosition);
+        }
+        if !self.detail.is_data() {
+            return Err(InputEventError::InvalidDetail);
         }
         Ok(())
     }
@@ -163,7 +168,7 @@ mod tests {
             kind: InputEventKind::Click,
             pointer: None,
             target: None,
-            detail: ProtocolValue::Null,
+            detail: WhiskerValue::Null,
         };
         assert_eq!(event.validate(), Ok(()));
 
@@ -184,5 +189,9 @@ mod tests {
         event.pointer.as_mut().unwrap().position.x = 2.0;
         event.pointer.as_mut().unwrap().position.y = f32::INFINITY;
         assert_eq!(event.validate(), Err(InputEventError::InvalidPosition));
+
+        event.pointer = None;
+        event.detail = WhiskerValue::Error("provider failed".into());
+        assert_eq!(event.validate(), Err(InputEventError::InvalidDetail));
     }
 }

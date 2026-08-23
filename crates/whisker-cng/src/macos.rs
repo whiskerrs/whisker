@@ -29,13 +29,17 @@ pub struct MacosInputs {
     /// Monotonic bundle build number.
     pub build_number: u32,
     /// Cargo package name of the generated Host executable.
-    pub host_package: String,
+    pub generated_package: String,
     /// Cargo package name of the user's application crate.
     pub user_package: String,
     /// Absolute path to the user's application crate.
     pub user_crate_path: PathBuf,
     /// Complete Cargo dependency declaration for `whisker-macos`.
     pub whisker_macos_dependency: String,
+    /// Complete Cargo dependency declaration for the shared Desktop Host API.
+    pub whisker_desktop_dependency: String,
+    /// Discovered external element definitions for Desktop.
+    pub element_modules: Vec<crate::RustElementModuleInput>,
     /// Minimum supported macOS release placed in `Info.plist`.
     pub minimum_system_version: String,
     /// Bumped whenever the generated project shape changes.
@@ -94,18 +98,20 @@ pub fn inputs_from(
         .clone()
         .unwrap_or_else(|| "0.1.0".to_string());
     let build_number = app_config.build_number.unwrap_or(1);
-    let host_package = format!("{}-whisker-macos", user_package);
+    let generated_package = format!("{}-whisker-macos", user_package);
     Ok(MacosInputs {
         app_name,
         bundle_id,
         version,
         build_number,
-        host_package,
+        generated_package,
         user_package,
         user_crate_path,
         whisker_macos_dependency,
+        whisker_desktop_dependency: format!("{:?}", env!("CARGO_PKG_VERSION")),
+        element_modules: Vec::new(),
         minimum_system_version: "12.0".to_string(),
-        template_version: 1,
+        template_version: 6,
     })
 }
 
@@ -116,7 +122,7 @@ fn validate(inputs: &MacosInputs) -> Result<()> {
     if inputs.bundle_id.trim().is_empty() {
         bail!("macOS bundle id must not be empty");
     }
-    if inputs.host_package.trim().is_empty() || inputs.user_package.trim().is_empty() {
+    if inputs.generated_package.trim().is_empty() || inputs.user_package.trim().is_empty() {
         bail!("macOS Cargo package names must not be empty");
     }
     Ok(())
@@ -129,7 +135,7 @@ fn template_vars(inputs: &MacosInputs) -> std::collections::HashMap<&'static str
     vars.insert("bundle_id", xml_escape(&inputs.bundle_id));
     vars.insert("version", xml_escape(&inputs.version));
     vars.insert("build_number", inputs.build_number.to_string());
-    vars.insert("host_package", inputs.host_package.clone());
+    vars.insert("generated_package", inputs.generated_package.clone());
     vars.insert("user_package_toml", toml_string(&inputs.user_package));
     vars.insert(
         "user_crate_path_toml",
@@ -138,6 +144,18 @@ fn template_vars(inputs: &MacosInputs) -> std::collections::HashMap<&'static str
     vars.insert(
         "whisker_macos_dependency",
         inputs.whisker_macos_dependency.clone(),
+    );
+    vars.insert(
+        "whisker_desktop_dependency",
+        inputs.whisker_desktop_dependency.clone(),
+    );
+    vars.insert(
+        "element_module_dependencies",
+        crate::rust_element_module_dependencies(&inputs.element_modules),
+    );
+    vars.insert(
+        "element_module_config",
+        crate::rust_element_module_config(&inputs.element_modules),
     );
     vars.insert(
         "minimum_system_version",
@@ -211,12 +229,14 @@ mod tests {
             bundle_id: "rs.whisker.hello".into(),
             version: "1.2.3".into(),
             build_number: 7,
-            host_package: "hello-whisker-macos".into(),
+            generated_package: "hello-whisker-macos".into(),
             user_package: "hello".into(),
             user_crate_path: PathBuf::from("/tmp/hello"),
             whisker_macos_dependency: "{ path = \"/tmp/whisker/platforms/macos\" }".into(),
+            whisker_desktop_dependency: "{ path = \"/tmp/whisker/platforms/desktop\" }".into(),
+            element_modules: Vec::new(),
             minimum_system_version: "12.0".into(),
-            template_version: 1,
+            template_version: 3,
         }
     }
 
@@ -261,7 +281,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(inputs.app_name, "Desktop");
-        assert_eq!(inputs.host_package, "demo-whisker-macos");
+        assert_eq!(inputs.generated_package, "demo-whisker-macos");
         assert_eq!(inputs.build_number, 9);
+    }
+
+    #[test]
+    fn generated_host_wires_discovered_desktop_module_definitions() {
+        let root = tempdir();
+        let out = root.join("gen/macos");
+        let mut inputs = sample();
+        inputs.element_modules.push(crate::RustElementModuleInput {
+            package: "whisker-toggle".into(),
+            crate_path: PathBuf::from("/modules/whisker-toggle"),
+            host_package: "whisker-toggle-desktop-host".into(),
+            host_dependency: crate::RustHostDependency::Path(PathBuf::from(
+                "/modules/whisker-toggle/desktop",
+            )),
+        });
+        sync(&out, &inputs).unwrap();
+        let manifest = std::fs::read_to_string(out.join("Cargo.toml")).unwrap();
+        assert!(manifest.contains("whisker-toggle = { package = \"whisker-toggle\""));
+        let main = std::fs::read_to_string(out.join("src/main.rs")).unwrap();
+        assert!(manifest.contains("whisker-toggle-desktop-host ="));
+        assert!(!main.contains("#[path ="));
+        assert!(main.contains(
+            ".with_element_module(whisker_toggle::__whisker_element_module_definition())"
+        ));
+        assert!(main.contains(
+            ".with_module_definition(whisker_toggle_desktop_host::__whisker_module_definition())"
+        ));
+        std::fs::remove_dir_all(root).ok();
     }
 }

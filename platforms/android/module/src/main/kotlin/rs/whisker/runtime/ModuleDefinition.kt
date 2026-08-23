@@ -7,11 +7,12 @@
 // ## Syntax
 //
 // ```kotlin
+// @WhiskerModule
 // class VideoModule : Module() {
 //     override fun definition() = ModuleDefinition {
 //         Name("Video")
 //
-//         Constants("maxResolution" to "1080p")
+//         Constants("maxResolution" to WhiskerValue.Str("1080p"))
 //
 //         View(WhiskerVideoComponent::class.java) {
 //             Prop("src") { view: WhiskerVideoComponent, value: String -> view.setSrc(value) }
@@ -27,6 +28,7 @@
 // Function-only modules omit the inner `View(...)` block:
 //
 // ```kotlin
+// @WhiskerModule
 // class LocalStoreModule : Module() {
 //     override fun definition() = ModuleDefinition {
 //         Name("WhiskerLocalStore")
@@ -39,7 +41,7 @@
 // }
 // ```
 //
-// The KSP codegen walks every `Module` subclass and turns
+// The KSP codegen walks every `@WhiskerModule` declaration and turns
 // `definition()` into Lynx prop / method registrations.
 
 package rs.whisker.runtime
@@ -62,7 +64,7 @@ public data class WhiskerNameComponent(public val value: String) :
  * `Constants("k" to v, ...)` — static key/value pairs exposed to
  * the host. Dictionary form only.
  */
-public data class WhiskerConstantsComponent(public val values: Map<String, Any?>) :
+public data class WhiskerConstantsComponent(public val values: Map<String, WhiskerValue>) :
     WhiskerDefinitionComponent
 
 /**
@@ -73,8 +75,10 @@ public data class WhiskerConstantsComponent(public val values: Map<String, Any?>
  * [WhiskerUI] subclass).
  */
 public data class WhiskerViewComponent(
-    public val viewClass: Class<*>,
+    public val viewClass: Class<*>? = null,
     public val components: List<WhiskerDefinitionComponent>,
+    public val elementName: String? = null,
+    internal val factory: WhiskerElementFactory? = null,
 ) : WhiskerDefinitionComponent
 
 /**
@@ -84,10 +88,12 @@ public data class WhiskerViewComponent(
  * it, e.g. `value.asString()`.
  */
 public typealias WhiskerPropSetterFn = (view: Any, value: WhiskerValue) -> Unit
+public typealias WhiskerPropClearerFn = (view: Any) -> Unit
 
 public data class WhiskerPropComponent(
     public val name: String,
     public val setter: WhiskerPropSetterFn,
+    public val clearer: WhiskerPropClearerFn,
 ) : WhiskerDefinitionComponent
 
 /**
@@ -126,7 +132,9 @@ public data class WhiskerAsyncFunctionComponent(
  * [Module.sendEvent], which fans the payload out to every Rust
  * subscriber registered via `PlatformModule::on_event`.
  */
-public data class WhiskerEventsComponent(public val names: List<String>) :
+public data class WhiskerEventsComponent(
+    public val names: List<String>,
+) :
     WhiskerDefinitionComponent
 
 /**
@@ -189,11 +197,11 @@ public class WhiskerModuleDefinitionBuilder {
         WhiskerNameComponent(value).also { components.add(it) }
 
     /** `Constants("k" to v, ...)` — static key/value pairs. */
-    public fun Constants(vararg entries: Pair<String, Any?>): WhiskerDefinitionComponent =
+    public fun Constants(vararg entries: Pair<String, WhiskerValue>): WhiskerDefinitionComponent =
         WhiskerConstantsComponent(entries.toMap()).also { components.add(it) }
 
     /** `Constants(mapOf(...))` — same, but takes a Map directly. */
-    public fun Constants(values: Map<String, Any?>): WhiskerDefinitionComponent =
+    public fun Constants(values: Map<String, WhiskerValue>): WhiskerDefinitionComponent =
         WhiskerConstantsComponent(values).also { components.add(it) }
 
     /**
@@ -206,8 +214,42 @@ public class WhiskerModuleDefinitionBuilder {
     ): WhiskerDefinitionComponent {
         val b = WhiskerViewDefinitionBuilder()
         b.block()
-        return WhiskerViewComponent(viewClass, b.components.toList())
+        return WhiskerViewComponent(viewClass = viewClass, components = b.components.toList())
             .also { components.add(it) }
+    }
+
+    /** String-declared element identity, resolved to Rust IDs at bootstrap. */
+    public fun View(
+        elementName: String,
+        viewClass: Class<*>,
+        block: WhiskerViewDefinitionBuilder.() -> Unit,
+    ): WhiskerDefinitionComponent {
+        val b = WhiskerViewDefinitionBuilder()
+        b.block()
+        return WhiskerViewComponent(viewClass = viewClass, components = b.components.toList(), elementName = elementName)
+            .also { components.add(it) }
+    }
+
+    /** Registers a Host factory through the same multi-View module DSL. */
+    public fun View(factory: WhiskerElementFactory): WhiskerDefinitionComponent =
+        WhiskerViewComponent(
+            components = emptyList(),
+            elementName = factory.name,
+            factory = factory,
+        ).also { components.add(it) }
+
+    /** Registers a Host factory with the ordinary View member block. */
+    public fun View(
+        factory: WhiskerElementFactory,
+        block: WhiskerViewDefinitionBuilder.() -> Unit,
+    ): WhiskerDefinitionComponent {
+        val b = WhiskerViewDefinitionBuilder()
+        b.block()
+        return WhiskerViewComponent(
+            components = b.components.toList(),
+            elementName = factory.name,
+            factory = factory,
+        ).also { components.add(it) }
     }
 
     /** `Events("a", "b", ...)` — variadic event-name declaration. */
@@ -278,12 +320,20 @@ public class WhiskerViewDefinitionBuilder {
      */
     public fun <V : Any> Prop(
         name: String,
+        clear: (V) -> Unit = {},
         setter: (V, WhiskerValue) -> Unit,
     ): WhiskerDefinitionComponent =
-        WhiskerPropComponent(name) { viewAny, value ->
-            @Suppress("UNCHECKED_CAST")
-            setter(viewAny as V, value)
-        }.also { components.add(it) }
+        WhiskerPropComponent(
+            name = name,
+            setter = { viewAny, value ->
+                @Suppress("UNCHECKED_CAST")
+                setter(viewAny as V, value)
+            },
+            clearer = { viewAny ->
+                @Suppress("UNCHECKED_CAST")
+                clear(viewAny as V)
+            },
+        ).also { components.add(it) }
 
     /** `Events("a", "b", ...)` declared inside a `View(...)` block. */
     public fun Events(vararg names: String): WhiskerDefinitionComponent =
@@ -316,22 +366,27 @@ public class WhiskerViewDefinitionBuilder {
 // ----- ModuleDefinition value -----------------------------------------------
 
 /**
- * The assembled definition the framework registers with Lynx at
+ * The assembled definition the framework registers with the active Host at
  * module-init time. Immutable; collected from a
  * [WhiskerModuleDefinitionBuilder] block.
  */
 public data class ModuleDefinition(public val components: List<WhiskerDefinitionComponent>) {
 
-    /** Module name (first [WhiskerNameComponent] in the components list). */
+    /** Explicit module name, or the first directly declared element name. */
     public val name: String?
-        get() = components.firstNotNullOfOrNull { (it as? WhiskerNameComponent)?.value }
+        get() = view?.elementName
+            ?: components.firstNotNullOfOrNull { (it as? WhiskerNameComponent)?.value }
 
-    /** View block, if any. */
+    /** First View block, retained for source compatibility. */
     public val view: WhiskerViewComponent?
-        get() = components.firstNotNullOfOrNull { it as? WhiskerViewComponent }
+        get() = views.firstOrNull()
+
+    /** Every Host View contributed by this module. */
+    internal val views: List<WhiskerViewComponent>
+        get() = components.filterIsInstance<WhiskerViewComponent>()
 
     /** Merged constants from all [WhiskerConstantsComponent] blocks. */
-    public val constants: Map<String, Any?>
+    public val constants: Map<String, WhiskerValue>
         get() = buildMap {
             for (c in components) {
                 if (c is WhiskerConstantsComponent) putAll(c.values)
@@ -353,6 +408,20 @@ public data class ModuleDefinition(public val components: List<WhiskerDefinition
     /** Module-level [OnStopObserving] hooks. */
     public val onStopObservingHooks: List<WhiskerOnStopObservingComponent>
         get() = components.filterIsInstance<WhiskerOnStopObservingComponent>()
+
+    /** Validate declaration-local invariants before runtime negotiation. */
+    public fun validateElementDeclaration() {
+        for (view in views) {
+            val props = view.components.filterIsInstance<WhiskerPropComponent>().map { it.name }
+            require(props.toSet().size == props.size) {
+                "duplicate Host property on ${view.elementName}"
+            }
+            val events = view.components.filterIsInstance<WhiskerEventsComponent>().flatMap { it.names }
+            require(events.toSet().size == events.size) {
+                "duplicate Host event on ${view.elementName}"
+            }
+        }
+    }
 
     public companion object {
         /**

@@ -7,7 +7,7 @@
     <key>CFBundleDisplayName</key>
     <string>{{app_name}}</string>
     <key>CFBundleExecutable</key>
-    <string>{{host_package}}</string>
+    <string>{{generated_package}}</string>
     <key>CFBundleIdentifier</key>
     <string>{{bundle_id}}</string>
     <key>CFBundleInfoDictionaryVersion</key>

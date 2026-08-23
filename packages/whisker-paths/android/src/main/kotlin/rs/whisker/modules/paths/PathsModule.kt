@@ -11,9 +11,12 @@
 package rs.whisker.modules.paths
 
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
 
+
+@WhiskerModule
 class PathsModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("WhiskerPaths")

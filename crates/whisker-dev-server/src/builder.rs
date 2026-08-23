@@ -18,9 +18,11 @@ use whisker_build::CaptureShims;
 /// dependency-shaped changes (Cargo.toml edits) and as a fallback
 /// when hot reload errors.
 pub struct Builder {
+    workspace_root: PathBuf,
     /// User crate dir (= `Cargo.toml` parent). Needed to find
     /// `gen/android/` for gradle invocation.
     crate_dir: PathBuf,
+    package: String,
     target: Target,
     /// Cargo features forwarded to whichever step compiles the user
     /// crate. The dev loop turns on `whisker/hot-reload` here.
@@ -32,13 +34,15 @@ pub struct Builder {
 
 impl Builder {
     pub fn new(
-        _workspace_root: PathBuf,
+        workspace_root: PathBuf,
         crate_dir: PathBuf,
-        _package: String,
+        package: String,
         target: Target,
     ) -> Self {
         Self {
+            workspace_root,
             crate_dir,
+            package,
             target,
             features: Vec::new(),
             capture: None,
@@ -89,15 +93,32 @@ impl Builder {
     // ----- per-target build paths ------------------------------------------
 
     async fn build_android(&self) -> Result<()> {
-        // The bootstrap slice is a plain AGP application: no Rust dylib,
-        // module aggregator, SDK AAR, or Lynx artifacts are involved yet.
-        // Gradle only needs to assemble the generated native shell.
+        let workspace_root = self.workspace_root.clone();
         let crate_dir = self.crate_dir.clone();
+        let package = self.package.clone();
         let features = self.features.clone();
         let capture = self.capture.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
+            const ABI: &str = "arm64-v8a";
+            let toolchain = whisker_build::android::resolve_toolchain(ABI, 24)
+                .context("resolve Android NDK toolchain")?;
+            let dylib =
+                whisker_build::android::cargo_build_dylib(&whisker_build::android::CargoBuild {
+                    workspace_root: &workspace_root,
+                    package: &package,
+                    toolchain: &toolchain,
+                    profile: whisker_build::Profile::Debug,
+                    features: &features,
+                    capture: capture.as_ref(),
+                })?;
             let gen_android = crate_dir.join("gen/android");
+            whisker_build::android::stage_so_files(
+                &gen_android.join("app/src/main/jniLibs").join(ABI),
+                &dylib,
+                &toolchain,
+                ABI,
+            )?;
             whisker_build::android::run_gradle_assemble(
                 &gen_android,
                 whisker_build::Profile::Debug,
@@ -111,9 +132,31 @@ impl Builder {
     }
 
     async fn build_ios_simulator(&self) -> Result<()> {
-        // The bootstrap slice is pure UIKit. xcodebuild in the installer
-        // owns the whole build, so there is no Rust/module pre-step here.
-        Ok(())
+        let workspace_root = self.workspace_root.clone();
+        let package = self.package.clone();
+        let features = self.features.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let built_products = workspace_root
+                .join("target/.whisker/ios-derived")
+                .join(&package)
+                .join("Build/Products/Debug-iphonesimulator");
+            whisker_build::ios::build_framework_for_xcode_run_script(
+                &whisker_build::ios::XcodeRunScriptInputs {
+                    workspace_root: &workspace_root,
+                    package: &package,
+                    platform: "iphonesimulator",
+                    // The generated Xcode project uses a generic simulator
+                    // destination, which asks for both slices even on an
+                    // Apple Silicon development machine.
+                    archs: &["arm64", "x86_64"],
+                    features: &features,
+                },
+                &built_products,
+            )?;
+            Ok(())
+        })
+        .await
+        .context("spawn_blocking iOS Rust framework build")?
     }
 }
 

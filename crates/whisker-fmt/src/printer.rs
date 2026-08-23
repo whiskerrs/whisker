@@ -570,6 +570,8 @@ impl Printer<'_> {
         let span = match node {
             IrNode::Tag(tag) => tag.tag_span?,
             IrNode::ChildrenSlot(span) => *span,
+            IrNode::Text(value) => value.span(),
+            IrNode::Expression(expr) => span_of(expr),
             IrNode::Spread(expr) => span_of(expr),
         };
         self.map.byte_range(span).map(|(s, _)| s)
@@ -591,6 +593,18 @@ impl Printer<'_> {
             IrNode::ChildrenSlot(_) => {
                 out.push_str(&self.indent(level));
                 out.push_str("children()");
+            }
+            IrNode::Text(value) => {
+                out.push_str(&self.indent(level));
+                out.push_str(&format!("{:?}", value.value()));
+            }
+            IrNode::Expression(expr) => {
+                let indent = self.indent(level);
+                let src = self.expr_src(span_of(expr), expr, level);
+                out.push_str(&indent);
+                out.push('{');
+                out.push_str(&src);
+                out.push('}');
             }
             IrNode::Spread(expr) => {
                 let indent = self.indent(level);

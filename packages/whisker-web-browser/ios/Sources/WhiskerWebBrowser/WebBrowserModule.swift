@@ -25,6 +25,7 @@ private final class PresentationAnchor: NSObject, ASWebAuthenticationPresentatio
     }
 }
 
+@WhiskerModule
 public final class WebBrowserModule: Module {
     private var authSession: ASWebAuthenticationSession?
     private var safari: SFSafariViewController?

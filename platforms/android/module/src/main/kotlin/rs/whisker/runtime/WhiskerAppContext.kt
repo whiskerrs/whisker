@@ -3,6 +3,7 @@
 // Modelled on Expo's `appContext.currentActivity`. A `Module` body
 // reaches the host Activity via:
 //
+//   @WhiskerModule
 //   class PredictiveBackModule : Module() {
 //       override fun definition() = ModuleDefinition {
 //           Name("PredictiveBack")
@@ -16,7 +17,7 @@
 // Whisker isn't Activity-centric — a host app can embed `WhiskerView`
 // inside any Activity / Fragment / Compose AndroidView / Dialog /
 // PopupWindow. So the host that publishes the Activity reference is
-// the **WhiskerView itself**: it implements [WhiskerModuleHost] and
+// the **WhiskerView itself**: it implements [WhiskerRuntimeOwner] and
 // pushes itself onto [WhiskerAppContext]'s host stack on
 // `onAttachedToWindow`, popping on `onDetachedFromWindow`.
 //
@@ -48,8 +49,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Listener registered via
- * [WhiskerAppContext.addOnHostAttachedListener]. Fires every time a
- * `WhiskerModuleHost` attaches (and once at registration time if a
+ * [WhiskerAppContext.addOnRuntimeAttachedListener]. Fires every time a
+ * `WhiskerRuntimeOwner` attaches (and once at registration time if a
  * host is already attached). Used by modules whose
  * `OnStartObserving` hook runs before any host is available — they
  * defer their Activity-touching wiring through this hook.
@@ -57,8 +58,8 @@ import java.util.concurrent.CopyOnWriteArrayList
  * Modeled as a SAM interface rather than `() -> Unit` so a Java
  * caller can implement it without a Kotlin function-type adapter.
  */
-public fun interface HostAttachedListener {
-    public fun onHostAttached()
+public fun interface RuntimeAttachedListener {
+    public fun onRuntimeAttached()
 }
 
 /** Fires with the full URL when a deep link arrives via `onNewIntent`. */
@@ -72,16 +73,16 @@ public fun interface DeepLinkListener {
  * default implementer is `WhiskerView`, but a custom host (e.g. a
  * unit-test harness or a non-View embedding) can implement this too.
  */
-public interface WhiskerModuleHost {
+public interface WhiskerRuntimeOwner {
     /**
      * The host's Android `Context`. [WhiskerAppContext.currentActivity]
      * walks the `ContextWrapper` chain to find the underlying
      * Activity, so any Activity-derived context works.
      *
-     * Named `hostContext` (not `context`) so a `View` implementer
+     * Named `runtimeContext` (not `context`) so a `View` implementer
      * doesn't collide with `View.getContext()` on the JVM signature.
      */
-    public val hostContext: Context
+    public val runtimeContext: Context
 }
 
 /**
@@ -94,7 +95,7 @@ public class WhiskerAppContext internal constructor() {
 
     /**
      * The host Activity for the currently-foremost
-     * [WhiskerModuleHost], or `null` if none is attached / the
+     * [WhiskerRuntimeOwner], or `null` if none is attached / the
      * host's context doesn't unwrap to an Activity.
      *
      * Request-time lookup — the Activity reference is never stored
@@ -102,10 +103,10 @@ public class WhiskerAppContext internal constructor() {
      * resolves to the new Activity once the new WhiskerView attaches.
      */
     public val currentActivity: Activity?
-        get() = currentHost()?.hostContext?.let { unwrapActivity(it) }
+        get() = currentRuntimeOwner()?.runtimeContext?.let { unwrapActivity(it) }
 
     /**
-     * Register `listener` to fire whenever a [WhiskerModuleHost]
+     * Register `listener` to fire whenever a [WhiskerRuntimeOwner]
      * attaches (i.e. `currentActivity` becomes non-null). If a host
      * is already attached at registration time, fires synchronously
      * once.
@@ -119,22 +120,22 @@ public class WhiskerAppContext internal constructor() {
      * `PredictiveBackModule` defers its `addCallback` against the
      * host Activity through this hook.
      *
-     * Caller is responsible for [removeOnHostAttachedListener] —
+     * Caller is responsible for [removeOnRuntimeAttachedListener] —
      * stale listeners pin nothing (the listener list holds Kotlin
      * lambdas, not module references), but firing them after
      * `OnStopObserving` would re-register a torn-down handler.
      */
-    public fun addOnHostAttachedListener(listener: HostAttachedListener) {
+    public fun addOnRuntimeAttachedListener(listener: RuntimeAttachedListener) {
         attachListeners.add(listener)
-        if (currentActivity != null) listener.onHostAttached()
+        if (currentActivity != null) listener.onRuntimeAttached()
     }
 
-    public fun removeOnHostAttachedListener(listener: HostAttachedListener) {
+    public fun removeOnRuntimeAttachedListener(listener: RuntimeAttachedListener) {
         attachListeners.remove(listener)
     }
 
-    /** Listeners registered via [addOnHostAttachedListener]. */
-    private val attachListeners: CopyOnWriteArrayList<HostAttachedListener> =
+    /** Listeners registered via [addOnRuntimeAttachedListener]. */
+    private val attachListeners: CopyOnWriteArrayList<RuntimeAttachedListener> =
         CopyOnWriteArrayList()
 
     public companion object {
@@ -166,38 +167,38 @@ public class WhiskerAppContext internal constructor() {
         // of a single-host app). Weak refs so a misbehaving host
         // that forgets to pop doesn't pin its Activity.
         private val hostsLock = Any()
-        private val hosts: MutableList<WeakReference<WhiskerModuleHost>> =
+        private val hosts: MutableList<WeakReference<WhiskerRuntimeOwner>> =
             mutableListOf()
 
         /**
-         * Register `host` as the current top-of-stack host.
-         * Idempotent — a host that's already in the stack moves to
+         * Register `owner` as the current top-of-stack runtime owner.
+         * Idempotent — an owner that's already in the stack moves to
          * the top (LIFO refresh).
          */
         @JvmStatic
-        public fun pushHost(host: WhiskerModuleHost) {
+        public fun pushRuntimeOwner(owner: WhiskerRuntimeOwner) {
             synchronized(hostsLock) {
-                // Drop any stale weak ref to this same host before pushing.
-                hosts.removeAll { it.get() === host || it.get() == null }
-                hosts.add(WeakReference(host))
+                // Drop any stale weak ref to this same owner before pushing.
+                hosts.removeAll { it.get() === owner || it.get() == null }
+                hosts.add(WeakReference(owner))
             }
             // Fire host-attached listeners OUTSIDE the lock (their
             // bodies may call back into the AppContext).
-            for (l in shared.attachListeners) l.onHostAttached()
+            for (l in shared.attachListeners) l.onRuntimeAttached()
         }
 
         /**
-         * Unregister `host`. Safe to call multiple times. Also
+         * Unregister `owner`. Safe to call multiple times. Also
          * sweeps stale (already-collected) weak refs.
          */
         @JvmStatic
-        public fun popHost(host: WhiskerModuleHost) {
+        public fun popRuntimeOwner(owner: WhiskerRuntimeOwner) {
             synchronized(hostsLock) {
-                hosts.removeAll { it.get() === host || it.get() == null }
+                hosts.removeAll { it.get() === owner || it.get() == null }
             }
         }
 
-        private fun currentHost(): WhiskerModuleHost? {
+        private fun currentRuntimeOwner(): WhiskerRuntimeOwner? {
             synchronized(hostsLock) {
                 // Walk from the top until we find a live ref. Sweep
                 // dead refs as we go so the list doesn't grow.

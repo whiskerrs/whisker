@@ -36,4 +36,6 @@ whisker-driver = { workspace = true }
 whisker-config = { workspace = true }
 whisker-css = { workspace = true }
 whisker-engine = { workspace = true }
+whisker-value = { workspace = true }
+serde_json = { workspace = true }
 subsecond = { workspace = true, optional = true }

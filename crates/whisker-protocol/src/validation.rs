@@ -45,7 +45,7 @@ pub enum ApplyResult {
     /// A delta did not continue the receiver state and a snapshot is needed.
     NeedSnapshot {
         /// Revision currently held by the receiver.
-        host_revision: u64,
+        receiver_revision: u64,
     },
 }
 
@@ -214,7 +214,7 @@ impl SceneProjection {
                 || self.revision != packet.header.base_revision)
         {
             return Ok(ApplyResult::NeedSnapshot {
-                host_revision: self.revision,
+                receiver_revision: self.revision,
             });
         }
 
@@ -498,9 +498,9 @@ mod tests {
     use crate::{
         CommandId, ElementTypeId, FrameHeader, HitTestBehavior, MeasureFontFamily,
         MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
-        MeasureTextWrap, Operation, PointerId, PropertyId, ProtocolValue, ProtocolVersion,
-        ResultId, TextContent, TextContentError, TextMeasurePayload, TextMeasureStyle, Transform,
-        Visibility,
+        MeasureTextWrap, Operation, PointerId, PropertyId, ProtocolVersion, ResultId, TextContent,
+        TextContentError, TextMeasurePayload, TextMeasureStyle, Transform, Visibility,
+        WhiskerValue,
     };
 
     fn surface() -> SurfaceId {
@@ -669,7 +669,12 @@ mod tests {
                 }],
             ))
             .expect("revision drift is recoverable");
-        assert_eq!(result, ApplyResult::NeedSnapshot { host_revision: 1 });
+        assert_eq!(
+            result,
+            ApplyResult::NeedSnapshot {
+                receiver_revision: 1
+            }
+        );
         assert_eq!(scene.revision(), 1);
         assert_eq!(scene.node_count(), 2);
     }
@@ -808,7 +813,7 @@ mod tests {
         let invoke = || Operation::InvokeCommand {
             node: root,
             command,
-            arguments: crate::ProtocolValue::Null,
+            arguments: crate::WhiskerValue::Null,
             result: Some(result),
         };
         let error = scene
@@ -900,7 +905,12 @@ mod tests {
         let result = scene
             .apply(&packet(FrameMode::Delta, 2, 1, 2, Vec::new()))
             .expect("epoch drift is recoverable");
-        assert_eq!(result, ApplyResult::NeedSnapshot { host_revision: 1 });
+        assert_eq!(
+            result,
+            ApplyResult::NeedSnapshot {
+                receiver_revision: 1
+            }
+        );
         assert_eq!(scene.scene_epoch(), Some(1));
     }
 
@@ -969,10 +979,7 @@ mod tests {
                 Operation::SetProperty {
                     node: root,
                     property,
-                    value: ProtocolValue::Object(vec![(
-                        "enabled".into(),
-                        ProtocolValue::Bool(true),
-                    )]),
+                    value: WhiskerValue::map([("enabled", WhiskerValue::Bool(true))]),
                 },
                 Operation::ClearProperty {
                     node: root,
@@ -997,13 +1004,13 @@ mod tests {
                 Operation::InvokeCommand {
                     node: root,
                     command,
-                    arguments: ProtocolValue::Array(Vec::new()),
+                    arguments: WhiskerValue::Array(Vec::new()),
                     result: None,
                 },
                 Operation::InvokeCommand {
                     node: root,
                     command,
-                    arguments: ProtocolValue::Null,
+                    arguments: WhiskerValue::Null,
                     result: Some(result),
                 },
             ],
@@ -1099,12 +1106,12 @@ mod tests {
             Operation::SetProperty {
                 node: missing,
                 property,
-                value: ProtocolValue::Null,
+                value: WhiskerValue::Null,
             },
             Operation::InvokeCommand {
                 node: missing,
                 command: CommandId::new(1).expect("test command"),
-                arguments: ProtocolValue::Null,
+                arguments: WhiskerValue::Null,
                 result: None,
             },
         ];

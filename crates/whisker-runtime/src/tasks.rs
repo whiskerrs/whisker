@@ -118,7 +118,7 @@ fn invoke_drive_hook() {
 /// any-thread-safe `run_on_main_thread`.
 struct DriveWaker {
     inner: std::task::Waker,
-    wake: Option<crate::host_wake::RuntimeWakeHandle>,
+    wake: Option<crate::runtime_wake::RuntimeWakeHandle>,
 }
 
 impl ArcWake for DriveWaker {
@@ -153,7 +153,7 @@ impl<F: Future<Output = ()>> Future for DriveBridged<F> {
         let future = unsafe { self.map_unchecked_mut(|s| &mut s.future) };
         let drive_waker = Arc::new(DriveWaker {
             inner: cx.waker().clone(),
-            wake: crate::host_wake::current_wake_handle(),
+            wake: crate::runtime_wake::current_wake_handle(),
         });
         let waker = waker_ref(&drive_waker);
         let mut cx = Context::from_waker(&waker);
@@ -165,7 +165,7 @@ impl<F: Future<Output = ()>> Future for DriveBridged<F> {
 ///
 /// The future is polled on the Host UI thread by the next drive after
 /// either:
-/// - [`crate::host_wake::wake_runtime`] fires (the future's `Waker`
+/// - [`crate::runtime_wake::wake_runtime`] fires (the future's `Waker`
 ///   was woken from anywhere), or
 /// - any other reactive activity drove a tick to begin with.
 ///
@@ -194,7 +194,7 @@ where
     });
     // Without this nudge a freshly spawned task sits dormant until
     // something else happens to wake the runtime.
-    crate::host_wake::wake_runtime();
+    crate::runtime_wake::wake_runtime();
 }
 
 /// Drain pending tasks until they're all pending on external events.
@@ -424,7 +424,7 @@ mod tests {
         extern "C" fn wake_cb(_: *mut c_void) {
             WOKE.store(true, Ordering::SeqCst);
         }
-        crate::host_wake::set_request_frame_callback(Some(wake_cb), std::ptr::null_mut());
+        crate::runtime_wake::set_request_frame_callback(Some(wake_cb), std::ptr::null_mut());
 
         crate::main_thread::run_on_main_thread(|| {});
 
@@ -435,7 +435,7 @@ mod tests {
              never gets re-polled (hn-reader Loading-stuck bug)"
         );
 
-        crate::host_wake::__reset_for_tests();
+        crate::runtime_wake::__reset_for_tests();
         crate::main_thread::__reset_for_tests();
     }
 

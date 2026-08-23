@@ -13,6 +13,7 @@
 
 import WhiskerModule
 
+@WhiskerModule
 public final class ImageModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {

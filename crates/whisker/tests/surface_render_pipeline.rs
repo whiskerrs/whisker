@@ -1,25 +1,45 @@
 use std::convert::Infallible;
 
-use whisker::SurfaceRuntime;
 use whisker::css::{BorderStyle, Overflow};
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
-use whisker::runtime::view::{set_root, with_installed_renderer};
+use whisker::runtime::view::{
+    BindType, create_element_by_name, set_attribute_bool, set_event_listener, set_root,
+    try_invoke_element_method, with_installed_renderer,
+};
+use whisker::{
+    ElementModuleDefinition, ElementProviderMetadata, ElementRegistry, ElementTag,
+    RuntimeBindingError, SurfaceRuntime,
+};
 use whisker_engine::RecordingRenderer;
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
-    MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse,
-    Operation, PaintColor, PreparedContentId, SurfaceId,
+    CommandId, ElementCommandSchema, ElementEventSchema, ElementMeasurement, ElementPropertySchema,
+    ElementSchema, ElementValueKind, EventId, MeasuredSize, MeasurementMetrics, MeasurementPayload,
+    MeasurementRequest, MeasurementResponse, Operation, PaintColor, PreparedContentId, PropertyId,
+    SurfaceId, WhiskerValue,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
-use whisker_engine::{HostLayoutOptions, MeasurementHost};
+use whisker_engine::{LayoutOptions, MeasurementProvider};
 
 #[derive(Default)]
 struct TextHost {
     calls: Vec<Vec<MeasurementRequest>>,
 }
 
-impl MeasurementHost for TextHost {
+#[whisker::module_component(
+    name = "whisker.test/AutoRegistered",
+    measurement = None,
+)]
+fn auto_registered(enabled: Signal<bool>, style: whisker::Style) {}
+
+#[whisker::module_component(
+    name = "whisker.test/NativeLabel",
+    measurement = Text,
+)]
+fn native_label(children: whisker::TextChildren) {}
+
+impl MeasurementProvider for TextHost {
     type Error = Infallible;
 
     fn measure_batch(
@@ -48,6 +68,137 @@ impl MeasurementHost for TextHost {
         }));
         Ok(())
     }
+}
+
+#[test]
+fn module_component_registers_its_schema_with_the_active_surface() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(11).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    assert!(
+        surface
+            .element_registrations()
+            .iter()
+            .all(|registration| registration.name != auto_registered_schema::NAME)
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                AutoRegistered(
+                    enabled: true,
+                    style: css!(width: px(40), height: px(20)),
+                )
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+    let registration = surface
+        .element_registrations()
+        .into_iter()
+        .find(|registration| registration.name == auto_registered_schema::NAME)
+        .expect("module component schema registered during authoring");
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("auto-registered module frame");
+    assert!(renderer.frames()[0].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::CreateNode { element_type, .. } if *element_type == registration.element_type)
+    ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn custom_plain_text_children_lower_to_measurement_and_set_text() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(15).unwrap(),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                NativeLabel(style: css!(font_size: px(20))) { "custom text" }
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+
+    let registration = surface
+        .element_registrations()
+        .into_iter()
+        .find(|registration| registration.name == native_label_schema::NAME)
+        .unwrap();
+    assert_eq!(registration.child_policy, whisker::ChildPolicy::PlainText);
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    assert!(renderer.frames()[0].packet.operations.iter().any(|operation| {
+        matches!(operation, Operation::SetText { content, .. } if content.payload.text == "custom text")
+    }));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn builtin_text_accepts_dynamic_into_view_text_children() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(17).unwrap(),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! { text(style: css!(font_size: px(20))) { { "dynamic".to_string() } } }
+        });
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(renderer.frames()[0].packet.operations.iter().any(|operation| {
+        matches!(operation, Operation::SetText { content, .. } if content.payload.text == "dynamic")
+    }));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
 #[test]
@@ -84,7 +235,7 @@ fn render_text_reaches_measured_frame_and_paint_only_delta() {
             1,
             &mut host,
             &mut renderer,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .expect("render! text frame");
     assert!(frame.layout.has_layout());
@@ -129,11 +280,11 @@ fn render_text_reaches_measured_frame_and_paint_only_delta() {
         whisker::flush();
     });
     surface
-        .drive_layout_with_host(
+        .drive_layout(
             LayoutSize::new(200.0, 100.0),
             1,
             &mut host,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .expect("reactive render! text update");
     assert!(host.calls.len() > measurement_calls);
@@ -166,11 +317,11 @@ fn render_text_reaches_measured_frame_and_paint_only_delta() {
         whisker::apply_style(root, Css::new().color(Color::rgba(20, 60, 230, 1.0)));
     });
     let progress = surface
-        .drive_layout_with_host(
+        .drive_layout(
             LayoutSize::new(200.0, 100.0),
             1,
             &mut host,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .expect("paint-only update");
     assert!(progress.has_layout());
@@ -241,11 +392,11 @@ fn render_box_paint_and_clip_reach_the_frame_sink() {
     });
     let mut host = TextHost::default();
     surface
-        .drive_layout_with_host(
+        .drive_layout(
             LayoutSize::new(200.0, 100.0),
             1,
             &mut host,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .expect("box layout");
     assert!(host.calls.is_empty());
@@ -288,11 +439,11 @@ fn render_box_paint_and_clip_reach_the_frame_sink() {
         whisker::apply_style(root, painted_box(Color::rgb(20, 60, 230)));
     });
     surface
-        .drive_layout_with_host(
+        .drive_layout(
             LayoutSize::new(200.0, 100.0),
             1,
             &mut host,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .expect("paint-only box update");
     assert!(host.calls.is_empty());
@@ -310,6 +461,223 @@ fn render_box_paint_and_clip_reach_the_frame_sink() {
                     blue: 230,
                     alpha: 1.0,
                 }
+    ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn frame_element_type_comes_from_the_surface_registry() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(10).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let scroll_type = surface
+        .element_registrations()
+        .into_iter()
+        .find(|registration| registration.name == "whisker.ui/ScrollView")
+        .expect("standard ScrollView registration")
+        .element_type;
+    assert_ne!(
+        scroll_type.get(),
+        ElementTag::ScrollView as u32,
+        "wire IDs must not depend on authoring-tag discriminants"
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| render! { scroll_view() });
+        set_root(root);
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("ScrollView frame");
+
+    assert!(renderer.frames()[0].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::CreateNode { element_type, .. } if *element_type == scroll_type)
+    ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn module_element_uses_the_same_retained_frame_path_as_builtins() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let registry = ElementRegistry::standard_builder()
+        .register_module(ElementModuleDefinition::new(
+            "example.maps",
+            [ElementProviderMetadata::named(ElementSchema {
+                name: "example.maps/Map".into(),
+                child_policy: whisker::ChildPolicy::Elements,
+                measurement: ElementMeasurement::None,
+                properties: Vec::new(),
+                events: Vec::new(),
+                commands: Vec::new(),
+            })],
+        ))
+        .build()
+        .expect("valid module element registry");
+    let map_type = registry
+        .registration_for_name("example.maps/Map")
+        .expect("map authoring binding")
+        .element_type;
+    let surface = SurfaceRuntime::with_element_registry(
+        SurfaceId::new(12).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+        registry,
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| create_element_by_name("example.maps/Map"));
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("module element frame");
+
+    assert!(renderer.frames()[0].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::CreateNode { element_type, .. } if *element_type == map_type)
+    ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn external_element_properties_events_and_commands_share_the_retained_frame_path() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let checked = PropertyId::new(1).unwrap();
+    let change = EventId::new(1).unwrap();
+    let toggle = CommandId::new(1).unwrap();
+    let registry = ElementRegistry::standard_builder()
+        .register_provider(ElementProviderMetadata::named(ElementSchema {
+            name: "whisker.test/Toggle".into(),
+            child_policy: whisker::ChildPolicy::None,
+            measurement: ElementMeasurement::None,
+            properties: vec![ElementPropertySchema {
+                property: checked,
+                name: "checked".into(),
+                value: ElementValueKind::Bool,
+            }],
+            events: vec![ElementEventSchema {
+                event: change,
+                name: "change".into(),
+                detail: Some(ElementValueKind::Map),
+            }],
+            commands: vec![ElementCommandSchema {
+                command: toggle,
+                name: "toggle".into(),
+                arguments: ElementValueKind::Null,
+            }],
+        }))
+        .build()
+        .unwrap();
+    let surface = SurfaceRuntime::with_element_registry(
+        SurfaceId::new(13).unwrap(),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+        registry,
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| create_element_by_name("whisker.test/Toggle"));
+        set_attribute_bool(root, "checked", true);
+        set_event_listener(root, "change", BindType::Bind, Box::new(|_| {}));
+        assert_eq!(
+            try_invoke_element_method(root, "toggle", WhiskerValue::args([])),
+            Some(WhiskerValue::Null)
+        );
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let operations = &renderer.frames()[0].packet.operations;
+    assert!(operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetProperty { property, value: WhiskerValue::Bool(true), .. }
+            if *property == checked
+    )));
+    assert!(operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetEventMask { event_mask, .. } if *event_mask == 1
+    )));
+    assert!(operations.iter().any(|operation| matches!(
+        operation,
+        Operation::InvokeCommand {
+            command,
+            arguments: WhiskerValue::Null,
+            ..
+        } if *command == toggle
+    )));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn text_leaf_contract_is_enforced_before_frame_generation() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(11).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        owner.with(|| render! { text { view() } });
+    });
+
+    assert!(matches!(
+        surface.binding_error(),
+        Some(RuntimeBindingError::ChildrenNotAllowed { .. })
+    ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn element_children_reject_raw_text_before_frame_generation() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(16).unwrap(),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        owner.with(|| render! { view { "not implicitly wrapped" } });
+    });
+
+    assert!(matches!(
+        surface.binding_error(),
+        Some(RuntimeBindingError::InvalidRawTextParent { .. })
     ));
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
@@ -359,7 +727,7 @@ fn wpt_border_radius_sum_of_radii_001_reaches_layout_and_frame_protocol() {
             1,
             &mut host,
             &mut renderer,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .expect("WPT-derived rounded box frame");
     assert!(host.calls.is_empty());

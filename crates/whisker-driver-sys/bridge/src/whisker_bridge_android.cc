@@ -18,6 +18,7 @@
 #include <dlfcn.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <mutex>
@@ -39,6 +40,23 @@ struct JvmHandles {
     jclass whisker_view_class = nullptr;        // global ref
     jmethodID request_frame_method = nullptr; // void requestFrameFromNative()
 };
+
+struct MobileHandles {
+    jclass surface_class = nullptr;       // global ref
+    jmethodID request_frame = nullptr;    // void requestFrameFromNative()
+    jmethodID apply_frame = nullptr;      // boolean applyFrameFromNative(byte[])
+    jobject surface = nullptr;            // global ref; one mobile surface per process
+};
+
+MobileHandles& Mobile() {
+    static MobileHandles h;
+    return h;
+}
+
+std::mutex& MobileMutex() {
+    static std::mutex m;
+    return m;
+}
 
 JvmHandles& Handles() {
     static JvmHandles h;
@@ -189,6 +207,69 @@ extern "C" void RequestFrameTrampoline(void* user_data) {
     }
 }
 
+extern "C" void MobileRequestFrame(void* /*user_data*/) {
+    JvmHandles& handles = Handles();
+    MobileHandles& mobile = Mobile();
+    if (handles.jvm == nullptr || mobile.request_frame == nullptr) return;
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (handles.jvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        if (handles.jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
+        attached = true;
+    }
+    jobject surface = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(MobileMutex());
+        if (mobile.surface != nullptr) surface = env->NewLocalRef(mobile.surface);
+    }
+    if (surface != nullptr) {
+        env->CallVoidMethod(surface, mobile.request_frame);
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        env->DeleteLocalRef(surface);
+    }
+    if (attached) handles.jvm->DetachCurrentThread();
+}
+
+extern "C" bool MobilePresentFrame(void* /*user_data*/, const uint8_t* bytes, size_t len) {
+    JvmHandles& handles = Handles();
+    MobileHandles& mobile = Mobile();
+    if (handles.jvm == nullptr || mobile.apply_frame == nullptr || bytes == nullptr) return false;
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (handles.jvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        if (handles.jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) return false;
+        attached = true;
+    }
+    jobject surface = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(MobileMutex());
+        if (mobile.surface != nullptr) surface = env->NewLocalRef(mobile.surface);
+    }
+    bool accepted = false;
+    if (surface != nullptr && len <= static_cast<size_t>(INT32_MAX)) {
+        jbyteArray payload = env->NewByteArray(static_cast<jsize>(len));
+        if (payload != nullptr) {
+            env->SetByteArrayRegion(payload, 0, static_cast<jsize>(len),
+                                    reinterpret_cast<const jbyte*>(bytes));
+            accepted = env->CallBooleanMethod(surface, mobile.apply_frame, payload) == JNI_TRUE;
+            env->DeleteLocalRef(payload);
+        }
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+            accepted = false;
+        }
+        env->DeleteLocalRef(surface);
+    }
+    if (attached) handles.jvm->DetachCurrentThread();
+    return accepted;
+}
+
 }  // namespace
 
 // JNI_OnLoad — cache the JVM pointer + WhiskerView class/method handles.
@@ -200,17 +281,35 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
         return JNI_ERR;
     }
+    bool found_host = false;
     jclass local = env->FindClass("rs/whisker/runtime/WhiskerView");
-    if (local == nullptr) {
-        LOGE("JNI_OnLoad: rs/whisker/runtime/WhiskerView not found");
-        return JNI_ERR;
+    if (local != nullptr) {
+        handles.whisker_view_class = static_cast<jclass>(env->NewGlobalRef(local));
+        handles.request_frame_method = env->GetMethodID(
+            handles.whisker_view_class, "requestFrameFromNative", "()V");
+        env->DeleteLocalRef(local);
+        found_host = handles.request_frame_method != nullptr;
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
     }
-    handles.whisker_view_class = static_cast<jclass>(env->NewGlobalRef(local));
-    handles.request_frame_method = env->GetMethodID(
-        handles.whisker_view_class, "requestFrameFromNative", "()V");
-    env->DeleteLocalRef(local);
-    if (handles.request_frame_method == nullptr) {
-        LOGE("JNI_OnLoad: requestFrameFromNative not found on WhiskerView");
+
+    MobileHandles& mobile = Mobile();
+    local = env->FindClass("rs/whisker/mobile/WhiskerSurface");
+    if (local != nullptr) {
+        mobile.surface_class = static_cast<jclass>(env->NewGlobalRef(local));
+        mobile.request_frame = env->GetMethodID(
+            mobile.surface_class, "requestFrameFromNative", "()V");
+        mobile.apply_frame = env->GetMethodID(
+            mobile.surface_class, "applyFrameFromNative", "([B)Z");
+        env->DeleteLocalRef(local);
+        found_host = found_host ||
+            (mobile.request_frame != nullptr && mobile.apply_frame != nullptr);
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (!found_host) {
+        LOGE("JNI_OnLoad: neither legacy WhiskerView nor mobile WhiskerSurface is available");
         return JNI_ERR;
     }
     return JNI_VERSION_1_6;
@@ -294,6 +393,50 @@ extern "C" void whisker_app_main(void* engine,
                               void (*request_frame)(void*),
                               void* request_frame_data);
 extern "C" bool whisker_tick(void* engine);
+
+extern "C" bool whisker_mobile_mount(
+    float width, float height, float scale,
+    void (*request_frame)(void*), void* request_frame_data,
+    bool (*present_frame)(void*, const uint8_t*, size_t), void* present_frame_data);
+extern "C" bool whisker_mobile_tick(double timestamp_ms, float width, float height, float scale);
+extern "C" void whisker_mobile_unmount();
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_rs_whisker_mobile_WhiskerSurface_nativeMount(
+    JNIEnv* env, jobject self, jfloat width, jfloat height, jfloat scale) {
+    MobileHandles& mobile = Mobile();
+    {
+        std::lock_guard<std::mutex> lock(MobileMutex());
+        if (mobile.surface != nullptr) env->DeleteGlobalRef(mobile.surface);
+        mobile.surface = env->NewGlobalRef(self);
+    }
+    bool mounted = whisker_mobile_mount(
+        width, height, scale,
+        &MobileRequestFrame, nullptr,
+        &MobilePresentFrame, nullptr);
+    if (!mounted) {
+        std::lock_guard<std::mutex> lock(MobileMutex());
+        if (mobile.surface != nullptr) env->DeleteGlobalRef(mobile.surface);
+        mobile.surface = nullptr;
+    }
+    return mounted ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_rs_whisker_mobile_WhiskerSurface_nativeTick(
+    JNIEnv* /*env*/, jobject /*self*/, jdouble timestamp_ms,
+    jfloat width, jfloat height, jfloat scale) {
+    return whisker_mobile_tick(timestamp_ms, width, height, scale) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_rs_whisker_mobile_WhiskerSurface_nativeUnmount(JNIEnv* env, jobject /*self*/) {
+    whisker_mobile_unmount();
+    MobileHandles& mobile = Mobile();
+    std::lock_guard<std::mutex> lock(MobileMutex());
+    if (mobile.surface != nullptr) env->DeleteGlobalRef(mobile.surface);
+    mobile.surface = nullptr;
+}
 
 extern "C" JNIEXPORT void JNICALL
 Java_rs_whisker_runtime_WhiskerView_nativeAppMain(

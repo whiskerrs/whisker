@@ -10,3 +10,4 @@ crate-type = ["rlib"]
 
 [dependencies]
 whisker = { workspace = true }
+whisker-toggle = { workspace = true }

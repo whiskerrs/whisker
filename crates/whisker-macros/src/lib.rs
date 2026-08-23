@@ -13,12 +13,70 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{ItemFn, parse_macro_input};
+use syn::{ImplItem, ItemFn, ItemImpl, parse_macro_input};
 
 mod component;
 mod css;
 mod module_component;
 mod render;
+
+/// Marks one platform implementation of [`WhiskerModule`].
+///
+/// The implementation remains an ordinary Rust trait implementation. The
+/// attribute only emits the private, conventionally-named adapter consumed by
+/// Whisker's generated composition root, keeping that build detail out of the
+/// module author's API.
+#[allow(non_snake_case)]
+#[proc_macro_attribute]
+pub fn WhiskerModule(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let implementation = parse_macro_input!(item as ItemImpl);
+    let Some((_, trait_path, _)) = &implementation.trait_ else {
+        return syn::Error::new_spanned(
+            &implementation.self_ty,
+            "#[WhiskerModule] must annotate a WhiskerModule trait implementation",
+        )
+        .into_compile_error()
+        .into();
+    };
+    if trait_path
+        .segments
+        .last()
+        .is_none_or(|segment| segment.ident != "WhiskerModule")
+    {
+        return syn::Error::new_spanned(
+            trait_path,
+            "#[WhiskerModule] must annotate a WhiskerModule trait implementation",
+        )
+        .into_compile_error()
+        .into();
+    }
+
+    let module_type = &implementation.self_ty;
+    let Some(definition_type) = implementation.items.iter().find_map(|item| match item {
+        ImplItem::Type(associated_type) if associated_type.ident == "Definition" => {
+            Some(&associated_type.ty)
+        }
+        _ => None,
+    }) else {
+        return syn::Error::new_spanned(
+            &implementation.self_ty,
+            "#[WhiskerModule] requires an explicit Definition associated type",
+        )
+        .into_compile_error()
+        .into();
+    };
+    quote! {
+        #implementation
+
+        #[doc(hidden)]
+        #[allow(dead_code)]
+        pub fn __whisker_module_definition(
+        ) -> #definition_type {
+            <#module_type as #trait_path>::definition()
+        }
+    }
+    .into()
+}
 
 /// Annotates the user's app function (returning `whisker::Element`) and
 /// generates the FFI symbols the iOS/Android host expects.
@@ -110,28 +168,116 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // `#[unsafe(no_mangle)]`, not bare `#[no_mangle]`: this macro
         // expands in the USER crate's edition, and a bare `#[no_mangle]`
         // is a hard error under edition 2024.
-        #[cfg(not(target_arch = "wasm32"))]
+        // Platform-neutral retained renderer entry points. Android and iOS
+        // provide only wake/present callbacks; application construction,
+        // layout, and frame production stay in shared Rust.
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         #[unsafe(no_mangle)]
-        pub extern "C" fn whisker_app_main(
-            engine: *mut ::std::ffi::c_void,
-            request_frame: ::std::option::Option<
-                extern "C" fn(*mut ::std::ffi::c_void),
-            >,
+        pub extern "C" fn whisker_view_create(
+            width: f32,
+            height: f32,
+            scale: f32,
+            request_frame: extern "C" fn(*mut ::std::ffi::c_void),
             request_frame_data: *mut ::std::ffi::c_void,
-        ) {
-            ::whisker::__main_runtime::run(
-                engine,
+            bootstrap: ::whisker::__mobile_abi::BootstrapCallback,
+            bootstrap_data: *mut ::std::ffi::c_void,
+            measure: ::whisker::__mobile_abi::MeasureCallback,
+            measure_data: *mut ::std::ffi::c_void,
+            present_frame: ::whisker::__mobile_abi::PresentFrameCallback,
+            present_frame_data: *mut ::std::ffi::c_void,
+            invoke_module: ::whisker::__mobile_module::InvokeModuleCallback,
+            observe_module: ::whisker::__mobile_module::ObserveModuleCallback,
+            module_data: *mut ::std::ffi::c_void,
+        ) -> *mut ::std::ffi::c_void {
+            ::whisker::__mobile_runtime::create(
+                width,
+                height,
+                scale,
                 request_frame,
                 request_frame_data,
+                bootstrap,
+                bootstrap_data,
+                measure,
+                measure_data,
+                present_frame,
+                present_frame_data,
+                invoke_module,
+                observe_module,
+                module_data,
                 __whisker_app_dispatch,
-                __whisker_app_hash_dispatch,
-            );
+            )
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         #[unsafe(no_mangle)]
-        pub extern "C" fn whisker_tick(engine: *mut ::std::ffi::c_void) -> bool {
-            ::whisker::__main_runtime::tick(engine)
+        pub unsafe extern "C" fn whisker_view_tick(
+            handle: *mut ::std::ffi::c_void,
+            timestamp_ms: f64,
+            width: f32,
+            height: f32,
+            scale: f32,
+        ) -> bool {
+            unsafe {
+                ::whisker::__mobile_runtime::tick(
+                    handle,
+                    timestamp_ms,
+                    width,
+                    height,
+                    scale,
+                )
+            }
+        }
+
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn whisker_view_destroy(
+            handle: *mut ::std::ffi::c_void,
+        ) {
+            unsafe { ::whisker::__mobile_runtime::destroy(handle) }
+        }
+
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn whisker_view_dispatch_event(
+            handle: *mut ::std::ffi::c_void,
+            timestamp_ms: f64,
+            node: u64,
+            name: *const u8,
+            name_len: usize,
+            detail: *const ::whisker::__mobile_abi::WhiskerValueRaw,
+        ) -> bool {
+            unsafe {
+                ::whisker::__mobile_runtime::dispatch_event(
+                    handle,
+                    timestamp_ms,
+                    node,
+                    name,
+                    name_len,
+                    detail,
+                )
+            }
+        }
+
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn whisker_view_dispatch_module_event(
+            handle: *mut ::std::ffi::c_void,
+            module: *const u8,
+            module_len: usize,
+            event: *const u8,
+            event_len: usize,
+            payload: *const ::whisker::__mobile_abi::WhiskerValueRaw,
+        ) -> bool {
+            unsafe {
+                ::whisker::__mobile_runtime::dispatch_module_event(
+                    handle,
+                    module,
+                    module_len,
+                    event,
+                    event_len,
+                    payload,
+                )
+            }
         }
 
         // Anchor symbol the vendored subsecond fork uses to compute
@@ -191,9 +337,8 @@ pub(crate) fn fnv1a64(s: &str) -> u64 {
 /// ```
 ///
 /// See `crates/whisker-macros/src/render.rs` for the full kwarg
-/// grammar. Dynamic values flow through `Signal<T>` props; bare
-/// `{expr}` blocks inside a children list are rejected (use
-/// `text(value: <expr>)` instead).
+/// grammar. Children may be components, string literals, or `{expr}` values;
+/// the Rust renderer validates them against the parent's child policy.
 #[proc_macro]
 pub fn render(input: TokenStream) -> TokenStream {
     render::expand(input)
@@ -281,8 +426,11 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Declare a Whisker-side wrapper for a Lynx-registered view module's element.
 ///
 /// ```ignore
-/// #[whisker::module_component("Hello")]
-/// pub fn hello(style: Signal<String>) -> Element;
+/// #[whisker::module_component(
+///     name = "example.ui/Hello",
+///     measurement = None,
+/// )]
+/// pub fn hello(style: Signal<String>) {}
 /// ```
 ///
 /// Generates the same Props + builder + PascalCase-alias surface as
@@ -294,13 +442,19 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// helpers built-in tags use, so a `Signal::Dynamic` prop transparently
 /// effect-wraps the attribute write.
 ///
-/// The tag string passed to Lynx at runtime is
-/// `<cargo-crate-name>:<attr-tag>` — the macro auto-prepends
-/// `env!("CARGO_PKG_NAME")` so two unrelated module packages can
-/// both declare a component named `Hello` without colliding in
-/// Lynx's behaviour registry. The matching platform-side
-/// `@WhiskerModule` DSL `Name(...)` is namespaced the same way by
-/// the per-platform codegen.
+/// `name` is the stable, versionless identity shared by Rust authoring and
+/// independently compiled platform `WhiskerModule` declarations. Bootstrap
+/// validates the strings and binds them to Rust-assigned compact IDs.
+/// Properties and events receive generated numeric IDs from the function
+/// signature. `Children` selects ordinary element children and
+/// `TextChildren` selects normalized plain-text content.
+/// The generated builder implements Whisker's common `ElementBuilder` API,
+/// so universal authoring features such as `style`, `id`, accessibility,
+/// gestures, and `ref` can be used without adding component-specific schema
+/// entries. A declared `style` parameter remains supported for compatibility
+/// and is excluded from the schema.
+/// The legacy string-literal form remains available while existing Lynx
+/// modules migrate.
 ///
 /// Imperative methods on a mounted element are dispatched through
 /// the element's `ElementRef` (`ref:` prop) via
@@ -320,4 +474,16 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn module_component(attr: TokenStream, item: TokenStream) -> TokenStream {
     module_component::expand(attr.into(), item.into()).into()
+}
+
+/// Declares the schema half of a Whisker built-in component.
+///
+/// This internal macro accepts the same `name`, `measurement`, and function
+/// signature model as [`module_component`], but deliberately does not generate
+/// an authoring builder. Whisker's built-in builders retain their specialized
+/// lowering and bind the generated schema to an internal `ElementTag`.
+#[doc(hidden)]
+#[proc_macro_attribute]
+pub fn builtin_component(attr: TokenStream, item: TokenStream) -> TokenStream {
+    module_component::expand_builtin(attr.into(), item.into()).into()
 }

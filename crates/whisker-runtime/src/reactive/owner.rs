@@ -325,7 +325,7 @@ impl Owner {
             true
         });
         if any_resumed {
-            crate::host_wake::wake_runtime();
+            crate::runtime_wake::wake_runtime();
         }
     }
 

@@ -1,34 +1,11 @@
-// Android event-subscription wiring.
-//
-// Sits between the Rust subscription API (`PlatformModule::on_event`)
-// and the `Module` author's `Events("name")` +
-// `OnStartObserving` / `OnStopObserving` DSL.
-//
-// ## Roles
-//
-// 1. **sendEvent dispatch.** `Module.sendEvent(name, payload)` calls
-//    [dispatchSend], which routes through JNI into
-//    `whisker_bridge_module_send_event`. The bridge synchronously
-//    fans the payload out to every Rust subscriber registered against
-//    `(module.qualifiedName, event)`.
-//
-// 2. **Observer-hook routing.** When a `Module` is registered, the
-//    KSP-generated code calls [register]. The center stores a
-//    `qualifiedName → Module` mapping and (via a JNI native method)
-//    asks the C++ bridge to point its per-module observer hooks at
-//    the shared trampolines below. The trampolines route incoming
-//    `(module, event)` events back to the matching `Module`'s
-//    `fireOnStartObserving` / `fireOnStopObserving`.
+// Android module event routing. The active Host installs a Kotlin sink rather
+// than requiring modules to know about a JNI or renderer implementation.
 
 package rs.whisker.runtime
 
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Process-wide dispatcher + observer-hook router. All public
- * entry points are `@JvmStatic` so the C++ JNI bridge can
- * invoke them via a single cached `jmethodID`.
- */
+/** Process-wide module registry and Host-injected event sink. */
 public object WhiskerModuleEventCenter {
 
     /**
@@ -37,42 +14,37 @@ public object WhiskerModuleEventCenter {
      * `(module, event)` event.
      */
     private val modulesByName = ConcurrentHashMap<String, Module>()
+    @Volatile
+    private var eventSink: ((String, String, WhiskerValue) -> Unit)? = null
 
     /**
-     * Register [module] with the event center. The KSP-generated
-     * `_whiskerRegisterModules()` calls this after assigning
-     * `module.qualifiedName`. Idempotent — re-registering replaces
-     * the previous entry (useful for hot-reload).
+     * Register [module] after its qualified name has been assigned.
+     * Idempotent — re-registering replaces the previous entry.
      */
     @JvmStatic
     public fun register(module: Module) {
         val qname = module.qualifiedName ?: return
         modulesByName[qname] = module
-        // Wire the C++ bridge's per-module observer hooks for this
-        // module. The native side stores a `(module → started,
-        // stopped)` table and fires the shared trampolines below.
-        nativeRegisterObserverHooks(qname)
     }
 
-    /**
-     * Encode [payload] and dispatch through the bridge. Called by
-     * [Module.sendEvent].
-     */
+    /** Install the event consumer owned by the active Whisker Host. */
+    @JvmStatic
+    public fun installEventSink(sink: ((String, String, WhiskerValue) -> Unit)?) {
+        eventSink = sink
+    }
+
+    /** Forward a module event to the active Host, if one is installed. */
     internal fun dispatchSend(
         moduleName: String,
         eventName: String,
         payload: WhiskerValue,
     ) {
-        nativeSendEvent(moduleName, eventName, payload)
+        eventSink?.invoke(moduleName, eventName, payload)
     }
 
     /**
-     * JNI trampoline target — invoked by the C++ bridge when a
-     * `(module, event)` listener count goes 0 → 1. Looks up the
-     * `Module` and fires every matching `OnStartObserving` closure.
-     *
-     * `@JvmStatic` + a flat name so the bridge can cache one
-     * `jmethodID` via `GetStaticMethodID`.
+     * Notify the registered module that its listener count changed 0 → 1.
+     * Hosts call this when wiring Rust-side subscriptions.
      */
     @JvmStatic
     public fun fireStart(moduleName: String, eventName: String) {
@@ -85,29 +57,4 @@ public object WhiskerModuleEventCenter {
         modulesByName[moduleName]?.fireOnStopObserving(eventName)
     }
 
-    // ----- Native methods --------------------------------------------------
-    //
-    // The C++ implementations live in
-    // `crates/whisker-driver-sys/bridge/src/whisker_bridge_android.cc`
-    // and follow the standard `Java_<fq-class>_<method>` JNI naming
-    // convention (no `RegisterNatives` call needed).
-
-    /**
-     * Tell the bridge to point its per-module observer hooks for
-     * [qualifiedName] at the shared trampolines that ultimately
-     * route back into [fireStart] / [fireStop].
-     */
-    @JvmStatic
-    private external fun nativeRegisterObserverHooks(qualifiedName: String)
-
-    /**
-     * Synchronously fan [payload] out to every Rust subscriber of
-     * `(qualifiedName, eventName)` via the C bridge.
-     */
-    @JvmStatic
-    private external fun nativeSendEvent(
-        qualifiedName: String,
-        eventName: String,
-        payload: WhiskerValue,
-    )
 }

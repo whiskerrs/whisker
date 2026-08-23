@@ -101,7 +101,7 @@ pub fn drain_runtime_dispatches() {
         };
         callback();
     }
-    crate::host_wake::wake_runtime();
+    crate::runtime_wake::wake_runtime();
     eprintln!(
         "whisker-runtime: UI dispatch exceeded {DISPATCH_CAP} callbacks; deferring the remainder"
     );

@@ -146,8 +146,8 @@ impl DynRenderer for RecordingRenderer {
             name: name.into(),
         });
     }
-    fn set_root(&self, page: Element) {
-        self.ops.borrow_mut().push(Op::SetRoot { id: page.id() });
+    fn set_root(&self, root: Element) {
+        self.ops.borrow_mut().push(Op::SetRoot { id: root.id() });
     }
     fn flush(&self) {
         self.ops.borrow_mut().push(Op::Flush);

@@ -33,10 +33,13 @@ package rs.whisker.modules.safe_area
 import android.app.Activity
 import androidx.core.view.WindowInsetsCompat
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerInsetsDispatcher
 import rs.whisker.runtime.WhiskerValue
 
+
+@WhiskerModule
 public class SafeAreaModule : Module() {
 
     /**

@@ -29,9 +29,12 @@ changes since the last accepted scene revision, so Whisker does not send the
 whole screen every frame.
 
 The renderer is an ordinary runtime module implementing
-`whisker.renderer@1`. UI modules are ordinary modules that contribute element
-types. Individual `View`, `Text`, or custom-view instances are scene nodes, not
-module instances.
+`whisker.renderer@1`. UI modules contribute element types through the narrow
+provider contract refined by
+[RFC 0004](0004-native-modules-and-host-elements.md). The scene coordinator,
+style resolution, Taffy layout, frame generation, measurement transaction,
+and event propagation remain Whisker core. Individual `View`, `Text`, or
+custom-view instances are scene nodes, not module instances.
 
 ## Motivation
 
@@ -139,7 +142,7 @@ the corresponding Android, UIKit, or DOM clip.
 | Desktop v1 | Native Rust | Native Rust | Whisker-owned window and GPU renderer |
 
 Desktop v1 links the Whisker runtime and the Desktop Host into the same native
-Rust process. The runtime calls `MeasurementHost::measure_batch` and
+Rust process. The runtime calls `MeasurementProvider::measure_batch` and
 `FrameSink::present(&FramePacket)` directly through typed Rust interfaces. A
 normal frame therefore requires neither packet serialization nor an FFI, WASM,
 JavaScript, WebView, command-channel, or process boundary.
@@ -164,7 +167,7 @@ The native frame path is:
 ```text
 window event/frame callback
   -> Whisker runtime scheduler
-       -> MeasurementHost::measure_batch(...) on cache misses
+       -> MeasurementProvider::measure_batch(...) on cache misses
        -> Taffy layout and frame preparation
        -> FrameSink::present(&FramePacket)
             -> DesktopSurface accepts Host projection
@@ -434,18 +437,18 @@ An element instance is a scene node identified by `NodeId`. Thousands of nodes
 may be created from one registered element type. Nodes follow scene lifecycle,
 not module-registry lifecycle.
 
-### Module dependency graph
+### Composition graph
 
 UI modules do not require a concrete renderer and do not call `present`,
-`measure_batch`, or Host factories. The Scene Runtime is the coordinator that
-requires both sides:
+`measure_batch`, or Host factories. Whisker core is the coordinator that binds
+both sides. It may use the module registry to resolve providers without making
+the scene engine itself a third-party-replaceable module:
 
 ```text
-Application Module
+Application
     |
-    | requires exactly one SceneV1
     v
-Scene Runtime Module
+Whisker Core Scene
     |
     | requires exactly one RendererV1
     +---------------------------> DOM / Android / iOS Renderer
@@ -457,17 +460,12 @@ Scene Runtime Module
     `---------------------------> Video Module
 ```
 
-Conceptually, the Scene Runtime declares:
+Conceptually, core requests these provider collections during bootstrap:
 
 ```rust,ignore
-ModuleDescriptor {
-    id: "whisker.scene",
-    provides: [interface("whisker.scene", "1")],
-    requires: [
-        exactly_one("whisker.renderer", "^1"),
-        many("whisker.element-provider", "^1"),
-    ],
-    lifecycle: LifecycleScope::Surface,
+ProviderRequirements {
+    renderer: exactly_one("whisker.renderer", "^1"),
+    elements: many("whisker.element-provider", "^1"),
 }
 ```
 
@@ -483,24 +481,23 @@ ModuleDescriptor {
 }
 ```
 
-The registry starts the renderer and element providers before the Scene
-Runtime, then starts the Application module. The Scene Runtime collects the
-schemas, validates duplicate canonical element keys, and passes registrations
-to the resolved renderer. Shutdown occurs in reverse order.
+The registry starts the renderer and element providers before core starts the
+Application. Core collects the schemas, validates duplicate canonical element
+keys, and passes registrations to the resolved renderer. Shutdown occurs in
+reverse order.
 
-The renderer does not resolve the Scene Runtime to send events back. During
-`attach_surface`, the Scene Runtime passes a typed `RendererEventSink`. This
-keeps the registry graph directed and avoids a `Scene -> Renderer -> Scene`
-cycle:
+The renderer does not resolve core to send events back. During
+`attach_surface`, core passes a typed `RendererEventSink`. This keeps the
+registry graph directed and avoids a `Core -> Renderer -> Core` cycle:
 
 ```text
-Scene --requires RendererV1---------> Renderer
-Scene --passes RendererEventSink----> Renderer
-Scene <-------events through sink---- Renderer
+Core --requires RendererV1---------> Renderer
+Core --passes RendererEventSink----> Renderer
+Core <-------events through sink---- Renderer
 ```
 
 Likewise, the renderer does not resolve `ElementProvider` modules itself. It
-receives normalized `ElementRegistration` values from the Scene Runtime. This
+receives normalized `ElementRegistration` values from core. This
 keeps provider discovery, duplicate detection, and schema policy in Rust while
 the renderer remains responsible for binding schemas to Host factories.
 
@@ -549,7 +546,7 @@ generated binding may use function tables, FFI functions, JNI methods, or
 WASM imports. The semantics and ordering remain the same.
 
 The native Rust implementation may expose the measurement and presentation
-parts as the narrower `MeasurementHost` and `FrameSink` traits and compose them
+parts as the narrower `MeasurementProvider` and `FrameSink` traits and compose them
 at the surface boundary. This is the Desktop v1 path and avoids a transport
 adapter without weakening the information-level `RendererV1` contract.
 
@@ -559,7 +556,7 @@ to JNI arrays, C-compatible tables, or WASM linear-memory views without an
 intermediate encoding. Each generated transport must round-trip the shared
 Rust conformance fixtures and preserve the batch validation rules. This keeps
 transport allocation and binary-format versioning out of the common hot path
-while `MeasurementHost` remains the final common Rust-facing seam.
+while `MeasurementProvider` remains the final common Rust-facing seam.
 
 `attach_surface` attaches to a Host root already supplied by bootstrap; it does
 not require Rust to create an operating-system window. `RendererEventSink` is
@@ -701,7 +698,7 @@ and presents one packet before the Desktop Host builds and submits GPU work:
 ```text
 native window frame callback
   -> Rust motion/reactivity/style
-  -> direct MeasurementHost::measure_batch(...) on cache misses
+  -> direct MeasurementProvider::measure_batch(...) on cache misses
   -> Taffy layout and frame preparation
   -> direct FrameSink::present(&FramePacket)
        -> update DesktopSurface Host projection
@@ -759,8 +756,9 @@ FramePacket
 `- optional diagnostics table in debug builds
 ```
 
-It does not serialize a `Vec<WhiskerValue>` per property and does not encode
-method names in the hot path. WASM JavaScript reads a borrowed `Uint8Array`
+It does not encode method names or issue a dynamic module call per property.
+The semantic model uses the shared `WhiskerValue` tagged union while the packed
+transport stores repeated and variable-size values in tables. WASM JavaScript reads a borrowed `Uint8Array`
 view over linear memory during `present`; native bindings receive a borrowed
 pointer and length. The packet is valid only for the synchronous duration of
 `present` unless a provider explicitly copies it.
@@ -794,6 +792,7 @@ Paint and content
   SetBoxPaint(node, background, borders, radii)
   SetShadow(node, shadow)
   SetText(node, text_run)
+  SetTextStyle(node, resolved_text_style)
   SetImage(node, resource)
   SetProperty(node, property_id, typed_value)
   ClearProperty(node, property_id)
@@ -839,33 +838,30 @@ packet operations while unchanged. An idle application requests no frames.
 
 An element provider defines what an element *is*; it does not implement common
 style resolution, limited text-property inheritance, layout, or paint
-properties. The Scene Runtime connects independent style and layout services
-with element providers and the renderer:
+properties. Whisker core connects its style and layout subsystems with element
+providers and the renderer:
 
 ```text
 ElementProvider modules -------+
-Style Engine ------------------+--> Scene Runtime --> FramePacket --> Renderer
+Style Engine ------------------+--> Whisker Core --> FramePacket --> Renderer
 Layout Engine -----------------+
 ```
 
-Element schemas declare semantic traits used by the common style system:
+RFC 0004 supersedes the original public content-category sketch. The common
+module declaration contains identity, intrinsic measurement, and generated
+property/event/command members:
 
 ```rust,ignore
-enum ElementTrait {
-    Box,
-    Container,
-    TextContent,
-    Replaced,
-    ScrollContainer,
-    HitTestable,
-    Accessible,
-}
+#[whisker::module_component(
+    name = "example.controls/Toggle",
+    measurement = None,
+)]
+pub fn toggle(checked: Signal<bool>, on_change: ChangeEvent) {}
 ```
 
-The final trait set belongs to RFC 0003. The boundary is fixed here: a `View`
-can declare `Box + Container`, `Text` can declare `Box + TextContent`, and
-`Image` or `Video` can declare `Box + Replaced`; the common Style Engine uses
-those declarations to determine property applicability.
+Child acceptance is inferred from a `Children` parameter; the Host definition
+owns the actual mount target. Built-in text may retain private renderer
+capabilities, but public schemas do not expose content or child-mount enums.
 
 Common typed style properties such as width, padding, background, opacity,
 transform, border, and clip are not repeated in each element schema. An
@@ -894,7 +890,7 @@ Conceptually, `View` declares:
 
 ```rust,ignore
 ElementSchema {
-    key: "whisker.ui/View@1",
+    key: "whisker.ui/View",
     children: ChildrenPolicy::Multiple,
     measure: MeasurePolicy::None,
     properties: &[ACCESSIBILITY_LABEL, POINTER_EVENTS, FOCUSABLE],
@@ -911,7 +907,7 @@ scene node:
 
 ```text
 whisker.ui.primitives module instance
-  `- element type whisker.ui/View@1
+  `- element type whisker.ui/View
        |- NodeId 41
        |- NodeId 42
        `- NodeId 43
@@ -946,7 +942,7 @@ whisker-video package
 |- Rust declarative component API
 |- Rust typed ElementHandle, props, events, and commands
 |- runtime module providing an ElementProvider
-|- versioned whisker.video/Video@1 element schema
+|- canonical whisker.video/Video element schema
 |- Android Host element factory
 |- iOS Host element factory
 |- JavaScript Host element factory
@@ -1009,7 +1005,8 @@ module and plugin declarations.
 ### Module-author contract
 
 A module author declares a canonical element key and typed properties, events,
-commands, measurement policy, child policy, and traits. The exact macro syntax
+commands, presentation/content category, measurement policy, and child policy.
+The exact macro syntax
 is deliberately not fixed by this RFC; conceptually the declaration produces:
 
 - the Rust component builder and props;
@@ -1024,9 +1021,10 @@ An illustrative generated schema is:
 
 ```rust,ignore
 ElementSchema {
-    key: "whisker.video/Video@1",
-    traits: &[BOX, REPLACED, ACCESSIBLE, MEDIA],
+    key: "whisker.video/Video",
+    presentation: Presentation::Box,
     children: ChildrenPolicy::None,
+    content: Content::Native,
     measure: MeasurePolicy::FixedAspectRatioOrHostIntrinsic,
     properties: &[
         VIDEO_SOURCE,
@@ -1050,8 +1048,8 @@ ElementSchema {
 
 Source, autoplay, muted, looping, controls, and playback rate are
 element-specific properties. Width, height, aspect ratio, object fit, opacity,
-transform, border radius, and clip are common styles supplied by the traits and
-the Style Engine.
+transform, border radius, and clip are common styles supplied by the closed
+semantic channels and the Style Engine.
 
 ### Typed updates, events, and commands
 
@@ -1091,12 +1089,14 @@ Every supported target provides a factory conforming to the generated element
 binding. At the information level it implements:
 
 ```rust,ignore
+trait HostElementMeasurer {
+    fn measure(&mut self, request: &MeasurementRequest) -> MeasurementResponse;
+}
+
 trait HostElementFactory {
     fn create(&mut self, context: ElementContext) -> HostElement;
     fn apply_properties(&mut self, element: &mut HostElement, patch: PropertyPatch);
     fn invoke_command(&mut self, element: &mut HostElement, command: Command);
-    fn measure(&mut self, element: &HostElement, request: MeasureRequest)
-        -> MeasureResponse;
     fn destroy(&mut self, element: HostElement);
 }
 ```
@@ -1104,12 +1104,16 @@ trait HostElementFactory {
 This is a cross-language behavioral shape, not a Rust trait that Kotlin,
 Swift, or JavaScript literally implements. Binding generation supplies native
 typed payloads and verifies the common schema so authors do not manually keep
-wire IDs synchronized.
+wire IDs synchronized. Measurement is separate because layout can need an
+answer before the first `CreateNode` has created a live Host element. The
+measurer receives all content, property, resolved-text-style, constraint, and
+environment inputs in the request and may share prepared resources with the
+later factory through `PreparedContentId`.
 
 The same element key can map to different concrete objects:
 
 ```text
-whisker.video/Video@1
+whisker.video/Video
   Android -> PlayerView / Media3 player
   iOS     -> AVPlayerLayer-backed UIView
   Web     -> HTMLVideoElement
@@ -1126,14 +1130,14 @@ and generated registration to be included in Project IR. At runtime:
 
 ```text
 Video module
-  -> provides ElementSchema("whisker.video/Video@1")
+  -> provides ElementSchema("whisker.video/Video")
 
-Scene Runtime
+Whisker Core
   -> collects and normalizes the schema
   -> Renderer.register_elements(...)
 
 Host Renderer
-  -> looks up embedded Host factory by canonical key and major version
+  -> looks up embedded Host factory by name
   -> verifies supported properties, events, commands, and measurement
   -> assigns compact ElementTypeId::VIDEO
 ```
@@ -1193,7 +1197,7 @@ composition fails. It must not silently emit an empty view or ignore commands:
 
 ```text
 cannot compose target `web`:
-  whisker.video/Video@1 is selected
+  whisker.video/Video is selected
   available Host providers: android, ios
   missing Host provider: web
 ```
@@ -1239,7 +1243,7 @@ None             Rust constraints determine size; no Host query
 HostIntrinsic    Host measures under Rust-provided constraints
 FixedAspectRatio Rust layout uses provider metadata
 DeferredResource size may become known after a resource event
-Custom           versioned element-specific measurement payload
+Custom           typed element-specific measurement payload
 ```
 
 The request also carries a semantic provider category independent of the
@@ -1317,7 +1321,7 @@ and reports it as a provider error.
 
 The Host-independent semantic request/response types, typed built-in payloads,
 strict batch validator, retained engine state machine, and Rust-facing
-`MeasurementHost::measure_batch` seam are implemented. `SurfaceEngine` can
+`MeasurementProvider::measure_batch` seam are implemented. `SurfaceEngine` can
 drive all synchronous batches to a final Taffy layout before frame preparation
 and returns to the event boundary only for `Pending`. Plain UTF-8 Text v1 can
 now lower computed inherited text style into the shared measurement payload;
@@ -1333,11 +1337,28 @@ multiple instances on one UI thread. Instance-specific future wakers and
 `RuntimeDispatcher` cover idle async completion without a busy tick. Typed
 Host input is validated, hit-tested against the retained Rust scene, and routed
 through Rust capture and bubble listeners; synchronous re-entry is queued until
-the current event/frame boundary. The packed/generated platform ABI and the
-Android/UIKit retained renderers remain follow-up slices. CNG now produces
-Lynx-free, minimal Android and UIKit applications that `whisker run` can build,
-install, and launch; these shells do not yet mount `RuntimeInstance` or consume
-frame packets. Initial DOM and macOS Host slices now provide CNG composition
+the current event/frame boundary. Android and UIKit now have their first
+retained-renderer vertical slice: CNG emits Lynx-free native surfaces,
+`whisker run` builds and embeds the user Rust library/framework, and the Host
+mounts and ticks `RuntimeInstance` while consuming semantic View/Text frame
+operations. Android and iOS now use the same versioned, borrowed C ABI for
+bootstrap registrations, batched measurement, frame operations, element
+events, module calls, and module events. `WhiskerValueRaw` carries every
+open-ended value; no JSON serialization exists on this retained mobile path.
+The attach sequence is mount, synchronous registration negotiation, Host
+factory binding, then measurement/frame scheduling, so Host measurement is
+never requested against an unbound element table. UIKit text bounding and
+Android `StaticLayout` replace the original zero-size/estimated provider;
+module factories may supply the same pre-mount custom measurer and unsupported
+kinds return `Unsupported` rather than a successful zero size.
+
+Mobile frame application is revision-aware and transactional at the retained
+scene boundary. Each Host stages and validates the complete operation graph
+before mutating UIKit/Android views, returns `NeedSnapshot` on epoch or base
+revision drift, and acknowledges the committed target revision. Native events
+raised during commit are queued until the transaction exits, preventing
+synchronous Rust re-entry through a live borrowed frame. Initial DOM
+and macOS Host slices now provide CNG composition
 roots, Host-driven frame scheduling, measurement, and frame consumption; DOM
 cover the built-in box/text paint subset. The first Desktop implementation has
 been extracted to `platforms/desktop`: it retains accepted packets in a native
@@ -1463,7 +1484,7 @@ architecture.
 Recoverable protocol outcomes include:
 
 - `Accepted { revision }`;
-- `NeedSnapshot { host_revision }`;
+- `NeedSnapshot { receiver_revision }`;
 - `SurfaceUnavailable`;
 - `UnsupportedElement` or `UnsupportedProperty` detected before mutation;
 - malformed packet or protocol-version failure.
@@ -1626,7 +1647,7 @@ how server-emitted presentation relates to Rust-resolved interactive styling.
 | Lynx frame/tick | Host `Frame` event feeding the Rust scheduler |
 | `bounding_client_rect` Host query | Read Rust layout for ordinary geometry; explicit Host query only where necessary |
 | Lynx element methods | Typed element commands ordered in the frame protocol |
-| Native `ModuleDefinition.View` / `Prop` | Host element factory and versioned element schema registration |
+| Native `ModuleDefinition.View` / `Prop` | Host element factory and canonical element schema registration |
 | Lynx CSS animation and imperative extension | Rust motion updating typed property slots before packet generation |
 | Lynx text/layout | Taffy layout plus batched Host intrinsic measurement |
 
@@ -1658,7 +1679,7 @@ how server-emitted presentation relates to Rust-resolved interactive styling.
 9. Complete Desktop capability coverage for hierarchical accessibility, group
    compositing, filters, path clipping, and external surfaces without leaking
    Desktop render types into the common protocol.
-10. Migrate custom UI modules to versioned element schemas, generated Host
+10. Migrate custom UI modules to canonical element schemas, generated Host
    factories, and typed commands.
 11. Remove the separate legacy Lynx production path, C++ bridge, fork artifacts,
    and obsolete distribution paths after Host conformance and visual parity are
@@ -1680,9 +1701,9 @@ how server-emitted presentation relates to Rust-resolved interactive styling.
    boundary. Neither crosses native-process IPC.
 10. Host-dependent measurement is batched, keyed, cached, and epoch-validated.
 11. Renderer and protocol behavior can be tested with a Rust-only provider.
-12. The Scene Runtime, not UI modules, requires and coordinates the renderer.
+12. Whisker core, not UI modules, requires and coordinates the renderer.
 13. Renderer callbacks use the event sink passed during binding and do not
-    create a reverse registry dependency on the Scene Runtime.
+    create a reverse registry dependency on core.
 14. A third-party UI element uses the same schema registration, frame,
     measurement, event, and command paths as a built-in element.
 15. A Host `WhiskerView` is a surface/bootstrap container, not a scene element
@@ -1708,8 +1729,8 @@ The following must be resolved before this RFC becomes `Accepted`:
 - whether accessibility uses frame operations or a separately versioned but
   transaction-linked semantics packet;
 - command cancellation and result ordering when an element is deleted;
-- the final standard `ElementTrait` and typed custom-property contracts, which
-  RFC 0003 must define consistently with this boundary;
+- the final normalized element-category encoding and typed custom-property
+  contracts, consistently with RFC 0004's public domain vocabulary;
 - debug symbol-table format for compact element, property, event, and command
   IDs;
 - hydration and event attachment requirements for a future SSR DOM renderer;

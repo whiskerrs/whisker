@@ -1,0 +1,76 @@
+package rs.whisker.runtime
+
+import android.content.Context
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ScrollView
+import kotlin.math.ceil
+import kotlin.math.max
+
+/**
+ * Concrete ViewGroup used by Whisker containers.
+ *
+ * Rust owns every node's geometry. This class deliberately implements no
+ * Android layout policy: it measures children from their assigned dimensions
+ * and lays them out at the origin, preserving the x/y translation supplied by
+ * the retained scene.
+ */
+public open class WhiskerContainerView(context: Context) : ViewGroup(context) {
+    init {
+        clipChildren = false
+        clipToPadding = false
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        var contentWidth = suggestedMinimumWidth
+        var contentHeight = suggestedMinimumHeight
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            if (child.visibility == View.GONE) continue
+            val params = child.layoutParams
+            val childWidth = if (params.width >= 0) {
+                params.width
+            } else {
+                MeasureSpec.getSize(widthMeasureSpec)
+            }
+            val childHeight = if (params.height >= 0) {
+                params.height
+            } else {
+                MeasureSpec.getSize(heightMeasureSpec)
+            }
+            child.measure(
+                MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(childHeight, MeasureSpec.EXACTLY),
+            )
+            contentWidth = max(contentWidth, ceil(child.x + child.measuredWidth).toInt())
+            contentHeight = max(contentHeight, ceil(child.y + child.measuredHeight).toInt())
+        }
+        setMeasuredDimension(
+            resolveSize(contentWidth, widthMeasureSpec),
+            resolveSize(contentHeight, heightMeasureSpec),
+        )
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            if (child.visibility != View.GONE) {
+                child.layout(0, 0, child.measuredWidth, child.measuredHeight)
+            }
+        }
+    }
+}
+
+/** Native vertical scroll container with a dedicated multi-child content host. */
+public class WhiskerScrollContainerView(context: Context) : ScrollView(context) {
+    public val contentView: WhiskerContainerView = WhiskerContainerView(context)
+
+    init {
+        isFillViewport = true
+        clipToPadding = false
+        addView(
+            contentView,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
+        )
+    }
+}

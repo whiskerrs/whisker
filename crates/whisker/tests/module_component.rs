@@ -132,7 +132,160 @@ pub fn x_typed_input(on_change: ::whisker::event::TouchEvent) {}
 #[whisker::module_component("x-container")]
 pub fn x_container(style: Signal<String>, children: ::whisker::Children) {}
 
+#[whisker::module_component(
+    name = "whisker.test/GeneratedSchema",
+    measurement = Custom,
+)]
+pub fn generated_schema(
+    enabled: Signal<bool>,
+    label: Signal<String>,
+    style: whisker::Style,
+    on_change: ::whisker::event::CustomEvent,
+    children: ::whisker::Children,
+) {
+}
+
+#[whisker::module_component(
+    name = "whisker.test/NativeLabel",
+    measurement = Text,
+)]
+pub fn native_label(children: ::whisker::TextChildren) {}
+
 // ---- Tests -----------------------------------------------------------------
+
+#[test]
+fn named_form_generates_the_host_independent_schema_and_ids() {
+    let provider = generated_schema_schema::element_provider();
+    assert_eq!(provider.schema, generated_schema_schema::schema());
+    assert_eq!(provider.schema.name, generated_schema_schema::NAME);
+    assert_eq!(provider.schema.name, "whisker.test/GeneratedSchema");
+    assert_eq!(provider.schema.child_policy, whisker::ChildPolicy::Elements);
+    assert_eq!(
+        provider.schema.measurement,
+        whisker::ElementMeasurement::Custom
+    );
+    assert_eq!(provider.schema.properties.len(), 2);
+    assert_eq!(
+        provider.schema.properties[0].property,
+        generated_schema_schema::ENABLED_PROPERTY
+    );
+    assert_eq!(
+        provider.schema.properties[0].value,
+        whisker::ElementValueKind::Bool
+    );
+    assert_eq!(
+        provider.schema.properties[1].property,
+        generated_schema_schema::LABEL_PROPERTY
+    );
+    assert_eq!(
+        provider.schema.properties[1].value,
+        whisker::ElementValueKind::String
+    );
+    assert_eq!(provider.schema.events.len(), 1);
+    assert_eq!(
+        provider.schema.events[0].event,
+        generated_schema_schema::CHANGE_EVENT
+    );
+    assert_eq!(provider.schema.events[0].detail, None);
+    assert!(provider.schema.commands.is_empty());
+    assert_eq!(provider.schema.validate(), Ok(()));
+}
+
+#[test]
+fn text_children_generate_plain_text_policy_and_mount_raw_text() {
+    assert_eq!(
+        native_label_schema::schema().child_policy,
+        whisker::ChildPolicy::PlainText
+    );
+
+    with_recorder_and_owner(|log| {
+        let _handle = render! { NativeLabel { "hello" } };
+        let operations = log.borrow();
+        assert!(operations.iter().any(|operation| matches!(
+            operation,
+            Op::Create {
+                tag: ElementTag::RawText,
+                ..
+            }
+        )));
+    });
+}
+
+#[test]
+fn named_form_uses_the_same_name_for_runtime_lookup() {
+    with_recorder_and_owner(|log| {
+        let _handle = render! {
+            GeneratedSchema(
+                enabled: true,
+                label: "generated",
+                on_change: |_event| {},
+            )
+        };
+        let names = log
+            .borrow()
+            .iter()
+            .filter_map(|operation| match operation {
+                Op::CreateByName { tag_name, .. } => Some(tag_name.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec![generated_schema_schema::NAME]);
+    });
+}
+
+#[test]
+fn module_component_builder_inherits_common_element_api() {
+    with_recorder_and_owner(|log| {
+        let _handle = render! {
+            GeneratedSchema(
+                enabled: true,
+                label: "generated",
+                style: "width: 10px;",
+                id: "generated-id",
+                accessibility_label: "Generated element",
+                on_tap: |_event| {},
+                on_change: |_event| {},
+            )
+        };
+        let operations = log.borrow();
+        assert!(operations.iter().any(|operation| matches!(
+            operation,
+            Op::SetAttr { key, value, .. }
+                if key == "id" && value == "generated-id"
+        )));
+        assert!(operations.iter().any(|operation| matches!(
+            operation,
+            Op::SetAttr { key, value, .. }
+                if key == "accessibility-label" && value == "Generated element"
+        )));
+        assert!(operations.iter().any(|operation| matches!(
+            operation,
+            Op::Event { name, .. } if name == "tap"
+        )));
+        assert!(operations.iter().any(|operation| matches!(
+            operation,
+            Op::Event { name, .. } if name == "change"
+        )));
+    });
+
+    let schema = generated_schema_schema::schema();
+    assert_eq!(
+        schema
+            .properties
+            .iter()
+            .map(|property| property.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["enabled", "label"]
+    );
+    assert_eq!(
+        schema
+            .events
+            .iter()
+            .map(|event| event.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["change"]
+    );
+}
 
 #[test]
 fn zero_props_creates_element_with_tag_name() {
@@ -151,6 +304,32 @@ fn zero_props_creates_element_with_tag_name() {
         // `concat!(env!("CARGO_PKG_NAME"), ":", tag)` resolves in this
         // integration-test crate to `whisker:x-zero-props`.
         assert_eq!(creates, vec!["whisker:x-zero-props".to_string()]);
+    });
+}
+
+#[test]
+fn zero_props_component_inherits_style_and_common_element_api() {
+    with_recorder_and_owner(|log| {
+        let _handle = render! {
+            XZeroProps(
+                style: "width: 12px;",
+                id: "zero-props",
+                on_tap: |_event| {},
+            )
+        };
+        let operations = log.borrow();
+        assert!(operations.iter().any(|operation| matches!(
+            operation,
+            Op::SetStyles { css, .. } if css == "width: 12px;"
+        )));
+        assert!(operations.iter().any(|operation| matches!(
+            operation,
+            Op::SetAttr { key, value, .. } if key == "id" && value == "zero-props"
+        )));
+        assert!(operations.iter().any(|operation| matches!(
+            operation,
+            Op::Event { name, .. } if name == "tap"
+        )));
     });
 }
 
@@ -254,10 +433,9 @@ fn read_signal_prop_tracks_underlying_signal() {
 }
 
 #[test]
-fn typed_signal_bool_serialises_via_to_string() {
-    // Pins that the macro's turbofish extracts `T = bool` from
-    // `Signal<bool>` rather than hardcoding String:
-    // `apply_attr::<_, bool>` stringifies to "true" / "false".
+fn typed_signal_bool_and_integer_use_typed_attribute_helpers() {
+    // The recorder's default typed setters forward to strings, retaining an
+    // observable value while the Surface renderer receives Bool/I64 values.
     with_recorder_and_owner(|log| {
         let (checked, set_checked) = signal(false).split();
         let _h = render! {

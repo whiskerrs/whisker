@@ -15,8 +15,8 @@
 import AVFoundation
 import Foundation
 import WhiskerModule
-import WhiskerRuntime
 
+@WhiskerModule
 public final class AudioModule: Module {
 
     /// Per-player state. Owned by the module, indexed by the id

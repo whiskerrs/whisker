@@ -5,7 +5,7 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
     whisker_web::run(
-        whisker_web::WebAppConfig::new({{app_title_rust}}),
+        whisker_web::WebAppConfig::new({{app_title_rust}}){{element_module_config}},
         whisker_app::__whisker_application,
     )
     .map_err(|error| JsValue::from_str(&error.to_string()))

@@ -1,0 +1,16 @@
+[package]
+name = "whisker-value"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Shared dynamic value model for Whisker module and Host boundaries."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

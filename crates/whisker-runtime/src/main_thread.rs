@@ -170,7 +170,7 @@ pub fn set_drive_callback(cb: Option<extern "C" fn()>) {
 /// writes, effect registrations, context lookups all work as if you
 /// were inside an event handler. Writes that mark new dependencies
 /// dirty will wake the host's render loop automatically (via
-/// `host_wake::wake_runtime` from the scheduler).
+/// `runtime_wake::wake_runtime` from the scheduler).
 ///
 /// After `f` runs, the [`trampoline`] drives the runtime directly (via
 /// the registered [`set_drive_callback`]) on this same main-thread
@@ -232,13 +232,13 @@ extern "C" fn trampoline(user_data: *mut c_void) {
     // An INLINE trampoline (see `MAIN_WORK_DEPTH`) must defer instead:
     // running `tick_frame` from inside one aborts.
     if main_work_in_progress() {
-        crate::host_wake::wake_runtime();
+        crate::runtime_wake::wake_runtime();
         return;
     }
     let drive = DRIVE.lock().ok().and_then(|g| *g);
     match drive {
         Some(cb) => cb(),
-        None => crate::host_wake::wake_runtime(),
+        None => crate::runtime_wake::wake_runtime(),
     }
 }
 
@@ -255,7 +255,7 @@ pub fn __reset_for_tests() {
 
 /// Shared serialisation lock for every test that touches the
 /// process-global host wiring (the main-thread dispatcher in this
-/// module and the frame-request callback in [`crate::host_wake`]).
+/// module and the frame-request callback in [`crate::runtime_wake`]).
 ///
 /// These globals are reset/installed by tests across SEVERAL modules
 /// (`main_thread`, `tasks`, `reactive::tests_resource`). A per-module

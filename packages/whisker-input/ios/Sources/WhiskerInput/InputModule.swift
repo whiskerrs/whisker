@@ -20,6 +20,7 @@
 
 import WhiskerModule
 
+@WhiskerModule
 public final class InputModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {

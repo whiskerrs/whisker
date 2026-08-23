@@ -7,8 +7,7 @@
 //! `[package.metadata.whisker]` table in its `Cargo.toml`. The
 //! Whisker CLI walks the consuming app's dep graph via `cargo
 //! metadata`, picks out every dependency carrying that table, and
-//! feeds the per-platform source paths through to the
-//! platform-specific build step.
+//! feeds each platform contribution through to its build system.
 //!
 //! This module is platform-neutral — it just produces the
 //! `ResolvedModule` list. `whisker-build::ios` and
@@ -32,8 +31,8 @@
 //!
 //! All paths are resolved relative to the directory containing the
 //! manifest (the crate's `Cargo.toml`). The resolver returns
-//! absolute paths so the downstream cc::Build / gradle invocations
-//! don't have to know about the module's source layout.
+//! absolute paths so downstream build-system integration does not
+//! have to know where Cargo originally found the module.
 
 use std::path::{Path, PathBuf};
 
@@ -57,6 +56,12 @@ pub struct ManifestRaw {
     pub ios: Option<IosSectionRaw>,
     #[serde(default)]
     pub android: Option<AndroidSectionRaw>,
+    /// Rust Desktop Host crate published beside the common module crate.
+    #[serde(default)]
+    pub desktop: Option<RustHostSectionRaw>,
+    /// Rust Web Host crate published beside the common module crate.
+    #[serde(default)]
+    pub web: Option<RustHostSectionRaw>,
     /// `[package.metadata.whisker.plugins.<name>]` entries —
     /// consumed by `whisker_cng::discovery`, not by the module
     /// system. Captured here as raw JSON so its presence doesn't
@@ -65,6 +70,18 @@ pub struct ManifestRaw {
     /// `whisker_cng::discovery::PluginEntryRaw`.
     #[serde(default)]
     pub plugins: Option<serde_json::Value>,
+}
+
+/// Published package identity for a Rust Host contribution.
+///
+/// A local checkout still discovers the nested manifest by convention. This
+/// declaration survives crates.io packaging, which deliberately excludes
+/// nested Cargo packages from the outer crate archive.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustHostSectionRaw {
+    /// Cargo package name of the separately published Host library.
+    pub package: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -122,6 +139,29 @@ pub struct ResolvedModule {
     /// for the Android build. Empty by default — most native_element
     /// modules use Kotlin, not JNI.
     pub android_jni_sources: Vec<PathBuf>,
+    /// Rust-native Desktop module contribution.
+    pub desktop: Option<ResolvedRustModuleContribution>,
+    /// Browser DOM module contribution.
+    pub web: Option<ResolvedRustModuleContribution>,
+}
+
+/// One existence-checked Rust Host library shipped inside a module package.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRustModuleContribution {
+    /// Cargo package name declared by the Host library.
+    pub package: String,
+    /// How the generated Host should depend on this library.
+    pub source: ResolvedRustHostSource,
+}
+
+/// Location of one Rust Host library after module discovery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedRustHostSource {
+    /// A nested crate present in a path or git checkout.
+    Path(PathBuf),
+    /// A separately published crate used when Cargo unpacked the outer module
+    /// without its nested packages.
+    Registry { version: String },
 }
 
 /// Walk the cargo dep graph of `app_package` (resolved at
@@ -139,11 +179,9 @@ pub struct ResolvedModule {
 /// - Metadata parse failure (`[package.metadata.whisker]` exists
 ///   but has unknown sections / fields) propagates with the
 ///   offending crate name attached.
-/// - Native-source path referenced in the table but not present
-///   on disk errors with the missing absolute path attached. We
-///   prefer eager failure over silently skipping — a missing source
-///   almost certainly means the module's metadata is out of sync
-///   with its `src/native/` layout.
+/// - Native-source path referenced in the table but not present on disk, or
+///   an invalid conventional `desktop/Cargo.toml` / `web/Cargo.toml`, errors
+///   eagerly rather than silently dropping a Host implementation.
 pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedModule>> {
     let metadata = MetadataCommand::new()
         .manifest_path(manifest_path)
@@ -228,6 +266,21 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
             serde_json::from_value(whisker_meta.clone()).with_context(|| {
                 format!("parse [package.metadata.whisker] in {}", pkg.manifest_path,)
             })?;
+        let package_version = pkg.version.to_string();
+        let desktop = resolve_rust_host_crate(
+            &pkg.name,
+            &package_version,
+            "desktop",
+            &manifest_dir,
+            manifest.desktop.as_ref(),
+        )?;
+        let web = resolve_rust_host_crate(
+            &pkg.name,
+            &package_version,
+            "web",
+            &manifest_dir,
+            manifest.web.as_ref(),
+        )?;
         let mut ios_swift: Vec<PathBuf> = Vec::new();
         if let Some(ios) = manifest.ios {
             for raw_path in ios.swift_sources {
@@ -277,6 +330,8 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
             ios_swift_sources: ios_swift,
             android_kotlin_sources: android_kotlin,
             android_jni_sources: android_jni,
+            desktop,
+            web,
         });
     }
 
@@ -284,6 +339,63 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
     // gradle / cargo don't re-run downstream tasks on a permutation.
     resolved.sort_by(|a, b| a.package.cmp(&b.package));
     Ok(resolved)
+}
+
+fn resolve_rust_host_crate(
+    package: &str,
+    package_version: &str,
+    target: &str,
+    manifest_dir: &Path,
+    published: Option<&RustHostSectionRaw>,
+) -> Result<Option<ResolvedRustModuleContribution>> {
+    if let Some(published) = published
+        && published.package.trim().is_empty()
+    {
+        return Err(anyhow!(
+            "module `{package}` metadata.whisker.{target}.package must not be empty"
+        ));
+    }
+    let cargo_toml = manifest_dir.join(target).join("Cargo.toml");
+    if !cargo_toml.is_file() {
+        return Ok(published.map(|published| ResolvedRustModuleContribution {
+            package: published.package.clone(),
+            source: ResolvedRustHostSource::Registry {
+                version: package_version.to_string(),
+            },
+        }));
+    }
+    let source = std::fs::read_to_string(&cargo_toml)
+        .with_context(|| format!("read {} Host manifest {}", target, cargo_toml.display()))?;
+    let manifest: toml::Value = toml::from_str(&source)
+        .with_context(|| format!("parse {} Host manifest {}", target, cargo_toml.display()))?;
+    let host_package = manifest
+        .get("package")
+        .and_then(|value| value.get("name"))
+        .and_then(toml::Value::as_str)
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "module `{package}` {target}/Cargo.toml must declare a non-empty [package].name"
+            )
+        })?;
+    if let Some(published) = published
+        && published.package != host_package
+    {
+        return Err(anyhow!(
+            "module `{package}` metadata.whisker.{target}.package is {:?}, but {target}/Cargo.toml declares package {:?}",
+            published.package,
+            host_package,
+        ));
+    }
+    let host_root = cargo_toml
+        .parent()
+        .expect("Cargo.toml has a parent")
+        .canonicalize()
+        .with_context(|| format!("canonicalize {} Host crate", cargo_toml.display()))?;
+    Ok(Some(ResolvedRustModuleContribution {
+        package: host_package.to_string(),
+        source: ResolvedRustHostSource::Path(host_root),
+    }))
 }
 
 /// Flatten every discovered module's Android Kotlin sources into a
@@ -525,4 +637,57 @@ fn hex(bytes: &[u8]) -> String {
         out.push_str(&format!("{b:02x}"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovers_rfc0004_rust_host_crates_by_convention() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .join("Cargo.toml");
+        let modules = discover(&workspace, "host-smoke").unwrap();
+        let toggle = modules
+            .iter()
+            .find(|module| module.package == "whisker-toggle")
+            .unwrap();
+        let desktop = toggle.desktop.as_ref().unwrap();
+        assert_eq!(desktop.package, "whisker-toggle-desktop-host");
+        assert!(matches!(
+            &desktop.source,
+            ResolvedRustHostSource::Path(path) if path.ends_with("whisker-toggle/desktop")
+        ));
+        let web = toggle.web.as_ref().unwrap();
+        assert_eq!(web.package, "whisker-toggle-web-host");
+        assert!(matches!(
+            &web.source,
+            ResolvedRustHostSource::Path(path) if path.ends_with("whisker-toggle/web")
+        ));
+    }
+
+    #[test]
+    fn published_rust_host_falls_back_to_the_outer_package_version() {
+        let contribution = resolve_rust_host_crate(
+            "whisker-toggle",
+            "1.2.3",
+            "desktop",
+            Path::new("/definitely/not/a/module/package"),
+            Some(&RustHostSectionRaw {
+                package: "whisker-toggle-desktop-host".into(),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(contribution.package, "whisker-toggle-desktop-host");
+        assert_eq!(
+            contribution.source,
+            ResolvedRustHostSource::Registry {
+                version: "1.2.3".into()
+            }
+        );
+    }
 }

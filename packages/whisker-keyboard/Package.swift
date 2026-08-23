@@ -22,13 +22,7 @@ let package = Package(
         .target(
             name: "WhiskerKeyboard",
             dependencies: [
-                // WhiskerModule provides the Module base + DSL;
-                // WhiskerRuntime is pulled for parity with the other
-                // module packages (and to keep the codegen plugin's
-                // generated registration compiling against the same
-                // runtime symbols).
                 .product(name: "WhiskerModule", package: "whisker"),
-                .product(name: "WhiskerRuntime", package: "whisker"),
             ],
             path: "ios/Sources/WhiskerKeyboard",
             plugins: [

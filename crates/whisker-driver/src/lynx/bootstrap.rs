@@ -7,7 +7,7 @@
 //!
 //! #[whisker::main]
 //! fn app() -> Element {
-//!     render! { page { text { "Hello" } } }
+//!     render! { view { text(value: "Hello") } }
 //! }
 //! ```
 //!
@@ -22,8 +22,8 @@
 //! 3. We invoke `app()`. The user's body runs `render!`, which
 //!    populates the Lynx element tree and returns an `Element`
 //!    for the root.
-//! 4. We call `view::set_root(root)` and `view::flush()` to commit
-//!    the initial frame.
+//! 4. We attach that root beneath the Lynx-required shell `page`, then
+//!    call `view::set_root(page)` and `view::flush()` to commit the frame.
 //!
 //! ## What happens on tick
 //!
@@ -155,7 +155,7 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     APP_ROOT_OWNER.with(|slot| {
         if let Some(prev) = slot.borrow_mut().take() {
             uninstall_renderer(None);
-            whisker_runtime::host_wake::set_request_frame_callback(None, std::ptr::null_mut());
+            whisker_runtime::runtime_wake::set_request_frame_callback(None, std::ptr::null_mut());
             whisker_runtime::main_thread::set_main_thread_dispatcher(None, std::ptr::null_mut());
             whisker_runtime::main_thread::set_drive_callback(None);
             prev.dispose();
@@ -171,7 +171,7 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // Wire host wake-up before we touch any reactive primitive — any
     // signal writes during the initial `app()` run (lazy state
     // initialisers, eager effects) need to schedule a frame correctly.
-    whisker_runtime::host_wake::set_request_frame_callback(
+    whisker_runtime::runtime_wake::set_request_frame_callback(
         ctx.request_frame,
         ctx.request_frame_data,
     );

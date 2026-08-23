@@ -39,10 +39,13 @@ import android.content.Context
 import android.view.inputmethod.InputMethodManager
 import androidx.core.view.WindowInsetsCompat
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerInsetsDispatcher
 import rs.whisker.runtime.WhiskerValue
 
+
+@WhiskerModule
 public class KeyboardModule : Module() {
 
     /**

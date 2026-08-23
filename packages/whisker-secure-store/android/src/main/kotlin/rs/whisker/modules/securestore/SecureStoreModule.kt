@@ -16,9 +16,12 @@
 package rs.whisker.modules.securestore
 
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
 
+
+@WhiskerModule
 class SecureStoreModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("WhiskerSecureStore")

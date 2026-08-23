@@ -17,5 +17,6 @@
 module WhiskerCBridge {
     header "whisker.h"
     header "whisker_bridge.h"
+    header "whisker_mobile.h"
     export *
 }

@@ -44,6 +44,7 @@ const APP_BUILD_GRADLE_KTS: &str = include_str!("templates/android/app/build.gra
 const APP_MANIFEST_XML: &str = include_str!("templates/android/app/src/main/AndroidManifest.xml");
 const MAIN_ACTIVITY_KT: &str =
     include_str!("templates/android/app/src/main/kotlin/MainActivity.kt");
+const WHISKER_VIEW_KT: &str = include_str!("templates/android/app/src/main/kotlin/WhiskerView.kt");
 const ROOT_BUILD_GRADLE_KTS: &str = include_str!("templates/android/build.gradle.kts");
 const SETTINGS_GRADLE_KTS: &str = include_str!("templates/android/settings.gradle.kts");
 const GRADLE_PROPERTIES: &str = include_str!("templates/android/gradle.properties");
@@ -481,6 +482,10 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
             APP_MANIFEST_XML,
         ),
         (kotlin_pkg.join("MainActivity.kt"), MAIN_ACTIVITY_KT),
+        (
+            out_dir.join("app/src/main/kotlin/rs/whisker/runtime/WhiskerView.kt"),
+            WHISKER_VIEW_KT,
+        ),
         (out_dir.join("build.gradle.kts"), ROOT_BUILD_GRADLE_KTS),
         (out_dir.join("settings.gradle.kts"), SETTINGS_GRADLE_KTS),
         (out_dir.join("gradle.properties"), GRADLE_PROPERTIES),
@@ -744,7 +749,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 15,
+        template_version: 28,
     })
 }
 
@@ -788,8 +793,34 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 15,
+            template_version: 28,
         }
+    }
+
+    #[test]
+    fn whisker_view_delegates_text_to_the_registered_element_factory() {
+        assert!(!WHISKER_VIEW_KT.contains("TextView"));
+        assert!(WHISKER_VIEW_KT.contains("mounted.setText("));
+        assert!(!WHISKER_VIEW_KT.contains("layoutContent("));
+        assert!(WHISKER_VIEW_KT.contains("content.layoutParams"));
+    }
+
+    #[test]
+    fn whisker_view_uses_typed_bootstrap_measure_and_transactional_frames() {
+        for expected in [
+            "beginBootstrapFromNative",
+            "finishBootstrapFromNative",
+            "measureFromNative",
+            "beginFrameFromNative",
+            "stageOperationFromNative",
+            "commitFrameFromNative",
+            "currentRevisionFromNative",
+        ] {
+            assert!(WHISKER_VIEW_KT.contains(expected), "missing {expected}");
+        }
+        assert!(!WHISKER_VIEW_KT.contains("org.json"));
+        assert!(!WHISKER_VIEW_KT.contains("JSONObject"));
+        assert!(!WHISKER_VIEW_KT.contains("JSONArray"));
     }
 
     #[test]
@@ -894,6 +925,7 @@ mod tests {
             "app/build.gradle.kts",
             "app/src/main/AndroidManifest.xml",
             "app/src/main/kotlin/rs/whisker/examples/helloworld/MainActivity.kt",
+            "app/src/main/kotlin/rs/whisker/runtime/WhiskerView.kt",
             "build.gradle.kts",
             "settings.gradle.kts",
             "gradle.properties",
@@ -932,7 +964,8 @@ mod tests {
 
         let settings = std::fs::read_to_string(out.join("settings.gradle.kts")).unwrap();
         assert!(!settings.contains("lynx"));
-        assert!(!settings.contains("rs.whisker"));
+        assert!(settings.contains("rs.whisker:ksp"));
+        assert!(settings.contains("whisker_modules.settings.gradle.kts"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

@@ -14,7 +14,7 @@
 
 import PackageDescription
 
-// WhiskerRuntime + the WhiskerModuleCodegenPlugin resolve from the
+// WhiskerModule + the WhiskerModuleCodegenPlugin resolve from the
 // remote `whisker` SwiftPM package (the repo-root Package.swift,
 // pinned by tag). No monorepo `platforms/ios` local path is required,
 // so this module builds for an app created outside the whisker repo.
@@ -31,12 +31,7 @@ let package = Package(
         .target(
             name: "WhiskerSafeArea",
             dependencies: [
-                // WhiskerRuntime re-exports both WhiskerModule (the
-                // Module base + DSL) and WhiskerDriver (the
-                // NotificationCenter name constant the safeAreaInsetsDidChange
-                // hook posts under).
                 .product(name: "WhiskerModule", package: "whisker"),
-                .product(name: "WhiskerRuntime", package: "whisker"),
             ],
             path: "ios/Sources/WhiskerSafeArea",
             plugins: [

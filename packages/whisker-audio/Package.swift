@@ -2,7 +2,7 @@
 //
 // SwiftPM manifest for the `whisker-audio` module package. Same
 // shape as `whisker-video`'s manifest — the SwiftPM codegen plugin
-// scans `ios/Sources/WhiskerAudio/` for `Module` subclasses and
+// scans `ios/Sources/WhiskerAudio/` for `@WhiskerModule` declarations and
 // auto-registers them with Lynx.
 
 import PackageDescription

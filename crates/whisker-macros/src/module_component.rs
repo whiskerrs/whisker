@@ -1,19 +1,25 @@
 //! `#[whisker::module_component]` proc-macro.
 //!
-//! Generates a builder-style API for a custom Lynx element identified
-//! by a tag-name string. The macro shape mirrors `#[component]` —
+//! Generates a builder-style API and, in the named form, the shared schema for
+//! a custom element. The macro shape mirrors `#[component]` —
 //! same `<Name>Props` struct, same hand-rolled builder, same
 //! PascalCase alias — but the function body is **auto-generated**
-//! rather than supplied by the user. Each declared parameter
-//! becomes either an attribute, an inline-style write, an event
-//! handler, or the children list on the underlying Lynx element,
-//! depending on its name + type.
+//! rather than supplied by the user. Each declared parameter becomes
+//! either a component-specific attribute, an inline-style write, a
+//! component-specific event handler, or the children list on the
+//! underlying element, depending on its name + type. The generated
+//! builder also implements Whisker's common `ElementBuilder` API, so
+//! style, accessibility, gesture, ref, and other universal authoring
+//! features do not need to be repeated in the component schema.
 //!
 //! ## User syntax
 //!
 //! ```ignore
-//! #[whisker::module_component("x-input")]
-//! pub fn x_input(
+//! #[whisker::module_component(
+//!     name = "example.forms/Input",
+//!     measurement = None,
+//! )]
+//! pub fn input(
 //!     value: Signal<String>,                // → SetAttribute("value", …) — Static / Dynamic dispatch
 //!     placeholder: Signal<String>,          // → SetAttribute("placeholder", …)
 //!     style: Signal<String>,                // → SetRawInlineStyles(…)
@@ -56,11 +62,18 @@
 //!     pub value: Signal<String>,
 //!     pub on_input: ::std::boxed::Box<dyn ::std::ops::Fn(TouchEvent) + 'static>,
 //!     pub children: Children,
+//!     __element: Element,
 //!     /* … */
 //! }
 //! impl XInputProps {
-//!     pub fn builder() -> XInputPropsBuilder { … }
+//!     pub fn builder() -> XInputPropsBuilder {
+//!         XInputPropsBuilder {
+//!             __element: view::create_element_by_name("example.forms/Input"),
+//!             /* … */
+//!         }
+//!     }
 //! }
+//! impl ElementBuilder for XInputPropsBuilder { … }
 //! impl XInputPropsBuilder {
 //!     pub fn value(self, v: impl Into<Signal<String>>) -> Self { … }
 //!     pub fn on_input<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self { … }
@@ -68,7 +81,7 @@
 //!     pub fn build(self) -> XInputProps { … }
 //! }
 //! pub fn XInput(props: XInputProps) -> Element {
-//!     let h = view::create_element_by_name("x-input");
+//!     let h = props.__element;
 //!     apply_attr::<_, String>(h, "value", props.value);
 //!     event::bind_typed::<TouchEvent, _>(h, "input", props.on_input);
 //!     let view: View = (props.children)();
@@ -93,25 +106,101 @@
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
+use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{
-    FnArg, GenericArgument, Ident, ItemFn, LitStr, Pat, PathArguments, Type, TypePath, TypeTuple,
-    parse2,
+    Expr, ExprLit, FnArg, GenericArgument, Ident, ItemFn, Lit, LitStr, Pat, PathArguments, Token,
+    Type, TypePath, TypeTuple, Visibility, parse2,
 };
 
-pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
-    let tag_name: LitStr = match parse2(attr.clone()) {
-        Ok(s) => s,
-        Err(_) => {
-            return syn::Error::new(
-                attr.span(),
-                "#[whisker::module_component(\"<tag-name>\")] requires a \
-                 string-literal tag name (e.g. `\"Hello\"`, `\"Input\"`)",
-            )
-            .to_compile_error();
+enum ModuleComponentArgs {
+    Legacy(LitStr),
+    Schema { name: LitStr, measurement: Ident },
+}
+
+struct SchemaArgs {
+    name: LitStr,
+    measurement: Ident,
+}
+
+impl Parse for SchemaArgs {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut name = None;
+        let mut measurement = None;
+
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+            match key.to_string().as_str() {
+                "name" => {
+                    if name.is_some() {
+                        return Err(syn::Error::new(key.span(), "duplicate `name` argument"));
+                    }
+                    let expression: Expr = input.parse()?;
+                    let Expr::Lit(ExprLit {
+                        lit: Lit::Str(value),
+                        ..
+                    }) = expression
+                    else {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "`name` must be a string literal",
+                        ));
+                    };
+                    name = Some(value);
+                }
+                "measurement" => {
+                    if measurement.is_some() {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "duplicate `measurement` argument",
+                        ));
+                    }
+                    measurement = Some(input.parse()?);
+                }
+                _ => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "unsupported module_component argument; expected `name` or `measurement`",
+                    ));
+                }
+            }
+
+            if input.is_empty() {
+                break;
+            }
+            input.parse::<Token![,]>()?;
         }
+
+        Ok(Self {
+            name: name.ok_or_else(|| syn::Error::new(input.span(), "missing `name` argument"))?,
+            measurement: measurement
+                .ok_or_else(|| syn::Error::new(input.span(), "missing `measurement` argument"))?,
+        })
+    }
+}
+
+fn parse_args(attr: TokenStream2) -> syn::Result<ModuleComponentArgs> {
+    if let Ok(name) = parse2::<LitStr>(attr.clone()) {
+        return Ok(ModuleComponentArgs::Legacy(name));
+    }
+    let args = parse2::<SchemaArgs>(attr)?;
+    Ok(ModuleComponentArgs::Schema {
+        name: args.name,
+        measurement: args.measurement,
+    })
+}
+
+pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
+    let args = match parse_args(attr) {
+        Ok(args) => args,
+        Err(error) => return error.to_compile_error(),
     };
-    let tag_name_str = tag_name.value();
+    let element_name = match &args {
+        ModuleComponentArgs::Legacy(name) => name,
+        ModuleComponentArgs::Schema { name, .. } => name,
+    };
+    let element_name_str = element_name.value();
 
     let input: ItemFn = match parse2(item) {
         Ok(f) => f,
@@ -183,7 +272,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
 
     let build_assignments: Vec<TokenStream2> = props
         .iter()
-        .map(|p| prop_build_assignment(p, &tag_name_str))
+        .map(|p| prop_build_assignment(p, &element_name_str))
         .collect();
 
     let apply_calls: Vec<TokenStream2> = props.iter().map(prop_apply_call).collect();
@@ -195,6 +284,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     };
 
     let inner_mod = format_ident!("__{}_inner", fn_name);
+    let schema_mod = format_ident!("{}_schema", fn_name);
 
     let pascal_alias_ident = format_ident!("{}", to_pascal_case(&fn_name.to_string()));
     let fn_name_str = fn_name.to_string();
@@ -219,6 +309,31 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         }
     };
 
+    let (element_creation, schema_emission) = match &args {
+        ModuleComponentArgs::Legacy(tag_name) => (
+            quote! {
+                ::whisker::runtime::view::create_element_by_name(
+                    concat!(env!("CARGO_PKG_NAME"), ":", #tag_name)
+                )
+            },
+            quote! {},
+        ),
+        ModuleComponentArgs::Schema { name, measurement } => {
+            let schema = match schema_tokens(&schema_mod, vis, name, measurement, &props, true) {
+                Ok(schema) => schema,
+                Err(error) => return error.to_compile_error(),
+            };
+            (
+                quote! {
+                    ::whisker::runtime::view::create_element_by_schema(
+                        &#schema_mod::schema()
+                    )
+                },
+                schema,
+            )
+        }
+    };
+
     // Every platform component implicitly carries a `__ref:
     // Option<ElementRef>` Props field. `render!` routes a call-site
     // `ref: <expr>` to the `.with_ref(expr)` setter emitted below; the
@@ -231,6 +346,8 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
 
             pub struct #props_name {
                 #(#props_fields,)*
+                #[doc(hidden)]
+                pub __element: ::whisker::runtime::view::Element,
                 /// Implicit `ref:` prop. Bound to the freshly-created
                 /// element inside the macro-emitted body so user code
                 /// can invoke element methods after mount.
@@ -240,6 +357,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             #[doc(hidden)]
             pub struct #builder_name {
                 #(#builder_fields,)*
+                pub __element: ::whisker::runtime::view::Element,
                 pub __ref: ::std::option::Option<::whisker::ElementRef>,
             }
 
@@ -247,6 +365,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
                 pub fn builder() -> #builder_name {
                     #builder_name {
                         #(#builder_init,)*
+                        __element: #element_creation,
                         __ref: ::std::option::Option::None,
                     }
                 }
@@ -270,8 +389,15 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
                 pub fn build(self) -> #props_name {
                     #props_name {
                         #(#build_assignments,)*
+                        __element: self.__element,
                         __ref: self.__ref,
                     }
+                }
+            }
+
+            impl ::whisker::__element_builder::ElementBuilder for #builder_name {
+                fn __element(&self) -> ::whisker::runtime::view::Element {
+                    self.__element
                 }
             }
         }
@@ -286,15 +412,10 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             #(#attrs)*
             pub fn #fn_name(props: #props_name) -> ::whisker::runtime::view::Element {
                 #drop_unused
-                // Namespacing the tag by cargo crate name keeps two
-                // unrelated crates declaring the same tag from
-                // colliding. The SwiftPM plugin / KSP processor
-                // prepends the same namespace when emitting the
-                // matching registration, so the lookup matches
-                // end-to-end.
-                let __handle = ::whisker::runtime::view::create_element_by_name(
-                    concat!(env!("CARGO_PKG_NAME"), ":", #tag_name)
-                );
+                // The builder creates the element early so common
+                // ElementBuilder methods and generated module props operate on
+                // the same handle.
+                let __handle = props.__element;
                 #(#apply_calls)*
                 // The matching `on_cleanup` clears the binding on
                 // unmount so post-unmount calls surface as
@@ -309,7 +430,210 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         }
 
         #alias_emission
+        #schema_emission
     }
+}
+
+/// Expands a built-in schema declaration without generating a second
+/// authoring builder. Built-ins retain their hand-tuned `ElementTag` builder;
+/// only their Host-independent schema uses the shared declaration compiler.
+pub fn expand_builtin(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
+    let args = match parse_args(attr) {
+        Ok(ModuleComponentArgs::Schema { name, measurement }) => (name, measurement),
+        Ok(ModuleComponentArgs::Legacy(name)) => {
+            return syn::Error::new(
+                name.span(),
+                "#[builtin_component] requires `name = ...` and `measurement = ...`",
+            )
+            .to_compile_error();
+        }
+        Err(error) => return error.to_compile_error(),
+    };
+    let input: ItemFn = match parse2(item) {
+        Ok(function) => function,
+        Err(error) => return error.to_compile_error(),
+    };
+    let visibility = &input.vis;
+    let signature = &input.sig;
+    if !signature.generics.params.is_empty() {
+        return syn::Error::new(
+            signature.generics.span(),
+            "#[builtin_component] does not support generic parameters",
+        )
+        .to_compile_error();
+    }
+
+    let mut props = Vec::new();
+    for argument in &signature.inputs {
+        let typed = match argument {
+            FnArg::Typed(typed) => typed,
+            FnArg::Receiver(receiver) => {
+                return syn::Error::new(
+                    receiver.span(),
+                    "#[builtin_component] does not support method receivers",
+                )
+                .to_compile_error();
+            }
+        };
+        let ident = match &*typed.pat {
+            Pat::Ident(ident) => ident.ident.clone(),
+            pattern => {
+                return syn::Error::new(
+                    pattern.span(),
+                    "#[builtin_component] parameters must be plain identifiers",
+                )
+                .to_compile_error();
+            }
+        };
+        let ty = (*typed.ty).clone();
+        let kind = match classify(&ident, &ty) {
+            Ok(kind) => kind,
+            Err(error) => return error.to_compile_error(),
+        };
+        props.push(Prop { ident, ty, kind });
+    }
+
+    let schema_mod = format_ident!("{}_schema", signature.ident);
+    match schema_tokens(&schema_mod, visibility, &args.0, &args.1, &props, false) {
+        Ok(tokens) => tokens,
+        Err(error) => error.to_compile_error(),
+    }
+}
+
+fn schema_tokens(
+    schema_mod: &Ident,
+    visibility: &Visibility,
+    name: &LitStr,
+    measurement: &Ident,
+    props: &[Prop],
+    named_provider: bool,
+) -> syn::Result<TokenStream2> {
+    let measurement_name = measurement.to_string();
+    if !matches!(
+        measurement_name.as_str(),
+        "None" | "Text" | "ReplacedContent" | "Custom"
+    ) {
+        return Err(syn::Error::new(
+            measurement.span(),
+            "measurement must be one of `None`, `Text`, `ReplacedContent`, or `Custom`",
+        ));
+    }
+
+    let child_policy = if props
+        .iter()
+        .any(|prop| matches!(prop.kind, PropKind::TextChildren))
+    {
+        quote! { ::whisker::ChildPolicy::PlainText }
+    } else if props
+        .iter()
+        .any(|prop| matches!(prop.kind, PropKind::Children))
+    {
+        quote! { ::whisker::ChildPolicy::Elements }
+    } else {
+        quote! { ::whisker::ChildPolicy::None }
+    };
+    let mut property_index = 0_u32;
+    let mut event_index = 0_u32;
+    let mut constants = Vec::new();
+    let mut properties = Vec::new();
+    let mut events = Vec::new();
+
+    for prop in props {
+        match &prop.kind {
+            PropKind::Attr { inner } => {
+                property_index += 1;
+                let constant =
+                    format_ident!("{}_PROPERTY", prop.ident.to_string().to_ascii_uppercase());
+                let property_name = prop.ident.to_string().replace('_', "-");
+                let value_kind = element_value_kind(inner)?;
+                let id = property_index;
+                constants.push(quote! {
+                    pub const #constant: ::whisker::PropertyId =
+                        ::whisker::PropertyId::new(#id).unwrap();
+                });
+                properties.push(quote! {
+                    ::whisker::ElementPropertySchema {
+                        property: #constant,
+                        name: #property_name.into(),
+                        value: ::whisker::ElementValueKind::#value_kind,
+                    }
+                });
+            }
+            PropKind::EventNoPayload { event } | PropKind::EventTyped { event, .. } => {
+                event_index += 1;
+                let constant = format_ident!("{}_EVENT", event.to_ascii_uppercase());
+                let id = event_index;
+                constants.push(quote! {
+                    pub const #constant: ::whisker::EventId =
+                        ::whisker::EventId::new(#id).unwrap();
+                });
+                events.push(quote! {
+                    ::whisker::ElementEventSchema {
+                        event: #constant,
+                        name: #event.into(),
+                        detail: ::std::option::Option::None,
+                    }
+                });
+            }
+            PropKind::Style | PropKind::Children | PropKind::TextChildren => {}
+        }
+    }
+
+    let provider = named_provider.then(|| {
+        quote! {
+            /// Builds the custom element metadata registered during bootstrap.
+            pub fn element_provider() -> ::whisker::ElementProviderMetadata {
+                ::whisker::ElementProviderMetadata::named(schema())
+            }
+        }
+    });
+
+    Ok(quote! {
+        /// Generated Host-independent schema and binding symbols.
+        #visibility mod #schema_mod {
+            #(#constants)*
+
+            /// Stable element name shared by Rust authoring and every Host.
+            pub const NAME: &str = #name;
+
+            /// Builds the Host-independent element contract.
+            pub fn schema() -> ::whisker::ElementSchema {
+                ::whisker::ElementSchema {
+                    name: NAME.into(),
+                    child_policy: #child_policy,
+                    measurement: ::whisker::ElementMeasurement::#measurement,
+                    properties: ::std::vec![#(#properties),*],
+                    events: ::std::vec![#(#events),*],
+                    commands: ::std::vec![],
+                }
+            }
+
+            #provider
+        }
+    })
+}
+
+fn element_value_kind(ty: &Type) -> syn::Result<Ident> {
+    let kind = if type_is(ty, "bool") {
+        "Bool"
+    } else if [
+        "i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64", "usize",
+    ]
+    .iter()
+    .any(|name| type_is(ty, name))
+    {
+        "Int"
+    } else if type_is(ty, "f32") || type_is(ty, "f64") {
+        "Float"
+    } else if type_is(ty, "String") || type_is(ty, "str") {
+        "String"
+    } else {
+        return Err(syn::Error::new(
+            ty.span(),
+            "cannot infer the WhiskerValue shape for this property type; use bool, an integer, a float, or String",
+        ));
+    };
+    Ok(Ident::new(kind, ty.span()))
 }
 
 struct Prop {
@@ -332,6 +656,10 @@ enum PropKind {
     /// attaches the resulting View to the element after all attribute
     /// writes.
     Children,
+    /// Plain-text children. The authoring value is still React-like `View`
+    /// data, but core rejects element children and lowers text fragments to
+    /// one `SetText` operation.
+    TextChildren,
     /// `on_<event>: ()` — no-payload event handler. The macro
     /// generates a `Box<dyn Fn() + 'static>` field and wires it via
     /// `event::bind_unit` (the value-carrying primitive, payload
@@ -379,11 +707,99 @@ const RESERVED_EVENT_NAMES: &[&str] = &[
     "transition_end",
 ];
 
+/// Props supplied by `ElementBuilder` for every element. They are Rust-side
+/// authoring features rather than component-specific Host schema entries.
+///
+/// `style` and `children` are intentionally absent: `style` remains accepted
+/// as a compatibility/convenience declaration and is always excluded from the
+/// schema, while the declared children type determines its child policy.
+const COMMON_ELEMENT_PROP_NAMES: &[&str] = &[
+    "class",
+    "id",
+    "name",
+    "data",
+    "attr",
+    "accessibility_label",
+    "accessibility_trait",
+    "accessibility_element",
+    "accessibility_elements",
+    "accessibility_elements_hidden",
+    "accessibility_exclusive_focus",
+    "a11y_id",
+    "user_interaction_enabled",
+    "native_interaction_enabled",
+    "event_through",
+    "exposure_id",
+    "exposure_scene",
+    "exposure_area",
+    "block_native_event",
+    "consume_slide_event",
+    "pan_intercept_direction",
+    "pan_intercept_scope",
+    "hit_slop",
+    "flatten",
+    "on_tap",
+    "on_tap_catch",
+    "on_capture_tap",
+    "on_capture_tap_catch",
+    "on_longpress",
+    "on_longpress_catch",
+    "on_capture_longpress",
+    "on_capture_longpress_catch",
+    "on_click",
+    "on_click_catch",
+    "on_capture_click",
+    "on_capture_click_catch",
+    "on_touchstart",
+    "on_touchstart_catch",
+    "on_capture_touchstart",
+    "on_capture_touchstart_catch",
+    "on_touchmove",
+    "on_touchmove_catch",
+    "on_capture_touchmove",
+    "on_capture_touchmove_catch",
+    "on_touchend",
+    "on_touchend_catch",
+    "on_capture_touchend",
+    "on_capture_touchend_catch",
+    "on_touchcancel",
+    "on_touchcancel_catch",
+    "on_capture_touchcancel",
+    "on_capture_touchcancel_catch",
+    "on_layoutchange",
+    "on_uiappear",
+    "on_uidisappear",
+    "on_animationstart",
+    "on_animationend",
+    "on_animationcancel",
+    "on_animationiteration",
+    "on_transitionstart",
+    "on_transitionend",
+    "on_transitioncancel",
+    "on",
+    "bind",
+    "child",
+    "bind_ref",
+];
+
 fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
     let name = ident.to_string();
 
     if name == "children" {
-        return Ok(PropKind::Children);
+        return Ok(if type_is(ty, "TextChildren") {
+            PropKind::TextChildren
+        } else {
+            PropKind::Children
+        });
+    }
+
+    if COMMON_ELEMENT_PROP_NAMES.contains(&name.as_str()) {
+        return Err(syn::Error::new(
+            ident.span(),
+            format!(
+                "#[whisker::module_component]: `{name}` is supplied by the common ElementBuilder API and must not be declared as a component-specific property or event"
+            ),
+        ));
     }
 
     // The `on_<event>` naming convention picks out handlers; the
@@ -471,6 +887,9 @@ fn prop_struct_field(p: &Prop) -> TokenStream2 {
         PropKind::Children => {
             quote! { pub #i: ::whisker::runtime::view::Children }
         }
+        PropKind::TextChildren => {
+            quote! { pub #i: ::whisker::runtime::view::TextChildren }
+        }
         PropKind::EventNoPayload { .. } => {
             quote! { pub #i: ::std::boxed::Box<dyn ::std::ops::Fn() + 'static> }
         }
@@ -492,6 +911,9 @@ fn prop_builder_field(p: &Prop) -> TokenStream2 {
         }
         PropKind::Children => {
             quote! { #i: ::std::option::Option<::whisker::runtime::view::Children> }
+        }
+        PropKind::TextChildren => {
+            quote! { #i: ::std::option::Option<::whisker::runtime::view::TextChildren> }
         }
         PropKind::EventNoPayload { .. } => {
             quote! { #i: ::std::option::Option<::std::boxed::Box<dyn ::std::ops::Fn() + 'static>> }
@@ -534,6 +956,17 @@ fn prop_setter(p: &Prop) -> TokenStream2 {
                 }
             }
         }
+        PropKind::TextChildren => {
+            quote! {
+                #[allow(unused_mut)]
+                pub fn #i(mut self, value: ::whisker::runtime::view::Children) -> Self {
+                    self.#i = ::std::option::Option::Some(
+                        ::whisker::runtime::view::TextChildren::new(value)
+                    );
+                    self
+                }
+            }
+        }
         PropKind::EventNoPayload { .. } => {
             quote! {
                 #[allow(unused_mut)]
@@ -569,6 +1002,15 @@ fn prop_build_assignment(p: &Prop, tag_name: &str) -> TokenStream2 {
                 })
             }
         }
+        PropKind::TextChildren => {
+            quote! {
+                #i: self.#i.unwrap_or_else(|| {
+                    ::whisker::runtime::view::TextChildren::new(
+                        ::std::rc::Rc::new(|| ::whisker::runtime::view::View::Empty)
+                    )
+                })
+            }
+        }
         // Style/Attr props are optional by default. `Signal<String>`
         // defaults to `Signal::Stored("")` when omitted, matching
         // what Lynx would see if the attribute wasn't declared.
@@ -598,8 +1040,22 @@ fn prop_apply_call(p: &Prop) -> TokenStream2 {
         }
         PropKind::Attr { inner } => {
             let attr_name = name.replace('_', "-");
-            quote! {
-                ::whisker::runtime::view::apply_attr::<_, #inner>(__handle, #attr_name, props.#i);
+            if type_is(inner, "bool") {
+                quote! {
+                    ::whisker::runtime::view::apply_attr_bool(__handle, #attr_name, props.#i);
+                }
+            } else if type_is(inner, "i32") {
+                quote! {
+                    ::whisker::runtime::view::apply_attr_int(__handle, #attr_name, props.#i);
+                }
+            } else if type_is(inner, "f64") {
+                quote! {
+                    ::whisker::runtime::view::apply_attr_f64(__handle, #attr_name, props.#i);
+                }
+            } else {
+                quote! {
+                    ::whisker::runtime::view::apply_attr::<_, #inner>(__handle, #attr_name, props.#i);
+                }
             }
         }
         PropKind::EventNoPayload { event } => {
@@ -629,7 +1085,24 @@ fn prop_apply_call(p: &Prop) -> TokenStream2 {
                     .attach_to(__handle);
             }
         }
+        PropKind::TextChildren => {
+            quote! {
+                ::whisker::runtime::view::mount_text_children(&props.#i, __handle);
+            }
+        }
     }
+}
+
+fn type_is(ty: &Type, expected: &str) -> bool {
+    matches!(
+        ty,
+        Type::Path(path)
+            if path.qself.is_none()
+                && path.path.segments.last().is_some_and(|segment| {
+                    segment.ident == expected
+                        && matches!(segment.arguments, PathArguments::None)
+                })
+    )
 }
 
 /// `hello` / `my_input` → `Hello` / `MyInput`. ASCII-only — native
@@ -652,4 +1125,39 @@ fn to_pascal_case(snake: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn common_builder_props_cannot_enter_a_component_schema() {
+        for name in ["id", "accessibility_label", "on_tap", "on_layoutchange"] {
+            let ident: Ident = syn::parse_str(name).unwrap();
+            let ty: Type = syn::parse_str("String").unwrap();
+            let error = classify(&ident, &ty).err().expect("must be rejected");
+            assert!(error.to_string().contains("common ElementBuilder API"));
+        }
+    }
+
+    #[test]
+    fn schema_special_fields_remain_supported() {
+        let style: Ident = syn::parse_str("style").unwrap();
+        let style_ty: Type = syn::parse_str("whisker::Style").unwrap();
+        assert!(matches!(classify(&style, &style_ty), Ok(PropKind::Style)));
+
+        let children: Ident = syn::parse_str("children").unwrap();
+        let children_ty: Type = syn::parse_str("whisker::Children").unwrap();
+        assert!(matches!(
+            classify(&children, &children_ty),
+            Ok(PropKind::Children)
+        ));
+
+        let text_children_ty: Type = syn::parse_str("whisker::TextChildren").unwrap();
+        assert!(matches!(
+            classify(&children, &text_children_ty),
+            Ok(PropKind::TextChildren)
+        ));
+    }
 }

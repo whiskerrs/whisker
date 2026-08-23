@@ -1,22 +1,23 @@
 use serde::Deserialize;
-use whisker::SurfaceRuntime;
 use whisker::css::BorderStyle;
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
 use whisker::runtime::view::{set_root, with_installed_renderer};
+use whisker::{SurfaceRuntime, standard_element_registrations};
 use whisker_engine::whisker_layout::LayoutSize;
-use whisker_engine::{FrameSink, MeasurementHost};
+use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_protocol::{
     AvailableSpace, BorderLineStyle, BoxPaint, ElementTypeId, FrameHeader, FrameMode, FramePacket,
     InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect, MeasureConstraints,
     MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
     MeasureTextOverflow, MeasureTextWrap, MeasurementKey, MeasurementPayload, MeasurementRequest,
     MeasurementResponse, NodeId, Operation, PaintColor, PaintCorners, PaintEdges,
-    PaintLengthPercentage, PointerId, PointerInput, PointerKind, ProtocolValue, ProtocolVersion,
-    SurfaceId, TextMeasurePayload, TextMeasureStyle,
+    PaintLengthPercentage, PointerId, PointerInput, PointerKind, ProtocolVersion, SurfaceId,
+    TextMeasurePayload, TextMeasureStyle, WhiskerValue,
 };
 use whisker_style::StyleEnvironment;
 
+use crate::element::{DesktopElementRegistry, built_in_element_factories};
 use crate::gpu::render_box_primitives_offscreen;
 use crate::paint::box_paint::{BoxPrimitive, BoxPrimitiveKind, lower_box};
 use crate::scene::{DesktopScene, PaintCommand};
@@ -244,6 +245,25 @@ struct Checkpoint {
     primitives: Vec<BoxPrimitive>,
 }
 
+fn standard_element_type(name: &str) -> ElementTypeId {
+    standard_element_registrations()
+        .into_iter()
+        .find(|registration| registration.name == name)
+        .expect("standard element registration")
+        .element_type
+}
+
+fn desktop_scene(surface: SurfaceId) -> DesktopScene {
+    DesktopScene::new(
+        surface,
+        DesktopElementRegistry::bind(
+            &standard_element_registrations(),
+            &built_in_element_factories(),
+        )
+        .unwrap(),
+    )
+}
+
 impl Driver {
     fn new() -> Self {
         Self {
@@ -251,7 +271,13 @@ impl Driver {
             scene: None,
             logical_size: [0.0; 2],
             scale: 1.0,
-            text: NativeTextHost::new(),
+            text: NativeTextHost::new(
+                DesktopElementRegistry::bind(
+                    &standard_element_registrations(),
+                    &built_in_element_factories(),
+                )
+                .unwrap(),
+            ),
             measurement_responses: Vec::new(),
             input: RecordingInputSink::default(),
         }
@@ -269,7 +295,7 @@ impl Driver {
                     assert!(*width > 0.0 && *height > 0.0 && *scale > 0.0);
                     let surface = SurfaceId::new(1).unwrap();
                     self.surface = Some(surface);
-                    self.scene = Some(DesktopScene::new(surface));
+                    self.scene = Some(desktop_scene(surface));
                     self.logical_size = [*width, *height];
                     self.scale = *scale;
                 }
@@ -363,7 +389,7 @@ impl Driver {
             operations: vec![
                 Operation::CreateNode {
                     node,
-                    element_type: ElementTypeId::new(1).unwrap(),
+                    element_type: standard_element_type(whisker::VIEW_ELEMENT_NAME),
                 },
                 Operation::SetLayout {
                     node,
@@ -416,7 +442,7 @@ impl Driver {
         let request = MeasurementRequest {
             key: MeasurementKey::new(key).expect("scenario measurement key is non-zero"),
             node: NodeId::new(key).expect("scenario node key is non-zero"),
-            element_type: ElementTypeId::new(1).unwrap(),
+            element_type: standard_element_type(whisker::TEXT_ELEMENT_NAME),
             environment_epoch: 1,
             constraints: MeasureConstraints {
                 known_dimensions: [None, None],
@@ -492,7 +518,7 @@ impl Driver {
                 changed_button,
             }),
             target: None,
-            detail: ProtocolValue::Null,
+            detail: WhiskerValue::Null,
         });
     }
 
@@ -794,8 +820,14 @@ fn render_taffy_protocol_and_desktop_box_paint_compose() {
         root
     });
 
-    let mut measurement = NativeTextHost::new();
-    let mut scene = DesktopScene::new(surface_id);
+    let registrations = surface.element_registrations();
+    let mut measurement = NativeTextHost::new(
+        DesktopElementRegistry::bind(&registrations, &built_in_element_factories()).unwrap(),
+    );
+    let mut scene = DesktopScene::new(
+        surface_id,
+        DesktopElementRegistry::bind(&registrations, &built_in_element_factories()).unwrap(),
+    );
     let frame = surface
         .render_frame(
             LayoutSize::new(100.0, 100.0),
@@ -803,7 +835,7 @@ fn render_taffy_protocol_and_desktop_box_paint_compose() {
             1,
             &mut measurement,
             &mut scene,
-            whisker_engine::HostLayoutOptions::default(),
+            whisker_engine::LayoutOptions::default(),
         )
         .expect("render!, Taffy, protocol, and Desktop scene compose");
     assert!(frame.layout.has_layout());

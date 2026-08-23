@@ -42,6 +42,7 @@ import WhiskerModule
 @_silgen_name("whisker_asset_set_ios_base")
 private func whisker_asset_set_ios_base(_ ptr: UnsafePointer<UInt8>?, _ len: Int)
 
+@WhiskerModule
 public final class AssetModule: Module {
 
     public override func definition() -> ModuleDefinition {

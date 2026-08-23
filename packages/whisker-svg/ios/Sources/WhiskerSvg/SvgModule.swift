@@ -18,6 +18,7 @@
 
 import WhiskerModule
 
+@WhiskerModule
 public final class SvgModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {

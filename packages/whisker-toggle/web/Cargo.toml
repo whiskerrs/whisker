@@ -1,0 +1,11 @@
+[package]
+name = "whisker-toggle-web-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Web Host implementation for whisker-toggle."
+
+[dependencies]
+whisker-web = { workspace = true }

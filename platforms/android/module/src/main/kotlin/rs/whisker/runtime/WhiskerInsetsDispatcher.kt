@@ -25,7 +25,7 @@
 //
 // The decor view is replaced on every config-change Activity recreation
 // (rotation, multi-window resize). We rewire transparently by owning a
-// single [HostAttachedListener]: registered lazily on the 0→1
+// single [RuntimeAttachedListener]: registered lazily on the 0→1
 // subscriber transition, it (re)installs the inset listener on whichever
 // decor view is current each time a host attaches, and is dropped on the
 // 1→0 transition. One host listener and one decor slot regardless of how
@@ -64,7 +64,7 @@ public object WhiskerInsetsDispatcher {
      * listener on the current decor view, so a config-change recreation
      * transparently rewires.
      */
-    private var hostListener: HostAttachedListener? = null
+    private var hostListener: RuntimeAttachedListener? = null
 
     private val appContext: WhiskerAppContext get() = WhiskerAppContext.shared
 
@@ -77,12 +77,12 @@ public object WhiskerInsetsDispatcher {
      */
     public fun addListener(callback: (WindowInsetsCompat) -> Unit): Registration {
         val registration = Registration(callback)
-        var listenerToRegister: HostAttachedListener? = null
+        var listenerToRegister: RuntimeAttachedListener? = null
         synchronized(lock) {
             val wasEmpty = listeners.isEmpty()
             listeners.add(registration)
             if (wasEmpty) {
-                val listener = HostAttachedListener { installOnCurrentHost() }
+                val listener = RuntimeAttachedListener { installOnCurrentHost() }
                 hostListener = listener
                 listenerToRegister = listener
             }
@@ -92,7 +92,7 @@ public object WhiskerInsetsDispatcher {
             // 0→1: register the host listener OUTSIDE the lock (its body
             // installs the decor slot and seeds every subscriber, incl.
             // this one, if a host is already attached).
-            appContext.addOnHostAttachedListener(toRegister)
+            appContext.addOnRuntimeAttachedListener(toRegister)
         } else {
             // 1→N: the decor slot is already installed and seeds only
             // fire on install / genuine change, so seed just the new
@@ -109,7 +109,7 @@ public object WhiskerInsetsDispatcher {
      * next 0→1 transition re-installs it on the current host anyway.
      */
     public fun removeListener(registration: Registration) {
-        var listenerToRemove: HostAttachedListener? = null
+        var listenerToRemove: RuntimeAttachedListener? = null
         synchronized(lock) {
             listeners.remove(registration)
             if (listeners.isEmpty()) {
@@ -117,7 +117,7 @@ public object WhiskerInsetsDispatcher {
                 hostListener = null
             }
         }
-        listenerToRemove?.let { appContext.removeOnHostAttachedListener(it) }
+        listenerToRemove?.let { appContext.removeOnRuntimeAttachedListener(it) }
     }
 
     /**

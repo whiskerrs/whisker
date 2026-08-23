@@ -29,6 +29,7 @@ import Foundation
 import UIKit
 import WhiskerModule
 
+@WhiskerModule
 public final class KeyboardModule: Module {
 
     /// Live notification observer tokens. Empty between the

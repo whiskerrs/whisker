@@ -1,0 +1,1030 @@
+//! Platform-neutral runtime behind the Android and iOS C entry points.
+
+use std::ffi::{CString, c_void};
+
+use whisker_driver::mobile_abi::*;
+use whisker_driver::module::{
+    InvokeModuleCallback, MobileModuleHost, ObserveModuleCallback, with_mobile_module_host,
+};
+use whisker_engine::whisker_protocol::{
+    ApplyResult, AvailableSpace, BorderLineStyle, ChildPolicy, ElementMeasurement,
+    ElementRegistration, ElementValueKind, FrameMode, FramePacket, MeasureFontFamily,
+    MeasureFontStyle, MeasureLineHeight, MeasureTextWrap, MeasuredSize, MeasurementMetrics,
+    MeasurementPayload, MeasurementRequest, MeasurementRequestId, MeasurementResponse, NodeId,
+    Operation, PaintColor, PaintLengthPercentage, PreparedContentId, SurfaceId,
+    UnsupportedMeasurementReason,
+};
+use whisker_engine::whisker_style::StyleEnvironment;
+use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
+use whisker_runtime::RuntimeWakeHandle;
+use whisker_runtime::view::Element;
+
+use crate::{RuntimeInstance, SurfaceRuntime};
+
+pub type RequestFrameCallback = extern "C" fn(*mut c_void);
+
+struct MobileRuntime {
+    runtime: RuntimeInstance,
+    modules: std::sync::Arc<MobileModuleHost>,
+    measurement: MobileMeasurementHost,
+    sink: MobileFrameSink,
+    environment_epoch: u64,
+    viewport_epoch: u32,
+    viewport: Viewport,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Viewport {
+    width: f32,
+    height: f32,
+    scale: f32,
+}
+
+impl Viewport {
+    fn new(width: f32, height: f32, scale: f32) -> Option<Self> {
+        (width.is_finite()
+            && width >= 0.0
+            && height.is_finite()
+            && height >= 0.0
+            && scale.is_finite()
+            && scale > 0.0)
+            .then_some(Self {
+                width,
+                height,
+                scale,
+            })
+    }
+    fn environment(self) -> StyleEnvironment {
+        StyleEnvironment::new(self.width, self.height, self.scale, 14.0)
+    }
+}
+
+/// Mounts Rust, negotiates all element registrations with the Host, then
+/// enables measurement and frame production. All callbacks run on the caller.
+#[allow(clippy::too_many_arguments)]
+pub fn create(
+    width: f32,
+    height: f32,
+    scale: f32,
+    request_frame: RequestFrameCallback,
+    request_data: *mut c_void,
+    bootstrap: BootstrapCallback,
+    bootstrap_data: *mut c_void,
+    measure: MeasureCallback,
+    measure_data: *mut c_void,
+    present_frame: PresentFrameCallback,
+    present_data: *mut c_void,
+    invoke_module: InvokeModuleCallback,
+    observe_module: ObserveModuleCallback,
+    module_data: *mut c_void,
+    application: impl FnOnce() -> Element,
+) -> *mut c_void {
+    #[cfg(target_os = "android")]
+    whisker_driver::ensure_mobile_bridge_linked();
+    let Some(viewport) = Viewport::new(width, height, scale) else {
+        return std::ptr::null_mut();
+    };
+    let wake_data = request_data as usize;
+    let wake = RuntimeWakeHandle::new(move || request_frame(wake_data as *mut c_void));
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(1).expect("mobile surface ID is non-zero"),
+        viewport.environment(),
+    );
+    let mut runtime = RuntimeInstance::new(surface, wake);
+    let modules = MobileModuleHost::new(module_data, invoke_module, observe_module);
+    if let Err(error) = with_mobile_module_host(&modules, || runtime.mount(application)) {
+        eprintln!("Whisker mobile mount failed: {error}");
+        return std::ptr::null_mut();
+    }
+    let registrations = runtime.surface().element_registrations();
+    let owned_bootstrap = MobileBootstrapOwned::new(&registrations);
+    if !bootstrap(bootstrap_data, &owned_bootstrap.value) {
+        let _ = with_mobile_module_host(&modules, || runtime.unmount());
+        return std::ptr::null_mut();
+    }
+    let mobile = Box::new(MobileRuntime {
+        runtime,
+        modules,
+        measurement: MobileMeasurementHost {
+            callback: measure,
+            data: measure_data,
+        },
+        sink: MobileFrameSink {
+            present: present_frame,
+            data: present_data,
+        },
+        environment_epoch: 1,
+        viewport_epoch: 1,
+        viewport,
+    });
+    request_frame(request_data);
+    Box::into_raw(mobile).cast()
+}
+
+/// # Safety
+/// `handle` must be a live pointer returned by [`create`] on this UI thread.
+pub unsafe fn tick(
+    handle: *mut c_void,
+    timestamp_ms: f64,
+    width: f32,
+    height: f32,
+    scale: f32,
+) -> bool {
+    let Some(viewport) = Viewport::new(width, height, scale) else {
+        return true;
+    };
+    let Some(mobile) = (unsafe { handle.cast::<MobileRuntime>().as_mut() }) else {
+        return true;
+    };
+    if mobile.viewport != viewport {
+        mobile.viewport = viewport;
+        mobile.environment_epoch = mobile.environment_epoch.saturating_add(1);
+        mobile.viewport_epoch = mobile.viewport_epoch.saturating_add(1);
+    }
+    let modules = std::sync::Arc::clone(&mobile.modules);
+    match with_mobile_module_host(&modules, || {
+        mobile.runtime.drive_frame(
+            timestamp_ms,
+            viewport.environment(),
+            mobile.environment_epoch,
+            mobile.viewport_epoch,
+            &mut mobile.measurement,
+            &mut mobile.sink,
+            LayoutOptions::default(),
+        )
+    }) {
+        Ok(drive) => !drive.needs_frame,
+        Err(error) => {
+            eprintln!("Whisker mobile frame failed: {error}");
+            true
+        }
+    }
+}
+
+/// # Safety
+/// `handle` must be live and must not be used after this call.
+pub unsafe fn destroy(handle: *mut c_void) {
+    if handle.is_null() {
+        return;
+    }
+    let mut mobile = unsafe { Box::from_raw(handle.cast::<MobileRuntime>()) };
+    let modules = std::sync::Arc::clone(&mobile.modules);
+    let _ = with_mobile_module_host(&modules, || mobile.runtime.unmount());
+}
+
+/// # Safety
+/// All borrowed values must remain valid for this call.
+pub unsafe fn dispatch_event(
+    handle: *mut c_void,
+    timestamp_ms: f64,
+    node: u64,
+    name: *const u8,
+    name_len: usize,
+    detail: *const WhiskerValueRaw,
+) -> bool {
+    let Some(mobile) = (unsafe { handle.cast::<MobileRuntime>().as_ref() }) else {
+        return false;
+    };
+    let Some(node) = NodeId::new(node) else {
+        return false;
+    };
+    if name.is_null() || name_len == 0 || !timestamp_ms.is_finite() {
+        return false;
+    }
+    let Ok(name) = std::str::from_utf8(unsafe { std::slice::from_raw_parts(name, name_len) })
+    else {
+        return false;
+    };
+    let event = whisker_engine::whisker_protocol::InputEvent {
+        surface: SurfaceId::new(1).unwrap(),
+        timestamp_ms,
+        kind: whisker_engine::whisker_protocol::InputEventKind::Named(name.to_owned()),
+        pointer: None,
+        target: Some(node),
+        detail: unsafe { decode_value(detail) },
+    };
+    let modules = std::sync::Arc::clone(&mobile.modules);
+    with_mobile_module_host(&modules, || mobile.runtime.dispatch_input(&event))
+        .map(|value| value.consumed)
+        .unwrap_or_else(|error| {
+            eprintln!("Whisker mobile event failed: {error}");
+            false
+        })
+}
+
+/// # Safety
+/// All borrowed values must remain valid for this call.
+pub unsafe fn dispatch_module_event(
+    handle: *mut c_void,
+    module: *const u8,
+    module_len: usize,
+    event: *const u8,
+    event_len: usize,
+    payload: *const WhiskerValueRaw,
+) -> bool {
+    let Some(mobile) = (unsafe { handle.cast::<MobileRuntime>().as_ref() }) else {
+        return false;
+    };
+    if module.is_null() || module_len == 0 || event.is_null() || event_len == 0 {
+        return false;
+    }
+    let Ok(module) = std::str::from_utf8(unsafe { std::slice::from_raw_parts(module, module_len) })
+    else {
+        return false;
+    };
+    let Ok(event) = std::str::from_utf8(unsafe { std::slice::from_raw_parts(event, event_len) })
+    else {
+        return false;
+    };
+    let payload = unsafe { decode_value(payload) };
+    let modules = std::sync::Arc::clone(&mobile.modules);
+    with_mobile_module_host(&modules, || modules.dispatch_event(module, event, payload))
+}
+
+struct MobileBootstrapOwned {
+    value: MobileBootstrap,
+    _strings: Vec<CString>,
+    _members: Vec<Vec<MobileMemberRegistration>>,
+    _registrations: Vec<MobileElementRegistration>,
+}
+
+impl MobileBootstrapOwned {
+    fn new(source: &[ElementRegistration]) -> Self {
+        let mut strings = Vec::new();
+        let mut members = Vec::<Vec<MobileMemberRegistration>>::new();
+        let mut registrations = Vec::with_capacity(source.len());
+        for registration in source {
+            let name = push_string(&mut strings, &registration.name);
+            let properties = registration
+                .properties
+                .iter()
+                .map(|item| {
+                    member_registration(
+                        item.property.get(),
+                        &item.name,
+                        item.value,
+                        false,
+                        &mut strings,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let events = registration
+                .events
+                .iter()
+                .map(|item| {
+                    member_registration(
+                        item.event.get(),
+                        &item.name,
+                        item.detail.unwrap_or(ElementValueKind::Null),
+                        item.detail.is_some(),
+                        &mut strings,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let commands = registration
+                .commands
+                .iter()
+                .map(|item| {
+                    member_registration(
+                        item.command.get(),
+                        &item.name,
+                        item.arguments,
+                        false,
+                        &mut strings,
+                    )
+                })
+                .collect::<Vec<_>>();
+            members.push(properties);
+            let (property_ptr, property_count) = (
+                members.last().unwrap().as_ptr(),
+                members.last().unwrap().len(),
+            );
+            members.push(events);
+            let (event_ptr, event_count) = (
+                members.last().unwrap().as_ptr(),
+                members.last().unwrap().len(),
+            );
+            members.push(commands);
+            let commands = members.last().unwrap();
+            registrations.push(MobileElementRegistration {
+                element_type: registration.element_type.get(),
+                child_policy: match registration.child_policy {
+                    ChildPolicy::None => 0,
+                    ChildPolicy::Elements => 1,
+                    ChildPolicy::PlainText => 2,
+                },
+                measurement: match registration.measurement {
+                    ElementMeasurement::None => 0,
+                    ElementMeasurement::Text => 1,
+                    ElementMeasurement::ReplacedContent => 2,
+                    ElementMeasurement::Custom => 3,
+                },
+                _pad: [0; 2],
+                name,
+                properties: property_ptr,
+                property_count,
+                events: event_ptr,
+                event_count,
+                commands: commands.as_ptr(),
+                command_count: commands.len(),
+            });
+        }
+        let value = MobileBootstrap {
+            abi_major: MOBILE_ABI_MAJOR,
+            abi_minor: MOBILE_ABI_MINOR,
+            protocol_major: whisker_engine::whisker_protocol::PROTOCOL_MAJOR,
+            protocol_minor: whisker_engine::whisker_protocol::PROTOCOL_MINOR,
+            registrations: registrations.as_ptr(),
+            registration_count: registrations.len(),
+        };
+        Self {
+            value,
+            _strings: strings,
+            _members: members,
+            _registrations: registrations,
+        }
+    }
+}
+
+fn push_string(strings: &mut Vec<CString>, value: &str) -> WhiskerStringRef {
+    let value = CString::new(value).unwrap_or_default();
+    let result = WhiskerStringRef {
+        ptr: value.as_ptr(),
+        len: value.as_bytes().len(),
+    };
+    strings.push(value);
+    result
+}
+
+fn empty_string() -> WhiskerStringRef {
+    WhiskerStringRef {
+        ptr: std::ptr::null(),
+        len: 0,
+    }
+}
+
+fn member_registration(
+    id: u32,
+    name: &str,
+    kind: ElementValueKind,
+    optional: bool,
+    strings: &mut Vec<CString>,
+) -> MobileMemberRegistration {
+    MobileMemberRegistration {
+        id,
+        value_kind: match kind {
+            ElementValueKind::Null => 0,
+            ElementValueKind::Bool => 1,
+            ElementValueKind::Int => 2,
+            ElementValueKind::Float => 3,
+            ElementValueKind::String => 4,
+            ElementValueKind::Bytes => 5,
+            ElementValueKind::Array => 6,
+            ElementValueKind::Map => 7,
+        },
+        optional_kind: u8::from(optional),
+        _pad: [0; 2],
+        name: push_string(strings, name),
+    }
+}
+
+#[derive(Debug)]
+struct MobileMeasureError(&'static str);
+impl std::fmt::Display for MobileMeasureError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+impl std::error::Error for MobileMeasureError {}
+
+struct MobileMeasurementHost {
+    callback: MeasureCallback,
+    data: *mut c_void,
+}
+
+impl MeasurementProvider for MobileMeasurementHost {
+    type Error = MobileMeasureError;
+
+    fn measure_batch(
+        &mut self,
+        _surface: SurfaceId,
+        requests: &[MeasurementRequest],
+        responses: &mut Vec<MeasurementResponse>,
+    ) -> Result<(), Self::Error> {
+        let mut batch = MobileMeasureBatch::new(requests);
+        if !(self.callback)(
+            self.data,
+            batch.requests.as_ptr(),
+            batch.requests.len(),
+            batch.responses.as_mut_ptr(),
+        ) {
+            return Err(MobileMeasureError("mobile Host rejected measurement batch"));
+        }
+        for raw in &batch.responses {
+            let Some(request) = requests.iter().find(|item| item.key.get() == raw.key) else {
+                return Err(MobileMeasureError(
+                    "mobile Host returned an unknown measurement key",
+                ));
+            };
+            if raw.environment_epoch != request.environment_epoch {
+                return Err(MobileMeasureError(
+                    "mobile Host returned a stale measurement epoch",
+                ));
+            }
+            let make_metrics = || MeasurementMetrics {
+                size: MeasuredSize::new(raw.width, raw.height),
+                first_baseline: (raw.metrics_mask & 1 != 0).then_some(raw.first_baseline),
+                last_baseline: (raw.metrics_mask & 2 != 0).then_some(raw.last_baseline),
+                overflow: None,
+                prepared_content: (raw.metrics_mask & 4 != 0)
+                    .then(|| PreparedContentId::new(raw.prepared_content))
+                    .flatten(),
+            };
+            responses.push(match raw.status {
+                MEASURE_READY => MeasurementResponse::Ready {
+                    key: request.key,
+                    environment_epoch: raw.environment_epoch,
+                    metrics: make_metrics(),
+                },
+                MEASURE_PENDING => MeasurementResponse::Pending {
+                    key: request.key,
+                    environment_epoch: raw.environment_epoch,
+                    request_id: MeasurementRequestId::new(raw.request_id)
+                        .ok_or(MobileMeasureError("pending measurement omitted request ID"))?,
+                    provisional: (raw.metrics_mask & 8 != 0).then(make_metrics),
+                },
+                MEASURE_UNSUPPORTED => MeasurementResponse::Unsupported {
+                    key: request.key,
+                    environment_epoch: raw.environment_epoch,
+                    reason: match raw.reason {
+                        1 => UnsupportedMeasurementReason::Element,
+                        2 => UnsupportedMeasurementReason::PayloadVersion,
+                        3 => UnsupportedMeasurementReason::Environment,
+                        _ => UnsupportedMeasurementReason::Kind,
+                    },
+                },
+                _ => {
+                    return Err(MobileMeasureError(
+                        "mobile Host returned an invalid measurement status",
+                    ));
+                }
+            });
+        }
+        Ok(())
+    }
+}
+
+struct MobileMeasureBatch {
+    _strings: Vec<CString>,
+    _bytes: Vec<Vec<u8>>,
+    requests: Vec<MobileMeasureRequest>,
+    responses: Vec<MobileMeasureResponse>,
+}
+
+impl MobileMeasureBatch {
+    fn new(source: &[MeasurementRequest]) -> Self {
+        let mut strings = Vec::new();
+        let mut bytes = Vec::new();
+        let mut requests = Vec::with_capacity(source.len());
+        let mut responses = Vec::with_capacity(source.len());
+        for request in source {
+            let mut raw = MobileMeasureRequest {
+                key: request.key.get(),
+                node: request.node.get(),
+                element_type: request.element_type.get(),
+                kind: 0,
+                environment_epoch: request.environment_epoch,
+                known_width: request.constraints.known_dimensions[0].unwrap_or_default(),
+                known_height: request.constraints.known_dimensions[1].unwrap_or_default(),
+                known_mask: u32::from(request.constraints.known_dimensions[0].is_some())
+                    | (u32::from(request.constraints.known_dimensions[1].is_some()) << 1),
+                available_width: available_value(request.constraints.available_space[0]),
+                available_height: available_value(request.constraints.available_space[1]),
+                available_width_kind: available_kind(request.constraints.available_space[0]),
+                available_height_kind: available_kind(request.constraints.available_space[1]),
+                font_style: 0,
+                wrap: 0,
+                text: empty_string(),
+                locale: empty_string(),
+                font_family: empty_string(),
+                font_size: 0.0,
+                font_weight: 400,
+                payload_version: 0,
+                line_height: 0.0,
+                letter_spacing: 0.0,
+                max_lines: 0,
+                payload: WhiskerBytesRef {
+                    ptr: std::ptr::null(),
+                    len: 0,
+                },
+                intrinsic_width: 0.0,
+                intrinsic_height: 0.0,
+                intrinsic_mask: 0,
+            };
+            match &request.payload {
+                MeasurementPayload::Text(value) => {
+                    raw.kind = MEASURE_TEXT;
+                    raw.text = push_string(&mut strings, &value.text);
+                    raw.locale = value
+                        .locale
+                        .as_deref()
+                        .map(|value| push_string(&mut strings, value))
+                        .unwrap_or_else(empty_string);
+                    if let Some(MeasureFontFamily::Named(value)) = value.style.font_families.first()
+                    {
+                        raw.font_family = push_string(&mut strings, value);
+                    }
+                    raw.font_size = value.style.font_size;
+                    raw.font_weight = value.style.font_weight;
+                    raw.font_style = match value.style.font_style {
+                        MeasureFontStyle::Normal => 0,
+                        MeasureFontStyle::Italic => 1,
+                        MeasureFontStyle::Oblique => 2,
+                    };
+                    raw.wrap = u8::from(matches!(value.wrap, MeasureTextWrap::Wrap));
+                    raw.line_height = match value.style.line_height {
+                        MeasureLineHeight::Normal => 0.0,
+                        MeasureLineHeight::LogicalPixels(value) => value,
+                    };
+                    raw.letter_spacing = value.style.letter_spacing;
+                    raw.max_lines = value.max_lines.unwrap_or(0);
+                }
+                MeasurementPayload::ReplacedContent(value) => {
+                    raw.kind = MEASURE_REPLACED_CONTENT;
+                    if let Some(size) = value.intrinsic_size {
+                        raw.intrinsic_width = size.width;
+                        raw.intrinsic_height = size.height;
+                        raw.intrinsic_mask = 3;
+                    }
+                }
+                MeasurementPayload::NativeControl(value) => {
+                    raw.kind = MEASURE_NATIVE_CONTROL;
+                    raw.payload_version = value.version;
+                    raw.payload = push_bytes(&mut bytes, &value.state);
+                }
+                MeasurementPayload::EmbeddedSurface(value) => {
+                    raw.kind = MEASURE_EMBEDDED_SURFACE;
+                    if let Some(size) = value.preferred_size {
+                        raw.intrinsic_width = size.width;
+                        raw.intrinsic_height = size.height;
+                        raw.intrinsic_mask = 3;
+                    }
+                }
+                MeasurementPayload::Custom(value) => {
+                    raw.kind = MEASURE_CUSTOM;
+                    raw.payload_version = value.version;
+                    raw.payload = push_bytes(&mut bytes, &value.data);
+                }
+            }
+            responses.push(MobileMeasureResponse {
+                key: raw.key,
+                environment_epoch: raw.environment_epoch,
+                ..MobileMeasureResponse::default()
+            });
+            requests.push(raw);
+        }
+        Self {
+            _strings: strings,
+            _bytes: bytes,
+            requests,
+            responses,
+        }
+    }
+}
+
+fn push_bytes(storage: &mut Vec<Vec<u8>>, value: &[u8]) -> WhiskerBytesRef {
+    let value = value.to_vec();
+    let result = WhiskerBytesRef {
+        ptr: value.as_ptr(),
+        len: value.len(),
+    };
+    storage.push(value);
+    result
+}
+fn available_kind(value: AvailableSpace) -> u8 {
+    match value {
+        AvailableSpace::Definite(_) => 0,
+        AvailableSpace::MinContent => 1,
+        AvailableSpace::MaxContent => 2,
+    }
+}
+fn available_value(value: AvailableSpace) -> f32 {
+    match value {
+        AvailableSpace::Definite(value) => value,
+        _ => 0.0,
+    }
+}
+
+#[derive(Debug)]
+struct MobileFrameError;
+impl std::fmt::Display for MobileFrameError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("mobile Host rejected a frame")
+    }
+}
+impl std::error::Error for MobileFrameError {}
+
+struct MobileFrameSink {
+    present: PresentFrameCallback,
+    data: *mut c_void,
+}
+
+impl FrameSink for MobileFrameSink {
+    type Error = MobileFrameError;
+    fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
+        let owned = MobileFrameOwned::new(packet);
+        let mut response = MobileApplyResponse::default();
+        if !(self.present)(self.data, &owned.value, &mut response) {
+            return Err(MobileFrameError);
+        }
+        match response.status {
+            APPLY_ACCEPTED if response.revision == packet.header.target_revision => {
+                Ok(ApplyResult::Accepted {
+                    revision: response.revision,
+                })
+            }
+            APPLY_NEED_SNAPSHOT => Ok(ApplyResult::NeedSnapshot {
+                receiver_revision: response.revision,
+            }),
+            _ => Err(MobileFrameError),
+        }
+    }
+}
+
+struct MobileFrameOwned {
+    value: MobileFrame,
+    _arena: RawValueArena,
+    _layouts: Vec<Box<MobileLayoutGeometry>>,
+    _paints: Vec<Box<MobileBoxPaint>>,
+    _texts: Vec<Box<MobileText>>,
+    _transforms: Vec<Box<[f32; 16]>>,
+    _values: Vec<Box<WhiskerValueRaw>>,
+    _strings: Vec<CString>,
+    _operations: Vec<MobileOperation>,
+}
+
+impl MobileFrameOwned {
+    fn new(packet: &FramePacket) -> Self {
+        let mut arena = RawValueArena::default();
+        let mut layouts = Vec::<Box<MobileLayoutGeometry>>::new();
+        let mut paints = Vec::<Box<MobileBoxPaint>>::new();
+        let mut texts = Vec::<Box<MobileText>>::new();
+        let mut transforms = Vec::<Box<[f32; 16]>>::new();
+        let mut values = Vec::<Box<WhiskerValueRaw>>::new();
+        let mut strings = Vec::new();
+        let mut operations = Vec::with_capacity(packet.operations.len());
+        for operation in &packet.operations {
+            let mut raw = MobileOperation {
+                tag: 0,
+                flags: 0,
+                node: 0,
+                parent: 0,
+                child: 0,
+                index: 0,
+                member: 0,
+                integer: 0,
+                scalar: 0.0,
+                wide: 0,
+                payload: std::ptr::null(),
+                payload_count: 0,
+            };
+            match operation {
+                Operation::CreateNode { node, element_type } => {
+                    raw.tag = OP_CREATE;
+                    raw.node = node.get();
+                    raw.member = element_type.get();
+                }
+                Operation::DeleteNode { node } => {
+                    raw.tag = OP_DELETE;
+                    raw.node = node.get();
+                }
+                Operation::InsertChild {
+                    parent,
+                    child,
+                    index,
+                } => {
+                    raw.tag = OP_INSERT;
+                    raw.parent = parent.get();
+                    raw.child = child.get();
+                    raw.index = *index;
+                }
+                Operation::RemoveChild { parent, child } => {
+                    raw.tag = OP_REMOVE;
+                    raw.parent = parent.get();
+                    raw.child = child.get();
+                }
+                Operation::MoveChild {
+                    parent,
+                    child,
+                    index,
+                } => {
+                    raw.tag = OP_MOVE;
+                    raw.parent = parent.get();
+                    raw.child = child.get();
+                    raw.index = *index;
+                }
+                Operation::SetLayout { node, geometry } => {
+                    raw.tag = OP_LAYOUT;
+                    raw.node = node.get();
+                    layouts.push(Box::new(MobileLayoutGeometry {
+                        border: mobile_rect(geometry.border_box),
+                        content: mobile_rect(geometry.content_box),
+                    }));
+                    raw.payload = layouts.last().unwrap().as_ref() as *const _ as *const c_void;
+                }
+                Operation::SetBoxPaint { node, paint } => {
+                    raw.tag = OP_PAINT;
+                    raw.node = node.get();
+                    paints.push(Box::new(mobile_paint(paint, &mut strings)));
+                    raw.payload = paints.last().unwrap().as_ref() as *const _ as *const c_void;
+                }
+                Operation::SetClip { node, clip } => {
+                    raw.tag = OP_CLIP;
+                    raw.node = node.get();
+                    raw.flags = u32::from(matches!(
+                        clip.horizontal,
+                        whisker_engine::whisker_protocol::OverflowClip::Hidden
+                    )) | (u32::from(matches!(
+                        clip.vertical,
+                        whisker_engine::whisker_protocol::OverflowClip::Hidden
+                    )) << 1);
+                }
+                Operation::SetTransform { node, transform } => {
+                    raw.tag = OP_TRANSFORM;
+                    raw.node = node.get();
+                    transforms.push(Box::new(transform.0));
+                    raw.payload = transforms.last().unwrap().as_ref().as_ptr().cast();
+                    raw.payload_count = 16;
+                }
+                Operation::SetOpacity { node, opacity } => {
+                    raw.tag = OP_OPACITY;
+                    raw.node = node.get();
+                    raw.scalar = *opacity;
+                }
+                Operation::SetVisibility { node, visibility } => {
+                    raw.tag = OP_VISIBILITY;
+                    raw.node = node.get();
+                    raw.integer = i32::from(matches!(
+                        visibility,
+                        whisker_engine::whisker_protocol::Visibility::Visible
+                    ));
+                }
+                Operation::SetZOrder { node, z_order } => {
+                    raw.tag = OP_Z_ORDER;
+                    raw.node = node.get();
+                    raw.integer = *z_order;
+                }
+                Operation::SetText { node, content } => {
+                    raw.tag = OP_TEXT;
+                    raw.node = node.get();
+                    texts.push(Box::new(MobileText {
+                        text: push_string(&mut strings, &content.payload.text),
+                        font_size: content.payload.style.font_size,
+                        font_weight: content.payload.style.font_weight,
+                        font_style: match content.payload.style.font_style {
+                            MeasureFontStyle::Normal => 0,
+                            MeasureFontStyle::Italic => 1,
+                            MeasureFontStyle::Oblique => 2,
+                        },
+                        wrap: u8::from(matches!(content.payload.wrap, MeasureTextWrap::Wrap)),
+                        max_lines: content.payload.max_lines.unwrap_or(0),
+                        line_height: match content.payload.style.line_height {
+                            MeasureLineHeight::Normal => 0.0,
+                            MeasureLineHeight::LogicalPixels(value) => value,
+                        },
+                        letter_spacing: content.payload.style.letter_spacing,
+                        color: mobile_color(&content.paint.foreground, &mut strings),
+                        prepared_content: content.prepared_content.map_or(0, |value| value.get()),
+                    }));
+                    raw.payload = texts.last().unwrap().as_ref() as *const _ as *const c_void;
+                }
+                Operation::SetProperty {
+                    node,
+                    property,
+                    value,
+                } => {
+                    raw.tag = OP_PROPERTY;
+                    raw.node = node.get();
+                    raw.member = property.get();
+                    values.push(Box::new(arena.encode(value)));
+                    raw.payload = values.last().unwrap().as_ref() as *const _ as *const c_void;
+                }
+                Operation::ClearProperty { node, property } => {
+                    raw.tag = OP_CLEAR_PROPERTY;
+                    raw.node = node.get();
+                    raw.member = property.get();
+                }
+                Operation::SetEventMask { node, event_mask } => {
+                    raw.tag = OP_EVENT_MASK;
+                    raw.node = node.get();
+                    raw.wide = *event_mask;
+                }
+                Operation::SetHitTest { node, behavior } => {
+                    raw.tag = OP_HIT_TEST;
+                    raw.node = node.get();
+                    raw.integer = match behavior {
+                        whisker_engine::whisker_protocol::HitTestBehavior::Auto => 0,
+                        whisker_engine::whisker_protocol::HitTestBehavior::None => 1,
+                        whisker_engine::whisker_protocol::HitTestBehavior::BoxOnly => 2,
+                        whisker_engine::whisker_protocol::HitTestBehavior::DescendantsOnly => 3,
+                    };
+                }
+                Operation::SetPointerCapture { node, pointer } => {
+                    raw.tag = OP_CAPTURE;
+                    raw.node = node.get();
+                    raw.wide = pointer.get();
+                }
+                Operation::ReleasePointerCapture { node, pointer } => {
+                    raw.tag = OP_RELEASE_CAPTURE;
+                    raw.node = node.get();
+                    raw.wide = pointer.get();
+                }
+                Operation::InvokeCommand {
+                    node,
+                    command,
+                    arguments,
+                    result,
+                } => {
+                    raw.tag = OP_COMMAND;
+                    raw.node = node.get();
+                    raw.member = command.get();
+                    raw.wide = result.map_or(0, |value| value.get());
+                    values.push(Box::new(arena.encode(arguments)));
+                    raw.payload = values.last().unwrap().as_ref() as *const _ as *const c_void;
+                }
+            }
+            operations.push(raw);
+        }
+        let value = MobileFrame {
+            abi_major: MOBILE_ABI_MAJOR,
+            abi_minor: MOBILE_ABI_MINOR,
+            protocol_major: packet.header.version.major,
+            protocol_minor: packet.header.version.minor,
+            mode: match packet.header.mode {
+                FrameMode::Snapshot => FRAME_SNAPSHOT,
+                FrameMode::Delta => FRAME_DELTA,
+            },
+            _pad: [0; 7],
+            surface: packet.header.surface.get(),
+            scene_epoch: packet.header.scene_epoch,
+            viewport_epoch: packet.header.viewport_epoch,
+            frame_id: packet.header.frame_id,
+            base_revision: packet.header.base_revision,
+            target_revision: packet.header.target_revision,
+            operations: operations.as_ptr(),
+            operation_count: operations.len(),
+        };
+        Self {
+            value,
+            _arena: arena,
+            _layouts: layouts,
+            _paints: paints,
+            _texts: texts,
+            _transforms: transforms,
+            _values: values,
+            _strings: strings,
+            _operations: operations,
+        }
+    }
+}
+
+fn mobile_rect(value: whisker_engine::whisker_protocol::LayoutRect) -> MobileRect {
+    MobileRect {
+        x: value.x,
+        y: value.y,
+        width: value.width,
+        height: value.height,
+    }
+}
+fn mobile_length(value: PaintLengthPercentage) -> MobileLengthPercentage {
+    MobileLengthPercentage {
+        length: value.length,
+        fraction: value.fraction,
+    }
+}
+fn mobile_paint(
+    value: &whisker_engine::whisker_protocol::BoxPaint,
+    strings: &mut Vec<CString>,
+) -> MobileBoxPaint {
+    MobileBoxPaint {
+        background: mobile_color(&value.background_color, strings),
+        widths: [
+            mobile_length(value.border_widths.top),
+            mobile_length(value.border_widths.right),
+            mobile_length(value.border_widths.bottom),
+            mobile_length(value.border_widths.left),
+        ],
+        colors: [
+            mobile_color(&value.border_colors.top, strings),
+            mobile_color(&value.border_colors.right, strings),
+            mobile_color(&value.border_colors.bottom, strings),
+            mobile_color(&value.border_colors.left, strings),
+        ],
+        styles: [
+            border_style(value.border_styles.top),
+            border_style(value.border_styles.right),
+            border_style(value.border_styles.bottom),
+            border_style(value.border_styles.left),
+        ],
+        radii: [
+            mobile_length(value.border_radii.top_left),
+            mobile_length(value.border_radii.top_right),
+            mobile_length(value.border_radii.bottom_right),
+            mobile_length(value.border_radii.bottom_left),
+        ],
+    }
+}
+fn mobile_color(value: &PaintColor, strings: &mut Vec<CString>) -> MobileColor {
+    match value {
+        PaintColor::Named(name) => MobileColor {
+            kind: 0,
+            red: 0,
+            green: 0,
+            blue: 0,
+            _pad: 0,
+            alpha: 1.0,
+            name: push_string(strings, name),
+        },
+        PaintColor::Srgba {
+            red,
+            green,
+            blue,
+            alpha,
+        } => MobileColor {
+            kind: 1,
+            red: *red,
+            green: *green,
+            blue: *blue,
+            _pad: 0,
+            alpha: *alpha,
+            name: empty_string(),
+        },
+        PaintColor::Hsla {
+            hue_degrees,
+            saturation,
+            lightness,
+            alpha,
+        } => {
+            let (red, green, blue) =
+                hsl_to_rgb(*hue_degrees, *saturation / 100.0, *lightness / 100.0);
+            MobileColor {
+                kind: 1,
+                red,
+                green,
+                blue,
+                _pad: 0,
+                alpha: *alpha,
+                name: empty_string(),
+            }
+        }
+    }
+}
+fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> (u8, u8, u8) {
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let h = hue.rem_euclid(360.0) / 60.0;
+    let x = chroma * (1.0 - (h.rem_euclid(2.0) - 1.0).abs());
+    let (r, g, b) = match h as u32 {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let m = lightness - chroma / 2.0;
+    (
+        ((r + m) * 255.0).round() as u8,
+        ((g + m) * 255.0).round() as u8,
+        ((b + m) * 255.0).round() as u8,
+    )
+}
+fn border_style(value: BorderLineStyle) -> u32 {
+    match value {
+        BorderLineStyle::None => 0,
+        BorderLineStyle::Hidden => 1,
+        BorderLineStyle::Solid => 2,
+        BorderLineStyle::Dashed => 3,
+        BorderLineStyle::Dotted => 4,
+        BorderLineStyle::Double => 5,
+        BorderLineStyle::Groove => 6,
+        BorderLineStyle::Ridge => 7,
+        BorderLineStyle::Inset => 8,
+        BorderLineStyle::Outset => 9,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn viewport_rejects_invalid_host_metrics() {
+        assert!(Viewport::new(320.0, 640.0, 2.0).is_some());
+        assert!(Viewport::new(-1.0, 640.0, 2.0).is_none());
+        assert!(Viewport::new(320.0, 640.0, 0.0).is_none());
+    }
+    #[test]
+    fn hsla_is_lowered_without_host_string_parsing() {
+        assert_eq!(hsl_to_rgb(0.0, 1.0, 0.5), (255, 0, 0));
+        assert_eq!(hsl_to_rgb(120.0, 1.0, 0.5), (0, 255, 0));
+    }
+}

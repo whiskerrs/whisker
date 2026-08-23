@@ -14,7 +14,7 @@
 //! adapted here and keeps its own small printer.
 
 use proc_macro2::Span;
-use syn::Expr;
+use syn::{Expr, LitStr};
 
 /// One node in the normalized tree.
 pub(crate) enum IrNode {
@@ -27,6 +27,10 @@ pub(crate) enum IrNode {
     /// `children()`, never subject to the "omit `()` with no kwargs"
     /// rule other tags get.
     ChildrenSlot(Span),
+    /// A static render child string.
+    Text(LitStr),
+    /// A dynamic `{expr}` render child.
+    Expression(Expr),
     /// routes!'s `..expr` spread — doesn't fit the tag shape at all.
     Spread(Expr),
 }
@@ -103,6 +107,8 @@ fn adapt_render_node(node: &whisker_macro_syntax::render::Node) -> IrNode {
             always_block: false,
         }),
         Node::ChildrenSlot { span } => IrNode::ChildrenSlot(*span),
+        Node::TextLiteral(value) => IrNode::Text(value.clone()),
+        Node::Expression(expression) => IrNode::Expression(expression.clone()),
     }
 }
 
@@ -215,6 +221,8 @@ pub(crate) fn collect_ir_expr_spans(node: &IrNode, out: &mut Vec<Span>) {
             }
         }
         IrNode::ChildrenSlot(_) => {}
+        IrNode::Text(_) => {}
+        IrNode::Expression(expr) => out.push(expr.span()),
         IrNode::Spread(expr) => out.push(expr.span()),
     }
 }

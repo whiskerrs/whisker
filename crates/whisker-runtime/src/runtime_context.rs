@@ -4,11 +4,11 @@ use std::cell::{Cell, RefCell};
 
 use crate::anim_hook::AnimationState;
 use crate::dispatch::RuntimeDispatcher;
-use crate::host_wake::RuntimeWakeHandle;
 use crate::reactive::runtime::ReactiveRuntime;
+use crate::runtime_wake::RuntimeWakeHandle;
 use crate::tasks::TaskState;
 use crate::view::renderer::ViewRuntimeState;
-use crate::{anim_hook, dispatch, host_wake, reactive, tasks, view};
+use crate::{anim_hook, dispatch, reactive, runtime_wake, tasks, view};
 
 struct ContextState {
     reactive: ReactiveRuntime,
@@ -40,7 +40,7 @@ impl ContextState {
         reactive::component::swap_pending_mount(&mut self.pending_mount);
         tasks::swap_state(&mut self.tasks);
         anim_hook::swap_state(&mut self.animation);
-        host_wake::swap_active_wake(&mut self.wake);
+        runtime_wake::swap_active_wake(&mut self.wake);
         dispatch::swap_active(&mut self.dispatcher);
     }
 }

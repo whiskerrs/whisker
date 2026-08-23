@@ -15,9 +15,9 @@
 // The bridge layer (whisker_bridge_ios.mm) hands the Swift dispatch
 // shim raw `WhiskerValueRaw` arrays. `WhiskerValue.decodeArray(_:
 // count:)` walks the C struct array and produces `[WhiskerValue]`.
-// `WhiskerValue.toRaw()` does the reverse, allocating heap-owned
-// strings / bytes / nested arrays / maps via `malloc` (the bridge
-// frees them after the dispatch returns).
+// `WhiskerValue.toRaw()` does the reverse, allocating Swift-owned
+// strings / bytes / nested arrays / maps. The producer releases them
+// with `WhiskerValue.releaseRaw` after the borrowed ABI call returns.
 //
 // ## Discriminant alignment
 //
@@ -129,9 +129,8 @@ public extension WhiskerValue {
     }
 
     /// Allocate a `WhiskerValueRaw` for this value. Heap allocations
-    /// are bridge-owned — caller MUST eventually call
-    /// `whisker_bridge_value_release` on the returned raw to free
-    /// strings / bytes / nested arrays / maps.
+    /// are Swift-owned — caller MUST eventually call
+    /// `WhiskerValue.releaseRaw` on the returned raw.
     func toRaw() -> WhiskerValueRaw {
         var out = WhiskerValueRaw()
         switch self {
@@ -163,6 +162,42 @@ public extension WhiskerValue {
             out.v.s = encodeString(msg)
         }
         return out
+    }
+
+    /// Release a raw tree allocated by `toRaw()` using the matching Swift
+    /// allocator. Rust-borrowed raw values must never be passed here.
+    static func releaseRaw(_ raw: inout WhiskerValueRaw) {
+        switch Int(raw.type) {
+        case Int(WHISKER_VALUE_STRING.rawValue), Int(WHISKER_VALUE_ERROR.rawValue):
+            if let pointer = raw.v.s.ptr {
+                UnsafeMutablePointer(mutating: pointer).deallocate()
+            }
+        case Int(WHISKER_VALUE_BYTES.rawValue):
+            if let pointer = raw.v.bytes.ptr {
+                UnsafeMutablePointer(mutating: pointer).deallocate()
+            }
+        case Int(WHISKER_VALUE_ARRAY.rawValue):
+            if let pointer = raw.v.array.items {
+                for index in 0..<raw.v.array.count {
+                    releaseRaw(&pointer.advanced(by: index).pointee)
+                }
+                pointer.deallocate()
+            }
+        case Int(WHISKER_VALUE_MAP.rawValue):
+            if let pointer = raw.v.map.entries {
+                for index in 0..<raw.v.map.count {
+                    let entry = pointer.advanced(by: index)
+                    if let key = entry.pointee.key.ptr {
+                        UnsafeMutablePointer(mutating: key).deallocate()
+                    }
+                    releaseRaw(&entry.pointee.value)
+                }
+                pointer.deallocate()
+            }
+        default:
+            break
+        }
+        raw = WhiskerValueRaw()
     }
 }
 

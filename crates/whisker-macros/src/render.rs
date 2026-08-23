@@ -58,6 +58,16 @@ fn node_to_tokens_returning_handle(node: &Node) -> TokenStream2 {
     match node {
         Node::Element(el) => element_to_tokens(el),
         Node::UserComponent(u) => user_component_to_tokens(u),
+        Node::TextLiteral(value) => quote_spanned! {value.span()=> {
+            let __text = ::whisker::runtime::view::create_element(
+                ::whisker::ElementTag::RawText,
+            );
+            ::whisker::runtime::view::set_attribute(__text, "text", #value);
+            __text
+        }},
+        Node::Expression(expression) => quote! {
+            ::whisker::runtime::view::mount_view(#expression)
+        },
         // A plain local-ident reference to the surrounding
         // `#[component]`'s destructured `children` prop. Deliberately
         // no `Rc::clone`: `mount_children` takes `&Children` so the
@@ -73,6 +83,18 @@ fn node_to_tokens_returning_handle(node: &Node) -> TokenStream2 {
 /// children-callback case; each child needs to be wrapped via
 /// `IntoView::into_view(…)` for the helper's signature.
 fn node_to_tokens_as_view(node: &Node) -> TokenStream2 {
+    if let Node::TextLiteral(value) = node {
+        return quote_spanned! {value.span()=>
+            ::whisker::runtime::view::View::Text(
+                ::std::string::String::from(#value)
+            )
+        };
+    }
+    if let Node::Expression(expression) = node {
+        return quote! {
+            ::whisker::runtime::view::IntoView::into_view(#expression)
+        };
+    }
     let h = node_to_tokens_returning_handle(node);
     quote! {
         ::whisker::runtime::view::IntoView::into_view(#h)
@@ -427,12 +449,15 @@ fn user_component_to_tokens(uc: &UserComponentNode) -> TokenStream2 {
     // single `use crate::Icon` covers both namespaces and users never
     // import `IconProps`.
     quote! {
-        #fn_ident(
-            #fn_ident::builder()
-                #(#setter_calls)*
-                #children_call
-                .build()
-        )
+        {
+            use ::whisker::__element_builder::ElementBuilder as _;
+            #fn_ident(
+                #fn_ident::builder()
+                    #(#setter_calls)*
+                    #children_call
+                    .build()
+            )
+        }
     }
 }
 
@@ -571,30 +596,19 @@ mod tests {
     }
 
     #[test]
-    fn bare_string_literal_child_is_rejected() {
+    fn bare_string_literal_child_lowers_to_raw_text() {
         let input: TokenStream2 = quote::quote! { view { "hi" } };
-        let result = syn::parse2::<Root>(input);
-        match result {
-            Err(e) => assert!(
-                e.to_string().contains("string literals are not allowed"),
-                "expected hint about `text(value: \"…\")`; got: {e}"
-            ),
-            Ok(_) => panic!("bare LitStr child should be a parse error"),
-        }
+        let output = super::expand_test(input).to_string();
+        assert!(output.contains("RawText"));
+        assert!(output.contains("\"text\""));
     }
 
     #[test]
-    fn bare_brace_expr_child_is_rejected() {
+    fn bare_brace_expr_child_lowers_through_into_view() {
         let input: TokenStream2 = quote::quote! { view { { count } } };
-        let result = syn::parse2::<Root>(input);
-        match result {
-            Err(e) => assert!(
-                e.to_string().contains("`{expr}` blocks are not allowed")
-                    || e.to_string().contains("text(value:"),
-                "expected hint about `text(value: <expr>)`; got: {e}"
-            ),
-            Ok(_) => panic!("bare `{{expr}}` child should be a parse error"),
-        }
+        let output = super::expand_test(input).to_string();
+        assert!(output.contains("mount_view"));
+        assert!(output.contains("count"));
     }
 
     #[test]

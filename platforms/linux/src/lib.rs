@@ -8,4 +8,4 @@
 
 mod app;
 
-pub use app::{LinuxAppConfig, LinuxHostError, run};
+pub use app::{LinuxAppConfig, LinuxError, run};

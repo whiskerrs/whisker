@@ -6,26 +6,30 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
+use crate::ElementRegistry;
+use crate::ElementRegistryError;
 use crate::runtime::element::ElementTag;
 use crate::runtime::value::WhiskerValue;
 use crate::runtime::view::{BindType, DynRenderer, Element};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
-    ElementTypeId, HitTestBehavior, InputEvent, InputEventError, MeasurementReady, NodeId,
-    ProtocolValue, SurfaceId,
+    ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior, InputEvent,
+    InputEventError, MeasurementReady, NodeId, SurfaceId,
 };
 use whisker_engine::whisker_style::{
     InheritedStyle, ResolvedNodeStyle, SpecifiedStyle, StyleEnvironment, StyleResolutionError,
     resolve_style,
 };
 use whisker_engine::{
-    DeferredMeasurementApply, FrameSink, HostLayoutError, HostLayoutOptions, LayoutProgress,
-    MeasurementHost, PlainTextInput, SurfaceEngine, SurfaceError, SurfacePresentError,
+    DeferredMeasurementApply, FrameSink, LayoutError, LayoutOptions, LayoutProgress,
+    MeasurementProvider, PlainTextInput, SurfaceEngine, SurfaceError, SurfacePresentError,
 };
 
 /// A mutation emitted by `render!` that could not enter the retained surface.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RuntimeBindingError {
+    /// A module attempted to publish an invalid or conflicting schema.
+    ElementRegistry(ElementRegistryError),
     /// The runtime named an element handle unknown to this surface.
     UnknownElement {
         /// Missing runtime handle.
@@ -35,6 +39,18 @@ pub enum RuntimeBindingError {
     UnsupportedCustomElement {
         /// Requested element name.
         name: String,
+    },
+    /// A built-in authoring tag has no negotiated element registration.
+    MissingElementRegistration {
+        /// Tag that could not be mapped to a compact element type.
+        tag: ElementTag,
+    },
+    /// A leaf element was given an ordinary scene child.
+    ChildrenNotAllowed {
+        /// Parent element whose schema declares no child mount target.
+        parent: Element,
+        /// Child rejected before entering the retained scene.
+        child: Element,
     },
     /// A compatibility-only CSS string reached the typed renderer.
     UnsupportedRawStyle {
@@ -48,6 +64,22 @@ pub enum RuntimeBindingError {
         /// Target runtime handle.
         element: Element,
         /// Attribute name.
+        name: String,
+    },
+    /// An element property or command received a value of the wrong shape.
+    InvalidElementValue {
+        /// Target runtime handle.
+        element: Element,
+        /// Property or command name.
+        name: String,
+        /// Top-level shape declared by the element contract.
+        expected: ElementValueKind,
+    },
+    /// An element command was not declared by the negotiated contract.
+    UnsupportedElementCommand {
+        /// Target runtime handle.
+        element: Element,
+        /// Command name.
         name: String,
     },
     /// A raw-text helper was attached outside a Text element.
@@ -79,6 +111,7 @@ impl fmt::Display for RuntimeBindingError {
 impl Error for RuntimeBindingError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::ElementRegistry(error) => Some(error),
             Self::Style(error) => Some(error),
             Self::Surface(error) => Some(error),
             _ => None,
@@ -95,6 +128,12 @@ impl From<StyleResolutionError> for RuntimeBindingError {
 impl From<SurfaceError> for RuntimeBindingError {
     fn from(error: SurfaceError) -> Self {
         Self::Surface(error)
+    }
+}
+
+impl From<ElementRegistryError> for RuntimeBindingError {
+    fn from(error: ElementRegistryError) -> Self {
+        Self::ElementRegistry(error)
     }
 }
 
@@ -156,13 +195,13 @@ pub struct InputDispatch {
 
 /// Failure while driving layout for a surface populated through `render!`.
 #[derive(Clone, Debug, PartialEq)]
-pub enum RuntimeLayoutError<HostError> {
+pub enum RuntimeLayoutError<MeasurementError> {
     /// A prior runtime mutation was rejected.
     Binding(RuntimeBindingError),
     /// The runtime has not called `set_root` yet.
     MissingRoot,
     /// Host measurement or retained layout failed.
-    Host(HostLayoutError<HostError>),
+    Measurement(LayoutError<MeasurementError>),
 }
 
 /// Failure while presenting a surface populated through `render!`.
@@ -193,39 +232,39 @@ pub struct RuntimeFrame {
 
 /// Failure while measuring, laying out, or presenting one runtime frame.
 #[derive(Clone, Debug, PartialEq)]
-pub enum RuntimeFrameError<HostError, SinkError> {
+pub enum RuntimeFrameError<MeasurementError, SinkError> {
     /// Measurement or layout failed.
-    Layout(RuntimeLayoutError<HostError>),
+    Layout(RuntimeLayoutError<MeasurementError>),
     /// Frame presentation failed.
     Present(RuntimePresentError<SinkError>),
 }
 
-impl<HostError: fmt::Debug, SinkError: fmt::Debug> fmt::Display
-    for RuntimeFrameError<HostError, SinkError>
+impl<MeasurementError: fmt::Debug, SinkError: fmt::Debug> fmt::Display
+    for RuntimeFrameError<MeasurementError, SinkError>
 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "Whisker runtime frame error: {self:?}")
     }
 }
 
-impl<HostError, SinkError> Error for RuntimeFrameError<HostError, SinkError>
+impl<MeasurementError, SinkError> Error for RuntimeFrameError<MeasurementError, SinkError>
 where
-    HostError: Error + 'static,
+    MeasurementError: Error + 'static,
     SinkError: Error + 'static,
 {
 }
 
-impl<HostError: fmt::Debug> fmt::Display for RuntimeLayoutError<HostError> {
+impl<MeasurementError: fmt::Debug> fmt::Display for RuntimeLayoutError<MeasurementError> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "Whisker render layout error: {self:?}")
     }
 }
 
-impl<HostError: Error + 'static> Error for RuntimeLayoutError<HostError> {
+impl<MeasurementError: Error + 'static> Error for RuntimeLayoutError<MeasurementError> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Binding(error) => Some(error),
-            Self::Host(error) => Some(error),
+            Self::Measurement(error) => Some(error),
             Self::MissingRoot => None,
         }
     }
@@ -241,13 +280,35 @@ pub struct SurfaceRuntime {
     state: Rc<RefCell<BindingState>>,
 }
 
+/// Returns the built-in element contracts used by a default surface.
+///
+/// Hosts normally obtain the same values from
+/// [`SurfaceRuntime::element_registrations`]. This helper is useful for
+/// Host-only conformance tests that intentionally do not mount a runtime.
+pub fn standard_element_registrations() -> Vec<ElementRegistration> {
+    ElementRegistry::standard().registrations().to_vec()
+}
+
 impl SurfaceRuntime {
     /// Creates an empty renderer-backed surface for one style environment.
     pub fn new(surface: SurfaceId, environment: StyleEnvironment) -> Self {
+        Self::with_element_registry(surface, environment, ElementRegistry::standard())
+    }
+
+    /// Creates a surface with a registry normalized during application bootstrap.
+    ///
+    /// Built-in and module-provided elements in this registry share the same
+    /// compact-ID allocation and retained scene path.
+    pub fn with_element_registry(
+        surface: SurfaceId,
+        environment: StyleEnvironment,
+        registry: ElementRegistry,
+    ) -> Self {
         Self {
             state: Rc::new(RefCell::new(BindingState {
                 surface: SurfaceEngine::new(surface),
                 environment,
+                registry,
                 next_element: 0,
                 elements: HashMap::new(),
                 node_elements: HashMap::new(),
@@ -265,6 +326,15 @@ impl SurfaceRuntime {
     /// Returns the semantic surface identifier.
     pub fn surface(&self) -> SurfaceId {
         self.state.borrow().surface.surface()
+    }
+
+    /// Returns the element contracts negotiated by this surface runtime.
+    ///
+    /// A Host binds this snapshot before accepting the first frame. Built-in
+    /// and future module-provided elements use the same registration values;
+    /// `ElementTag` discriminants are not wire element IDs.
+    pub fn element_registrations(&self) -> Vec<ElementRegistration> {
+        self.state.borrow().registry.registrations().to_vec()
     }
 
     /// Returns the root selected by the runtime, when available.
@@ -360,13 +430,13 @@ impl SurfaceRuntime {
     }
 
     /// Runs Taffy and all synchronously available Host measurements.
-    pub fn drive_layout_with_host<Host: MeasurementHost>(
+    pub fn drive_layout<Provider: MeasurementProvider>(
         &self,
         viewport: LayoutSize,
         environment_epoch: u64,
-        host: &mut Host,
-        options: HostLayoutOptions,
-    ) -> Result<LayoutProgress, RuntimeLayoutError<Host::Error>> {
+        provider: &mut Provider,
+        options: LayoutOptions,
+    ) -> Result<LayoutProgress, RuntimeLayoutError<Provider::Error>> {
         let mut state = self.state.borrow_mut();
         if let Some(error) = state.error.clone() {
             return Err(RuntimeLayoutError::Binding(error));
@@ -374,8 +444,8 @@ impl SurfaceRuntime {
         let root = state.root.ok_or(RuntimeLayoutError::MissingRoot)?;
         state
             .surface
-            .drive_layout_with_host(root, viewport, environment_epoch, host, options)
-            .map_err(RuntimeLayoutError::Host)
+            .drive_layout(root, viewport, environment_epoch, provider, options)
+            .map_err(RuntimeLayoutError::Measurement)
     }
 
     /// Presents the next transaction and records the Host acknowledgement.
@@ -396,17 +466,17 @@ impl SurfaceRuntime {
     }
 
     /// Runs Host measurement, final layout, and transactional presentation.
-    pub fn render_frame<Host: MeasurementHost, Sink: FrameSink>(
+    pub fn render_frame<Provider: MeasurementProvider, Sink: FrameSink>(
         &self,
         viewport: LayoutSize,
         environment_epoch: u64,
         viewport_epoch: u32,
-        host: &mut Host,
+        provider: &mut Provider,
         sink: &mut Sink,
-        options: HostLayoutOptions,
-    ) -> Result<RuntimeFrame, RuntimeFrameError<Host::Error, Sink::Error>> {
+        options: LayoutOptions,
+    ) -> Result<RuntimeFrame, RuntimeFrameError<Provider::Error, Sink::Error>> {
         let layout = self
-            .drive_layout_with_host(viewport, environment_epoch, host, options)
+            .drive_layout(viewport, environment_epoch, provider, options)
             .map_err(RuntimeFrameError::Layout)?;
         let presentation = if layout.has_layout() {
             self.present(viewport_epoch, sink)
@@ -423,7 +493,7 @@ impl SurfaceRuntime {
 
 #[derive(Clone)]
 struct BoundElement {
-    tag: ElementTag,
+    kind: BoundElementKind,
     node: Option<NodeId>,
     parent: Option<Element>,
     children: Vec<Element>,
@@ -432,6 +502,40 @@ struct BoundElement {
     text: Option<PlainTextInput>,
     raw_text: String,
     listeners: HashMap<String, Vec<RuntimeListener>>,
+}
+
+#[derive(Clone)]
+enum BoundElementKind {
+    RawText,
+    Registered { registration: ElementRegistration },
+}
+
+impl BoundElementKind {
+    fn is_raw_text(&self) -> bool {
+        matches!(self, Self::RawText)
+    }
+
+    fn accepts_plain_text(&self) -> bool {
+        matches!(
+            self,
+            Self::Registered { registration }
+                if registration.child_policy.accepts_plain_text()
+        )
+    }
+
+    fn accepts_elements(&self) -> bool {
+        match self {
+            Self::RawText => false,
+            Self::Registered { registration } => registration.child_policy.accepts_elements(),
+        }
+    }
+
+    fn registration(&self) -> Option<&ElementRegistration> {
+        match self {
+            Self::RawText => None,
+            Self::Registered { registration } => Some(registration),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -445,6 +549,7 @@ type PlannedListener = (NodeId, Rc<dyn Fn(WhiskerValue) + 'static>);
 struct BindingState {
     surface: SurfaceEngine,
     environment: StyleEnvironment,
+    registry: ElementRegistry,
     next_element: u32,
     elements: HashMap<Element, BoundElement>,
     node_elements: HashMap<NodeId, Element>,
@@ -469,7 +574,7 @@ impl BindingState {
 
     fn record(&mut self, result: Result<(), RuntimeBindingError>) {
         match result {
-            Ok(()) => crate::runtime::host_wake::wake_runtime(),
+            Ok(()) => crate::runtime::runtime_wake::wake_runtime(),
             Err(error) if self.error.is_none() => self.error = Some(error),
             Err(_) => {}
         }
@@ -551,27 +656,60 @@ impl BindingState {
     }
 
     fn allocate(&mut self, tag: ElementTag) -> Result<Element, RuntimeBindingError> {
+        if tag == ElementTag::RawText {
+            return self.allocate_registration(None);
+        }
+        let registration = self
+            .registry
+            .registration_for_builtin(tag)
+            .cloned()
+            .ok_or(RuntimeBindingError::MissingElementRegistration { tag })?;
+        self.allocate_registration(Some(registration))
+    }
+
+    fn allocate_named(&mut self, name: &str) -> Result<Element, RuntimeBindingError> {
+        let registration = self
+            .registry
+            .registration_for_name(name)
+            .cloned()
+            .ok_or_else(|| RuntimeBindingError::UnsupportedCustomElement {
+                name: name.to_owned(),
+            })?;
+        self.allocate_registration(Some(registration))
+    }
+
+    fn allocate_registration(
+        &mut self,
+        registration: Option<ElementRegistration>,
+    ) -> Result<Element, RuntimeBindingError> {
         if self.next_element == u32::MAX {
             return Err(RuntimeBindingError::ElementIdExhausted);
         }
         let handle = Element::from_raw(self.next_element);
         self.next_element += 1;
-        let (node, resolved, text) = if tag == ElementTag::RawText {
-            (None, None, None)
-        } else {
+        let (kind, node, resolved, text) = if let Some(registration) = registration {
             let resolved = resolve_style(&SpecifiedStyle::new(), None, self.environment)?;
-            let element_type =
-                ElementTypeId::new(tag as u32).expect("built-in element tags are non-zero");
-            let node = self
-                .surface
-                .create_node(element_type, resolved.computed().layout().clone())?;
-            let text = (tag == ElementTag::Text).then(|| PlainTextInput::new(""));
-            (Some(node), Some(resolved), text)
+            let node = self.surface.create_node(
+                registration.element_type,
+                resolved.computed().layout().clone(),
+            )?;
+            let text = registration
+                .child_policy
+                .accepts_plain_text()
+                .then(|| PlainTextInput::new(""));
+            (
+                BoundElementKind::Registered { registration },
+                Some(node),
+                Some(resolved),
+                text,
+            )
+        } else {
+            (BoundElementKind::RawText, None, None, None)
         };
         self.elements.insert(
             handle,
             BoundElement {
-                tag,
+                kind,
                 node,
                 parent: None,
                 children: Vec::new(),
@@ -702,7 +840,7 @@ impl BindingState {
     }
 
     fn refresh_text(&mut self, text_element: Element) -> Result<(), RuntimeBindingError> {
-        if self.element(text_element)?.tag != ElementTag::Text {
+        if !self.element(text_element)?.kind.accepts_plain_text() {
             return Err(RuntimeBindingError::InvalidRawTextParent {
                 element: text_element,
                 parent: text_element,
@@ -712,7 +850,7 @@ impl BindingState {
         let mut value = String::new();
         for child in children {
             let child = self.element(child)?;
-            if child.tag == ElementTag::RawText {
+            if child.kind.is_raw_text() {
                 value.push_str(&child.raw_text);
             }
         }
@@ -738,11 +876,14 @@ impl BindingState {
                 parent,
             });
         }
-        if child_entry.tag == ElementTag::RawText && parent_entry.tag != ElementTag::Text {
+        if child_entry.kind.is_raw_text() && !parent_entry.kind.accepts_plain_text() {
             return Err(RuntimeBindingError::InvalidRawTextParent {
                 element: child,
                 parent,
             });
+        }
+        if !child_entry.kind.is_raw_text() && !parent_entry.kind.accepts_elements() {
+            return Err(RuntimeBindingError::ChildrenNotAllowed { parent, child });
         }
         let position = match before {
             Some(reference) => self
@@ -805,15 +946,15 @@ impl BindingState {
         name: &str,
         value: &str,
     ) -> Result<(), RuntimeBindingError> {
-        let tag = self.element(element)?.tag;
-        if tag == ElementTag::RawText && name == "text" {
+        let kind = self.element(element)?.kind.clone();
+        if kind.is_raw_text() && name == "text" {
             self.element_mut(element)?.raw_text = value.to_owned();
             if let Some(parent) = self.element(element)?.parent {
                 self.refresh_text(parent)?;
             }
             return Ok(());
         }
-        if tag == ElementTag::Text && name == "text-maxline" {
+        if kind.accepts_plain_text() && name == "text-maxline" {
             let max_lines = value.parse::<i32>().ok().and_then(|value| {
                 if value > 0 {
                     u32::try_from(value).ok()
@@ -829,10 +970,86 @@ impl BindingState {
             self.apply_subtree(element)?;
             return Ok(());
         }
-        Err(RuntimeBindingError::UnsupportedAttribute {
-            element,
-            name: name.to_owned(),
-        })
+        self.set_property_value(element, name, WhiskerValue::String(value.to_owned()))
+    }
+
+    fn set_property_value(
+        &mut self,
+        element: Element,
+        name: &str,
+        value: WhiskerValue,
+    ) -> Result<(), RuntimeBindingError> {
+        let (node, property, expected) = {
+            let entry = self.element(element)?;
+            let registration = entry.kind.registration().ok_or_else(|| {
+                RuntimeBindingError::UnsupportedAttribute {
+                    element,
+                    name: name.to_owned(),
+                }
+            })?;
+            let property = registration.property_named(name).ok_or_else(|| {
+                RuntimeBindingError::UnsupportedAttribute {
+                    element,
+                    name: name.to_owned(),
+                }
+            })?;
+            (
+                entry
+                    .node
+                    .expect("registered elements always own scene nodes"),
+                property.property,
+                property.value,
+            )
+        };
+        if !expected.accepts(&value) {
+            return Err(RuntimeBindingError::InvalidElementValue {
+                element,
+                name: name.to_owned(),
+                expected,
+            });
+        }
+        self.surface.set_property(node, property, value)?;
+        Ok(())
+    }
+
+    fn invoke_command(
+        &mut self,
+        element: Element,
+        name: &str,
+        params: &WhiskerValue,
+    ) -> Result<WhiskerValue, RuntimeBindingError> {
+        let (node, command, expected) = {
+            let entry = self.element(element)?;
+            let registration = entry.kind.registration().ok_or_else(|| {
+                RuntimeBindingError::UnsupportedElementCommand {
+                    element,
+                    name: name.to_owned(),
+                }
+            })?;
+            let command = registration.command_named(name).ok_or_else(|| {
+                RuntimeBindingError::UnsupportedElementCommand {
+                    element,
+                    name: name.to_owned(),
+                }
+            })?;
+            (
+                entry
+                    .node
+                    .expect("registered elements always own scene nodes"),
+                command.command,
+                command.arguments,
+            )
+        };
+        let arguments = command_arguments(params, expected).ok_or_else(|| {
+            RuntimeBindingError::InvalidElementValue {
+                element,
+                name: name.to_owned(),
+                expected,
+            }
+        })?;
+        self.surface
+            .invoke_command(node, command, arguments, None)?;
+        Ok(WhiskerValue::Null)
     }
 }
 
@@ -849,6 +1066,13 @@ fn event_class_mask(name: &str) -> u64 {
     }
 }
 
+fn event_mask(kind: &BoundElementKind, name: &str) -> u64 {
+    kind.registration()
+        .and_then(|registration| registration.event_named(name))
+        .and_then(|event| event.mask())
+        .unwrap_or_else(|| event_class_mask(name))
+}
+
 fn input_body(event: &InputEvent, target: NodeId) -> WhiskerValue {
     let pointer_kind = event.pointer.map(|pointer| match pointer.kind {
         whisker_engine::whisker_protocol::PointerKind::Mouse => "mouse",
@@ -862,7 +1086,7 @@ fn input_body(event: &InputEvent, target: NodeId) -> WhiskerValue {
             ("y", WhiskerValue::Float(f64::from(pointer.position.y))),
         ])
     } else {
-        protocol_value(&event.detail)
+        event.detail.clone()
     };
     let mut entries = vec![
         (
@@ -913,23 +1137,42 @@ fn with_current_target(body: &WhiskerValue, target: NodeId) -> WhiskerValue {
     body
 }
 
-fn protocol_value(value: &ProtocolValue) -> WhiskerValue {
-    match value {
-        ProtocolValue::Null => WhiskerValue::Null,
-        ProtocolValue::Bool(value) => WhiskerValue::Bool(*value),
-        ProtocolValue::I64(value) => WhiskerValue::Int(*value),
-        ProtocolValue::F64(value) => WhiskerValue::Float(*value),
-        ProtocolValue::String(value) => WhiskerValue::String(value.clone()),
-        ProtocolValue::Bytes(value) => WhiskerValue::Bytes(value.clone()),
-        ProtocolValue::Array(values) => {
-            WhiskerValue::Array(values.iter().map(protocol_value).collect())
-        }
-        ProtocolValue::Object(values) => WhiskerValue::map(
+fn retained_value(value: &WhiskerValue) -> Option<WhiskerValue> {
+    Some(match value {
+        WhiskerValue::Null => WhiskerValue::Null,
+        WhiskerValue::Bool(value) => WhiskerValue::Bool(*value),
+        WhiskerValue::Int(value) => WhiskerValue::Int(*value),
+        WhiskerValue::Float(value) => WhiskerValue::Float(*value),
+        WhiskerValue::String(value) => WhiskerValue::String(value.clone()),
+        WhiskerValue::Bytes(value) => WhiskerValue::Bytes(value.clone()),
+        WhiskerValue::Array(values) => WhiskerValue::Array(
             values
                 .iter()
-                .map(|(name, value)| (name.clone(), protocol_value(value))),
+                .map(retained_value)
+                .collect::<Option<Vec<_>>>()?,
         ),
+        WhiskerValue::Map(values) => WhiskerValue::Map(
+            values
+                .iter()
+                .map(|(name, value)| Some((name.clone(), retained_value(value)?)))
+                .collect::<Option<std::collections::BTreeMap<_, _>>>()?,
+        ),
+        WhiskerValue::Error(_) => return None,
+    })
+}
+
+fn command_arguments(value: &WhiskerValue, expected: ElementValueKind) -> Option<WhiskerValue> {
+    if expected == ElementValueKind::Null
+        && matches!(
+            value,
+            WhiskerValue::Map(values)
+                if matches!(values.get("args"), Some(WhiskerValue::Array(args)) if args.is_empty())
+        )
+    {
+        return Some(WhiskerValue::Null);
     }
+    let value = retained_value(value)?;
+    expected.accepts(&value).then_some(value)
 }
 
 impl DynRenderer for SurfaceRuntime {
@@ -946,10 +1189,30 @@ impl DynRenderer for SurfaceRuntime {
 
     fn create_element_by_name(&self, tag_name: &str) -> Element {
         let mut state = self.state.borrow_mut();
-        state.record(Err(RuntimeBindingError::UnsupportedCustomElement {
-            name: tag_name.to_owned(),
-        }));
-        Element::from_raw(u32::MAX)
+        match state.allocate_named(tag_name) {
+            Ok(element) => element,
+            Err(error) => {
+                state.record(Err(error));
+                Element::from_raw(u32::MAX)
+            }
+        }
+    }
+
+    fn create_element_by_schema(&self, schema: &ElementSchema) -> Element {
+        let mut state = self.state.borrow_mut();
+        let registration = state
+            .registry
+            .register_named(schema.clone())
+            .map(|_| ())
+            .map_err(RuntimeBindingError::from);
+        let result = registration.and_then(|()| state.allocate_named(&schema.name));
+        match result {
+            Ok(element) => element,
+            Err(error) => {
+                state.record(Err(error));
+                Element::from_raw(u32::MAX)
+            }
+        }
     }
 
     fn release_element(&self, handle: Element) {
@@ -977,6 +1240,24 @@ impl DynRenderer for SurfaceRuntime {
     fn set_attribute(&self, handle: Element, key: &str, value: &str) {
         let mut state = self.state.borrow_mut();
         let result = state.set_attribute(handle, key, value);
+        state.record(result);
+    }
+
+    fn set_attribute_int(&self, handle: Element, key: &str, value: i64) {
+        let mut state = self.state.borrow_mut();
+        let result = state.set_property_value(handle, key, WhiskerValue::Int(value));
+        state.record(result);
+    }
+
+    fn set_attribute_bool(&self, handle: Element, key: &str, value: bool) {
+        let mut state = self.state.borrow_mut();
+        let result = state.set_property_value(handle, key, WhiskerValue::Bool(value));
+        state.record(result);
+    }
+
+    fn set_attribute_double(&self, handle: Element, key: &str, value: f64) {
+        let mut state = self.state.borrow_mut();
+        let result = state.set_property_value(handle, key, WhiskerValue::Float(value));
         state.record(result);
     }
 
@@ -1046,11 +1327,11 @@ impl DynRenderer for SurfaceRuntime {
                     bind_type,
                     callback: Rc::from(callback),
                 });
-            let mask = state
-                .element(handle)?
+            let entry = state.element(handle)?;
+            let mask = entry
                 .listeners
                 .keys()
-                .fold(0, |mask, name| mask | event_class_mask(name));
+                .fold(0, |mask, name| mask | event_mask(&entry.kind, name));
             state.surface.set_event_mask(node, mask)?;
             state.surface.set_hit_test(node, HitTestBehavior::Auto)?;
             Ok(())
@@ -1058,15 +1339,35 @@ impl DynRenderer for SurfaceRuntime {
         state.record(result);
     }
 
-    fn set_root(&self, page: Element) {
+    fn invoke_element_method(
+        &self,
+        handle: Element,
+        method: &str,
+        params: WhiskerValue,
+    ) -> Option<WhiskerValue> {
         let mut state = self.state.borrow_mut();
-        let result = match state.element(page) {
+        Some(match state.invoke_command(handle, method, &params) {
+            Ok(value) => {
+                state.record(Ok(()));
+                value
+            }
+            Err(error) => {
+                let message = error.to_string();
+                state.record(Err(error));
+                WhiskerValue::Error(message)
+            }
+        })
+    }
+
+    fn set_root(&self, root: Element) {
+        let mut state = self.state.borrow_mut();
+        let result = match state.element(root) {
             Ok(entry) => match entry.node {
                 Some(node) => {
                     state.root = Some(node);
                     Ok(())
                 }
-                None => Err(RuntimeBindingError::InvalidRoot { element: page }),
+                None => Err(RuntimeBindingError::InvalidRoot { element: root }),
             },
             Err(error) => Err(error),
         };

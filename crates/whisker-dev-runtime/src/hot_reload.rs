@@ -293,7 +293,7 @@ fn handle_patch_frame(bytes: &[u8]) {
     }
     // Wake the host so a frame is scheduled — `take_pending_patch`
     // only runs inside the tick and the TASM thread may be idle.
-    whisker_runtime::host_wake::wake_runtime();
+    whisker_runtime::runtime_wake::wake_runtime();
 }
 
 /// Write the patch dylib payload to a file under the app's cache dir

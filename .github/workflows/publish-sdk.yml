@@ -1,10 +1,9 @@
 name: publish-sdk
 
-# Publishes the three Whisker Android SDK artifacts to the same
+# Publishes the two Whisker Android SDK artifacts to the same
 # `gh-pages` Maven repository the Gradle plugin ships from
 # (https://whiskerrs.github.io/whisker/maven/):
 #
-#   * `rs.whisker:whisker-runtime-android:<ver>` (AAR)
 #   * `rs.whisker:whisker-module-android:<ver>`  (AAR)
 #   * `rs.whisker:ksp:<ver>`                     (jar)
 #
@@ -69,7 +68,7 @@ jobs:
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "Resolved SDK version: $VER"
 
-      - name: Stamp version into the three build.gradle.kts files
+      - name: Stamp version into the two build.gradle.kts files
         # Same `sed` pattern as `publish-gradle-plugin.yml`: anchor on
         # the start-of-line `version = "..."` assignment so unrelated
         # `version = ...` strings inside dependency coords are left
@@ -80,7 +79,6 @@ jobs:
           set -e
           VER="${{ steps.ver.outputs.version }}"
           for FILE in \
-            platforms/android/whisker-runtime/build.gradle.kts \
             platforms/android/module/build.gradle.kts \
             platforms/android/ksp/ksp/build.gradle.kts; do
             sed -i -E "s/^version = \"[^\"]*\"$/version = \"${VER}\"/" "$FILE"
@@ -88,13 +86,8 @@ jobs:
             grep -n '^version = ' "$FILE"
           done
 
-      - name: Publish whisker-runtime + module to staging Maven repo
-        # `-PwhiskerSdkRelease=true` flips the Lynx AAR deps from the
-        # flatDir-friendly `:LynxAndroid@aar` form to proper Maven
-        # coords pinned to `lynxFork`. The published POM then resolves
-        # cleanly off `https://whiskerrs.github.io/lynx/maven/`.
-        #
-        # `publishUrl` is `whisker-runtime`'s and `module`'s
+      - name: Publish module API to staging Maven repo
+        # `publishUrl` is the module API's
         # `publishing.repositories.maven.url` override — redirects
         # the publish target from `build/repo` to our workspace
         # `maven-out` dir.
@@ -102,7 +95,6 @@ jobs:
         run: |
           ./gradle-plugin/gradlew --no-daemon \
             publishAllPublicationsToGhPagesRepository \
-            -PwhiskerSdkRelease=true \
             -PpublishUrl=file://${{ github.workspace }}/maven-out
 
       - name: Publish ksp to staging Maven repo
