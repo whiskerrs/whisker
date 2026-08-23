@@ -288,17 +288,21 @@ fn invalid(property: StyleProperty) -> StyleResolutionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LengthPercentageValue, LengthUnit, LengthValue};
+    use crate::{BorderRadiusValue, LengthPercentageValue, LengthUnit, LengthValue};
 
     fn number(value: f32) -> StyleNumber {
         StyleNumber::new(value)
     }
 
-    fn px(value: f32) -> StyleValue {
-        StyleValue::LengthPercentage(LengthPercentageValue::Length(LengthValue::Dimension {
+    fn px_length(value: f32) -> LengthPercentageValue {
+        LengthPercentageValue::Length(LengthValue::Dimension {
             value: number(value),
             unit: LengthUnit::Px,
-        }))
+        })
+    }
+
+    fn px(value: f32) -> StyleValue {
+        StyleValue::LengthPercentage(px_length(value))
     }
 
     #[test]
@@ -350,7 +354,13 @@ mod tests {
                 StyleValue::BorderStyle(BorderStyleValue::Double),
             )
             .push(StyleProperty::BorderTopLeftRadius, px(8.0))
-            .push(StyleProperty::BorderTopRightRadius, px(9.0))
+            .push(
+                StyleProperty::BorderTopRightRadius,
+                StyleValue::BorderRadius(BorderRadiusValue {
+                    horizontal: px_length(9.0),
+                    vertical: px_length(4.0),
+                }),
+            )
             .push(StyleProperty::BorderBottomRightRadius, px(10.0))
             .push(StyleProperty::BorderBottomLeftRadius, px(11.0))
             .push(StyleProperty::Opacity, StyleValue::Number(number(2.0)))
@@ -392,6 +402,7 @@ mod tests {
         assert_eq!(paint.border_radii.top_left.horizontal.length(), 8.0);
         assert_eq!(paint.border_radii.top_left.vertical.length(), 8.0);
         assert_eq!(paint.border_radii.top_right.horizontal.length(), 9.0);
+        assert_eq!(paint.border_radii.top_right.vertical.length(), 4.0);
         assert_eq!(paint.border_radii.bottom_right.horizontal.length(), 10.0);
         assert_eq!(paint.border_radii.bottom_left.horizontal.length(), 11.0);
         assert_eq!(paint.opacity.get(), 1.0);
@@ -455,6 +466,13 @@ mod tests {
             (StyleProperty::Opacity, StyleValue::Number(number(f32::NAN))),
             (StyleProperty::ZIndex, StyleValue::Integer(i64::MAX)),
             (StyleProperty::BorderTopLeftRadius, px(f32::NAN)),
+            (
+                StyleProperty::BorderTopRightRadius,
+                StyleValue::BorderRadius(BorderRadiusValue {
+                    horizontal: px_length(1.0),
+                    vertical: px_length(f32::NAN),
+                }),
+            ),
         ] {
             assert_eq!(
                 crate::resolve_style(
