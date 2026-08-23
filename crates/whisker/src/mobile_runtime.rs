@@ -411,6 +411,16 @@ impl MeasurementProvider for MobileMeasurementHost {
         requests: &[MeasurementRequest],
         responses: &mut Vec<MeasurementResponse>,
     ) -> Result<(), Self::Error> {
+        if requests.iter().any(|request| {
+            matches!(
+                &request.payload,
+                MeasurementPayload::Text(text) if text.style.uses_extended_typography()
+            )
+        }) {
+            return Err(MobileMeasureError(
+                "mobile Host does not implement extended text typography",
+            ));
+        }
         let mut batch = MobileMeasureBatch::new(requests);
         if !(self.callback)(
             self.data,
@@ -460,6 +470,7 @@ impl MeasurementProvider for MobileMeasurementHost {
                         1 => UnsupportedMeasurementReason::Element,
                         2 => UnsupportedMeasurementReason::PayloadVersion,
                         3 => UnsupportedMeasurementReason::Environment,
+                        4 => UnsupportedMeasurementReason::Feature,
                         _ => UnsupportedMeasurementReason::Kind,
                     },
                 },
@@ -631,8 +642,17 @@ struct MobileFrameSink {
 
 impl FrameSink for MobileFrameSink {
     type Error = MobileFrameError;
+    fn capabilities(&self) -> whisker_engine::whisker_protocol::RenderCapabilities {
+        whisker_engine::whisker_protocol::RenderCapabilities::base()
+    }
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
-        let owned = MobileFrameOwned::new(packet);
+        let capabilities = self.capabilities();
+        if !capabilities.supports_protocol(packet.header.version)
+            || capabilities.first_unsupported(packet).is_some()
+        {
+            return Err(MobileFrameError);
+        }
+        let owned = MobileFrameOwned::new(packet)?;
         let mut response = MobileApplyResponse::default();
         if !(self.present)(self.data, &owned.value, &mut response) {
             return Err(MobileFrameError);
@@ -664,7 +684,7 @@ struct MobileFrameOwned {
 }
 
 impl MobileFrameOwned {
-    fn new(packet: &FramePacket) -> Self {
+    fn new(packet: &FramePacket) -> Result<Self, MobileFrameError> {
         let mut arena = RawValueArena::default();
         let mut layouts = Vec::<Box<MobileLayoutGeometry>>::new();
         let mut paints = Vec::<Box<MobileBoxPaint>>::new();
@@ -733,6 +753,17 @@ impl MobileFrameOwned {
                     raw.payload = layouts.last().unwrap().as_ref() as *const _ as *const c_void;
                 }
                 Operation::SetBoxPaint { node, paint } => {
+                    if [
+                        paint.border_radii.top_left,
+                        paint.border_radii.top_right,
+                        paint.border_radii.bottom_right,
+                        paint.border_radii.bottom_left,
+                    ]
+                    .into_iter()
+                    .any(|radius| !radius.is_circular())
+                    {
+                        return Err(MobileFrameError);
+                    }
                     raw.tag = OP_PAINT;
                     raw.node = node.get();
                     paints.push(Box::new(mobile_paint(paint, &mut strings)));
@@ -775,6 +806,11 @@ impl MobileFrameOwned {
                     raw.integer = *z_order;
                 }
                 Operation::SetText { node, content } => {
+                    if content.paint.uses_extended_features()
+                        || content.payload.style.uses_extended_typography()
+                    {
+                        return Err(MobileFrameError);
+                    }
                     raw.tag = OP_TEXT;
                     raw.node = node.get();
                     texts.push(Box::new(MobileText {
@@ -852,6 +888,10 @@ impl MobileFrameOwned {
                     values.push(Box::new(arena.encode(arguments)));
                     raw.payload = values.last().unwrap().as_ref() as *const _ as *const c_void;
                 }
+                Operation::SetBackgroundLayers { .. }
+                | Operation::SetVisualEffects { .. }
+                | Operation::SetImage { .. }
+                | Operation::SetCursor { .. } => return Err(MobileFrameError),
             }
             operations.push(raw);
         }
@@ -874,7 +914,7 @@ impl MobileFrameOwned {
             operations: operations.as_ptr(),
             operation_count: operations.len(),
         };
-        Self {
+        Ok(Self {
             value,
             _arena: arena,
             _layouts: layouts,
@@ -884,7 +924,7 @@ impl MobileFrameOwned {
             _values: values,
             _strings: strings,
             _operations: operations,
-        }
+        })
     }
 }
 
@@ -927,10 +967,10 @@ fn mobile_paint(
             border_style(value.border_styles.left),
         ],
         radii: [
-            mobile_length(value.border_radii.top_left),
-            mobile_length(value.border_radii.top_right),
-            mobile_length(value.border_radii.bottom_right),
-            mobile_length(value.border_radii.bottom_left),
+            mobile_length(value.border_radii.top_left.horizontal),
+            mobile_length(value.border_radii.top_right.horizontal),
+            mobile_length(value.border_radii.bottom_right.horizontal),
+            mobile_length(value.border_radii.bottom_left.horizontal),
         ],
     }
 }

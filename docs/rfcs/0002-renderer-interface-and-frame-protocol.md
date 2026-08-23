@@ -768,6 +768,14 @@ sections or opcodes only when their skip length and optional semantics are
 encoded. Required unknown behavior must fail capability negotiation instead of
 being silently skipped.
 
+The typed Rust protocol exposes optional semantic groups through
+`RenderCapabilities`. A Host classifies each group as native, emulated, or
+unsupported; omission is unsupported. A frame can derive its requirements
+without inspecting CSS spellings. Capability preflight occurs before retained
+state mutation, so a packet cannot partially apply before discovering an
+unsupported background, effect, text, image, cursor, or elliptical-radius
+operation.
+
 ### Operation groups
 
 The protocol supports at least these operation groups:
@@ -790,16 +798,17 @@ Geometry and compositing
 
 Paint and content
   SetBoxPaint(node, background, borders, radii)
-  SetShadow(node, shadow)
+  SetBackgroundLayers(node, layers)
+  SetVisualEffects(node, outline, shadows, clip_path, masks, filters, compositing)
   SetText(node, text_run)
-  SetTextStyle(node, resolved_text_style)
-  SetImage(node, resource)
+  SetImage(node, resource, fit, position)
   SetProperty(node, property_id, typed_value)
   ClearProperty(node, property_id)
 
 Interaction and semantics
   SetEventMask(node, event_mask)
   SetHitTest(node, hit_test_behavior)
+  SetCursor(node, cursor)
   SetAccessibility(node, semantics)
   SetPointerCapture(node, pointer_id)
   ReleasePointerCapture(node, pointer_id)
@@ -811,6 +820,22 @@ Commands
 The final opcode set may combine common operations for compactness. The
 semantic separation matters because it enables dirty classification,
 validation, and backend-specific fast paths.
+
+Resource acquisition is ordered on a separate typed channel:
+
+```text
+ResourceCommand::Load(id, generation, kind, source)
+  -> Host fetch/decode/register
+  -> ResourceEvent::Ready(id, generation, intrinsic_dimensions?)
+     or ResourceEvent::Failed(id, generation, code)
+
+ResourceCommand::Release(id, generation)
+```
+
+Frames carry only `ResourceId`. A generation prevents stale asynchronous
+completion from replacing a newer load, and release happens only after no
+accepted frame references that generation. Inline bytes, when used, cross the
+resource channel once and are not embedded into every frame transaction.
 
 Structural operations must establish a node before later operations reference
 it. Deleting a subtree invalidates its Host handles, subscriptions, pending

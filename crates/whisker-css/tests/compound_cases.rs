@@ -13,12 +13,12 @@
 //! - Pathological edge cases (empty builds, repeated overrides).
 
 use whisker_css::ext::*;
-use whisker_css::keyword::{AlignItems, Display, Overflow};
+use whisker_css::keyword::{AlignItems, Overflow};
 use whisker_css::{
     Animation, Background, BackgroundLayer, Border, BorderRadius, Color, ColorStop, Css, CssString,
     EasingFunction, Flex, FlexBasis, FlexDirection, Gradient, GridLine, GridTemplate, ImageRef,
-    JustifyContent, LengthPercentage, LinearOrientation, NamedColor, PositionKind, Size, ToCss,
-    TransformFn, Transition, TransitionPropertyKind, Visibility,
+    JustifyContent, LengthPercentage, NamedColor, PositionKind, Size, ToCss, TransformFn,
+    Transition, TransitionPropertyKind, Visibility,
 };
 
 #[test]
@@ -244,18 +244,6 @@ fn background_full_shorthand() {
 }
 
 #[test]
-fn linear_extension_block() {
-    let s = Css::new()
-        .display(Display::Linear)
-        .linear_orientation(LinearOrientation::Vertical)
-        .linear_weight(1.0);
-    assert_eq!(
-        s.to_string(),
-        "display: linear; linear-orientation: vertical; linear-weight: 1;"
-    );
-}
-
-#[test]
 fn grid_definition_block() {
     let s = Css::new()
         .display_grid()
@@ -284,7 +272,7 @@ fn visibility_then_opacity() {
 }
 
 #[test]
-fn border_radius_full_elliptical_stays_shorthand() {
+fn border_radius_full_elliptical_expands_to_semantic_corner_longhands() {
     let h = [
         LengthPercentage::Length(px(2)),
         LengthPercentage::Length(px(4)),
@@ -300,8 +288,19 @@ fn border_radius_full_elliptical_stays_shorthand() {
     let s = Css::new().border_radius_full(BorderRadius::elliptical(h, v));
     assert_eq!(
         s.to_string(),
-        "border-radius: 2px 4px 6px 8px / 20px 40px 60px 80px;"
+        "border-top-left-radius: 2px 20px; border-top-right-radius: 4px 40px; border-bottom-right-radius: 6px 60px; border-bottom-left-radius: 8px 80px;"
     );
+    assert!(s.resolved().into_iter().all(|declaration| matches!(
+        declaration.style_value(),
+        Some(whisker_style::StyleValue::BorderRadius(_))
+    )));
+    let specified = s.to_specified_style().unwrap();
+    let resolved =
+        whisker_style::resolve_style(&specified, None, whisker_style::StyleEnvironment::default())
+            .unwrap();
+    let radius = resolved.computed().paint().border_radii.top_left;
+    assert_eq!(radius.horizontal.length(), 2.0);
+    assert_eq!(radius.vertical.length(), 20.0);
 }
 
 #[test]

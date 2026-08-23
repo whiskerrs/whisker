@@ -257,6 +257,7 @@ mod tests {
                     font_style: MeasureFontStyle::Normal,
                     line_height: MeasureLineHeight::LogicalPixels(20.0),
                     letter_spacing: 0.5,
+                    ..TextMeasureStyle::default()
                 },
                 locale: Some("en-US".into()),
                 direction: MeasureTextDirection::LeftToRight,

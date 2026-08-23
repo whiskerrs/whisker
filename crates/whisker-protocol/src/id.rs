@@ -75,6 +75,11 @@ define_id!(
     u64,
     "Identifies Host-prepared content shared by measurement and painting"
 );
+define_id!(
+    ResourceId,
+    u64,
+    "Identifies an image or effect resource negotiated with the Host"
+);
 
 #[cfg(test)]
 mod tests {
@@ -88,6 +93,7 @@ mod tests {
         assert_eq!(MeasurementKey::new(0), None);
         assert_eq!(MeasurementRequestId::new(0), None);
         assert_eq!(PreparedContentId::new(0), None);
+        assert_eq!(ResourceId::new(0), None);
     }
 
     #[test]

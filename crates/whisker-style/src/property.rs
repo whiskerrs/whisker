@@ -22,7 +22,7 @@ impl StylePropertyId {
 /// Where a property's spelling originates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PropertyOrigin {
-    /// A standard CSS property also supported by Lynx.
+    /// A standard, non-deprecated CSS property in Whisker's conformance target.
     Css,
     /// A WebKit compatibility property supported by Lynx.
     Webkit,
@@ -45,6 +45,38 @@ pub struct PropertyMetadata {
     ///
     /// Version 1 deliberately limits inheritance to seven text properties.
     pub inherited: bool,
+    /// Host-independent stage that owns the property's resolved semantics.
+    pub domain: StylePropertyDomain,
+}
+
+/// Destination of a property after typed declaration resolution.
+///
+/// This classifies ownership, not implementation status. In particular, a
+/// property can have a protocol domain before every Host implements it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StylePropertyDomain {
+    /// Taffy or Whisker's surrounding layout integration consumes the value.
+    Layout,
+    /// Rust motion/timeline code samples the value before presentation.
+    Motion,
+    /// Background color or image-layer protocol state.
+    Background,
+    /// Border and radius protocol state.
+    BoxPaint,
+    /// Outline, shadow, mask, filter, or shape-clip protocol state.
+    VisualEffects,
+    /// Text shaping or text-paint protocol state.
+    Text,
+    /// Transform matrix or 3-D transform-group protocol state.
+    Transform,
+    /// Opacity, visibility, or stacking/compositing protocol state.
+    Compositing,
+    /// Descendant clipping or scrolling behavior.
+    ClipAndScroll,
+    /// Host hit testing, cursor, caret, or other input presentation.
+    Interaction,
+    /// Compatibility-only property excluded from the standard CSS target.
+    CompatibilityExtension,
 }
 
 macro_rules! define_style_properties {
@@ -89,39 +121,7 @@ macro_rules! define_style_properties {
 
             /// Returns registry metadata for the property.
             pub const fn metadata(self) -> PropertyMetadata {
-                let origin = match self {
-                    Self::WebkitLineClamp => PropertyOrigin::Webkit,
-                    Self::XAutoFontSize
-                    | Self::XAutoFontSizePresetSizes
-                    | Self::XCaretWidth
-                    | Self::XHandleColor
-                    | Self::XHandleSize => PropertyOrigin::Lynx,
-                    Self::LinearCrossGravity
-                    | Self::LinearDirection
-                    | Self::LinearGravity
-                    | Self::LinearLayoutGravity
-                    | Self::LinearOrientation
-                    | Self::LinearWeight
-                    | Self::LinearWeightSum
-                    | Self::RelativeAlignBottom
-                    | Self::RelativeAlignInlineEnd
-                    | Self::RelativeAlignInlineStart
-                    | Self::RelativeAlignLeft
-                    | Self::RelativeAlignRight
-                    | Self::RelativeAlignTop
-                    | Self::RelativeBottomOf
-                    | Self::RelativeCenter
-                    | Self::RelativeCenterHorizontal
-                    | Self::RelativeCenterVertical
-                    | Self::RelativeId
-                    | Self::RelativeInlineEndOf
-                    | Self::RelativeInlineStartOf
-                    | Self::RelativeLayoutOnce
-                    | Self::RelativeLeftOf
-                    | Self::RelativeRightOf
-                    | Self::RelativeTopOf => PropertyOrigin::LynxUnprefixed,
-                    _ => PropertyOrigin::Css,
-                };
+                let origin = PropertyOrigin::Css;
                 let inherited = matches!(
                     self,
                     Self::FontFamily
@@ -132,11 +132,202 @@ macro_rules! define_style_properties {
                         | Self::LetterSpacing
                         | Self::Color
                 );
+                let domain = self.domain();
                 PropertyMetadata {
                     id: self.id(),
                     css_name: self.css_name(),
                     origin,
                     inherited,
+                    domain,
+                }
+            }
+
+            /// Returns the Host-independent semantic destination.
+            pub const fn domain(self) -> StylePropertyDomain {
+                match self {
+                    Self::Animation
+                    | Self::AnimationDelay
+                    | Self::AnimationDirection
+                    | Self::AnimationDuration
+                    | Self::AnimationFillMode
+                    | Self::AnimationIterationCount
+                    | Self::AnimationName
+                    | Self::AnimationPlayState
+                    | Self::AnimationTimingFunction
+                    | Self::Transition
+                    | Self::TransitionDelay
+                    | Self::TransitionDuration
+                    | Self::TransitionProperty
+                    | Self::TransitionTimingFunction => StylePropertyDomain::Motion,
+
+                    Self::Background
+                    | Self::BackgroundAttachment
+                    | Self::BackgroundClip
+                    | Self::BackgroundColor
+                    | Self::BackgroundImage
+                    | Self::BackgroundOrigin
+                    | Self::BackgroundPosition
+                    | Self::BackgroundPositionX
+                    | Self::BackgroundPositionY
+                    | Self::BackgroundRepeat
+                    | Self::BackgroundSize => StylePropertyDomain::Background,
+
+                    Self::BorderBottomColor
+                    | Self::BorderBottomLeftRadius
+                    | Self::BorderBottomRightRadius
+                    | Self::BorderBottomStyle
+                    | Self::BorderBottomWidth
+                    | Self::BorderLeftColor
+                    | Self::BorderLeftStyle
+                    | Self::BorderLeftWidth
+                    | Self::BorderRadius
+                    | Self::BorderRightColor
+                    | Self::BorderRightStyle
+                    | Self::BorderRightWidth
+                    | Self::BorderTopColor
+                    | Self::BorderTopLeftRadius
+                    | Self::BorderTopRightRadius
+                    | Self::BorderTopStyle
+                    | Self::BorderTopWidth
+                    | Self::Border
+                    | Self::BorderBottom
+                    | Self::BorderColor
+                    | Self::BorderEndEndRadius
+                    | Self::BorderEndStartRadius
+                    | Self::BorderInlineEndColor
+                    | Self::BorderInlineEndStyle
+                    | Self::BorderInlineEndWidth
+                    | Self::BorderInlineStartColor
+                    | Self::BorderInlineStartStyle
+                    | Self::BorderInlineStartWidth
+                    | Self::BorderLeft
+                    | Self::BorderRight
+                    | Self::BorderStartEndRadius
+                    | Self::BorderStartStartRadius
+                    | Self::BorderStyle
+                    | Self::BorderTop
+                    | Self::BorderWidth => StylePropertyDomain::BoxPaint,
+
+                    Self::BoxShadow
+                    | Self::ClipPath
+                    | Self::Filter
+                    | Self::ImageRendering
+                    | Self::Mask
+                    | Self::MaskComposite
+                    | Self::MaskImage
+                    | Self::OutlineColor
+                    | Self::OutlineOffset
+                    | Self::OutlineStyle
+                    | Self::OutlineWidth => StylePropertyDomain::VisualEffects,
+
+                    Self::CaretColor | Self::Cursor | Self::PointerEvents => {
+                        StylePropertyDomain::Interaction
+                    }
+
+                    Self::Color
+                    | Self::Direction
+                    | Self::FontFamily
+                    | Self::FontFeatureSettings
+                    | Self::FontOpticalSizing
+                    | Self::FontSize
+                    | Self::FontStyle
+                    | Self::FontVariationSettings
+                    | Self::FontVariant
+                    | Self::FontWeight
+                    | Self::LetterSpacing
+                    | Self::LineHeight
+                    | Self::OverflowWrap
+                    | Self::TextAlign
+                    | Self::TextDecoration
+                    | Self::TextDecorationColor
+                    | Self::TextDecorationLine
+                    | Self::TextDecorationStyle
+                    | Self::TextDecorationThickness
+                    | Self::TextIndent
+                    | Self::TextOverflow
+                    | Self::TextShadow
+                    | Self::TextTransform
+                    | Self::WhiteSpace
+                    | Self::WordBreak => StylePropertyDomain::Text,
+
+                    Self::BackfaceVisibility
+                    | Self::Perspective
+                    | Self::PerspectiveOrigin
+                    | Self::OffsetDistance
+                    | Self::OffsetPath
+                    | Self::OffsetRotate
+                    | Self::Transform
+                    | Self::TransformBox
+                    | Self::TransformOrigin
+                    | Self::TransformStyle => StylePropertyDomain::Transform,
+
+                    Self::Opacity | Self::Visibility | Self::ZIndex => {
+                        StylePropertyDomain::Compositing
+                    }
+
+                    Self::Overflow | Self::OverflowX | Self::OverflowY => {
+                        StylePropertyDomain::ClipAndScroll
+                    }
+
+                    Self::AlignContent
+                    | Self::AlignItems
+                    | Self::AlignSelf
+                    | Self::AspectRatio
+                    | Self::Bottom
+                    | Self::BoxSizing
+                    | Self::ColumnGap
+                    | Self::Display
+                    | Self::Flex
+                    | Self::FlexBasis
+                    | Self::FlexDirection
+                    | Self::FlexFlow
+                    | Self::FlexGrow
+                    | Self::FlexShrink
+                    | Self::FlexWrap
+                    | Self::GridAutoColumns
+                    | Self::GridAutoFlow
+                    | Self::GridAutoRows
+                    | Self::GridColumn
+                    | Self::GridColumnEnd
+                    | Self::GridColumnStart
+                    | Self::GridRow
+                    | Self::GridRowEnd
+                    | Self::GridRowStart
+                    | Self::GridTemplateColumns
+                    | Self::GridTemplateRows
+                    | Self::Height
+                    | Self::InsetInlineEnd
+                    | Self::InsetInlineStart
+                    | Self::JustifyContent
+                    | Self::JustifyItems
+                    | Self::JustifySelf
+                    | Self::Left
+                    | Self::Margin
+                    | Self::MarginBottom
+                    | Self::MarginInlineEnd
+                    | Self::MarginInlineStart
+                    | Self::MarginLeft
+                    | Self::MarginRight
+                    | Self::MarginTop
+                    | Self::MaxHeight
+                    | Self::MaxWidth
+                    | Self::MinHeight
+                    | Self::MinWidth
+                    | Self::Order
+                    | Self::Padding
+                    | Self::PaddingBottom
+                    | Self::PaddingInlineEnd
+                    | Self::PaddingInlineStart
+                    | Self::PaddingLeft
+                    | Self::PaddingRight
+                    | Self::PaddingTop
+                    | Self::Position
+                    | Self::Right
+                    | Self::Gap
+                    | Self::RowGap
+                    | Self::Top
+                    | Self::VerticalAlign
+                    | Self::Width => StylePropertyDomain::Layout,
                 }
             }
         }
@@ -144,12 +335,6 @@ macro_rules! define_style_properties {
 }
 
 define_style_properties! {
-    WebkitLineClamp = 1 => "-webkit-line-clamp",
-    XAutoFontSize = 2 => "-x-auto-font-size",
-    XAutoFontSizePresetSizes = 3 => "-x-auto-font-size-preset-sizes",
-    XCaretWidth = 4 => "-x-caret-width",
-    XHandleColor = 5 => "-x-handle-color",
-    XHandleSize = 6 => "-x-handle-size",
     AlignContent = 7 => "align-content",
     AlignItems = 8 => "align-items",
     AlignSelf = 9 => "align-self",
@@ -217,10 +402,8 @@ define_style_properties! {
     GridAutoFlow = 71 => "grid-auto-flow",
     GridAutoRows = 72 => "grid-auto-rows",
     GridColumnEnd = 73 => "grid-column-end",
-    GridColumnGap = 74 => "grid-column-gap",
     GridColumnStart = 75 => "grid-column-start",
     GridRowEnd = 76 => "grid-row-end",
-    GridRowGap = 77 => "grid-row-gap",
     GridRowStart = 78 => "grid-row-start",
     GridTemplateColumns = 79 => "grid-template-columns",
     GridTemplateRows = 80 => "grid-template-rows",
@@ -231,13 +414,6 @@ define_style_properties! {
     Left = 85 => "left",
     LetterSpacing = 86 => "letter-spacing",
     LineHeight = 87 => "line-height",
-    LinearCrossGravity = 88 => "linear-cross-gravity",
-    LinearDirection = 89 => "linear-direction",
-    LinearGravity = 90 => "linear-gravity",
-    LinearLayoutGravity = 91 => "linear-layout-gravity",
-    LinearOrientation = 92 => "linear-orientation",
-    LinearWeight = 93 => "linear-weight",
-    LinearWeightSum = 94 => "linear-weight-sum",
     MarginBottom = 95 => "margin-bottom",
     MarginLeft = 96 => "margin-left",
     MarginRight = 97 => "margin-right",
@@ -264,23 +440,6 @@ define_style_properties! {
     PerspectiveOrigin = 118 => "perspective-origin",
     PointerEvents = 119 => "pointer-events",
     Position = 120 => "position",
-    RelativeAlignBottom = 121 => "relative-align-bottom",
-    RelativeAlignInlineEnd = 122 => "relative-align-inline-end",
-    RelativeAlignInlineStart = 123 => "relative-align-inline-start",
-    RelativeAlignLeft = 124 => "relative-align-left",
-    RelativeAlignRight = 125 => "relative-align-right",
-    RelativeAlignTop = 126 => "relative-align-top",
-    RelativeBottomOf = 127 => "relative-bottom-of",
-    RelativeCenter = 128 => "relative-center",
-    RelativeCenterHorizontal = 129 => "relative-center-horizontal",
-    RelativeCenterVertical = 130 => "relative-center-vertical",
-    RelativeId = 131 => "relative-id",
-    RelativeInlineEndOf = 132 => "relative-inline-end-of",
-    RelativeInlineStartOf = 133 => "relative-inline-start-of",
-    RelativeLayoutOnce = 134 => "relative-layout-once",
-    RelativeLeftOf = 135 => "relative-left-of",
-    RelativeRightOf = 136 => "relative-right-of",
-    RelativeTopOf = 137 => "relative-top-of",
     Right = 138 => "right",
     RowGap = 139 => "row-gap",
     TextAlign = 140 => "text-align",
@@ -290,8 +449,6 @@ define_style_properties! {
     TextDecorationThickness = 144 => "text-decoration-thickness",
     TextIndent = 145 => "text-indent",
     TextOverflow = 146 => "text-overflow",
-    TextStrokeColor = 147 => "text-stroke-color",
-    TextStrokeWidth = 148 => "text-stroke-width",
     TextTransform = 149 => "text-transform",
     Top = 150 => "top",
     Transform = 151 => "transform",
@@ -308,8 +465,50 @@ define_style_properties! {
     WhiteSpace = 162 => "white-space",
     Width = 163 => "width",
     WordBreak = 164 => "word-break",
-    WordWrap = 165 => "word-wrap",
     ZIndex = 166 => "z-index",
+    Border = 167 => "border",
+    BorderBottom = 168 => "border-bottom",
+    BorderColor = 169 => "border-color",
+    BorderEndEndRadius = 170 => "border-end-end-radius",
+    BorderEndStartRadius = 171 => "border-end-start-radius",
+    BorderInlineEndColor = 172 => "border-inline-end-color",
+    BorderInlineEndStyle = 173 => "border-inline-end-style",
+    BorderInlineEndWidth = 174 => "border-inline-end-width",
+    BorderInlineStartColor = 175 => "border-inline-start-color",
+    BorderInlineStartStyle = 176 => "border-inline-start-style",
+    BorderInlineStartWidth = 177 => "border-inline-start-width",
+    BorderLeft = 178 => "border-left",
+    BorderRight = 179 => "border-right",
+    BorderStartEndRadius = 180 => "border-start-end-radius",
+    BorderStartStartRadius = 181 => "border-start-start-radius",
+    BorderStyle = 182 => "border-style",
+    BorderTop = 183 => "border-top",
+    BorderWidth = 184 => "border-width",
+    Flex = 185 => "flex",
+    FlexFlow = 186 => "flex-flow",
+    FontFeatureSettings = 187 => "font-feature-settings",
+    FontOpticalSizing = 188 => "font-optical-sizing",
+    FontVariationSettings = 189 => "font-variation-settings",
+    Gap = 190 => "gap",
+    GridColumn = 191 => "grid-column",
+    GridRow = 192 => "grid-row",
+    ImageRendering = 193 => "image-rendering",
+    JustifyItems = 194 => "justify-items",
+    JustifySelf = 195 => "justify-self",
+    Margin = 196 => "margin",
+    MarginInlineEnd = 197 => "margin-inline-end",
+    MarginInlineStart = 198 => "margin-inline-start",
+    Mask = 199 => "mask",
+    MaskComposite = 200 => "mask-composite",
+    OffsetDistance = 201 => "offset-distance",
+    OffsetPath = 202 => "offset-path",
+    OffsetRotate = 203 => "offset-rotate",
+    Overflow = 204 => "overflow",
+    Padding = 205 => "padding",
+    PaddingInlineEnd = 206 => "padding-inline-end",
+    PaddingInlineStart = 207 => "padding-inline-start",
+    TextDecoration = 208 => "text-decoration",
+    TextShadow = 209 => "text-shadow",
 }
 
 #[cfg(test)]
@@ -342,20 +541,19 @@ mod tests {
     }
 
     #[test]
-    fn origin_categories_cover_compatibility_extensions() {
+    fn registry_contains_only_the_standard_property_target() {
+        assert_eq!(StyleProperty::ALL.len(), 174);
         assert_eq!(StyleProperty::Color.metadata().origin, PropertyOrigin::Css);
-        assert_eq!(
-            StyleProperty::WebkitLineClamp.metadata().origin,
-            PropertyOrigin::Webkit
+        assert!(
+            StyleProperty::ALL
+                .iter()
+                .all(|property| property.metadata().origin == PropertyOrigin::Css)
         );
-        assert_eq!(
-            StyleProperty::XHandleSize.metadata().origin,
-            PropertyOrigin::Lynx
-        );
-        assert_eq!(
-            StyleProperty::RelativeId.metadata().origin,
-            PropertyOrigin::LynxUnprefixed
-        );
+        assert_eq!(StyleProperty::from_css_name("grid-column-gap"), None);
+        assert_eq!(StyleProperty::from_css_name("grid-row-gap"), None);
+        assert_eq!(StyleProperty::from_css_name("word-wrap"), None);
+        assert_eq!(StyleProperty::from_css_name("-x-auto-font-size"), None);
+        assert_eq!(StyleProperty::from_css_name("text-stroke-width"), None);
     }
 
     #[test]
@@ -378,5 +576,18 @@ mod tests {
             ]
         );
         assert!(!StyleProperty::Opacity.metadata().inherited);
+    }
+
+    #[test]
+    fn every_standard_property_has_a_semantic_destination() {
+        for property in StyleProperty::ALL {
+            let metadata = property.metadata();
+            assert_ne!(
+                metadata.domain,
+                StylePropertyDomain::CompatibilityExtension,
+                "unexpected destination for {}",
+                metadata.css_name
+            );
+        }
     }
 }

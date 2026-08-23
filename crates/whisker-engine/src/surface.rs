@@ -841,6 +841,7 @@ mod tests {
                     font_style: MeasureFontStyle::Normal,
                     line_height: MeasureLineHeight::Normal,
                     letter_spacing: 0.0,
+                    ..TextMeasureStyle::default()
                 },
                 locale: Some("en-US".into()),
                 direction: MeasureTextDirection::LeftToRight,
@@ -1911,6 +1912,10 @@ mod tests {
 
         impl FrameSink for TestSink {
             type Error = &'static str;
+
+            fn capabilities(&self) -> whisker_protocol::RenderCapabilities {
+                self.renderer.capabilities()
+            }
 
             fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
                 match self.behavior {

@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "target": {
+    "feature_count": 175,
+    "property_count": 174,
+    "non_property_features": ["custom-properties"],
+    "lynx_inventory": {
+      "revision": "18a0a91009809de1d52a5637b82f573dc924e32a",
+      "property_count": 191
+    }
+  },
+  "statuses": ["implemented", "partial", "protocol-only", "planned", "not-applicable"],
+  "capabilities": [
+    {
+      "id": "layout.geometry",
+      "properties": ["align-content", "align-items", "align-self", "aspect-ratio", "bottom", "box-sizing", "column-gap", "display", "flex", "flex-basis", "flex-direction", "flex-flow", "flex-grow", "flex-shrink", "flex-wrap", "gap", "grid-auto-columns", "grid-auto-flow", "grid-auto-rows", "grid-column", "grid-column-end", "grid-column-start", "grid-row", "grid-row-end", "grid-row-start", "grid-template-columns", "grid-template-rows", "height", "inset-inline-end", "inset-inline-start", "justify-content", "justify-items", "justify-self", "left", "margin", "margin-bottom", "margin-inline-end", "margin-inline-start", "margin-left", "margin-right", "margin-top", "max-height", "max-width", "min-height", "min-width", "order", "padding", "padding-bottom", "padding-inline-end", "padding-inline-start", "padding-left", "padding-right", "padding-top", "position", "right", "row-gap", "top", "vertical-align", "width"],
+      "protocol": ["SetLayout"],
+      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+    },
+    {
+      "id": "paint.box",
+      "properties": ["background-color", "border", "border-bottom", "border-bottom-color", "border-bottom-left-radius", "border-bottom-right-radius", "border-bottom-style", "border-bottom-width", "border-color", "border-end-end-radius", "border-end-start-radius", "border-inline-end-color", "border-inline-end-style", "border-inline-end-width", "border-inline-start-color", "border-inline-start-style", "border-inline-start-width", "border-left", "border-left-color", "border-left-style", "border-left-width", "border-radius", "border-right", "border-right-color", "border-right-style", "border-right-width", "border-start-end-radius", "border-start-start-radius", "border-style", "border-top", "border-top-color", "border-top-left-radius", "border-top-right-radius", "border-top-style", "border-top-width", "border-width"],
+      "protocol": ["SetBoxPaint"],
+      "hosts": {"desktop": "partial", "web": "implemented", "android": "partial", "ios": "partial"}
+    },
+    {
+      "id": "paint.background-layers",
+      "properties": ["background", "background-attachment", "background-clip", "background-image", "background-origin", "background-position", "background-position-x", "background-position-y", "background-repeat", "background-size"],
+      "protocol": ["SetBackgroundLayers"],
+      "hosts": {"desktop": "protocol-only", "web": "protocol-only", "android": "protocol-only", "ios": "protocol-only"}
+    },
+    {
+      "id": "paint.visual-effects",
+      "properties": ["box-shadow", "clip-path", "filter", "image-rendering", "mask", "mask-composite", "mask-image", "outline-color", "outline-offset", "outline-style", "outline-width"],
+      "protocol": ["SetVisualEffects"],
+      "hosts": {"desktop": "protocol-only", "web": "protocol-only", "android": "protocol-only", "ios": "protocol-only"}
+    },
+    {
+      "id": "paint.transform",
+      "properties": ["backface-visibility", "offset-distance", "offset-path", "offset-rotate", "perspective", "perspective-origin", "transform", "transform-box", "transform-origin", "transform-style"],
+      "protocol": ["SetTransform", "SetVisualEffects"],
+      "hosts": {"desktop": "planned", "web": "implemented", "android": "planned", "ios": "planned"}
+    },
+    {
+      "id": "paint.compositing",
+      "properties": ["opacity", "visibility", "z-index"],
+      "protocol": ["SetOpacity", "SetVisibility", "SetZOrder"],
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
+    },
+    {
+      "id": "paint.clip-scroll",
+      "properties": ["overflow", "overflow-x", "overflow-y"],
+      "protocol": ["SetClip"],
+      "hosts": {"desktop": "partial", "web": "implemented", "android": "partial", "ios": "partial"}
+    },
+    {
+      "id": "paint.text",
+      "properties": ["color", "direction", "font-family", "font-feature-settings", "font-optical-sizing", "font-size", "font-style", "font-variation-settings", "font-variant", "font-weight", "letter-spacing", "line-height", "overflow-wrap", "text-align", "text-decoration", "text-decoration-color", "text-decoration-line", "text-decoration-style", "text-decoration-thickness", "text-indent", "text-overflow", "text-shadow", "text-transform", "white-space", "word-break"],
+      "protocol": ["SetText"],
+      "hosts": {"desktop": "partial", "web": "partial", "android": "partial", "ios": "partial"}
+    },
+    {
+      "id": "interaction.pointer",
+      "properties": ["caret-color", "cursor", "pointer-events"],
+      "protocol": ["SetCursor", "SetHitTest", "SetProperty"],
+      "hosts": {"desktop": "protocol-only", "web": "protocol-only", "android": "protocol-only", "ios": "protocol-only"}
+    },
+    {
+      "id": "motion.rust",
+      "properties": ["animation", "animation-delay", "animation-direction", "animation-duration", "animation-fill-mode", "animation-iteration-count", "animation-name", "animation-play-state", "animation-timing-function", "transition", "transition-delay", "transition-duration", "transition-property", "transition-timing-function"],
+      "protocol": [],
+      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+    },
+    {
+      "id": "style.custom-properties",
+      "features": ["custom-properties"],
+      "properties": [],
+      "protocol": [],
+      "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
+    }
+  ]
+}

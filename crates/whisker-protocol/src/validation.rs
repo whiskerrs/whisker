@@ -57,6 +57,13 @@ pub enum ValidationError {
         /// Received major version.
         received: u16,
     },
+    /// Packet requires a newer protocol minor than this implementation knows.
+    UnsupportedProtocolMinor {
+        /// Received minor version.
+        received: u16,
+        /// Highest minor understood by this implementation.
+        supported: u16,
+    },
     /// Packet targets a different surface.
     SurfaceMismatch {
         /// Surface owned by the projection.
@@ -128,6 +135,12 @@ pub enum ValidationError {
     },
     /// Box paint contained an invalid color, length, or percentage.
     InvalidBoxPaint,
+    /// Background layers contained invalid image, gradient, position, or size data.
+    InvalidBackgroundLayers,
+    /// A visual effect contained invalid color or numeric data.
+    InvalidVisualEffects,
+    /// Replaced image content contained invalid position data.
+    InvalidImageContent,
     /// A geometry or transform component was NaN or infinite.
     NonFiniteNumber,
     /// Plain-text presentation contained invalid shaping inputs.
@@ -244,6 +257,12 @@ impl SceneProjection {
                 received: header.version.major,
             });
         }
+        if header.version.minor > crate::PROTOCOL_MINOR {
+            return Err(ValidationError::UnsupportedProtocolMinor {
+                received: header.version.minor,
+                supported: crate::PROTOCOL_MINOR,
+            });
+        }
         if header.surface != self.surface {
             return Err(ValidationError::SurfaceMismatch {
                 expected: self.surface,
@@ -314,6 +333,18 @@ impl SceneProjection {
                     return Err(ValidationError::InvalidBoxPaint);
                 }
             }
+            Operation::SetBackgroundLayers { node, layers } => {
+                self.require_node(*node)?;
+                if !layers.iter().all(crate::BackgroundLayer::validate) {
+                    return Err(ValidationError::InvalidBackgroundLayers);
+                }
+            }
+            Operation::SetVisualEffects { node, effects } => {
+                self.require_node(*node)?;
+                if !effects.validate() {
+                    return Err(ValidationError::InvalidVisualEffects);
+                }
+            }
             Operation::SetTransform { node, transform } => {
                 self.require_node(*node)?;
                 if !transform.0.into_iter().all(f32::is_finite) {
@@ -332,6 +363,12 @@ impl SceneProjection {
                     .validate()
                     .map_err(|error| ValidationError::InvalidText { error })?;
             }
+            Operation::SetImage { node, content } => {
+                self.require_node(*node)?;
+                if !content.validate() {
+                    return Err(ValidationError::InvalidImageContent);
+                }
+            }
             Operation::InvokeCommand { node, result, .. } => {
                 self.require_node(*node)?;
                 if let Some(result) = result
@@ -347,6 +384,7 @@ impl SceneProjection {
             | Operation::ClearProperty { node, .. }
             | Operation::SetEventMask { node, .. }
             | Operation::SetHitTest { node, .. }
+            | Operation::SetCursor { node, .. }
             | Operation::SetPointerCapture { node, .. }
             | Operation::ReleasePointerCapture { node, .. } => {
                 self.require_node(*node)?;
@@ -498,9 +536,9 @@ mod tests {
     use crate::{
         CommandId, ElementTypeId, FrameHeader, HitTestBehavior, MeasureFontFamily,
         MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
-        MeasureTextWrap, Operation, PointerId, PropertyId, ProtocolVersion, ResultId, TextContent,
-        TextContentError, TextMeasurePayload, TextMeasureStyle, Transform, Visibility,
-        WhiskerValue,
+        MeasureTextWrap, ObjectFit, Operation, PaintPosition, PointerId, PropertyId,
+        ProtocolVersion, ResourceId, ResultId, TextContent, TextContentError, TextMeasurePayload,
+        TextMeasureStyle, Transform, Visibility, WhiskerValue,
     };
 
     fn surface() -> SurfaceId {
@@ -526,6 +564,7 @@ mod tests {
                     font_style: MeasureFontStyle::Normal,
                     line_height: MeasureLineHeight::Normal,
                     letter_spacing: 0.0,
+                    ..TextMeasureStyle::default()
                 },
                 locale: None,
                 direction: MeasureTextDirection::Auto,
@@ -631,10 +670,10 @@ mod tests {
                 left: crate::BorderLineStyle::None,
             },
             border_radii: crate::PaintCorners {
-                top_left: zero,
-                top_right: zero,
-                bottom_right: zero,
-                bottom_left: zero,
+                top_left: crate::PaintCornerRadius::circular(zero),
+                top_right: crate::PaintCornerRadius::circular(zero),
+                bottom_right: crate::PaintCornerRadius::circular(zero),
+                bottom_left: crate::PaintCornerRadius::circular(zero),
             },
         }
     }
@@ -870,6 +909,17 @@ mod tests {
             (
                 {
                     let mut value = packet(FrameMode::Snapshot, 1, 0, 1, Vec::new());
+                    value.header.version.minor += 1;
+                    value
+                },
+                ValidationError::UnsupportedProtocolMinor {
+                    received: crate::PROTOCOL_MINOR + 1,
+                    supported: crate::PROTOCOL_MINOR,
+                },
+            ),
+            (
+                {
+                    let mut value = packet(FrameMode::Snapshot, 1, 0, 1, Vec::new());
                     value.header.surface = SurfaceId::new(2).expect("other surface");
                     value
                 },
@@ -945,6 +995,14 @@ mod tests {
                     node: root,
                     paint: box_paint(),
                 },
+                Operation::SetBackgroundLayers {
+                    node: root,
+                    layers: Vec::new(),
+                },
+                Operation::SetVisualEffects {
+                    node: root,
+                    effects: crate::VisualEffects::default(),
+                },
                 Operation::SetClip {
                     node: root,
                     clip: crate::BoxClip {
@@ -976,6 +1034,14 @@ mod tests {
                     node: root,
                     content: text_content("hello"),
                 },
+                Operation::SetImage {
+                    node: root,
+                    content: crate::ImageContent {
+                        resource: ResourceId::new(1).unwrap(),
+                        fit: ObjectFit::Contain,
+                        position: PaintPosition::default(),
+                    },
+                },
                 Operation::SetProperty {
                     node: root,
                     property,
@@ -992,6 +1058,13 @@ mod tests {
                 Operation::SetHitTest {
                     node: root,
                     behavior: HitTestBehavior::BoxOnly,
+                },
+                Operation::SetCursor {
+                    node: root,
+                    cursor: crate::Cursor {
+                        resources: Vec::new(),
+                        fallback: crate::CursorKeyword::Pointer,
+                    },
                 },
                 Operation::SetPointerCapture {
                     node: root,
@@ -1127,7 +1200,7 @@ mod tests {
     fn malformed_box_paint_is_rejected_transactionally() {
         let (mut scene, root, _) = initial_tree();
         let mut paint = box_paint();
-        paint.border_radii.bottom_left.length = -1.0;
+        paint.border_radii.bottom_left.horizontal.length = -1.0;
 
         let error = apply_next(
             &mut scene,
@@ -1137,6 +1210,71 @@ mod tests {
 
         assert_eq!(error, ValidationError::InvalidBoxPaint);
         assert_eq!(scene.revision(), 1);
+    }
+
+    #[test]
+    fn malformed_extended_visual_operations_are_rejected_transactionally() {
+        let (mut scene, root, _) = initial_tree();
+        let revision = scene.revision();
+        let background = crate::BackgroundLayer {
+            image: crate::PaintImage::LinearGradient {
+                angle_degrees: f32::NAN,
+                repeating: false,
+                stops: Vec::new(),
+            },
+            position: PaintPosition::default(),
+            size: crate::BackgroundSize::Auto,
+            repeat_x: crate::ImageRepeat::NoRepeat,
+            repeat_y: crate::ImageRepeat::NoRepeat,
+            origin: crate::PaintBox::Padding,
+            clip: crate::PaintBox::Border,
+            attachment: crate::BackgroundAttachment::Scroll,
+            blend_mode: crate::BlendMode::Normal,
+        };
+        let error = apply_next(
+            &mut scene,
+            vec![Operation::SetBackgroundLayers {
+                node: root,
+                layers: vec![background],
+            }],
+        )
+        .expect_err("invalid gradient");
+        assert_eq!(error, ValidationError::InvalidBackgroundLayers);
+        assert_eq!(scene.revision(), revision);
+
+        let mut effects = crate::VisualEffects::default();
+        effects.filters.push(crate::FilterOperation::Blur(-1.0));
+        let error = apply_next(
+            &mut scene,
+            vec![Operation::SetVisualEffects {
+                node: root,
+                effects,
+            }],
+        )
+        .expect_err("invalid filter");
+        assert_eq!(error, ValidationError::InvalidVisualEffects);
+        assert_eq!(scene.revision(), revision);
+
+        let error = apply_next(
+            &mut scene,
+            vec![Operation::SetImage {
+                node: root,
+                content: crate::ImageContent {
+                    resource: ResourceId::new(1).unwrap(),
+                    fit: ObjectFit::Contain,
+                    position: PaintPosition {
+                        x: crate::PaintCoordinate {
+                            length: f32::INFINITY,
+                            fraction: 0.0,
+                        },
+                        y: crate::PaintCoordinate::default(),
+                    },
+                },
+            }],
+        )
+        .expect_err("invalid image position");
+        assert_eq!(error, ValidationError::InvalidImageContent);
+        assert_eq!(scene.revision(), revision);
     }
 
     #[test]

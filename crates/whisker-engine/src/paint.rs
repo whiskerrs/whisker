@@ -1,8 +1,8 @@
 //! Lowering from computed style into the Host-independent paint protocol.
 
 use whisker_protocol::{
-    BorderLineStyle, BoxClip, BoxPaint, OverflowClip, PaintColor, PaintCorners, PaintEdges,
-    PaintLengthPercentage, Visibility,
+    BorderLineStyle, BoxClip, BoxPaint, OverflowClip, PaintColor, PaintCornerRadius, PaintCorners,
+    PaintEdges, PaintLengthPercentage, Visibility,
 };
 use whisker_style::{
     BorderStyleValue, ColorValue, ComputedLayoutStyle, ComputedLengthPercentage,
@@ -44,10 +44,10 @@ pub fn lower_paint(style: &ComputedPaintStyle, layout: &ComputedLayoutStyle) -> 
             },
             border_styles: edges(&style.border_styles, lower_border_style),
             border_radii: PaintCorners {
-                top_left: length(&style.border_radii.top_left),
-                top_right: length(&style.border_radii.top_right),
-                bottom_right: length(&style.border_radii.bottom_right),
-                bottom_left: length(&style.border_radii.bottom_left),
+                top_left: corner_radius(&style.border_radii.top_left),
+                top_right: corner_radius(&style.border_radii.top_right),
+                bottom_right: corner_radius(&style.border_radii.bottom_right),
+                bottom_left: corner_radius(&style.border_radii.bottom_left),
             },
         },
         clip: BoxClip {
@@ -76,6 +76,13 @@ fn length(value: &ComputedLengthPercentage) -> PaintLengthPercentage {
     PaintLengthPercentage {
         length: value.length(),
         fraction: value.fraction(),
+    }
+}
+
+fn corner_radius(value: &whisker_style::ComputedCornerRadius) -> PaintCornerRadius {
+    PaintCornerRadius {
+        horizontal: length(&value.horizontal),
+        vertical: length(&value.vertical),
     }
 }
 
@@ -145,7 +152,7 @@ fn lower_overflow(value: OverflowValue) -> OverflowClip {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whisker_style::{Corners, Edges, StyleNumber};
+    use whisker_style::{ComputedCornerRadius, Corners, Edges, StyleNumber};
 
     fn color(name: &str) -> ColorValue {
         ColorValue::Named(name.into())
@@ -167,16 +174,28 @@ mod tests {
                 left: BorderStyleValue::Double,
             },
             border_radii: Corners {
-                top_left: ComputedLengthPercentage::new(1.0, 0.1),
-                top_right: ComputedLengthPercentage::new(2.0, 0.2),
-                bottom_right: ComputedLengthPercentage::new(3.0, 0.3),
-                bottom_left: ComputedLengthPercentage::new(4.0, 0.4),
+                top_left: radius(1.0, 0.1, 11.0, 0.11),
+                top_right: radius(2.0, 0.2, 12.0, 0.12),
+                bottom_right: radius(3.0, 0.3, 13.0, 0.13),
+                bottom_left: radius(4.0, 0.4, 14.0, 0.14),
             },
             opacity: StyleNumber::new(0.5),
             visibility: VisibilityValue::Hidden,
             overflow_x: OverflowValue::Visible,
             overflow_y: OverflowValue::Hidden,
             z_index: -3,
+        }
+    }
+
+    fn radius(
+        horizontal_length: f32,
+        horizontal_fraction: f32,
+        vertical_length: f32,
+        vertical_fraction: f32,
+    ) -> ComputedCornerRadius {
+        ComputedCornerRadius {
+            horizontal: ComputedLengthPercentage::new(horizontal_length, horizontal_fraction),
+            vertical: ComputedLengthPercentage::new(vertical_length, vertical_fraction),
         }
     }
 
@@ -199,7 +218,14 @@ mod tests {
         );
         assert_eq!(lowered.box_paint.border_widths.left.length, 4.0);
         assert_eq!(lowered.box_paint.border_widths.left.fraction, 0.3);
-        assert_eq!(lowered.box_paint.border_radii.bottom_left.length, 4.0);
+        assert_eq!(
+            lowered.box_paint.border_radii.bottom_left.horizontal.length,
+            4.0
+        );
+        assert_eq!(
+            lowered.box_paint.border_radii.bottom_left.vertical.length,
+            14.0
+        );
         assert_eq!(
             lowered.box_paint.border_colors.top,
             PaintColor::Named("top".into())

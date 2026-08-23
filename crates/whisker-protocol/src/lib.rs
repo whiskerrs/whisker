@@ -14,13 +14,19 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod capability;
 mod element;
 mod frame;
 mod id;
 mod input;
 mod measurement;
+mod resource;
 mod validation;
+mod visual;
 
+pub use capability::{
+    CapabilityEntry, CapabilitySupport, DuplicateCapability, RenderCapabilities, RenderCapability,
+};
 pub use element::{
     ChildPolicy, ElementCommandSchema, ElementEventSchema, ElementMeasurement,
     ElementPropertySchema, ElementRegistration, ElementRegistrationError, ElementSchema,
@@ -29,24 +35,38 @@ pub use element::{
 pub use frame::{
     BorderLineStyle, BoxClip, BoxPaint, FrameHeader, FrameMode, FramePacket, HitTestBehavior,
     LayoutGeometry, LayoutRect, Operation, OverflowClip, PROTOCOL_MAJOR, PROTOCOL_MINOR,
-    PaintColor, PaintCorners, PaintEdges, PaintLengthPercentage, ProtocolVersion, TextContent,
-    TextContentError, TextPaint, Transform, Visibility,
+    PaintColor, PaintCornerRadius, PaintCorners, PaintEdges, PaintLengthPercentage,
+    ProtocolVersion, TextContent, TextContentError, TextPaint, Transform, Visibility,
 };
 pub use id::{
     CommandId, ElementTypeId, EventId, MeasurementKey, MeasurementRequestId, NodeId, PointerId,
-    PreparedContentId, PropertyId, ResultId, SurfaceId,
+    PreparedContentId, PropertyId, ResourceId, ResultId, SurfaceId,
 };
 pub use input::{
     InputEvent, InputEventError, InputEventKind, InputPoint, PointerInput, PointerKind,
 };
 pub use measurement::{
-    AvailableSpace, CustomMeasurePayload, EmbeddedSurfaceMeasurePayload, MeasureConstraints,
-    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
-    MeasureTextOverflow, MeasureTextWrap, MeasuredSize, MeasurementBatchError, MeasurementKind,
-    MeasurementMetrics, MeasurementPayload, MeasurementPayloadError, MeasurementReady,
-    MeasurementRequest, MeasurementResponse, MeasurementSpec, NativeControlMeasurePayload,
-    PendingMeasurePolicy, ReplacedContentMeasurePayload, TextMeasurePayload, TextMeasureStyle,
+    AvailableSpace, CustomMeasurePayload, EmbeddedSurfaceMeasurePayload, FontFeature,
+    FontOpticalSizing, FontTag, FontVariation, MeasureConstraints, MeasureFontFamily,
+    MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
+    MeasureTextWrap, MeasuredSize, MeasurementBatchError, MeasurementKind, MeasurementMetrics,
+    MeasurementPayload, MeasurementPayloadError, MeasurementReady, MeasurementRequest,
+    MeasurementResponse, MeasurementSpec, NativeControlMeasurePayload, PendingMeasurePolicy,
+    ReplacedContentMeasurePayload, TextMeasurePayload, TextMeasureStyle,
     UnsupportedMeasurementReason, validate_measurement_batch,
 };
+pub use resource::{
+    ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode, ResourceKind,
+    ResourceMessageError, ResourceRequest, ResourceSource,
+};
 pub use validation::{ApplyResult, NodeProjection, SceneProjection, ValidationError};
+pub use visual::{
+    BackfaceVisibility, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
+    BoxShadow, ClipShape, Cursor, CursorKeyword, CursorResource, FillRule, FilterOperation,
+    GradientStop, ImageContent, ImageRendering, ImageRepeat, Isolation, MaskComposite, MaskLayer,
+    MaskMode, ObjectFit, OutlineLineStyle, OutlinePaint, PaintBox, PaintCoordinate, PaintImage,
+    PaintPosition, PathCommand, RadialGradientExtent, RadialGradientShape, TextDecoration,
+    TextDecorationLines, TextDecorationStyle, TextDecorationThickness, TextShadow, TransformStyle,
+    VisualEffects,
+};
 pub use whisker_value::WhiskerValue;

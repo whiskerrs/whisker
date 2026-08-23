@@ -75,38 +75,10 @@ impl Css {
         self.push(crate::StyleProperty::WordBreak, v)
     }
 
-    /// Sets `word-wrap` (also known as `overflow-wrap`).
-    /// <https://lynxjs.org/api/css/properties/word-wrap>
-    pub fn word_wrap(self, v: WordWrap) -> Self {
-        self.push(crate::StyleProperty::WordWrap, v)
-    }
-
-    /// Sets `overflow-wrap` — synonym of `word-wrap`.
+    /// Sets `overflow-wrap`.
     /// <https://lynxjs.org/api/css/properties/overflow-wrap>
     pub fn overflow_wrap(self, v: WordWrap) -> Self {
         self.push(crate::StyleProperty::OverflowWrap, v)
-    }
-
-    /// Sets `-webkit-line-clamp` — limit the visible line count.
-    /// <https://lynxjs.org/api/css/properties/-webkit-line-clamp>
-    pub fn webkit_line_clamp(self, v: u32) -> Self {
-        self.push_semantic(
-            crate::StyleProperty::WebkitLineClamp,
-            whisker_style::StyleValue::Integer(i64::from(v)),
-            v.to_string(),
-        )
-    }
-
-    /// Sets `text-stroke-width`.
-    /// <https://lynxjs.org/api/css/properties/text-stroke-width>
-    pub fn text_stroke_width(self, v: Length) -> Self {
-        self.push_typed(crate::StyleProperty::TextStrokeWidth, v)
-    }
-
-    /// Sets `text-stroke-color`.
-    /// <https://lynxjs.org/api/css/properties/text-stroke-color>
-    pub fn text_stroke_color(self, v: Color) -> Self {
-        self.push(crate::StyleProperty::TextStrokeColor, v)
     }
 }
 
@@ -164,28 +136,10 @@ mod tests {
         let s = Css::new()
             .white_space(WhiteSpace::Nowrap)
             .word_break(WordBreak::BreakAll)
-            .word_wrap(WordWrap::BreakWord)
-            .overflow_wrap(WordWrap::Normal);
+            .overflow_wrap(WordWrap::BreakWord);
         assert_eq!(
             s.to_string(),
-            "white-space: nowrap; word-break: break-all; word-wrap: break-word; overflow-wrap: normal;"
-        );
-    }
-
-    #[test]
-    fn webkit_line_clamp_count() {
-        let s = Css::new().webkit_line_clamp(2);
-        assert_eq!(s.to_string(), "-webkit-line-clamp: 2;");
-    }
-
-    #[test]
-    fn text_stroke_set() {
-        let s = Css::new()
-            .text_stroke_width(1.px())
-            .text_stroke_color(Color::hex(0x000000));
-        assert_eq!(
-            s.to_string(),
-            "text-stroke-width: 1px; text-stroke-color: rgb(0, 0, 0);"
+            "white-space: nowrap; word-break: break-all; overflow-wrap: break-word;"
         );
     }
 }

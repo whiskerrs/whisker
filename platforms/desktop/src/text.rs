@@ -152,6 +152,14 @@ impl MeasurementProvider for NativeTextHost {
                 &request.payload,
             ) {
                 (Ok(ElementMeasurement::Text), MeasurementPayload::Text(payload)) => {
+                    if payload.style.uses_extended_typography() {
+                        responses.push(MeasurementResponse::Unsupported {
+                            key: request.key,
+                            environment_epoch: request.environment_epoch,
+                            reason: UnsupportedMeasurementReason::Feature,
+                        });
+                        continue;
+                    }
                     let (prepared, mut metrics) = self.prepare_text(payload, request);
                     let id = PreparedContentId::new(request.key.get())
                         .expect("measurement keys are always non-zero");
@@ -229,6 +237,7 @@ mod tests {
                 font_style: MeasureFontStyle::Normal,
                 line_height: MeasureLineHeight::LogicalPixels(24.0),
                 letter_spacing: 0.5,
+                ..whisker_protocol::TextMeasureStyle::default()
             },
             locale: None,
             direction: whisker_protocol::MeasureTextDirection::Auto,
@@ -272,6 +281,7 @@ mod tests {
                 font_style: MeasureFontStyle::Italic,
                 line_height: MeasureLineHeight::Normal,
                 letter_spacing: 0.0,
+                ..whisker_protocol::TextMeasureStyle::default()
             },
             locale: Some("en-US".into()),
             direction: whisker_protocol::MeasureTextDirection::LeftToRight,

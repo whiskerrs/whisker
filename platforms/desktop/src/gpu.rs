@@ -956,12 +956,16 @@ mod tests {
     use super::*;
     use glyphon::Color as TextColor;
     use whisker_protocol::{
-        BorderLineStyle, BoxPaint, LayoutRect, PaintColor, PaintCorners, PaintEdges,
-        PaintLengthPercentage,
+        BorderLineStyle, BoxPaint, LayoutRect, PaintColor, PaintCornerRadius, PaintCorners,
+        PaintEdges, PaintLengthPercentage,
     };
 
     use crate::paint::box_paint::{ResolvedRadii, resolve_box_geometry, resolve_radii};
     use crate::paint::color::{srgb_to_linear, srgba};
+
+    fn radius(length: f32, fraction: f32) -> PaintCornerRadius {
+        PaintCornerRadius::circular(PaintLengthPercentage { length, fraction })
+    }
 
     fn lower_vertices(
         rect: LayoutRect,
@@ -1000,10 +1004,10 @@ mod tests {
                 left: BorderLineStyle::None,
             },
             border_radii: PaintCorners {
-                top_left: zero,
-                top_right: zero,
-                bottom_right: zero,
-                bottom_left: zero,
+                top_left: PaintCornerRadius::default(),
+                top_right: PaintCornerRadius::default(),
+                bottom_right: PaintCornerRadius::default(),
+                bottom_left: PaintCornerRadius::default(),
             },
         }
     }
@@ -1048,22 +1052,10 @@ mod tests {
     fn rounded_radii_resolve_percentages_and_scale_overlaps() {
         let resolved = resolve_radii(
             &PaintCorners {
-                top_left: PaintLengthPercentage {
-                    length: 30.0,
-                    fraction: 0.0,
-                },
-                top_right: PaintLengthPercentage {
-                    length: 0.0,
-                    fraction: 0.5,
-                },
-                bottom_right: PaintLengthPercentage {
-                    length: 30.0,
-                    fraction: 0.0,
-                },
-                bottom_left: PaintLengthPercentage {
-                    length: 30.0,
-                    fraction: 0.0,
-                },
+                top_left: radius(30.0, 0.0),
+                top_right: radius(0.0, 0.5),
+                bottom_right: radius(30.0, 0.0),
+                bottom_left: radius(30.0, 0.0),
             },
             LayoutRect {
                 x: 5.0,
@@ -1083,13 +1075,10 @@ mod tests {
 
         let mut rounded = paint(PaintColor::Named("red".into()));
         rounded.border_radii = PaintCorners {
-            top_left: PaintLengthPercentage {
-                length: 8.0,
-                fraction: 0.0,
-            },
-            top_right: PaintLengthPercentage::default(),
-            bottom_right: PaintLengthPercentage::default(),
-            bottom_left: PaintLengthPercentage::default(),
+            top_left: radius(8.0, 0.0),
+            top_right: PaintCornerRadius::default(),
+            bottom_right: PaintCornerRadius::default(),
+            bottom_left: PaintCornerRadius::default(),
         };
         let mut vertices = Vec::new();
         lower_vertices(
@@ -1142,22 +1131,10 @@ mod tests {
             left: PaintColor::Named("yellow".into()),
         };
         bordered.border_radii = PaintCorners {
-            top_left: PaintLengthPercentage {
-                length: 40.0,
-                fraction: 0.0,
-            },
-            top_right: PaintLengthPercentage {
-                length: 8.0,
-                fraction: 0.0,
-            },
-            bottom_right: PaintLengthPercentage {
-                length: 40.0,
-                fraction: 0.0,
-            },
-            bottom_left: PaintLengthPercentage {
-                length: 8.0,
-                fraction: 0.0,
-            },
+            top_left: radius(40.0, 0.0),
+            top_right: radius(8.0, 0.0),
+            bottom_right: radius(40.0, 0.0),
+            bottom_left: radius(8.0, 0.0),
         };
         let geometry = resolve_box_geometry(
             LayoutRect {

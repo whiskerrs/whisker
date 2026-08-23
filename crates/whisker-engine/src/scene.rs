@@ -1108,6 +1108,7 @@ mod tests {
                     font_style: MeasureFontStyle::Normal,
                     line_height: MeasureLineHeight::Normal,
                     letter_spacing: 0.0,
+                    ..TextMeasureStyle::default()
                 },
                 locale: None,
                 direction: MeasureTextDirection::Auto,
@@ -1143,10 +1144,10 @@ mod tests {
                 left: BorderLineStyle::None,
             },
             border_radii: PaintCorners {
-                top_left: zero,
-                top_right: zero,
-                bottom_right: zero,
-                bottom_left: zero,
+                top_left: whisker_protocol::PaintCornerRadius::circular(zero),
+                top_right: whisker_protocol::PaintCornerRadius::circular(zero),
+                bottom_right: whisker_protocol::PaintCornerRadius::circular(zero),
+                bottom_left: whisker_protocol::PaintCornerRadius::circular(zero),
             },
         }
     }

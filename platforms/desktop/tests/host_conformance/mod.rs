@@ -11,11 +11,11 @@ use whisker_protocol::{
     InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect, MeasureConstraints,
     MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
     MeasureTextOverflow, MeasureTextWrap, MeasurementKey, MeasurementPayload, MeasurementRequest,
-    MeasurementResponse, NodeId, Operation, PaintColor, PaintCorners, PaintEdges,
-    PaintLengthPercentage, PointerId, PointerInput, PointerKind, ProtocolVersion, SurfaceId,
-    TextMeasurePayload, TextMeasureStyle, WhiskerValue,
+    MeasurementResponse, NodeId, Operation, PaintColor, PaintCornerRadius, PaintCorners,
+    PaintEdges, PaintLengthPercentage, PointerId, PointerInput, PointerKind, ProtocolVersion,
+    SurfaceId, TextMeasurePayload, TextMeasureStyle, WhiskerValue,
 };
-use whisker_style::StyleEnvironment;
+use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
 use crate::element::{DesktopElementRegistry, built_in_element_factories};
 use crate::gpu::render_box_primitives_offscreen;
@@ -34,6 +34,7 @@ const TEXT_MEASURE_BASIC: &str =
 const POINTER_INPUT_BASIC: &str =
     include_str!("../../../../tests/host-conformance/core/pointer-input-basic.json");
 const MANIFEST: &str = include_str!("../../../../tests/host-conformance/manifest.json");
+const CAPABILITIES: &str = include_str!("../../../../tests/host-conformance/capabilities.json");
 
 #[derive(Debug, Deserialize)]
 struct Manifest {
@@ -460,6 +461,7 @@ impl Driver {
                     font_style: MeasureFontStyle::Normal,
                     line_height: MeasureLineHeight::LogicalPixels(line_height),
                     letter_spacing: 0.0,
+                    ..TextMeasureStyle::default()
                 },
                 locale: None,
                 direction: MeasureTextDirection::Auto,
@@ -572,10 +574,10 @@ fn box_paint(background: &ColorFixture, border: Option<&BorderFixture>) -> BoxPa
                 left: BorderLineStyle::None,
             },
             border_radii: PaintCorners {
-                top_left: zero,
-                top_right: zero,
-                bottom_right: zero,
-                bottom_left: zero,
+                top_left: PaintCornerRadius::circular(zero),
+                top_right: PaintCornerRadius::circular(zero),
+                bottom_right: PaintCornerRadius::circular(zero),
+                bottom_left: PaintCornerRadius::circular(zero),
             },
         };
     };
@@ -583,9 +585,11 @@ fn box_paint(background: &ColorFixture, border: Option<&BorderFixture>) -> BoxPa
         length,
         fraction: 0.0,
     });
-    let radii = border.radii.map(|length| PaintLengthPercentage {
-        length,
-        fraction: 0.0,
+    let radii = border.radii.map(|length| {
+        PaintCornerRadius::circular(PaintLengthPercentage {
+            length,
+            fraction: 0.0,
+        })
     });
     BoxPaint {
         background_color: background.protocol(),
@@ -902,4 +906,62 @@ fn manifest_assigns_every_seed_case_to_desktop() {
         assert!(case.required_hosts.iter().any(|host| host == "desktop"));
         assert!(!case.checkpoints.is_empty());
     }
+}
+
+#[test]
+fn capability_checklist_covers_each_standard_registry_property_once() {
+    let checklist: serde_json::Value =
+        serde_json::from_str(CAPABILITIES).expect("valid capability checklist JSON");
+    assert_eq!(checklist["schema"], 1);
+    assert_eq!(checklist["target"]["feature_count"], 175);
+    assert_eq!(checklist["target"]["property_count"], 174);
+    let statuses = checklist["statuses"]
+        .as_array()
+        .expect("status vocabulary")
+        .iter()
+        .map(|status| status.as_str().expect("string status"))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut actual = std::collections::BTreeSet::new();
+    let mut features = std::collections::BTreeSet::new();
+    for capability in checklist["capabilities"]
+        .as_array()
+        .expect("capability entries")
+    {
+        for property in capability["properties"]
+            .as_array()
+            .expect("capability properties")
+        {
+            assert!(
+                actual.insert(property.as_str().expect("property name")),
+                "duplicate property in capability checklist: {property}"
+            );
+        }
+        if let Some(capability_features) = capability["features"].as_array() {
+            for feature in capability_features {
+                assert!(
+                    features.insert(feature.as_str().expect("feature name")),
+                    "duplicate non-property feature in capability checklist: {feature}"
+                );
+            }
+        }
+        for host in ["desktop", "web", "android", "ios"] {
+            let status = capability["hosts"][host]
+                .as_str()
+                .expect("Host capability status");
+            assert!(statuses.contains(status), "unknown status {status}");
+        }
+    }
+
+    let expected = StyleProperty::ALL
+        .iter()
+        .filter(|property| property.metadata().origin == PropertyOrigin::Css)
+        .map(|property| property.css_name())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(actual, expected);
+    assert_eq!(actual.len(), 174);
+    assert_eq!(
+        features,
+        std::collections::BTreeSet::from(["custom-properties"])
+    );
+    assert_eq!(actual.len() + features.len(), 175);
 }

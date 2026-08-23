@@ -94,6 +94,7 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &InheritedStyle) -> Lower
                 }
             },
             letter_spacing: style.letter_spacing(),
+            ..TextMeasureStyle::default()
         },
         locale: input.locale.clone(),
         direction: input.direction,
@@ -112,6 +113,7 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &InheritedStyle) -> Lower
             payload,
             paint: TextPaint {
                 foreground: lower_color(style.color()),
+                ..TextPaint::default()
             },
             prepared_content: None,
         },
