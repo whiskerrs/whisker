@@ -1157,6 +1157,14 @@ mod tests {
                 node: missing,
                 paint: box_paint(),
             },
+            Operation::SetBackgroundLayers {
+                node: missing,
+                layers: Vec::new(),
+            },
+            Operation::SetVisualEffects {
+                node: missing,
+                effects: crate::VisualEffects::default(),
+            },
             Operation::SetClip {
                 node: missing,
                 clip: crate::BoxClip {
@@ -1175,6 +1183,14 @@ mod tests {
             Operation::SetText {
                 node: missing,
                 content: text_content("missing"),
+            },
+            Operation::SetImage {
+                node: missing,
+                content: crate::ImageContent {
+                    resource: ResourceId::new(1).unwrap(),
+                    fit: ObjectFit::Contain,
+                    position: PaintPosition::default(),
+                },
             },
             Operation::SetProperty {
                 node: missing,

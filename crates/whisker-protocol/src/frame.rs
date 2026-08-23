@@ -817,6 +817,28 @@ mod tests {
     }
 
     #[test]
+    fn text_paint_detects_each_extended_feature_independently() {
+        let mut paint = TextPaint::default();
+        assert!(!paint.uses_extended_features());
+        paint.decoration.lines.underline = true;
+        assert!(paint.uses_extended_features());
+        paint.decoration.lines.underline = false;
+        paint.decoration.lines.overline = true;
+        assert!(paint.uses_extended_features());
+        paint.decoration.lines.overline = false;
+        paint.decoration.lines.line_through = true;
+        assert!(paint.uses_extended_features());
+        paint.decoration.lines.line_through = false;
+        paint.shadows.push(crate::TextShadow {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            blur_radius: 0.0,
+            color: PaintColor::default(),
+        });
+        assert!(paint.uses_extended_features());
+    }
+
+    #[test]
     fn box_paint_validates_lengths_colors_and_short_circuit_paths() {
         assert!(box_paint().validate());
 

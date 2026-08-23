@@ -243,4 +243,109 @@ mod tests {
             Err(ResourceMessageError::ZeroGeneration)
         );
     }
+
+    #[test]
+    fn lifecycle_validation_covers_every_source_command_and_event_path() {
+        let resource = ResourceId::new(1).unwrap();
+        for source in [
+            ResourceSource::Url(" ".into()),
+            ResourceSource::BundledAsset(String::new()),
+            ResourceSource::Bytes {
+                media_type: " ".into(),
+                data: vec![1],
+            },
+        ] {
+            assert_eq!(
+                ResourceRequest {
+                    resource,
+                    generation: 1,
+                    kind: ResourceKind::RasterImage,
+                    source,
+                }
+                .validate(),
+                Err(ResourceMessageError::EmptyIdentifier)
+            );
+        }
+        assert_eq!(
+            ResourceCommand::Release {
+                resource,
+                generation: 1,
+            }
+            .validate(),
+            Ok(())
+        );
+        assert_eq!(
+            ResourceEvent::Failed {
+                resource,
+                generation: 1,
+                code: ResourceFailureCode::Network,
+                diagnostic: Some("network".into()),
+            }
+            .validate(),
+            Ok(())
+        );
+        assert_eq!(
+            ResourceEvent::Failed {
+                resource,
+                generation: 0,
+                code: ResourceFailureCode::Network,
+                diagnostic: Some("network".into()),
+            }
+            .validate(),
+            Err(ResourceMessageError::ZeroGeneration)
+        );
+
+        let invalid_dimensions = [
+            ResourceDimensions {
+                width: f32::NAN,
+                height: 1.0,
+                scale: 1.0,
+            },
+            ResourceDimensions {
+                width: -1.0,
+                height: 1.0,
+                scale: 1.0,
+            },
+            ResourceDimensions {
+                width: 1.0,
+                height: f32::NAN,
+                scale: 1.0,
+            },
+            ResourceDimensions {
+                width: 1.0,
+                height: -1.0,
+                scale: 1.0,
+            },
+            ResourceDimensions {
+                width: 1.0,
+                height: 1.0,
+                scale: f32::NAN,
+            },
+            ResourceDimensions {
+                width: 1.0,
+                height: 1.0,
+                scale: 0.0,
+            },
+        ];
+        for dimensions in invalid_dimensions {
+            assert_eq!(
+                ResourceEvent::Ready {
+                    resource,
+                    generation: 1,
+                    dimensions: Some(dimensions),
+                }
+                .validate(),
+                Err(ResourceMessageError::InvalidDimensions)
+            );
+        }
+        assert_eq!(
+            ResourceEvent::Ready {
+                resource,
+                generation: 1,
+                dimensions: None,
+            }
+            .validate(),
+            Ok(())
+        );
+    }
 }

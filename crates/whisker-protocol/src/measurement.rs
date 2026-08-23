@@ -830,6 +830,31 @@ mod tests {
     }
 
     #[test]
+    fn font_tags_and_extended_typography_cover_each_path() {
+        let kern = FontTag::new(*b"kern").expect("printable tag");
+        assert_eq!(kern.get(), *b"kern");
+        assert_eq!(FontTag::new([0x1f, b'e', b'r', b'n']), None);
+        assert_eq!(FontTag::new([b'k', b'e', b'r', 0x7f]), None);
+
+        let mut style = TextMeasureStyle::default();
+        assert!(!style.uses_extended_typography());
+        style.features.push(FontFeature {
+            tag: kern,
+            value: 1,
+        });
+        assert!(style.uses_extended_typography());
+        style.features.clear();
+        style.variations.push(FontVariation {
+            tag: FontTag::new(*b"wght").unwrap(),
+            value: 500.0,
+        });
+        assert!(style.uses_extended_typography());
+        style.variations.clear();
+        style.optical_sizing = FontOpticalSizing::None;
+        assert!(style.uses_extended_typography());
+    }
+
+    #[test]
     fn typed_payloads_report_kinds_and_reject_every_invalid_field() {
         let text = MeasurementPayload::Text(text_payload());
         assert_eq!(text.kind(), MeasurementKind::Text);
@@ -880,6 +905,47 @@ mod tests {
         assert_eq!(
             MeasurementPayload::Text(invalid).validate(),
             Err(MeasurementPayloadError::InvalidLetterSpacing)
+        );
+        let kern = FontTag::new(*b"kern").unwrap();
+        let liga = FontTag::new(*b"liga").unwrap();
+        let mut invalid = text_payload();
+        invalid.style.features = vec![
+            FontFeature {
+                tag: liga,
+                value: 1,
+            },
+            FontFeature {
+                tag: kern,
+                value: 1,
+            },
+        ];
+        assert_eq!(
+            MeasurementPayload::Text(invalid).validate(),
+            Err(MeasurementPayloadError::InvalidFontFeatures)
+        );
+        let mut invalid = text_payload();
+        invalid.style.variations = vec![
+            FontVariation {
+                tag: FontTag::new(*b"wght").unwrap(),
+                value: 500.0,
+            },
+            FontVariation {
+                tag: FontTag::new(*b"opsz").unwrap(),
+                value: 14.0,
+            },
+        ];
+        assert_eq!(
+            MeasurementPayload::Text(invalid).validate(),
+            Err(MeasurementPayloadError::InvalidFontVariations)
+        );
+        let mut invalid = text_payload();
+        invalid.style.variations = vec![FontVariation {
+            tag: FontTag::new(*b"wght").unwrap(),
+            value: f32::NAN,
+        }];
+        assert_eq!(
+            MeasurementPayload::Text(invalid).validate(),
+            Err(MeasurementPayloadError::InvalidFontVariations)
         );
         let mut invalid = text_payload();
         invalid.locale = Some(String::new());

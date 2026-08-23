@@ -966,6 +966,204 @@ mod tests {
     }
 
     #[test]
+    fn text_shadow_reaches_color_validation_after_valid_geometry() {
+        let shadow = TextShadow {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            blur_radius: 0.0,
+            color: PaintColor::Named(String::new()),
+        };
+        assert!(!shadow.validate());
+    }
+
+    #[test]
+    fn image_and_clip_validation_cover_remaining_shape_families() {
+        let resource = ResourceId::new(1).unwrap();
+        assert!(PaintImage::None.is_valid());
+        assert!(PaintImage::Resource(resource).is_valid());
+
+        let position = PaintPosition::default();
+        let stops = vec![stop(0.0), stop(1.0)];
+        let radial = |extent, radii| PaintImage::RadialGradient {
+            shape: RadialGradientShape::Circle,
+            extent,
+            center: position,
+            radii,
+            repeating: false,
+            stops: stops.clone(),
+        };
+        assert!(!radial(RadialGradientExtent::Explicit, None).is_valid());
+        assert!(radial(RadialGradientExtent::ClosestSide, None).is_valid());
+        assert!(
+            !radial(
+                RadialGradientExtent::FarthestSide,
+                Some((
+                    PaintLengthPercentage::default(),
+                    PaintLengthPercentage::default()
+                ))
+            )
+            .is_valid()
+        );
+
+        let valid_length = PaintLengthPercentage::default();
+        let valid_radius = PaintCornerRadius::default();
+        let edges = PaintEdges {
+            top: PaintCoordinate::default(),
+            right: PaintCoordinate::default(),
+            bottom: PaintCoordinate::default(),
+            left: PaintCoordinate::default(),
+        };
+        let radii = PaintCorners {
+            top_left: valid_radius,
+            top_right: valid_radius,
+            bottom_right: valid_radius,
+            bottom_left: valid_radius,
+        };
+        assert!(
+            ClipShape::Inset {
+                edges: edges.clone(),
+                radii: radii.clone(),
+            }
+            .is_valid()
+        );
+        let mut invalid_edges = edges;
+        invalid_edges.left.length = f32::NAN;
+        assert!(
+            !ClipShape::Inset {
+                edges: invalid_edges,
+                radii: radii.clone(),
+            }
+            .is_valid()
+        );
+        let mut invalid_radii = radii;
+        invalid_radii.bottom_left.horizontal.length = -1.0;
+        assert!(
+            !ClipShape::Inset {
+                edges: PaintEdges {
+                    top: PaintCoordinate::default(),
+                    right: PaintCoordinate::default(),
+                    bottom: PaintCoordinate::default(),
+                    left: PaintCoordinate::default(),
+                },
+                radii: invalid_radii,
+            }
+            .is_valid()
+        );
+
+        assert!(
+            ClipShape::Circle {
+                radius: valid_length,
+                center: position,
+            }
+            .is_valid()
+        );
+        assert!(
+            !ClipShape::Circle {
+                radius: PaintLengthPercentage {
+                    length: -1.0,
+                    fraction: 0.0,
+                },
+                center: position,
+            }
+            .is_valid()
+        );
+        let invalid_position = PaintPosition {
+            x: PaintCoordinate {
+                length: f32::NAN,
+                fraction: 0.0,
+            },
+            y: PaintCoordinate::default(),
+        };
+        assert!(
+            !ClipShape::Circle {
+                radius: valid_length,
+                center: invalid_position,
+            }
+            .is_valid()
+        );
+        assert!(
+            ClipShape::Ellipse {
+                radius_x: valid_length,
+                radius_y: valid_length,
+                center: position,
+            }
+            .is_valid()
+        );
+        for shape in [
+            ClipShape::Ellipse {
+                radius_x: PaintLengthPercentage {
+                    length: -1.0,
+                    fraction: 0.0,
+                },
+                radius_y: valid_length,
+                center: position,
+            },
+            ClipShape::Ellipse {
+                radius_x: valid_length,
+                radius_y: PaintLengthPercentage {
+                    length: -1.0,
+                    fraction: 0.0,
+                },
+                center: position,
+            },
+            ClipShape::Ellipse {
+                radius_x: valid_length,
+                radius_y: valid_length,
+                center: invalid_position,
+            },
+        ] {
+            assert!(!shape.is_valid());
+        }
+
+        let valid_quadratic = PathCommand::QuadraticTo {
+            control: position,
+            end: position,
+        };
+        assert!(valid_quadratic.is_valid());
+        assert!(
+            !PathCommand::QuadraticTo {
+                control: invalid_position,
+                end: position,
+            }
+            .is_valid()
+        );
+        assert!(
+            !PathCommand::QuadraticTo {
+                control: position,
+                end: invalid_position,
+            }
+            .is_valid()
+        );
+        let valid_cubic = PathCommand::CubicTo {
+            control_1: position,
+            control_2: position,
+            end: position,
+        };
+        assert!(valid_cubic.is_valid());
+        for command in [
+            PathCommand::CubicTo {
+                control_1: invalid_position,
+                control_2: position,
+                end: position,
+            },
+            PathCommand::CubicTo {
+                control_1: position,
+                control_2: invalid_position,
+                end: position,
+            },
+            PathCommand::CubicTo {
+                control_1: position,
+                control_2: position,
+                end: invalid_position,
+            },
+        ] {
+            assert!(!command.is_valid());
+        }
+        assert!(PathCommand::LineTo(position).is_valid());
+        assert!(!PathCommand::LineTo(invalid_position).is_valid());
+    }
+
+    #[test]
     fn image_content_accepts_signed_finite_positions() {
         let image = ImageContent {
             resource: ResourceId::new(1).unwrap(),

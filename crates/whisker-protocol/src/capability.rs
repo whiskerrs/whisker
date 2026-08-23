@@ -228,8 +228,11 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 2
 mod tests {
     use super::*;
     use crate::{
-        BoxPaint, ElementTypeId, FrameHeader, FrameMode, NodeId, PaintCornerRadius,
-        PaintLengthPercentage, SurfaceId,
+        BoxPaint, Cursor, ElementTypeId, FontFeature, FontOpticalSizing, FontTag, FrameHeader,
+        FrameMode, ImageContent, MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap,
+        NodeId, ObjectFit, PaintCornerRadius, PaintLengthPercentage, PaintPosition, ResourceId,
+        SurfaceId, TextContent, TextDecorationLines, TextMeasurePayload, TextMeasureStyle,
+        TextPaint, VisualEffects,
     };
 
     fn packet(operations: Vec<Operation>) -> FramePacket {
@@ -284,8 +287,164 @@ mod tests {
             support: CapabilitySupport::Native,
         };
         assert_eq!(
-            RenderCapabilities::new(ProtocolVersion::CURRENT, [duplicate, duplicate]),
+            RenderCapabilities::new(ProtocolVersion::CURRENT, vec![duplicate, duplicate]),
             Err(DuplicateCapability(RenderCapability::Cursor))
+        );
+    }
+
+    #[test]
+    fn profiles_and_packets_cover_every_optional_capability() {
+        assert_eq!(
+            RenderCapability::ALL.map(RenderCapability::as_str),
+            [
+                "elliptical-border-radius",
+                "background-layers",
+                "visual-effects",
+                "text-effects",
+                "text-typography",
+                "image-content",
+                "cursor",
+                "resource-lifecycle",
+            ]
+        );
+
+        let profile = RenderCapabilities::new(
+            ProtocolVersion::CURRENT,
+            vec![
+                CapabilityEntry {
+                    capability: RenderCapability::BackgroundLayers,
+                    support: CapabilitySupport::Native,
+                },
+                CapabilityEntry {
+                    capability: RenderCapability::VisualEffects,
+                    support: CapabilitySupport::Emulated,
+                },
+                CapabilityEntry {
+                    capability: RenderCapability::Cursor,
+                    support: CapabilitySupport::Unsupported,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(profile.protocol(), ProtocolVersion::CURRENT);
+        assert!(profile.supports_protocol(ProtocolVersion { major: 1, minor: 0 }));
+        assert!(!profile.supports_protocol(ProtocolVersion { major: 1, minor: 2 }));
+        assert!(!profile.supports_protocol(ProtocolVersion { major: 2, minor: 0 }));
+        assert_eq!(
+            profile.support(RenderCapability::BackgroundLayers),
+            CapabilitySupport::Native
+        );
+        assert_eq!(
+            profile.support(RenderCapability::VisualEffects),
+            CapabilitySupport::Emulated
+        );
+        assert_eq!(
+            profile.support(RenderCapability::Cursor),
+            CapabilitySupport::Unsupported
+        );
+
+        let node = NodeId::new(1).unwrap();
+        let mut paint = BoxPaint::default();
+        paint.border_radii.top_left = PaintCornerRadius {
+            horizontal: PaintLengthPercentage {
+                length: 1.0,
+                fraction: 0.0,
+            },
+            vertical: PaintLengthPercentage {
+                length: 2.0,
+                fraction: 0.0,
+            },
+        };
+        let mut style = TextMeasureStyle::default();
+        style.features.push(FontFeature {
+            tag: FontTag::new(*b"kern").unwrap(),
+            value: 1,
+        });
+        style.optical_sizing = FontOpticalSizing::None;
+        let mut text_paint = TextPaint::default();
+        text_paint.decoration.lines = TextDecorationLines {
+            underline: true,
+            overline: false,
+            line_through: false,
+        };
+        let operations = vec![
+            Operation::SetBoxPaint { node, paint },
+            Operation::SetBackgroundLayers {
+                node,
+                layers: Vec::new(),
+            },
+            Operation::SetVisualEffects {
+                node,
+                effects: VisualEffects::default(),
+            },
+            Operation::SetText {
+                node,
+                content: TextContent {
+                    payload: TextMeasurePayload {
+                        text: "capabilities".into(),
+                        style,
+                        locale: None,
+                        direction: MeasureTextDirection::Auto,
+                        wrap: MeasureTextWrap::Wrap,
+                        max_lines: None,
+                        overflow: MeasureTextOverflow::Clip,
+                    },
+                    paint: text_paint,
+                    prepared_content: None,
+                },
+            },
+            Operation::SetImage {
+                node,
+                content: ImageContent {
+                    resource: ResourceId::new(1).unwrap(),
+                    fit: ObjectFit::Contain,
+                    position: PaintPosition::default(),
+                },
+            },
+            Operation::SetCursor {
+                node,
+                cursor: Cursor::default(),
+            },
+            Operation::SetBackgroundLayers {
+                node,
+                layers: Vec::new(),
+            },
+        ];
+        let packet = packet(operations);
+        assert_eq!(
+            packet.required_capabilities(),
+            vec![
+                RenderCapability::EllipticalBorderRadius,
+                RenderCapability::BackgroundLayers,
+                RenderCapability::VisualEffects,
+                RenderCapability::TextEffects,
+                RenderCapability::TextTypography,
+                RenderCapability::ImageContent,
+                RenderCapability::Cursor,
+            ]
+        );
+        assert_eq!(
+            RenderCapabilities::base().first_unsupported(&packet),
+            Some(RenderCapability::EllipticalBorderRadius)
+        );
+        let elliptical_only = RenderCapabilities::new(
+            ProtocolVersion::CURRENT,
+            vec![CapabilityEntry {
+                capability: RenderCapability::EllipticalBorderRadius,
+                support: CapabilitySupport::Native,
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            elliptical_only.first_unsupported(&packet),
+            Some(RenderCapability::BackgroundLayers)
+        );
+        assert_eq!(
+            RenderCapabilities::all_frame_native().first_unsupported(&packet),
+            None
+        );
+        assert!(
+            !RenderCapabilities::all_frame_native().supports(RenderCapability::ResourceLifecycle)
         );
     }
 }
