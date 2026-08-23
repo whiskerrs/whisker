@@ -752,6 +752,7 @@ mod tests {
                     font_style: MeasureFontStyle::Normal,
                     line_height: MeasureLineHeight::Normal,
                     letter_spacing: 0.0,
+                    ..TextMeasureStyle::default()
                 },
                 locale: None,
                 direction: MeasureTextDirection::Auto,

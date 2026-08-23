@@ -228,7 +228,7 @@ impl DesktopScene {
         }
     }
 
-    fn validate_element_operations(&self, packet: &FramePacket) -> Result<(), DesktopElementError> {
+    fn validate_element_operations(&self, packet: &FramePacket) -> Result<(), DesktopPresentError> {
         let mut types = if packet.header.mode == FrameMode::Snapshot {
             HashMap::new()
         } else {
@@ -247,10 +247,18 @@ impl DesktopScene {
                     if let Some(element_type) = types.get(parent).copied()
                         && !self.elements.child_policy(element_type)?.accepts_elements()
                     {
-                        return Err(DesktopElementError::ChildrenNotAllowed { parent: *parent });
+                        return Err(
+                            DesktopElementError::ChildrenNotAllowed { parent: *parent }.into()
+                        );
                     }
                 }
                 Operation::SetText { node, content } => {
+                    if content.paint.uses_extended_features() {
+                        return Err(DesktopPresentError::Unsupported("text-effects"));
+                    }
+                    if content.payload.style.uses_extended_typography() {
+                        return Err(DesktopPresentError::Unsupported("text-typography"));
+                    }
                     if let Some(element_type) = types.get(node).copied() {
                         self.elements
                             .create(element_type)?
@@ -287,6 +295,18 @@ impl DesktopScene {
                         self.elements
                             .validate_command(element_type, *node, *command, arguments)?;
                     }
+                }
+                Operation::SetBackgroundLayers { .. } => {
+                    return Err(DesktopPresentError::Unsupported("background-layers"));
+                }
+                Operation::SetVisualEffects { .. } => {
+                    return Err(DesktopPresentError::Unsupported("visual-effects"));
+                }
+                Operation::SetImage { .. } => {
+                    return Err(DesktopPresentError::Unsupported("image-content"));
+                }
+                Operation::SetCursor { .. } => {
+                    return Err(DesktopPresentError::Unsupported("cursor"));
                 }
                 Operation::DeleteNode { .. }
                 | Operation::RemoveChild { .. }
@@ -484,6 +504,12 @@ impl DesktopScene {
                 | Operation::SetHitTest { .. }
                 | Operation::SetPointerCapture { .. }
                 | Operation::ReleasePointerCapture { .. } => {}
+                Operation::SetBackgroundLayers { .. }
+                | Operation::SetVisualEffects { .. }
+                | Operation::SetImage { .. }
+                | Operation::SetCursor { .. } => {
+                    unreachable!("unsupported operations are rejected before commit")
+                }
             }
         }
     }
@@ -509,7 +535,21 @@ impl DesktopScene {
 impl FrameSink for DesktopScene {
     type Error = DesktopPresentError;
 
+    fn capabilities(&self) -> whisker_protocol::RenderCapabilities {
+        whisker_protocol::RenderCapabilities::new(
+            whisker_protocol::ProtocolVersion::CURRENT,
+            [whisker_protocol::CapabilityEntry {
+                capability: whisker_protocol::RenderCapability::EllipticalBorderRadius,
+                support: whisker_protocol::CapabilitySupport::Native,
+            }],
+        )
+        .expect("Desktop capability profile is unique")
+    }
+
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
+        if let Some(capability) = self.capabilities().first_unsupported(packet) {
+            return Err(DesktopPresentError::Unsupported(capability.as_str()));
+        }
         if packet.header.mode == FrameMode::Delta
             && (self.validation.scene_epoch() != Some(packet.header.scene_epoch)
                 || self.validation.revision() != packet.header.base_revision)
@@ -533,6 +573,7 @@ impl FrameSink for DesktopScene {
 pub(crate) enum DesktopPresentError {
     Protocol(ValidationError),
     Element(DesktopElementError),
+    Unsupported(&'static str),
 }
 
 impl fmt::Display for DesktopPresentError {
@@ -546,6 +587,7 @@ impl Error for DesktopPresentError {
         match self {
             Self::Protocol(error) => Some(error),
             Self::Element(error) => Some(error),
+            Self::Unsupported(_) => None,
         }
     }
 }
@@ -647,10 +689,10 @@ mod tests {
                 left: whisker_protocol::BorderLineStyle::None,
             },
             border_radii: PaintCorners {
-                top_left: zero,
-                top_right: zero,
-                bottom_right: zero,
-                bottom_left: zero,
+                top_left: whisker_protocol::PaintCornerRadius::circular(zero),
+                top_right: whisker_protocol::PaintCornerRadius::circular(zero),
+                bottom_right: whisker_protocol::PaintCornerRadius::circular(zero),
+                bottom_left: whisker_protocol::PaintCornerRadius::circular(zero),
             },
         }
     }
@@ -666,6 +708,7 @@ mod tests {
                     font_style: MeasureFontStyle::Normal,
                     line_height: MeasureLineHeight::Normal,
                     letter_spacing: 0.0,
+                    ..TextMeasureStyle::default()
                 },
                 locale: None,
                 direction: MeasureTextDirection::Auto,
@@ -986,6 +1029,37 @@ mod tests {
         assert!(
             matches!(scene.paint_commands()[0], PaintCommand::Box { rect, .. } if rect.width == 10.0)
         );
+    }
+
+    #[test]
+    fn protocol_only_visual_operation_is_rejected_before_desktop_commit() {
+        let root = id(1);
+        let mut scene = scene(SurfaceId::new(1).unwrap());
+        scene
+            .present(&packet(
+                FrameMode::Snapshot,
+                0,
+                1,
+                vec![Operation::CreateNode {
+                    node: root,
+                    element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+                }],
+            ))
+            .unwrap();
+
+        assert_eq!(
+            scene.present(&packet(
+                FrameMode::Delta,
+                1,
+                2,
+                vec![Operation::SetVisualEffects {
+                    node: root,
+                    effects: whisker_protocol::VisualEffects::default(),
+                }],
+            )),
+            Err(DesktopPresentError::Unsupported("visual-effects"))
+        );
+        assert_eq!(scene.validation.revision(), 1);
     }
 
     #[test]

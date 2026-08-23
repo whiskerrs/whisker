@@ -419,7 +419,7 @@ fn render_box_paint_and_clip_reach_the_frame_sink() {
                     alpha: 1.0,
                 }
                 && paint.border_widths.top.length == 2.0
-                && paint.border_radii.top_left.length == 8.0
+                && paint.border_radii.top_left.horizontal.length == 8.0
     )));
     assert!(snapshot.operations.iter().any(|operation| matches!(
         operation,
@@ -746,10 +746,10 @@ fn wpt_border_radius_sum_of_radii_001_reaches_layout_and_frame_protocol() {
         Operation::SetBoxPaint { node, paint }
             if *node == root
                 && paint.border_widths.top.length == 10.0
-                && paint.border_radii.top_left.length == 60.0
-                && paint.border_radii.top_right.length == 150.0
-                && paint.border_radii.bottom_right.length == 30.0
-                && paint.border_radii.bottom_left.length == 30.0
+                && paint.border_radii.top_left.horizontal.length == 60.0
+                && paint.border_radii.top_right.horizontal.length == 150.0
+                && paint.border_radii.bottom_right.horizontal.length == 30.0
+                && paint.border_radii.bottom_left.horizontal.length == 30.0
     )));
 
     with_installed_renderer(surface.renderer(), || owner.dispose());

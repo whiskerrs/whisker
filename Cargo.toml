@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "xtask",
     "crates/whisker",
     "crates/whisker-animation",
     "crates/whisker-config",
@@ -17,6 +18,7 @@ members = [
     "crates/whisker-macros",
     "crates/whisker-macro-syntax",
     "crates/whisker-fmt",
+    "crates/whisker-host-conformance",
     "packages/whisker-asset",
     "packages/whisker-asset-macros",
     "crates/whisker-css",
@@ -115,6 +117,7 @@ whisker-layout = { path = "crates/whisker-layout", version = "0.12.0" }
 whisker-macros = { path = "crates/whisker-macros", version = "0.12.0" }
 whisker-macro-syntax = { path = "crates/whisker-macro-syntax", version = "0.12.0" }
 whisker-fmt = { path = "crates/whisker-fmt", version = "0.12.0" }
+whisker-host-conformance = { path = "crates/whisker-host-conformance" }
 whisker-asset = { path = "packages/whisker-asset", version = "0.12.0" }
 whisker-asset-macros = { path = "packages/whisker-asset-macros", version = "0.12.0" }
 whisker-css = { path = "crates/whisker-css", version = "0.12.0" }

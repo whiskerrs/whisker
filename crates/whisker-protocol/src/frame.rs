@@ -35,7 +35,7 @@ pub enum PaintColor {
 }
 
 impl PaintColor {
-    fn is_valid(&self) -> bool {
+    pub(crate) fn is_valid(&self) -> bool {
         match self {
             Self::Named(name) => !name.trim().is_empty(),
             Self::Srgba { alpha, .. } => alpha.is_finite() && (0.0..=1.0).contains(alpha),
@@ -73,6 +73,21 @@ impl Default for PaintColor {
 pub struct TextPaint {
     /// Foreground glyph color.
     pub foreground: PaintColor,
+    /// Resolved line decoration.
+    pub decoration: crate::TextDecoration,
+    /// Text shadows, ordered front to back.
+    pub shadows: Vec<crate::TextShadow>,
+}
+
+impl TextPaint {
+    /// Returns whether painting requires protocol-minor-1 decoration or shadow
+    /// support beyond the original foreground-color path.
+    pub fn uses_extended_features(&self) -> bool {
+        self.decoration.lines.underline
+            || self.decoration.lines.overline
+            || self.decoration.lines.line_through
+            || !self.shadows.is_empty()
+    }
 }
 
 /// An affine logical length retaining a border-box-relative fraction.
@@ -85,7 +100,7 @@ pub struct PaintLengthPercentage {
 }
 
 impl PaintLengthPercentage {
-    fn is_valid(self) -> bool {
+    pub(crate) fn is_valid(self) -> bool {
         self.length.is_finite()
             && self.length >= 0.0
             && self.fraction.is_finite()
@@ -117,6 +132,34 @@ pub struct PaintCorners<T> {
     pub bottom_right: T,
     /// Bottom-left corner.
     pub bottom_left: T,
+}
+
+/// Horizontal and vertical radius of one rounded corner.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PaintCornerRadius {
+    /// Horizontal radius, resolved against the border-box width.
+    pub horizontal: PaintLengthPercentage,
+    /// Vertical radius, resolved against the border-box height.
+    pub vertical: PaintLengthPercentage,
+}
+
+impl PaintCornerRadius {
+    /// Creates a circular radius from one CSS value.
+    pub const fn circular(value: PaintLengthPercentage) -> Self {
+        Self {
+            horizontal: value,
+            vertical: value,
+        }
+    }
+
+    /// Returns whether both axes carry identical resolved values.
+    pub fn is_circular(self) -> bool {
+        self.horizontal == self.vertical
+    }
+
+    pub(crate) fn is_valid(self) -> bool {
+        self.horizontal.is_valid() && self.vertical.is_valid()
+    }
 }
 
 /// Renderer-independent border line style.
@@ -156,7 +199,45 @@ pub struct BoxPaint {
     /// Border line styles.
     pub border_styles: PaintEdges<BorderLineStyle>,
     /// Corner radii retaining their border-box percentage components.
-    pub border_radii: PaintCorners<PaintLengthPercentage>,
+    pub border_radii: PaintCorners<PaintCornerRadius>,
+}
+
+impl Default for BoxPaint {
+    fn default() -> Self {
+        let transparent = PaintColor::Srgba {
+            red: 0,
+            green: 0,
+            blue: 0,
+            alpha: 0.0,
+        };
+        Self {
+            background_color: transparent.clone(),
+            border_widths: PaintEdges {
+                top: PaintLengthPercentage::default(),
+                right: PaintLengthPercentage::default(),
+                bottom: PaintLengthPercentage::default(),
+                left: PaintLengthPercentage::default(),
+            },
+            border_colors: PaintEdges {
+                top: transparent.clone(),
+                right: transparent.clone(),
+                bottom: transparent.clone(),
+                left: transparent,
+            },
+            border_styles: PaintEdges {
+                top: BorderLineStyle::None,
+                right: BorderLineStyle::None,
+                bottom: BorderLineStyle::None,
+                left: BorderLineStyle::None,
+            },
+            border_radii: PaintCorners {
+                top_left: PaintCornerRadius::default(),
+                top_right: PaintCornerRadius::default(),
+                bottom_right: PaintCornerRadius::default(),
+                bottom_left: PaintCornerRadius::default(),
+            },
+        }
+    }
 }
 
 impl BoxPaint {
@@ -168,13 +249,17 @@ impl BoxPaint {
                 self.border_widths.right,
                 self.border_widths.bottom,
                 self.border_widths.left,
+            ]
+            .into_iter()
+            .all(PaintLengthPercentage::is_valid)
+            && [
                 self.border_radii.top_left,
                 self.border_radii.top_right,
                 self.border_radii.bottom_right,
                 self.border_radii.bottom_left,
             ]
             .into_iter()
-            .all(PaintLengthPercentage::is_valid)
+            .all(PaintCornerRadius::is_valid)
             && [
                 &self.border_colors.top,
                 &self.border_colors.right,
@@ -217,7 +302,7 @@ pub enum TextContentError {
 pub const PROTOCOL_MAJOR: u16 = 1;
 
 /// Protocol minor version implemented by this semantic model.
-pub const PROTOCOL_MINOR: u16 = 0;
+pub const PROTOCOL_MINOR: u16 = 1;
 
 /// A negotiated frame protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -380,7 +465,10 @@ impl TextContent {
         self.payload
             .validate()
             .map_err(TextContentError::InvalidMeasurement)?;
-        if !self.paint.foreground.is_valid() {
+        if !self.paint.foreground.is_valid()
+            || !self.paint.decoration.validate()
+            || !self.paint.shadows.iter().all(crate::TextShadow::validate)
+        {
             return Err(TextContentError::InvalidPaint);
         }
         Ok(())
@@ -441,6 +529,20 @@ pub enum Operation {
         /// Resolved paint values.
         paint: BoxPaint,
     },
+    /// Replaces resolved background image layers, ordered front to back.
+    SetBackgroundLayers {
+        /// Target node.
+        node: NodeId,
+        /// Complete background layer list; an empty list clears all images.
+        layers: Vec<crate::BackgroundLayer>,
+    },
+    /// Replaces resolved outline, shadow, mask, filter, and group effects.
+    SetVisualEffects {
+        /// Target node.
+        node: NodeId,
+        /// Complete visual-effect state.
+        effects: crate::VisualEffects,
+    },
     /// Sets descendant overflow clipping.
     SetClip {
         /// Target node.
@@ -483,6 +585,13 @@ pub enum Operation {
         /// Resolved text inputs used for both measurement and painting.
         content: TextContent,
     },
+    /// Sets replaced image content for an image-capable element.
+    SetImage {
+        /// Target node.
+        node: NodeId,
+        /// Resolved image resource and fitting behavior.
+        content: crate::ImageContent,
+    },
     /// Sets a typed common or element-specific property.
     SetProperty {
         /// Target node.
@@ -512,6 +621,13 @@ pub enum Operation {
         node: NodeId,
         /// Resolved behavior.
         behavior: HitTestBehavior,
+    },
+    /// Sets the resolved pointing-device cursor.
+    SetCursor {
+        /// Target node.
+        node: NodeId,
+        /// Cursor selected after style resolution.
+        cursor: crate::Cursor,
     },
     /// Captures a pointer stream for a node.
     SetPointerCapture {
@@ -548,16 +664,20 @@ impl Operation {
             Self::DeleteNode { node }
             | Self::SetLayout { node, .. }
             | Self::SetBoxPaint { node, .. }
+            | Self::SetBackgroundLayers { node, .. }
+            | Self::SetVisualEffects { node, .. }
             | Self::SetClip { node, .. }
             | Self::SetTransform { node, .. }
             | Self::SetOpacity { node, .. }
             | Self::SetVisibility { node, .. }
             | Self::SetZOrder { node, .. }
             | Self::SetText { node, .. }
+            | Self::SetImage { node, .. }
             | Self::SetProperty { node, .. }
             | Self::ClearProperty { node, .. }
             | Self::SetEventMask { node, .. }
             | Self::SetHitTest { node, .. }
+            | Self::SetCursor { node, .. }
             | Self::SetPointerCapture { node, .. }
             | Self::ReleasePointerCapture { node, .. }
             | Self::InvokeCommand { node, .. } => Some(*node),
@@ -578,6 +698,10 @@ mod tests {
 
     fn length(length: f32, fraction: f32) -> PaintLengthPercentage {
         PaintLengthPercentage { length, fraction }
+    }
+
+    fn radius(length_value: f32, fraction: f32) -> PaintCornerRadius {
+        PaintCornerRadius::circular(length(length_value, fraction))
     }
 
     fn box_paint() -> BoxPaint {
@@ -602,10 +726,10 @@ mod tests {
                 left: BorderLineStyle::Dotted,
             },
             border_radii: PaintCorners {
-                top_left: length(0.0, 0.0),
-                top_right: length(2.0, 0.0),
-                bottom_right: length(0.0, 0.25),
-                bottom_left: length(2.0, 0.25),
+                top_left: radius(0.0, 0.0),
+                top_right: radius(2.0, 0.0),
+                bottom_right: radius(0.0, 0.25),
+                bottom_left: radius(2.0, 0.25),
             },
         }
     }
@@ -668,6 +792,7 @@ mod tests {
                     font_style: crate::MeasureFontStyle::Normal,
                     line_height: crate::MeasureLineHeight::Normal,
                     letter_spacing: 0.0,
+                    ..crate::TextMeasureStyle::default()
                 },
                 locale: None,
                 direction: crate::MeasureTextDirection::Auto,
@@ -681,6 +806,36 @@ mod tests {
         assert_eq!(content.validate(), Ok(()));
         content.paint.foreground = PaintColor::Named(String::new());
         assert_eq!(content.validate(), Err(TextContentError::InvalidPaint));
+        content.paint.foreground = PaintColor::default();
+        content.paint.shadows.push(crate::TextShadow {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            blur_radius: -1.0,
+            color: PaintColor::default(),
+        });
+        assert_eq!(content.validate(), Err(TextContentError::InvalidPaint));
+    }
+
+    #[test]
+    fn text_paint_detects_each_extended_feature_independently() {
+        let mut paint = TextPaint::default();
+        assert!(!paint.uses_extended_features());
+        paint.decoration.lines.underline = true;
+        assert!(paint.uses_extended_features());
+        paint.decoration.lines.underline = false;
+        paint.decoration.lines.overline = true;
+        assert!(paint.uses_extended_features());
+        paint.decoration.lines.overline = false;
+        paint.decoration.lines.line_through = true;
+        assert!(paint.uses_extended_features());
+        paint.decoration.lines.line_through = false;
+        paint.shadows.push(crate::TextShadow {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            blur_radius: 0.0,
+            color: PaintColor::default(),
+        });
+        assert!(paint.uses_extended_features());
     }
 
     #[test]
@@ -774,6 +929,14 @@ mod tests {
                 node: target,
                 paint: box_paint(),
             },
+            Operation::SetBackgroundLayers {
+                node: target,
+                layers: Vec::new(),
+            },
+            Operation::SetVisualEffects {
+                node: target,
+                effects: crate::VisualEffects::default(),
+            },
             Operation::SetClip {
                 node: target,
                 clip: BoxClip {
@@ -809,6 +972,7 @@ mod tests {
                             font_style: crate::MeasureFontStyle::Normal,
                             line_height: crate::MeasureLineHeight::Normal,
                             letter_spacing: 0.0,
+                            ..crate::TextMeasureStyle::default()
                         },
                         locale: None,
                         direction: crate::MeasureTextDirection::Auto,
@@ -818,6 +982,14 @@ mod tests {
                     },
                     paint: TextPaint::default(),
                     prepared_content: None,
+                },
+            },
+            Operation::SetImage {
+                node: target,
+                content: crate::ImageContent {
+                    resource: crate::ResourceId::new(1).unwrap(),
+                    fit: crate::ObjectFit::Contain,
+                    position: crate::PaintPosition::default(),
                 },
             },
             Operation::SetProperty {
@@ -836,6 +1008,13 @@ mod tests {
             Operation::SetHitTest {
                 node: target,
                 behavior: HitTestBehavior::Auto,
+            },
+            Operation::SetCursor {
+                node: target,
+                cursor: crate::Cursor {
+                    resources: Vec::new(),
+                    fallback: crate::CursorKeyword::Pointer,
+                },
             },
             Operation::SetPointerCapture {
                 node: target,

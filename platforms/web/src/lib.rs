@@ -24,7 +24,8 @@ use whisker_protocol::{
     FrameMode, FramePacket, InputEvent, InputEventKind, MeasureFontFamily, MeasureFontStyle,
     MeasureLineHeight, MeasureTextDirection, MeasureTextWrap, MeasuredSize, MeasurementMetrics,
     MeasurementPayload, MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip,
-    PaintColor, PaintLengthPercentage, PreparedContentId, PropertyId, SceneProjection, SurfaceId,
+    PaintColor, PaintCornerRadius, PaintLengthPercentage, PreparedContentId, PropertyId,
+    SceneProjection, SurfaceId, UnsupportedMeasurementReason,
 };
 use whisker_style::StyleEnvironment;
 
@@ -839,6 +840,14 @@ impl MeasurementProvider for DomMeasurementProvider {
                 });
                 continue;
             };
+            if text.style.uses_extended_typography() {
+                responses.push(MeasurementResponse::Unsupported {
+                    key: request.key,
+                    environment_epoch: request.environment_epoch,
+                    reason: UnsupportedMeasurementReason::Feature,
+                });
+                continue;
+            }
             let probe = self
                 .document
                 .create_element("div")
@@ -1025,6 +1034,29 @@ impl DomFrameSink {
     }
 
     fn apply(&mut self, packet: &FramePacket) -> Result<(), WebError> {
+        if let Some(feature) = packet
+            .operations
+            .iter()
+            .find_map(|operation| match operation {
+                Operation::SetBackgroundLayers { .. } => Some("background-layers"),
+                Operation::SetVisualEffects { .. } => Some("visual-effects"),
+                Operation::SetImage { .. } => Some("image-content"),
+                Operation::SetCursor { .. } => Some("cursor"),
+                Operation::SetText { content, .. } if content.paint.uses_extended_features() => {
+                    Some("text-effects")
+                }
+                Operation::SetText { content, .. }
+                    if content.payload.style.uses_extended_typography() =>
+                {
+                    Some("text-typography")
+                }
+                _ => None,
+            })
+        {
+            return Err(WebError(format!(
+                "DOM Host does not implement protocol feature {feature}"
+            )));
+        }
         if packet.header.mode == FrameMode::Snapshot {
             self.root.set_inner_html("");
             self.nodes.clear();
@@ -1185,21 +1217,25 @@ impl DomFrameSink {
                 set_style(&element, "border-bottom-style", border_style(styles.bottom))?;
                 set_style(&element, "border-left-style", border_style(styles.left))?;
                 let radii = &paint.border_radii;
-                set_style(&element, "border-top-left-radius", &length(radii.top_left))?;
+                set_style(
+                    &element,
+                    "border-top-left-radius",
+                    &corner_radius(radii.top_left),
+                )?;
                 set_style(
                     &element,
                     "border-top-right-radius",
-                    &length(radii.top_right),
+                    &corner_radius(radii.top_right),
                 )?;
                 set_style(
                     &element,
                     "border-bottom-right-radius",
-                    &length(radii.bottom_right),
+                    &corner_radius(radii.bottom_right),
                 )?;
                 set_style(
                     &element,
                     "border-bottom-left-radius",
-                    &length(radii.bottom_left),
+                    &corner_radius(radii.bottom_left),
                 )?;
             }
             Operation::SetClip { node, clip } => {
@@ -1391,6 +1427,12 @@ impl DomFrameSink {
                     .map_err(|error| js_error("invoke native DOM command", error))?;
             }
             Operation::SetPointerCapture { .. } | Operation::ReleasePointerCapture { .. } => {}
+            Operation::SetBackgroundLayers { .. }
+            | Operation::SetVisualEffects { .. }
+            | Operation::SetImage { .. }
+            | Operation::SetCursor { .. } => {
+                unreachable!("unsupported operations are rejected before DOM mutation")
+            }
         }
         Ok(())
     }
@@ -1443,7 +1485,24 @@ fn position_text(
 impl FrameSink for DomFrameSink {
     type Error = WebError;
 
+    fn capabilities(&self) -> whisker_protocol::RenderCapabilities {
+        whisker_protocol::RenderCapabilities::new(
+            whisker_protocol::ProtocolVersion::CURRENT,
+            [whisker_protocol::CapabilityEntry {
+                capability: whisker_protocol::RenderCapability::EllipticalBorderRadius,
+                support: whisker_protocol::CapabilitySupport::Native,
+            }],
+        )
+        .expect("Web capability profile is unique")
+    }
+
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
+        if let Some(capability) = self.capabilities().first_unsupported(packet) {
+            return Err(WebError(format!(
+                "DOM Host does not implement protocol feature {}",
+                capability.as_str()
+            )));
+        }
         let mut next = self.projection.clone();
         let result = next
             .apply(packet)
@@ -1532,6 +1591,10 @@ fn length(value: PaintLengthPercentage) -> String {
     } else {
         format!("calc({}px + {}%)", value.length, value.fraction * 100.0)
     }
+}
+
+fn corner_radius(value: PaintCornerRadius) -> String {
+    format!("{} {}", length(value.horizontal), length(value.vertical))
 }
 
 fn color(value: &PaintColor) -> String {
@@ -1651,3 +1714,7 @@ mod element_registry_tests {
         assert!(error.0.contains("checked"));
     }
 }
+
+#[cfg(all(test, target_arch = "wasm32"))]
+#[path = "tests/host_conformance.rs"]
+mod host_conformance_tests;

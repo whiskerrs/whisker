@@ -11,6 +11,11 @@ keywords.workspace = true
 categories.workspace = true
 description = "Shared native Desktop Host for Whisker applications."
 
+[features]
+# Keeps the relatively expensive offscreen GPU fixture suite out of ordinary
+# unit-test runs. `cargo xtask host-conformance desktop` is its entry point.
+host-conformance = []
+
 [dependencies]
 whisker = { workspace = true }
 whisker-engine = { workspace = true }
@@ -34,5 +39,5 @@ wgpu = { version = "25.0.2", default-features = false, features = ["vulkan", "gl
 
 [dev-dependencies]
 pollster = "0.4.0"
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+whisker-host-conformance = { workspace = true }

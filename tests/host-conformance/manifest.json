@@ -6,14 +6,14 @@
       "id": "wpt.css2.backgrounds.background-color-129",
       "feature": "background-color",
       "fixture": "wpt/css/CSS2/backgrounds/background-color-129.json",
-      "required_hosts": ["desktop"],
+      "required_hosts": ["desktop", "android", "ios"],
       "checkpoints": ["semantic-projection", "pixel"]
     },
     {
       "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.test1",
       "feature": "border-radius",
       "fixture": "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json",
-      "required_hosts": ["desktop"],
+      "required_hosts": ["desktop", "android", "ios"],
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel"]
     },
     {

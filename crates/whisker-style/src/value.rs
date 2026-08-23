@@ -170,6 +170,15 @@ pub enum LineHeightValue {
     LengthPercentage(LengthPercentageValue),
 }
 
+/// A specified corner radius with independent horizontal and vertical axes.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BorderRadiusValue {
+    /// Radius resolved against the border box width.
+    pub horizontal: LengthPercentageValue,
+    /// Radius resolved against the border box height.
+    pub vertical: LengthPercentageValue,
+}
+
 /// An owned value in a specified inline-style declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StyleValue {
@@ -185,6 +194,8 @@ pub enum StyleValue {
     Length(LengthValue),
     /// Length, percentage, or typed `calc` expression.
     LengthPercentage(LengthPercentageValue),
+    /// One border corner's horizontal and vertical radii.
+    BorderRadius(BorderRadiusValue),
     /// Font family.
     FontFamily(FontFamilyValue),
     /// Font face style.

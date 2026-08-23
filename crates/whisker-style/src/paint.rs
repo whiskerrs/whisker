@@ -18,6 +18,22 @@ pub struct Corners<T> {
     pub bottom_left: T,
 }
 
+/// A computed border radius retaining both percentage axes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedCornerRadius {
+    /// Horizontal radius, resolved against border-box width by the renderer.
+    pub horizontal: ComputedLengthPercentage,
+    /// Vertical radius, resolved against border-box height by the renderer.
+    pub vertical: ComputedLengthPercentage,
+}
+
+impl ComputedCornerRadius {
+    const ZERO: Self = Self {
+        horizontal: ComputedLengthPercentage::ZERO,
+        vertical: ComputedLengthPercentage::ZERO,
+    };
+}
+
 impl<T: Copy> Corners<T> {
     const fn all(value: T) -> Self {
         Self {
@@ -85,7 +101,7 @@ pub struct ComputedPaintStyle {
     /// Border line styles in physical edge order.
     pub border_styles: Edges<BorderStyleValue>,
     /// Corner radii retaining their border-box percentage component.
-    pub border_radii: Corners<ComputedLengthPercentage>,
+    pub border_radii: Corners<ComputedCornerRadius>,
     /// Group opacity, clamped to `0.0..=1.0`.
     pub opacity: StyleNumber,
     /// Paint visibility.
@@ -120,7 +136,7 @@ impl ComputedPaintStyle {
                 bottom: BorderStyleValue::None,
                 left: BorderStyleValue::None,
             },
-            border_radii: Corners::all(ComputedLengthPercentage::ZERO),
+            border_radii: Corners::all(ComputedCornerRadius::ZERO),
             opacity: StyleNumber::new(1.0),
             visibility: VisibilityValue::Visible,
             overflow_x: OverflowValue::Visible,
@@ -244,15 +260,25 @@ fn radius(
     inherited: &InheritedStyle,
     environment: StyleEnvironment,
     property: StyleProperty,
-) -> Result<ComputedLengthPercentage, StyleResolutionError> {
-    let StyleValue::LengthPercentage(value) = value else {
-        return Err(invalid(property));
+) -> Result<ComputedCornerRadius, StyleResolutionError> {
+    let (horizontal, vertical) = match value {
+        StyleValue::LengthPercentage(value) => (value, value),
+        StyleValue::BorderRadius(value) => (&value.horizontal, &value.vertical),
+        _ => return Err(invalid(property)),
     };
-    let resolved = resolve_affine(value, inherited.font_size(), environment, property)?;
-    if resolved.length() < 0.0 || resolved.fraction() < 0.0 {
+    let horizontal = resolve_affine(horizontal, inherited.font_size(), environment, property)?;
+    let vertical = resolve_affine(vertical, inherited.font_size(), environment, property)?;
+    if horizontal.length() < 0.0
+        || horizontal.fraction() < 0.0
+        || vertical.length() < 0.0
+        || vertical.fraction() < 0.0
+    {
         return Err(invalid(property));
     }
-    Ok(resolved)
+    Ok(ComputedCornerRadius {
+        horizontal,
+        vertical,
+    })
 }
 
 fn invalid(property: StyleProperty) -> StyleResolutionError {
@@ -262,17 +288,21 @@ fn invalid(property: StyleProperty) -> StyleResolutionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LengthPercentageValue, LengthUnit, LengthValue};
+    use crate::{BorderRadiusValue, LengthPercentageValue, LengthUnit, LengthValue};
 
     fn number(value: f32) -> StyleNumber {
         StyleNumber::new(value)
     }
 
-    fn px(value: f32) -> StyleValue {
-        StyleValue::LengthPercentage(LengthPercentageValue::Length(LengthValue::Dimension {
+    fn px_length(value: f32) -> LengthPercentageValue {
+        LengthPercentageValue::Length(LengthValue::Dimension {
             value: number(value),
             unit: LengthUnit::Px,
-        }))
+        })
+    }
+
+    fn px(value: f32) -> StyleValue {
+        StyleValue::LengthPercentage(px_length(value))
     }
 
     #[test]
@@ -324,7 +354,13 @@ mod tests {
                 StyleValue::BorderStyle(BorderStyleValue::Double),
             )
             .push(StyleProperty::BorderTopLeftRadius, px(8.0))
-            .push(StyleProperty::BorderTopRightRadius, px(9.0))
+            .push(
+                StyleProperty::BorderTopRightRadius,
+                StyleValue::BorderRadius(BorderRadiusValue {
+                    horizontal: px_length(9.0),
+                    vertical: px_length(4.0),
+                }),
+            )
             .push(StyleProperty::BorderBottomRightRadius, px(10.0))
             .push(StyleProperty::BorderBottomLeftRadius, px(11.0))
             .push(StyleProperty::Opacity, StyleValue::Number(number(2.0)))
@@ -363,10 +399,12 @@ mod tests {
         assert_eq!(paint.border_styles.right, BorderStyleValue::Dashed);
         assert_eq!(paint.border_styles.bottom, BorderStyleValue::Dotted);
         assert_eq!(paint.border_styles.left, BorderStyleValue::Double);
-        assert_eq!(paint.border_radii.top_left.length(), 8.0);
-        assert_eq!(paint.border_radii.top_right.length(), 9.0);
-        assert_eq!(paint.border_radii.bottom_right.length(), 10.0);
-        assert_eq!(paint.border_radii.bottom_left.length(), 11.0);
+        assert_eq!(paint.border_radii.top_left.horizontal.length(), 8.0);
+        assert_eq!(paint.border_radii.top_left.vertical.length(), 8.0);
+        assert_eq!(paint.border_radii.top_right.horizontal.length(), 9.0);
+        assert_eq!(paint.border_radii.top_right.vertical.length(), 4.0);
+        assert_eq!(paint.border_radii.bottom_right.horizontal.length(), 10.0);
+        assert_eq!(paint.border_radii.bottom_left.horizontal.length(), 11.0);
         assert_eq!(paint.opacity.get(), 1.0);
         assert_eq!(paint.overflow_x, OverflowValue::Hidden);
         assert_eq!(paint.overflow_y, OverflowValue::Hidden);
@@ -428,6 +466,13 @@ mod tests {
             (StyleProperty::Opacity, StyleValue::Number(number(f32::NAN))),
             (StyleProperty::ZIndex, StyleValue::Integer(i64::MAX)),
             (StyleProperty::BorderTopLeftRadius, px(f32::NAN)),
+            (
+                StyleProperty::BorderTopRightRadius,
+                StyleValue::BorderRadius(BorderRadiusValue {
+                    horizontal: px_length(1.0),
+                    vertical: px_length(f32::NAN),
+                }),
+            ),
         ] {
             assert_eq!(
                 crate::resolve_style(

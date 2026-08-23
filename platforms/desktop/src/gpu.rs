@@ -47,6 +47,7 @@ struct VertexInput {
     @location(11) border_right_color: vec4<f32>,
     @location(12) border_bottom_color: vec4<f32>,
     @location(13) border_left_color: vec4<f32>,
+    @location(14) border_styles: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -65,6 +66,7 @@ struct VertexOutput {
     @location(11) border_right_color: vec4<f32>,
     @location(12) border_bottom_color: vec4<f32>,
     @location(13) border_left_color: vec4<f32>,
+    @location(14) @interpolate(flat) border_styles: vec4<f32>,
 };
 
 @vertex
@@ -86,6 +88,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.border_right_color = input.border_right_color;
     output.border_bottom_color = input.border_bottom_color;
     output.border_left_color = input.border_left_color;
+    output.border_styles = input.border_styles;
     return output;
 }
 
@@ -159,7 +162,7 @@ fn shape_coverage(distance: f32) -> f32 {
     return clamp(0.5 - distance / smoothing, 0.0, 1.0);
 }
 
-fn border_side(position: vec2<f32>, rect: vec4<f32>, widths: vec4<f32>) -> f32 {
+fn border_side(position: vec2<f32>, rect: vec4<f32>, widths: vec4<f32>) -> vec2<f32> {
     let left = rect.x;
     let top = rect.y;
     let right = left + rect.z;
@@ -189,9 +192,10 @@ fn border_side(position: vec2<f32>, rect: vec4<f32>, widths: vec4<f32>) -> f32 {
         let candidate = (position.x - left) / widths.w;
         if candidate < score {
             selected = 3.0;
+            score = candidate;
         }
     }
-    return selected;
+    return vec2<f32>(selected, clamp(score, 0.0, 1.0));
 }
 
 fn border_color(input: VertexOutput, side: f32) -> vec4<f32> {
@@ -205,6 +209,107 @@ fn border_color(input: VertexOutput, side: f32) -> vec4<f32> {
         return input.border_bottom_color;
     }
     return input.border_left_color;
+}
+
+fn border_style(input: VertexOutput, side: f32) -> f32 {
+    if side < 0.5 {
+        return input.border_styles.x;
+    }
+    if side < 1.5 {
+        return input.border_styles.y;
+    }
+    if side < 2.5 {
+        return input.border_styles.z;
+    }
+    return input.border_styles.w;
+}
+
+fn border_width(input: VertexOutput, side: f32) -> f32 {
+    if side < 0.5 {
+        return input.border_widths.x;
+    }
+    if side < 1.5 {
+        return input.border_widths.y;
+    }
+    if side < 2.5 {
+        return input.border_widths.z;
+    }
+    return input.border_widths.w;
+}
+
+fn border_path_position(position: vec2<f32>, rect: vec4<f32>, side: f32) -> f32 {
+    let left = rect.x;
+    let top = rect.y;
+    let right = left + rect.z;
+    let bottom = top + rect.w;
+    if side < 0.5 {
+        return position.x - left;
+    }
+    if side < 1.5 {
+        return rect.z + position.y - top;
+    }
+    if side < 2.5 {
+        return rect.z + rect.w + right - position.x;
+    }
+    return rect.z * 2.0 + rect.w + bottom - position.y;
+}
+
+fn patterned_coverage(
+    style: f32,
+    path_position: f32,
+    width: f32,
+    depth: f32,
+) -> f32 {
+    if style < 1.5 || style >= 3.5 {
+        return 1.0;
+    }
+    if style < 2.5 {
+        let period = max(width * 4.0, 0.0001);
+        let phase = fract(path_position / period) * period;
+        let distance = max(-phase, phase - width * 3.0);
+        return shape_coverage(distance);
+    }
+    let period = max(width * 2.0, 0.0001);
+    let along = abs(fract(path_position / period) * period - width);
+    let across = abs(depth - 0.5) * width;
+    let distance = length(vec2<f32>(along, across)) - width * 0.5;
+    return shape_coverage(distance);
+}
+
+fn double_coverage(style: f32, depth: f32) -> f32 {
+    if style < 3.5 || style >= 4.5 {
+        return 1.0;
+    }
+    let distance = min(abs(depth - 1.0 / 6.0), abs(depth - 5.0 / 6.0)) - 1.0 / 6.0;
+    return shape_coverage(distance);
+}
+
+fn shade(color: vec4<f32>, amount: f32) -> vec4<f32> {
+    var rgb = color.rgb;
+    if amount < 0.0 {
+        rgb = rgb * (1.0 + amount);
+    } else {
+        rgb = rgb + (vec3<f32>(1.0) - rgb) * amount;
+    }
+    return vec4<f32>(rgb, color.a);
+}
+
+fn styled_color(color: vec4<f32>, style: f32, side: f32, depth: f32) -> vec4<f32> {
+    let top_or_left = side < 0.5 || side > 2.5;
+    let inset_amount = select(0.35, -0.35, top_or_left);
+    if style >= 6.5 && style < 7.5 {
+        return shade(color, inset_amount);
+    }
+    if style >= 7.5 {
+        return shade(color, -inset_amount);
+    }
+    if style >= 4.5 && style < 5.5 {
+        return shade(color, select(-inset_amount, inset_amount, depth < 0.5));
+    }
+    if style >= 5.5 && style < 6.5 {
+        return shade(color, select(inset_amount, -inset_amount, depth < 0.5));
+    }
+    return color;
 }
 
 @fragment
@@ -230,9 +335,20 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         );
         inner_coverage = shape_coverage(inner_distance);
     }
-    let side = border_side(input.logical_position, input.outer_rect, input.border_widths);
-    let color = border_color(input, side);
-    let coverage = max(outer_coverage - inner_coverage, 0.0);
+    let side_and_depth = border_side(
+        input.logical_position,
+        input.outer_rect,
+        input.border_widths,
+    );
+    let side = side_and_depth.x;
+    let depth = side_and_depth.y;
+    let style = border_style(input, side);
+    let width = border_width(input, side);
+    let path_position = border_path_position(input.logical_position, input.outer_rect, side);
+    let color = styled_color(border_color(input, side), style, side, depth);
+    let style_coverage = patterned_coverage(style, path_position, width, depth)
+        * double_coverage(style, depth);
+    let coverage = max(outer_coverage - inner_coverage, 0.0) * style_coverage;
     return vec4<f32>(color.rgb, color.a * coverage);
 }
 "#;
@@ -262,10 +378,11 @@ struct BoxVertex {
     border_widths: [f32; 4],
     mode: f32,
     border_colors: [[f32; 4]; 4],
+    border_styles: [f32; 4],
 }
 
 impl BoxVertex {
-    const ATTRIBUTES: [VertexAttribute; 14] = [
+    const ATTRIBUTES: [VertexAttribute; 15] = [
         VertexAttribute {
             format: VertexFormat::Float32x2,
             offset: 0,
@@ -335,6 +452,11 @@ impl BoxVertex {
             format: VertexFormat::Float32x4,
             offset: std::mem::size_of::<[f32; 47]>() as u64,
             shader_location: 13,
+        },
+        VertexAttribute {
+            format: VertexFormat::Float32x4,
+            offset: std::mem::size_of::<[f32; 51]>() as u64,
+            shader_location: 14,
         },
     ];
 
@@ -802,6 +924,7 @@ fn push_quad(vertices: &mut Vec<BoxVertex>, primitive: BoxPrimitive) {
             border_widths: primitive.border_widths,
             mode: primitive.kind.shader_mode(),
             border_colors: primitive.border_colors,
+            border_styles: primitive.border_styles,
         });
     }
 }
@@ -819,7 +942,7 @@ fn text_bounds(clip: LogicalClip, width: u32, height: u32, scale: f32) -> TextBo
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host-conformance"))]
 pub(crate) async fn render_box_primitives_offscreen(
     primitives: &[BoxPrimitive],
     logical_size: [u32; 2],
@@ -956,12 +1079,16 @@ mod tests {
     use super::*;
     use glyphon::Color as TextColor;
     use whisker_protocol::{
-        BorderLineStyle, BoxPaint, LayoutRect, PaintColor, PaintCorners, PaintEdges,
-        PaintLengthPercentage,
+        BorderLineStyle, BoxPaint, LayoutRect, PaintColor, PaintCornerRadius, PaintCorners,
+        PaintEdges, PaintLengthPercentage,
     };
 
     use crate::paint::box_paint::{ResolvedRadii, resolve_box_geometry, resolve_radii};
     use crate::paint::color::{srgb_to_linear, srgba};
+
+    fn radius(length: f32, fraction: f32) -> PaintCornerRadius {
+        PaintCornerRadius::circular(PaintLengthPercentage { length, fraction })
+    }
 
     fn lower_vertices(
         rect: LayoutRect,
@@ -1000,10 +1127,10 @@ mod tests {
                 left: BorderLineStyle::None,
             },
             border_radii: PaintCorners {
-                top_left: zero,
-                top_right: zero,
-                bottom_right: zero,
-                bottom_left: zero,
+                top_left: PaintCornerRadius::default(),
+                top_right: PaintCornerRadius::default(),
+                bottom_right: PaintCornerRadius::default(),
+                bottom_left: PaintCornerRadius::default(),
             },
         }
     }
@@ -1048,22 +1175,10 @@ mod tests {
     fn rounded_radii_resolve_percentages_and_scale_overlaps() {
         let resolved = resolve_radii(
             &PaintCorners {
-                top_left: PaintLengthPercentage {
-                    length: 30.0,
-                    fraction: 0.0,
-                },
-                top_right: PaintLengthPercentage {
-                    length: 0.0,
-                    fraction: 0.5,
-                },
-                bottom_right: PaintLengthPercentage {
-                    length: 30.0,
-                    fraction: 0.0,
-                },
-                bottom_left: PaintLengthPercentage {
-                    length: 30.0,
-                    fraction: 0.0,
-                },
+                top_left: radius(30.0, 0.0),
+                top_right: radius(0.0, 0.5),
+                bottom_right: radius(30.0, 0.0),
+                bottom_left: radius(30.0, 0.0),
             },
             LayoutRect {
                 x: 5.0,
@@ -1083,13 +1198,10 @@ mod tests {
 
         let mut rounded = paint(PaintColor::Named("red".into()));
         rounded.border_radii = PaintCorners {
-            top_left: PaintLengthPercentage {
-                length: 8.0,
-                fraction: 0.0,
-            },
-            top_right: PaintLengthPercentage::default(),
-            bottom_right: PaintLengthPercentage::default(),
-            bottom_left: PaintLengthPercentage::default(),
+            top_left: radius(8.0, 0.0),
+            top_right: PaintCornerRadius::default(),
+            bottom_right: PaintCornerRadius::default(),
+            bottom_left: PaintCornerRadius::default(),
         };
         let mut vertices = Vec::new();
         lower_vertices(
@@ -1142,22 +1254,10 @@ mod tests {
             left: PaintColor::Named("yellow".into()),
         };
         bordered.border_radii = PaintCorners {
-            top_left: PaintLengthPercentage {
-                length: 40.0,
-                fraction: 0.0,
-            },
-            top_right: PaintLengthPercentage {
-                length: 8.0,
-                fraction: 0.0,
-            },
-            bottom_right: PaintLengthPercentage {
-                length: 40.0,
-                fraction: 0.0,
-            },
-            bottom_left: PaintLengthPercentage {
-                length: 8.0,
-                fraction: 0.0,
-            },
+            top_left: radius(40.0, 0.0),
+            top_right: radius(8.0, 0.0),
+            bottom_right: radius(40.0, 0.0),
+            bottom_left: radius(8.0, 0.0),
         };
         let geometry = resolve_box_geometry(
             LayoutRect {

@@ -2,7 +2,7 @@
 //! filter, cursor, pointer-events, clip-path.
 
 use crate::css::Css;
-use crate::data_type::{Color, Length, LengthPercentage};
+use crate::data_type::{Color, Length};
 use crate::keyword::{Cursor, Overflow, PointerEvents, Visibility};
 
 impl Css {
@@ -152,51 +152,6 @@ impl Css {
     pub fn outline_offset(self, v: Length) -> Self {
         self.push_typed(crate::StyleProperty::OutlineOffset, v)
     }
-
-    /// Sets `-x-caret-width`. Lynx accepts a length controlling the
-    /// rendered caret thickness. Lynx 4.0 renamed the unprefixed
-    /// `caret-width` (unlike `caret-color`, which kept its name).
-    pub fn caret_width(self, v: Length) -> Self {
-        self.push_typed(crate::StyleProperty::XCaretWidth, v)
-    }
-
-    /// Sets `-x-handle-color` — Lynx-only selection-handle color.
-    /// <https://lynxjs.org/api/css/properties/-x-handle-color>
-    pub fn x_handle_color(self, v: Color) -> Self {
-        self.push(crate::StyleProperty::XHandleColor, v)
-    }
-
-    /// Sets `-x-handle-size` — Lynx-only selection-handle size.
-    /// <https://lynxjs.org/api/css/properties/-x-handle-size>
-    pub fn x_handle_size(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push_typed(crate::StyleProperty::XHandleSize, v.into())
-    }
-
-    /// Sets `-x-auto-font-size` — Lynx-only auto font-size flag.
-    /// <https://lynxjs.org/api/css/properties/-x-auto-font-size>
-    pub fn x_auto_font_size(self, enabled: bool) -> Self {
-        self.push_semantic(
-            crate::StyleProperty::XAutoFontSize,
-            whisker_style::StyleValue::Bool(enabled),
-            if enabled { "true" } else { "false" },
-        )
-    }
-
-    /// Sets `-x-auto-font-size-preset-sizes` — Lynx-only list of preset sizes.
-    /// <https://lynxjs.org/api/css/properties/-x-auto-font-size-preset-sizes>
-    pub fn x_auto_font_size_preset_sizes(self, sizes: impl IntoIterator<Item = Length>) -> Self {
-        use crate::to_css::ToCss;
-        let mut s = String::new();
-        let mut first = true;
-        for sz in sizes {
-            if !first {
-                s.push(' ');
-            }
-            let _ = sz.to_css(&mut s);
-            first = false;
-        }
-        self.push_raw(crate::StyleProperty::XAutoFontSizePresetSizes, s)
-    }
 }
 
 #[cfg(test)]
@@ -297,34 +252,7 @@ mod tests {
 
     #[test]
     fn caret_props() {
-        let s = Css::new()
-            .caret_color(Color::hex(0xFF00FF))
-            .caret_width(2.px());
-        assert_eq!(
-            s.to_string(),
-            "caret-color: rgb(255, 0, 255); -x-caret-width: 2px;"
-        );
-    }
-
-    #[test]
-    fn x_handle_props() {
-        let s = Css::new()
-            .x_handle_color(Color::hex(0x00FF00))
-            .x_handle_size(8.px());
-        assert_eq!(
-            s.to_string(),
-            "-x-handle-color: rgb(0, 255, 0); -x-handle-size: 8px;"
-        );
-    }
-
-    #[test]
-    fn x_auto_font_size_flag_and_presets() {
-        let s = Css::new()
-            .x_auto_font_size(true)
-            .x_auto_font_size_preset_sizes([12.px(), 14.px(), 16.px()]);
-        assert_eq!(
-            s.to_string(),
-            "-x-auto-font-size: true; -x-auto-font-size-preset-sizes: 12px 14px 16px;"
-        );
+        let s = Css::new().caret_color(Color::hex(0xFF00FF));
+        assert_eq!(s.to_string(), "caret-color: rgb(255, 0, 255);");
     }
 }

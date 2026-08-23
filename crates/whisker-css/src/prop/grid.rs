@@ -1,7 +1,6 @@
 //! CSS Grid properties.
 
 use crate::css::Css;
-use crate::data_type::LengthPercentage;
 use crate::keyword::GridAutoFlow;
 use crate::value::{GridLine, GridTemplate};
 
@@ -59,24 +58,11 @@ impl Css {
     pub fn grid_column_end(self, v: GridLine) -> Self {
         self.push(crate::StyleProperty::GridColumnEnd, v)
     }
-
-    /// Sets `grid-row-gap` (legacy alias for `row-gap`).
-    /// <https://lynxjs.org/api/css/properties/grid-row-gap>
-    pub fn grid_row_gap(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push_typed(crate::StyleProperty::GridRowGap, v.into())
-    }
-
-    /// Sets `grid-column-gap` (legacy alias for `column-gap`).
-    /// <https://lynxjs.org/api/css/properties/grid-column-gap>
-    pub fn grid_column_gap(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push_typed(crate::StyleProperty::GridColumnGap, v.into())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::Css;
-    use crate::ext::*;
     use crate::keyword::GridAutoFlow;
     use crate::value::{GridLine, GridTemplate};
 
@@ -114,11 +100,5 @@ mod tests {
             s.to_string(),
             "grid-row-start: 1; grid-row-end: span 2; grid-column-start: auto; grid-column-end: -1;"
         );
-    }
-
-    #[test]
-    fn grid_gaps_legacy() {
-        let s = Css::new().grid_row_gap(px(8)).grid_column_gap(px(12));
-        assert_eq!(s.to_string(), "grid-row-gap: 8px; grid-column-gap: 12px;");
     }
 }

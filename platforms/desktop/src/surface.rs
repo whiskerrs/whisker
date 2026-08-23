@@ -1,5 +1,5 @@
 use whisker_engine::FrameSink;
-use whisker_protocol::{ApplyResult, FramePacket, SurfaceId};
+use whisker_protocol::{ApplyResult, FramePacket, RenderCapabilities, SurfaceId};
 
 use crate::element::DesktopElementRegistry;
 use crate::gpu::{GpuError, GpuRenderer};
@@ -48,6 +48,10 @@ impl DesktopSurface {
 
 impl FrameSink for DesktopSurface {
     type Error = DesktopPresentError;
+
+    fn capabilities(&self) -> RenderCapabilities {
+        self.scene.capabilities()
+    }
 
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
         self.scene.present(packet)

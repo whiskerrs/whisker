@@ -1,6 +1,8 @@
 //! Rust-only renderer used by engine and protocol tests.
 
-use whisker_protocol::{ApplyResult, FramePacket, SceneProjection, SurfaceId, ValidationError};
+use whisker_protocol::{
+    ApplyResult, FramePacket, RenderCapabilities, SceneProjection, SurfaceId, ValidationError,
+};
 
 /// Semantic frame receiver used by a [`Scene`](crate::Scene).
 ///
@@ -10,6 +12,9 @@ use whisker_protocol::{ApplyResult, FramePacket, SceneProjection, SurfaceId, Val
 pub trait FrameSink {
     /// Receiver-specific presentation failure.
     type Error;
+
+    /// Declares optional semantic protocol groups before a surface presents them.
+    fn capabilities(&self) -> RenderCapabilities;
 
     /// Validates and presents one complete frame transaction.
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error>;
@@ -58,6 +63,10 @@ impl RecordingRenderer {
 impl FrameSink for RecordingRenderer {
     type Error = ValidationError;
 
+    fn capabilities(&self) -> RenderCapabilities {
+        RenderCapabilities::all_frame_native()
+    }
+
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
         let result = self.projection.apply(packet);
         self.frames.push(RecordedFrame {
@@ -80,6 +89,10 @@ mod tests {
     #[test]
     fn records_accepted_and_rejected_packets() {
         let mut renderer = RecordingRenderer::new(surface(1));
+        assert_eq!(
+            renderer.capabilities(),
+            RenderCapabilities::all_frame_native()
+        );
         let packet = FramePacket {
             header: FrameHeader {
                 version: ProtocolVersion::CURRENT,

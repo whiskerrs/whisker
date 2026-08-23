@@ -39,6 +39,28 @@ let package = Package(
             dependencies: ["WhiskerCBridge", "WhiskerModuleMacros"],
             path: "platforms/ios/Sources/WhiskerModule"
         ),
+        .target(
+            name: "WhiskerIOSHost",
+            dependencies: ["WhiskerModule"],
+            path: "crates/whisker-cng/src/templates/ios/Sources",
+            exclude: ["AppDelegate.swift"],
+            sources: ["WhiskerView.swift"],
+            swiftSettings: [.define("WHISKER_HOST_CONFORMANCE")]
+        ),
+        .target(
+            name: "WhiskerHostConformanceStubs",
+            path: "tests/host-conformance/runners/ios/Stubs"
+        ),
+        .testTarget(
+            name: "WhiskerIOSHostConformanceTests",
+            dependencies: [
+                "WhiskerIOSHost",
+                "WhiskerModule",
+                "WhiskerCBridge",
+                "WhiskerHostConformanceStubs",
+            ],
+            path: "tests/host-conformance/runners/ios/Tests"
+        ),
         .executableTarget(
             name: "WhiskerModuleCodegen",
             dependencies: [

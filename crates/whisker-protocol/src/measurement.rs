@@ -45,6 +45,57 @@ pub enum MeasureFontStyle {
     Oblique,
 }
 
+/// Four-byte OpenType feature or variation axis tag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FontTag([u8; 4]);
+
+impl FontTag {
+    /// Creates a tag from exactly four printable ASCII bytes.
+    pub const fn new(value: [u8; 4]) -> Option<Self> {
+        let mut index = 0;
+        while index < value.len() {
+            if value[index] < 0x20 || value[index] > 0x7e {
+                return None;
+            }
+            index += 1;
+        }
+        Some(Self(value))
+    }
+
+    /// Returns the OpenType tag bytes.
+    pub const fn get(self) -> [u8; 4] {
+        self.0
+    }
+}
+
+/// One resolved OpenType feature selector.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FontFeature {
+    /// Four-byte feature tag, such as `kern` or `tnum`.
+    pub tag: FontTag,
+    /// Feature value after CSS `on`/`off` normalization.
+    pub value: u32,
+}
+
+/// One resolved variable-font axis value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FontVariation {
+    /// Four-byte axis tag, such as `wght` or `opsz`.
+    pub tag: FontTag,
+    /// Finite axis value.
+    pub value: f32,
+}
+
+/// Whether the shaper may select optical sizing from the computed font size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FontOpticalSizing {
+    /// Enable automatic optical sizing when the selected font provides it.
+    #[default]
+    Auto,
+    /// Disable automatic optical sizing.
+    None,
+}
+
 /// Computed line-height input.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MeasureLineHeight {
@@ -98,6 +149,37 @@ pub struct TextMeasureStyle {
     pub line_height: MeasureLineHeight,
     /// Additional logical pixels between glyph advances.
     pub letter_spacing: f32,
+    /// Resolved OpenType feature settings, sorted by tag.
+    pub features: Vec<FontFeature>,
+    /// Resolved variable-font axis settings, sorted by tag.
+    pub variations: Vec<FontVariation>,
+    /// Optical sizing behavior.
+    pub optical_sizing: FontOpticalSizing,
+}
+
+impl Default for TextMeasureStyle {
+    fn default() -> Self {
+        Self {
+            font_families: vec![MeasureFontFamily::System],
+            font_size: 14.0,
+            font_weight: 400,
+            font_style: MeasureFontStyle::Normal,
+            line_height: MeasureLineHeight::Normal,
+            letter_spacing: 0.0,
+            features: Vec::new(),
+            variations: Vec::new(),
+            optical_sizing: FontOpticalSizing::Auto,
+        }
+    }
+}
+
+impl TextMeasureStyle {
+    /// Returns whether this style needs the protocol-minor-1 typography path.
+    pub fn uses_extended_typography(&self) -> bool {
+        !self.features.is_empty()
+            || !self.variations.is_empty()
+            || self.optical_sizing != FontOpticalSizing::Auto
+    }
 }
 
 /// Complete built-in Text input required by a Host shaper.
@@ -253,6 +335,18 @@ impl TextMeasurePayload {
         if !self.style.letter_spacing.is_finite() {
             return Err(MeasurementPayloadError::InvalidLetterSpacing);
         }
+        if !strictly_sorted_tags(self.style.features.iter().map(|feature| feature.tag)) {
+            return Err(MeasurementPayloadError::InvalidFontFeatures);
+        }
+        if !strictly_sorted_tags(self.style.variations.iter().map(|variation| variation.tag))
+            || self
+                .style
+                .variations
+                .iter()
+                .any(|variation| !variation.value.is_finite())
+        {
+            return Err(MeasurementPayloadError::InvalidFontVariations);
+        }
         if self.locale.as_ref().is_some_and(|locale| locale.is_empty()) {
             return Err(MeasurementPayloadError::InvalidLocale);
         }
@@ -276,6 +370,10 @@ pub enum MeasurementPayloadError {
     InvalidLineHeight,
     /// Letter spacing is non-finite.
     InvalidLetterSpacing,
+    /// Feature tags are duplicated or not in canonical sorted order.
+    InvalidFontFeatures,
+    /// Variation tags are duplicated, unsorted, or paired with non-finite values.
+    InvalidFontVariations,
     /// Locale is present but empty.
     InvalidLocale,
     /// A present line limit is zero.
@@ -290,6 +388,17 @@ pub enum MeasurementPayloadError {
     InvalidPayloadVersion,
     /// An embedded surface preferred size is invalid.
     InvalidPreferredSize,
+}
+
+fn strictly_sorted_tags(tags: impl Iterator<Item = FontTag>) -> bool {
+    let mut previous = None;
+    for tag in tags {
+        if previous.is_some_and(|previous| previous >= tag) {
+            return false;
+        }
+        previous = Some(tag);
+    }
+    true
 }
 
 /// Space made available by the box-layout algorithm on one axis.
@@ -433,6 +542,8 @@ pub enum UnsupportedMeasurementReason {
     PayloadVersion,
     /// Required platform facilities are unavailable in this environment.
     Environment,
+    /// The backend does not implement one of the requested semantic features.
+    Feature,
 }
 
 /// Immediate response to one entry in a measurement batch.
@@ -606,6 +717,7 @@ mod tests {
                 font_style: MeasureFontStyle::Normal,
                 line_height: MeasureLineHeight::Normal,
                 letter_spacing: 0.0,
+                ..TextMeasureStyle::default()
             },
             locale: Some("en-US".into()),
             direction: MeasureTextDirection::Auto,
@@ -718,6 +830,31 @@ mod tests {
     }
 
     #[test]
+    fn font_tags_and_extended_typography_cover_each_path() {
+        let kern = FontTag::new(*b"kern").expect("printable tag");
+        assert_eq!(kern.get(), *b"kern");
+        assert_eq!(FontTag::new([0x1f, b'e', b'r', b'n']), None);
+        assert_eq!(FontTag::new([b'k', b'e', b'r', 0x7f]), None);
+
+        let mut style = TextMeasureStyle::default();
+        assert!(!style.uses_extended_typography());
+        style.features.push(FontFeature {
+            tag: kern,
+            value: 1,
+        });
+        assert!(style.uses_extended_typography());
+        style.features.clear();
+        style.variations.push(FontVariation {
+            tag: FontTag::new(*b"wght").unwrap(),
+            value: 500.0,
+        });
+        assert!(style.uses_extended_typography());
+        style.variations.clear();
+        style.optical_sizing = FontOpticalSizing::None;
+        assert!(style.uses_extended_typography());
+    }
+
+    #[test]
     fn typed_payloads_report_kinds_and_reject_every_invalid_field() {
         let text = MeasurementPayload::Text(text_payload());
         assert_eq!(text.kind(), MeasurementKind::Text);
@@ -768,6 +905,47 @@ mod tests {
         assert_eq!(
             MeasurementPayload::Text(invalid).validate(),
             Err(MeasurementPayloadError::InvalidLetterSpacing)
+        );
+        let kern = FontTag::new(*b"kern").unwrap();
+        let liga = FontTag::new(*b"liga").unwrap();
+        let mut invalid = text_payload();
+        invalid.style.features = vec![
+            FontFeature {
+                tag: liga,
+                value: 1,
+            },
+            FontFeature {
+                tag: kern,
+                value: 1,
+            },
+        ];
+        assert_eq!(
+            MeasurementPayload::Text(invalid).validate(),
+            Err(MeasurementPayloadError::InvalidFontFeatures)
+        );
+        let mut invalid = text_payload();
+        invalid.style.variations = vec![
+            FontVariation {
+                tag: FontTag::new(*b"wght").unwrap(),
+                value: 500.0,
+            },
+            FontVariation {
+                tag: FontTag::new(*b"opsz").unwrap(),
+                value: 14.0,
+            },
+        ];
+        assert_eq!(
+            MeasurementPayload::Text(invalid).validate(),
+            Err(MeasurementPayloadError::InvalidFontVariations)
+        );
+        let mut invalid = text_payload();
+        invalid.style.variations = vec![FontVariation {
+            tag: FontTag::new(*b"wght").unwrap(),
+            value: f32::NAN,
+        }];
+        assert_eq!(
+            MeasurementPayload::Text(invalid).validate(),
+            Err(MeasurementPayloadError::InvalidFontVariations)
         );
         let mut invalid = text_payload();
         invalid.locale = Some(String::new());

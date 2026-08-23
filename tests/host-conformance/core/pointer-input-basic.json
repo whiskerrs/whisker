@@ -1,24 +1,26 @@
 {
   "schema": 1,
   "id": "host.input.pointer.basic",
-  "commands": [
-    { "type": "attach_surface", "width": 200.0, "height": 100.0, "scale": 2.0 },
-    {
-      "type": "emit_pointer",
-      "event": "down",
-      "pointer_id": 1,
-      "timestamp_ms": 42.5,
-      "x": 24.0,
-      "y": 16.0,
-      "buttons": 1,
-      "changed_button": 0
-    },
-    {
-      "type": "checkpoint_input",
-      "event": "down",
-      "pointer_id": 1,
-      "x": 24.0,
-      "y": 16.0
-    }
-  ]
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 200.0, "height": 100.0, "scale": 2.0 },
+      {
+        "type": "emit_pointer",
+        "event": "down",
+        "pointer_id": 1,
+        "timestamp_ms": 42.5,
+        "x": 24.0,
+        "y": 16.0,
+        "buttons": 1,
+        "changed_button": 0
+      },
+      {
+        "type": "checkpoint_input",
+        "event": "down",
+        "pointer_id": 1,
+        "x": 24.0,
+        "y": 16.0
+      }
+    ]
+  }
 }

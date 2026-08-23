@@ -1,5 +1,6 @@
 use whisker_protocol::{
-    BorderLineStyle, BoxPaint, LayoutRect, PaintColor, PaintCorners, PaintLengthPercentage,
+    BorderLineStyle, BoxPaint, LayoutRect, PaintColor, PaintCornerRadius, PaintCorners,
+    PaintLengthPercentage,
 };
 
 use super::color::linear_color;
@@ -17,6 +18,7 @@ pub(crate) struct BoxPrimitive {
     pub(crate) border_widths: [f32; 4],
     pub(crate) color: [f32; 4],
     pub(crate) border_colors: [[f32; 4]; 4],
+    pub(crate) border_styles: [f32; 4],
     pub(crate) kind: BoxPrimitiveKind,
 }
 
@@ -50,7 +52,7 @@ pub(crate) fn lower_box(
     if !is_transparent(&paint.background_color) {
         let color = linear_color(&paint.background_color, opacity);
         if color[3] > 0.0 {
-            emit(geometry.primitive(color, [[0.0; 4]; 4], BoxPrimitiveKind::Fill));
+            emit(geometry.primitive(color, [[0.0; 4]; 4], [0.0; 4], BoxPrimitiveKind::Fill));
         }
     }
     let [top, right, bottom, left] = geometry.border_widths;
@@ -81,7 +83,31 @@ pub(crate) fn lower_box(
         ),
     ];
     if border_colors.iter().any(|color| color[3] > 0.0) {
-        emit(geometry.primitive([0.0; 4], border_colors, BoxPrimitiveKind::Border));
+        emit(geometry.primitive(
+            [0.0; 4],
+            border_colors,
+            [
+                border_style(paint.border_styles.top),
+                border_style(paint.border_styles.right),
+                border_style(paint.border_styles.bottom),
+                border_style(paint.border_styles.left),
+            ],
+            BoxPrimitiveKind::Border,
+        ));
+    }
+}
+
+fn border_style(style: BorderLineStyle) -> f32 {
+    match style {
+        BorderLineStyle::None | BorderLineStyle::Hidden => 0.0,
+        BorderLineStyle::Solid => 1.0,
+        BorderLineStyle::Dashed => 2.0,
+        BorderLineStyle::Dotted => 3.0,
+        BorderLineStyle::Double => 4.0,
+        BorderLineStyle::Groove => 5.0,
+        BorderLineStyle::Ridge => 6.0,
+        BorderLineStyle::Inset => 7.0,
+        BorderLineStyle::Outset => 8.0,
     }
 }
 
@@ -121,6 +147,7 @@ impl BoxGeometry {
         self,
         color: [f32; 4],
         border_colors: [[f32; 4]; 4],
+        border_styles: [f32; 4],
         kind: BoxPrimitiveKind,
     ) -> BoxPrimitive {
         BoxPrimitive {
@@ -133,6 +160,7 @@ impl BoxGeometry {
             border_widths: self.border_widths,
             color,
             border_colors,
+            border_styles,
             kind,
         }
     }
@@ -174,7 +202,7 @@ pub(crate) fn resolve_box_geometry(rect: LayoutRect, paint: &BoxPaint) -> BoxGeo
 }
 
 pub(crate) fn resolve_radii(
-    radii: &PaintCorners<PaintLengthPercentage>,
+    radii: &PaintCorners<PaintCornerRadius>,
     rect: LayoutRect,
 ) -> ResolvedRadii {
     let values = [
@@ -183,8 +211,8 @@ pub(crate) fn resolve_radii(
         radii.bottom_right,
         radii.bottom_left,
     ];
-    let mut horizontal = values.map(|radius| resolve_length(radius, rect.width));
-    let mut vertical = values.map(|radius| resolve_length(radius, rect.height));
+    let mut horizontal = values.map(|radius| resolve_length(radius.horizontal, rect.width));
+    let mut vertical = values.map(|radius| resolve_length(radius.vertical, rect.height));
     let ratios = [
         ratio(rect.width, horizontal[0] + horizontal[1]),
         ratio(rect.width, horizontal[3] + horizontal[2]),
@@ -217,6 +245,23 @@ mod tests {
     use super::*;
     use whisker_protocol::{PaintCorners, PaintEdges};
 
+    fn radius(length: f32, fraction: f32) -> PaintCornerRadius {
+        PaintCornerRadius::circular(PaintLengthPercentage { length, fraction })
+    }
+
+    fn elliptical(horizontal: f32, vertical: f32) -> PaintCornerRadius {
+        PaintCornerRadius {
+            horizontal: PaintLengthPercentage {
+                length: horizontal,
+                fraction: 0.0,
+            },
+            vertical: PaintLengthPercentage {
+                length: vertical,
+                fraction: 0.0,
+            },
+        }
+    }
+
     fn paint(background_color: PaintColor) -> BoxPaint {
         let zero = PaintLengthPercentage::default();
         BoxPaint {
@@ -243,10 +288,10 @@ mod tests {
                 left: BorderLineStyle::None,
             },
             border_radii: PaintCorners {
-                top_left: zero,
-                top_right: zero,
-                bottom_right: zero,
-                bottom_left: zero,
+                top_left: PaintCornerRadius::default(),
+                top_right: PaintCornerRadius::default(),
+                bottom_right: PaintCornerRadius::default(),
+                bottom_left: PaintCornerRadius::default(),
             },
         }
     }
@@ -288,22 +333,10 @@ mod tests {
     fn rounded_radii_resolve_percentages_and_scale_overlaps() {
         let resolved = resolve_radii(
             &PaintCorners {
-                top_left: PaintLengthPercentage {
-                    length: 30.0,
-                    fraction: 0.0,
-                },
-                top_right: PaintLengthPercentage {
-                    length: 0.0,
-                    fraction: 0.5,
-                },
-                bottom_right: PaintLengthPercentage {
-                    length: 30.0,
-                    fraction: 0.0,
-                },
-                bottom_left: PaintLengthPercentage {
-                    length: 30.0,
-                    fraction: 0.0,
-                },
+                top_left: radius(30.0, 0.0),
+                top_right: radius(0.0, 0.5),
+                bottom_right: radius(30.0, 0.0),
+                bottom_left: radius(30.0, 0.0),
             },
             LayoutRect {
                 x: 5.0,
@@ -315,6 +348,26 @@ mod tests {
         assert!((resolved.horizontal[0] - 20.0).abs() < f32::EPSILON);
         assert!((resolved.horizontal[1] - 100.0 / 3.0).abs() < 0.001);
         assert!((resolved.vertical[1] - 40.0 / 3.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn elliptical_radii_preserve_independent_axes() {
+        let resolved = resolve_radii(
+            &PaintCorners {
+                top_left: elliptical(12.0, 4.0),
+                top_right: elliptical(10.0, 6.0),
+                bottom_right: elliptical(8.0, 3.0),
+                bottom_left: elliptical(7.0, 2.0),
+            },
+            LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 50.0,
+            },
+        );
+        assert_eq!(resolved.horizontal, [12.0, 10.0, 8.0, 7.0]);
+        assert_eq!(resolved.vertical, [4.0, 6.0, 3.0, 2.0]);
     }
 
     #[test]
@@ -343,22 +396,10 @@ mod tests {
             left: PaintColor::Named("yellow".into()),
         };
         bordered.border_radii = PaintCorners {
-            top_left: PaintLengthPercentage {
-                length: 40.0,
-                fraction: 0.0,
-            },
-            top_right: PaintLengthPercentage {
-                length: 8.0,
-                fraction: 0.0,
-            },
-            bottom_right: PaintLengthPercentage {
-                length: 40.0,
-                fraction: 0.0,
-            },
-            bottom_left: PaintLengthPercentage {
-                length: 8.0,
-                fraction: 0.0,
-            },
+            top_left: radius(40.0, 0.0),
+            top_right: radius(8.0, 0.0),
+            bottom_right: radius(40.0, 0.0),
+            bottom_left: radius(8.0, 0.0),
         };
         let geometry = resolve_box_geometry(
             LayoutRect {

@@ -1,11 +1,11 @@
 //! Conversion from the compatibility authoring types to semantic style values.
 
 use whisker_style::{
-    AlignContentValue, AlignItemsValue, AlignSelfValue, BorderStyleValue, BoxSizingValue,
-    CalcExpression, ColorValue, DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue,
-    FlexWrapValue, FontStyleValue, FontWeightValue, JustifyContentValue, LengthPercentageAutoValue,
-    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, PositionValue, SizeValue,
-    StyleNumber, StyleValue,
+    AlignContentValue, AlignItemsValue, AlignSelfValue, BorderRadiusValue, BorderStyleValue,
+    BoxSizingValue, CalcExpression, ColorValue, DirectionValue, DisplayValue, FlexBasisValue,
+    FlexDirectionValue, FlexWrapValue, FontStyleValue, FontWeightValue, JustifyContentValue,
+    LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
+    PositionValue, SizeValue, StyleNumber, StyleValue,
 };
 
 use crate::{
@@ -36,6 +36,16 @@ impl ToStyleValue for LengthPercentage {
     fn to_style_value(&self) -> StyleValue {
         StyleValue::LengthPercentage(to_length_percentage(self))
     }
+}
+
+pub(crate) fn to_border_radius(
+    horizontal: &LengthPercentage,
+    vertical: &LengthPercentage,
+) -> StyleValue {
+    StyleValue::BorderRadius(BorderRadiusValue {
+        horizontal: to_length_percentage(horizontal),
+        vertical: to_length_percentage(vertical),
+    })
 }
 
 impl ToStyleValue for Number {

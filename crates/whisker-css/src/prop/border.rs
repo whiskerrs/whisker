@@ -122,11 +122,38 @@ impl Css {
 
     /// Sets `border-radius` to a [`BorderRadius`](crate::BorderRadius)
     /// with per-corner control and optional elliptical second axis.
-    /// Pushed as the shorthand because Lynx serializes elliptical
-    /// corners via the `/` separator that has no longhand form.
+    /// Expands to semantic corner longhands; each corner longhand accepts
+    /// the standard two-value horizontal/vertical form.
     /// <https://lynxjs.org/api/css/properties/border-radius>
     pub fn border_radius_full(self, v: crate::BorderRadius) -> Self {
-        self.push(crate::StyleProperty::BorderRadius, v)
+        let vertical = v.vertical.as_ref().unwrap_or(&v.horizontal);
+        let properties = [
+            crate::StyleProperty::BorderTopLeftRadius,
+            crate::StyleProperty::BorderTopRightRadius,
+            crate::StyleProperty::BorderBottomRightRadius,
+            crate::StyleProperty::BorderBottomLeftRadius,
+        ];
+        properties
+            .into_iter()
+            .enumerate()
+            .fold(self, |css, (index, property)| {
+                let horizontal = &v.horizontal[index];
+                let vertical = &vertical[index];
+                let lynx_value = if horizontal == vertical {
+                    crate::ToCss::to_css_string(horizontal)
+                } else {
+                    format!(
+                        "{} {}",
+                        crate::ToCss::to_css_string(horizontal),
+                        crate::ToCss::to_css_string(vertical)
+                    )
+                };
+                css.push_semantic(
+                    property,
+                    crate::style_value::to_border_radius(horizontal, vertical),
+                    lynx_value,
+                )
+            })
     }
 }
 

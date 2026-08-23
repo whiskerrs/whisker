@@ -841,6 +841,7 @@ mod tests {
                     font_style: MeasureFontStyle::Normal,
                     line_height: MeasureLineHeight::Normal,
                     letter_spacing: 0.0,
+                    ..TextMeasureStyle::default()
                 },
                 locale: Some("en-US".into()),
                 direction: MeasureTextDirection::LeftToRight,
@@ -1912,6 +1913,10 @@ mod tests {
         impl FrameSink for TestSink {
             type Error = &'static str;
 
+            fn capabilities(&self) -> whisker_protocol::RenderCapabilities {
+                self.renderer.capabilities()
+            }
+
             fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
                 match self.behavior {
                     SinkBehavior::Record => self
@@ -1934,6 +1939,10 @@ mod tests {
             .create_node(element_type(), ComputedLayoutStyle::default())
             .unwrap();
         let mut sink = TestSink::new(surface_id());
+        assert_eq!(
+            sink.capabilities(),
+            whisker_protocol::RenderCapabilities::all_frame_native()
+        );
         let already_prepared = surface.prepare_frame(1).unwrap().unwrap().clone();
         assert_eq!(
             surface.present(1, &mut sink),

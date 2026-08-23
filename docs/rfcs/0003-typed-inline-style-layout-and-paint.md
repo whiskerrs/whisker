@@ -472,11 +472,46 @@ Rust resolves the semantic values for:
 - stacking order and isolated stacking contexts;
 - visibility and hit-test participation.
 
+Protocol minor 1 groups those resolved meanings by Host capability rather
+than by CSS spelling. `SetBackgroundLayers` carries resource-backed images,
+linear/radial/conic gradients, positioning, sizing, repeat, origin, clip,
+attachment, and layer blending. `SetVisualEffects` carries outlines, ordered
+box shadows, normalized basic/path clips, mask layers, filter chains, blend
+and isolation intent, back-face visibility, and 3-D descendant behavior.
+`SetText` paint includes decoration lines/style/thickness and ordered text
+shadows; `SetImage` and `SetCursor` carry replaced content and cursor resources.
+All resource references use `ResourceId`; platform image objects, decoded
+pixels, paths, and GPU handles never enter the common protocol.
+
+Resource acquisition is a separate, non-frame channel. `ResourceCommand::Load`
+binds a `ResourceId` and monotonic generation to a URL, bundled asset, or
+one-time byte payload; `ResourceEvent::Ready` or `Failed` completes that exact
+generation, and `ResourceCommand::Release` ends its Host lifetime after no
+accepted frame references it. Ready events may carry intrinsic dimensions and
+therefore schedule measurement invalidation and a later frame. Encoded image
+bytes are never repeated in `FramePacket`.
+
+Adding the semantic value does not declare a Host implementation complete.
+Until a Host advertises and implements the corresponding capability, its
+receiver rejects the operation before mutating retained state. It must not
+accept an unknown or protocol-only operation as a successful no-op. The
+machine-readable implementation state lives in
+`tests/host-conformance/capabilities.json`; `StyleProperty::domain()` keeps
+every registry entry assigned to layout, motion, or one of these protocol
+capabilities without creating a per-property Host dispatch layer.
+
 The Host maps these values to platform objects and drawing APIs. It does not
 rerun style resolution. A renderer capability table classifies each feature as
 native, emulated, or unsupported. Required capabilities are validated when the
 surface binds, and unsupported dynamic values produce deterministic errors
 rather than silent visual changes.
+
+The Rust boundary exposes this table as `RenderCapabilities`. Optional
+protocol-minor-1 groups are `elliptical-border-radius`, `background-layers`,
+`visual-effects`, `text-effects`, `text-typography`, `image-content`, `cursor`,
+and `resource-lifecycle`. `FramePacket::required_capabilities()` derives the
+dynamic subset from semantic operations. An omitted entry means unsupported;
+Hosts preflight the complete packet before changing their retained projection.
 
 Paint order is derived from the Rust scene, stacking-context rules, and
 resolved order. A backend may realize it with native child order, layers, DOM
@@ -620,6 +655,22 @@ hydration protocol remain a later RFC.
 
 ## Lynx styling coverage
 
+The initial conformance target is fixed at 175 standard CSS features:
+
+- 156 standard properties from Lynx's 191-property inventory pinned at
+  `18a0a91009809de1d52a5637b82f573dc924e32a` after excluding 32 Lynx-specific
+  properties and three non-standard unprefixed `text-stroke*` properties;
+- 19 standard features present in Whisker's existing registry but absent from
+  that Lynx inventory;
+- represented in code as 174 `StyleProperty` entries plus CSS Custom
+  Properties as one non-fixed-property mechanism.
+
+The deprecated aliases `grid-column-gap`, `grid-row-gap`, and `word-wrap` are
+not separate target features. Their canonical spellings are used. Retired
+numeric property IDs stay reserved and must not be reassigned. The normative
+machine-readable partition is
+`tests/host-conformance/capabilities.json`.
+
 Migration tracks semantic capability rather than CSS syntax. A generated
 property registry and coverage table must classify every Lynx style feature
 used or promised by Whisker into these groups:
@@ -755,6 +806,19 @@ Visual snapshots supplement but do not replace semantic assertions.
    shaping and Metal/wgpu painting, including normalized per-corner rounded
    backgrounds and border outlines. Rounded descendant/path clipping, exact
    non-solid borders, and group compositing remain Desktop conformance work.
+   Protocol minor 1 now defines the remaining Host-independent
+   background-layer, outline/shadow, shape-clip, mask, filter, compositing,
+   text-decoration/shadow, image, and cursor value shapes with transactional
+   validation. It also retains elliptical radius axes, OpenType
+   feature/variation/optical-sizing measurement inputs, image-rendering intent,
+   optional capability profiles, and a generation-safe resource lifecycle.
+   Existing Desktop and Web Hosts advertise elliptical radius support; all
+   other newly introduced groups are rejected before retained-state mutation.
+   Mobile advertises the base profile until its packed ABI grows equivalent
+   fields. Except for box radius, these operations are intentionally not
+   emitted by style lowering yet; each property group lands next as a complete
+   specified-value -> computed-value -> operation slice and then advances the
+   per-Host checklist.
 6. Route signal and `whisker-motion` writes through the shared property slots
    and incremental dirty classifier.
 7. Add the shared Host conformance scenario format, standalone runners, and

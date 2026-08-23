@@ -29,7 +29,7 @@ mod scene;
 mod surface;
 mod text;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host-conformance"))]
 #[path = "../tests/host_conformance/mod.rs"]
 mod host_conformance_tests;
 

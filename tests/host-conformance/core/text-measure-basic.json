@@ -1,24 +1,26 @@
 {
   "schema": 1,
   "id": "host.measure.text.basic",
-  "commands": [
-    { "type": "attach_surface", "width": 200.0, "height": 100.0, "scale": 1.0 },
-    {
-      "type": "measure_text",
-      "key": 1,
-      "text": "Whisker",
-      "font_size": 16.0,
-      "line_height": 20.0,
-      "available_width": 200.0
-    },
-    {
-      "type": "checkpoint_measurement",
-      "key": 1,
-      "min_width": 10.0,
-      "max_width": 200.0,
-      "min_height": 10.0,
-      "max_height": 40.0,
-      "prepared_content": true
-    }
-  ]
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 200.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "measure_text",
+        "key": 1,
+        "text": "Whisker",
+        "font_size": 16.0,
+        "line_height": 20.0,
+        "available_width": 200.0
+      },
+      {
+        "type": "checkpoint_measurement",
+        "key": 1,
+        "min_width": 10.0,
+        "max_width": 200.0,
+        "min_height": 10.0,
+        "max_height": 40.0,
+        "prepared_content": true
+      }
+    ]
+  }
 }
