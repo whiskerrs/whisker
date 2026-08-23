@@ -1,77 +1,48 @@
 package rs.whisker.runtime
 
-/**
- * Lynx symbol hiding (Android).
- *
- * A view-bearing Whisker module's `View(...)` block references a
- * Lynx UI subclass. These typealiases give module authors
- * `Whisker*` symbols that resolve to their Lynx counterparts at
- * Kotlin's type-system level — same runtime classes, just a
- * presentation rename, so Lynx-ness doesn't leak into every
- * module's public API:
- *
- * ```kotlin
- * import rs.whisker.runtime.WhiskerContext
- * import rs.whisker.runtime.WhiskerUI
- *
- * class HelloView(context: WhiskerContext) : WhiskerUI<View>(context) { ... }
- * ```
- *
- * Stack traces / debugger views still surface the real `LynxUI`
- * class names — typealiases are purely a source-level concept.
- */
+import android.content.Context
+import android.view.View
+import android.view.ViewGroup
 
-public typealias WhiskerUI<V> = com.lynx.tasm.behavior.ui.LynxUI<V>
+/** Context supplied when a module element is mounted by `WhiskerView`. */
+public typealias WhiskerContext = Context
 
-public typealias WhiskerContext = com.lynx.tasm.behavior.LynxContext
+/** Lightweight native-element base class with no renderer SDK dependency. */
+public abstract class WhiskerUI<V : View>(context: Context) : WhiskerContainerView(context) {
+    private val nativeView: V = createView(context)
+    private var eventSink: ((String, WhiskerValue) -> Unit)? = null
 
-public typealias WhiskerCustomEventBase = com.lynx.tasm.event.LynxCustomEvent
+    init {
+        addView(
+            nativeView,
+            LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+    }
 
-public typealias WhiskerBehavior = com.lynx.tasm.behavior.Behavior
+    protected abstract fun createView(context: Context): V
 
-public typealias WhiskerEnv = com.lynx.tasm.LynxEnv
+    public fun view(): V = nativeView
 
-// MARK: - Custom-event dispatch helper
+    internal fun installWhiskerEventSink(sink: ((String, WhiskerValue) -> Unit)?) {
+        eventSink = sink
+    }
 
-/**
- * Whisker-branded façade over `LynxCustomEvent` +
- * `LynxContext.eventEmitter.dispatchCustomEvent(...)`.
- *
- * Module authors that need to push events back to Rust (e.g. an
- * `Input` element's text-change firing `on_input:` on the consumer
- * crate) call:
- *
- * ```kotlin
- * WhiskerCustomEvent.dispatch(
- *     from = this,                                    // WhiskerUI subclass
- *     name = "input",
- *     params = mapOf("value" to editText.text.toString()))
- * ```
- *
- * instead of manually constructing `LynxCustomEvent` and
- * reaching into `lynxContext.eventEmitter`. The function looks
- * at the UI's `sign` + `lynxContext` to wire the event back to
- * the host's bridge reporter, which delivers `params` to the
- * matching Rust `on_<event>` callback.
- */
+    public fun emitWhiskerEvent(name: String, detail: WhiskerValue = WhiskerValue.Null) {
+        eventSink?.invoke(name, detail)
+    }
+}
+
+/** Event helper used by module-owned native controls. */
 public object WhiskerCustomEvent {
-    /**
-     * Build and dispatch a `LynxCustomEvent` from [ui]. No-op if
-     * the UI's context is null (e.g. before mount or after
-     * detach).
-     */
     @JvmStatic
     public fun dispatch(
         ui: WhiskerUI<*>,
         name: String,
         params: Map<String, Any?> = emptyMap(),
     ) {
-        val ctx = ui.lynxContext ?: return
-        val emitter = ctx.eventEmitter ?: return
-        val event = com.lynx.tasm.event.LynxCustomEvent(ui.sign, name, params)
-        // Android's `EventEmitter` exposes `sendCustomEvent(...)`
-        // (whereas iOS's equivalent is `dispatchCustomEvent`).
-        // Same end behaviour — the reporter sees the event.
-        emitter.sendCustomEvent(event)
+        ui.emitWhiskerEvent(name, whiskerValueOf(params))
     }
 }

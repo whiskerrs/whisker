@@ -21,7 +21,7 @@ internal enum ModuleDefinitionSamples {
         ModuleDefinition {
             Name("Video")
 
-            Constants(["maxResolution": "1080p"])
+            Constants(["maxResolution": .string("1080p")])
 
             View(FakeVideoView.self) {
                 Prop("src") { (view: FakeVideoView, value: WhiskerValue) in
@@ -57,6 +57,7 @@ internal enum ModuleDefinitionSamples {
 
     // MARK: - WhiskerModule subclass shape
 
+    @WhiskerModule
     internal final class StubModule: Module {
         public override func definition() -> ModuleDefinition {
             ModuleDefinitionSamples.videoModuleDefinition()

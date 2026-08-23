@@ -406,7 +406,7 @@ to the runtime's `pending` queue. The queue is drained by `flush`:
 1. Explicitly, and at the end of the current event handler / effect — the
    Solid/Leptos microtask-batching model.
 2. Implicitly: the first enqueue on an empty queue pings the host's
-   request-frame callback (`host_wake::wake_runtime`) so the runtime can
+   request-frame callback (`runtime_wake::wake_runtime`) so the runtime can
    wake out of idle.
 
 Within a batch, `flush` reentrantly drains until the queue is empty (an

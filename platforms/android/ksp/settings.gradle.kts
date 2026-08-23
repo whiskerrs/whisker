@@ -2,11 +2,9 @@
 //
 // Single module:
 // - `ksp` — KSP processor that scans the user app's compilation
-//   for `rs.whisker.runtime.Module` subclasses and generates
-//   `<Module>Behaviors.kt`. Discovery is inheritance-based — Phase
-//   M (Issue #59) dropped the `@WhiskerModule` marker annotation
-//   that previously gated registration, so the `annotations`
-//   subproject is gone.
+//   for explicit `@rs.whisker.runtime.WhiskerModule` declarations and
+//   generates `<Module>Behaviors.kt`. KSP also verifies that every marked
+//   declaration extends `rs.whisker.runtime.Module`.
 //
 // Consumed by the generated user app via `includeBuild("...")` in
 // `gen/android/settings.gradle.kts` — composite-build dep, no Maven

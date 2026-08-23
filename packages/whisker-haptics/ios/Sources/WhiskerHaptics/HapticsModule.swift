@@ -19,6 +19,7 @@
 import UIKit
 import WhiskerModule // Module, ModuleDefinition, DSL
 
+@WhiskerModule
 public final class HapticsModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {

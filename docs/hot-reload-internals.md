@@ -185,7 +185,7 @@ crash the device.
    elsewhere), and rewrite `table.lib` to that local path.
 2. Park the JumpTable in a single-slot `PENDING` mutex
    (most-recent-wins).
-3. Wake the runtime (`whisker_runtime::host_wake::wake_runtime()`) so a
+3. Wake the runtime (`whisker_runtime::runtime_wake::wake_runtime()`) so a
    frame gets scheduled even when no signal is dirty.
 
 The Lynx TASM thread drains `PENDING` at the top of its tick. In

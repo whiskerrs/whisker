@@ -18,13 +18,15 @@ pub struct WebInputs {
     /// Browser document title.
     pub app_name: String,
     /// Cargo package name of the generated WASM composition root.
-    pub host_package: String,
+    pub generated_package: String,
     /// Cargo package name of the user's application crate.
     pub user_package: String,
     /// Absolute path to the user's application crate.
     pub user_crate_path: PathBuf,
     /// Complete Cargo dependency declaration for `whisker-web`.
     pub whisker_web_dependency: String,
+    /// Discovered external element definitions for Web.
+    pub element_modules: Vec<crate::RustElementModuleInput>,
     /// Bumped whenever the generated project shape changes.
     pub template_version: u32,
 }
@@ -42,11 +44,12 @@ pub fn inputs_from(
         .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required for Web"))?;
     Ok(WebInputs {
         app_name,
-        host_package: format!("{user_package}-whisker-web"),
+        generated_package: format!("{user_package}-whisker-web"),
         user_package,
         user_crate_path,
         whisker_web_dependency,
-        template_version: 1,
+        element_modules: Vec::new(),
+        template_version: 6,
     })
 }
 
@@ -84,7 +87,7 @@ fn validate(inputs: &WebInputs) -> Result<()> {
     if inputs.app_name.trim().is_empty() {
         bail!("Web app name must not be empty");
     }
-    if inputs.host_package.trim().is_empty() || inputs.user_package.trim().is_empty() {
+    if inputs.generated_package.trim().is_empty() || inputs.user_package.trim().is_empty() {
         bail!("Web Cargo package names must not be empty");
     }
     Ok(())
@@ -94,7 +97,7 @@ fn template_vars(inputs: &WebInputs) -> std::collections::HashMap<&'static str, 
     let mut vars = std::collections::HashMap::new();
     vars.insert("app_name_html", html_escape(&inputs.app_name));
     vars.insert("app_title_rust", format!("{:?}", inputs.app_name));
-    vars.insert("host_package", inputs.host_package.clone());
+    vars.insert("generated_package", inputs.generated_package.clone());
     vars.insert("user_package_toml", format!("{:?}", inputs.user_package));
     vars.insert(
         "user_crate_path_toml",
@@ -103,6 +106,14 @@ fn template_vars(inputs: &WebInputs) -> std::collections::HashMap<&'static str, 
     vars.insert(
         "whisker_web_dependency",
         inputs.whisker_web_dependency.clone(),
+    );
+    vars.insert(
+        "element_module_dependencies",
+        crate::rust_element_module_dependencies(&inputs.element_modules),
+    );
+    vars.insert(
+        "element_module_config",
+        crate::rust_element_module_config(&inputs.element_modules),
     );
     vars
 }
@@ -164,11 +175,12 @@ mod tests {
     fn sample() -> WebInputs {
         WebInputs {
             app_name: "Hello Web".into(),
-            host_package: "hello-whisker-web".into(),
+            generated_package: "hello-whisker-web".into(),
             user_package: "hello".into(),
             user_crate_path: PathBuf::from("/tmp/hello"),
             whisker_web_dependency: "{ path = \"/tmp/whisker/platforms/web\" }".into(),
-            template_version: 1,
+            element_modules: Vec::new(),
+            template_version: 3,
         }
     }
 
@@ -192,6 +204,34 @@ mod tests {
         assert!(manifest.contains("whisker-web"));
         let html = std::fs::read_to_string(out.join("index.html")).unwrap();
         assert!(html.contains("<title>Hello Web</title>"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn generated_host_wires_discovered_web_module_definitions() {
+        let root = tempdir();
+        let out = root.join("gen/web");
+        let mut inputs = sample();
+        inputs.element_modules.push(crate::RustElementModuleInput {
+            package: "whisker-toggle".into(),
+            crate_path: PathBuf::from("/modules/whisker-toggle"),
+            host_package: "whisker-toggle-web-host".into(),
+            host_dependency: crate::RustHostDependency::Path(PathBuf::from(
+                "/modules/whisker-toggle/web",
+            )),
+        });
+        sync(&out, &inputs).unwrap();
+        let manifest = std::fs::read_to_string(out.join("Cargo.toml")).unwrap();
+        assert!(manifest.contains("whisker-toggle = { package = \"whisker-toggle\""));
+        let source = std::fs::read_to_string(out.join("src/lib.rs")).unwrap();
+        assert!(manifest.contains("whisker-toggle-web-host ="));
+        assert!(!source.contains("#[path ="));
+        assert!(source.contains(
+            ".with_element_module(whisker_toggle::__whisker_element_module_definition())"
+        ));
+        assert!(source.contains(
+            ".with_module_definition(whisker_toggle_web_host::__whisker_module_definition())"
+        ));
         std::fs::remove_dir_all(root).ok();
     }
 }

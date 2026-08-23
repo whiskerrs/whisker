@@ -13,16 +13,16 @@ use whisker::{
 use whisker_engine::whisker_protocol::{
     FrameMode, InputEvent, InputEventKind, InputPoint, MeasuredSize, MeasurementMetrics,
     MeasurementPayload, MeasurementReady, MeasurementRequest, MeasurementRequestId,
-    MeasurementResponse, Operation, PointerId, PointerInput, PointerKind, ProtocolValue, SurfaceId,
+    MeasurementResponse, Operation, PointerId, PointerInput, PointerKind, SurfaceId, WhiskerValue,
 };
 use whisker_engine::whisker_style::{StyleEnvironment, StyleResolutionError};
-use whisker_engine::{HostLayoutOptions, MeasurementHost, RecordingRenderer};
+use whisker_engine::{LayoutOptions, MeasurementProvider, RecordingRenderer};
 use whisker_runtime::RuntimeWakeHandle;
 
 #[derive(Default)]
 struct NoMeasurement;
 
-impl MeasurementHost for NoMeasurement {
+impl MeasurementProvider for NoMeasurement {
     type Error = Infallible;
 
     fn measure_batch(
@@ -46,7 +46,7 @@ struct ReadyTextMeasurement {
     calls: Vec<Vec<MeasurementRequest>>,
 }
 
-impl MeasurementHost for ReadyTextMeasurement {
+impl MeasurementProvider for ReadyTextMeasurement {
     type Error = Infallible;
 
     fn measure_batch(
@@ -73,7 +73,7 @@ impl MeasurementHost for ReadyTextMeasurement {
     }
 }
 
-impl MeasurementHost for PendingTextMeasurement {
+impl MeasurementProvider for PendingTextMeasurement {
     type Error = Infallible;
 
     fn measure_batch(
@@ -131,7 +131,7 @@ fn host_drives_mount_frame_pause_resume_and_unmount() {
             1,
             &mut measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
     assert!(first.frame.presentation.is_some());
@@ -148,7 +148,7 @@ fn host_drives_mount_frame_pause_resume_and_unmount() {
                 1,
                 &mut measurements,
                 &mut sink,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
             .is_err()
     );
@@ -182,7 +182,7 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
             1,
             &mut measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
     let root = surface.root().unwrap();
@@ -229,7 +229,7 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
             2,
             &mut measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
     assert_eq!(
@@ -273,7 +273,7 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
             2,
             &mut measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
     assert!(idle.frame.presentation.is_none());
@@ -287,7 +287,7 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
             3,
             &mut measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
     assert!(measurements.calls.len() > resized_call_count);
@@ -302,7 +302,7 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
         4,
         &mut measurements,
         &mut sink,
-        HostLayoutOptions::default(),
+        LayoutOptions::default(),
     );
     assert!(matches!(
         invalid,
@@ -332,7 +332,7 @@ fn render_root_flex_grow_fills_host_viewport_without_a_protocol_node() {
             1,
             &mut measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
 
@@ -393,7 +393,7 @@ fn pointer_hit_test_routes_capture_target_and_bubble_in_rust() {
             1,
             &mut measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
 
@@ -409,7 +409,7 @@ fn pointer_hit_test_routes_capture_target_and_bubble_in_rust() {
             changed_button: 0,
         }),
         target: None,
-        detail: ProtocolValue::Null,
+        detail: WhiskerValue::Null,
     };
     let dispatch = runtime.dispatch_input(&event).unwrap();
 
@@ -464,7 +464,7 @@ fn background_completion_parks_while_paused_and_resumes_on_host_drive() {
             1,
             &mut measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
     started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -486,7 +486,7 @@ fn background_completion_parks_while_paused_and_resumes_on_host_drive() {
             1,
             &mut measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
     assert_eq!(result.get(), 42);
@@ -525,7 +525,7 @@ fn reentrant_host_input_is_queued_until_the_event_boundary() {
                                 changed_button: 0,
                             }),
                             target: None,
-                            detail: ProtocolValue::Null,
+                            detail: WhiskerValue::Null,
                         };
                         let queued = nested_runtime
                             .upgrade()
@@ -551,7 +551,7 @@ fn reentrant_host_input_is_queued_until_the_event_boundary() {
             1,
             &mut measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
     let tap = InputEvent {
@@ -566,7 +566,7 @@ fn reentrant_host_input_is_queued_until_the_event_boundary() {
             changed_button: 0,
         }),
         target: None,
-        detail: ProtocolValue::Null,
+        detail: WhiskerValue::Null,
     };
 
     runtime.borrow().dispatch_input(&tap).unwrap();
@@ -597,7 +597,7 @@ fn deferred_measurement_event_wakes_and_completes_the_next_frame() {
             1,
             &mut measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
     assert!(!blocked.frame.layout.has_layout());
@@ -631,7 +631,7 @@ fn deferred_measurement_event_wakes_and_completes_the_next_frame() {
             1,
             &mut ready_measurements,
             &mut sink,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         )
         .unwrap();
     assert!(complete.frame.layout.has_layout());

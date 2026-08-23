@@ -24,7 +24,7 @@ pub mod wrapper;
 
 pub use cache::HotpatchModuleCache;
 pub use jump_table::{DiffReport, PatchPlan, build_jump_table};
-pub use link_plan::{LinkPlan, LinkerOs, build_link_plan, linker_os_for_host};
+pub use link_plan::{LinkPlan, LinkerOs, build_link_plan, linker_os_for_current_platform};
 pub use patcher::Patcher;
 pub use runner::{RustcRejectedCode, run_link_plan, run_obj_plan, thin_rebuild_obj};
 pub use shim_paths::{ShimPaths, expected_shim_paths, resolve_shim_paths};
@@ -37,6 +37,6 @@ pub use thin_build::{ObjBuildPlan, build_obj_plan, library_filename, object_file
 pub use validate::{ensure_target_supported, extract_target_triple, validate_environment};
 pub use wrapper::{
     CapturedLinkerInvocation, CapturedRustcInvocation, LinkerCaptureConfig, default_cache_dir,
-    default_linker_cache_dir, load_captured_args, load_captured_linker_args, resolve_host_linker,
+    default_linker_cache_dir, load_captured_args, load_captured_linker_args, resolve_linker,
     run_fat_build,
 };

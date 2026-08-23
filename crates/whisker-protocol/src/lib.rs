@@ -22,17 +22,18 @@ mod measurement;
 mod validation;
 
 pub use element::{
-    ElementChildMount, ElementContentKind, ElementMeasurement, ElementRegistration,
-    ElementRegistrationError, ElementSchema,
+    ChildPolicy, ElementCommandSchema, ElementEventSchema, ElementMeasurement,
+    ElementPropertySchema, ElementRegistration, ElementRegistrationError, ElementSchema,
+    ElementValueKind,
 };
 pub use frame::{
     BorderLineStyle, BoxClip, BoxPaint, FrameHeader, FrameMode, FramePacket, HitTestBehavior,
     LayoutGeometry, LayoutRect, Operation, OverflowClip, PROTOCOL_MAJOR, PROTOCOL_MINOR,
-    PaintColor, PaintCorners, PaintEdges, PaintLengthPercentage, ProtocolValue, ProtocolVersion,
-    TextContent, TextContentError, TextPaint, Transform, Visibility,
+    PaintColor, PaintCorners, PaintEdges, PaintLengthPercentage, ProtocolVersion, TextContent,
+    TextContentError, TextPaint, Transform, Visibility,
 };
 pub use id::{
-    CommandId, ElementTypeId, MeasurementKey, MeasurementRequestId, NodeId, PointerId,
+    CommandId, ElementTypeId, EventId, MeasurementKey, MeasurementRequestId, NodeId, PointerId,
     PreparedContentId, PropertyId, ResultId, SurfaceId,
 };
 pub use input::{
@@ -48,3 +49,4 @@ pub use measurement::{
     UnsupportedMeasurementReason, validate_measurement_batch,
 };
 pub use validation::{ApplyResult, NodeProjection, SceneProjection, ValidationError};
+pub use whisker_value::WhiskerValue;

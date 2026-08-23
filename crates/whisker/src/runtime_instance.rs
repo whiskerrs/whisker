@@ -8,14 +8,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::runtime::RuntimeContext;
-use crate::runtime::host_wake::RuntimeWakeHandle;
 use crate::runtime::reactive::{self, Owner};
+use crate::runtime::runtime_wake::RuntimeWakeHandle;
 use crate::runtime::view::{self, Element};
 use crate::{InputDispatch, RuntimeFrame, RuntimeFrameError, RuntimeInputError, SurfaceRuntime};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{ApplyResult, InputEvent, MeasurementReady};
 use whisker_engine::whisker_style::StyleEnvironment;
-use whisker_engine::{DeferredMeasurementApply, FrameSink, HostLayoutOptions, MeasurementHost};
+use whisker_engine::{DeferredMeasurementApply, FrameSink, LayoutOptions, MeasurementProvider};
 
 /// Lifecycle of one Host-mounted runtime instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,28 +79,28 @@ pub struct RuntimeDrive {
 
 /// Failure while validating lifecycle or producing a frame.
 #[derive(Clone, Debug, PartialEq)]
-pub enum RuntimeDriveError<HostError, SinkError> {
+pub enum RuntimeDriveError<MeasurementError, SinkError> {
     /// Frame delivery is invalid for the current lifecycle.
     Lifecycle(RuntimeLifecycleError),
     /// Measurement, layout, or presentation failed.
-    Frame(RuntimeFrameError<HostError, SinkError>),
+    Frame(RuntimeFrameError<MeasurementError, SinkError>),
     /// A queued Host event failed validation or routing.
     Input(RuntimeInputError),
     /// Host viewport values could not be applied to the retained style environment.
     Environment(crate::RuntimeBindingError),
 }
 
-impl<HostError: fmt::Debug, SinkError: fmt::Debug> fmt::Display
-    for RuntimeDriveError<HostError, SinkError>
+impl<MeasurementError: fmt::Debug, SinkError: fmt::Debug> fmt::Display
+    for RuntimeDriveError<MeasurementError, SinkError>
 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "Whisker runtime drive error: {self:?}")
     }
 }
 
-impl<HostError, SinkError> Error for RuntimeDriveError<HostError, SinkError>
+impl<MeasurementError, SinkError> Error for RuntimeDriveError<MeasurementError, SinkError>
 where
-    HostError: Error + 'static,
+    MeasurementError: Error + 'static,
     SinkError: Error + 'static,
 {
 }
@@ -123,10 +123,10 @@ pub struct RuntimeInstance {
 
 impl RuntimeInstance {
     /// Creates an unmounted runtime connected to one Host wake-up endpoint.
-    pub fn new(surface: SurfaceRuntime, host_wake: RuntimeWakeHandle) -> Self {
+    pub fn new(surface: SurfaceRuntime, wake: RuntimeWakeHandle) -> Self {
         let wake_enabled = Arc::new(AtomicBool::new(false));
         let gate = Arc::clone(&wake_enabled);
-        let forwarded = host_wake.clone();
+        let forwarded = wake.clone();
         let wake = RuntimeWakeHandle::new(move || {
             if gate.load(Ordering::Acquire) {
                 forwarded.wake();
@@ -319,16 +319,16 @@ impl RuntimeInstance {
     /// viewport-relative style resolution and Taffy root constraints from using
     /// different dimensions.
     #[allow(clippy::too_many_arguments)]
-    pub fn drive_frame<Host: MeasurementHost, Sink: FrameSink>(
+    pub fn drive_frame<Provider: MeasurementProvider, Sink: FrameSink>(
         &self,
         timestamp_ms: f64,
         environment: StyleEnvironment,
         environment_epoch: u64,
         viewport_epoch: u32,
-        measurement_host: &mut Host,
+        measurement_provider: &mut Provider,
         frame_sink: &mut Sink,
-        options: HostLayoutOptions,
-    ) -> Result<RuntimeDrive, RuntimeDriveError<Host::Error, Sink::Error>> {
+        options: LayoutOptions,
+    ) -> Result<RuntimeDrive, RuntimeDriveError<Provider::Error, Sink::Error>> {
         self.require(RuntimeLifecycle::Running, "drive a frame")
             .map_err(RuntimeDriveError::Lifecycle)?;
         let surface = self.surface.clone();
@@ -354,7 +354,7 @@ impl RuntimeInstance {
                         ),
                         environment_epoch,
                         viewport_epoch,
-                        measurement_host,
+                        measurement_provider,
                         frame_sink,
                         options,
                     )
@@ -390,7 +390,7 @@ impl RuntimeInstance {
             };
             self.dispatch_input_active(&event)?;
         }
-        crate::runtime::host_wake::wake_runtime();
+        crate::runtime::runtime_wake::wake_runtime();
         Ok(())
     }
 

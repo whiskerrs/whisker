@@ -1,12 +1,11 @@
 // `Module` base class (iOS) — the API a Whisker module subclasses.
-// **Subclassing is the registration signal** — the SwiftPM codegen
-// plugin (`WhiskerModuleCodegen`) walks every concrete subclass of
-// `Module` and emits the Lynx registration. No marker attribute is
-// required at the declaration site.
+// `@WhiskerModule` is the explicit registration signal. The SwiftPM
+// codegen plugin emits registration for every marked declaration.
 //
 // ```swift
 // import WhiskerModule    // Module, ModuleDefinition, DSL
 //
+// @WhiskerModule
 // public final class VideoModule: Module {
 //     public override func definition() -> ModuleDefinition {
 //         Name("Video")

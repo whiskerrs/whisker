@@ -832,7 +832,7 @@ struct HotReloadPrep {
 /// `config` carries the workspace + target + android/ios params the
 /// linker/triple pickers need:
 ///   - Android → NDK clang for `config.android.abi`.
-///   - others → host clang via [`hotpatch::wrapper::resolve_host_linker`].
+///   - others → host clang via [`hotpatch::wrapper::resolve_linker`].
 fn prepare_hot_reload_capture(config: &Config) -> Result<HotReloadPrep> {
     let shims = hotpatch::resolve_shim_paths(&config.workspace_root)?;
     let rustc_cache_dir = hotpatch::wrapper::default_cache_dir(&config.workspace_root);
@@ -904,8 +904,8 @@ fn resolve_linker_for(config: &Config) -> Result<PathBuf> {
             hotpatch::android_ndk::android_clang_for(abi, api)
                 .with_context(|| format!("resolve NDK clang for ABI {abi} API {api}"))
         }
-        Target::IosSimulator => Ok(hotpatch::wrapper::resolve_host_linker()),
-        Target::Macos => Ok(hotpatch::wrapper::resolve_host_linker()),
+        Target::IosSimulator => Ok(hotpatch::wrapper::resolve_linker()),
+        Target::Macos => Ok(hotpatch::wrapper::resolve_linker()),
         Target::Web => anyhow::bail!("Web builds are owned by the generated Trunk project"),
     }
 }

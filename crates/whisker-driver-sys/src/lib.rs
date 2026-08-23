@@ -6,6 +6,11 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
+#[cfg(target_os = "android")]
+unsafe extern "C" {
+    pub fn whisker_mobile_bridge_anchor();
+}
+
 #[repr(C)]
 pub struct WhiskerEngine {
     _private: [u8; 0],

@@ -230,7 +230,7 @@ fn xcrun_sdk_path(kind: &str) -> Option<String> {
 /// For cross-target hot-patch (e.g. macOS host → Android device),
 /// callers should pass the target OS explicitly rather than rely on
 /// this convenience.
-pub fn linker_os_for_host() -> LinkerOs {
+pub fn linker_os_for_current_platform() -> LinkerOs {
     if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
         LinkerOs::Macos
     } else if cfg!(target_os = "linux") || cfg!(target_os = "android") {
@@ -802,11 +802,11 @@ mod tests {
         assert!(plan.args.iter().any(|a| a.ends_with("demo.obj")));
     }
 
-    // ----- linker_os_for_host ------------------------------------------
+    // ----- linker_os_for_current_platform ------------------------------------------
 
     #[test]
-    fn linker_os_for_host_picks_an_os_consistent_with_cfg() {
-        let os = linker_os_for_host();
+    fn linker_os_for_current_platform_picks_an_os_consistent_with_cfg() {
+        let os = linker_os_for_current_platform();
         if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
             assert_eq!(os, LinkerOs::Macos);
         } else if cfg!(target_os = "linux") || cfg!(target_os = "android") {

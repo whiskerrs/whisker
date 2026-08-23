@@ -77,7 +77,7 @@ pub fn ndk_home() -> Result<PathBuf> {
 
 /// NDK toolchain host tag (`darwin-x86_64` / `linux-x86_64` / …).
 /// NDK ships `darwin-x86_64` even on Apple Silicon.
-pub fn host_tag() -> Result<&'static str> {
+pub fn toolchain_tag() -> Result<&'static str> {
     if cfg!(target_os = "macos") {
         Ok("darwin-x86_64")
     } else if cfg!(target_os = "linux") {
@@ -126,7 +126,7 @@ pub fn android_clang_for(abi: &str, api: u32) -> Result<PathBuf> {
 /// it.
 pub fn ndk_bin_dir() -> Result<PathBuf> {
     let ndk = ndk_home()?;
-    let host = host_tag()?;
+    let host = toolchain_tag()?;
     Ok(ndk.join("toolchains/llvm/prebuilt").join(host).join("bin"))
 }
 
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn host_tag_returns_a_known_string_for_this_host() {
-        let t = host_tag().expect("host tag");
+        let t = toolchain_tag().expect("host tag");
         assert!(matches!(
             t,
             "darwin-x86_64" | "linux-x86_64" | "windows-x86_64",

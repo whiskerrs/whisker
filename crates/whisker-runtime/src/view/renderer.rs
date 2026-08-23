@@ -25,6 +25,7 @@ use std::rc::Rc;
 use super::handle::Element;
 use crate::element::ElementTag;
 use crate::value::WhiskerValue;
+use whisker_protocol::ElementSchema;
 use whisker_style::SpecifiedStyle;
 
 /// Event-handler propagation type — a faithful 1:1 mapping to Lynx's
@@ -111,6 +112,11 @@ pub trait DynRenderer {
     /// Returns a handle whose [`id`](Element::id) is `u32::MAX` when the
     /// tag is unknown to Lynx's behaviour registry.
     fn create_element_by_name(&self, tag_name: &str) -> Element;
+    /// Schema-carrying path used by `#[module_component]`. Renderers that
+    /// negotiate schemas out of band can keep the default name-only behavior.
+    fn create_element_by_schema(&self, schema: &ElementSchema) -> Element {
+        self.create_element_by_name(&schema.name)
+    }
     fn release_element(&self, handle: Element);
 
     fn set_attribute(&self, handle: Element, key: &str, value: &str);
@@ -270,6 +276,20 @@ pub trait DynRenderer {
         _body: &WhiskerValue,
     ) -> EventDispatchPlan {
         EventDispatchPlan::default()
+    }
+
+    /// Handles an element command without crossing the legacy Lynx bridge.
+    ///
+    /// Retained-surface renderers return `Some` and lower the call into their
+    /// semantic frame protocol. Bridge renderers leave the default `None`, so
+    /// `whisker-driver` can continue with its platform-pointer path.
+    fn invoke_element_method(
+        &self,
+        _handle: Element,
+        _method: &str,
+        _params: WhiskerValue,
+    ) -> Option<WhiskerValue> {
+        None
     }
 
     fn set_root(&self, root: Element);
@@ -449,6 +469,25 @@ pub fn create_element_by_name(tag_name: &str) -> Element {
                 if let Some(owner) = rt.owners.get_mut(owner_id) {
                     owner.elements.push(handle);
                 }
+            }
+        });
+    }
+    handle
+}
+
+/// Allocate a module element while making its Host-independent schema
+/// available to the active retained renderer.
+pub fn create_element_by_schema(schema: &ElementSchema) -> Element {
+    let handle = with_renderer(
+        |renderer| renderer.create_element_by_schema(schema),
+        Element(u32::MAX),
+    );
+    if handle.id() != u32::MAX {
+        crate::reactive::with_runtime(|runtime| {
+            if let Some(owner_id) = runtime.current_owner()
+                && let Some(owner) = runtime.owners.get_mut(owner_id)
+            {
+                owner.elements.push(handle);
             }
         });
     }
@@ -956,6 +995,23 @@ pub fn set_event_listener(
     with_renderer(
         |r| r.set_event_listener(handle, event_name, bind_type, callback),
         (),
+    )
+}
+
+/// Gives the installed renderer the first opportunity to handle an element
+/// command. `None` asks the driver to use its legacy bridge path.
+#[doc(hidden)]
+pub fn try_invoke_element_method(
+    handle: Element,
+    method: &str,
+    params: WhiskerValue,
+) -> Option<WhiskerValue> {
+    if is_phantom(handle) {
+        return None;
+    }
+    with_renderer(
+        |renderer| renderer.invoke_element_method(handle, method, params),
+        None,
     )
 }
 

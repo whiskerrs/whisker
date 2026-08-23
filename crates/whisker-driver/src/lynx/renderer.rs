@@ -624,7 +624,7 @@ extern "C" fn whisker_custom_event_entry(
     CUSTOM_EVENT_QUEUE.with(|q| q.borrow_mut().push((target_sign, name, value)));
     // Schedule a frame so the backlog drains promptly even when the
     // render loop is idle (no signal writes pending).
-    whisker_runtime::host_wake::wake_runtime();
+    whisker_runtime::runtime_wake::wake_runtime();
     true
 }
 

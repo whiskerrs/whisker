@@ -30,6 +30,28 @@ pub trait IntoView {
 /// `#[component]` re-clones every prop on every body invocation.
 pub type Children = ::std::rc::Rc<dyn ::std::ops::Fn() -> View + 'static>;
 
+/// Authoring children whose rendered value must contain only plain-text
+/// fragments.
+///
+/// This wrapper lets an element declaration distinguish text content from
+/// ordinary scene children without changing the React-like `View` value built
+/// by `render!`. The Rust renderer validates and normalizes the materialized
+/// raw-text nodes before a Host sees the resulting `SetText` operation.
+#[derive(Clone)]
+pub struct TextChildren(pub Children);
+
+impl TextChildren {
+    /// Wraps the children closure emitted by `render!`.
+    pub fn new(children: Children) -> Self {
+        Self(children)
+    }
+
+    /// Materializes the wrapped authoring children.
+    pub fn render(&self) -> View {
+        (self.0)()
+    }
+}
+
 /// Mount a `Children` prop at the current position in the tree.
 ///
 /// Returns a phantom element (no on-screen footprint — `is_phantom`
@@ -48,6 +70,19 @@ pub fn mount_children(children: &Children) -> Element {
     let view = children();
     view.attach_to(ph);
     ph
+}
+
+/// Mounts one dynamically typed `IntoView` value behind a phantom slot.
+#[doc(hidden)]
+pub fn mount_view(view: impl IntoView) -> Element {
+    let ph = super::create_phantom_element();
+    view.into_view().attach_to(ph);
+    ph
+}
+
+/// Mount plain-text authoring children at their declared element.
+pub fn mount_text_children(children: &TextChildren, parent: Element) -> Vec<Element> {
+    children.render().attach_to(parent)
 }
 
 // Function-shaped prop types for control-flow components. These

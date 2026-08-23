@@ -367,8 +367,9 @@ pub(crate) extern "C" fn async_trampoline(
 /// The `WhiskerValueRaw`s the builder produces hold raw pointers into
 /// these allocations; keep the builder alive until the FFI call
 /// returns, then dropping it frees everything in one shot.
+#[doc(hidden)]
 #[derive(Default)]
-pub(crate) struct RawBuilder {
+pub struct RawBuilder {
     /// `CString`s back the `WhiskerValueRaw::s` pointers. The
     /// FFI pointer points to the CString's internal buffer (a
     /// heap allocation owned by the CString's inner `Vec<u8>`);
@@ -412,7 +413,9 @@ impl RawBuilder {
         r
     }
 
-    pub(crate) fn encode(&mut self, v: &WhiskerValue) -> ffi::WhiskerValueRaw {
+    /// Borrows storage owned by this builder and exposes one C-ABI value.
+    /// The returned tree is valid until the builder is dropped.
+    pub fn encode(&mut self, v: &WhiskerValue) -> ffi::WhiskerValueRaw {
         match v {
             WhiskerValue::Null => empty_raw(ffi::WhiskerValueType::Null),
             WhiskerValue::Bool(b) => {

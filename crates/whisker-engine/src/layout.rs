@@ -15,7 +15,7 @@ use crate::{LayoutProgress, SurfaceEngine, SurfaceError};
 /// Android, UIKit, DOM, and native Desktop bindings implement this information flow at
 /// their generated boundary. The trait itself contains no platform types and
 /// is also the conformance seam used by Rust-only tests.
-pub trait MeasurementHost {
+pub trait MeasurementProvider {
     /// Backend or binding failure returned before a batch can be accepted.
     type Error;
 
@@ -34,12 +34,12 @@ pub trait MeasurementHost {
 
 /// Limit for synchronous Host batches attempted by one layout drive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HostLayoutOptions {
+pub struct LayoutOptions {
     /// Maximum number of immediate request/response rounds.
     pub max_immediate_batches: usize,
 }
 
-impl Default for HostLayoutOptions {
+impl Default for LayoutOptions {
     fn default() -> Self {
         Self {
             max_immediate_batches: 32,
@@ -49,11 +49,11 @@ impl Default for HostLayoutOptions {
 
 /// Failure while driving Taffy through the Rust-to-Host measurement boundary.
 #[derive(Clone, Debug, PartialEq)]
-pub enum HostLayoutError<HostError> {
+pub enum LayoutError<MeasurementError> {
     /// Retained surface or response semantics were invalid.
     Surface(SurfaceError),
     /// The Host binding failed without producing an accepted batch.
-    Host(HostError),
+    Measurement(MeasurementError),
     /// The Host returned a structurally malformed response set.
     InvalidBatch(MeasurementBatchError),
     /// Immediate measurements did not converge within the configured guard.
@@ -63,23 +63,23 @@ pub enum HostLayoutError<HostError> {
     },
 }
 
-impl<HostError: fmt::Debug> fmt::Display for HostLayoutError<HostError> {
+impl<MeasurementError: fmt::Debug> fmt::Display for LayoutError<MeasurementError> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "Whisker Host layout error: {self:?}")
     }
 }
 
-impl<HostError: Error + 'static> Error for HostLayoutError<HostError> {
+impl<MeasurementError: Error + 'static> Error for LayoutError<MeasurementError> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Surface(error) => Some(error),
-            Self::Host(error) => Some(error),
+            Self::Measurement(error) => Some(error),
             Self::InvalidBatch(_) | Self::BatchLimitExceeded { .. } => None,
         }
     }
 }
 
-impl<HostError> From<SurfaceError> for HostLayoutError<HostError> {
+impl<MeasurementError> From<SurfaceError> for LayoutError<MeasurementError> {
     fn from(error: SurfaceError) -> Self {
         Self::Surface(error)
     }
@@ -94,14 +94,14 @@ impl SurfaceEngine {
     /// Host-to-Rust [`MeasurementReady`](whisker_protocol::MeasurementReady)
     /// event is applied with [`SurfaceEngine::apply_measurement_ready`] before
     /// driving layout again.
-    pub fn drive_layout_with_host<Host: MeasurementHost>(
+    pub fn drive_layout<Provider: MeasurementProvider>(
         &mut self,
         root: NodeId,
         viewport: LayoutSize,
         environment_epoch: u64,
-        host: &mut Host,
-        options: HostLayoutOptions,
-    ) -> Result<LayoutProgress, HostLayoutError<Host::Error>> {
+        provider: &mut Provider,
+        options: LayoutOptions,
+    ) -> Result<LayoutProgress, LayoutError<Provider::Error>> {
         let mut batches = 0;
         loop {
             let progress =
@@ -110,17 +110,17 @@ impl SurfaceEngine {
                 return Ok(progress);
             }
             if batches >= options.max_immediate_batches {
-                return Err(HostLayoutError::BatchLimitExceeded {
+                return Err(LayoutError::BatchLimitExceeded {
                     limit: options.max_immediate_batches,
                 });
             }
 
             let requests = progress.requests().to_vec();
             let mut responses = Vec::with_capacity(requests.len());
-            host.measure_batch(self.surface(), &requests, &mut responses)
-                .map_err(HostLayoutError::Host)?;
-            validate_measurement_batch(&requests, &responses)
-                .map_err(HostLayoutError::InvalidBatch)?;
+            provider
+                .measure_batch(self.surface(), &requests, &mut responses)
+                .map_err(LayoutError::Measurement)?;
+            validate_measurement_batch(&requests, &responses).map_err(LayoutError::InvalidBatch)?;
             self.apply_measurement_responses(&responses)?;
             batches += 1;
         }
@@ -178,7 +178,7 @@ mod tests {
         }
     }
 
-    impl MeasurementHost for TestHost {
+    impl MeasurementProvider for TestHost {
         type Error = TestHostError;
 
         fn measure_batch(
@@ -287,12 +287,12 @@ mod tests {
         let (mut surface, root) = surface_with_text();
         let mut host = TestHost::new(Reply::Ready(MeasuredSize::new(48.0, 20.0)));
         let progress = surface
-            .drive_layout_with_host(
+            .drive_layout(
                 root,
                 LayoutSize::new(100.0, 100.0),
                 7,
                 &mut host,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
             .expect("synchronous layout");
 
@@ -354,12 +354,12 @@ mod tests {
 
         let mut host = TestHost::new(Reply::ReadyPreparedText);
         let progress = surface
-            .drive_layout_with_host(
+            .drive_layout(
                 root,
                 LayoutSize::new(200.0, 100.0),
                 3,
                 &mut host,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
             .expect("measure and finalize first text layout");
         assert!(progress.has_layout());
@@ -418,12 +418,12 @@ mod tests {
                 .expect("lower changed text")
         );
         surface
-            .drive_layout_with_host(
+            .drive_layout(
                 root,
                 LayoutSize::new(200.0, 100.0),
                 3,
                 &mut host,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
             .expect("measure and finalize changed text layout");
         let second_measure_batches = host.calls.len();
@@ -456,12 +456,12 @@ mod tests {
                 .expect("equal text is idle")
         );
         surface
-            .drive_layout_with_host(
+            .drive_layout(
                 root,
                 LayoutSize::new(200.0, 100.0),
                 3,
                 &mut host,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
             .expect("equal text reuses retained layout");
         assert_eq!(host.calls.len(), second_measure_batches);
@@ -492,12 +492,12 @@ mod tests {
             )
             .expect("register replaced measurement");
         let mut host = TestHost::new(Reply::ReadyPreparedText);
-        let _ = surface.drive_layout_with_host(
+        let _ = surface.drive_layout(
             root,
             LayoutSize::new(100.0, 100.0),
             1,
             &mut host,
-            HostLayoutOptions::default(),
+            LayoutOptions::default(),
         );
     }
 
@@ -506,12 +506,12 @@ mod tests {
         let (mut surface, root) = surface_with_text();
         let mut host = TestHost::new(Reply::Pending);
         let progress = surface
-            .drive_layout_with_host(
+            .drive_layout(
                 root,
                 LayoutSize::new(100.0, 100.0),
                 1,
                 &mut host,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
             .expect("pending layout is valid");
         assert_eq!(host.calls.len(), 1);
@@ -527,32 +527,32 @@ mod tests {
         let (mut surface, root) = surface_with_text();
         let mut failed = TestHost::new(Reply::Fail);
         let error = surface
-            .drive_layout_with_host(
+            .drive_layout(
                 root,
                 LayoutSize::new(100.0, 100.0),
                 1,
                 &mut failed,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
             .expect_err("Host failure");
-        assert_eq!(error, HostLayoutError::Host(TestHostError::Failed));
+        assert_eq!(error, LayoutError::Measurement(TestHostError::Failed));
         assert!(error.source().is_some());
         assert!(error.to_string().contains("Host"));
         assert_eq!(TestHostError::Failed.to_string(), "test Host failed");
 
         let mut missing = TestHost::new(Reply::Missing);
         let error = surface
-            .drive_layout_with_host(
+            .drive_layout(
                 root,
                 LayoutSize::new(100.0, 100.0),
                 1,
                 &mut missing,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
             .expect_err("missing response");
         assert_eq!(
             error,
-            HostLayoutError::InvalidBatch(MeasurementBatchError::MissingResponseKey {
+            LayoutError::InvalidBatch(MeasurementBatchError::MissingResponseKey {
                 key: whisker_protocol::MeasurementKey::new(1).expect("first request key"),
             })
         );
@@ -560,17 +560,17 @@ mod tests {
 
         let mut invalid_metrics = TestHost::new(Reply::InvalidMetrics);
         let error = surface
-            .drive_layout_with_host(
+            .drive_layout(
                 root,
                 LayoutSize::new(100.0, 100.0),
                 1,
                 &mut invalid_metrics,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
             .expect_err("invalid metrics");
         assert_eq!(
             error,
-            HostLayoutError::Surface(SurfaceError::Measurement(
+            LayoutError::Surface(SurfaceError::Measurement(
                 crate::MeasurementError::InvalidMetrics {
                     key: whisker_protocol::MeasurementKey::new(1).expect("first request key"),
                 }
@@ -583,17 +583,17 @@ mod tests {
         let mut empty = SurfaceEngine::new(id(SurfaceId::new));
         let mut host = TestHost::new(Reply::Ready(MeasuredSize::default()));
         let error = empty
-            .drive_layout_with_host(
+            .drive_layout(
                 id(NodeId::new),
                 LayoutSize::new(1.0, 1.0),
                 1,
                 &mut host,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
             .expect_err("unknown root");
         assert_eq!(
             error,
-            HostLayoutError::Surface(SurfaceError::Layout(
+            LayoutError::Surface(SurfaceError::Layout(
                 whisker_layout::LayoutError::UnknownNode(id(NodeId::new))
             ))
         );
@@ -601,17 +601,17 @@ mod tests {
 
         let (mut surface, root) = surface_with_text();
         let error = surface
-            .drive_layout_with_host(
+            .drive_layout(
                 root,
                 LayoutSize::new(100.0, 100.0),
                 1,
                 &mut host,
-                HostLayoutOptions {
+                LayoutOptions {
                     max_immediate_batches: 0,
                 },
             )
             .expect_err("zero batch guard");
-        assert_eq!(error, HostLayoutError::BatchLimitExceeded { limit: 0 });
+        assert_eq!(error, LayoutError::BatchLimitExceeded { limit: 0 });
         assert!(error.source().is_none());
         assert!(host.calls.is_empty());
     }

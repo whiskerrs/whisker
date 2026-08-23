@@ -4,7 +4,7 @@ use std::convert::Infallible;
 use glyphon::{
     Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight, Wrap,
 };
-use whisker_engine::MeasurementHost;
+use whisker_engine::MeasurementProvider;
 use whisker_protocol::{
     AvailableSpace, ElementMeasurement, LayoutRect, MeasureFontFamily, MeasureFontStyle,
     MeasureLineHeight, MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload,
@@ -137,7 +137,7 @@ impl NativeTextHost {
     }
 }
 
-impl MeasurementHost for NativeTextHost {
+impl MeasurementProvider for NativeTextHost {
     type Error = Infallible;
 
     fn measure_batch(
@@ -185,14 +185,13 @@ mod tests {
     use super::*;
     use whisker::standard_element_registrations;
     use whisker_protocol::{
-        ElementContentKind, ElementTypeId, MeasureConstraints, MeasurementKey, NodeId,
-        ReplacedContentMeasurePayload,
+        ElementTypeId, MeasureConstraints, MeasurementKey, NodeId, ReplacedContentMeasurePayload,
     };
 
     fn registry() -> DesktopElementRegistry {
         DesktopElementRegistry::bind(
             &standard_element_registrations(),
-            &crate::element::standard_desktop_element_factories(),
+            &crate::element::built_in_element_factories(),
         )
         .unwrap()
     }
@@ -200,7 +199,7 @@ mod tests {
     fn text_element_type() -> ElementTypeId {
         standard_element_registrations()
             .into_iter()
-            .find(|registration| registration.content == ElementContentKind::Text)
+            .find(|registration| registration.name == whisker::TEXT_ELEMENT_NAME)
             .unwrap()
             .element_type
     }

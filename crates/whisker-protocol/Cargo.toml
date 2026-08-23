@@ -12,3 +12,4 @@ categories.workspace = true
 description = "Host-independent scene frame model and validator for Whisker."
 
 [dependencies]
+whisker-value = { workspace = true }

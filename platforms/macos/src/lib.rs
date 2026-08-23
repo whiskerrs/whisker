@@ -8,4 +8,4 @@
 
 mod app;
 
-pub use app::{MacosAppConfig, MacosHostError, run};
+pub use app::{MacosAppConfig, MacosError, run};

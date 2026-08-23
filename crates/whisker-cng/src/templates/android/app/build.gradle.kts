@@ -30,6 +30,7 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    sourceSets.getByName("main").kotlin.srcDir("src/main/whisker_generated")
 
     val whiskerKeystore = System.getenv("WHISKER_ANDROID_KEYSTORE")
     if (whiskerKeystore != null) {
@@ -57,5 +58,12 @@ android {
 }
 
 dependencies {
+    if (rootProject.findProject(":whisker-module") != null) {
+        implementation(project(":whisker-module"))
+    } else {
+        implementation("rs.whisker:whisker-module-android:{{whisker_sdk_version}}")
+    }
 {{extra_gradle_dependencies}}
 }
+
+apply(from = rootProject.file("whisker_module_deps.gradle.kts"))

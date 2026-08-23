@@ -142,7 +142,7 @@ the corresponding Android, UIKit, or DOM clip.
 | Desktop v1 | Native Rust | Native Rust | Whisker-owned window and GPU renderer |
 
 Desktop v1 links the Whisker runtime and the Desktop Host into the same native
-Rust process. The runtime calls `MeasurementHost::measure_batch` and
+Rust process. The runtime calls `MeasurementProvider::measure_batch` and
 `FrameSink::present(&FramePacket)` directly through typed Rust interfaces. A
 normal frame therefore requires neither packet serialization nor an FFI, WASM,
 JavaScript, WebView, command-channel, or process boundary.
@@ -167,7 +167,7 @@ The native frame path is:
 ```text
 window event/frame callback
   -> Whisker runtime scheduler
-       -> MeasurementHost::measure_batch(...) on cache misses
+       -> MeasurementProvider::measure_batch(...) on cache misses
        -> Taffy layout and frame preparation
        -> FrameSink::present(&FramePacket)
             -> DesktopSurface accepts Host projection
@@ -546,7 +546,7 @@ generated binding may use function tables, FFI functions, JNI methods, or
 WASM imports. The semantics and ordering remain the same.
 
 The native Rust implementation may expose the measurement and presentation
-parts as the narrower `MeasurementHost` and `FrameSink` traits and compose them
+parts as the narrower `MeasurementProvider` and `FrameSink` traits and compose them
 at the surface boundary. This is the Desktop v1 path and avoids a transport
 adapter without weakening the information-level `RendererV1` contract.
 
@@ -556,7 +556,7 @@ to JNI arrays, C-compatible tables, or WASM linear-memory views without an
 intermediate encoding. Each generated transport must round-trip the shared
 Rust conformance fixtures and preserve the batch validation rules. This keeps
 transport allocation and binary-format versioning out of the common hot path
-while `MeasurementHost` remains the final common Rust-facing seam.
+while `MeasurementProvider` remains the final common Rust-facing seam.
 
 `attach_surface` attaches to a Host root already supplied by bootstrap; it does
 not require Rust to create an operating-system window. `RendererEventSink` is
@@ -698,7 +698,7 @@ and presents one packet before the Desktop Host builds and submits GPU work:
 ```text
 native window frame callback
   -> Rust motion/reactivity/style
-  -> direct MeasurementHost::measure_batch(...) on cache misses
+  -> direct MeasurementProvider::measure_batch(...) on cache misses
   -> Taffy layout and frame preparation
   -> direct FrameSink::present(&FramePacket)
        -> update DesktopSurface Host projection
@@ -756,8 +756,9 @@ FramePacket
 `- optional diagnostics table in debug builds
 ```
 
-It does not serialize a `Vec<WhiskerValue>` per property and does not encode
-method names in the hot path. WASM JavaScript reads a borrowed `Uint8Array`
+It does not encode method names or issue a dynamic module call per property.
+The semantic model uses the shared `WhiskerValue` tagged union while the packed
+transport stores repeated and variable-size values in tables. WASM JavaScript reads a borrowed `Uint8Array`
 view over linear memory during `present`; native bindings receive a borrowed
 pointer and length. The packet is valid only for the synchronous duration of
 `present` unless a provider explicitly copies it.
@@ -846,23 +847,21 @@ Style Engine ------------------+--> Whisker Core --> FramePacket --> Renderer
 Layout Engine -----------------+
 ```
 
-Element schemas declare closed semantic categories used by the common style
-system. The public module DSL uses domain terms rather than Rust traits:
+RFC 0004 supersedes the original public content-category sketch. The common
+module declaration contains identity, intrinsic measurement, and generated
+property/event/command members:
 
 ```rust,ignore
-ElementDefinition {
-    presentation: Presentation::Box,
-    children: Children::None,
-    content: Content::Text,
-    measurement: Measurement::Text,
-    consumes_text_style: true,
-}
+#[whisker::module_component(
+    name = "example.controls/Toggle",
+    measurement = None,
+)]
+pub fn toggle(checked: Signal<bool>, on_change: ChangeEvent) {}
 ```
 
-The schema compiler may normalize these declarations to internal capability
-bits. Those bits are not exposed as `Traits` in Swift, Kotlin, JavaScript, or
-the public Rust module-definition surface. RFC 0004 owns the closed categories
-and their mapping to common presentation and element content.
+Child acceptance is inferred from a `Children` parameter; the Host definition
+owns the actual mount target. Built-in text may retain private renderer
+capabilities, but public schemas do not expose content or child-mount enums.
 
 Common typed style properties such as width, padding, background, opacity,
 transform, border, and clip are not repeated in each element schema. An
@@ -1138,7 +1137,7 @@ Whisker Core
   -> Renderer.register_elements(...)
 
 Host Renderer
-  -> looks up embedded Host factory by canonical key
+  -> looks up embedded Host factory by name
   -> verifies supported properties, events, commands, and measurement
   -> assigns compact ElementTypeId::VIDEO
 ```
@@ -1322,7 +1321,7 @@ and reports it as a provider error.
 
 The Host-independent semantic request/response types, typed built-in payloads,
 strict batch validator, retained engine state machine, and Rust-facing
-`MeasurementHost::measure_batch` seam are implemented. `SurfaceEngine` can
+`MeasurementProvider::measure_batch` seam are implemented. `SurfaceEngine` can
 drive all synchronous batches to a final Taffy layout before frame preparation
 and returns to the event boundary only for `Pending`. Plain UTF-8 Text v1 can
 now lower computed inherited text style into the shared measurement payload;
@@ -1338,11 +1337,28 @@ multiple instances on one UI thread. Instance-specific future wakers and
 `RuntimeDispatcher` cover idle async completion without a busy tick. Typed
 Host input is validated, hit-tested against the retained Rust scene, and routed
 through Rust capture and bubble listeners; synchronous re-entry is queued until
-the current event/frame boundary. The packed/generated platform ABI and the
-Android/UIKit retained renderers remain follow-up slices. CNG now produces
-Lynx-free, minimal Android and UIKit applications that `whisker run` can build,
-install, and launch; these shells do not yet mount `RuntimeInstance` or consume
-frame packets. Initial DOM and macOS Host slices now provide CNG composition
+the current event/frame boundary. Android and UIKit now have their first
+retained-renderer vertical slice: CNG emits Lynx-free native surfaces,
+`whisker run` builds and embeds the user Rust library/framework, and the Host
+mounts and ticks `RuntimeInstance` while consuming semantic View/Text frame
+operations. Android and iOS now use the same versioned, borrowed C ABI for
+bootstrap registrations, batched measurement, frame operations, element
+events, module calls, and module events. `WhiskerValueRaw` carries every
+open-ended value; no JSON serialization exists on this retained mobile path.
+The attach sequence is mount, synchronous registration negotiation, Host
+factory binding, then measurement/frame scheduling, so Host measurement is
+never requested against an unbound element table. UIKit text bounding and
+Android `StaticLayout` replace the original zero-size/estimated provider;
+module factories may supply the same pre-mount custom measurer and unsupported
+kinds return `Unsupported` rather than a successful zero size.
+
+Mobile frame application is revision-aware and transactional at the retained
+scene boundary. Each Host stages and validates the complete operation graph
+before mutating UIKit/Android views, returns `NeedSnapshot` on epoch or base
+revision drift, and acknowledges the committed target revision. Native events
+raised during commit are queued until the transaction exits, preventing
+synchronous Rust re-entry through a live borrowed frame. Initial DOM
+and macOS Host slices now provide CNG composition
 roots, Host-driven frame scheduling, measurement, and frame consumption; DOM
 cover the built-in box/text paint subset. The first Desktop implementation has
 been extracted to `platforms/desktop`: it retains accepted packets in a native
@@ -1468,7 +1484,7 @@ architecture.
 Recoverable protocol outcomes include:
 
 - `Accepted { revision }`;
-- `NeedSnapshot { host_revision }`;
+- `NeedSnapshot { receiver_revision }`;
 - `SurfaceUnavailable`;
 - `UnsupportedElement` or `UnsupportedProperty` detected before mutation;
 - malformed packet or protocol-version failure.

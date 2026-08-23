@@ -40,6 +40,7 @@ final class SmokeFakeVideoView: NSObject {
     @objc dynamic var playCount: Int = 0
 }
 
+@WhiskerModule
 final class SmokeModule: Module {
     override func definition() -> ModuleDefinition {
         ModuleDefinition {

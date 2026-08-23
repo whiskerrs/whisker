@@ -9,4 +9,4 @@
 
 mod app;
 
-pub use app::{WindowsAppConfig, WindowsHostError, run};
+pub use app::{WindowsAppConfig, WindowsError, run};

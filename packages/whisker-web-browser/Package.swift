@@ -15,7 +15,6 @@ let package = Package(
             name: "WhiskerWebBrowser",
             dependencies: [
                 .product(name: "WhiskerModule", package: "whisker"),
-                .product(name: "WhiskerRuntime", package: "whisker"),
             ],
             path: "ios/Sources/WhiskerWebBrowser",
             plugins: [

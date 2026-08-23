@@ -16,6 +16,7 @@ whisker = { workspace = true }
 whisker-engine = { workspace = true }
 whisker-protocol = { workspace = true }
 whisker-style = { workspace = true }
+whisker-value = { workspace = true }
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = [
     "console",
@@ -23,9 +24,11 @@ web-sys = { version = "0.3", features = [
     "Document",
     "DomRect",
     "Element",
+    "Event",
     "EventTarget",
     "HtmlCollection",
     "HtmlElement",
+    "HtmlInputElement",
     "Node",
     "Performance",
     "Window",

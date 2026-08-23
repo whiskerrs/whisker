@@ -7,8 +7,8 @@ use std::fmt;
 use whisker_protocol::{
     BoxClip, BoxPaint, CommandId, ElementTypeId, FrameHeader, FrameMode, FramePacket,
     HitTestBehavior, InputPoint, LayoutGeometry, NodeId, Operation, OverflowClip, PointerId,
-    PropertyId, ProtocolValue, ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError,
-    Transform, Visibility,
+    PropertyId, ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError, Transform,
+    Visibility, WhiskerValue,
 };
 
 /// A retained logical node owned by a [`Scene`].
@@ -25,7 +25,7 @@ pub struct SceneNode {
     visibility: Option<Visibility>,
     z_order: Option<i32>,
     text: Option<TextContent>,
-    properties: BTreeMap<PropertyId, ProtocolValue>,
+    properties: BTreeMap<PropertyId, WhiskerValue>,
     event_mask: Option<u64>,
     hit_test: Option<HitTestBehavior>,
     captured_pointers: BTreeSet<PointerId>,
@@ -675,7 +675,7 @@ impl Scene {
         &mut self,
         node: NodeId,
         property: PropertyId,
-        value: ProtocolValue,
+        value: WhiskerValue,
     ) -> Result<(), SceneError> {
         self.ensure_mutable()?;
         if self.require_node(node)?.properties.get(&property) == Some(&value) {
@@ -806,7 +806,7 @@ impl Scene {
         &mut self,
         node: NodeId,
         command: CommandId,
-        arguments: ProtocolValue,
+        arguments: WhiskerValue,
         result: Option<ResultId>,
     ) -> Result<(), SceneError> {
         self.ensure_mutable()?;
@@ -1214,7 +1214,7 @@ mod tests {
         let text = text_content("hello");
         scene.set_text(root, text.clone()).expect("text");
         scene
-            .set_property(root, property(1), ProtocolValue::String("red".into()))
+            .set_property(root, property(1), WhiskerValue::String("red".into()))
             .expect("property");
         scene.set_event_mask(root, 3).expect("event mask");
         scene
@@ -1227,7 +1227,7 @@ mod tests {
             .invoke_command(
                 root,
                 command(1),
-                ProtocolValue::Array(Vec::new()),
+                WhiskerValue::Array(Vec::new()),
                 Some(result_id(1)),
             )
             .expect("command");
@@ -1314,13 +1314,13 @@ mod tests {
         scene.set_text(root, text.clone()).expect("text");
         scene.set_text(root, text).expect("equal text");
         scene
-            .set_property(root, property(1), ProtocolValue::I64(1))
+            .set_property(root, property(1), WhiskerValue::Int(1))
             .expect("first property");
         scene
-            .set_property(root, property(1), ProtocolValue::I64(2))
+            .set_property(root, property(1), WhiskerValue::Int(2))
             .expect("coalesced property");
         scene
-            .set_property(root, property(1), ProtocolValue::I64(2))
+            .set_property(root, property(1), WhiskerValue::Int(2))
             .expect("equal property");
         scene.set_event_mask(root, 7).expect("event mask");
         scene.set_event_mask(root, 7).expect("equal event mask");
@@ -1338,7 +1338,7 @@ mod tests {
             .expect("equal capture");
 
         scene
-            .invoke_command(root, command(1), ProtocolValue::Null, None)
+            .invoke_command(root, command(1), WhiskerValue::Null, None)
             .expect("barrier command");
         scene.set_opacity(root, 0.8).expect("post-barrier opacity");
 
@@ -1377,7 +1377,7 @@ mod tests {
         assert!(!scene.has_pending_work());
 
         scene
-            .set_property(root, property, ProtocolValue::Bool(true))
+            .set_property(root, property, WhiskerValue::Bool(true))
             .expect("set property");
         scene
             .clear_property(root, property)
@@ -1474,7 +1474,7 @@ mod tests {
         );
         assert_eq!(scene.set_z_order(root, 0), Err(SceneError::FramePending));
         assert_eq!(
-            scene.set_property(root, property(1), ProtocolValue::Null),
+            scene.set_property(root, property(1), WhiskerValue::Null),
             Err(SceneError::FramePending)
         );
         assert_eq!(
@@ -1495,7 +1495,7 @@ mod tests {
             Err(SceneError::FramePending)
         );
         assert_eq!(
-            scene.invoke_command(root, command(1), ProtocolValue::Null, None),
+            scene.invoke_command(root, command(1), WhiskerValue::Null, None),
             Err(SceneError::FramePending)
         );
         assert_eq!(
@@ -1524,7 +1524,9 @@ mod tests {
         let mut empty_renderer = RecordingRenderer::new(surface());
         assert_eq!(
             empty_renderer.present(&delta),
-            Ok(ApplyResult::NeedSnapshot { host_revision: 0 })
+            Ok(ApplyResult::NeedSnapshot {
+                receiver_revision: 0
+            })
         );
 
         scene.require_snapshot().expect("recovery snapshot");
@@ -1551,7 +1553,7 @@ mod tests {
         let mut scene = Scene::new(surface());
         let doomed = scene.create_node(element_type(1)).expect("doomed node");
         scene
-            .invoke_command(doomed, command(1), ProtocolValue::Null, Some(result_id(1)))
+            .invoke_command(doomed, command(1), WhiskerValue::Null, Some(result_id(1)))
             .expect("queued command");
         scene.delete_node(doomed).expect("delete command target");
         let snapshot = prepared(&mut scene);
@@ -1646,13 +1648,13 @@ mod tests {
             scene.set_visibility(missing, Visibility::Visible),
             scene.set_z_order(missing, 0),
             scene.set_text(missing, text_content("missing")),
-            scene.set_property(missing, property(1), ProtocolValue::Null),
+            scene.set_property(missing, property(1), WhiskerValue::Null),
             scene.clear_property(missing, property(1)),
             scene.set_event_mask(missing, 0),
             scene.set_hit_test(missing, HitTestBehavior::Auto),
             scene.set_pointer_capture(missing, pointer(1)),
             scene.release_pointer_capture(missing, pointer(1)),
-            scene.invoke_command(missing, command(1), ProtocolValue::Null, None),
+            scene.invoke_command(missing, command(1), WhiskerValue::Null, None),
             scene.remove_child(missing, node(1)),
             scene.remove_child(node(1), missing),
         ];
@@ -1703,10 +1705,10 @@ mod tests {
 
         let result = result_id(1);
         scene
-            .invoke_command(root, command(1), ProtocolValue::Null, Some(result))
+            .invoke_command(root, command(1), WhiskerValue::Null, Some(result))
             .expect("first result");
         assert_eq!(
-            scene.invoke_command(root, command(1), ProtocolValue::Null, Some(result)),
+            scene.invoke_command(root, command(1), WhiskerValue::Null, Some(result)),
             Err(SceneError::DuplicateResultId { result })
         );
         assert!(
@@ -1748,11 +1750,11 @@ mod tests {
         let (mut scene, mut renderer, root, _) = initialized_scene();
         let result = result_id(1);
         scene
-            .invoke_command(root, command(1), ProtocolValue::Null, Some(result))
+            .invoke_command(root, command(1), WhiskerValue::Null, Some(result))
             .expect("first frame result");
         present_and_accept(&mut scene, &mut renderer);
         scene
-            .invoke_command(root, command(1), ProtocolValue::Null, Some(result))
+            .invoke_command(root, command(1), WhiskerValue::Null, Some(result))
             .expect("next frame result");
     }
 

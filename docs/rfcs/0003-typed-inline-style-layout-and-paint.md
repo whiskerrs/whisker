@@ -558,7 +558,7 @@ paths, glyph runs, texture handles, atlases, command buffers, and native window
 objects remain Desktop-only types.
 
 The same boundary applies in the reverse direction. A Desktop text provider
-implements `MeasurementHost`, shapes and wraps text using its native font
+implements `MeasurementProvider`, shapes and wraps text using its native font
 environment, retains the prepared glyph content under a
 `PreparedContentId`, and returns only protocol metrics to the engine. The
 engine can then finish Taffy layout and include that handle in the final paint
@@ -733,7 +733,7 @@ Visual snapshots supplement but do not replace semantic assertions.
    protocol, keyed cache, explicit block/placeholder/retain-previous policies,
    pending completion with epoch rejection, and `SurfaceEngine` integration
    into incremental scene/frame production are implemented. Typed built-in
-   payloads, strict batch validation, the Rust `MeasurementHost` seam, and
+   payloads, strict batch validation, the Rust `MeasurementProvider` seam, and
    synchronous drive-to-final-layout orchestration are also implemented. Plain
    UTF-8 Text v1 now lowers computed inherited text style into matching
    measurement and `SetText` presentation payloads, including propagation of

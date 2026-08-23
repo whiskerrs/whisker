@@ -7,14 +7,17 @@
 package rs.whisker.elements.video
 
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
 
 /**
- * DSL-driven module. Subclassing [Module] is the registration signal:
- * the KSP processor finds every concrete subclass and emits the
+ * DSL-driven module. [WhiskerModule] is the registration signal:
+ * the KSP processor finds every annotated module and emits the
  * registration block into `WhiskerVideoBehaviors.registerAll()`.
  */
+
+@WhiskerModule
 class VideoModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Video")

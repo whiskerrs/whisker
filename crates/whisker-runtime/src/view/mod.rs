@@ -33,7 +33,8 @@ pub use apply::{
 };
 pub use handle::Element;
 pub use into_view::{
-    Children, EachFn, Fallback, IntoView, ItemFn, KeyFn, MetaFn, View, WhenFn, mount_children,
+    Children, EachFn, Fallback, IntoView, ItemFn, KeyFn, MetaFn, TextChildren, View, WhenFn,
+    mount_children, mount_text_children, mount_view,
 };
 pub use list_provider::{INVALID_ITEM_INDEX, NativeItemProvider};
 #[doc(hidden)]
@@ -46,10 +47,11 @@ pub use virtualizer::{ItemMeta, virtualize};
 // platform-component module crates) legitimately reach for.
 pub use renderer::{
     BindType, append_child, child_index, children_of, create_element, create_element_by_name,
-    create_phantom_element, dispatch_event, flush, insert_child_at,
+    create_element_by_schema, create_phantom_element, dispatch_event, flush, insert_child_at,
     install_list_native_item_provider, is_phantom, previous_sibling, release_element, remove_child,
-    set_attribute, set_attribute_int, set_attribute_object, set_event_listener, set_inline_styles,
-    set_root, set_specified_style, set_update_list_info,
+    set_attribute, set_attribute_bool, set_attribute_double, set_attribute_int,
+    set_attribute_object, set_event_listener, set_inline_styles, set_root, set_specified_style,
+    set_update_list_info,
 };
 
 // Renderer-wiring internals. Public because `whisker-driver` (and test
@@ -59,5 +61,6 @@ pub use renderer::{
 #[doc(hidden)]
 pub use renderer::{
     DynRenderer, EventDispatchPlan, PHANTOM_BASE, current_renderer_id, element_sign,
-    install_renderer, module_component_ptr, uninstall_renderer, with_installed_renderer,
+    install_renderer, module_component_ptr, try_invoke_element_method, uninstall_renderer,
+    with_installed_renderer,
 };

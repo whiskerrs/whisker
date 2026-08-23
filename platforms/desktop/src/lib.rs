@@ -13,9 +13,14 @@ use std::error::Error;
 use std::fmt;
 
 use whisker::RuntimeInstance;
-use whisker_engine::HostLayoutOptions;
-use whisker_protocol::{ElementRegistration, SurfaceId};
+use whisker_engine::LayoutOptions;
+use whisker_protocol::{ElementRegistration, InputEvent, InputEventKind, SurfaceId};
 use whisker_style::StyleEnvironment;
+
+/// Marks and defines a platform implementation contributed by a module.
+pub use whisker::WhiskerModule;
+/// Shared value used by Desktop module properties, functions, and events.
+pub use whisker_value::WhiskerValue;
 
 mod element;
 mod gpu;
@@ -30,9 +35,11 @@ mod host_conformance_tests;
 
 use element::DesktopElementRegistry;
 pub use element::{
-    DesktopElementFactory, DesktopElementModule, standard_desktop_element_factories,
-    standard_desktop_element_modules,
+    BuiltInElementModule, DesktopElementFactory, DesktopModuleDefinition, DesktopNativeElement,
+    DesktopNativeEvent, DesktopViewDefinition, DesktopViewImplementation,
 };
+/// Desktop Host module declaration, named consistently with native Hosts.
+pub type ModuleDefinition = DesktopModuleDefinition;
 use surface::DesktopSurface;
 use text::NativeTextHost;
 
@@ -62,27 +69,27 @@ pub struct DesktopFrameResult {
 
 /// Failure while initializing or driving shared Desktop Host services.
 #[derive(Debug)]
-pub struct DesktopHostError(String);
+pub struct DesktopError(String);
 
-impl fmt::Display for DesktopHostError {
+impl fmt::Display for DesktopError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
-impl Error for DesktopHostError {}
+impl Error for DesktopError {}
 
 /// Host-owned state shared by all native Desktop OS adapters.
 ///
 /// The OS crate owns the window and [`RuntimeInstance`]. This type owns the
 /// corresponding measurement provider, retained Host projection, and GPU
 /// surface. Calls remain direct Rust calls; no FFI or serialization is added.
-pub struct DesktopHost {
+pub struct DesktopRuntime {
     measurements: NativeTextHost,
     surface: DesktopSurface,
 }
 
-impl DesktopHost {
+impl DesktopRuntime {
     /// Creates shared Host state for an owned native window target.
     ///
     /// `target` is normally an `Arc<winit::window::Window>` supplied by an OS
@@ -94,12 +101,12 @@ impl DesktopHost {
         surface: SurfaceId,
         elements: &[ElementRegistration],
         element_factories: &[DesktopElementFactory],
-    ) -> Result<Self, DesktopHostError> {
+    ) -> Result<Self, DesktopError> {
         let elements = DesktopElementRegistry::bind(elements, element_factories)
-            .map_err(|error| DesktopHostError(format!("bind Desktop elements: {error}")))?;
+            .map_err(|error| DesktopError(format!("bind Desktop elements: {error}")))?;
         let surface = DesktopSurface::new(target, physical_size, surface, elements.clone())
             .await
-            .map_err(|error| DesktopHostError(format!("initialize Desktop renderer: {error}")))?;
+            .map_err(|error| DesktopError(format!("initialize Desktop renderer: {error}")))?;
         Ok(Self {
             measurements: NativeTextHost::new(elements),
             surface,
@@ -116,7 +123,7 @@ impl DesktopHost {
         &mut self,
         runtime: &RuntimeInstance,
         context: DesktopFrameContext,
-    ) -> Result<DesktopFrameResult, DesktopHostError> {
+    ) -> Result<DesktopFrameResult, DesktopError> {
         validate_context(context)?;
         let environment = StyleEnvironment::new(
             context.logical_width,
@@ -132,23 +139,39 @@ impl DesktopHost {
                 context.viewport_epoch,
                 &mut self.measurements,
                 &mut self.surface,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
-            .map_err(|error| DesktopHostError(format!("drive Desktop frame: {error}")))?;
+            .map_err(|error| DesktopError(format!("drive Desktop frame: {error}")))?;
+        let events = self.surface.take_events();
+        let dispatched_provider_event = !events.is_empty();
+        for event in events {
+            runtime
+                .dispatch_input(&InputEvent {
+                    surface: runtime.surface().surface(),
+                    timestamp_ms: context.timestamp_ms,
+                    kind: InputEventKind::Named(event.name),
+                    pointer: None,
+                    target: Some(event.target),
+                    detail: event.detail,
+                })
+                .map_err(|error| {
+                    DesktopError(format!("dispatch Desktop provider event: {error}"))
+                })?;
+        }
         self.surface
             .paint(
                 &mut self.measurements,
                 [context.logical_width, context.logical_height],
                 context.scale,
             )
-            .map_err(|error| DesktopHostError(format!("paint Desktop frame: {error}")))?;
+            .map_err(|error| DesktopError(format!("paint Desktop frame: {error}")))?;
         Ok(DesktopFrameResult {
-            needs_frame: drive.needs_frame,
+            needs_frame: drive.needs_frame || dispatched_provider_event,
         })
     }
 }
 
-fn validate_context(context: DesktopFrameContext) -> Result<(), DesktopHostError> {
+fn validate_context(context: DesktopFrameContext) -> Result<(), DesktopError> {
     if !context.timestamp_ms.is_finite()
         || !context.logical_width.is_finite()
         || !context.logical_height.is_finite()
@@ -157,7 +180,7 @@ fn validate_context(context: DesktopFrameContext) -> Result<(), DesktopHostError
         || context.logical_height <= 0.0
         || context.scale <= 0.0
     {
-        return Err(DesktopHostError(
+        return Err(DesktopError(
             "Desktop frame context must contain finite positive viewport metrics".into(),
         ));
     }

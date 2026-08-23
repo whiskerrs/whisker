@@ -4,10 +4,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use whisker::runtime::RuntimeWakeHandle;
-use whisker::{Element, ElementRegistry, RuntimeInstance, SurfaceRuntime};
+use whisker::{Element, ElementModuleDefinition, ElementRegistry, RuntimeInstance, SurfaceRuntime};
 use whisker_desktop::{
-    DesktopElementFactory, DesktopElementModule, DesktopFrameContext, DesktopHost,
-    standard_desktop_element_modules,
+    BuiltInElementModule, DesktopElementFactory, DesktopFrameContext, DesktopModuleDefinition,
+    DesktopRuntime, WhiskerModule,
 };
 use whisker_protocol::SurfaceId;
 use whisker_style::StyleEnvironment;
@@ -27,7 +27,9 @@ pub struct MacosAppConfig {
     /// Initial logical height in points.
     pub height: f64,
     /// Element modules selected for this target.
-    pub element_modules: Vec<DesktopElementModule>,
+    pub module_definitions: Vec<DesktopModuleDefinition>,
+    /// Host-independent element schemas selected from Rust module crates.
+    pub element_modules: Vec<ElementModuleDefinition>,
     element_factories: Vec<DesktopElementFactory>,
 }
 
@@ -38,54 +40,59 @@ impl MacosAppConfig {
             title: title.into(),
             width: 1024.0,
             height: 720.0,
+            module_definitions: Vec::new(),
             element_modules: Vec::new(),
             element_factories: Vec::new(),
         }
     }
 
     /// Adds one Rust element definition with its matching Desktop factory.
-    pub fn with_element_module(mut self, module: DesktopElementModule) -> Self {
-        self.element_modules.push(module);
+    pub fn with_module_definition(mut self, definition: DesktopModuleDefinition) -> Self {
+        self.module_definitions.push(definition);
+        self
+    }
+
+    /// Adds one Host-independent Rust element module for bootstrap negotiation.
+    pub fn with_element_module(mut self, definition: ElementModuleDefinition) -> Self {
+        self.element_modules.push(definition);
         self
     }
 }
 
 /// Failure while creating or running the native macOS Host.
 #[derive(Debug)]
-pub struct MacosHostError(String);
+pub struct MacosError(String);
 
-impl fmt::Display for MacosHostError {
+impl fmt::Display for MacosError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
-impl Error for MacosHostError {}
+impl Error for MacosError {}
 
 /// Runs a standalone Whisker application in a native macOS window.
-pub fn run(mut config: MacosAppConfig, application: fn() -> Element) -> Result<(), MacosHostError> {
-    let mut element_modules = standard_desktop_element_modules();
-    element_modules.append(&mut config.element_modules);
-    let elements = ElementRegistry::builder()
-        .register_providers(
-            element_modules
-                .iter()
-                .map(|module| module.provider().clone()),
-        )
+pub fn run(mut config: MacosAppConfig, application: fn() -> Element) -> Result<(), MacosError> {
+    let mut element_factories = BuiltInElementModule::definition().into_factories();
+    let elements = ElementRegistry::standard_builder()
+        .register_modules(config.element_modules.drain(..))
         .build()
-        .map_err(|error| MacosHostError(format!("build element registry: {error}")))?;
-    config.element_factories = element_modules
-        .iter()
-        .map(|module| module.factory().clone())
-        .collect();
+        .map_err(|error| MacosError(format!("build element registry: {error}")))?;
+    element_factories.extend(
+        config
+            .module_definitions
+            .drain(..)
+            .flat_map(DesktopModuleDefinition::into_factories),
+    );
+    config.element_factories = element_factories;
     let event_loop = EventLoop::<HostEvent>::with_user_event()
         .build()
-        .map_err(|error| MacosHostError(format!("create macOS event loop: {error}")))?;
+        .map_err(|error| MacosError(format!("create macOS event loop: {error}")))?;
     let proxy = event_loop.create_proxy();
     let mut application = MacosApplication::new(config, elements, application, proxy);
     event_loop
         .run_app(&mut application)
-        .map_err(|error| MacosHostError(format!("run macOS event loop: {error}")))
+        .map_err(|error| MacosError(format!("run macOS event loop: {error}")))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -100,7 +107,7 @@ struct MacosApplication {
     proxy: EventLoopProxy<HostEvent>,
     window: Option<Arc<Window>>,
     runtime: Option<RuntimeInstance>,
-    host: Option<DesktopHost>,
+    host: Option<DesktopRuntime>,
     viewport: PhysicalSize<u32>,
     viewport_epoch: u32,
     environment_epoch: u64,
@@ -131,7 +138,7 @@ impl MacosApplication {
         }
     }
 
-    fn mount(&mut self, event_loop: &ActiveEventLoop) -> Result<(), MacosHostError> {
+    fn mount(&mut self, event_loop: &ActiveEventLoop) -> Result<(), MacosError> {
         if self.window.is_some() {
             return Ok(());
         }
@@ -141,7 +148,7 @@ impl MacosApplication {
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
-                .map_err(|error| MacosHostError(format!("create macOS window: {error}")))?,
+                .map_err(|error| MacosError(format!("create macOS window: {error}")))?,
         );
         self.viewport = window.inner_size();
         let scale = window.scale_factor() as f32;
@@ -157,18 +164,18 @@ impl MacosApplication {
         let wake = RuntimeWakeHandle::new(move || {
             let _ = wake_proxy.send_event(HostEvent::RequestFrame);
         });
-        let host = pollster::block_on(DesktopHost::new(
+        let host = pollster::block_on(DesktopRuntime::new(
             window.clone(),
             [self.viewport.width, self.viewport.height],
             surface_id,
             &element_registrations,
             &self.config.element_factories,
         ))
-        .map_err(|error| MacosHostError(error.to_string()))?;
+        .map_err(|error| MacosError(error.to_string()))?;
         let mut runtime = RuntimeInstance::new(surface, wake);
         runtime
             .mount(self.application)
-            .map_err(|error| MacosHostError(format!("mount Whisker application: {error}")))?;
+            .map_err(|error| MacosError(format!("mount Whisker application: {error}")))?;
         self.host = Some(host);
         self.runtime = Some(runtime);
         self.window = Some(window);

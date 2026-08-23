@@ -46,7 +46,7 @@ publishing {
                 name.set("Whisker KSP processor")
                 description.set(
                     "KSP SymbolProcessor that scans the user app's classpath " +
-                        "for rs.whisker.runtime.Module subclasses and emits " +
+                        "for @rs.whisker.runtime.WhiskerModule declarations and emits " +
                         "<Module>Behaviors.kt aggregator source.",
                 )
                 url.set("https://github.com/whiskerrs/whisker")

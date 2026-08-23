@@ -22,23 +22,46 @@
 pub mod back;
 pub mod element_ref;
 pub mod focus;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod lynx;
+#[doc(hidden)]
+pub mod mobile_abi;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod module;
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[path = "module_mobile.rs"]
 pub mod module;
 
 pub use element_ref::{
     BoundingClientRect, ElementHandle, ElementRef, ListHandle, ListScrollAlign, RefError,
     ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo, VisibleCell, VisibleCells,
 };
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use lynx::bootstrap;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use lynx::renderer::BridgeRenderer;
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::ffi::{CString, c_void};
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use whisker_driver_sys as ffi;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use whisker_driver_sys::WhiskerElement;
-use whisker_runtime::view::{Element, module_component_ptr};
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use whisker_runtime::view::module_component_ptr;
+use whisker_runtime::view::{Element, try_invoke_element_method};
 
-use crate::module::{RawBuilder, WhiskerValue, async_trampoline, from_raw};
+use crate::module::WhiskerValue;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use crate::module::{RawBuilder, async_trampoline, from_raw};
+
+/// Forces the tiny Android JNI archive into the final application library.
+#[cfg(target_os = "android")]
+#[doc(hidden)]
+pub fn ensure_mobile_bridge_linked() {
+    unsafe { whisker_driver_sys::whisker_mobile_bridge_anchor() }
+}
 
 /// Synchronously invoke `method` on the platform component identified
 /// by `handle`, with `args` passed positionally through Lynx's
@@ -49,6 +72,7 @@ use crate::module::{RawBuilder, WhiskerValue, async_trampoline, from_raw};
 /// and the `#[whisker::element_methods]`-emitted bodies. User code
 /// uses the typed wrappers ([`ElementRef`], [`ElementHandle`], …),
 /// not this entry point.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn invoke_element_method(
     handle: Element,
     method: &str,
@@ -92,6 +116,20 @@ pub fn invoke_element_method(
     result
 }
 
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn invoke_element_method(
+    handle: Element,
+    method: &str,
+    args: Vec<WhiskerValue>,
+) -> WhiskerValue {
+    try_invoke_element_method(handle, method, WhiskerValue::args(args)).unwrap_or_else(|| {
+        WhiskerValue::Error(format!(
+            "invoke_element_method({method}): element {} has no Host method binding",
+            handle.id()
+        ))
+    })
+}
+
 /// Fire-and-forget invoke of a built-in Lynx UI method whose arguments
 /// are read as *named fields* of the params object (`scrollTo`,
 /// `scrollBy`, `autoScroll`, `scrollIntoView`, …) rather than from the
@@ -105,37 +143,49 @@ pub fn invoke_element_method_with_params(
     method: &str,
     params: WhiskerValue,
 ) -> WhiskerValue {
-    let ptr_usize = module_component_ptr(handle);
-    if ptr_usize == 0 {
-        return WhiskerValue::Error(format!(
-            "invoke_element_method_with_params({method}): no platform component \
+    if let Some(result) = try_invoke_element_method(handle, method, params.clone()) {
+        return result;
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    return WhiskerValue::Error(format!(
+        "invoke_element_method_with_params({method}): element {} has no Host method binding",
+        handle.id()
+    ));
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let ptr_usize = module_component_ptr(handle);
+        if ptr_usize == 0 {
+            return WhiskerValue::Error(format!(
+                "invoke_element_method_with_params({method}): no platform component \
              for handle {} (renderer not installed, or element released)",
-            handle.id()
-        ));
+                handle.id()
+            ));
+        }
+        let method_c = match CString::new(method) {
+            Ok(c) => c,
+            Err(_) => return WhiskerValue::Error("method name contained NUL byte".into()),
+        };
+
+        let mut builder = RawBuilder::default();
+        let raw_params = builder.encode(&params);
+
+        let raw_result = unsafe {
+            ffi::whisker_bridge_invoke_element_method_with_params(
+                ptr_usize as *mut WhiskerElement,
+                method_c.as_ptr(),
+                &raw_params as *const _,
+            )
+        };
+
+        let result = unsafe { from_raw(&raw_result) };
+        unsafe {
+            let mut mutable = raw_result;
+            ffi::whisker_bridge_value_release(&mut mutable as *mut _);
+        }
+        drop(builder);
+        result
     }
-    let method_c = match CString::new(method) {
-        Ok(c) => c,
-        Err(_) => return WhiskerValue::Error("method name contained NUL byte".into()),
-    };
-
-    let mut builder = RawBuilder::default();
-    let raw_params = builder.encode(&params);
-
-    let raw_result = unsafe {
-        ffi::whisker_bridge_invoke_element_method_with_params(
-            ptr_usize as *mut WhiskerElement,
-            method_c.as_ptr(),
-            &raw_params as *const _,
-        )
-    };
-
-    let result = unsafe { from_raw(&raw_result) };
-    unsafe {
-        let mut mutable = raw_result;
-        ffi::whisker_bridge_value_release(&mut mutable as *mut _);
-    }
-    drop(builder);
-    result
 }
 
 /// Typed timing options for [`animate_start`].
@@ -368,48 +418,59 @@ pub fn invoke_element_animate(
     keyframes: WhiskerValue,
     options: WhiskerValue,
 ) -> WhiskerValue {
-    let ptr_usize = module_component_ptr(handle);
-    if ptr_usize == 0 {
-        return WhiskerValue::Error(format!(
-            "invoke_element_animate: no platform component for handle {} \
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let _ = (operation, &keyframes, &options);
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    return WhiskerValue::Error(format!(
+        "invoke_element_animate({animation_name}): element {} has no Host animation binding",
+        handle.id()
+    ));
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let ptr_usize = module_component_ptr(handle);
+        if ptr_usize == 0 {
+            return WhiskerValue::Error(format!(
+                "invoke_element_animate: no platform component for handle {} \
              (renderer not installed, or element released)",
-            handle.id()
-        ));
+                handle.id()
+            ));
+        }
+        let name_c = match CString::new(animation_name) {
+            Ok(c) => c,
+            Err(_) => return WhiskerValue::Error("animation_name contained NUL byte".into()),
+        };
+
+        let mut builder = RawBuilder::default();
+        let raw_kf = builder.encode(&keyframes);
+        let raw_opt = builder.encode(&options);
+        let kf_ptr = match keyframes {
+            WhiskerValue::Null => std::ptr::null(),
+            _ => &raw_kf as *const _,
+        };
+        let opt_ptr = match options {
+            WhiskerValue::Null => std::ptr::null(),
+            _ => &raw_opt as *const _,
+        };
+
+        let raw_result = unsafe {
+            ffi::whisker_bridge_element_animate(
+                ptr_usize as *mut WhiskerElement,
+                operation,
+                name_c.as_ptr(),
+                kf_ptr,
+                opt_ptr,
+            )
+        };
+
+        let result = unsafe { from_raw(&raw_result) };
+        unsafe {
+            let mut mutable = raw_result;
+            ffi::whisker_bridge_value_release(&mut mutable as *mut _);
+        }
+        drop(builder);
+        result
     }
-    let name_c = match CString::new(animation_name) {
-        Ok(c) => c,
-        Err(_) => return WhiskerValue::Error("animation_name contained NUL byte".into()),
-    };
-
-    let mut builder = RawBuilder::default();
-    let raw_kf = builder.encode(&keyframes);
-    let raw_opt = builder.encode(&options);
-    let kf_ptr = match keyframes {
-        WhiskerValue::Null => std::ptr::null(),
-        _ => &raw_kf as *const _,
-    };
-    let opt_ptr = match options {
-        WhiskerValue::Null => std::ptr::null(),
-        _ => &raw_opt as *const _,
-    };
-
-    let raw_result = unsafe {
-        ffi::whisker_bridge_element_animate(
-            ptr_usize as *mut WhiskerElement,
-            operation,
-            name_c.as_ptr(),
-            kf_ptr,
-            opt_ptr,
-        )
-    };
-
-    let result = unsafe { from_raw(&raw_result) };
-    unsafe {
-        let mut mutable = raw_result;
-        ffi::whisker_bridge_value_release(&mut mutable as *mut _);
-    }
-    drop(builder);
-    result
 }
 
 /// Async, **result-returning** element-method invoke — the path for
@@ -427,44 +488,52 @@ pub async fn invoke_element_method_async(
     method: &str,
     args: Vec<WhiskerValue>,
 ) -> WhiskerValue {
-    let ptr_usize = module_component_ptr(handle);
-    if ptr_usize == 0 {
-        return WhiskerValue::Error(format!(
-            "invoke_element_method_async({method}): no platform component for handle {} \
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    return invoke_element_method(handle, method, args);
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let ptr_usize = module_component_ptr(handle);
+        if ptr_usize == 0 {
+            return WhiskerValue::Error(format!(
+                "invoke_element_method_async({method}): no platform component for handle {} \
              (renderer not installed, or element released)",
-            handle.id()
-        ));
+                handle.id()
+            ));
+        }
+        let method_c = match CString::new(method) {
+            Ok(c) => c,
+            Err(_) => return WhiskerValue::Error("method name contained NUL byte".into()),
+        };
+
+        let mut builder = RawBuilder::default();
+        let raw_args: Vec<ffi::WhiskerValueRaw> = args.iter().map(|v| builder.encode(v)).collect();
+
+        let (tx, rx) = futures_channel::oneshot::channel::<WhiskerValue>();
+        let tx_box: Box<Option<futures_channel::oneshot::Sender<WhiskerValue>>> =
+            Box::new(Some(tx));
+        let tx_ptr = Box::into_raw(tx_box) as *mut c_void;
+
+        let _scheduled = unsafe {
+            ffi::whisker_bridge_invoke_element_method_async(
+                ptr_usize as *mut WhiskerElement,
+                method_c.as_ptr(),
+                if raw_args.is_empty() {
+                    std::ptr::null()
+                } else {
+                    raw_args.as_ptr()
+                },
+                raw_args.len(),
+                async_trampoline,
+                tx_ptr,
+            )
+        };
+        drop(builder);
+
+        rx.await.unwrap_or_else(|_| {
+            WhiskerValue::Error("element-method async callback never fired".into())
+        })
     }
-    let method_c = match CString::new(method) {
-        Ok(c) => c,
-        Err(_) => return WhiskerValue::Error("method name contained NUL byte".into()),
-    };
-
-    let mut builder = RawBuilder::default();
-    let raw_args: Vec<ffi::WhiskerValueRaw> = args.iter().map(|v| builder.encode(v)).collect();
-
-    let (tx, rx) = futures_channel::oneshot::channel::<WhiskerValue>();
-    let tx_box: Box<Option<futures_channel::oneshot::Sender<WhiskerValue>>> = Box::new(Some(tx));
-    let tx_ptr = Box::into_raw(tx_box) as *mut c_void;
-
-    let _scheduled = unsafe {
-        ffi::whisker_bridge_invoke_element_method_async(
-            ptr_usize as *mut WhiskerElement,
-            method_c.as_ptr(),
-            if raw_args.is_empty() {
-                std::ptr::null()
-            } else {
-                raw_args.as_ptr()
-            },
-            raw_args.len(),
-            async_trampoline,
-            tx_ptr,
-        )
-    };
-    drop(builder);
-
-    rx.await
-        .unwrap_or_else(|_| WhiskerValue::Error("element-method async callback never fired".into()))
 }
 
 /// The unified element-method dispatch: `params` (a single
@@ -480,37 +549,51 @@ pub async fn invoke_element_method_async_with_params(
     method: &str,
     params: WhiskerValue,
 ) -> WhiskerValue {
-    let ptr_usize = module_component_ptr(handle);
-    if ptr_usize == 0 {
-        return WhiskerValue::Error(format!(
-            "invoke_element_method_async_with_params({method}): no platform component \
-             for handle {} (renderer not installed, or element released)",
-            handle.id()
-        ));
+    if let Some(result) = try_invoke_element_method(handle, method, params.clone()) {
+        return result;
     }
-    let method_c = match CString::new(method) {
-        Ok(c) => c,
-        Err(_) => return WhiskerValue::Error("method name contained NUL byte".into()),
-    };
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    return WhiskerValue::Error(format!(
+        "invoke_element_method_async_with_params({method}): element {} has no Host method binding",
+        handle.id()
+    ));
 
-    let mut builder = RawBuilder::default();
-    let raw_params = builder.encode(&params);
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let ptr_usize = module_component_ptr(handle);
+        if ptr_usize == 0 {
+            return WhiskerValue::Error(format!(
+                "invoke_element_method_async_with_params({method}): no platform component \
+             for handle {} (renderer not installed, or element released)",
+                handle.id()
+            ));
+        }
+        let method_c = match CString::new(method) {
+            Ok(c) => c,
+            Err(_) => return WhiskerValue::Error("method name contained NUL byte".into()),
+        };
 
-    let (tx, rx) = futures_channel::oneshot::channel::<WhiskerValue>();
-    let tx_box: Box<Option<futures_channel::oneshot::Sender<WhiskerValue>>> = Box::new(Some(tx));
-    let tx_ptr = Box::into_raw(tx_box) as *mut c_void;
+        let mut builder = RawBuilder::default();
+        let raw_params = builder.encode(&params);
 
-    let _scheduled = unsafe {
-        ffi::whisker_bridge_invoke_element_method_async_with_params(
-            ptr_usize as *mut WhiskerElement,
-            method_c.as_ptr(),
-            &raw_params as *const _,
-            async_trampoline,
-            tx_ptr,
-        )
-    };
-    drop(builder);
+        let (tx, rx) = futures_channel::oneshot::channel::<WhiskerValue>();
+        let tx_box: Box<Option<futures_channel::oneshot::Sender<WhiskerValue>>> =
+            Box::new(Some(tx));
+        let tx_ptr = Box::into_raw(tx_box) as *mut c_void;
 
-    rx.await
-        .unwrap_or_else(|_| WhiskerValue::Error("element-method async callback never fired".into()))
+        let _scheduled = unsafe {
+            ffi::whisker_bridge_invoke_element_method_async_with_params(
+                ptr_usize as *mut WhiskerElement,
+                method_c.as_ptr(),
+                &raw_params as *const _,
+                async_trampoline,
+                tx_ptr,
+            )
+        };
+        drop(builder);
+
+        rx.await.unwrap_or_else(|_| {
+            WhiskerValue::Error("element-method async callback never fired".into())
+        })
+    }
 }

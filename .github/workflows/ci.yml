@@ -99,20 +99,17 @@ jobs:
       - run: cargo check -p whisker --target aarch64-apple-ios-sim
 
   build-ios-runtime:
-    name: swift build (WhiskerRuntime)
+    name: swift build (WhiskerModule)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      # The iOS runtime is Swift, and nothing else in this workflow
+      # The iOS module API is Swift, and nothing else in this workflow
       # compiles Swift: `cross build` above builds the Rust half for an
       # iOS target and stops there. A Swift-only break therefore reached
       # a tagged SwiftPM release and only surfaced when an app built
-      # against it (a property read against a Lynx header the shipped
-      # framework doesn't surface). This scheme pulls the Lynx binary
-      # target the same way an app does, so it catches that class of
-      # break here instead.
+      # against it. Compile the module authoring surface for iOS here.
       - run: |
-          xcodebuild -scheme WhiskerRuntime \
+          xcodebuild -scheme WhiskerModule \
             -destination 'generic/platform=iOS Simulator' \
             -skipPackagePluginValidation \
             build

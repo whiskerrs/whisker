@@ -5,19 +5,19 @@ use whisker::runtime::reactive::{__reset_for_tests, Owner};
 use whisker::runtime::view::{set_root, with_installed_renderer};
 use whisker::{SurfaceRuntime, standard_element_registrations};
 use whisker_engine::whisker_layout::LayoutSize;
-use whisker_engine::{FrameSink, MeasurementHost};
+use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_protocol::{
-    AvailableSpace, BorderLineStyle, BoxPaint, ElementContentKind, ElementTypeId, FrameHeader,
-    FrameMode, FramePacket, InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect,
-    MeasureConstraints, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
-    MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasurementKey, MeasurementPayload,
-    MeasurementRequest, MeasurementResponse, NodeId, Operation, PaintColor, PaintCorners,
-    PaintEdges, PaintLengthPercentage, PointerId, PointerInput, PointerKind, ProtocolValue,
-    ProtocolVersion, SurfaceId, TextMeasurePayload, TextMeasureStyle,
+    AvailableSpace, BorderLineStyle, BoxPaint, ElementTypeId, FrameHeader, FrameMode, FramePacket,
+    InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect, MeasureConstraints,
+    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
+    MeasureTextOverflow, MeasureTextWrap, MeasurementKey, MeasurementPayload, MeasurementRequest,
+    MeasurementResponse, NodeId, Operation, PaintColor, PaintCorners, PaintEdges,
+    PaintLengthPercentage, PointerId, PointerInput, PointerKind, ProtocolVersion, SurfaceId,
+    TextMeasurePayload, TextMeasureStyle, WhiskerValue,
 };
 use whisker_style::StyleEnvironment;
 
-use crate::element::{DesktopElementRegistry, standard_desktop_element_factories};
+use crate::element::{DesktopElementRegistry, built_in_element_factories};
 use crate::gpu::render_box_primitives_offscreen;
 use crate::paint::box_paint::{BoxPrimitive, BoxPrimitiveKind, lower_box};
 use crate::scene::{DesktopScene, PaintCommand};
@@ -245,11 +245,11 @@ struct Checkpoint {
     primitives: Vec<BoxPrimitive>,
 }
 
-fn standard_element_type(content: ElementContentKind) -> ElementTypeId {
+fn standard_element_type(name: &str) -> ElementTypeId {
     standard_element_registrations()
         .into_iter()
-        .find(|registration| registration.content == content)
-        .expect("standard content registration")
+        .find(|registration| registration.name == name)
+        .expect("standard element registration")
         .element_type
 }
 
@@ -258,7 +258,7 @@ fn desktop_scene(surface: SurfaceId) -> DesktopScene {
         surface,
         DesktopElementRegistry::bind(
             &standard_element_registrations(),
-            &standard_desktop_element_factories(),
+            &built_in_element_factories(),
         )
         .unwrap(),
     )
@@ -274,7 +274,7 @@ impl Driver {
             text: NativeTextHost::new(
                 DesktopElementRegistry::bind(
                     &standard_element_registrations(),
-                    &standard_desktop_element_factories(),
+                    &built_in_element_factories(),
                 )
                 .unwrap(),
             ),
@@ -389,7 +389,7 @@ impl Driver {
             operations: vec![
                 Operation::CreateNode {
                     node,
-                    element_type: standard_element_type(ElementContentKind::None),
+                    element_type: standard_element_type(whisker::VIEW_ELEMENT_NAME),
                 },
                 Operation::SetLayout {
                     node,
@@ -442,7 +442,7 @@ impl Driver {
         let request = MeasurementRequest {
             key: MeasurementKey::new(key).expect("scenario measurement key is non-zero"),
             node: NodeId::new(key).expect("scenario node key is non-zero"),
-            element_type: standard_element_type(ElementContentKind::Text),
+            element_type: standard_element_type(whisker::TEXT_ELEMENT_NAME),
             environment_epoch: 1,
             constraints: MeasureConstraints {
                 known_dimensions: [None, None],
@@ -518,7 +518,7 @@ impl Driver {
                 changed_button,
             }),
             target: None,
-            detail: ProtocolValue::Null,
+            detail: WhiskerValue::Null,
         });
     }
 
@@ -822,13 +822,11 @@ fn render_taffy_protocol_and_desktop_box_paint_compose() {
 
     let registrations = surface.element_registrations();
     let mut measurement = NativeTextHost::new(
-        DesktopElementRegistry::bind(&registrations, &standard_desktop_element_factories())
-            .unwrap(),
+        DesktopElementRegistry::bind(&registrations, &built_in_element_factories()).unwrap(),
     );
     let mut scene = DesktopScene::new(
         surface_id,
-        DesktopElementRegistry::bind(&registrations, &standard_desktop_element_factories())
-            .unwrap(),
+        DesktopElementRegistry::bind(&registrations, &built_in_element_factories()).unwrap(),
     );
     let frame = surface
         .render_frame(
@@ -837,7 +835,7 @@ fn render_taffy_protocol_and_desktop_box_paint_compose() {
             1,
             &mut measurement,
             &mut scene,
-            whisker_engine::HostLayoutOptions::default(),
+            whisker_engine::LayoutOptions::default(),
         )
         .expect("render!, Taffy, protocol, and Desktop scene compose");
     assert!(frame.layout.has_layout());

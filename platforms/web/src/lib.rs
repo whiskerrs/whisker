@@ -8,22 +8,35 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
+use std::rc::Rc;
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use whisker::runtime::RuntimeWakeHandle;
-use whisker::{Element, ElementProviderMetadata, ElementRegistry, RuntimeInstance, SurfaceRuntime};
-use whisker_engine::{FrameSink, HostLayoutOptions, MeasurementHost};
+use whisker::{Element, ElementModuleDefinition, ElementRegistry, RuntimeInstance, SurfaceRuntime};
+use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
 use whisker_protocol::{
-    ApplyResult, AvailableSpace, BorderLineStyle, ElementContentKind, ElementRegistration,
-    ElementTypeId, FrameMode, FramePacket, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
-    MeasureTextDirection, MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload,
-    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintColor,
-    PaintLengthPercentage, PreparedContentId, SceneProjection, SurfaceId,
+    ApplyResult, AvailableSpace, BorderLineStyle, CommandId, ElementRegistration, ElementTypeId,
+    FrameMode, FramePacket, InputEvent, InputEventKind, MeasureFontFamily, MeasureFontStyle,
+    MeasureLineHeight, MeasureTextDirection, MeasureTextWrap, MeasuredSize, MeasurementMetrics,
+    MeasurementPayload, MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip,
+    PaintColor, PaintLengthPercentage, PreparedContentId, PropertyId, SceneProjection, SurfaceId,
 };
 use whisker_style::StyleEnvironment;
+
+/// Marks and defines a platform implementation contributed by a module.
+pub use whisker::WhiskerModule;
+
+/// Browser bindings used by Rust-authored Web Host contributions.
+pub use wasm_bindgen;
+/// DOM bindings used by Rust-authored Web Host contributions.
+pub use web_sys;
+/// Shared value used by Web module properties, functions, and events.
+pub use whisker_value::WhiskerValue;
 
 thread_local! {
     static APPLICATION: RefCell<Option<WebApplication>> = const { RefCell::new(None) };
@@ -38,7 +51,9 @@ pub struct WebAppConfig {
     /// DOM element id used as the surface root.
     pub root_id: String,
     /// Element modules selected for this target.
-    pub element_modules: Vec<WebElementModule>,
+    pub module_definitions: Vec<WebModuleDefinition>,
+    /// Host-independent element schemas selected from Rust module crates.
+    pub element_modules: Vec<ElementModuleDefinition>,
 }
 
 impl WebAppConfig {
@@ -47,104 +62,573 @@ impl WebAppConfig {
         Self {
             title: title.into(),
             root_id: "whisker-root".to_string(),
+            module_definitions: Vec::new(),
             element_modules: Vec::new(),
         }
     }
 
     /// Adds one Rust element definition with its matching DOM factory.
-    pub fn with_element_module(mut self, module: WebElementModule) -> Self {
-        self.element_modules.push(module);
+    pub fn with_module_definition(mut self, definition: WebModuleDefinition) -> Self {
+        self.module_definitions.push(definition);
+        self
+    }
+
+    /// Adds one Host-independent Rust element module for bootstrap negotiation.
+    pub fn with_element_module(mut self, definition: ElementModuleDefinition) -> Self {
+        self.element_modules.push(definition);
         self
     }
 }
 
-/// One Web element module's Rust schema and target factory.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WebElementModule {
-    provider: ElementProviderMetadata,
-    factory: WebElementFactory,
+/// Rust/Web counterpart of the Swift/Kotlin `ModuleDefinition` DSL.
+#[derive(Clone, Debug, Default)]
+pub struct WebModuleDefinition {
+    factories: Vec<WebElementFactory>,
 }
 
-impl WebElementModule {
-    /// Joins a Rust provider to its DOM Host factory.
-    pub fn new(provider: ElementProviderMetadata, factory: WebElementFactory) -> Self {
-        Self { provider, factory }
+/// Web Host module declaration, named consistently with native Hosts.
+pub type ModuleDefinition = WebModuleDefinition;
+
+impl WebModuleDefinition {
+    /// Starts an empty Web module declaration.
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Returns the Rust provider metadata.
-    pub fn provider(&self) -> &ElementProviderMetadata {
-        &self.provider
+    /// Adds an independently declared Host View matched by stable name.
+    pub fn view<I>(mut self, implementation: I) -> Self
+    where
+        I: WebViewImplementation,
+    {
+        self.factories.push(implementation.into_web_factory());
+        self
     }
 
-    /// Returns the target-specific DOM factory.
-    pub fn factory(&self) -> &WebElementFactory {
-        &self.factory
+    /// Returns every DOM factory contributed by this declaration.
+    pub fn factories(&self) -> &[WebElementFactory] {
+        &self.factories
+    }
+
+    /// Consumes the declaration and returns its DOM factories.
+    pub fn into_factories(self) -> Vec<WebElementFactory> {
+        self.factories
     }
 }
 
-/// DOM factory embedded for one element-provider module.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WebElementFactory {
-    canonical_name: String,
-    tag_name: String,
+/// Converts one Web `View` declaration into its Host factory.
+pub trait WebViewImplementation {
+    /// Erases this declaration into a factory bound by name at bootstrap.
+    fn into_web_factory(self) -> WebElementFactory;
 }
 
-impl WebElementFactory {
-    /// Creates a DOM factory joined to a Rust schema by canonical name.
-    pub fn new(canonical_name: impl Into<String>, tag_name: impl Into<String>) -> Self {
+impl WebViewImplementation for WebElementFactory {
+    fn into_web_factory(self) -> WebElementFactory {
+        self
+    }
+}
+
+type WebViewConstructor<T> =
+    Rc<dyn Fn(&web_sys::Document, WebEventEmitter) -> Result<T, wasm_bindgen::JsValue>>;
+type WebElementGetter<T> = Rc<dyn Fn(&T) -> web_sys::Element>;
+type WebPropSetter<T> = Rc<dyn Fn(&mut T, &WhiskerValue) -> Result<(), wasm_bindgen::JsValue>>;
+type WebPropClearer<T> = Rc<dyn Fn(&mut T) -> Result<(), wasm_bindgen::JsValue>>;
+type WebCommandHandler<T> = Rc<dyn Fn(&mut T, &WhiskerValue) -> Result<(), wasm_bindgen::JsValue>>;
+
+struct WebPropBinding<T> {
+    set: WebPropSetter<T>,
+    clear: WebPropClearer<T>,
+}
+
+impl<T> Clone for WebPropBinding<T> {
+    fn clone(&self) -> Self {
         Self {
-            canonical_name: canonical_name.into(),
-            tag_name: tag_name.into(),
+            set: Rc::clone(&self.set),
+            clear: Rc::clone(&self.clear),
         }
     }
 }
 
-/// Returns the standard UI package as ordinary Web element modules.
-pub fn standard_web_element_modules() -> Vec<WebElementModule> {
-    whisker::standard_element_providers()
-        .into_iter()
-        .map(|provider| {
-            let factory = match provider.schema.canonical_name.as_str() {
-                whisker::VIEW_ELEMENT_NAME
-                | whisker::TEXT_ELEMENT_NAME
-                | whisker::SCROLL_VIEW_ELEMENT_NAME => {
-                    WebElementFactory::new(provider.schema.canonical_name.clone(), "div")
-                }
-                canonical_name => panic!("standard UI DOM factory missing for {canonical_name}"),
-            };
-            WebElementModule::new(provider, factory)
-        })
-        .collect()
+/// The `View { Prop / Events / Command }` portion of a Web declaration.
+pub struct WebViewDefinition<T> {
+    name: String,
+    create: WebViewConstructor<T>,
+    element: WebElementGetter<T>,
+    properties: HashMap<String, WebPropBinding<T>>,
+    events: HashSet<String>,
+    commands: HashMap<String, WebCommandHandler<T>>,
+    plain_text: bool,
+    scroll_content: bool,
 }
 
-/// Returns only the DOM factories from the standard UI package.
-pub fn standard_web_element_factories() -> Vec<WebElementFactory> {
-    standard_web_element_modules()
-        .into_iter()
-        .map(|module| module.factory)
-        .collect()
+impl<T> WebViewDefinition<T>
+where
+    T: 'static,
+{
+    /// Declares how DOM-backed state is created and which DOM element is
+    /// mounted as its content object.
+    pub fn new(
+        name: impl Into<String>,
+        create: impl Fn(&web_sys::Document, WebEventEmitter) -> Result<T, wasm_bindgen::JsValue>
+        + 'static,
+        element: impl Fn(&T) -> web_sys::Element + 'static,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            create: Rc::new(create),
+            element: Rc::new(element),
+            properties: HashMap::new(),
+            events: HashSet::new(),
+            commands: HashMap::new(),
+            plain_text: false,
+            scroll_content: false,
+        }
+    }
+
+    /// Declares that this DOM implementation consumes normalized plain text.
+    pub fn plain_text(mut self) -> Self {
+        self.plain_text = true;
+        self
+    }
+
+    /// Declares the Host-local scroll presentation used by this element.
+    pub fn scroll_container(mut self) -> Self {
+        self.scroll_content = true;
+        self
+    }
+
+    /// Declares one property by its stable Host name.
+    pub fn prop(
+        mut self,
+        property: impl Into<String>,
+        set: impl Fn(&mut T, &WhiskerValue) -> Result<(), wasm_bindgen::JsValue> + 'static,
+        clear: impl Fn(&mut T) -> Result<(), wasm_bindgen::JsValue> + 'static,
+    ) -> Self {
+        let property = property.into();
+        assert!(!property.trim().is_empty(), "Web property name is empty");
+        assert!(
+            self.properties
+                .insert(
+                    property.clone(),
+                    WebPropBinding {
+                        set: Rc::new(set),
+                        clear: Rc::new(clear),
+                    },
+                )
+                .is_none(),
+            "duplicate Web property binding for {property}"
+        );
+        self
+    }
+
+    /// Declares one event by its stable Host name.
+    pub fn event(mut self, event: impl Into<String>) -> Self {
+        let event = event.into();
+        assert!(!event.trim().is_empty(), "Web event name is empty");
+        assert!(
+            self.events.insert(event.clone()),
+            "duplicate Web event binding for {event}"
+        );
+        self
+    }
+
+    /// Declares one command by its stable Host name.
+    pub fn command(
+        mut self,
+        command: impl Into<String>,
+        handler: impl Fn(&mut T, &WhiskerValue) -> Result<(), wasm_bindgen::JsValue> + 'static,
+    ) -> Self {
+        let command = command.into();
+        assert!(!command.trim().is_empty(), "Web command name is empty");
+        assert!(
+            self.commands
+                .insert(command.clone(), Rc::new(handler))
+                .is_none(),
+            "duplicate Web command binding for {command}"
+        );
+        self
+    }
+
+    fn bind(&self, registration: &ElementRegistration) -> Result<WebNativeConstructor, String> {
+        if registration.child_policy.accepts_plain_text() != self.plain_text {
+            return Err(format!(
+                "plain-text policy differs: Host={}, Rust={:?}",
+                self.plain_text, registration.child_policy
+            ));
+        }
+        let schema_properties = registration
+            .properties
+            .iter()
+            .map(|property| property.name.clone())
+            .collect::<HashSet<_>>();
+        let schema_events = registration
+            .events
+            .iter()
+            .map(|event| event.name.clone())
+            .collect::<HashSet<_>>();
+        let schema_commands = registration
+            .commands
+            .iter()
+            .map(|command| command.name.clone())
+            .collect::<HashSet<_>>();
+        let declared_properties = self.properties.keys().cloned().collect::<HashSet<_>>();
+        let declared_commands = self.commands.keys().cloned().collect::<HashSet<_>>();
+        if declared_properties != schema_properties {
+            return Err(format!(
+                "property declarations differ: Host={declared_properties:?}, Rust={schema_properties:?}"
+            ));
+        }
+        if self.events != schema_events {
+            return Err(format!(
+                "event declarations differ: Host={:?}, Rust={schema_events:?}",
+                self.events
+            ));
+        }
+        if declared_commands != schema_commands {
+            return Err(format!(
+                "command declarations differ: Host={declared_commands:?}, Rust={schema_commands:?}"
+            ));
+        }
+        let properties = registration
+            .properties
+            .iter()
+            .map(|schema| (schema.property, self.properties[&schema.name].clone()))
+            .collect();
+        let commands = registration
+            .commands
+            .iter()
+            .map(|schema| (schema.command, Rc::clone(&self.commands[&schema.name])))
+            .collect();
+        let definition = Rc::new(BoundWebViewDefinition {
+            create: Rc::clone(&self.create),
+            element: Rc::clone(&self.element),
+            properties,
+            commands,
+        });
+        Ok(Rc::new(move |document, emitter| {
+            Ok(Box::new(DeclaredWebElement {
+                state: (definition.create)(document, emitter)?,
+                definition: definition.clone(),
+            }))
+        }))
+    }
+}
+
+impl<T> WebViewImplementation for WebViewDefinition<T>
+where
+    T: 'static,
+{
+    fn into_web_factory(self) -> WebElementFactory {
+        let name = self.name.clone();
+        let plain_text = self.plain_text;
+        let scroll_content = self.scroll_content;
+        WebElementFactory::declared(name, self, plain_text, scroll_content)
+    }
+}
+
+struct BoundWebViewDefinition<T> {
+    create: WebViewConstructor<T>,
+    element: WebElementGetter<T>,
+    properties: HashMap<PropertyId, WebPropBinding<T>>,
+    commands: HashMap<CommandId, WebCommandHandler<T>>,
+}
+
+struct DeclaredWebElement<T> {
+    state: T,
+    definition: Rc<BoundWebViewDefinition<T>>,
+}
+
+impl<T> fmt::Debug for DeclaredWebElement<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("DeclaredWebElement(..)")
+    }
+}
+
+impl<T> WebNativeElement for DeclaredWebElement<T>
+where
+    T: 'static,
+{
+    fn element(&self) -> web_sys::Element {
+        (self.definition.element)(&self.state)
+    }
+
+    fn set_property(
+        &mut self,
+        property: PropertyId,
+        value: &WhiskerValue,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        let binding = self
+            .definition
+            .properties
+            .get(&property)
+            .expect("Web Host validates property IDs");
+        (binding.set)(&mut self.state, value)
+    }
+
+    fn clear_property(&mut self, property: PropertyId) -> Result<(), wasm_bindgen::JsValue> {
+        let binding = self
+            .definition
+            .properties
+            .get(&property)
+            .expect("Web Host validates property IDs");
+        (binding.clear)(&mut self.state)
+    }
+
+    fn invoke_command(
+        &mut self,
+        command: CommandId,
+        arguments: &WhiskerValue,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        let handler = self
+            .definition
+            .commands
+            .get(&command)
+            .expect("Web Host validates command IDs");
+        handler(&mut self.state, arguments)
+    }
+}
+
+/// DOM factory embedded for one element module.
+#[derive(Clone)]
+pub struct WebElementFactory {
+    name: String,
+    kind: WebElementFactoryKind,
+    text_content: bool,
+    scroll_content: bool,
+}
+
+impl WebElementFactory {
+    /// Creates a DOM factory joined to a Rust schema by element name.
+    pub fn new(name: impl Into<String>, tag_name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            kind: WebElementFactoryKind::Tag(tag_name.into()),
+            text_content: false,
+            scroll_content: false,
+        }
+    }
+
+    /// Creates a DOM-native element whose implementation is owned by its
+    /// external module beside the Rust schema.
+    pub fn native<F>(name: impl Into<String>, create: F) -> Self
+    where
+        F: Fn(
+                &web_sys::Document,
+                WebEventEmitter,
+            ) -> Result<Box<dyn WebNativeElement>, wasm_bindgen::JsValue>
+            + 'static,
+    {
+        Self {
+            name: name.into(),
+            kind: WebElementFactoryKind::Native(Rc::new(create)),
+            text_content: false,
+            scroll_content: false,
+        }
+    }
+
+    fn declared<T>(
+        name: impl Into<String>,
+        definition: WebViewDefinition<T>,
+        text_content: bool,
+        scroll_content: bool,
+    ) -> Self
+    where
+        T: 'static,
+    {
+        Self {
+            name: name.into(),
+            kind: WebElementFactoryKind::Declared(Rc::new(definition)),
+            text_content,
+            scroll_content,
+        }
+    }
+
+    fn bind(&self, registration: &ElementRegistration) -> Result<Self, WebError> {
+        if registration.child_policy.accepts_plain_text() != self.text_content {
+            return Err(WebError(format!(
+                "DOM factory {} plain-text policy differs: Host={}, Rust={:?}",
+                registration.name, self.text_content, registration.child_policy
+            )));
+        }
+        let kind = match &self.kind {
+            WebElementFactoryKind::Declared(definition) => {
+                WebElementFactoryKind::Native(definition.bind(registration).map_err(|reason| {
+                    WebError(format!(
+                        "DOM factory {} contract mismatch: {reason}",
+                        registration.name
+                    ))
+                })?)
+            }
+            other => other.clone(),
+        };
+        Ok(Self {
+            name: self.name.clone(),
+            kind,
+            text_content: self.text_content,
+            scroll_content: self.scroll_content,
+        })
+    }
+}
+
+impl fmt::Debug for WebElementFactory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WebElementFactory")
+            .field("name", &self.name)
+            .field("kind", &self.kind.name())
+            .finish()
+    }
+}
+
+type WebNativeConstructor = Rc<
+    dyn Fn(
+        &web_sys::Document,
+        WebEventEmitter,
+    ) -> Result<Box<dyn WebNativeElement>, wasm_bindgen::JsValue>,
+>;
+
+trait WebDeclaredFactory {
+    fn bind(&self, registration: &ElementRegistration) -> Result<WebNativeConstructor, String>;
+}
+
+impl<T> WebDeclaredFactory for WebViewDefinition<T>
+where
+    T: 'static,
+{
+    fn bind(&self, registration: &ElementRegistration) -> Result<WebNativeConstructor, String> {
+        WebViewDefinition::bind(self, registration)
+    }
+}
+
+#[derive(Clone)]
+enum WebElementFactoryKind {
+    Tag(String),
+    Native(WebNativeConstructor),
+    Declared(Rc<dyn WebDeclaredFactory>),
+}
+
+impl WebElementFactoryKind {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Tag(_) => "tag",
+            Self::Native(_) => "native",
+            Self::Declared(_) => "declared-native",
+        }
+    }
+}
+
+impl fmt::Debug for WebElementFactoryKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tag(tag) => formatter.debug_tuple("Tag").field(tag).finish(),
+            Self::Native(_) => formatter.write_str("Native(..)"),
+            Self::Declared(_) => formatter.write_str("Declared(..)"),
+        }
+    }
+}
+
+/// Event emitted by one module-owned DOM element.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WebNativeEvent {
+    /// Stable event name declared by the Host module.
+    pub event: String,
+    /// Typed detail routed to the Rust listener.
+    pub detail: WhiskerValue,
+}
+
+/// Cloneable event channel handed to each DOM-native element instance.
+#[derive(Clone)]
+pub struct WebEventEmitter(Rc<dyn Fn(WebNativeEvent)>);
+
+impl WebEventEmitter {
+    /// Emits an event after the browser callback returns, at the next runtime
+    /// frame boundary.
+    pub fn emit(&self, event: WebNativeEvent) {
+        (self.0)(event);
+    }
+}
+
+impl fmt::Debug for WebEventEmitter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("WebEventEmitter(..)")
+    }
+}
+
+/// Per-node DOM implementation supplied by an external element module.
+///
+/// Implementations retain their browser listener closures and other resources;
+/// dropping the instance during `DeleteNode` releases those resources.
+pub trait WebNativeElement: fmt::Debug + 'static {
+    /// Returns the DOM element mounted into the common Host projection.
+    fn element(&self) -> web_sys::Element;
+
+    /// Applies one schema-validated property.
+    fn set_property(
+        &mut self,
+        property: PropertyId,
+        value: &WhiskerValue,
+    ) -> Result<(), wasm_bindgen::JsValue>;
+
+    /// Restores one schema-validated property to its implementation default.
+    fn clear_property(&mut self, property: PropertyId) -> Result<(), wasm_bindgen::JsValue>;
+
+    /// Executes one schema-validated command.
+    fn invoke_command(
+        &mut self,
+        command: CommandId,
+        arguments: &WhiskerValue,
+    ) -> Result<(), wasm_bindgen::JsValue>;
+}
+
+/// Built-in element implementations contributed by the Web platform.
+pub struct BuiltInElementModule;
+
+#[WhiskerModule]
+impl WhiskerModule for BuiltInElementModule {
+    type Definition = WebModuleDefinition;
+
+    fn definition() -> Self::Definition {
+        fn div(
+            document: &web_sys::Document,
+            _events: WebEventEmitter,
+        ) -> Result<web_sys::Element, wasm_bindgen::JsValue> {
+            document.create_element("div")
+        }
+
+        WebModuleDefinition::new()
+            .view(WebViewDefinition::new("whisker.ui/View", div, Clone::clone))
+            .view(WebViewDefinition::new("whisker.ui/Text", div, Clone::clone).plain_text())
+            .view(
+                WebViewDefinition::new("whisker.ui/ScrollView", div, Clone::clone)
+                    .scroll_container(),
+            )
+    }
+}
+
+#[cfg(test)]
+fn built_in_element_factories() -> Vec<WebElementFactory> {
+    BuiltInElementModule::definition().into_factories()
 }
 
 /// Failure while creating or driving the browser Host.
 #[derive(Clone, Debug)]
-pub struct WebHostError(String);
+pub struct WebError(String);
 
-impl fmt::Display for WebHostError {
+impl fmt::Display for WebError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
-impl Error for WebHostError {}
+impl Error for WebError {}
 
 /// Mounts a Whisker application into the current browser document.
 ///
 /// The generated `gen/web` crate calls this once from its WASM start
 /// function. Subsequent work is driven by `requestAnimationFrame`.
-pub fn run(config: WebAppConfig, application: fn() -> Element) -> Result<(), WebHostError> {
+pub fn run(config: WebAppConfig, application: fn() -> Element) -> Result<(), WebError> {
     APPLICATION.with(|slot| {
         if slot.borrow().is_some() {
-            return Err(WebHostError("a Web application is already mounted".into()));
+            return Err(WebError("a Web application is already mounted".into()));
         }
         *slot.borrow_mut() = Some(WebApplication::new(config)?);
         Ok(())
@@ -157,7 +641,7 @@ pub fn run(config: WebAppConfig, application: fn() -> Element) -> Result<(), Web
             .runtime
             .mount(application)
             .map(|_| ())
-            .map_err(|error| WebHostError(format!("mount Whisker application: {error}")))
+            .map_err(|error| WebError(format!("mount Whisker application: {error}")))
     });
     if let Err(error) = mount {
         APPLICATION.with(|slot| *slot.borrow_mut() = None);
@@ -175,7 +659,7 @@ pub fn run(config: WebAppConfig, application: fn() -> Element) -> Result<(), Web
 
 struct WebApplication {
     runtime: RuntimeInstance,
-    measurements: DomMeasurementHost,
+    measurements: DomMeasurementProvider,
     frames: DomFrameSink,
     viewport: (f32, f32, f32),
     viewport_epoch: u32,
@@ -183,21 +667,26 @@ struct WebApplication {
 }
 
 impl WebApplication {
-    fn new(mut config: WebAppConfig) -> Result<Self, WebHostError> {
-        let mut element_modules = standard_web_element_modules();
-        element_modules.append(&mut config.element_modules);
-        let elements = ElementRegistry::builder()
-            .register_providers(element_modules.iter().map(|module| module.provider.clone()))
+    fn new(mut config: WebAppConfig) -> Result<Self, WebError> {
+        let mut element_factories = BuiltInElementModule::definition().into_factories();
+        let elements = ElementRegistry::standard_builder()
+            .register_modules(config.element_modules.drain(..))
             .build()
-            .map_err(|error| WebHostError(format!("build element registry: {error}")))?;
+            .map_err(|error| WebError(format!("build element registry: {error}")))?;
+        element_factories.extend(
+            config
+                .module_definitions
+                .drain(..)
+                .flat_map(WebModuleDefinition::into_factories),
+        );
         let window = browser_window()?;
         let document = window
             .document()
-            .ok_or_else(|| WebHostError("browser document is unavailable".into()))?;
+            .ok_or_else(|| WebError("browser document is unavailable".into()))?;
         document.set_title(&config.title);
         let root = document
             .get_element_by_id(&config.root_id)
-            .ok_or_else(|| WebHostError(format!("missing Web Host root #{}", config.root_id)))?;
+            .ok_or_else(|| WebError(format!("missing Web Host root #{}", config.root_id)))?;
         set_style(&root, "position", "relative")?;
         set_style(&root, "width", "100vw")?;
         set_style(&root, "height", "100vh")?;
@@ -206,10 +695,6 @@ impl WebApplication {
         let viewport = viewport(&window)?;
         let surface_id = SurfaceId::new(1).expect("the browser surface id is non-zero");
         let registrations = elements.registrations().to_vec();
-        let element_factories = element_modules
-            .iter()
-            .map(|module| module.factory.clone())
-            .collect::<Vec<_>>();
         let surface = SurfaceRuntime::with_element_registry(
             surface_id,
             StyleEnvironment::new(viewport.0, viewport.1, viewport.2, 16.0),
@@ -218,7 +703,7 @@ impl WebApplication {
         let wake = RuntimeWakeHandle::new(request_frame);
         Ok(Self {
             runtime: RuntimeInstance::new(surface, wake),
-            measurements: DomMeasurementHost::new(document.clone()),
+            measurements: DomMeasurementProvider::new(document.clone()),
             frames: DomFrameSink::new(
                 document,
                 root,
@@ -232,7 +717,19 @@ impl WebApplication {
         })
     }
 
-    fn drive_frame(&mut self, timestamp_ms: f64) -> Result<(), WebHostError> {
+    fn drive_frame(&mut self, timestamp_ms: f64) -> Result<(), WebError> {
+        for event in self.frames.take_events() {
+            self.runtime
+                .dispatch_input(&InputEvent {
+                    surface: self.runtime.surface().surface(),
+                    timestamp_ms,
+                    kind: InputEventKind::Named(event.name),
+                    pointer: None,
+                    target: Some(event.target),
+                    detail: event.detail,
+                })
+                .map_err(|error| WebError(format!("dispatch Web provider event: {error}")))?;
+        }
         let current = viewport(&browser_window()?)?;
         if current != self.viewport {
             self.viewport = current;
@@ -248,9 +745,9 @@ impl WebApplication {
                 self.viewport_epoch,
                 &mut self.measurements,
                 &mut self.frames,
-                HostLayoutOptions::default(),
+                LayoutOptions::default(),
             )
-            .map_err(|error| WebHostError(format!("drive Web frame: {error}")))?;
+            .map_err(|error| WebError(format!("drive Web frame: {error}")))?;
         if drive.needs_frame {
             request_frame();
         }
@@ -268,7 +765,7 @@ fn request_frame() {
             let result = APPLICATION.with(|slot| {
                 let mut slot = slot.borrow_mut();
                 slot.as_mut()
-                    .ok_or_else(|| WebHostError("Web application is not mounted".into()))?
+                    .ok_or_else(|| WebError("Web application is not mounted".into()))?
                     .drive_frame(timestamp_ms)
             });
             if let Err(error) = result {
@@ -286,38 +783,36 @@ fn request_frame() {
     });
 }
 
-fn browser_window() -> Result<web_sys::Window, WebHostError> {
-    web_sys::window().ok_or_else(|| WebHostError("browser window is unavailable".into()))
+fn browser_window() -> Result<web_sys::Window, WebError> {
+    web_sys::window().ok_or_else(|| WebError("browser window is unavailable".into()))
 }
 
-fn viewport(window: &web_sys::Window) -> Result<(f32, f32, f32), WebHostError> {
+fn viewport(window: &web_sys::Window) -> Result<(f32, f32, f32), WebError> {
     let width = window
         .inner_width()
         .map_err(|error| js_error("read viewport width", error))?
         .as_f64()
-        .ok_or_else(|| WebHostError("viewport width was not numeric".into()))?
-        as f32;
+        .ok_or_else(|| WebError("viewport width was not numeric".into()))? as f32;
     let height = window
         .inner_height()
         .map_err(|error| js_error("read viewport height", error))?
         .as_f64()
-        .ok_or_else(|| WebHostError("viewport height was not numeric".into()))?
-        as f32;
+        .ok_or_else(|| WebError("viewport height was not numeric".into()))? as f32;
     Ok((width, height, window.device_pixel_ratio() as f32))
 }
 
-struct DomMeasurementHost {
+struct DomMeasurementProvider {
     document: web_sys::Document,
 }
 
-impl DomMeasurementHost {
+impl DomMeasurementProvider {
     fn new(document: web_sys::Document) -> Self {
         Self { document }
     }
 }
 
-impl MeasurementHost for DomMeasurementHost {
-    type Error = WebHostError;
+impl MeasurementProvider for DomMeasurementProvider {
+    type Error = WebError;
 
     fn measure_batch(
         &mut self,
@@ -328,7 +823,7 @@ impl MeasurementHost for DomMeasurementHost {
         let body = self
             .document
             .body()
-            .ok_or_else(|| WebHostError("document body is unavailable".into()))?;
+            .ok_or_else(|| WebError("document body is unavailable".into()))?;
         for request in requests {
             let MeasurementPayload::Text(text) = &request.payload else {
                 responses.push(MeasurementResponse::Ready {
@@ -400,6 +895,16 @@ struct DomFrameSink {
     parents: HashMap<NodeId, NodeId>,
     layouts: HashMap<NodeId, whisker_protocol::LayoutGeometry>,
     text_nodes: HashMap<NodeId, web_sys::Element>,
+    native_nodes: HashMap<NodeId, Box<dyn WebNativeElement>>,
+    event_masks: HashMap<NodeId, Rc<Cell<u64>>>,
+    pending_events: Rc<RefCell<VecDeque<WebProviderEvent>>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct WebProviderEvent {
+    target: NodeId,
+    name: String,
+    detail: WhiskerValue,
 }
 
 #[derive(Clone, Debug)]
@@ -409,100 +914,81 @@ struct DomElementRegistry {
 
 #[derive(Clone, Debug)]
 struct DomElementBinding {
-    content: ElementContentKind,
-    tag_name: String,
+    registration: ElementRegistration,
+    factory: WebElementFactoryKind,
+    text_content: bool,
+    scroll_content: bool,
 }
 
 impl DomElementRegistry {
     fn bind(
         registrations: &[ElementRegistration],
         factories: &[WebElementFactory],
-    ) -> Result<Self, WebHostError> {
+    ) -> Result<Self, WebError> {
         let mut bindings = HashMap::with_capacity(registrations.len());
-        let mut canonical = HashMap::with_capacity(registrations.len());
+        let mut elements_by_name = HashMap::with_capacity(registrations.len());
         let mut factories_by_name = HashMap::with_capacity(factories.len());
         for factory in factories {
-            if factory.tag_name.trim().is_empty() {
-                return Err(WebHostError(format!(
+            if matches!(&factory.kind, WebElementFactoryKind::Tag(tag) if tag.trim().is_empty()) {
+                return Err(WebError(format!(
                     "DOM factory {} has an empty tag name",
-                    factory.canonical_name
+                    factory.name
                 )));
             }
             if factories_by_name
-                .insert(factory.canonical_name.clone(), factory.clone())
+                .insert(factory.name.clone(), factory.clone())
                 .is_some()
             {
-                return Err(WebHostError(format!(
-                    "duplicate DOM factory {}",
-                    factory.canonical_name
-                )));
+                return Err(WebError(format!("duplicate DOM factory {}", factory.name)));
             }
         }
         for registration in registrations {
             registration.validate().map_err(|error| {
-                WebHostError(format!(
+                WebError(format!(
                     "invalid DOM element {}: {error:?}",
-                    registration.canonical_name
+                    registration.name
                 ))
             })?;
             if bindings.contains_key(&registration.element_type) {
-                return Err(WebHostError(format!(
+                return Err(WebError(format!(
                     "duplicate DOM element type {}",
                     registration.element_type.get()
                 )));
             }
-            if canonical
-                .insert(
-                    registration.canonical_name.clone(),
-                    registration.element_type,
-                )
+            if elements_by_name
+                .insert(registration.name.clone(), registration.element_type)
                 .is_some()
             {
-                return Err(WebHostError(format!(
+                return Err(WebError(format!(
                     "duplicate DOM element {}",
-                    registration.canonical_name
+                    registration.name
                 )));
             }
-            match registration.content {
-                ElementContentKind::None
-                | ElementContentKind::Text
-                | ElementContentKind::ScrollContainer => {}
-                ElementContentKind::Image
-                | ElementContentKind::EditableText
-                | ElementContentKind::Native => {
-                    return Err(WebHostError(format!(
-                        "DOM Host does not implement {} content {:?}",
-                        registration.canonical_name, registration.content
-                    )));
-                }
-            }
             let factory = factories_by_name
-                .remove(&registration.canonical_name)
-                .ok_or_else(|| {
-                    WebHostError(format!(
-                        "missing DOM factory {}",
-                        registration.canonical_name
-                    ))
-                })?;
+                .remove(&registration.name)
+                .ok_or_else(|| WebError(format!("missing DOM factory {}", registration.name)))?
+                .bind(registration)?;
             bindings.insert(
                 registration.element_type,
                 DomElementBinding {
-                    content: registration.content,
-                    tag_name: factory.tag_name,
+                    registration: registration.clone(),
+                    factory: factory.kind,
+                    text_content: factory.text_content,
+                    scroll_content: factory.scroll_content,
                 },
             );
         }
-        if let Some(canonical_name) = factories_by_name.into_keys().next() {
-            return Err(WebHostError(format!(
-                "DOM factory {canonical_name} has no Rust element schema"
+        if let Some(name) = factories_by_name.into_keys().next() {
+            return Err(WebError(format!(
+                "DOM factory {name} has no Rust element schema"
             )));
         }
         Ok(Self { bindings })
     }
 
-    fn binding(&self, element_type: ElementTypeId) -> Result<&DomElementBinding, WebHostError> {
+    fn binding(&self, element_type: ElementTypeId) -> Result<&DomElementBinding, WebError> {
         self.bindings.get(&element_type).ok_or_else(|| {
-            WebHostError(format!(
+            WebError(format!(
                 "DOM Host received unknown element type {}",
                 element_type.get()
             ))
@@ -517,7 +1003,7 @@ impl DomFrameSink {
         surface: SurfaceId,
         registrations: &[ElementRegistration],
         factories: &[WebElementFactory],
-    ) -> Result<Self, WebHostError> {
+    ) -> Result<Self, WebError> {
         Ok(Self {
             document,
             root,
@@ -528,10 +1014,17 @@ impl DomFrameSink {
             parents: HashMap::new(),
             layouts: HashMap::new(),
             text_nodes: HashMap::new(),
+            native_nodes: HashMap::new(),
+            event_masks: HashMap::new(),
+            pending_events: Rc::new(RefCell::new(VecDeque::new())),
         })
     }
 
-    fn apply(&mut self, packet: &FramePacket) -> Result<(), WebHostError> {
+    fn take_events(&self) -> Vec<WebProviderEvent> {
+        self.pending_events.borrow_mut().drain(..).collect()
+    }
+
+    fn apply(&mut self, packet: &FramePacket) -> Result<(), WebError> {
         if packet.header.mode == FrameMode::Snapshot {
             self.root.set_inner_html("");
             self.nodes.clear();
@@ -539,6 +1032,9 @@ impl DomFrameSink {
             self.parents.clear();
             self.layouts.clear();
             self.text_nodes.clear();
+            self.native_nodes.clear();
+            self.event_masks.clear();
+            self.pending_events.borrow_mut().clear();
         }
         for operation in &packet.operations {
             self.apply_operation(operation)?;
@@ -546,27 +1042,88 @@ impl DomFrameSink {
         Ok(())
     }
 
-    fn apply_operation(&mut self, operation: &Operation) -> Result<(), WebHostError> {
+    fn apply_operation(&mut self, operation: &Operation) -> Result<(), WebError> {
         match operation {
             Operation::CreateNode { node, element_type } => {
                 let binding = self.elements.binding(*element_type)?.clone();
-                let element = self
-                    .document
-                    .create_element(&binding.tag_name)
-                    .map_err(|error| js_error("create Whisker DOM node", error))?;
+                let event_mask = Rc::new(Cell::new(0));
+                let emitter = WebEventEmitter({
+                    let registration = binding.registration.clone();
+                    let event_mask = Rc::clone(&event_mask);
+                    let pending = Rc::clone(&self.pending_events);
+                    let node = *node;
+                    Rc::new(move |event: WebNativeEvent| {
+                        let Some(schema) = registration.event_named(&event.event) else {
+                            web_sys::console::error_1(
+                                &format!(
+                                    "DOM element {} emitted unknown event {}",
+                                    registration.name, event.event
+                                )
+                                .into(),
+                            );
+                            return;
+                        };
+                        if !schema.accepts_detail(&event.detail) {
+                            web_sys::console::error_1(
+                                &format!(
+                                    "DOM element {} emitted invalid detail for {}",
+                                    registration.name, schema.name
+                                )
+                                .into(),
+                            );
+                            return;
+                        }
+                        let mask = schema
+                            .mask()
+                            .expect("registration validation checked event ID");
+                        if event_mask.get() & mask == 0 {
+                            return;
+                        }
+                        pending.borrow_mut().push_back(WebProviderEvent {
+                            target: node,
+                            name: schema.name.clone(),
+                            detail: event.detail,
+                        });
+                        request_frame();
+                    })
+                });
+                let (element, native) = match &binding.factory {
+                    WebElementFactoryKind::Tag(tag_name) => (
+                        self.document
+                            .create_element(tag_name)
+                            .map_err(|error| js_error("create Whisker DOM node", error))?,
+                        None,
+                    ),
+                    WebElementFactoryKind::Native(create) => {
+                        let native = create(&self.document, emitter)
+                            .map_err(|error| js_error("create native Whisker DOM node", error))?;
+                        (native.element(), Some(native))
+                    }
+                    WebElementFactoryKind::Declared(_) => {
+                        unreachable!("DOM declared factory was not bound at bootstrap")
+                    }
+                };
                 element
                     .set_attribute("data-whisker-node", &node.get().to_string())
                     .map_err(|error| js_error("mark Whisker DOM node", error))?;
                 element
-                    .set_attribute("data-whisker-content", content_name(binding.content))
+                    .set_attribute("data-whisker-content", binding.factory.name())
                     .map_err(|error| js_error("mark Whisker DOM element content", error))?;
                 set_style(&element, "position", "absolute")?;
                 set_style(&element, "box-sizing", "border-box")?;
+                if binding.scroll_content {
+                    set_style(&element, "overflow-x", "hidden")?;
+                    set_style(&element, "overflow-y", "auto")?;
+                }
                 self.root
                     .append_child(&element)
                     .map_err(|error| js_error("attach Whisker DOM node", error))?;
                 self.nodes.insert(*node, element);
                 self.node_types.insert(*node, *element_type);
+                self.event_masks.insert(*node, event_mask);
+                if let Some(native) = native {
+                    self.native_nodes.insert(*node, native);
+                }
             }
             Operation::DeleteNode { node } => self.delete_subtree(*node),
             Operation::InsertChild {
@@ -647,11 +1204,18 @@ impl DomFrameSink {
             }
             Operation::SetClip { node, clip } => {
                 let element = self.node(*node)?;
+                let element_type = *self
+                    .node_types
+                    .get(node)
+                    .ok_or_else(|| WebError(format!("missing DOM element type for {node:?}")))?;
+                let scroll_content = self.elements.binding(element_type)?.scroll_content;
                 set_style(
                     &element,
                     "overflow-x",
                     if clip.horizontal == OverflowClip::Hidden {
                         "hidden"
+                    } else if scroll_content {
+                        "auto"
                     } else {
                         "visible"
                     },
@@ -661,6 +1225,8 @@ impl DomFrameSink {
                     "overflow-y",
                     if clip.vertical == OverflowClip::Hidden {
                         "hidden"
+                    } else if scroll_content {
+                        "auto"
                     } else {
                         "visible"
                     },
@@ -698,10 +1264,10 @@ impl DomFrameSink {
             }
             Operation::SetText { node, content } => {
                 let element_type = self.node_types.get(node).copied().ok_or_else(|| {
-                    WebHostError(format!("DOM projection is missing node {}", node.get()))
+                    WebError(format!("DOM projection is missing node {}", node.get()))
                 })?;
-                if self.elements.binding(element_type)?.content != ElementContentKind::Text {
-                    return Err(WebHostError(format!(
+                if !self.elements.binding(element_type)?.text_content {
+                    return Err(WebError(format!(
                         "DOM Host received text for non-text node {}",
                         node.get()
                     )));
@@ -741,21 +1307,99 @@ impl DomFrameSink {
                     if disabled { "none" } else { "auto" },
                 )?;
             }
-            Operation::SetProperty { .. }
-            | Operation::ClearProperty { .. }
-            | Operation::SetEventMask { .. }
-            | Operation::SetPointerCapture { .. }
-            | Operation::ReleasePointerCapture { .. }
-            | Operation::InvokeCommand { .. } => {}
+            Operation::SetProperty {
+                node,
+                property,
+                value,
+            } => {
+                let element_type = *self.node_types.get(node).ok_or_else(|| {
+                    WebError(format!("DOM projection is missing node {}", node.get()))
+                })?;
+                let registration = &self.elements.binding(element_type)?.registration;
+                let schema = registration.property(*property).ok_or_else(|| {
+                    WebError(format!(
+                        "DOM element {} has no property {}",
+                        registration.name,
+                        property.get()
+                    ))
+                })?;
+                if !schema.value.accepts(value) {
+                    return Err(WebError(format!(
+                        "DOM property {} expected {:?}",
+                        schema.name, schema.value
+                    )));
+                }
+                self.native_nodes
+                    .get_mut(node)
+                    .ok_or_else(|| WebError(format!("DOM node {} is not native", node.get())))?
+                    .set_property(*property, value)
+                    .map_err(|error| js_error("set native DOM property", error))?;
+            }
+            Operation::ClearProperty { node, property } => {
+                let element_type = *self.node_types.get(node).ok_or_else(|| {
+                    WebError(format!("DOM projection is missing node {}", node.get()))
+                })?;
+                let registration = &self.elements.binding(element_type)?.registration;
+                registration.property(*property).ok_or_else(|| {
+                    WebError(format!(
+                        "DOM element {} has no property {}",
+                        registration.name,
+                        property.get()
+                    ))
+                })?;
+                self.native_nodes
+                    .get_mut(node)
+                    .ok_or_else(|| WebError(format!("DOM node {} is not native", node.get())))?
+                    .clear_property(*property)
+                    .map_err(|error| js_error("clear native DOM property", error))?;
+            }
+            Operation::SetEventMask { node, event_mask } => {
+                self.event_masks
+                    .get(node)
+                    .ok_or_else(|| {
+                        WebError(format!("DOM projection is missing node {}", node.get()))
+                    })?
+                    .set(*event_mask);
+            }
+            Operation::InvokeCommand {
+                node,
+                command,
+                arguments,
+                ..
+            } => {
+                let element_type = *self.node_types.get(node).ok_or_else(|| {
+                    WebError(format!("DOM projection is missing node {}", node.get()))
+                })?;
+                let registration = &self.elements.binding(element_type)?.registration;
+                let schema = registration.command(*command).ok_or_else(|| {
+                    WebError(format!(
+                        "DOM element {} has no command {}",
+                        registration.name,
+                        command.get()
+                    ))
+                })?;
+                if !schema.arguments.accepts(arguments) {
+                    return Err(WebError(format!(
+                        "DOM command {} expected {:?}",
+                        schema.name, schema.arguments
+                    )));
+                }
+                self.native_nodes
+                    .get_mut(node)
+                    .ok_or_else(|| WebError(format!("DOM node {} is not native", node.get())))?
+                    .invoke_command(*command, arguments)
+                    .map_err(|error| js_error("invoke native DOM command", error))?;
+            }
+            Operation::SetPointerCapture { .. } | Operation::ReleasePointerCapture { .. } => {}
         }
         Ok(())
     }
 
-    fn node(&self, node: NodeId) -> Result<web_sys::Element, WebHostError> {
+    fn node(&self, node: NodeId) -> Result<web_sys::Element, WebError> {
         self.nodes
             .get(&node)
             .cloned()
-            .ok_or_else(|| WebHostError(format!("DOM projection is missing node {}", node.get())))
+            .ok_or_else(|| WebError(format!("DOM projection is missing node {}", node.get())))
     }
 
     fn delete_subtree(&mut self, root: NodeId) {
@@ -779,25 +1423,16 @@ impl DomFrameSink {
             self.parents.remove(&node);
             self.layouts.remove(&node);
             self.text_nodes.remove(&node);
+            self.native_nodes.remove(&node);
+            self.event_masks.remove(&node);
         }
-    }
-}
-
-fn content_name(content: ElementContentKind) -> &'static str {
-    match content {
-        ElementContentKind::None => "none",
-        ElementContentKind::Text => "text",
-        ElementContentKind::ScrollContainer => "scroll-container",
-        ElementContentKind::Image => "image",
-        ElementContentKind::EditableText => "editable-text",
-        ElementContentKind::Native => "native",
     }
 }
 
 fn position_text(
     element: &web_sys::Element,
     rect: whisker_protocol::LayoutRect,
-) -> Result<(), WebHostError> {
+) -> Result<(), WebError> {
     set_style(element, "left", &px(rect.x))?;
     set_style(element, "top", &px(rect.y))?;
     set_style(element, "width", &px(rect.width))?;
@@ -806,13 +1441,13 @@ fn position_text(
 }
 
 impl FrameSink for DomFrameSink {
-    type Error = WebHostError;
+    type Error = WebError;
 
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
         let mut next = self.projection.clone();
         let result = next
             .apply(packet)
-            .map_err(|error| WebHostError(error.to_string()))?;
+            .map_err(|error| WebError(error.to_string()))?;
         if matches!(result, ApplyResult::Accepted { .. }) {
             self.apply(packet)?;
             self.projection = next;
@@ -824,7 +1459,7 @@ impl FrameSink for DomFrameSink {
 fn apply_text_metrics_style(
     element: &web_sys::Element,
     text: &whisker_protocol::TextMeasurePayload,
-) -> Result<(), WebHostError> {
+) -> Result<(), WebError> {
     let families = text
         .style
         .font_families
@@ -878,10 +1513,10 @@ fn apply_text_metrics_style(
     Ok(())
 }
 
-fn set_style(element: &web_sys::Element, property: &str, value: &str) -> Result<(), WebHostError> {
+fn set_style(element: &web_sys::Element, property: &str, value: &str) -> Result<(), WebError> {
     let html = element
         .dyn_ref::<web_sys::HtmlElement>()
-        .ok_or_else(|| WebHostError("Whisker DOM node is not an HtmlElement".into()))?;
+        .ok_or_else(|| WebError("Whisker DOM node is not an HtmlElement".into()))?;
     html.style()
         .set_property(property, value)
         .map_err(|error| js_error(&format!("set CSS property {property}"), error))
@@ -932,8 +1567,8 @@ fn border_style(value: BorderLineStyle) -> &'static str {
     }
 }
 
-fn js_error(context: &str, value: wasm_bindgen::JsValue) -> WebHostError {
-    WebHostError(format!(
+fn js_error(context: &str, value: wasm_bindgen::JsValue) -> WebError {
+    WebError(format!(
         "{context}: {}",
         value.as_string().unwrap_or_else(|| format!("{value:?}"))
     ))
@@ -942,40 +1577,37 @@ fn js_error(context: &str, value: wasm_bindgen::JsValue) -> WebHostError {
 #[cfg(test)]
 mod element_registry_tests {
     use super::*;
-    use whisker::{ElementProviderMetadata, ElementRegistry};
-    use whisker_protocol::{ElementChildMount, ElementMeasurement, ElementSchema};
+    use whisker::ElementRegistry;
+    use whisker_protocol::{
+        ElementMeasurement, ElementPropertySchema, ElementSchema, ElementValueKind,
+    };
 
     #[test]
-    fn standard_and_module_factories_use_the_same_dom_binding_path() {
-        let mut modules = standard_web_element_modules();
-        modules.push(WebElementModule::new(
-            ElementProviderMetadata::named(
-                "badge",
-                ElementSchema {
-                    canonical_name: "whisker.test/Badge".into(),
-                    content: ElementContentKind::None,
-                    child_mount: ElementChildMount::Presentation,
-                    measurement: ElementMeasurement::None,
-                    consumes_text_style: false,
-                },
-            ),
-            WebElementFactory::new("whisker.test/Badge", "span"),
-        ));
-        let elements = ElementRegistry::builder()
-            .register_providers(modules.iter().map(|module| module.provider().clone()))
+    fn built_in_and_package_modules_use_the_same_dom_binding_path() {
+        let built_ins = BuiltInElementModule::definition();
+        assert_eq!(built_ins.factories().len(), 3);
+        let modules = built_ins.view(WebElementFactory::new("whisker.test/Badge", "span"));
+        let elements = ElementRegistry::standard_builder()
+            .register_provider(whisker::ElementProviderMetadata::named(ElementSchema {
+                name: "whisker.test/Badge".into(),
+                child_policy: whisker_protocol::ChildPolicy::Elements,
+                measurement: ElementMeasurement::None,
+                properties: Vec::new(),
+                events: Vec::new(),
+                commands: Vec::new(),
+            }))
             .build()
             .unwrap();
-        let factories = modules
-            .iter()
-            .map(|module| module.factory().clone())
-            .collect::<Vec<_>>();
+        let factories = modules.factories().to_vec();
 
         let registry = DomElementRegistry::bind(elements.registrations(), &factories).unwrap();
-        let badge = elements.registration_for_name("badge").unwrap();
-        assert_eq!(
-            registry.binding(badge.element_type).unwrap().tag_name,
-            "span"
-        );
+        let badge = elements
+            .registration_for_name("whisker.test/Badge")
+            .unwrap();
+        assert!(matches!(
+            &registry.binding(badge.element_type).unwrap().factory,
+            WebElementFactoryKind::Tag(tag_name) if tag_name == "span"
+        ));
     }
 
     #[test]
@@ -984,9 +1616,38 @@ mod element_registry_tests {
         let missing = DomElementRegistry::bind(&registrations, &[]).unwrap_err();
         assert!(missing.0.contains("missing DOM factory"));
 
-        let mut factories = standard_web_element_factories();
+        let mut factories = built_in_element_factories();
         factories.push(WebElementFactory::new("whisker.test/Unknown", "div"));
         let unknown = DomElementRegistry::bind(&registrations, &factories).unwrap_err();
         assert!(unknown.0.contains("has no Rust element schema"));
+    }
+
+    #[test]
+    fn declared_host_members_must_match_the_rust_schema_at_bootstrap() {
+        let registration = ElementRegistration {
+            element_type: ElementTypeId::new(20).unwrap(),
+            name: "whisker.test/Toggle".into(),
+            child_policy: whisker_protocol::ChildPolicy::None,
+            measurement: ElementMeasurement::None,
+            properties: vec![ElementPropertySchema {
+                property: PropertyId::new(1).unwrap(),
+                name: "checked".into(),
+                value: ElementValueKind::Bool,
+            }],
+            events: Vec::new(),
+            commands: Vec::new(),
+        };
+        let definition = WebViewDefinition::new(
+            "whisker.test/Toggle",
+            |_, _| Ok(()),
+            |_| unreachable!("the factory is not instantiated during bootstrap"),
+        )
+        .prop("misspelled", |_, _| Ok(()), |_| Ok(()));
+        let factory = definition.into_web_factory();
+
+        let error = DomElementRegistry::bind(&[registration], &[factory]).unwrap_err();
+        assert!(error.0.contains("contract mismatch"));
+        assert!(error.0.contains("misspelled"));
+        assert!(error.0.contains("checked"));
     }
 }

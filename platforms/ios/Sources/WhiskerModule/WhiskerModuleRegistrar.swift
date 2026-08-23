@@ -1,289 +1,268 @@
-// iOS dispatch wiring for the `ModuleDefinition` DSL.
-//
-// At module-registration time (typically host-app launch), the
-// framework calls `module.registerWithLynx()`. This walks the DSL
-// definition the author built in `definition()` and installs the
-// corresponding selectors on their `View(...)`-declared class via
-// Obj-C runtime APIs:
-//
-//   - For each `Prop("foo") { setter }`:
-//       + class method  `__lynx_prop_config__foo`        → `["foo", "setFoo", "id"]`
-//       + instance method `setFoo:requestReset:`         → invokes the closure
-//
-//   - For each `Function("foo") { handler }`:
-//       + class method  `__lynx_ui_method_config__foo`   → `"foo"`
-//       + instance method `foo:withResult:`              → invokes the closure
-//
-// These are exactly the shapes Lynx's `LynxPropsProcessor` and
-// `LynxUIMethodProcessor` scan for via class-method reflection.
-//
-// ## Author bootstrap
-//
-// Module authors add their `WhiskerModule` subclass once to the
-// host app's startup code, or let the codegen build plugin generate
-// the registration call. A minimal driver:
-//
-// ```swift
-// @main
-// struct App: SwiftUI.App {
-//     init() {
-//         VideoModule().registerWithLynx()
-//     }
-//     // ...
-// }
-// ```
-
 import Foundation
-import ObjectiveC.runtime
+import UIKit
 
-extension Module {
+public typealias WhiskerElementEventSink = (WhiskerEventBinding, WhiskerValue) -> Void
 
-    /// Walk `definitionLazy` and install the Lynx-visible setters /
-    /// methods on the view class.
-    ///
-    /// Idempotent — a second call against the same view class
-    /// re-installs over the previous registration (last-write-wins).
-    /// Module-level (view-less) `Function`s are not wired up here;
-    /// the module-level dispatch path lives in the codegen-emitted
-    /// `@_cdecl` shim + `whisker_bridge_register_module_dispatch`.
-    public func registerWithLynx() {
-        let def = self.definitionLazy
+public struct WhiskerMeasureRequest {
+    public let availableWidth: CGFloat?
+    public let availableHeight: CGFloat?
+    public let knownWidth: CGFloat?
+    public let knownHeight: CGFloat?
+    public let payloadVersion: UInt16
+    public let payload: Data
 
-        // Function-only modules (no `View(...)` block) don't install
-        // anything on a LynxUI class — their module-level `Function`s
-        // dispatch through `dispatchModuleFunction(_:_:)` via the
-        // codegen-emitted `@_cdecl` shim, not through this method.
-        guard let viewBlock = def.view else { return }
+    public init(
+        availableWidth: CGFloat?,
+        availableHeight: CGFloat?,
+        knownWidth: CGFloat?,
+        knownHeight: CGFloat?,
+        payloadVersion: UInt16,
+        payload: Data
+    ) {
+        self.availableWidth = availableWidth
+        self.availableHeight = availableHeight
+        self.knownWidth = knownWidth
+        self.knownHeight = knownHeight
+        self.payloadVersion = payloadVersion
+        self.payload = payload
+    }
+}
 
-        let viewClass: AnyClass = viewBlock.viewClass
+public struct WhiskerMeasuredSize {
+    public let width: CGFloat
+    public let height: CGFloat
 
-        for component in viewBlock.components {
-            switch component {
-            case let prop as WhiskerPropComponent:
-                WhiskerLynxInstaller.installProp(prop, on: viewClass)
-            case let fn as WhiskerFunctionComponent:
-                WhiskerLynxInstaller.installFunction(fn, on: viewClass)
-            case let afn as WhiskerAsyncFunctionComponent:
-                WhiskerLynxInstaller.installAsyncFunction(afn, on: viewClass)
-            case is WhiskerEventsComponent:
-                // Declaration-only metadata; dispatch goes through
-                // `WhiskerCustomEvent.dispatch(from:name:params:)`.
-                continue
-            default:
-                continue
+    public init(width: CGFloat, height: CGFloat) {
+        self.width = width
+        self.height = height
+    }
+}
+
+public struct WhiskerTextContent {
+    public let value: String
+    public let fontSize: CGFloat
+    public let fontWeight: Int
+    public let color: UIColor
+
+    public init(value: String, fontSize: CGFloat, fontWeight: Int, color: UIColor) {
+        self.value = value
+        self.fontSize = fontSize
+        self.fontWeight = fontWeight
+        self.color = color
+    }
+}
+
+public final class WhiskerMountedElement {
+    public let registration: WhiskerElementRegistration
+    public let view: UIView
+    private let nativeElement: WhiskerNativeElement?
+    private let textUpdater: ((UIView, WhiskerTextContent) -> Void)?
+    private let childrenHostProvider: ((UIView) -> UIView)?
+    private let properties: [Int: WhiskerPropComponent]
+    private let eventsByName: [String: WhiskerEventBinding]
+    private let eventSink: WhiskerElementEventSink
+    private var eventMask: UInt64 = 0
+
+    fileprivate init(
+        registration: WhiskerElementRegistration,
+        view: UIView,
+        textUpdater: ((UIView, WhiskerTextContent) -> Void)?,
+        childrenHost: ((UIView) -> UIView)?,
+        properties: [Int: WhiskerPropComponent],
+        eventsByName: [String: WhiskerEventBinding],
+        eventSink: @escaping WhiskerElementEventSink
+    ) {
+        self.registration = registration
+        self.view = view
+        self.nativeElement = view as? WhiskerNativeElement
+        self.textUpdater = textUpdater
+        self.childrenHostProvider = childrenHost
+        self.properties = properties
+        self.eventsByName = eventsByName
+        self.eventSink = eventSink
+        nativeElement?.installWhiskerEventSink { [weak self] name, detail in
+            guard let self, let event = self.eventsByName[name] else { return }
+            let bit = UInt64(1) << UInt64(event.id - 1)
+            if self.eventMask & bit != 0 { self.eventSink(event, detail) }
+        }
+    }
+
+    public func setProperty(_ id: Int, value: WhiskerValue) { properties[id]?.setter(view, value) }
+
+    /// Clear is a distinct protocol operation; it is not converted to `.null`.
+    public func clearProperty(_ id: Int) { properties[id]?.clearer(view) }
+
+    public func setEventMask(_ mask: UInt64) { eventMask = mask }
+
+    @discardableResult
+    public func setText(_ content: WhiskerTextContent) -> Bool {
+        guard let textUpdater else { return false }
+        textUpdater(view, content)
+        return true
+    }
+
+    public func childrenHost() -> UIView? { childrenHostProvider?(view) }
+    public func dispose() { nativeElement?.installWhiskerEventSink(nil) }
+}
+
+/** Host-owned declaration. It contains names and behavior, never Rust IDs. */
+public struct WhiskerElementFactory {
+    public let name: String
+    fileprivate let textUpdater: ((UIView, WhiskerTextContent) -> Void)?
+    fileprivate let childrenHost: ((UIView) -> UIView)?
+    fileprivate let measurer: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)?
+    fileprivate let makeView: () -> UIView
+
+    public init(
+        name: String,
+        textUpdater: ((UIView, WhiskerTextContent) -> Void)? = nil,
+        childrenHost: ((UIView) -> UIView)? = nil,
+        measurer: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)? = nil,
+        makeView: @escaping () -> UIView
+    ) {
+        precondition(!name.isEmpty && !name.contains("@"))
+        self.name = name
+        self.textUpdater = textUpdater
+        self.childrenHost = childrenHost
+        self.measurer = measurer
+        self.makeView = makeView
+    }
+}
+
+private struct WhiskerDeclaredElement {
+    let factory: WhiskerElementFactory
+    let properties: [String: WhiskerPropComponent]
+    let events: Set<String>
+}
+
+private struct WhiskerBoundElement {
+    let registration: WhiskerElementRegistration
+    let factory: WhiskerElementFactory
+    let properties: [Int: WhiskerPropComponent]
+}
+
+public enum WhiskerModuleRegistry {
+    private static var modules: [String: Module] = [:]
+
+    fileprivate static func register(_ module: Module) {
+        guard let name = module.qualifiedName else { preconditionFailure("module needs a name") }
+        modules[name] = module
+        WhiskerModuleEventCenter.register(module)
+    }
+
+    public static func module(named name: String) -> Module? { modules[name] }
+}
+
+/** Process-wide Host declaration registry and per-surface negotiated table. */
+public enum WhiskerElementRegistry {
+    private static var declarations: [String: WhiskerDeclaredElement] = [:]
+    private static var boundByType: [Int: WhiskerBoundElement] = [:]
+
+    public static func register(_ factory: WhiskerElementFactory) {
+        register(factory, properties: [:], events: [])
+    }
+
+    fileprivate static func register(_ view: WhiskerViewComponent, fallbackName: String) {
+        let name = view.elementName ?? fallbackName
+        if let factory = view.factory {
+            let props = view.components.compactMap { $0 as? WhiskerPropComponent }
+            let properties = Dictionary(uniqueKeysWithValues: props.map { ($0.name, $0) })
+            let events = Set(view.components.compactMap { $0 as? WhiskerEventsComponent }.flatMap(\.names))
+            register(factory, properties: properties, events: events)
+            return
+        }
+        guard let viewClass = view.viewClass else {
+            preconditionFailure("\(name) View declaration needs a class or factory")
+        }
+        guard let elementType = viewClass as? WhiskerNativeElement.Type else {
+            preconditionFailure("\(name) View class must implement WhiskerNativeElement")
+        }
+        let props = view.components.compactMap { $0 as? WhiskerPropComponent }
+        let properties = Dictionary(uniqueKeysWithValues: props.map { ($0.name, $0) })
+        let events = Set(view.components.compactMap { $0 as? WhiskerEventsComponent }.flatMap(\.names))
+        register(
+            WhiskerElementFactory(
+                name: name,
+                makeView: elementType.makeWhiskerView
+            ),
+            properties: properties,
+            events: events
+        )
+    }
+
+    private static func register(
+        _ factory: WhiskerElementFactory,
+        properties: [String: WhiskerPropComponent],
+        events: Set<String>
+    ) {
+        precondition(declarations[factory.name] == nil, "duplicate Host element \(factory.name)")
+        declarations[factory.name] = WhiskerDeclaredElement(factory: factory, properties: properties, events: events)
+    }
+
+    /** Match Host strings to Rust registrations and compile compact dispatch tables. */
+    @discardableResult
+    public static func bind(_ registrations: [WhiskerElementRegistration]) -> Bool {
+        var result: [Int: WhiskerBoundElement] = [:]
+        for registration in registrations {
+            guard let declaration = declarations[registration.name] else {
+                return false
             }
-        }
-    }
-}
-
-// MARK: - Installer
-
-/// Internal helper that materialises `WhiskerPropComponent` /
-/// `WhiskerFunctionComponent` values as real Obj-C selectors on a
-/// LynxUI subclass. Pulled into its own enum so the implementation
-/// surface stays separate from the `WhiskerModule` public API.
-internal enum WhiskerLynxInstaller {
-
-    // ---- Prop installation ----------------------------------------------
-
-    static func installProp(_ comp: WhiskerPropComponent, on viewClass: AnyClass) {
-        // ---- 1. Class method `__lynx_prop_config__<name>` --------------
-        //
-        // Lynx's reflection: for each class method whose name starts
-        // with `__lynx_prop_config__`, call it to recover the
-        // `[propName, shortSelector, typeName]` triple.
-        let propName = comp.name
-        let setterShort = "set" + propName.uppercasingFirstLetter()
-        let configSelName = "__lynx_prop_config__" + propName
-
-        // Block receives `(_cls: AnyClass)` because the IMP is
-        // called with (self, SEL) — under
-        // `imp_implementationWithBlock`, Swift's `self` slot drops
-        // out, but Obj-C still passes the class. We accept it as
-        // first arg and ignore.
-        let configBlock: @convention(block) (AnyClass) -> [String] = { _ in
-            // Type name `id` keeps Lynx's value-unboxing in
-            // "pass through whatever the bridge handed in" mode.
-            return [propName, setterShort, "id"]
-        }
-        let configIMP = imp_implementationWithBlock(configBlock)
-        addClassMethod(
-            on: viewClass,
-            selector: NSSelectorFromString(configSelName),
-            imp: configIMP,
-            // Method signature: `(NSArray *)method(id self, SEL _cmd)`
-            //   '@' = return id, '@' = self id, ':' = SEL
-            typeEncoding: "@@:"
-        )
-
-        // ---- 2. Instance method `set<Cap>:requestReset:` ---------------
-        //
-        // Two trailing args: the value (`id`) and a BOOL `requestReset`
-        // flag Lynx uses to signal "the engine asked for a re-apply
-        // of all props"; the DSL closure ignores it (the closure is
-        // declarative — re-application is harmless).
-        let setterSel = NSSelectorFromString(setterShort + ":requestReset:")
-        let setter = comp.setter
-        let setterBlock: @convention(block) (AnyObject, Any?, Bool) -> Void = { view, value, _ in
-            let wv = value.map { WhiskerValue.from(nsObject: $0) } ?? .null
-            setter(view, wv)
-        }
-        let setterIMP = imp_implementationWithBlock(setterBlock)
-        addInstanceMethod(
-            on: viewClass,
-            selector: setterSel,
-            imp: setterIMP,
-            // `v@:@B` = void return, (self id, SEL, value id, BOOL).
-            typeEncoding: "v@:@B"
-        )
-    }
-
-    // ---- Function installation ------------------------------------------
-
-    static func installFunction(_ comp: WhiskerFunctionComponent, on viewClass: AnyClass) {
-        // ---- 1. Class method `__lynx_ui_method_config__<name>` ----------
-        let methodName = comp.name
-        let configSelName = "__lynx_ui_method_config__" + methodName
-        let configBlock: @convention(block) (AnyClass) -> NSString = { _ in
-            return methodName as NSString
-        }
-        let configIMP = imp_implementationWithBlock(configBlock)
-        addClassMethod(
-            on: viewClass,
-            selector: NSSelectorFromString(configSelName),
-            imp: configIMP,
-            // Returns NSString; `@@:` again.
-            typeEncoding: "@@:"
-        )
-
-        // ---- 2. Instance method `<name>:withResult:` --------------------
-        //
-        // Signature: `-(void)<name>:(NSDictionary *)params
-        //                       withResult:(LynxUIMethodCallbackBlock)cb`.
-        //
-        // The callback block is Lynx-typed `void(^)(NSInteger code,
-        // id _Nullable data)`. Lynx's
-        // `LynxUIMethodConstants.kUIMethodSuccess` is 0; we pass 0
-        // on a normal return and pass back the result encoded as an
-        // Any? (NSNull-erased on Void closures).
-        //
-        // Args decode: Lynx hands `params` as
-        //   `@{ "args": [<positional entries>] }`. We pull out the
-        //   array and hand it to the closure.
-        let methodSel = NSSelectorFromString(methodName + ":withResult:")
-        let handler = comp.handler
-        let methodBlock: @convention(block) (AnyObject, NSDictionary?, LynxUIMethodCallbackBlockShim?) -> Void = { view, params, cb in
-            let args = WhiskerValue.fromNSDictionary(params)
-            settle(cb, with: handler(view, args))
-        }
-        let methodIMP = imp_implementationWithBlock(methodBlock)
-        addInstanceMethod(
-            on: viewClass,
-            selector: methodSel,
-            imp: methodIMP,
-            // `v@:@@?` = void return, (self id, SEL, params id, block).
-            // `@` also works for argument-position blocks (same ABI);
-            // `@?` gives clearer crash diagnostics on a shape mismatch.
-            typeEncoding: "v@:@@?"
-        )
-    }
-
-    // ---- AsyncFunction installation --------------------------------------
-
-    /// Same selector shapes as [`installFunction`], but the handler
-    /// receives a [`WhiskerPromise`] wrapping the (late-callable) Lynx
-    /// callback, so it can deliver the result from a later completion.
-    static func installAsyncFunction(
-        _ comp: WhiskerAsyncFunctionComponent, on viewClass: AnyClass
-    ) {
-        let methodName = comp.name
-        let configSelName = "__lynx_ui_method_config__" + methodName
-        let configBlock: @convention(block) (AnyClass) -> NSString = { _ in
-            return methodName as NSString
-        }
-        addClassMethod(
-            on: viewClass,
-            selector: NSSelectorFromString(configSelName),
-            imp: imp_implementationWithBlock(configBlock),
-            typeEncoding: "@@:"
-        )
-
-        let methodSel = NSSelectorFromString(methodName + ":withResult:")
-        let handler = comp.handler
-        let methodBlock: @convention(block) (AnyObject, NSDictionary?, LynxUIMethodCallbackBlockShim?) -> Void = { view, params, cb in
-            let args = WhiskerValue.fromNSDictionary(params)
-            let promise = WhiskerPromise(onSettle: { value in
-                settle(cb, with: value)
+            guard registration.childPolicy.acceptsPlainText == (declaration.factory.textUpdater != nil),
+                  registration.measurement == .none || registration.measurement == .text || declaration.factory.measurer != nil
+            else { return false }
+            let rustProps = Dictionary(uniqueKeysWithValues: registration.properties.map { ($0.name, $0) })
+            guard Set(rustProps.keys) == Set(declaration.properties.keys),
+                  Set(registration.events.map(\.name)) == declaration.events,
+                  result[registration.elementType] == nil
+            else { return false }
+            let properties = Dictionary(uniqueKeysWithValues: registration.properties.map {
+                ($0.id, declaration.properties[$0.name]!)
             })
-            handler(view, args, promise)
+            result[registration.elementType] = WhiskerBoundElement(
+                registration: registration,
+                factory: declaration.factory,
+                properties: properties
+            )
         }
-        addInstanceMethod(
-            on: viewClass,
-            selector: methodSel,
-            imp: imp_implementationWithBlock(methodBlock),
-            typeEncoding: "v@:@@?"
+        boundByType = result
+        return true
+    }
+
+    public static func mount(
+        _ elementType: Int,
+        eventSink: @escaping WhiskerElementEventSink
+    ) -> WhiskerMountedElement? {
+        guard let element = boundByType[elementType] else { return nil }
+        return WhiskerMountedElement(
+            registration: element.registration,
+            view: element.factory.makeView(),
+            textUpdater: element.factory.textUpdater,
+            childrenHost: element.factory.childrenHost,
+            properties: element.properties,
+            eventsByName: Dictionary(uniqueKeysWithValues: element.registration.events.map { ($0.name, $0) }),
+            eventSink: eventSink
         )
     }
 
-    // ---- Helpers ---------------------------------------------------------
-
-    /// `.error` rides the error-code channel (UNKNOWN = 1) — a
-    /// success-coded error flattens into a plain map in the lepus
-    /// round-trip and the message is lost.
-    private static func settle(_ cb: LynxUIMethodCallbackBlockShim?, with value: WhiskerValue) {
-        if case .error(let message) = value {
-            cb?(1, message as NSString)
-        } else {
-            cb?(0, WhiskerValue.toAnyObject(value) as AnyObject?)
-        }
+    public static func measure(
+        _ elementType: Int,
+        request: WhiskerMeasureRequest
+    ) -> WhiskerMeasuredSize? {
+        boundByType[elementType]?.factory.measurer?(request)
     }
 
-    private static func addInstanceMethod(
-        on cls: AnyClass,
-        selector: Selector,
-        imp: IMP,
-        typeEncoding: String,
-    ) {
-        if !class_addMethod(cls, selector, imp, typeEncoding) {
-            // Method already exists — replace its IMP in-place.
-            _ = class_replaceMethod(cls, selector, imp, typeEncoding)
-        }
-    }
-
-    private static func addClassMethod(
-        on cls: AnyClass,
-        selector: Selector,
-        imp: IMP,
-        typeEncoding: String,
-    ) {
-        // Class methods live on the metaclass.
-        guard let metaclass = object_getClass(cls) else { return }
-        if !class_addMethod(metaclass, selector, imp, typeEncoding) {
-            _ = class_replaceMethod(metaclass, selector, imp, typeEncoding)
-        }
+    public static func registration(_ elementType: Int) -> WhiskerElementRegistration? {
+        boundByType[elementType]?.registration
     }
 }
 
-// MARK: - Lynx callback typealias
-
-/// Local mirror of Lynx's `LynxUIMethodCallbackBlock`. We can't
-/// import Lynx here without dragging the headers into the public
-/// surface, so we redeclare the shape — Obj-C-block ABI matching
-/// is what matters at runtime, not the Swift type identity.
-///
-/// Lynx's actual declaration is roughly:
-///
-/// ```objc
-/// typedef void (^LynxUIMethodCallbackBlock)(NSInteger code, id _Nullable data);
-/// ```
-public typealias LynxUIMethodCallbackBlockShim =
-    @convention(block) (Int, AnyObject?) -> Void
-
-// MARK: - String helper
-
-extension String {
-    fileprivate func uppercasingFirstLetter() -> String {
-        guard let first = self.first else { return self }
-        return String(first).uppercased() + self.dropFirst()
+public extension Module {
+    func registerWithWhisker() {
+        let definition = definitionLazy
+        definition.validateElementDeclaration()
+        guard let name = definition.name else { return }
+        if qualifiedName == nil { qualifiedName = name }
+        WhiskerModuleRegistry.register(self)
+        definition.views.forEach { WhiskerElementRegistry.register($0, fallbackName: qualifiedName!) }
     }
 }

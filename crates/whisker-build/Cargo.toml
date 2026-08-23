@@ -46,3 +46,4 @@ serde_json = "1"
 # walk the consuming app's dep tree and find each dep that declares
 # a `[package.metadata.whisker]` table.
 cargo_metadata = "0.18"
+toml = "0.8"

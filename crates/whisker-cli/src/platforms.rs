@@ -157,12 +157,38 @@ fn sync_macos(
     } else {
         format!("{:?}", env!("CARGO_PKG_VERSION"))
     };
-    let inputs = whisker_cng::macos::inputs_from(
+    let mut inputs = whisker_cng::macos::inputs_from(
         app_config,
         package.to_string(),
         crate_dir.to_path_buf(),
         dependency,
     )?;
+    let in_tree_desktop = workspace_root.join("platforms/desktop");
+    if in_tree_desktop.join("Cargo.toml").is_file() {
+        inputs.whisker_desktop_dependency =
+            format!("{{ path = {:?} }}", in_tree_desktop.display().to_string());
+    }
+    inputs.element_modules =
+        whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), package)?
+            .into_iter()
+            .filter_map(|module| {
+                let contribution = module.desktop?;
+                let host_dependency = match contribution.source {
+                    whisker_build::modules::ResolvedRustHostSource::Path(path) => {
+                        whisker_cng::RustHostDependency::Path(path)
+                    }
+                    whisker_build::modules::ResolvedRustHostSource::Registry { version } => {
+                        whisker_cng::RustHostDependency::Registry { version }
+                    }
+                };
+                Some(whisker_cng::RustElementModuleInput {
+                    package: module.package,
+                    crate_path: module.manifest_dir,
+                    host_package: contribution.package,
+                    host_dependency,
+                })
+            })
+            .collect();
     let template_version = inputs.template_version;
     let regenerated = whisker_cng::sync_macos(&gen_dir, &inputs).context("render gen/macos")?;
     Ok(PlatformSync {
@@ -185,12 +211,33 @@ fn sync_web(
     } else {
         format!("{:?}", env!("CARGO_PKG_VERSION"))
     };
-    let inputs = whisker_cng::web::inputs_from(
+    let mut inputs = whisker_cng::web::inputs_from(
         app_config,
         package.to_string(),
         crate_dir.to_path_buf(),
         dependency,
     )?;
+    inputs.element_modules =
+        whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), package)?
+            .into_iter()
+            .filter_map(|module| {
+                let contribution = module.web?;
+                let host_dependency = match contribution.source {
+                    whisker_build::modules::ResolvedRustHostSource::Path(path) => {
+                        whisker_cng::RustHostDependency::Path(path)
+                    }
+                    whisker_build::modules::ResolvedRustHostSource::Registry { version } => {
+                        whisker_cng::RustHostDependency::Registry { version }
+                    }
+                };
+                Some(whisker_cng::RustElementModuleInput {
+                    package: module.package,
+                    crate_path: module.manifest_dir,
+                    host_package: contribution.package,
+                    host_dependency,
+                })
+            })
+            .collect();
     let template_version = inputs.template_version;
     let regenerated = whisker_cng::sync_web(&gen_dir, &inputs).context("render gen/web")?;
     Ok(PlatformSync {
@@ -297,4 +344,49 @@ fn build_discovered_plugins(workspace_root: &Path, discovered: &[DiscoveredPlugi
         step.done("");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn tempdir() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "whisker-cli-rfc0004-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn host_smoke_dependency_wires_toggle_into_generated_rust_hosts() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let crate_dir = tempdir();
+        let mut config = Config::default();
+        config.name("Host Smoke").bundle_id("rs.whisker.hostsmoke");
+
+        let macos =
+            sync_for_target(Target::Macos, &config, &crate_dir, workspace, "host-smoke").unwrap();
+        let macos_source = std::fs::read_to_string(macos.gen_dir.join("src/main.rs")).unwrap();
+        assert!(macos_source.contains("mod __whisker_module_whisker_toggle;"));
+        assert!(
+            macos_source.contains("__whisker_module_whisker_toggle::__whisker_module_definition()")
+        );
+
+        let web =
+            sync_for_target(Target::Web, &config, &crate_dir, workspace, "host-smoke").unwrap();
+        let web_source = std::fs::read_to_string(web.gen_dir.join("src/lib.rs")).unwrap();
+        assert!(web_source.contains("mod __whisker_module_whisker_toggle;"));
+        assert!(
+            web_source.contains("__whisker_module_whisker_toggle::__whisker_module_definition()")
+        );
+        std::fs::remove_dir_all(crate_dir).ok();
+    }
 }

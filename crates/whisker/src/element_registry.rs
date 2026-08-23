@@ -16,8 +16,8 @@ type SchemaKey = String;
 pub enum ElementAuthoringBinding {
     /// A standard `render!` tag implemented through the provider path.
     Builtin(ElementTag),
-    /// A generated module component or compatibility element name.
-    Named(String),
+    /// A generated module component resolved by its schema name.
+    Named,
 }
 
 /// Generated bootstrap metadata for one UI-providing module definition.
@@ -38,7 +38,7 @@ pub struct ElementProviderMetadata {
 ///
 /// A module owns its element schemas and authoring bindings as one bootstrap
 /// unit. Host packages bind target-specific factories to the resulting
-/// canonical names before the first frame.
+/// element names before the first frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ElementModuleDefinition {
     /// Stable package/module identity used in bootstrap diagnostics.
@@ -69,11 +69,14 @@ impl ElementProviderMetadata {
         }
     }
 
-    /// Describes one generated module element name.
-    pub fn named(name: impl Into<String>, schema: ElementSchema) -> Self {
+    /// Describes one generated module element.
+    ///
+    /// Its Rust authoring name, schema name, and Host binding key are the same
+    /// package-qualified [`ElementSchema::name`].
+    pub fn named(schema: ElementSchema) -> Self {
         Self {
             schema,
-            authoring: ElementAuthoringBinding::Named(name.into()),
+            authoring: ElementAuthoringBinding::Named,
         }
     }
 }
@@ -101,7 +104,7 @@ impl ElementRegistry {
     /// Callers can append module schemas and authoring-name bindings before
     /// building the immutable surface registry.
     pub fn standard_builder() -> ElementRegistryBuilder {
-        Self::builder().register_module(crate::standard_ui_module_definition())
+        Self::builder().register_module(crate::standard_ui::standard_ui_module_definition())
     }
 
     /// Returns the standard Whisker element registry.
@@ -128,6 +131,40 @@ impl ElementRegistry {
         self.names
             .get(name)
             .and_then(|index| self.registrations.get(*index))
+    }
+
+    /// Ensures a named module schema belongs to this registry epoch and
+    /// returns its compact registration. Repeating the same declaration is
+    /// idempotent; changing a schema under an existing name is rejected.
+    pub fn register_named(
+        &mut self,
+        schema: ElementSchema,
+    ) -> Result<&ElementRegistration, ElementRegistryError> {
+        schema
+            .validate()
+            .map_err(|error| ElementRegistryError::InvalidSchema {
+                name: schema.name.clone(),
+                error,
+            })?;
+        if let Some(index) = self.names.get(&schema.name).copied() {
+            let registration = &self.registrations[index];
+            if registration.schema() != schema {
+                return Err(ElementRegistryError::ConflictingSchema {
+                    name: registration.name.clone(),
+                });
+            }
+            return Ok(registration);
+        }
+        let raw_id = u32::try_from(self.registrations.len())
+            .ok()
+            .and_then(|value| value.checked_add(1))
+            .and_then(ElementTypeId::new)
+            .ok_or(ElementRegistryError::ElementTypeIdExhausted)?;
+        let name = schema.name.clone();
+        let index = self.registrations.len();
+        self.registrations.push(schema.bind(raw_id));
+        self.names.insert(name, index);
+        Ok(&self.registrations[index])
     }
 }
 
@@ -158,14 +195,14 @@ impl ElementRegistryBuilder {
 
     /// Adds generated metadata for one UI-providing module.
     pub fn register_provider(mut self, provider: ElementProviderMetadata) -> Self {
-        let canonical_name = provider.schema.canonical_name.clone();
+        let name = provider.schema.name.clone();
         self.schemas.push(provider.schema);
         match provider.authoring {
             ElementAuthoringBinding::Builtin(tag) => {
-                self.builtin_bindings.push((tag, canonical_name));
+                self.builtin_bindings.push((tag, name));
             }
-            ElementAuthoringBinding::Named(name) => {
-                self.name_bindings.push((name, canonical_name));
+            ElementAuthoringBinding::Named => {
+                self.name_bindings.push((name.clone(), name));
             }
         }
         self
@@ -192,16 +229,20 @@ impl ElementRegistryBuilder {
         self
     }
 
-    /// Maps a built-in authoring tag to a schema's canonical key.
-    pub fn bind_builtin(mut self, tag: ElementTag, canonical_name: impl Into<String>) -> Self {
-        self.builtin_bindings.push((tag, canonical_name.into()));
+    /// Maps a built-in authoring tag to a schema name.
+    pub fn bind_builtin(mut self, tag: ElementTag, name: impl Into<String>) -> Self {
+        self.builtin_bindings.push((tag, name.into()));
         self
     }
 
     /// Maps a generated or compatibility authoring name to a schema key.
-    pub fn bind_name(mut self, name: impl Into<String>, canonical_name: impl Into<String>) -> Self {
+    pub fn bind_name(
+        mut self,
+        authoring_name: impl Into<String>,
+        element_name: impl Into<String>,
+    ) -> Self {
         self.name_bindings
-            .push((name.into(), canonical_name.into()));
+            .push((authoring_name.into(), element_name.into()));
         self
     }
 
@@ -213,14 +254,12 @@ impl ElementRegistryBuilder {
             schema
                 .validate()
                 .map_err(|error| ElementRegistryError::InvalidSchema {
-                    canonical_name: schema.canonical_name.clone(),
+                    name: schema.name.clone(),
                     error,
                 })?;
-            let key = schema.canonical_name.clone();
+            let key = schema.name.clone();
             if schemas.contains_key(&key) {
-                return Err(ElementRegistryError::DuplicateCanonicalKey {
-                    canonical_name: key,
-                });
+                return Err(ElementRegistryError::DuplicateName { name: key });
             }
             let raw_id = u32::try_from(index)
                 .ok()
@@ -236,11 +275,10 @@ impl ElementRegistryBuilder {
             if tag == ElementTag::RawText {
                 return Err(ElementRegistryError::VirtualBuiltinBinding { tag });
             }
-            let index = schemas.get(&key).copied().ok_or_else(|| {
-                ElementRegistryError::UnknownSchemaBinding {
-                    canonical_name: key.clone(),
-                }
-            })?;
+            let index = schemas
+                .get(&key)
+                .copied()
+                .ok_or_else(|| ElementRegistryError::UnknownSchemaBinding { name: key.clone() })?;
             if builtins.insert(tag, index).is_some() {
                 return Err(ElementRegistryError::DuplicateBuiltinBinding { tag });
             }
@@ -251,11 +289,10 @@ impl ElementRegistryBuilder {
             if name.trim().is_empty() {
                 return Err(ElementRegistryError::EmptyAuthoringName);
             }
-            let index = schemas.get(&key).copied().ok_or_else(|| {
-                ElementRegistryError::UnknownSchemaBinding {
-                    canonical_name: key.clone(),
-                }
-            })?;
+            let index = schemas
+                .get(&key)
+                .copied()
+                .ok_or_else(|| ElementRegistryError::UnknownSchemaBinding { name: key.clone() })?;
             if names.insert(name.clone(), index).is_some() {
                 return Err(ElementRegistryError::DuplicateAuthoringName { name });
             }
@@ -274,20 +311,25 @@ impl ElementRegistryBuilder {
 pub enum ElementRegistryError {
     /// A schema violated a Host-independent contract invariant.
     InvalidSchema {
-        /// Canonical name retained for diagnostics.
-        canonical_name: String,
+        /// Element name retained for diagnostics.
+        name: String,
         /// Rejected contract combination.
         error: ElementRegistrationError,
     },
-    /// Two schemas declared the same canonical name.
-    DuplicateCanonicalKey {
+    /// Two schemas declared the same name.
+    DuplicateName {
         /// Conflicting package-qualified name.
-        canonical_name: String,
+        name: String,
+    },
+    /// A declaration reused a name with a different contract.
+    ConflictingSchema {
+        /// Stable name whose contract changed within one registry epoch.
+        name: String,
     },
     /// A binding referred to a schema absent from this registry definition.
     UnknownSchemaBinding {
         /// Missing package-qualified name.
-        canonical_name: String,
+        name: String,
     },
     /// A built-in tag was bound more than once.
     DuplicateBuiltinBinding {
@@ -321,17 +363,16 @@ impl Error for ElementRegistryError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whisker_engine::whisker_protocol::{
-        ElementChildMount, ElementContentKind, ElementMeasurement,
-    };
+    use whisker_engine::whisker_protocol::{ChildPolicy, ElementMeasurement};
 
     fn custom_schema(name: &str) -> ElementSchema {
         ElementSchema {
-            canonical_name: name.into(),
-            content: ElementContentKind::None,
-            child_mount: ElementChildMount::Presentation,
+            name: name.into(),
+            child_policy: ChildPolicy::Elements,
             measurement: ElementMeasurement::None,
-            consumes_text_style: false,
+            properties: Vec::new(),
+            events: Vec::new(),
+            commands: Vec::new(),
         }
     }
 
@@ -340,17 +381,19 @@ mod tests {
         let registry = ElementRegistry::standard_builder()
             .register_module(ElementModuleDefinition::new(
                 "example.maps",
-                [ElementProviderMetadata::named(
-                    "map",
-                    custom_schema("example.maps/Map"),
-                )],
+                [ElementProviderMetadata::named(custom_schema(
+                    "example.maps/Map",
+                ))],
             ))
             .build()
             .unwrap();
 
         assert_eq!(registry.registrations().len(), 4);
         assert_eq!(
-            registry.registration_for_name("map").unwrap().element_type,
+            registry
+                .registration_for_name("example.maps/Map")
+                .unwrap()
+                .element_type,
             ElementTypeId::new(4).unwrap()
         );
         assert!(
@@ -369,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_canonical_keys_fail_before_a_surface_starts() {
+    fn duplicate_names_fail_before_a_surface_starts() {
         let result = ElementRegistry::builder()
             .register(custom_schema("example/Map"))
             .register(custom_schema("example/Map"))
@@ -377,7 +420,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ElementRegistryError::DuplicateCanonicalKey { .. })
+            Err(ElementRegistryError::DuplicateName { .. })
         ));
     }
 

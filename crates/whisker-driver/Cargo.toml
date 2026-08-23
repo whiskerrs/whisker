@@ -54,5 +54,6 @@ futures-channel = "0.3"
 # `Deserialize` and decode out of the `WhiskerValue` the async invoke
 # returns via `WhiskerValue::deserialize_into`.
 serde = { workspace = true }
+serde_json = { workspace = true }
 subsecond = { workspace = true, optional = true }
 whisker-dev-runtime = { workspace = true, optional = true }

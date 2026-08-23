@@ -2013,6 +2013,7 @@ name = "host-smoke"
 version = "0.1.0"
 dependencies = [
  "whisker",
+ "whisker-toggle",
 ]
 
 [[package]]
@@ -5739,6 +5740,7 @@ dependencies = [
 name = "whisker"
 version = "0.12.0"
 dependencies = [
+ "serde_json",
  "whisker-animation",
  "whisker-config",
  "whisker-css",
@@ -5747,6 +5749,7 @@ dependencies = [
  "whisker-macros",
  "whisker-runtime",
  "whisker-subsecond",
+ "whisker-value",
 ]
 
 [[package]]
@@ -5808,6 +5811,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -5896,6 +5900,7 @@ dependencies = [
  "whisker-engine",
  "whisker-protocol",
  "whisker-style",
+ "whisker-value",
 ]
 
 [[package]]
@@ -5937,6 +5942,7 @@ version = "0.12.0"
 dependencies = [
  "futures-channel",
  "serde",
+ "serde_json",
  "tokio",
  "whisker-dev-runtime",
  "whisker-driver-sys",
@@ -6128,6 +6134,9 @@ dependencies = [
 [[package]]
 name = "whisker-protocol"
 version = "0.12.0"
+dependencies = [
+ "whisker-value",
+]
 
 [[package]]
 name = "whisker-router"
@@ -6168,9 +6177,10 @@ dependencies = [
  "futures-executor",
  "futures-util",
  "serde",
- "serde_json",
  "slotmap",
+ "whisker-protocol",
  "whisker-style",
+ "whisker-value",
 ]
 
 [[package]]
@@ -6253,6 +6263,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-toggle"
+version = "0.12.0"
+dependencies = [
+ "whisker",
+]
+
+[[package]]
+name = "whisker-toggle-desktop-host"
+version = "0.12.0"
+dependencies = [
+ "whisker-desktop",
+]
+
+[[package]]
+name = "whisker-toggle-web-host"
+version = "0.12.0"
+dependencies = [
+ "whisker-web",
+]
+
+[[package]]
+name = "whisker-value"
+version = "0.12.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "whisker-video"
 version = "0.12.0"
 dependencies = [
@@ -6269,6 +6308,7 @@ dependencies = [
  "whisker-engine",
  "whisker-protocol",
  "whisker-style",
+ "whisker-value",
 ]
 
 [[package]]

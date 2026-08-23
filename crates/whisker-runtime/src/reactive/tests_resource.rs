@@ -373,7 +373,7 @@ mod cross_thread_wake {
         }
         set_main_thread_dispatcher(Some(enqueue_post as DispatchFn), std::ptr::null_mut());
         set_drive_callback(Some(test_drive));
-        crate::host_wake::set_request_frame_callback(
+        crate::runtime_wake::set_request_frame_callback(
             Some(request_frame_noop),
             std::ptr::null_mut(),
         );
@@ -381,7 +381,7 @@ mod cross_thread_wake {
 
     fn reset_host() {
         crate::main_thread::__reset_for_tests();
-        crate::host_wake::__reset_for_tests();
+        crate::runtime_wake::__reset_for_tests();
         if let Ok(mut q) = POSTS.lock() {
             q.clear();
         }

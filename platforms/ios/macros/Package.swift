@@ -3,16 +3,14 @@
 // `WhiskerModuleMacros` — SwiftPM Build Tool plugin powering the
 // Whisker module system's iOS module-discovery codegen.
 //
-// Despite the name there is no Swift macro here — discovery finds
-// concrete subclasses of `WhiskerModule.Module` directly. The name
-// stays `WhiskerModuleMacros` for source compatibility with user
-// packages that reference `.package(name: "macros", ...)`.
+// Three targets:
 //
-// Two targets:
+// - **`WhiskerModuleMacros`**: provides the compiler-checked
+//   `@WhiskerModule` marker exported by the runtime package.
 //
 // - **`whisker-module-codegen`** (executable): scans the consuming
 //   target's `.swift` sources via SwiftSyntax, extracts every
-//   class whose inheritance clause names `Module`, and emits
+//   class carrying `@WhiskerModule`, and emits
 //   `<Target>+Generated.swift` (the iOS counterpart of Android's
 //   KSP-generated `<Module>Behaviors.kt`). Invoked at SPM build
 //   time by the plugin below.
@@ -48,6 +46,16 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "510.0.0"),
     ],
     targets: [
+        .macro(
+            name: "WhiskerModuleMacros",
+            dependencies: [
+                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+            ],
+            path: "Sources/WhiskerModuleMacros"
+        ),
+
         // SwiftSyntax-driven codegen tool, invoked by the plugin
         // below. Built once per `swift build` of the consuming
         // package, then re-used to process every WhiskerModules

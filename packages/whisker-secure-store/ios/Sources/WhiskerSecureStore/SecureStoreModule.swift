@@ -15,6 +15,7 @@
 
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
+@WhiskerModule
 public final class SecureStoreModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {

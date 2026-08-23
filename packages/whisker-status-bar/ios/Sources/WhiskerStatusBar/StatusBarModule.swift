@@ -21,6 +21,7 @@
 import UIKit
 import WhiskerModule
 
+@WhiskerModule
 public final class StatusBarModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {

@@ -3,6 +3,7 @@ use whisker_protocol::{ApplyResult, FramePacket, SurfaceId};
 
 use crate::element::DesktopElementRegistry;
 use crate::gpu::{GpuError, GpuRenderer};
+use crate::scene::DesktopProviderEvent;
 use crate::scene::{DesktopPresentError, DesktopScene};
 use crate::text::NativeTextHost;
 
@@ -38,6 +39,10 @@ impl DesktopSurface {
     ) -> Result<(), GpuError> {
         self.gpu
             .render(&self.scene.paint_commands(), text, logical_size, scale)
+    }
+
+    pub(crate) fn take_events(&mut self) -> Vec<DesktopProviderEvent> {
+        self.scene.take_events()
     }
 }
 

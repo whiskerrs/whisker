@@ -4,9 +4,9 @@ use std::fmt;
 
 use whisker_engine::FrameSink;
 use whisker_protocol::{
-    ApplyResult, BoxClip, BoxPaint, ElementChildMount, ElementTypeId, FrameMode, FramePacket,
-    LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip, PaintColor, SceneProjection,
-    SurfaceId, TextContent, ValidationError, Visibility,
+    ApplyResult, BoxClip, BoxPaint, ElementTypeId, FrameMode, FramePacket, LayoutGeometry,
+    LayoutRect, NodeId, Operation, OverflowClip, PaintColor, SceneProjection, SurfaceId,
+    TextContent, ValidationError, Visibility, WhiskerValue,
 };
 
 use crate::element::{DesktopElementContent, DesktopElementError, DesktopElementRegistry};
@@ -41,11 +41,19 @@ impl Default for CommonPresentation {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct RenderNode {
     element_type: ElementTypeId,
     presentation: CommonPresentation,
     content: DesktopElementContent,
+    event_mask: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DesktopProviderEvent {
+    pub(crate) target: NodeId,
+    pub(crate) name: String,
+    pub(crate) detail: WhiskerValue,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -104,6 +112,7 @@ pub(crate) struct DesktopScene {
     validation: SceneProjection,
     elements: DesktopElementRegistry,
     nodes: HashMap<NodeId, RenderNode>,
+    pending_events: Vec<DesktopProviderEvent>,
 }
 
 impl DesktopScene {
@@ -112,7 +121,12 @@ impl DesktopScene {
             validation: SceneProjection::new(surface),
             elements,
             nodes: HashMap::new(),
+            pending_events: Vec::new(),
         }
+    }
+
+    pub(crate) fn take_events(&mut self) -> Vec<DesktopProviderEvent> {
+        std::mem::take(&mut self.pending_events)
     }
 
     pub(crate) fn paint_commands(&self) -> Vec<PaintCommand<'_>> {
@@ -231,7 +245,7 @@ impl DesktopScene {
                 }
                 Operation::InsertChild { parent, .. } => {
                     if let Some(element_type) = types.get(parent).copied()
-                        && self.elements.child_mount(element_type)? == ElementChildMount::None
+                        && !self.elements.child_policy(element_type)?.accepts_elements()
                     {
                         return Err(DesktopElementError::ChildrenNotAllowed { parent: *parent });
                     }
@@ -243,14 +257,35 @@ impl DesktopScene {
                             .set_text(*node, content.clone())?;
                     }
                 }
-                Operation::SetProperty { node, .. } | Operation::ClearProperty { node, .. } => {
-                    if types.contains_key(node) {
-                        return Err(DesktopElementError::UnsupportedProperty { node: *node });
+                Operation::SetProperty {
+                    node,
+                    property,
+                    value,
+                } => {
+                    if let Some(element_type) = types.get(node).copied() {
+                        self.elements.validate_property(
+                            element_type,
+                            *node,
+                            *property,
+                            Some(value),
+                        )?;
                     }
                 }
-                Operation::InvokeCommand { node, .. } => {
-                    if types.contains_key(node) {
-                        return Err(DesktopElementError::UnsupportedCommand { node: *node });
+                Operation::ClearProperty { node, property } => {
+                    if let Some(element_type) = types.get(node).copied() {
+                        self.elements
+                            .validate_property(element_type, *node, *property, None)?;
+                    }
+                }
+                Operation::InvokeCommand {
+                    node,
+                    command,
+                    arguments,
+                    ..
+                } => {
+                    if let Some(element_type) = types.get(node).copied() {
+                        self.elements
+                            .validate_command(element_type, *node, *command, arguments)?;
                     }
                 }
                 Operation::DeleteNode { .. }
@@ -275,6 +310,7 @@ impl DesktopScene {
     fn apply_operations(&mut self, packet: &FramePacket) {
         if packet.header.mode == FrameMode::Snapshot {
             self.nodes.clear();
+            self.pending_events.clear();
         }
         for operation in &packet.operations {
             match operation {
@@ -289,6 +325,7 @@ impl DesktopScene {
                             element_type: *element_type,
                             presentation: CommonPresentation::default(),
                             content,
+                            event_mask: 0,
                         },
                     );
                 }
@@ -391,14 +428,62 @@ impl DesktopScene {
                         .set_text(*node, content.clone())
                         .expect("element content operation was validated before commit");
                 }
+                Operation::SetProperty {
+                    node,
+                    property,
+                    value,
+                } => {
+                    self.nodes
+                        .get_mut(node)
+                        .expect("validated node")
+                        .content
+                        .set_property(*node, *property, value)
+                        .expect("element property was validated before commit");
+                }
+                Operation::ClearProperty { node, property } => {
+                    self.nodes
+                        .get_mut(node)
+                        .expect("validated node")
+                        .content
+                        .clear_property(*node, *property)
+                        .expect("element property was validated before commit");
+                }
+                Operation::SetEventMask { node, event_mask } => {
+                    self.nodes.get_mut(node).expect("validated node").event_mask = *event_mask;
+                }
+                Operation::InvokeCommand {
+                    node,
+                    command,
+                    arguments,
+                    ..
+                } => {
+                    let state = self.nodes.get_mut(node).expect("validated node");
+                    let element_type = state.element_type;
+                    let event_mask = state.event_mask;
+                    let event = state
+                        .content
+                        .invoke_command(*node, *command, arguments)
+                        .expect("element command was validated before commit");
+                    if let Some(event) = event {
+                        let resolved =
+                            self.elements
+                                .event(element_type, *node, &event.event, &event.detail);
+                        debug_assert!(resolved.is_ok(), "native element emitted invalid event");
+                        if let Ok((name, mask)) = resolved
+                            && event_mask & mask != 0
+                        {
+                            self.pending_events.push(DesktopProviderEvent {
+                                target: *node,
+                                name,
+                                detail: event.detail,
+                            });
+                        }
+                    }
+                }
                 Operation::SetTransform { .. }
-                | Operation::SetProperty { .. }
-                | Operation::ClearProperty { .. }
-                | Operation::SetEventMask { .. }
                 | Operation::SetHitTest { .. }
                 | Operation::SetPointerCapture { .. }
-                | Operation::ReleasePointerCapture { .. }
-                | Operation::InvokeCommand { .. } => {}
+                | Operation::ReleasePointerCapture { .. } => {}
             }
         }
     }
@@ -487,18 +572,23 @@ pub(crate) fn is_transparent(color: &PaintColor) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::element::{
+        DesktopElementFactory, DesktopNativeElement, DesktopNativeEvent, built_in_element_factories,
+    };
     use whisker::standard_element_registrations;
     use whisker_protocol::{
-        ElementContentKind, FrameHeader, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
-        MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, PaintCorners, PaintEdges,
-        PaintLengthPercentage, ProtocolVersion, TextMeasurePayload, TextMeasureStyle, TextPaint,
+        CommandId, ElementCommandSchema, ElementEventSchema, ElementMeasurement,
+        ElementPropertySchema, ElementRegistration, ElementValueKind, EventId, FrameHeader,
+        MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
+        MeasureTextOverflow, MeasureTextWrap, PaintCorners, PaintEdges, PaintLengthPercentage,
+        PropertyId, ProtocolVersion, TextMeasurePayload, TextMeasureStyle, TextPaint,
     };
 
-    fn element_type(content: ElementContentKind) -> ElementTypeId {
+    fn element_type(name: &str) -> ElementTypeId {
         standard_element_registrations()
             .into_iter()
-            .find(|registration| registration.content == content)
-            .expect("standard content registration")
+            .find(|registration| registration.name == name)
+            .expect("standard element registration")
             .element_type
     }
 
@@ -507,7 +597,7 @@ mod tests {
             surface,
             DesktopElementRegistry::bind(
                 &standard_element_registrations(),
-                &crate::element::standard_desktop_element_factories(),
+                &crate::element::built_in_element_factories(),
             )
             .unwrap(),
         )
@@ -604,12 +694,173 @@ mod tests {
         }
     }
 
+    const CHECKED: PropertyId = PropertyId::new(1).unwrap();
+    const DISABLED: PropertyId = PropertyId::new(2).unwrap();
+    const CHANGE: EventId = EventId::new(1).unwrap();
+    const TOGGLE: CommandId = CommandId::new(1).unwrap();
+
+    #[derive(Debug, Default)]
+    struct ToggleNative {
+        checked: bool,
+        disabled: bool,
+    }
+
+    impl DesktopNativeElement for ToggleNative {
+        fn set_property(&mut self, property: PropertyId, value: &WhiskerValue) {
+            let WhiskerValue::Bool(value) = value else {
+                unreachable!()
+            };
+            match property {
+                CHECKED => self.checked = *value,
+                DISABLED => self.disabled = *value,
+                _ => unreachable!(),
+            }
+        }
+
+        fn clear_property(&mut self, property: PropertyId) {
+            match property {
+                CHECKED => self.checked = false,
+                DISABLED => self.disabled = false,
+                _ => unreachable!(),
+            }
+        }
+
+        fn invoke_command(
+            &mut self,
+            command: CommandId,
+            _arguments: &WhiskerValue,
+        ) -> Option<DesktopNativeEvent> {
+            assert_eq!(command, TOGGLE);
+            if self.disabled {
+                return None;
+            }
+            self.checked = !self.checked;
+            Some(DesktopNativeEvent {
+                event: "change".into(),
+                detail: WhiskerValue::map([("checked", WhiskerValue::Bool(self.checked))]),
+            })
+        }
+    }
+
+    fn toggle_scene() -> (DesktopScene, ElementTypeId) {
+        let element_type = ElementTypeId::new(20).unwrap();
+        let mut registrations = standard_element_registrations();
+        registrations.push(ElementRegistration {
+            element_type,
+            name: "whisker.test/Toggle".into(),
+            child_policy: whisker_protocol::ChildPolicy::None,
+            measurement: ElementMeasurement::None,
+            properties: vec![
+                ElementPropertySchema {
+                    property: CHECKED,
+                    name: "checked".into(),
+                    value: ElementValueKind::Bool,
+                },
+                ElementPropertySchema {
+                    property: DISABLED,
+                    name: "disabled".into(),
+                    value: ElementValueKind::Bool,
+                },
+            ],
+            events: vec![ElementEventSchema {
+                event: CHANGE,
+                name: "change".into(),
+                detail: Some(ElementValueKind::Map),
+            }],
+            commands: vec![ElementCommandSchema {
+                command: TOGGLE,
+                name: "toggle".into(),
+                arguments: ElementValueKind::Null,
+            }],
+        });
+        let mut factories = built_in_element_factories();
+        factories.push(DesktopElementFactory::native("whisker.test/Toggle", || {
+            Box::<ToggleNative>::default()
+        }));
+        (
+            DesktopScene::new(
+                SurfaceId::new(1).unwrap(),
+                DesktopElementRegistry::bind(&registrations, &factories).unwrap(),
+            ),
+            element_type,
+        )
+    }
+
+    #[test]
+    fn native_toggle_applies_properties_invokes_command_and_routes_change() {
+        let node = id(1);
+        let (mut scene, element_type) = toggle_scene();
+        assert_eq!(
+            scene.present(&packet(
+                FrameMode::Snapshot,
+                0,
+                1,
+                vec![
+                    Operation::CreateNode { node, element_type },
+                    Operation::SetEventMask {
+                        node,
+                        event_mask: 1,
+                    },
+                    Operation::SetProperty {
+                        node,
+                        property: CHECKED,
+                        value: WhiskerValue::Bool(true),
+                    },
+                    Operation::InvokeCommand {
+                        node,
+                        command: TOGGLE,
+                        arguments: WhiskerValue::Null,
+                        result: None,
+                    },
+                ],
+            )),
+            Ok(ApplyResult::Accepted { revision: 1 })
+        );
+        assert_eq!(
+            scene.take_events(),
+            vec![DesktopProviderEvent {
+                target: node,
+                name: "change".into(),
+                detail: WhiskerValue::map([("checked", WhiskerValue::Bool(false),)]),
+            }]
+        );
+    }
+
+    #[test]
+    fn native_toggle_rejects_wrong_property_shape_before_commit() {
+        let node = id(1);
+        let (mut scene, element_type) = toggle_scene();
+        assert_eq!(
+            scene.present(&packet(
+                FrameMode::Snapshot,
+                0,
+                1,
+                vec![
+                    Operation::CreateNode { node, element_type },
+                    Operation::SetProperty {
+                        node,
+                        property: CHECKED,
+                        value: WhiskerValue::String("true".into()),
+                    },
+                ],
+            )),
+            Err(DesktopPresentError::Element(
+                DesktopElementError::InvalidPropertyValue {
+                    node,
+                    property: CHECKED,
+                    expected: ElementValueKind::Bool,
+                }
+            ))
+        );
+        assert!(scene.nodes.is_empty());
+    }
+
     #[test]
     fn accepted_projection_lowers_content_geometry_clip_and_opacity() {
         let root = id(1);
         let child = id(2);
-        let box_type = element_type(ElementContentKind::None);
-        let text_type = element_type(ElementContentKind::Text);
+        let box_type = element_type(whisker::VIEW_ELEMENT_NAME);
+        let text_type = element_type(whisker::TEXT_ELEMENT_NAME);
         let mut scene = scene(SurfaceId::new(1).unwrap());
         let snapshot = packet(
             FrameMode::Snapshot,
@@ -686,7 +937,7 @@ mod tests {
     #[test]
     fn rejected_delta_does_not_partially_change_desktop_state() {
         let root = id(1);
-        let element_type = element_type(ElementContentKind::None);
+        let element_type = element_type(whisker::VIEW_ELEMENT_NAME);
         let mut scene = scene(SurfaceId::new(1).unwrap());
         scene
             .present(&packet(
@@ -767,7 +1018,7 @@ mod tests {
                 1,
                 vec![Operation::CreateNode {
                     node: root,
-                    element_type: element_type(ElementContentKind::None),
+                    element_type: element_type(whisker::VIEW_ELEMENT_NAME),
                 }],
             )),
             Ok(ApplyResult::Accepted { revision: 1 })
@@ -787,7 +1038,7 @@ mod tests {
                 vec![
                     Operation::CreateNode {
                         node: root,
-                        element_type: element_type(ElementContentKind::None),
+                        element_type: element_type(whisker::VIEW_ELEMENT_NAME),
                     },
                     Operation::SetText {
                         node: root,
@@ -808,7 +1059,7 @@ mod tests {
                 vec![
                     Operation::CreateNode {
                         node: root,
-                        element_type: element_type(ElementContentKind::Text),
+                        element_type: element_type(whisker::TEXT_ELEMENT_NAME),
                     },
                     Operation::SetText {
                         node: root,
@@ -842,11 +1093,11 @@ mod tests {
                 vec![
                     Operation::CreateNode {
                         node: parent,
-                        element_type: element_type(ElementContentKind::Text),
+                        element_type: element_type(whisker::TEXT_ELEMENT_NAME),
                     },
                     Operation::CreateNode {
                         node: child,
-                        element_type: element_type(ElementContentKind::None),
+                        element_type: element_type(whisker::VIEW_ELEMENT_NAME),
                     },
                     Operation::InsertChild {
                         parent,
@@ -867,7 +1118,7 @@ mod tests {
                 1,
                 vec![Operation::CreateNode {
                     node: parent,
-                    element_type: element_type(ElementContentKind::Text),
+                    element_type: element_type(whisker::TEXT_ELEMENT_NAME),
                 }],
             )),
             Ok(ApplyResult::Accepted { revision: 1 })

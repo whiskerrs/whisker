@@ -60,6 +60,8 @@ packages/**/Package.resolved
 packages/**/build/
 packages/**/.gradle/
 packages/**/.kotlin/
+packages/**/.whisker-generated/
+packages/**/WhiskerGenerated/
 
 # Per-example Rust workspace artifacts.
 examples/**/target/

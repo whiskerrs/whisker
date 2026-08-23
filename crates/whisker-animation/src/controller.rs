@@ -396,7 +396,7 @@ fn register(state: &Rc<RefCell<ControllerState>>) {
     }
     // Report busy before the next `step`, and nudge the host for a frame.
     anim_hook::mark_animating(true);
-    whisker_runtime::host_wake::wake_runtime();
+    whisker_runtime::runtime_wake::wake_runtime();
 }
 
 /// Deregister `state` from the active list (no-op if absent).

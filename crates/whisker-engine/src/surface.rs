@@ -4,9 +4,9 @@ use std::{error::Error, fmt};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
-    ApplyResult, ElementTypeId, FramePacket, HitTestBehavior, InputPoint, LayoutGeometry,
-    MeasurementMetrics, MeasurementReady, MeasurementResponse, MeasurementSpec, NodeId, PointerId,
-    SurfaceId, TextContent,
+    ApplyResult, CommandId, ElementTypeId, FramePacket, HitTestBehavior, InputPoint,
+    LayoutGeometry, MeasurementMetrics, MeasurementReady, MeasurementResponse, MeasurementSpec,
+    NodeId, PointerId, PropertyId, ResultId, SurfaceId, TextContent, WhiskerValue,
 };
 use whisker_style::{ComputedLayoutStyle, ComputedStyle, InheritedStyle, PropertyImpactSet};
 
@@ -213,6 +213,42 @@ impl SurfaceEngine {
     pub fn set_event_mask(&mut self, node: NodeId, mask: u64) -> Result<(), SurfaceError> {
         self.scene
             .set_event_mask(node, mask)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Sets one typed element property in the retained scene.
+    pub fn set_property(
+        &mut self,
+        node: NodeId,
+        property: PropertyId,
+        value: WhiskerValue,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .set_property(node, property, value)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Clears one typed element property in the retained scene.
+    pub fn clear_property(
+        &mut self,
+        node: NodeId,
+        property: PropertyId,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .clear_property(node, property)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Queues one typed element command after preceding visual mutations.
+    pub fn invoke_command(
+        &mut self,
+        node: NodeId,
+        command: CommandId,
+        arguments: WhiskerValue,
+        result: Option<ResultId>,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .invoke_command(node, command, arguments, result)
             .map_err(SurfaceError::Scene)
     }
 
@@ -1854,9 +1890,9 @@ mod tests {
                     SinkBehavior::WrongRevision => Ok(ApplyResult::Accepted {
                         revision: packet.header.target_revision + 1,
                     }),
-                    SinkBehavior::NeedSnapshot => {
-                        Ok(ApplyResult::NeedSnapshot { host_revision: 0 })
-                    }
+                    SinkBehavior::NeedSnapshot => Ok(ApplyResult::NeedSnapshot {
+                        receiver_revision: 0,
+                    }),
                 }
             }
         }
@@ -1886,7 +1922,9 @@ mod tests {
         sink.renderer = RecordingRenderer::new(surface_id());
         assert_eq!(
             surface.present(1, &mut sink),
-            Ok(Some(ApplyResult::NeedSnapshot { host_revision: 0 }))
+            Ok(Some(ApplyResult::NeedSnapshot {
+                receiver_revision: 0
+            }))
         );
         assert_eq!(surface.scene().accepted_revision(), 1);
         assert_eq!(

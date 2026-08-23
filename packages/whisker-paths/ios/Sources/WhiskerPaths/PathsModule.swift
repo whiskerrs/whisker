@@ -10,6 +10,7 @@
 
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
+@WhiskerModule
 public final class PathsModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {

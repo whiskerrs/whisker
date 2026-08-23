@@ -46,6 +46,11 @@ define_id!(
     "Identifies a command declared by an element schema"
 );
 define_id!(
+    EventId,
+    u32,
+    "Identifies a node-scoped event declared by an element schema"
+);
+define_id!(
     ResultId,
     u64,
     "Correlates an asynchronous command result with its invocation"
@@ -79,6 +84,7 @@ mod tests {
     fn zero_is_reserved_for_every_id_width() {
         assert_eq!(NodeId::new(0), None);
         assert_eq!(PropertyId::new(0), None);
+        assert_eq!(EventId::new(0), None);
         assert_eq!(MeasurementKey::new(0), None);
         assert_eq!(MeasurementRequestId::new(0), None);
         assert_eq!(PreparedContentId::new(0), None);

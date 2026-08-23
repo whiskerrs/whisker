@@ -36,8 +36,8 @@ use std::path::{Path, PathBuf};
 
 use whisker_dev_server::hotpatch::{
     CapturedLinkerInvocation, CapturedRustcInvocation, HotpatchModuleCache, LinkerOs, Patcher,
-    build_link_plan, build_obj_plan, library_filename, linker_os_for_host, parse_symbol_table,
-    run_link_plan, run_obj_plan,
+    build_link_plan, build_obj_plan, library_filename, linker_os_for_current_platform,
+    parse_symbol_table, run_link_plan, run_obj_plan,
 };
 
 const FIXTURE_CRATE_NAME: &str = "thin_build_fixture";
@@ -141,7 +141,7 @@ async fn build_original_via_pipeline(lib_rs: &Path, out_dir: &Path, cwd: &Path) 
         &captured_linker.args,
         &object,
         &dylib,
-        linker_os_for_host(),
+        linker_os_for_current_platform(),
         &[],
         &[],
     );
@@ -202,7 +202,7 @@ async fn build_patch_emits_a_jump_table_entry_for_a_mangled_function() {
         linker_path(),
         work.clone(),
         patch_out.clone(),
-        match linker_os_for_host() {
+        match linker_os_for_current_platform() {
             LinkerOs::Macos => LinkerOs::Macos,
             LinkerOs::Linux => LinkerOs::Linux,
             LinkerOs::Other => LinkerOs::Other,
@@ -277,7 +277,7 @@ async fn build_patch_errors_when_no_captured_rustc_for_the_package() {
         linker_path(),
         work.clone(),
         work.join("patches"),
-        linker_os_for_host(),
+        linker_os_for_current_platform(),
         original_cache,
         HashMap::new(),
         HashMap::new(),
@@ -315,7 +315,7 @@ async fn build_patch_errors_when_captured_linker_is_missing() {
         linker_path(),
         work.clone(),
         work.join("patches"),
-        linker_os_for_host(),
+        linker_os_for_current_platform(),
         original_cache,
         captured_rustc_args,
         HashMap::new(), // empty linker map

@@ -73,6 +73,10 @@ pub use whisker_css as css;
 pub use whisker_animation as animation;
 pub use whisker_animation::{AnimConfig, Animatable, AnimationController, Curve, Tween, animated};
 
+pub use whisker_engine::whisker_protocol::{
+    ChildPolicy, CommandId, ElementCommandSchema, ElementEventSchema, ElementMeasurement,
+    ElementPropertySchema, ElementSchema, ElementValueKind, EventId, PropertyId,
+};
 pub use whisker_runtime::element::ElementTag;
 
 /// The return type of a `#[component]` / `#[whisker::main]` function —
@@ -81,7 +85,21 @@ pub use whisker_runtime::element::ElementTag;
 /// `-> Element` without an internal `runtime::view` import.
 pub use whisker_runtime::view::Element;
 
-pub use whisker_macros::{component, main, module_component, render};
+#[doc(hidden)]
+pub use whisker_macros::builtin_component;
+pub use whisker_macros::{WhiskerModule, component, main, module_component, render};
+
+/// A platform implementation contributed by a Whisker module package.
+///
+/// `Definition` is intentionally associated: Desktop, Web, Android, and iOS
+/// bind the same shared schema to different native implementation types.
+pub trait WhiskerModule {
+    /// Platform-specific declaration consumed by the generated application.
+    type Definition;
+
+    /// Builds this platform's declaration.
+    fn definition() -> Self::Definition;
+}
 
 pub use whisker_driver::{
     AnimateOp, AnimateOptions, BoundingClientRect, ElementHandle, ElementRef, ListHandle,
@@ -89,6 +107,9 @@ pub use whisker_driver::{
     VisibleCell, VisibleCells, animate_cancel, animate_start, invoke_element_animate,
 };
 
+#[doc(hidden)]
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub use whisker_driver::module as __mobile_module;
 pub use whisker_driver::module::PlatformModule;
 
 /// The process-global focused-element registry (Whisker's analogue of
@@ -107,7 +128,7 @@ pub use whisker_driver::back;
 /// boundary as both module args/returns and event payloads, so it
 /// lives at the crate root rather than buried under
 /// `platform_module` (where it's also re-exported for back-compat).
-pub use whisker_runtime::value::WhiskerValue;
+pub use whisker_value::WhiskerValue;
 
 /// Typed event objects handed to `on_<event>` handlers on built-in
 /// elements and `#[whisker::module_component]` view methods.
@@ -166,6 +187,9 @@ pub use whisker_runtime::{RuntimeDispatcher, runtime_dispatcher};
 pub use whisker_runtime::tasks::run_until_stalled;
 mod control_flow;
 mod element_registry;
+#[doc(hidden)]
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub mod mobile_runtime;
 mod runtime_instance;
 mod standard_ui;
 mod style;
@@ -182,8 +206,8 @@ pub use runtime_instance::{
     RuntimeLifecycleError,
 };
 pub use standard_ui::{
-    SCROLL_VIEW_ELEMENT_NAME, TEXT_ELEMENT_NAME, VIEW_ELEMENT_NAME, standard_element_providers,
-    standard_ui_module_definition,
+    SCROLL_VIEW_ELEMENT_NAME, TEXT_ELEMENT_NAME, VIEW_ELEMENT_NAME, scroll_view_element_binding,
+    text_element_binding, view_element_binding,
 };
 pub use style::{Style, apply_style};
 pub use surface_runtime::{
@@ -192,7 +216,7 @@ pub use surface_runtime::{
 };
 
 pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
-pub use whisker_runtime::view::Children;
+pub use whisker_runtime::view::{Children, TextChildren};
 pub use whisker_runtime::view::{EachFn, Fallback, ItemFn, ItemMeta, KeyFn, MetaFn, WhenFn};
 
 /// Built-in tag builders. The `render!` macro lowers each built-in
@@ -215,6 +239,11 @@ pub use whisker_runtime::view::{EachFn, Fallback, ItemFn, ItemMeta, KeyFn, MetaF
 /// Internal. Not part of the public surface — users go through
 /// `render!`.
 #[doc(hidden)]
+pub mod __element_builder {
+    pub use crate::__tags::ElementBuilder;
+}
+
+#[doc(hidden)]
 pub mod __tags {
     use crate::ElementTag;
     use whisker_runtime::event::{
@@ -232,12 +261,12 @@ pub mod __tags {
     // A trait, not `macro_rules!`: RA's method-completion does NOT
     // surface methods produced by a `macro_rules!` expansion inside an
     // `impl` block, whereas trait methods are first-class items it
-    // indexes — provided the trait is in scope, which the `render!` /
-    // `#[component]` expansions arrange with
-    // `use ::whisker::__tags::ElementBuilder as _;`. End-to-end guard:
+    // indexes — provided the trait is in scope. `render!` imports it through
+    // `__tags` for built-ins and through the common `__element_builder`
+    // re-export for module components. End-to-end guard:
     // `crates/whisker-macros/tests/ra_completion.rs`.
 
-    /// Shared builder methods for every built-in element tag.
+    /// Shared builder methods for built-in and module element tags.
     ///
     /// Each method consumes `self` and returns it, so calls chain:
     /// `view().style(…).on_tap(…).child(…)`. Reactive-capable
@@ -1711,17 +1740,13 @@ pub use whisker_runtime::main_thread::run_on_main_thread;
 /// Rust proxies that wrap `invoke` / `invoke_async`; reach into this
 /// module directly only when you need the raw [`WhiskerValue`] enum.
 pub mod platform_module {
-    pub use whisker_driver::module::{
-        WhiskerModuleError, WhiskerValue, from_raw, invoke, invoke_async,
-    };
+    pub use whisker_driver::module::{WhiskerModuleError, WhiskerValue, invoke, invoke_async};
 }
 
 /// Internal runtime entry points used by code the `#[whisker::main]` macro
 /// expands to. Not stable, not for direct use.
 #[doc(hidden)]
 pub mod __main_runtime {
-    pub use whisker_driver::bootstrap::{run, tick};
-
     /// Wrap one invocation of the user's `app` function for hot-patch
     /// dispatch. The `#[whisker::main]` macro calls this unconditionally
     /// from inside the user crate so we don't need a user-crate-local
@@ -1792,6 +1817,19 @@ pub mod __main_runtime {
         f()
     }
 }
+
+/// Internal platform-neutral mobile entry points generated by
+/// [`main`](crate::main). This is intentionally hidden from application code;
+/// Android and iOS call the exported C functions instead.
+#[doc(hidden)]
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub mod __mobile_runtime {
+    pub use crate::mobile_runtime::{create, destroy, dispatch_event, dispatch_module_event, tick};
+}
+
+/// Stable C-ABI types referenced by code emitted from [`main`](crate::main).
+#[doc(hidden)]
+pub use whisker_driver::mobile_abi as __mobile_abi;
 
 /// Hot-reload dispatcher namespace exposed for the `#[component]`
 /// macro. With the `hot-reload` feature on, this re-exports

@@ -1,6 +1,6 @@
 // `whisker-input` ModuleDefinition (Android).
 //
-// KSP scans this module's sources for any concrete `Module` subclass
+// KSP scans this module's sources for `@WhiskerModule`
 // and emits the registration block into
 // `WhiskerInputBehaviors.registerAll()`.
 //
@@ -11,9 +11,12 @@
 package rs.whisker.elements.input
 
 import rs.whisker.runtime.Module
+import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
 
+
+@WhiskerModule
 class InputModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Input")

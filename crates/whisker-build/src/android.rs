@@ -4,20 +4,12 @@
 //!
 //! Three phases:
 //!
-//! 1. [`cargo_build_dylib`] — cross-compile the user crate as a Mach-O
-//!    `.so` via `cargo rustc --crate-type dylib --target <triple>`.
-//!    Why `dylib` (and not `cdylib`)? rustc unconditionally injects
-//!    `-Wl,--exclude-libs,ALL` for `cdylib`, which strips every
-//!    mangled Rust symbol from `.dynsym`. The `dylib` flavour keeps
-//!    them — `System.loadLibrary` doesn't care which flavour, but
-//!    the symmetric hot-reload patch path (dev mode) does. Production
-//!    builds use the same shape for consistency.
+//! 1. [`cargo_build_dylib`] — cross-compile the user crate as an ELF
+//!    `.so`. Production uses a stripped, LTO'd `cdylib`; hot reload uses a
+//!    `dylib` so its Rust symbols remain available to the patcher.
 //!
-//! 2. [`stage_jni_libs`] — drop the `.so` plus the matching
-//!    `libc++_shared.so` from the NDK sysroot into the gen tree's
-//!    `app/src/main/jniLibs/<abi>/`. The bridge is dynamically linked
-//!    against `libc++_shared`; without it `System.loadLibrary` fails
-//!    with `dlopen failed: cannot locate symbol _ZNSt6__ndk1…`.
+//! 2. [`stage_jni_libs`] — drop the self-contained Rust `.so` into the gen
+//!    tree's `app/src/main/jniLibs/<abi>/`.
 //!
 //! 3. [`run_gradle_assemble`] — invoke `gradle :app:assemble{Release,Debug}`
 //!    against the generated project. Output is `app-{release,debug}.apk`
@@ -38,12 +30,9 @@ use crate::capture::{CaptureShims, capture_env_vars};
 
 /// NDK versions Whisker is known to link against, newest first.
 ///
-/// Newest wins because `libc++_shared.so` is copied out of whichever
-/// NDK this resolves to, and the copy shipped before r27 is laid out
-/// for 4 KB pages — unloadable on a 16 KB-page device, and rejected by
-/// Play. The older entries stay as a fallback for machines that have
-/// nothing newer installed; such a build still runs, but only on 4 KB
-/// devices.
+/// Newest wins so the bare-clang toolchain follows current Android ABI and
+/// page-alignment behavior. Older entries remain supported for existing
+/// development machines; Whisker supplies the 16 KB linker flag itself.
 const PREFERRED_NDKS: &[&str] = &[
     "27.1.12297006",
     "27.0.12077973",
@@ -175,7 +164,7 @@ pub struct CargoBuild<'a> {
     pub capture: Option<&'a CaptureShims>,
 }
 
-/// Run `cargo rustc --crate-type dylib --target <triple>` against the
+/// Run `cargo rustc --crate-type {cdylib,dylib} --target <triple>` against the
 /// user crate. Returns the absolute path to the produced `.so`.
 pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     // Version-script: rustc auto-generates one that lists Rust-mangled
@@ -190,7 +179,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     let vs_path = vs_dir.join("android-jni-exports.ver");
     std::fs::write(
         &vs_path,
-        b"{\n  global:\n    Java_*;\n    JNI_OnLoad;\n};\n",
+        b"{\n  global:\n    Java_*;\n    JNI_OnLoad;\n    whisker_view_create;\n    whisker_view_tick;\n    whisker_view_destroy;\n    whisker_view_dispatch_event;\n    whisker_view_dispatch_module_event;\n};\n",
     )
     .with_context(|| format!("write {}", vs_path.display()))?;
 
@@ -198,11 +187,16 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     let triple_env = triple.replace('-', "_");
     let triple_upper = triple_env.to_uppercase();
 
+    let crate_type = if b.capture.is_some() {
+        "dylib"
+    } else {
+        "cdylib"
+    };
     let mut cmd = Command::new("cargo");
     cmd.arg("rustc")
         .args(["--target", triple])
         .args(["-p", b.package])
-        .args(["--crate-type", "dylib"]);
+        .args(["--crate-type", crate_type]);
     if let Some(flag) = b.profile.cargo_flag() {
         cmd.arg(flag);
     }
@@ -232,6 +226,9 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         cmd.env(&linker_env, &b.toolchain.clang);
     }
     cmd.env("ANDROID_NDK_HOME", &b.toolchain.ndk);
+    if b.profile == Profile::Release {
+        configure_minimum_release_profile(&mut cmd);
+    }
     cmd.current_dir(b.workspace_root);
 
     // hot reload capture shims (rustc-shim + linker-shim + cache dirs).
@@ -287,16 +284,24 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     Ok(so_path)
 }
 
+fn configure_minimum_release_profile(cmd: &mut Command) {
+    cmd.env("CARGO_PROFILE_RELEASE_LTO", "fat")
+        .env("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1")
+        .env("CARGO_PROFILE_RELEASE_OPT_LEVEL", "z")
+        .env("CARGO_PROFILE_RELEASE_STRIP", "symbols")
+        .env("CARGO_PROFILE_RELEASE_PANIC", "abort");
+}
+
 // ----- jniLibs staging ------------------------------------------------------
 
-/// Copy `so` plus the NDK-shipped `libc++_shared.so` into `abi_dir`.
+/// Copy the retained runtime `so` into `abi_dir`.
 /// Lower-level than [`stage_jni_libs`] — the caller hands in the
 /// already-resolved abi leaf directory rather than the gen-android
 /// root. Used by the `whisker build-android` binary path, where the
 /// Gradle plugin computes the destination as
 /// `<buildDir>/intermediates/whisker_jni_libs/<variant>/<abi>/` and
 /// passes it in via `--jni-libs-dir`.
-pub fn stage_so_files(abi_dir: &Path, so: &Path, tc: &AndroidToolchain, abi: &str) -> Result<()> {
+pub fn stage_so_files(abi_dir: &Path, so: &Path, _tc: &AndroidToolchain, _abi: &str) -> Result<()> {
     std::fs::create_dir_all(abi_dir).with_context(|| format!("mkdir -p {}", abi_dir.display()))?;
 
     let so_name = so
@@ -306,19 +311,14 @@ pub fn stage_so_files(abi_dir: &Path, so: &Path, tc: &AndroidToolchain, abi: &st
     std::fs::copy(so, &dst_so)
         .with_context(|| format!("copy {} → {}", so.display(), dst_so.display()))?;
 
-    let libcxx = find_libcxx_shared(&tc.ndk, abi)?;
-    let dst_libcxx = abi_dir.join("libc++_shared.so");
-    std::fs::copy(&libcxx, &dst_libcxx)
-        .with_context(|| format!("copy {} → {}", libcxx.display(), dst_libcxx.display()))?;
-
-    for staged in [&dst_so, &dst_libcxx] {
-        warn_if_not_16k_aligned(staged);
+    let stale_libcxx = abi_dir.join("libc++_shared.so");
+    if stale_libcxx.is_file() {
+        std::fs::remove_file(&stale_libcxx)
+            .with_context(|| format!("remove stale {}", stale_libcxx.display()))?;
     }
+    warn_if_not_16k_aligned(&dst_so);
 
-    crate::ui::info(format!(
-        "stage jniLibs ({} + libc++_shared.so)",
-        so_name.to_string_lossy(),
-    ));
+    crate::ui::info(format!("stage jniLibs ({})", so_name.to_string_lossy()));
     Ok(())
 }
 
@@ -394,9 +394,8 @@ fn max_load_align(so: &Path) -> Option<u64> {
         .max()
 }
 
-/// Copy `so` plus the NDK-shipped `libc++_shared.so` into
-/// `gen/android/app/src/main/jniLibs/<abi>/`. Used by the cng-driven
-/// legacy non-gradle CLI path; the Gradle-plugin path goes through
+/// Copy `so` into `gen/android/app/src/main/jniLibs/<abi>/`. The
+/// Gradle-plugin path goes through
 /// [`stage_so_files`] directly.
 pub fn stage_jni_libs(
     gen_android: &Path,
@@ -429,6 +428,9 @@ pub fn stage_jni_libs(
 ///    its `registerAll()`. The aggregator's FQN matches what the user
 ///    app's `Application.onCreate()` already invokes, so the
 ///    user-facing surface is unchanged.
+///
+/// Built-in element implementations are checked into the Android SDK. The
+/// generated aggregator only calls their ordinary module registration path.
 ///
 /// Each module's KSP plugin emits its own `<ModuleName>Behaviors`
 /// object into its subproject's generated-source set; the
@@ -479,7 +481,6 @@ pub fn stage_module_kotlin_sources(
     let aggregator_path = aggregator_dir.join("WhiskerModuleBehaviors.kt");
     std::fs::write(&aggregator_path, render_aggregator_kt(&android_modules))
         .with_context(|| format!("write {}", aggregator_path.display()))?;
-
     if !android_modules.is_empty() {
         crate::ui::info(format!(
             "wire {n} module gradle subproject(s) into the app build",
@@ -557,16 +558,18 @@ fn render_aggregator_kt(modules: &[&crate::modules::ResolvedModule]) -> String {
          // (generated from the cng `Application.kt` template) calls\n\
          // `registerAll()` once at launch — that fans out to each\n\
          // subproject's per-module behaviors, which themselves wire\n\
-         // both `@WhiskerElement` Lynx registrations and\n\
-         // `@WhiskerModule` dispatch registrations.\n\n",
+         // both native element and function-module registrations.\n\n",
     );
     out.push_str("package rs.whisker.runtime.generated\n\n");
+    out.push_str("import rs.whisker.runtime.BuiltInElementModule\n");
+    out.push_str("import rs.whisker.runtime.registerWithWhisker\n");
     out.push_str("import java.util.concurrent.atomic.AtomicBoolean\n\n");
     out.push_str("public object WhiskerModuleBehaviors {\n");
     out.push_str("    private val registered = AtomicBoolean(false)\n\n");
     out.push_str("    @JvmStatic\n");
     out.push_str("    public fun registerAll() {\n");
     out.push_str("        if (!registered.compareAndSet(false, true)) return\n");
+    out.push_str("        BuiltInElementModule().registerWithWhisker()\n");
     if modules.is_empty() {
         out.push_str("        // (no Whisker module deps)\n");
     }
@@ -577,32 +580,6 @@ fn render_aggregator_kt(modules: &[&crate::modules::ResolvedModule]) -> String {
     out.push_str("    }\n");
     out.push_str("}\n");
     out
-}
-
-/// Locate `libc++_shared.so` inside the NDK sysroot for `abi`. NDKs
-/// place it under the host-prebuilt sysroot's lib/<triple>/ dir.
-fn find_libcxx_shared(ndk: &Path, abi: &str) -> Result<PathBuf> {
-    let host = host_tag()?;
-    let triple = match abi {
-        "arm64-v8a" => "aarch64-linux-android",
-        "armeabi-v7a" => "arm-linux-androideabi",
-        "x86_64" => "x86_64-linux-android",
-        "x86" => "i686-linux-android",
-        other => return Err(anyhow!("unknown ABI for libc++_shared lookup: {other}")),
-    };
-    let cand = ndk
-        .join("toolchains/llvm/prebuilt")
-        .join(host)
-        .join("sysroot/usr/lib")
-        .join(triple)
-        .join("libc++_shared.so");
-    if !cand.is_file() {
-        return Err(anyhow!(
-            "libc++_shared.so missing at {} (check NDK install)",
-            cand.display(),
-        ));
-    }
-    Ok(cand)
 }
 
 // ----- gradle ---------------------------------------------------------------
@@ -859,25 +836,12 @@ pub fn resolve_java_home() -> Result<PathBuf> {
 mod tests {
     use super::*;
 
-    /// Reads the alignment out of a real library rather than a
-    /// fixture: the point of the check is what the NDK's linker
-    /// actually emitted, and a hand-built ELF would only prove the
-    /// parser agrees with itself. Skipped when no NDK is installed.
     #[test]
-    fn load_alignment_is_read_from_a_real_library() {
-        let Ok(ndk) = ndk_home() else { return };
-        let Ok(libcxx) = find_libcxx_shared(&ndk, "arm64-v8a") else {
-            return;
-        };
-        let align = max_load_align(&libcxx).expect("libc++_shared.so is an ELF64 shared object");
-        assert!(
-            align.is_power_of_two(),
-            "p_align must be a power of two, got {align}"
-        );
-        assert!(
-            align >= 4096,
-            "no Android ABI pages smaller than 4 KB, got {align}"
-        );
+    fn generated_entrypoint_registers_the_built_in_element_module() {
+        let source = render_aggregator_kt(&[]);
+        assert!(source.contains("import rs.whisker.runtime.BuiltInElementModule"));
+        assert!(source.contains("BuiltInElementModule().registerWithWhisker()"));
+        assert!(!source.contains("BuiltInElementBindings"));
     }
 
     #[test]
