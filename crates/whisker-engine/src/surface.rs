@@ -1093,6 +1093,38 @@ mod tests {
                 node: missing
             }))
         );
+
+        let property = PropertyId::new(1).unwrap();
+        assert_eq!(
+            surface.set_property(root, property, WhiskerValue::Bool(true)),
+            Ok(())
+        );
+        assert_eq!(
+            surface.set_property(missing, property, WhiskerValue::Bool(false)),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        assert_eq!(surface.clear_property(root, property), Ok(()));
+        assert_eq!(
+            surface.clear_property(missing, property),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+
+        let command = CommandId::new(1).unwrap();
+        assert_eq!(
+            surface.invoke_command(root, command, WhiskerValue::Null, None),
+            Ok(())
+        );
+        assert_eq!(
+            surface.invoke_command(missing, command, WhiskerValue::Null, None),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+
         surface.set_hit_test(root, HitTestBehavior::None).unwrap();
         assert_eq!(surface.hit_test(root, point), Ok(None));
         assert_eq!(
