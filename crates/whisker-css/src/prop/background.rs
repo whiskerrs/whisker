@@ -2,7 +2,9 @@
 
 use crate::ToCss;
 use crate::css::Css;
-use crate::data_type::{Color, LengthPercentage};
+use crate::data_type::{
+    Color, Gradient, LengthPercentage, LinearDirection, RadialShape, StopPosition,
+};
 use crate::data_type_ext::Position;
 use crate::keyword::{
     BackgroundAttachment, BackgroundClip, BackgroundOrigin, BackgroundRepeat, BackgroundSize,
@@ -24,14 +26,11 @@ impl Css {
     pub fn background_image(self, v: impl Into<ImageRef>) -> Self {
         let image = v.into();
         let lynx_value = image.to_css_string();
-        match background_image_value(&image) {
-            Some(image) => self.push_semantic(
-                crate::StyleProperty::BackgroundImage,
-                whisker_style::StyleValue::BackgroundImages(vec![image]),
-                lynx_value,
-            ),
-            None => self.push_raw(crate::StyleProperty::BackgroundImage, lynx_value),
-        }
+        self.push_semantic(
+            crate::StyleProperty::BackgroundImage,
+            whisker_style::StyleValue::BackgroundImages(vec![background_image_value(&image)]),
+            lynx_value,
+        )
     }
 
     /// Sets `background-repeat`.
@@ -140,13 +139,104 @@ impl Css {
     }
 }
 
-pub(crate) fn background_image_value(
-    value: &ImageRef,
-) -> Option<whisker_style::BackgroundImageValue> {
+pub(crate) fn background_image_value(value: &ImageRef) -> whisker_style::BackgroundImageValue {
     match value {
-        ImageRef::None => Some(whisker_style::BackgroundImageValue::None),
-        ImageRef::Url(value) => Some(whisker_style::BackgroundImageValue::Url(value.0.clone())),
-        ImageRef::Gradient(_) => None,
+        ImageRef::None => whisker_style::BackgroundImageValue::None,
+        ImageRef::Url(value) => whisker_style::BackgroundImageValue::Url(value.0.clone()),
+        ImageRef::Gradient(value) => {
+            whisker_style::BackgroundImageValue::Gradient(gradient_value(value))
+        }
+    }
+}
+
+fn gradient_value(value: &Gradient) -> whisker_style::GradientValue {
+    use whisker_style::{
+        BackgroundPositionValue, GradientStopValue, GradientValue, RadialGradientValue,
+        StyleNumber, StyleValue,
+    };
+
+    let stops = |values: &[crate::ColorStop]| {
+        values
+            .iter()
+            .map(|stop| {
+                let StyleValue::Color(color) = stop.color.to_style_value() else {
+                    unreachable!("Color always has a semantic style value")
+                };
+                GradientStopValue {
+                    color,
+                    position: stop.position.as_ref().map(|position| match position {
+                        StopPosition::LengthPercentage(value) => length_percentage_value(value),
+                        StopPosition::Number(value) => {
+                            whisker_style::LengthPercentageValue::Percentage(StyleNumber::new(
+                                *value * 100.0,
+                            ))
+                        }
+                    }),
+                }
+            })
+            .collect()
+    };
+    match value {
+        Gradient::Linear {
+            direction,
+            stops: values,
+        } => GradientValue::Linear {
+            angle_degrees: StyleNumber::new(match direction {
+                LinearDirection::ToTop => 0.0,
+                LinearDirection::ToTopRight => 45.0,
+                LinearDirection::ToRight => 90.0,
+                LinearDirection::ToBottomRight => 135.0,
+                LinearDirection::ToBottom => 180.0,
+                LinearDirection::ToBottomLeft => 225.0,
+                LinearDirection::ToLeft => 270.0,
+                LinearDirection::ToTopLeft => 315.0,
+                LinearDirection::Angle(value) => angle_degrees(*value),
+            }),
+            stops: stops(values),
+        },
+        Gradient::Radial {
+            shape,
+            stops: values,
+        } => GradientValue::Radial {
+            shape: match shape {
+                RadialShape::Circle => RadialGradientValue::Circle,
+                RadialShape::Ellipse => RadialGradientValue::Ellipse,
+                RadialShape::CircleSized(radius) => {
+                    RadialGradientValue::CircleSized(length_percentage_value(radius))
+                }
+                RadialShape::EllipseSized(x, y) => RadialGradientValue::EllipseSized(
+                    length_percentage_value(x),
+                    length_percentage_value(y),
+                ),
+            },
+            stops: stops(values),
+        },
+        Gradient::Conic {
+            from,
+            at,
+            stops: values,
+        } => GradientValue::Conic {
+            from_degrees: StyleNumber::new(from.map_or(0.0, angle_degrees)),
+            center: at.as_ref().map_or_else(
+                || BackgroundPositionValue {
+                    horizontal: percentage(50.0),
+                    vertical: percentage(50.0),
+                },
+                |(x, y)| BackgroundPositionValue {
+                    horizontal: length_percentage_value(x),
+                    vertical: length_percentage_value(y),
+                },
+            ),
+            stops: stops(values),
+        },
+    }
+}
+
+fn angle_degrees(value: crate::Angle) -> f32 {
+    match value {
+        crate::Angle::Deg(value) => value,
+        crate::Angle::Rad(value) => value.to_degrees(),
+        crate::Angle::Turn(value) => value * 360.0,
     }
 }
 

@@ -3,8 +3,9 @@
 use crate::{
     BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue, BackgroundPositionValue,
     BackgroundRepeatModeValue, BackgroundSizeValue, ColorValue, ComputedLengthPercentage,
-    DirectionValue, Edges, InheritedStyle, SpecifiedStyle, StyleEnvironment, StyleNumber,
-    StyleProperty, StyleResolutionError, StyleValue, layout::resolve_affine,
+    DirectionValue, Edges, GradientValue, InheritedStyle, RadialGradientValue, SpecifiedStyle,
+    StyleEnvironment, StyleNumber, StyleProperty, StyleResolutionError, StyleValue,
+    layout::resolve_affine,
 };
 
 /// Four physical corners in top-left, top-right, bottom-right, bottom-left order.
@@ -120,6 +121,56 @@ pub enum ComputedBackgroundSize {
     },
 }
 
+/// One gradient stop after environment-dependent lengths are resolved.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedGradientStop {
+    /// Stop color.
+    pub color: ColorValue,
+    /// Optional distance along the gradient line.
+    pub position: Option<ComputedLengthPercentage>,
+}
+
+/// Renderer-independent computed procedural gradient.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedGradient {
+    /// Linear gradient.
+    Linear {
+        /// Direction in degrees clockwise from the positive vertical axis.
+        angle_degrees: StyleNumber,
+        /// Ordered stops.
+        stops: Vec<ComputedGradientStop>,
+    },
+    /// Radial gradient.
+    Radial {
+        /// Circle or ellipse.
+        circle: bool,
+        /// Explicit radii, or `None` for farthest-corner sizing.
+        radii: Option<(ComputedLengthPercentage, ComputedLengthPercentage)>,
+        /// Ordered stops.
+        stops: Vec<ComputedGradientStop>,
+    },
+    /// Conic gradient.
+    Conic {
+        /// Starting angle in degrees.
+        from_degrees: StyleNumber,
+        /// Center in the image box.
+        center: ComputedBackgroundPosition,
+        /// Ordered stops.
+        stops: Vec<ComputedGradientStop>,
+    },
+}
+
+/// One background image after style resolution but before Host resource policy.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedBackgroundImage {
+    /// Explicit empty layer.
+    None,
+    /// URL awaiting Host resource loading.
+    Url(String),
+    /// Procedural image ready for protocol lowering.
+    Gradient(ComputedGradient),
+}
+
 /// Computed geometry and scrolling values paired with one background image.
 ///
 /// The authoring API currently exposes one scalar set of longhands. Keeping
@@ -166,7 +217,7 @@ pub struct ComputedPaintStyle {
     /// Resolved background color. Transparent is represented explicitly.
     pub background_color: ColorValue,
     /// Ordered Host-independent background image sources, front to back.
-    pub background_images: Vec<BackgroundImageValue>,
+    pub background_images: Vec<ComputedBackgroundImage>,
     /// Per-layer geometry aligned with `background_images` using CSS list cycling.
     pub background_layers: Vec<ComputedBackgroundLayerStyle>,
     /// Resolved border colors in physical edge order.
@@ -249,8 +300,10 @@ pub(crate) fn resolve_paint_style(
                 paint.background_images = value
                     .layers
                     .iter()
-                    .map(|layer| layer.image.clone())
-                    .collect();
+                    .map(|layer| {
+                        resolve_background_image(&layer.image, inherited, environment, property)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 paint.background_layers = value
                     .layers
                     .iter()
@@ -289,7 +342,10 @@ pub(crate) fn resolve_paint_style(
                 let StyleValue::BackgroundImages(images) = value else {
                     return Err(invalid(property));
                 };
-                paint.background_images = images.clone();
+                paint.background_images = images
+                    .iter()
+                    .map(|image| resolve_background_image(image, inherited, environment, property))
+                    .collect::<Result<Vec<_>, _>>()?;
             }
             StyleProperty::BackgroundRepeat => {
                 let StyleValue::BackgroundRepeat(value) = value else {
@@ -474,6 +530,145 @@ pub(crate) fn resolve_paint_style(
     Ok(paint)
 }
 
+fn resolve_background_image(
+    image: &BackgroundImageValue,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedBackgroundImage, StyleResolutionError> {
+    Ok(match image {
+        BackgroundImageValue::None => ComputedBackgroundImage::None,
+        BackgroundImageValue::Url(url) if url.trim().is_empty() => return Err(invalid(property)),
+        BackgroundImageValue::Url(url) => ComputedBackgroundImage::Url(url.clone()),
+        BackgroundImageValue::Gradient(gradient) => ComputedBackgroundImage::Gradient(
+            resolve_gradient(gradient, inherited, environment, property)?,
+        ),
+    })
+}
+
+fn resolve_gradient(
+    gradient: &GradientValue,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedGradient, StyleResolutionError> {
+    let stops = |values: &[crate::GradientStopValue]| {
+        if values.len() < 2 {
+            return Err(invalid(property));
+        }
+        let mut resolved = values
+            .iter()
+            .map(|stop| {
+                Ok(ComputedGradientStop {
+                    color: color(&StyleValue::Color(stop.color.clone()), property)?,
+                    position: stop
+                        .position
+                        .as_ref()
+                        .map(|position| {
+                            resolve_length_percentage(
+                                &StyleValue::LengthPercentage(position.clone()),
+                                inherited,
+                                environment,
+                                property,
+                            )
+                        })
+                        .transpose()?,
+                })
+            })
+            .collect::<Result<Vec<_>, StyleResolutionError>>()?;
+        normalize_gradient_stops(&mut resolved);
+        Ok(resolved)
+    };
+    Ok(match gradient {
+        GradientValue::Linear {
+            angle_degrees,
+            stops: values,
+        } => {
+            if !angle_degrees.get().is_finite() {
+                return Err(invalid(property));
+            }
+            ComputedGradient::Linear {
+                angle_degrees: *angle_degrees,
+                stops: stops(values)?,
+            }
+        }
+        GradientValue::Radial {
+            shape,
+            stops: values,
+        } => {
+            let resolve_radius = |value: &crate::LengthPercentageValue| {
+                resolve_length_percentage(
+                    &StyleValue::LengthPercentage(value.clone()),
+                    inherited,
+                    environment,
+                    property,
+                )
+            };
+            let (circle, radii) = match shape {
+                RadialGradientValue::Circle => (true, None),
+                RadialGradientValue::Ellipse => (false, None),
+                RadialGradientValue::CircleSized(radius) => {
+                    let radius = resolve_radius(radius)?;
+                    (true, Some((radius, radius)))
+                }
+                RadialGradientValue::EllipseSized(x, y) => {
+                    (false, Some((resolve_radius(x)?, resolve_radius(y)?)))
+                }
+            };
+            ComputedGradient::Radial {
+                circle,
+                radii,
+                stops: stops(values)?,
+            }
+        }
+        GradientValue::Conic {
+            from_degrees,
+            center,
+            stops: values,
+        } => {
+            if !from_degrees.get().is_finite() {
+                return Err(invalid(property));
+            }
+            ComputedGradient::Conic {
+                from_degrees: *from_degrees,
+                center: resolve_background_position(center, inherited, environment, property)?,
+                stops: stops(values)?,
+            }
+        }
+    })
+}
+
+fn normalize_gradient_stops(stops: &mut [ComputedGradientStop]) {
+    let last = stops.len() - 1;
+    stops[0]
+        .position
+        .get_or_insert(ComputedLengthPercentage::ZERO);
+    stops[last]
+        .position
+        .get_or_insert(ComputedLengthPercentage::new(0.0, 1.0));
+
+    let mut start = 0;
+    while start < last {
+        let mut end = start + 1;
+        while stops[end].position.is_none() {
+            end += 1;
+        }
+        if end > start + 1 {
+            let from = stops[start].position.unwrap();
+            let to = stops[end].position.unwrap();
+            let span = (end - start) as f32;
+            for (offset, stop) in stops[(start + 1)..end].iter_mut().enumerate() {
+                let progress = (offset + 1) as f32 / span;
+                stop.position = Some(ComputedLengthPercentage::new(
+                    from.length() + (to.length() - from.length()) * progress,
+                    from.fraction() + (to.fraction() - from.fraction()) * progress,
+                ));
+            }
+        }
+        start = end;
+    }
+}
+
 fn color(value: &StyleValue, property: StyleProperty) -> Result<ColorValue, StyleResolutionError> {
     let StyleValue::Color(value) = value else {
         return Err(invalid(property));
@@ -598,7 +793,7 @@ mod tests {
     use super::*;
     use crate::{
         BackgroundLayerValue, BackgroundRepeatValue, BackgroundValue, BorderRadiusValue,
-        LengthPercentageValue, LengthUnit, LengthValue,
+        GradientStopValue, LengthPercentageValue, LengthUnit, LengthValue,
     };
 
     fn number(value: f32) -> StyleNumber {
@@ -816,8 +1011,8 @@ mod tests {
         assert_eq!(
             paint.background_images,
             vec![
-                BackgroundImageValue::Url("front".into()),
-                BackgroundImageValue::Url("back".into()),
+                ComputedBackgroundImage::Url("front".into()),
+                ComputedBackgroundImage::Url("back".into()),
             ]
         );
         assert_eq!(paint.background_layers.len(), 2);
@@ -880,7 +1075,15 @@ mod tests {
             width: Some(px_length(-1.0)),
             height: None,
         };
-        for layer in [invalid_position, invalid_size] {
+        let invalid_image = layer(
+            "  ",
+            0.0,
+            BackgroundSizeValue::Auto,
+            BackgroundRepeatModeValue::Repeat,
+            BackgroundBoxValue::Padding,
+            BackgroundBoxValue::Border,
+        );
+        for layer in [invalid_position, invalid_size, invalid_image] {
             assert_eq!(
                 crate::resolve_style(
                     &SpecifiedStyle::new().push(
@@ -895,6 +1098,195 @@ mod tests {
                 ),
                 Err(StyleResolutionError::InvalidPropertyValue(
                     StyleProperty::Background
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn background_gradients_resolve_all_shapes_and_reject_invalid_values() {
+        let stop = |name: &str, position| GradientStopValue {
+            color: ColorValue::Named(name.into()),
+            position,
+        };
+        let stops = || {
+            vec![
+                stop("red", None),
+                stop("gold", None),
+                stop("blue", Some(percentage(100.0))),
+            ]
+        };
+        let resolve = |image| {
+            crate::resolve_style(
+                &SpecifiedStyle::new().push(
+                    StyleProperty::BackgroundImage,
+                    StyleValue::BackgroundImages(vec![image]),
+                ),
+                None,
+                StyleEnvironment::default(),
+            )
+        };
+
+        assert_eq!(
+            resolve(BackgroundImageValue::None)
+                .unwrap()
+                .computed()
+                .paint()
+                .background_images,
+            vec![ComputedBackgroundImage::None]
+        );
+        let linear = resolve(BackgroundImageValue::Gradient(GradientValue::Linear {
+            angle_degrees: number(90.0),
+            stops: stops(),
+        }))
+        .unwrap();
+        assert!(matches!(
+            &linear.computed().paint().background_images[0],
+            ComputedBackgroundImage::Gradient(ComputedGradient::Linear {
+                angle_degrees,
+                stops,
+            }) if angle_degrees.get() == 90.0
+                && stops[0].position.unwrap().fraction() == 0.0
+                && stops[1].position.unwrap().fraction() == 0.5
+                && stops[2].position.unwrap().fraction() == 1.0
+        ));
+        let implicit_endpoints = resolve(BackgroundImageValue::Gradient(GradientValue::Linear {
+            angle_degrees: number(0.0),
+            stops: vec![stop("start", None), stop("end", None)],
+        }))
+        .unwrap();
+        assert!(matches!(
+            &implicit_endpoints.computed().paint().background_images[0],
+            ComputedBackgroundImage::Gradient(ComputedGradient::Linear { stops, .. })
+                if stops[0].position.unwrap().fraction() == 0.0
+                    && stops[1].position.unwrap().fraction() == 1.0
+        ));
+
+        for (shape, circle, explicit) in [
+            (RadialGradientValue::Circle, true, false),
+            (RadialGradientValue::Ellipse, false, false),
+            (
+                RadialGradientValue::CircleSized(px_length(20.0)),
+                true,
+                true,
+            ),
+            (
+                RadialGradientValue::EllipseSized(px_length(30.0), percentage(40.0)),
+                false,
+                true,
+            ),
+        ] {
+            let resolved = resolve(BackgroundImageValue::Gradient(GradientValue::Radial {
+                shape,
+                stops: stops(),
+            }))
+            .unwrap();
+            assert!(matches!(
+                &resolved.computed().paint().background_images[0],
+                ComputedBackgroundImage::Gradient(ComputedGradient::Radial {
+                    circle: actual_circle,
+                    radii,
+                    ..
+                }) if *actual_circle == circle && radii.is_some() == explicit
+            ));
+        }
+
+        let conic = resolve(BackgroundImageValue::Gradient(GradientValue::Conic {
+            from_degrees: number(45.0),
+            center: BackgroundPositionValue {
+                horizontal: percentage(25.0),
+                vertical: percentage(75.0),
+            },
+            stops: stops(),
+        }))
+        .unwrap();
+        assert!(matches!(
+            &conic.computed().paint().background_images[0],
+            ComputedBackgroundImage::Gradient(ComputedGradient::Conic {
+                from_degrees,
+                center,
+                ..
+            }) if from_degrees.get() == 45.0
+                && center.horizontal.fraction() == 0.25
+                && center.vertical.fraction() == 0.75
+        ));
+
+        let invalid_color = GradientStopValue {
+            color: ColorValue::Rgba {
+                red: 0,
+                green: 0,
+                blue: 0,
+                alpha: number(f32::NAN),
+            },
+            position: None,
+        };
+        let invalid = [
+            BackgroundImageValue::Url("  ".into()),
+            BackgroundImageValue::Gradient(GradientValue::Linear {
+                angle_degrees: number(f32::NAN),
+                stops: stops(),
+            }),
+            BackgroundImageValue::Gradient(GradientValue::Linear {
+                angle_degrees: number(0.0),
+                stops: vec![stop("only", None)],
+            }),
+            BackgroundImageValue::Gradient(GradientValue::Linear {
+                angle_degrees: number(0.0),
+                stops: vec![
+                    stop("bad-position", Some(px_length(f32::NAN))),
+                    stop("end", None),
+                ],
+            }),
+            BackgroundImageValue::Gradient(GradientValue::Linear {
+                angle_degrees: number(0.0),
+                stops: vec![invalid_color, stop("end", None)],
+            }),
+            BackgroundImageValue::Gradient(GradientValue::Radial {
+                shape: RadialGradientValue::CircleSized(px_length(f32::NAN)),
+                stops: stops(),
+            }),
+            BackgroundImageValue::Gradient(GradientValue::Radial {
+                shape: RadialGradientValue::EllipseSized(px_length(1.0), px_length(f32::NAN)),
+                stops: stops(),
+            }),
+            BackgroundImageValue::Gradient(GradientValue::Radial {
+                shape: RadialGradientValue::EllipseSized(px_length(f32::NAN), px_length(1.0)),
+                stops: stops(),
+            }),
+            BackgroundImageValue::Gradient(GradientValue::Radial {
+                shape: RadialGradientValue::Circle,
+                stops: vec![stop("only", None)],
+            }),
+            BackgroundImageValue::Gradient(GradientValue::Conic {
+                from_degrees: number(f32::NAN),
+                center: BackgroundPositionValue {
+                    horizontal: percentage(50.0),
+                    vertical: percentage(50.0),
+                },
+                stops: stops(),
+            }),
+            BackgroundImageValue::Gradient(GradientValue::Conic {
+                from_degrees: number(0.0),
+                center: BackgroundPositionValue {
+                    horizontal: px_length(f32::NAN),
+                    vertical: percentage(50.0),
+                },
+                stops: stops(),
+            }),
+            BackgroundImageValue::Gradient(GradientValue::Conic {
+                from_degrees: number(0.0),
+                center: BackgroundPositionValue {
+                    horizontal: percentage(50.0),
+                    vertical: percentage(50.0),
+                },
+                stops: vec![stop("only", None)],
+            }),
+        ];
+        for image in invalid {
+            assert_eq!(
+                resolve(image),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::BackgroundImage
                 ))
             );
         }
@@ -1025,7 +1417,7 @@ mod tests {
         );
         assert_eq!(
             paint.background_images,
-            vec![BackgroundImageValue::Url(
+            vec![ComputedBackgroundImage::Url(
                 "https://example.com/image.png".into()
             )]
         );

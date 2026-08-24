@@ -2,14 +2,17 @@
 
 use std::collections::{HashMap, HashSet};
 
+use whisker_engine::lower_color;
 use whisker_engine::whisker_protocol::{
-    BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, ImageRepeat, NodeId,
-    PaintBox, PaintCoordinate, PaintImage, PaintLengthPercentage, PaintPosition, ResourceCommand,
-    ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
+    BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, GradientStop, ImageRepeat,
+    NodeId, PaintBox, PaintCoordinate, PaintImage, PaintLengthPercentage, PaintPosition,
+    RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceEvent, ResourceId,
+    ResourceKind, ResourceRequest, ResourceSource,
 };
 use whisker_engine::whisker_style::{
-    BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue, BackgroundRepeatModeValue,
-    ComputedBackgroundLayerStyle, ComputedBackgroundSize, ComputedLengthPercentage,
+    BackgroundAttachmentValue, BackgroundBoxValue, BackgroundRepeatModeValue,
+    ComputedBackgroundImage, ComputedBackgroundLayerStyle, ComputedBackgroundSize,
+    ComputedGradient, ComputedGradientStop, ComputedLengthPercentage,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -42,6 +45,7 @@ impl ResourceKey {
 enum DesiredImage {
     None,
     Resource(ResourceKey),
+    Gradient(ComputedGradient),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,19 +124,22 @@ impl BackgroundResourceManager {
     pub(super) fn reconcile_node(
         &mut self,
         node: NodeId,
-        images: &[BackgroundImageValue],
+        images: &[ComputedBackgroundImage],
         layer_styles: &[ComputedBackgroundLayerStyle],
         externally_used: &HashSet<ResourceId>,
     ) -> Result<ReconcileResult, BackgroundResourceError> {
         let desired = images
             .iter()
             .map(|image| match image {
-                BackgroundImageValue::None => Ok(DesiredImage::None),
-                BackgroundImageValue::Url(url) if url.trim().is_empty() => {
+                ComputedBackgroundImage::None => Ok(DesiredImage::None),
+                ComputedBackgroundImage::Url(url) if url.trim().is_empty() => {
                     Err(BackgroundResourceError::InvalidSource)
                 }
-                BackgroundImageValue::Url(url) => {
+                ComputedBackgroundImage::Url(url) => {
                     Ok(DesiredImage::Resource(ResourceKey::raster_url(url.clone())))
+                }
+                ComputedBackgroundImage::Gradient(gradient) => {
+                    Ok(DesiredImage::Gradient(gradient.clone()))
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -390,6 +397,13 @@ impl BackgroundResourceManager {
             .enumerate()
             .filter_map(|(index, image)| match image {
                 DesiredImage::None => None,
+                DesiredImage::Gradient(gradient) => {
+                    let styles = &self.node_layer_styles[&node];
+                    Some(initial_gradient_layer(
+                        gradient,
+                        styles[index % styles.len()],
+                    ))
+                }
                 DesiredImage::Resource(key) => {
                     let resource = self.resources_by_key[key];
                     let styles = &self.node_layer_styles[&node];
@@ -406,6 +420,7 @@ fn resource_keys(images: &[DesiredImage]) -> HashSet<ResourceKey> {
         .iter()
         .filter_map(|image| match image {
             DesiredImage::None => None,
+            DesiredImage::Gradient(_) => None,
             DesiredImage::Resource(key) => Some(key.clone()),
         })
         .collect()
@@ -415,8 +430,80 @@ fn initial_resource_layer(
     resource: ResourceId,
     style: ComputedBackgroundLayerStyle,
 ) -> BackgroundLayer {
+    initial_layer(PaintImage::Resource(resource), style)
+}
+
+fn initial_gradient_layer(
+    gradient: &ComputedGradient,
+    style: ComputedBackgroundLayerStyle,
+) -> BackgroundLayer {
+    let stops = |values: &[ComputedGradientStop]| {
+        values
+            .iter()
+            .map(|stop| GradientStop {
+                color: lower_color(&stop.color),
+                position: stop.position.map(paint_coordinate),
+            })
+            .collect()
+    };
+    let image = match gradient {
+        ComputedGradient::Linear {
+            angle_degrees,
+            stops: values,
+        } => PaintImage::LinearGradient {
+            angle_degrees: angle_degrees.get(),
+            repeating: false,
+            stops: stops(values),
+        },
+        ComputedGradient::Radial {
+            circle,
+            radii,
+            stops: values,
+        } => PaintImage::RadialGradient {
+            shape: if *circle {
+                RadialGradientShape::Circle
+            } else {
+                RadialGradientShape::Ellipse
+            },
+            extent: if radii.is_some() {
+                RadialGradientExtent::Explicit
+            } else {
+                RadialGradientExtent::FarthestCorner
+            },
+            center: PaintPosition {
+                x: PaintCoordinate {
+                    length: 0.0,
+                    fraction: 0.5,
+                },
+                y: PaintCoordinate {
+                    length: 0.0,
+                    fraction: 0.5,
+                },
+            },
+            radii: radii.map(|(x, y)| (paint_length_percentage(x), paint_length_percentage(y))),
+            repeating: false,
+            stops: stops(values),
+        },
+        ComputedGradient::Conic {
+            from_degrees,
+            center,
+            stops: values,
+        } => PaintImage::ConicGradient {
+            from_degrees: from_degrees.get(),
+            center: PaintPosition {
+                x: paint_coordinate(center.horizontal),
+                y: paint_coordinate(center.vertical),
+            },
+            repeating: false,
+            stops: stops(values),
+        },
+    };
+    initial_layer(image, style)
+}
+
+fn initial_layer(image: PaintImage, style: ComputedBackgroundLayerStyle) -> BackgroundLayer {
     BackgroundLayer {
-        image: PaintImage::Resource(resource),
+        image,
         position: PaintPosition {
             x: paint_coordinate(style.position.horizontal),
             y: paint_coordinate(style.position.vertical),
@@ -490,8 +577,8 @@ mod tests {
         NodeId::new(value).unwrap()
     }
 
-    fn url(value: &str) -> BackgroundImageValue {
-        BackgroundImageValue::Url(value.into())
+    fn url(value: &str) -> ComputedBackgroundImage {
+        ComputedBackgroundImage::Url(value.into())
     }
 
     fn load(command: &ResourceCommand) -> (ResourceId, u64) {

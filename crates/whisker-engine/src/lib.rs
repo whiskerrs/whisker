@@ -29,7 +29,7 @@ pub use layout::{LayoutError, LayoutOptions, MeasurementProvider};
 pub use measurement::{
     DeferredMeasurementApply, LayoutProgress, MeasurementApply, MeasurementError,
 };
-pub use paint::{LoweredPaint, lower_paint};
+pub use paint::{LoweredPaint, lower_color, lower_paint};
 pub use recording::{FrameSink, RecordedFrame, RecordingRenderer};
 pub use scene::{Scene, SceneError, SceneNode};
 pub use surface::{LayoutUpdate, SurfaceEngine, SurfaceError, SurfacePresentError};

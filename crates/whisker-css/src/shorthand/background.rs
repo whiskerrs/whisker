@@ -207,7 +207,7 @@ fn background_value(background: &Background) -> Option<whisker_style::StyleValue
         .iter()
         .map(|layer| {
             Some(BackgroundLayerValue {
-                image: crate::prop::background::background_image_value(&layer.image)?,
+                image: crate::prop::background::background_image_value(&layer.image),
                 position: match layer.position.clone() {
                     Some(position) => crate::prop::background::background_position_value(position)?,
                     None => default_position(),

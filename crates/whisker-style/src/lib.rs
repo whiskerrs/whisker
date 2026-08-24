@@ -32,9 +32,9 @@ pub use layout_value::{
     LengthPercentageAutoValue, PositionValue, SizeValue,
 };
 pub use paint::{
-    BorderStyleValue, ComputedBackgroundLayerStyle, ComputedBackgroundPosition,
-    ComputedBackgroundSize, ComputedCornerRadius, ComputedPaintStyle, Corners, OverflowValue,
-    VisibilityValue,
+    BorderStyleValue, ComputedBackgroundImage, ComputedBackgroundLayerStyle,
+    ComputedBackgroundPosition, ComputedBackgroundSize, ComputedCornerRadius, ComputedGradient,
+    ComputedGradientStop, ComputedPaintStyle, Corners, OverflowValue, VisibilityValue,
 };
 pub use property::{
     PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyDomain, StylePropertyId,
@@ -48,6 +48,6 @@ pub use value::{
     BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue, BackgroundLayerValue,
     BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundRepeatValue, BackgroundSizeValue,
     BackgroundValue, BorderRadiusValue, CalcExpression, ColorValue, FontFamilyValue,
-    FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue,
-    LineHeightValue, StyleNumber, StyleValue,
+    FontStyleValue, FontWeightValue, GradientStopValue, GradientValue, LengthPercentageValue,
+    LengthUnit, LengthValue, LineHeightValue, RadialGradientValue, StyleNumber, StyleValue,
 };
