@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-position-three-four-values.test1",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/background-position-three-four-values.html",
+    "reference_path": "css/css-backgrounds/reference/background-position-three-four-values-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "Length and percentage background-position components offset a no-repeat image within its positioning area.",
+    "adaptation": "This fixture isolates upstream test1 (`left 50px center`). CSS parsing resolves it to x=50px and y=50%; the Host receives those length/fraction components plus an explicit 20 by 20 image size. A constant blue gradient replaces the resource image so samples test only positioning semantics."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 100.0],
+            "background": { "kind": "srgba", "red": 255, "green": 255, "blue": 255, "alpha": 0.0 },
+            "background_layer": {
+              "position": [
+                { "length": 50.0, "fraction": 0.0 },
+                { "length": 0.0, "fraction": 0.5 }
+              ],
+              "size": [
+                { "length": 20.0, "fraction": 0.0 },
+                { "length": 20.0, "fraction": 0.0 }
+              ],
+              "repeat_x": "no_repeat",
+              "repeat_y": "no_repeat"
+            },
+            "linear_gradient": {
+              "angle_degrees": 180.0,
+              "stops": [
+                { "color": { "kind": "named", "value": "blue" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "blue" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.position-length-percentage",
+        "samples": [
+          { "point": [51.0, 41.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 5 },
+          { "point": [68.0, 58.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 5 },
+          { "point": [49.0, 50.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [71.0, 50.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [60.0, 39.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [60.0, 61.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}
