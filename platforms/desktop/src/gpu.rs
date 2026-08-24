@@ -721,6 +721,7 @@ pub(crate) struct LinearGradientDraw {
     geometry_flags: u32,
 }
 
+#[cfg(all(test, feature = "host-conformance"))]
 pub(crate) type ClippedBoxPrimitive = (
     BoxPrimitive,
     LogicalClip,
