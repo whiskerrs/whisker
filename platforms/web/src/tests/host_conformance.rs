@@ -24,6 +24,110 @@ const MANIFEST: &str = include_str!("../../../../tests/host-conformance/manifest
 
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
+#[wasm_bindgen_test]
+fn padded_parent_preserves_child_border_box_coordinates() {
+    let mut driver = Driver::new();
+    let parent = NodeId::new(1).unwrap();
+    let child = NodeId::new(2).unwrap();
+    let view = ElementRegistry::standard()
+        .registration_for_builtin(whisker::ElementTag::View)
+        .unwrap()
+        .element_type;
+    let mut parent_paint = BoxPaint::default();
+    let border_width = PaintLengthPercentage {
+        length: 10.0,
+        fraction: 0.0,
+    };
+    parent_paint.border_widths = PaintEdges {
+        top: border_width,
+        right: border_width,
+        bottom: border_width,
+        left: border_width,
+    };
+    parent_paint.border_styles = PaintEdges {
+        top: BorderLineStyle::Solid,
+        right: BorderLineStyle::Solid,
+        bottom: BorderLineStyle::Solid,
+        left: BorderLineStyle::Solid,
+    };
+    let packet = FramePacket {
+        header: FrameHeader {
+            version: ProtocolVersion::CURRENT,
+            surface: SurfaceId::new(1).unwrap(),
+            scene_epoch: 1,
+            frame_id: 1,
+            base_revision: 0,
+            target_revision: 1,
+            viewport_epoch: 1,
+            mode: FrameMode::Snapshot,
+        },
+        operations: vec![
+            Operation::CreateNode {
+                node: parent,
+                element_type: view,
+            },
+            Operation::CreateNode {
+                node: child,
+                element_type: view,
+            },
+            Operation::SetLayout {
+                node: parent,
+                geometry: LayoutGeometry {
+                    border_box: LayoutRect {
+                        x: 10.0,
+                        y: 12.0,
+                        width: 100.0,
+                        height: 100.0,
+                    },
+                    content_box: LayoutRect {
+                        x: 20.0,
+                        y: 20.0,
+                        width: 60.0,
+                        height: 60.0,
+                    },
+                },
+            },
+            Operation::SetBoxPaint {
+                node: parent,
+                paint: parent_paint,
+            },
+            Operation::SetLayout {
+                node: child,
+                geometry: LayoutGeometry {
+                    border_box: LayoutRect {
+                        x: 5.0,
+                        y: 7.0,
+                        width: 10.0,
+                        height: 11.0,
+                    },
+                    content_box: LayoutRect {
+                        width: 10.0,
+                        height: 11.0,
+                        ..LayoutRect::default()
+                    },
+                },
+            },
+            Operation::InsertChild {
+                parent,
+                child,
+                index: 0,
+            },
+        ],
+    };
+    driver.sink.present(&packet).unwrap();
+
+    let parent_bounds = driver.node(1).get_bounding_client_rect();
+    let child_bounds = driver.node(2).get_bounding_client_rect();
+    assert_eq!(child_bounds.left() - parent_bounds.left(), 5.0);
+    assert_eq!(child_bounds.top() - parent_bounds.top(), 7.0);
+    let parent_style = driver
+        .node(1)
+        .dyn_into::<web_sys::HtmlElement>()
+        .unwrap()
+        .style();
+    assert_style(&parent_style, "padding", "10px");
+}
+
 struct Driver {
     root: web_sys::Element,
     sink: DomFrameSink,
@@ -153,6 +257,28 @@ impl Driver {
                                             .iter()
                                             .any(|node| {
                                                 node.background_layer.clip
+                                                    == BackgroundBoxFixture::Content
+                                            })
+                                            .then_some(
+                                                "paint.background-layers.clip-content-box",
+                                            )
+                                    })
+                                    .or_else(|| {
+                                        nodes
+                                            .iter()
+                                            .any(|node| {
+                                                node.background_layer.origin
+                                                    == BackgroundBoxFixture::Content
+                                            })
+                                            .then_some(
+                                                "paint.background-layers.origin-content-box",
+                                            )
+                                    })
+                                    .or_else(|| {
+                                        nodes
+                                            .iter()
+                                            .any(|node| {
+                                                node.background_layer.clip
                                                     == BackgroundBoxFixture::Padding
                                             })
                                             .then_some(
@@ -267,6 +393,13 @@ impl Driver {
             assert_style(&style, "top", &fixture_px(fixture_node.rect[1]));
             assert_style(&style, "width", &fixture_px(fixture_node.rect[2]));
             assert_style(&style, "height", &fixture_px(fixture_node.rect[3]));
+            if fixture_node.content_box.is_some() {
+                let padding = fixture_padding(fixture_node);
+                assert_style(&style, "padding-top", &fixture_px(padding[0]));
+                assert_style(&style, "padding-right", &fixture_px(padding[1]));
+                assert_style(&style, "padding-bottom", &fixture_px(padding[2]));
+                assert_style(&style, "padding-left", &fixture_px(padding[3]));
+            }
             assert_style(
                 &style,
                 "background-color",
@@ -514,6 +647,12 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-backgrounds/background-repeat-round-position.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-repeat-round-position.json"
         ),
+        "wpt/css/css-backgrounds/background-origin-content-box.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-origin-content-box.json"
+        ),
+        "wpt/css/css-backgrounds/background-clip-content-box.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-clip-content-box.json"
+        ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
         ),
@@ -630,7 +769,11 @@ fn packet(
                         width: rect[2],
                         height: rect[3],
                     },
-                    content_box: LayoutRect::default(),
+                    content_box: LayoutRect {
+                        width: rect[2],
+                        height: rect[3],
+                        ..LayoutRect::default()
+                    },
                 },
             },
             Operation::SetBoxPaint {
@@ -664,7 +807,15 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
                         width: fixture_node.rect[2],
                         height: fixture_node.rect[3],
                     },
-                    content_box: LayoutRect::default(),
+                    content_box: {
+                        let content_box = fixture_node.resolved_content_box();
+                        LayoutRect {
+                            x: content_box[0],
+                            y: content_box[1],
+                            width: content_box[2],
+                            height: content_box[3],
+                        }
+                    },
                 },
             },
             Operation::SetBoxPaint {
@@ -1280,8 +1431,8 @@ fn fixture_node_paints_at(node: &SceneNodeFixture, point: [f32; 2]) -> bool {
         .border
         .as_ref()
         .map_or([0.0; 4], |border| border.widths);
-    let positioning_area = fixture_background_area(node.rect, border_widths, layer.origin);
-    let clip_area = fixture_background_area(node.rect, border_widths, layer.clip);
+    let positioning_area = fixture_background_area(node, border_widths, layer.origin);
+    let clip_area = fixture_background_area(node, border_widths, layer.clip);
     if !fixture_rect_contains(clip_area, point) {
         return false;
     }
@@ -1309,19 +1460,45 @@ fn fixture_node_paints_at(node: &SceneNodeFixture, point: [f32; 2]) -> bool {
 }
 
 fn fixture_background_area(
-    border_box: [f32; 4],
+    node: &SceneNodeFixture,
     border_widths: [f32; 4],
     background_box: BackgroundBoxFixture,
 ) -> [f32; 4] {
     match background_box {
-        BackgroundBoxFixture::Border => border_box,
-        BackgroundBoxFixture::Padding | BackgroundBoxFixture::Content => [
-            border_box[0] + border_widths[3],
-            border_box[1] + border_widths[0],
-            border_box[2] - border_widths[1] - border_widths[3],
-            border_box[3] - border_widths[0] - border_widths[2],
+        BackgroundBoxFixture::Border => node.rect,
+        BackgroundBoxFixture::Padding => [
+            node.rect[0] + border_widths[3],
+            node.rect[1] + border_widths[0],
+            node.rect[2] - border_widths[1] - border_widths[3],
+            node.rect[3] - border_widths[0] - border_widths[2],
         ],
+        BackgroundBoxFixture::Content => {
+            let content_box = node.resolved_content_box();
+            [
+                node.rect[0] + content_box[0],
+                node.rect[1] + content_box[1],
+                content_box[2],
+                content_box[3],
+            ]
+        }
     }
+}
+
+fn fixture_padding(node: &SceneNodeFixture) -> [f32; 4] {
+    let content_box = node.resolved_content_box();
+    let border_widths = node.border.as_ref().map_or([0.0; 4], |border| {
+        std::array::from_fn(|index| {
+            (border.styles[index] != BorderStyleFixture::None)
+                .then_some(border.widths[index])
+                .unwrap_or(0.0)
+        })
+    });
+    [
+        (content_box[1] - border_widths[0]).max(0.0),
+        (node.rect[2] - content_box[0] - content_box[2] - border_widths[1]).max(0.0),
+        (node.rect[3] - content_box[1] - content_box[3] - border_widths[2]).max(0.0),
+        (content_box[0] - border_widths[3]).max(0.0),
+    ]
 }
 
 fn fixture_rect_contains(rect: [f32; 4], point: [f32; 2]) -> bool {
