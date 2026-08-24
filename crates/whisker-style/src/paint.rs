@@ -1,9 +1,10 @@
 //! Computed paint values that remain independent of every Host renderer.
 
 use crate::{
-    BackgroundImageValue, ColorValue, ComputedLengthPercentage, Edges, InheritedStyle,
-    SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty, StyleResolutionError, StyleValue,
-    layout::resolve_affine,
+    BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue, BackgroundPositionValue,
+    BackgroundRepeatModeValue, BackgroundSizeValue, ColorValue, ComputedLengthPercentage, Edges,
+    InheritedStyle, SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty,
+    StyleResolutionError, StyleValue, layout::resolve_affine,
 };
 
 /// Four physical corners in top-left, top-right, bottom-right, bottom-left order.
@@ -92,6 +93,73 @@ pub enum VisibilityValue {
     Hidden,
 }
 
+/// Computed position of one background layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedBackgroundPosition {
+    /// Horizontal length plus positioning-area fraction.
+    pub horizontal: ComputedLengthPercentage,
+    /// Vertical length plus positioning-area fraction.
+    pub vertical: ComputedLengthPercentage,
+}
+
+/// Computed size of one background layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedBackgroundSize {
+    /// Use the image's intrinsic dimensions.
+    Auto,
+    /// Preserve aspect ratio while covering the positioning area.
+    Cover,
+    /// Preserve aspect ratio while fitting inside the positioning area.
+    Contain,
+    /// Resolve an explicit width and height against the positioning area.
+    Explicit {
+        /// Computed image width.
+        width: ComputedLengthPercentage,
+        /// Computed image height.
+        height: ComputedLengthPercentage,
+    },
+}
+
+/// Computed geometry and scrolling values paired with one background image.
+///
+/// The authoring API currently exposes one scalar set of longhands. Keeping
+/// them grouped makes later CSS list alignment an expansion from one layer to
+/// many rather than a collection of unrelated parallel fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedBackgroundLayerStyle {
+    /// Position within the selected origin box.
+    pub position: ComputedBackgroundPosition,
+    /// Image sizing behavior.
+    pub size: ComputedBackgroundSize,
+    /// Horizontal tiling behavior.
+    pub repeat_x: BackgroundRepeatModeValue,
+    /// Vertical tiling behavior.
+    pub repeat_y: BackgroundRepeatModeValue,
+    /// Box defining the positioning area.
+    pub origin: BackgroundBoxValue,
+    /// Box clipping background paint.
+    pub clip: BackgroundBoxValue,
+    /// Relationship to scrolling.
+    pub attachment: BackgroundAttachmentValue,
+}
+
+impl Default for ComputedBackgroundLayerStyle {
+    fn default() -> Self {
+        Self {
+            position: ComputedBackgroundPosition {
+                horizontal: ComputedLengthPercentage::ZERO,
+                vertical: ComputedLengthPercentage::ZERO,
+            },
+            size: ComputedBackgroundSize::Auto,
+            repeat_x: BackgroundRepeatModeValue::Repeat,
+            repeat_y: BackgroundRepeatModeValue::Repeat,
+            origin: BackgroundBoxValue::Padding,
+            clip: BackgroundBoxValue::Border,
+            attachment: BackgroundAttachmentValue::Scroll,
+        }
+    }
+}
+
 /// Computed background, border, clip, and compositing values for one node.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ComputedPaintStyle {
@@ -99,6 +167,8 @@ pub struct ComputedPaintStyle {
     pub background_color: ColorValue,
     /// Ordered Host-independent background image sources, front to back.
     pub background_images: Vec<BackgroundImageValue>,
+    /// Scalar longhands applied to the current background image layer.
+    pub background_layer: ComputedBackgroundLayerStyle,
     /// Resolved border colors in physical edge order.
     pub border_colors: Edges<ColorValue>,
     /// Border line styles in physical edge order.
@@ -128,6 +198,7 @@ impl ComputedPaintStyle {
         Self {
             background_color: transparent,
             background_images: Vec::new(),
+            background_layer: ComputedBackgroundLayerStyle::default(),
             border_colors: Edges {
                 top: current_color.clone(),
                 right: current_color.clone(),
@@ -177,6 +248,53 @@ pub(crate) fn resolve_paint_style(
                     return Err(invalid(property));
                 };
                 paint.background_images = images.clone();
+            }
+            StyleProperty::BackgroundRepeat => {
+                let StyleValue::BackgroundRepeat(value) = value else {
+                    return Err(invalid(property));
+                };
+                paint.background_layer.repeat_x = value.horizontal;
+                paint.background_layer.repeat_y = value.vertical;
+            }
+            StyleProperty::BackgroundPosition => {
+                let StyleValue::BackgroundPosition(value) = value else {
+                    return Err(invalid(property));
+                };
+                paint.background_layer.position =
+                    resolve_background_position(value, inherited, environment, property)?;
+            }
+            StyleProperty::BackgroundPositionX => {
+                paint.background_layer.position.horizontal =
+                    resolve_length_percentage(value, inherited, environment, property)?;
+            }
+            StyleProperty::BackgroundPositionY => {
+                paint.background_layer.position.vertical =
+                    resolve_length_percentage(value, inherited, environment, property)?;
+            }
+            StyleProperty::BackgroundSize => {
+                let StyleValue::BackgroundSize(value) = value else {
+                    return Err(invalid(property));
+                };
+                paint.background_layer.size =
+                    resolve_background_size(value, inherited, environment, property)?;
+            }
+            StyleProperty::BackgroundOrigin => {
+                let StyleValue::BackgroundBox(value) = value else {
+                    return Err(invalid(property));
+                };
+                paint.background_layer.origin = *value;
+            }
+            StyleProperty::BackgroundClip => {
+                let StyleValue::BackgroundBox(value) = value else {
+                    return Err(invalid(property));
+                };
+                paint.background_layer.clip = *value;
+            }
+            StyleProperty::BackgroundAttachment => {
+                let StyleValue::BackgroundAttachment(value) = value else {
+                    return Err(invalid(property));
+                };
+                paint.background_layer.attachment = *value;
             }
             StyleProperty::BorderTopColor => paint.border_colors.top = color(value, property)?,
             StyleProperty::BorderRightColor => paint.border_colors.right = color(value, property)?,
@@ -291,6 +409,66 @@ fn radius(
     })
 }
 
+fn resolve_length_percentage(
+    value: &StyleValue,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedLengthPercentage, StyleResolutionError> {
+    let StyleValue::LengthPercentage(value) = value else {
+        return Err(invalid(property));
+    };
+    resolve_affine(value, inherited.font_size(), environment, property)
+}
+
+fn resolve_background_position(
+    value: &BackgroundPositionValue,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedBackgroundPosition, StyleResolutionError> {
+    Ok(ComputedBackgroundPosition {
+        horizontal: resolve_affine(
+            &value.horizontal,
+            inherited.font_size(),
+            environment,
+            property,
+        )?,
+        vertical: resolve_affine(
+            &value.vertical,
+            inherited.font_size(),
+            environment,
+            property,
+        )?,
+    })
+}
+
+fn resolve_background_size(
+    value: &BackgroundSizeValue,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedBackgroundSize, StyleResolutionError> {
+    let size = match value {
+        BackgroundSizeValue::Auto => ComputedBackgroundSize::Auto,
+        BackgroundSizeValue::Cover => ComputedBackgroundSize::Cover,
+        BackgroundSizeValue::Contain => ComputedBackgroundSize::Contain,
+        BackgroundSizeValue::Explicit { width, height } => {
+            let width = resolve_affine(width, inherited.font_size(), environment, property)?;
+            let height = resolve_affine(height, inherited.font_size(), environment, property)?;
+            if width.length() < 0.0
+                || width.fraction() < 0.0
+                || height.length() < 0.0
+                || height.fraction() < 0.0
+            {
+                return Err(invalid(property));
+            }
+            ComputedBackgroundSize::Explicit { width, height }
+        }
+    };
+    Ok(size)
+}
+
 fn invalid(property: StyleProperty) -> StyleResolutionError {
     StyleResolutionError::InvalidPropertyValue(property)
 }
@@ -298,7 +476,9 @@ fn invalid(property: StyleProperty) -> StyleResolutionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BorderRadiusValue, LengthPercentageValue, LengthUnit, LengthValue};
+    use crate::{
+        BackgroundRepeatValue, BorderRadiusValue, LengthPercentageValue, LengthUnit, LengthValue,
+    };
 
     fn number(value: f32) -> StyleNumber {
         StyleNumber::new(value)
@@ -313,6 +493,21 @@ mod tests {
 
     fn px(value: f32) -> StyleValue {
         StyleValue::LengthPercentage(px_length(value))
+    }
+
+    fn percentage(value: f32) -> LengthPercentageValue {
+        LengthPercentageValue::Percentage(number(value))
+    }
+
+    #[test]
+    fn background_layer_initial_values_match_css() {
+        let resolved =
+            crate::resolve_style(&SpecifiedStyle::new(), None, StyleEnvironment::default())
+                .unwrap();
+        assert_eq!(
+            resolved.computed().paint().background_layer,
+            ComputedBackgroundLayerStyle::default()
+        );
     }
 
     #[test]
@@ -336,6 +531,40 @@ mod tests {
                 StyleValue::BackgroundImages(vec![BackgroundImageValue::Url(
                     "https://example.com/image.png".into(),
                 )]),
+            )
+            .push(
+                StyleProperty::BackgroundPosition,
+                StyleValue::BackgroundPosition(BackgroundPositionValue {
+                    horizontal: percentage(25.0),
+                    vertical: px_length(10.0),
+                }),
+            )
+            .push(StyleProperty::BackgroundPositionX, px(5.0))
+            .push(
+                StyleProperty::BackgroundSize,
+                StyleValue::BackgroundSize(BackgroundSizeValue::Explicit {
+                    width: percentage(50.0),
+                    height: px_length(20.0),
+                }),
+            )
+            .push(
+                StyleProperty::BackgroundRepeat,
+                StyleValue::BackgroundRepeat(BackgroundRepeatValue {
+                    horizontal: BackgroundRepeatModeValue::Space,
+                    vertical: BackgroundRepeatModeValue::Round,
+                }),
+            )
+            .push(
+                StyleProperty::BackgroundOrigin,
+                StyleValue::BackgroundBox(BackgroundBoxValue::Content),
+            )
+            .push(
+                StyleProperty::BackgroundClip,
+                StyleValue::BackgroundBox(BackgroundBoxValue::Padding),
+            )
+            .push(
+                StyleProperty::BackgroundAttachment,
+                StyleValue::BackgroundAttachment(BackgroundAttachmentValue::Scroll),
             )
             .push(
                 StyleProperty::BorderTopStyle,
@@ -410,6 +639,30 @@ mod tests {
                 "https://example.com/image.png".into()
             )]
         );
+        assert_eq!(paint.background_layer.position.horizontal.length(), 5.0);
+        assert_eq!(paint.background_layer.position.horizontal.fraction(), 0.0);
+        assert_eq!(paint.background_layer.position.vertical.length(), 10.0);
+        assert_eq!(
+            paint.background_layer.size,
+            ComputedBackgroundSize::Explicit {
+                width: ComputedLengthPercentage::new(0.0, 0.5),
+                height: ComputedLengthPercentage::new(20.0, 0.0),
+            }
+        );
+        assert_eq!(
+            paint.background_layer.repeat_x,
+            BackgroundRepeatModeValue::Space
+        );
+        assert_eq!(
+            paint.background_layer.repeat_y,
+            BackgroundRepeatModeValue::Round
+        );
+        assert_eq!(paint.background_layer.origin, BackgroundBoxValue::Content);
+        assert_eq!(paint.background_layer.clip, BackgroundBoxValue::Padding);
+        assert_eq!(
+            paint.background_layer.attachment,
+            BackgroundAttachmentValue::Scroll
+        );
         assert_eq!(paint.border_colors.top, ColorValue::Named("top".into()));
         assert_eq!(paint.border_colors.right, ColorValue::Named("right".into()));
         assert_eq!(
@@ -444,6 +697,14 @@ mod tests {
         for property in [
             StyleProperty::BackgroundColor,
             StyleProperty::BackgroundImage,
+            StyleProperty::BackgroundRepeat,
+            StyleProperty::BackgroundPosition,
+            StyleProperty::BackgroundPositionX,
+            StyleProperty::BackgroundPositionY,
+            StyleProperty::BackgroundSize,
+            StyleProperty::BackgroundOrigin,
+            StyleProperty::BackgroundClip,
+            StyleProperty::BackgroundAttachment,
             StyleProperty::BorderTopColor,
             StyleProperty::BorderRightColor,
             StyleProperty::BorderBottomColor,
@@ -485,6 +746,13 @@ mod tests {
             (
                 StyleProperty::BackgroundColor,
                 StyleValue::Color(ColorValue::Named(String::new())),
+            ),
+            (
+                StyleProperty::BackgroundSize,
+                StyleValue::BackgroundSize(BackgroundSizeValue::Explicit {
+                    width: px_length(-1.0),
+                    height: px_length(1.0),
+                }),
             ),
             (StyleProperty::Opacity, StyleValue::Number(number(f32::NAN))),
             (StyleProperty::ZIndex, StyleValue::Integer(i64::MAX)),

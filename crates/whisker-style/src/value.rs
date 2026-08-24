@@ -188,6 +188,77 @@ pub enum BackgroundImageValue {
     Url(String),
 }
 
+/// Tiling behavior on one background axis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BackgroundRepeatModeValue {
+    /// Repeat adjacent tiles without adding space.
+    Repeat,
+    /// Paint at most one tile.
+    NoRepeat,
+    /// Distribute whole tiles with equal gaps.
+    Space,
+    /// Resize tiles so a whole number fills the axis.
+    Round,
+}
+
+/// Expanded two-axis value of one `background-repeat` layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BackgroundRepeatValue {
+    /// Horizontal tiling behavior.
+    pub horizontal: BackgroundRepeatModeValue,
+    /// Vertical tiling behavior.
+    pub vertical: BackgroundRepeatModeValue,
+}
+
+/// Specified position of one background layer.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BackgroundPositionValue {
+    /// Horizontal position relative to the positioning area.
+    pub horizontal: LengthPercentageValue,
+    /// Vertical position relative to the positioning area.
+    pub vertical: LengthPercentageValue,
+}
+
+/// Specified size of one background layer.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BackgroundSizeValue {
+    /// Use the image's intrinsic dimensions.
+    Auto,
+    /// Preserve aspect ratio while covering the positioning area.
+    Cover,
+    /// Preserve aspect ratio while fitting inside the positioning area.
+    Contain,
+    /// Resolve an explicit width and height.
+    Explicit {
+        /// Specified image width.
+        width: LengthPercentageValue,
+        /// Specified image height.
+        height: LengthPercentageValue,
+    },
+}
+
+/// Box used to position or clip a background layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BackgroundBoxValue {
+    /// The outer border box.
+    Border,
+    /// The inner padding box.
+    Padding,
+    /// The content box.
+    Content,
+}
+
+/// Scrolling relationship of one background layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BackgroundAttachmentValue {
+    /// Scroll with the element's border box.
+    Scroll,
+    /// Remain fixed relative to the viewport.
+    Fixed,
+    /// Scroll with the element's contents.
+    Local,
+}
+
 /// An owned value in a specified inline-style declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StyleValue {
@@ -207,6 +278,16 @@ pub enum StyleValue {
     BorderRadius(BorderRadiusValue),
     /// Ordered background images, front to back.
     BackgroundImages(Vec<BackgroundImageValue>),
+    /// Expanded tiling behavior of one background layer.
+    BackgroundRepeat(BackgroundRepeatValue),
+    /// Specified position of one background layer.
+    BackgroundPosition(BackgroundPositionValue),
+    /// Specified size of one background layer.
+    BackgroundSize(BackgroundSizeValue),
+    /// Positioning or clipping box of one background layer.
+    BackgroundBox(BackgroundBoxValue),
+    /// Scrolling relationship of one background layer.
+    BackgroundAttachment(BackgroundAttachmentValue),
     /// Font family.
     FontFamily(FontFamilyValue),
     /// Font face style.

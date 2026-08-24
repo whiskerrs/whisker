@@ -162,6 +162,7 @@ mod tests {
         ComputedPaintStyle {
             background_color: color("background"),
             background_images: Vec::new(),
+            background_layer: Default::default(),
             border_colors: Edges {
                 top: color("top"),
                 right: color("right"),
