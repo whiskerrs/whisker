@@ -72,6 +72,8 @@ pub use crate::shorthand::{
 };
 pub use crate::to_css::ToCss;
 pub use crate::value::{
-    BorderRadius, FlexBasis, GridLine, GridTemplate, ImageRef, LineHeight, Repeated, Size,
+    BorderRadius, FlexBasis, GridArea, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
+    GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, ImageRef, LineHeight, Repeated,
+    Size,
 };
 pub use whisker_style::{PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyId};

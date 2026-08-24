@@ -1,6 +1,6 @@
 use std::convert::Infallible;
 
-use whisker::css::{BorderStyle, Overflow};
+use whisker::css::{BorderStyle, GridLine, GridTemplate, GridTrack, Overflow};
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
 use whisker::runtime::view::{
@@ -462,6 +462,81 @@ fn render_box_paint_and_clip_reach_the_frame_sink() {
                     alpha: 1.0,
                 }
     ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn render_grid_layout_reaches_frame_packet_geometry() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(18).expect("test surface"),
+        StyleEnvironment::new(200.0, 50.0, 1.0, 14.0),
+    );
+    let root_style = Css::new()
+        .display_grid()
+        .width(px(200))
+        .height(px(50))
+        .grid_template_columns(GridTemplate::tracks([
+            GridTrack::fixed(px(50)),
+            GridTrack::fraction(1.0),
+        ]))
+        .grid_template_rows(GridTemplate::tracks([GridTrack::fixed(px(50))]));
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: root_style) {
+                    view(style: Css::new().grid_column(GridLine::Number(1), GridLine::Number(2)))
+                    view(style: Css::new().grid_column(GridLine::Number(2), GridLine::Number(3)))
+                }
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(200.0, 50.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("render! grid frame");
+    assert!(host.calls.is_empty());
+
+    let root_node = surface.root().expect("grid root");
+    let packet = &renderer.frames()[0].packet;
+    let child_nodes: Vec<_> = packet
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            Operation::InsertChild { parent, child, .. } if *parent == root_node => Some(*child),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(child_nodes.len(), 2);
+    let geometry = |node| {
+        packet
+            .operations
+            .iter()
+            .find_map(|operation| match operation {
+                Operation::SetLayout {
+                    node: candidate,
+                    geometry,
+                } if *candidate == node => Some(geometry.border_box),
+                _ => None,
+            })
+    };
+    let first = geometry(child_nodes[0]).expect("first Grid item geometry");
+    let second = geometry(child_nodes[1]).expect("second Grid item geometry");
+    assert_eq!((first.x, first.width), (0.0, 50.0));
+    assert_eq!((second.x, second.width), (50.0, 150.0));
+
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 

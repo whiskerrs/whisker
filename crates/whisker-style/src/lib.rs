@@ -27,7 +27,9 @@ pub use layout::{
 pub use layout_value::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, AspectRatioValue, BoxSizingValue,
     DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue,
-    JustifyContentValue, LengthPercentageAutoValue, PositionValue, SizeValue,
+    GridMaxTrackSizingValue, GridMinTrackSizingValue, GridTemplateComponentValue,
+    GridTemplateRepetitionValue, GridTemplateValue, GridTrackSizingValue, JustifyContentValue,
+    LengthPercentageAutoValue, PositionValue, SizeValue,
 };
 pub use paint::{
     BorderStyleValue, ComputedBackgroundLayerStyle, ComputedBackgroundPosition,

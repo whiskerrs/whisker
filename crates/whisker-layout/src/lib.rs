@@ -955,8 +955,9 @@ fn justify(value: JustifyContentValue) -> AlignContent {
 mod tests {
     use super::*;
     use whisker_style::{
-        Axes, ComputedGridTemplate, ComputedGridTrackSizing, Edges, GridPlacementLineValue,
-        StyleNumber,
+        Axes, ComputedGridTemplate, ComputedGridTemplateComponent, ComputedGridTemplateRepetition,
+        ComputedGridTrackSizing, Edges, GridPlacementLineValue, GridRepetitionCountValue,
+        GridTemplateAreaValue, GridTemplateAreasValue, StyleNumber,
     };
 
     const MIXED: ComputedLengthPercentage = ComputedLengthPercentage::new(1.0, 0.5);
@@ -1100,6 +1101,65 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot.get(centered).unwrap().border_box.x, 40.0);
         assert_eq!(snapshot.get(ended).unwrap().border_box.x, 180.0);
+    }
+
+    #[test]
+    fn grid_repeat_and_named_areas_reach_taffy() {
+        let root = id(1);
+        let children = [id(2), id(3), id(4)];
+        let template = ComputedGridTemplate {
+            components: vec![ComputedGridTemplateComponent::Repeat(
+                ComputedGridTemplateRepetition {
+                    count: GridRepetitionCountValue::Count(3),
+                    tracks: vec![ComputedGridTrackSizing::length(50.0)],
+                    line_names: vec![vec!["cell-start".into()], vec!["cell-end".into()]],
+                },
+            )],
+            line_names: vec![Vec::new(), Vec::new()],
+        };
+        let areas = GridTemplateAreasValue {
+            areas: vec![GridTemplateAreaValue {
+                name: "content".into(),
+                row_start: 0,
+                row_end: 1,
+                column_start: 0,
+                column_end: 3,
+            }],
+            row_count: 1,
+            column_count: 3,
+        };
+        let root_style = ComputedLayoutStyle {
+            display: DisplayValue::Grid,
+            size: Axes {
+                width: ComputedSizeValue::Value(ComputedLengthPercentage::new(150.0, 0.0)),
+                height: ComputedSizeValue::Value(ComputedLengthPercentage::new(50.0, 0.0)),
+            },
+            grid_template_columns: template,
+            grid_template_rows: ComputedGridTemplate::tracks([ComputedGridTrackSizing::length(
+                50.0,
+            )]),
+            grid_template_areas: Some(areas),
+            ..ComputedLayoutStyle::default()
+        };
+        let converted = convert_style(&root_style).unwrap();
+        assert_eq!(
+            converted.grid_template_areas.as_ref().unwrap().areas[0].name,
+            "content"
+        );
+
+        let mut tree = LayoutTree::new();
+        tree.create_node(root, root_style).unwrap();
+        for child in children {
+            tree.create_node(child, ComputedLayoutStyle::default())
+                .unwrap();
+        }
+        tree.set_children(root, &children).unwrap();
+        let snapshot = tree
+            .compute(root, LayoutSize::new(150.0, 50.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(snapshot.get(children[0]).unwrap().border_box.x, 0.0);
+        assert_eq!(snapshot.get(children[1]).unwrap().border_box.x, 50.0);
+        assert_eq!(snapshot.get(children[2]).unwrap().border_box.x, 100.0);
     }
 
     fn assert_unsupported(style: ComputedLayoutStyle, feature: UnsupportedLayoutFeature) {

@@ -264,19 +264,23 @@ fn write_four(dest: &mut dyn fmt::Write, v: &[LengthPercentage; 4]) -> fmt::Resu
     Ok(())
 }
 
-// ---------- GridLine, GridTemplate ----------
+// ---------- CSS Grid ----------
 
 /// Value for `grid-row-start`, `grid-row-end`, `grid-column-start`,
 /// `grid-column-end`. Lynx accepts numeric line references and
 /// `span <integer>`.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum GridLine {
     /// `auto` — let the layout algorithm decide.
     Auto,
     /// Numeric line reference; negative values count from the end.
-    Number(i32),
+    Number(i16),
     /// `span <integer>` — span N tracks from the opposite edge.
-    Span(u32),
+    Span(u16),
+    /// A named line, optionally selecting the nth occurrence.
+    Named(String, i16),
+    /// Span to a named line.
+    NamedSpan(String, u16),
 }
 
 impl ToCss for GridLine {
@@ -285,35 +289,479 @@ impl ToCss for GridLine {
             GridLine::Auto => dest.write_str("auto"),
             GridLine::Number(n) => write!(dest, "{n}"),
             GridLine::Span(n) => write!(dest, "span {n}"),
+            GridLine::Named(name, occurrence) if *occurrence == 0 => dest.write_str(name),
+            GridLine::Named(name, occurrence) => write!(dest, "{occurrence} {name}"),
+            GridLine::NamedSpan(name, occurrence) if *occurrence == 0 => {
+                write!(dest, "span {name}")
+            }
+            GridLine::NamedSpan(name, occurrence) => write!(dest, "span {occurrence} {name}"),
         }
     }
 }
 
-/// Value for `grid-template-rows` / `grid-template-columns`. Lynx
-/// accepts a sequence of track-sizing values; this struct stores
-/// them as already-serialized track strings since the grammar is
-/// rich enough that a typed model is impractical.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct GridTemplate(pub String);
+/// Minimum sizing function accepted by `minmax()`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridTrackMin {
+    /// A fixed length or percentage.
+    Fixed(LengthPercentage),
+    /// The minimum intrinsic contribution.
+    MinContent,
+    /// The maximum intrinsic contribution.
+    MaxContent,
+    /// Automatic minimum sizing.
+    Auto,
+}
+
+/// Maximum sizing function accepted by `minmax()`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridTrackMax {
+    /// A fixed length or percentage.
+    Fixed(LengthPercentage),
+    /// The minimum intrinsic contribution.
+    MinContent,
+    /// The maximum intrinsic contribution.
+    MaxContent,
+    /// `fit-content(<limit>)`.
+    FitContent(LengthPercentage),
+    /// Automatic maximum sizing.
+    Auto,
+    /// A flexible share in `fr` units.
+    Fraction(f32),
+}
+
+/// One CSS Grid track sizing function.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridTrack {
+    pub(crate) min: GridTrackMin,
+    pub(crate) max: GridTrackMax,
+}
+
+impl GridTrack {
+    /// `auto`.
+    pub const fn auto() -> Self {
+        Self {
+            min: GridTrackMin::Auto,
+            max: GridTrackMax::Auto,
+        }
+    }
+
+    /// `min-content`.
+    pub const fn min_content() -> Self {
+        Self {
+            min: GridTrackMin::MinContent,
+            max: GridTrackMax::MinContent,
+        }
+    }
+
+    /// `max-content`.
+    pub const fn max_content() -> Self {
+        Self {
+            min: GridTrackMin::MaxContent,
+            max: GridTrackMax::MaxContent,
+        }
+    }
+
+    /// A fixed length or percentage.
+    pub fn fixed(value: impl Into<LengthPercentage>) -> Self {
+        let value = value.into();
+        Self {
+            min: GridTrackMin::Fixed(value.clone()),
+            max: GridTrackMax::Fixed(value),
+        }
+    }
+
+    /// A flexible `fr` track.
+    pub const fn fraction(value: f32) -> Self {
+        Self {
+            min: GridTrackMin::Auto,
+            max: GridTrackMax::Fraction(value),
+        }
+    }
+
+    /// `fit-content(<limit>)`.
+    pub fn fit_content(limit: impl Into<LengthPercentage>) -> Self {
+        Self {
+            min: GridTrackMin::Auto,
+            max: GridTrackMax::FitContent(limit.into()),
+        }
+    }
+
+    /// `minmax(<min>, <max>)`.
+    pub const fn minmax(min: GridTrackMin, max: GridTrackMax) -> Self {
+        Self { min, max }
+    }
+}
+
+impl From<Length> for GridTrack {
+    fn from(value: Length) -> Self {
+        Self::fixed(value)
+    }
+}
+
+impl From<Percentage> for GridTrack {
+    fn from(value: Percentage) -> Self {
+        Self::fixed(value)
+    }
+}
+
+impl From<LengthPercentage> for GridTrack {
+    fn from(value: LengthPercentage) -> Self {
+        Self::fixed(value)
+    }
+}
+
+impl From<Length> for GridTrackMin {
+    fn from(value: Length) -> Self {
+        Self::Fixed(value.into())
+    }
+}
+
+impl From<Percentage> for GridTrackMin {
+    fn from(value: Percentage) -> Self {
+        Self::Fixed(value.into())
+    }
+}
+
+impl From<LengthPercentage> for GridTrackMin {
+    fn from(value: LengthPercentage) -> Self {
+        Self::Fixed(value)
+    }
+}
+
+impl From<Length> for GridTrackMax {
+    fn from(value: Length) -> Self {
+        Self::Fixed(value.into())
+    }
+}
+
+impl From<Percentage> for GridTrackMax {
+    fn from(value: Percentage) -> Self {
+        Self::Fixed(value.into())
+    }
+}
+
+impl From<LengthPercentage> for GridTrackMax {
+    fn from(value: LengthPercentage) -> Self {
+        Self::Fixed(value)
+    }
+}
+
+impl ToCss for GridTrack {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match (&self.min, &self.max) {
+            (GridTrackMin::Auto, GridTrackMax::Auto) => dest.write_str("auto"),
+            (GridTrackMin::MinContent, GridTrackMax::MinContent) => dest.write_str("min-content"),
+            (GridTrackMin::MaxContent, GridTrackMax::MaxContent) => dest.write_str("max-content"),
+            (GridTrackMin::Fixed(min), GridTrackMax::Fixed(max)) if min == max => min.to_css(dest),
+            (GridTrackMin::Auto, GridTrackMax::Fraction(value)) => {
+                write_number(dest, *value)?;
+                dest.write_str("fr")
+            }
+            (GridTrackMin::Auto, GridTrackMax::FitContent(limit)) => {
+                dest.write_str("fit-content(")?;
+                limit.to_css(dest)?;
+                dest.write_char(')')
+            }
+            (min, max) => {
+                dest.write_str("minmax(")?;
+                min.to_css(dest)?;
+                dest.write_str(", ")?;
+                max.to_css(dest)?;
+                dest.write_char(')')
+            }
+        }
+    }
+}
+
+impl ToCss for GridTrackMin {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Fixed(value) => value.to_css(dest),
+            Self::MinContent => dest.write_str("min-content"),
+            Self::MaxContent => dest.write_str("max-content"),
+            Self::Auto => dest.write_str("auto"),
+        }
+    }
+}
+
+impl ToCss for GridTrackMax {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Fixed(value) => value.to_css(dest),
+            Self::MinContent => dest.write_str("min-content"),
+            Self::MaxContent => dest.write_str("max-content"),
+            Self::FitContent(limit) => {
+                dest.write_str("fit-content(")?;
+                limit.to_css(dest)?;
+                dest.write_char(')')
+            }
+            Self::Auto => dest.write_str("auto"),
+            Self::Fraction(value) => {
+                write_number(dest, *value)?;
+                dest.write_str("fr")
+            }
+        }
+    }
+}
+
+/// Count used by a Grid `repeat()` fragment.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum GridRepeatCount {
+    /// Repeat a fixed number of times.
+    Count(u16),
+    /// Fill the available axis while retaining empty repeated tracks.
+    AutoFill,
+    /// Fill the available axis and collapse empty repeated tracks.
+    AutoFit,
+}
+
+/// One explicit track or repeated track fragment.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridTemplateComponent {
+    /// One track.
+    Track(GridTrack),
+    /// A repeated fragment.
+    Repeat {
+        /// Fixed or automatic repetition count.
+        count: GridRepeatCount,
+        /// Tracks inside the repeated fragment.
+        tracks: Vec<GridTrack>,
+        /// Named lines before, between, and after repeated tracks.
+        line_names: Vec<Vec<String>>,
+    },
+}
+
+impl From<GridTrack> for GridTemplateComponent {
+    fn from(value: GridTrack) -> Self {
+        Self::Track(value)
+    }
+}
+
+/// Value for `grid-template-rows` / `grid-template-columns`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridTemplate {
+    pub(crate) components: Vec<GridTemplateComponent>,
+    pub(crate) line_names: Vec<Vec<String>>,
+}
 
 impl GridTemplate {
     /// Build from a list of track-sizing tokens. Each token is
     /// joined with a space.
-    pub fn tracks(tracks: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        let mut out = String::new();
-        for (i, t) in tracks.into_iter().enumerate() {
-            if i > 0 {
-                out.push(' ');
-            }
-            out.push_str(&t.into());
+    pub fn tracks(tracks: impl IntoIterator<Item = impl Into<GridTrack>>) -> Self {
+        let components: Vec<_> = tracks
+            .into_iter()
+            .map(|track| track.into().into())
+            .collect();
+        let line_names = vec![Vec::new(); components.len() + 1];
+        Self {
+            components,
+            line_names,
         }
-        Self(out)
+    }
+
+    /// Build a template from explicit track and `repeat()` components.
+    pub fn components(components: impl IntoIterator<Item = GridTemplateComponent>) -> Self {
+        let components: Vec<_> = components.into_iter().collect();
+        let line_names = vec![Vec::new(); components.len() + 1];
+        Self {
+            components,
+            line_names,
+        }
+    }
+
+    /// Build a template containing one `repeat()` fragment.
+    pub fn repeat(
+        count: GridRepeatCount,
+        tracks: impl IntoIterator<Item = impl Into<GridTrack>>,
+    ) -> Self {
+        let tracks: Vec<_> = tracks.into_iter().map(Into::into).collect();
+        let line_names = vec![Vec::new(); tracks.len() + 1];
+        Self::components([GridTemplateComponent::Repeat {
+            count,
+            tracks,
+            line_names,
+        }])
+    }
+
+    /// Attach names to the lines before, between, and after components.
+    /// Invalid line-name counts are rejected during style resolution.
+    pub fn line_names(
+        mut self,
+        line_names: impl IntoIterator<Item = impl IntoIterator<Item = impl Into<String>>>,
+    ) -> Self {
+        self.line_names = line_names
+            .into_iter()
+            .map(|names| names.into_iter().map(Into::into).collect())
+            .collect();
+        self
     }
 }
 
 impl ToCss for GridTemplate {
     fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
-        dest.write_str(&self.0)
+        for (index, component) in self.components.iter().enumerate() {
+            if index > 0 {
+                dest.write_char(' ')?;
+            }
+            write_grid_line_names(dest, self.line_names.get(index))?;
+            if !self.line_names.get(index).is_none_or(Vec::is_empty) {
+                dest.write_char(' ')?;
+            }
+            component.to_css(dest)?;
+        }
+        if !self
+            .line_names
+            .get(self.components.len())
+            .is_none_or(Vec::is_empty)
+        {
+            if !self.components.is_empty() {
+                dest.write_char(' ')?;
+            }
+            write_grid_line_names(dest, self.line_names.get(self.components.len()))?;
+        }
+        Ok(())
+    }
+}
+
+impl ToCss for GridTemplateComponent {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Track(track) => track.to_css(dest),
+            Self::Repeat {
+                count,
+                tracks,
+                line_names,
+            } => {
+                dest.write_str("repeat(")?;
+                count.to_css(dest)?;
+                dest.write_str(", ")?;
+                for (index, track) in tracks.iter().enumerate() {
+                    if index > 0 {
+                        dest.write_char(' ')?;
+                    }
+                    write_grid_line_names(dest, line_names.get(index))?;
+                    if !line_names.get(index).is_none_or(Vec::is_empty) {
+                        dest.write_char(' ')?;
+                    }
+                    track.to_css(dest)?;
+                }
+                if !line_names.get(tracks.len()).is_none_or(Vec::is_empty) {
+                    if !tracks.is_empty() {
+                        dest.write_char(' ')?;
+                    }
+                    write_grid_line_names(dest, line_names.get(tracks.len()))?;
+                }
+                dest.write_char(')')
+            }
+        }
+    }
+}
+
+impl ToCss for GridRepeatCount {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Count(value) => write!(dest, "{value}"),
+            Self::AutoFill => dest.write_str("auto-fill"),
+            Self::AutoFit => dest.write_str("auto-fit"),
+        }
+    }
+}
+
+fn write_grid_line_names(dest: &mut dyn fmt::Write, names: Option<&Vec<String>>) -> fmt::Result {
+    let Some(names) = names.filter(|names| !names.is_empty()) else {
+        return Ok(());
+    };
+    dest.write_char('[')?;
+    for (index, name) in names.iter().enumerate() {
+        if index > 0 {
+            dest.write_char(' ')?;
+        }
+        dest.write_str(name)?;
+    }
+    dest.write_char(']')
+}
+
+/// One rectangular named region in `grid-template-areas`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GridArea {
+    pub(crate) name: String,
+    pub(crate) row_start: u16,
+    pub(crate) row_end: u16,
+    pub(crate) column_start: u16,
+    pub(crate) column_end: u16,
+}
+
+impl GridArea {
+    /// Defines a zero-based, end-exclusive rectangular area.
+    pub fn new(
+        name: impl Into<String>,
+        row_start: u16,
+        row_end: u16,
+        column_start: u16,
+        column_end: u16,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            row_start,
+            row_end,
+            column_start,
+            column_end,
+        }
+    }
+}
+
+/// Rectangular named regions for `grid-template-areas`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GridTemplateAreas {
+    pub(crate) row_count: u16,
+    pub(crate) column_count: u16,
+    pub(crate) areas: Vec<GridArea>,
+}
+
+impl GridTemplateAreas {
+    /// Creates an empty named-area matrix with explicit dimensions.
+    pub const fn new(row_count: u16, column_count: u16) -> Self {
+        Self {
+            row_count,
+            column_count,
+            areas: Vec::new(),
+        }
+    }
+
+    /// Adds one named rectangular area.
+    pub fn area(mut self, area: GridArea) -> Self {
+        self.areas.push(area);
+        self
+    }
+}
+
+impl ToCss for GridTemplateAreas {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        for row in 0..self.row_count {
+            if row > 0 {
+                dest.write_char(' ')?;
+            }
+            dest.write_char('"')?;
+            for column in 0..self.column_count {
+                if column > 0 {
+                    dest.write_char(' ')?;
+                }
+                let name = self
+                    .areas
+                    .iter()
+                    .rev()
+                    .find(|area| {
+                        area.row_start <= row
+                            && row < area.row_end
+                            && area.column_start <= column
+                            && column < area.column_end
+                    })
+                    .map_or(".", |area| area.name.as_str());
+                dest.write_str(name)?;
+            }
+            dest.write_char('"')?;
+        }
+        Ok(())
     }
 }
 
@@ -440,11 +888,23 @@ mod tests {
         assert_eq!(GridLine::Number(1).to_css_string(), "1");
         assert_eq!(GridLine::Number(-1).to_css_string(), "-1");
         assert_eq!(GridLine::Span(2).to_css_string(), "span 2");
+        assert_eq!(
+            GridLine::Named("content".into(), 0).to_css_string(),
+            "content"
+        );
+        assert_eq!(
+            GridLine::NamedSpan("content".into(), 2).to_css_string(),
+            "span 2 content"
+        );
     }
 
     #[test]
     fn grid_template_joins_tracks() {
-        let t = GridTemplate::tracks(["1fr", "auto", "2fr"]);
+        let t = GridTemplate::tracks([
+            GridTrack::fraction(1.0),
+            GridTrack::auto(),
+            GridTrack::fraction(2.0),
+        ]);
         assert_eq!(t.to_css_string(), "1fr auto 2fr");
     }
 

@@ -13,7 +13,8 @@ use whisker_css::ext::*;
 use whisker_css::shorthand::padding_margin::MarginValue;
 use whisker_css::shorthand::{Animation, Background, BackgroundLayer, Border, Transition};
 use whisker_css::value::{
-    BorderRadius, FlexBasis, GridLine, GridTemplate, ImageRef, LineHeight, Repeated, Size,
+    BorderRadius, FlexBasis, GridLine, GridTemplate, GridTrack, ImageRef, LineHeight, Repeated,
+    Size,
 };
 use whisker_css::{Css, ToCss};
 
@@ -244,10 +245,10 @@ fn grid_line_all_variants() {
 
 #[test]
 fn grid_template_empty_then_extend() {
-    let tracks: Vec<String> = Vec::new();
+    let tracks: Vec<GridTrack> = Vec::new();
     let t1 = GridTemplate::tracks(tracks);
     assert!(t1.to_css_string().is_empty());
-    let t2 = GridTemplate::tracks(["1fr".to_string(), "2fr".to_string()]);
+    let t2 = GridTemplate::tracks([GridTrack::fraction(1.0), GridTrack::fraction(2.0)]);
     assert_eq!(t2.to_css_string(), "1fr 2fr");
 }
 

@@ -16,8 +16,8 @@ use whisker_css::ext::*;
 use whisker_css::keyword::{AlignItems, Overflow};
 use whisker_css::{
     Animation, Background, BackgroundLayer, Border, BorderRadius, Color, ColorStop, Css, CssString,
-    EasingFunction, Flex, FlexBasis, FlexDirection, Gradient, GridLine, GridTemplate, ImageRef,
-    JustifyContent, LengthPercentage, NamedColor, PositionKind, Size, ToCss, TransformFn,
+    EasingFunction, Flex, FlexBasis, FlexDirection, Gradient, GridLine, GridTemplate, GridTrack,
+    ImageRef, JustifyContent, LengthPercentage, NamedColor, PositionKind, Size, ToCss, TransformFn,
     Transition, TransitionPropertyKind, Visibility,
 };
 
@@ -247,8 +247,12 @@ fn background_full_shorthand() {
 fn grid_definition_block() {
     let s = Css::new()
         .display_grid()
-        .grid_template_columns(GridTemplate::tracks(["1fr", "auto", "1fr"]))
-        .grid_template_rows(GridTemplate::tracks(["auto"]))
+        .grid_template_columns(GridTemplate::tracks([
+            GridTrack::fraction(1.0),
+            GridTrack::auto(),
+            GridTrack::fraction(1.0),
+        ]))
+        .grid_template_rows(GridTemplate::tracks([GridTrack::auto()]))
         .grid_row_start(GridLine::Number(1))
         .grid_column_end(GridLine::Span(2));
     let css = s.to_string();
