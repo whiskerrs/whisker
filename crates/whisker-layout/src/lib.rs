@@ -9,22 +9,23 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use taffy::{
-    AlignContent, AlignItems, AvailableSpace as TaffyAvailableSpace, BoxSizing, Dimension,
-    Direction, Display, FlexDirection, FlexWrap, GridAutoFlow, GridPlacement, GridTemplateArea,
-    GridTemplateAreas, GridTemplateComponent, GridTemplateRepetition, LengthPercentage,
-    LengthPercentageAuto, Line, MaxTrackSizingFunction, MinTrackSizingFunction, Position, Rect,
-    RepetitionCount, Size, Style, TaffyTree, TrackSizingFunction,
+    AlignContent, AlignItems, AvailableSpace as TaffyAvailableSpace, BoxSizing,
+    Clear as TaffyClear, Dimension, Direction, Display, FlexDirection, FlexWrap,
+    Float as TaffyFloat, GridAutoFlow, GridPlacement, GridTemplateArea, GridTemplateAreas,
+    GridTemplateComponent, GridTemplateRepetition, LengthPercentage, LengthPercentageAuto, Line,
+    MaxTrackSizingFunction, MinTrackSizingFunction, Position, Rect, RepetitionCount, Size, Style,
+    TaffyTree, TrackSizingFunction,
 };
 pub use whisker_protocol::AvailableSpace;
 use whisker_protocol::{LayoutGeometry, LayoutRect, MeasureConstraints, NodeId};
 use whisker_style::{
-    AlignContentValue, AlignItemsValue, AlignSelfValue, BoxSizingValue, ComputedFlexBasis,
-    ComputedGridMaxTrackSizing, ComputedGridMinTrackSizing, ComputedGridTemplate,
-    ComputedGridTemplateComponent, ComputedGridTrackSizing, ComputedLayoutStyle,
-    ComputedLengthPercentage, ComputedLengthPercentageAuto, ComputedSizeValue, DirectionValue,
-    DisplayValue, FlexDirectionValue, FlexWrapValue, GridAutoFlowValue, GridPlacementLineValue,
-    GridPlacementValue, GridRepetitionCountValue, GridTemplateAreasValue, JustifyContentValue,
-    PositionValue, PropertyImpactSet,
+    AlignContentValue, AlignItemsValue, AlignSelfValue, BoxSizingValue, ClearValue,
+    ComputedFlexBasis, ComputedGridMaxTrackSizing, ComputedGridMinTrackSizing,
+    ComputedGridTemplate, ComputedGridTemplateComponent, ComputedGridTrackSizing,
+    ComputedLayoutStyle, ComputedLengthPercentage, ComputedLengthPercentageAuto, ComputedSizeValue,
+    DirectionValue, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, GridAutoFlowValue,
+    GridPlacementLineValue, GridPlacementValue, GridRepetitionCountValue, GridTemplateAreasValue,
+    JustifyContentValue, PositionValue, PropertyImpactSet,
 };
 
 /// A width and height in logical pixels.
@@ -612,6 +613,19 @@ fn convert_style(input: &ComputedLayoutStyle) -> Result<Style, LayoutError> {
             DisplayValue::Flex | DisplayValue::Linear => Display::Flex,
             DisplayValue::Grid => Display::Grid,
             DisplayValue::Relative => Display::Block,
+            DisplayValue::Block => Display::Block,
+            DisplayValue::FlowRoot => Display::FlowRoot,
+        },
+        float: match input.float {
+            FloatValue::None => TaffyFloat::None,
+            FloatValue::Left => TaffyFloat::Left,
+            FloatValue::Right => TaffyFloat::Right,
+        },
+        clear: match input.clear {
+            ClearValue::None => TaffyClear::None,
+            ClearValue::Left => TaffyClear::Left,
+            ClearValue::Right => TaffyClear::Right,
+            ClearValue::Both => TaffyClear::Both,
         },
         position: match input.position {
             PositionValue::Relative => Position::Relative,
@@ -955,9 +969,10 @@ fn justify(value: JustifyContentValue) -> AlignContent {
 mod tests {
     use super::*;
     use whisker_style::{
-        Axes, ComputedGridTemplate, ComputedGridTemplateComponent, ComputedGridTemplateRepetition,
-        ClearValue, ComputedGridTrackSizing, Edges, FloatValue, GridPlacementLineValue,
-        GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue, StyleNumber,
+        Axes, ClearValue, ComputedGridTemplate, ComputedGridTemplateComponent,
+        ComputedGridTemplateRepetition, ComputedGridTrackSizing, Edges, FloatValue,
+        GridPlacementLineValue, GridRepetitionCountValue, GridTemplateAreaValue,
+        GridTemplateAreasValue, StyleNumber,
     };
 
     const MIXED: ComputedLengthPercentage = ComputedLengthPercentage::new(1.0, 0.5);

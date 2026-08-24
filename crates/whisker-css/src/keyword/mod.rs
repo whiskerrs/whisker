@@ -28,7 +28,9 @@ pub use background::{
 pub use border::BorderStyle;
 pub use flex::{AlignContent, AlignItems, AlignSelf, FlexDirection, FlexWrap, JustifyContent};
 pub use grid::GridAutoFlow;
-pub use layout::{BoxSizing, Display, Overflow, PointerEvents, PositionKind, Visibility};
+pub use layout::{
+    BoxSizing, Clear, Display, Float, Overflow, PointerEvents, PositionKind, Visibility,
+};
 pub use linear::{LinearCrossGravity, LinearGravity, LinearLayoutGravity, LinearOrientation};
 pub use text::{
     Direction, TextAlign, TextDecorationLine, TextDecorationStyle, TextOverflow, TextTransform,

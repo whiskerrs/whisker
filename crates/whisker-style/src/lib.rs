@@ -26,8 +26,8 @@ pub use layout::{
 };
 pub use layout_value::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, AspectRatioValue, BoxSizingValue,
-    DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue,
-    GridMaxTrackSizingValue, GridMinTrackSizingValue, GridTemplateComponentValue,
+    ClearValue, DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue,
+    FloatValue, GridMaxTrackSizingValue, GridMinTrackSizingValue, GridTemplateComponentValue,
     GridTemplateRepetitionValue, GridTemplateValue, GridTrackSizingValue, JustifyContentValue,
     LengthPercentageAutoValue, PositionValue, SizeValue,
 };

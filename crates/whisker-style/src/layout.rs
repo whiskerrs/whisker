@@ -2,11 +2,12 @@
 
 use crate::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, AspectRatioValue, BoxSizingValue,
-    CalcExpression, DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue,
-    FlexWrapValue, GridMaxTrackSizingValue, GridMinTrackSizingValue, GridTemplateComponentValue,
-    GridTemplateValue, GridTrackSizingValue, JustifyContentValue, LengthPercentageAutoValue,
-    LengthPercentageValue, LengthUnit, LengthValue, PositionValue, PropertyImpactSet, SizeValue,
-    SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty, StyleResolutionError, StyleValue,
+    CalcExpression, ClearValue, DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue,
+    FlexWrapValue, FloatValue, GridMaxTrackSizingValue, GridMinTrackSizingValue,
+    GridTemplateComponentValue, GridTemplateValue, GridTrackSizingValue, JustifyContentValue,
+    LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue, PositionValue,
+    PropertyImpactSet, SizeValue, SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty,
+    StyleResolutionError, StyleValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -331,6 +332,10 @@ impl<T: Copy> Axes<T> {
 pub struct ComputedLayoutStyle {
     /// Selected layout algorithm.
     pub display: DisplayValue,
+    /// Float side when this node participates in block layout.
+    pub float: FloatValue,
+    /// Clearance applied against preceding floats.
+    pub clear: ClearValue,
     /// Positioning model.
     pub position: PositionValue,
     /// Inline writing direction.
@@ -401,6 +406,8 @@ impl Default for ComputedLayoutStyle {
     fn default() -> Self {
         Self {
             display: DisplayValue::Linear,
+            float: FloatValue::None,
+            clear: ClearValue::None,
             position: PositionValue::Relative,
             direction: DirectionValue::Ltr,
             box_sizing: BoxSizingValue::BorderBox,
@@ -468,6 +475,24 @@ pub(crate) fn resolve_layout_style(
         },
     )?
     .unwrap_or(style.display);
+    style.float = copied(
+        declarations.float,
+        StyleProperty::Float,
+        |value| match value {
+            StyleValue::Float(value) => Some(*value),
+            _ => None,
+        },
+    )?
+    .unwrap_or(style.float);
+    style.clear = copied(
+        declarations.clear,
+        StyleProperty::Clear,
+        |value| match value {
+            StyleValue::Clear(value) => Some(*value),
+            _ => None,
+        },
+    )?
+    .unwrap_or(style.clear);
     style.position = copied(
         declarations.position,
         StyleProperty::Position,
@@ -1319,6 +1344,8 @@ fn invalid(property: StyleProperty) -> StyleResolutionError {
 #[derive(Default)]
 struct LayoutDeclarations<'a> {
     display: Option<&'a StyleValue>,
+    float: Option<&'a StyleValue>,
+    clear: Option<&'a StyleValue>,
     position: Option<&'a StyleValue>,
     direction: Option<&'a StyleValue>,
     box_sizing: Option<&'a StyleValue>,
@@ -1373,6 +1400,8 @@ impl<'a> LayoutDeclarations<'a> {
         for declaration in specified.resolved() {
             let slot = match declaration.property() {
                 StyleProperty::Display => &mut values.display,
+                StyleProperty::Float => &mut values.float,
+                StyleProperty::Clear => &mut values.clear,
                 StyleProperty::Position => &mut values.position,
                 StyleProperty::Direction => &mut values.direction,
                 StyleProperty::BoxSizing => &mut values.box_sizing,
@@ -1472,6 +1501,8 @@ mod tests {
             ComputedLengthPercentage::ZERO
         );
         assert_eq!(style.display, DisplayValue::Linear);
+        assert_eq!(style.float, FloatValue::None);
+        assert_eq!(style.clear, ClearValue::None);
         assert_eq!(style.position, PositionValue::Relative);
         assert_eq!(style.direction, DirectionValue::Ltr);
         assert_eq!(style.box_sizing, BoxSizingValue::BorderBox);
@@ -1903,6 +1934,21 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn block_float_declarations_resolve_without_backend_types() {
+        let specified = SpecifiedStyle::new()
+            .push(
+                StyleProperty::Display,
+                StyleValue::Display(DisplayValue::FlowRoot),
+            )
+            .push(StyleProperty::Float, StyleValue::Float(FloatValue::Right))
+            .push(StyleProperty::Clear, StyleValue::Clear(ClearValue::Both));
+        let style = resolve(&specified).unwrap();
+        assert_eq!(style.display, DisplayValue::FlowRoot);
+        assert_eq!(style.float, FloatValue::Right);
+        assert_eq!(style.clear, ClearValue::Both);
     }
 
     #[test]

@@ -11,10 +11,40 @@ pub enum DisplayValue {
     Flex,
     /// CSS grid.
     Grid,
+    /// CSS block layout.
+    Block,
+    /// CSS block layout establishing a new block formatting context.
+    FlowRoot,
     /// Lynx-compatible linear layout.
     Linear,
     /// Lynx-compatible relative layout.
     Relative,
+}
+
+/// Side to which a box floats in a block formatting context.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FloatValue {
+    /// Do not float the box.
+    #[default]
+    None,
+    /// Float to the physical left side.
+    Left,
+    /// Float to the physical right side.
+    Right,
+}
+
+/// Floats that a block box must clear.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ClearValue {
+    /// Do not add clearance.
+    #[default]
+    None,
+    /// Clear preceding left floats.
+    Left,
+    /// Clear preceding right floats.
+    Right,
+    /// Clear preceding floats on both sides.
+    Both,
 }
 
 /// The positioning model selected for a node.

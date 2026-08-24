@@ -82,8 +82,7 @@ The target follows two explicit baselines. Layout semantics are the CSS subset
 represented by Taffy 0.13. Non-layout properties follow the standard,
 non-vendor Lynx 4.0 inventory at the recorded upstream revision. The resulting
 target is 158 conformance features: 157 properties plus the CSS Custom
-Properties mechanism. Of the 175 currently registered spellings, 155 remain
-in the target, 20 are deliberately unsupported, and `float` and `clear` still
-need registry entries. The legacy aliases
+Properties mechanism. Of the 177 currently registered spellings, 157 remain
+in the target and 20 are deliberately unsupported. The legacy aliases
 `grid-column-gap`, `grid-row-gap`, and `word-wrap` remain absent. Stable IDs
 assigned to excluded spellings are reserved and are never reused.

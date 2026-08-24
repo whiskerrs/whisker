@@ -25,6 +25,16 @@ impl Css {
         self.push_typed(crate::StyleProperty::Display, Display::Grid)
     }
 
+    /// Sets `display: block`.
+    pub fn display_block(self) -> Self {
+        self.push_typed(crate::StyleProperty::Display, Display::Block)
+    }
+
+    /// Sets `display: flow-root` to establish an independent block formatting context.
+    pub fn display_flow_root(self) -> Self {
+        self.push_typed(crate::StyleProperty::Display, Display::FlowRoot)
+    }
+
     /// Sets `display: linear` — Lynx default linear layout.
     pub fn display_linear(self) -> Self {
         self.push_typed(crate::StyleProperty::Display, Display::Linear)
@@ -58,6 +68,11 @@ mod tests {
         assert_eq!(Css::new().display_none().to_string(), "display: none;");
         assert_eq!(Css::new().display_flex().to_string(), "display: flex;");
         assert_eq!(Css::new().display_grid().to_string(), "display: grid;");
+        assert_eq!(Css::new().display_block().to_string(), "display: block;");
+        assert_eq!(
+            Css::new().display_flow_root().to_string(),
+            "display: flow-root;"
+        );
         assert_eq!(Css::new().display_linear().to_string(), "display: linear;");
         assert_eq!(
             Css::new().display_relative().to_string(),
