@@ -538,6 +538,10 @@ mod tests {
                 node,
                 layers: vec![basic_linear_layer()],
             },
+            Operation::SetBackgroundLayers {
+                node,
+                layers: vec![basic_linear_layer()],
+            },
             Operation::SetVisualEffects {
                 node,
                 effects: VisualEffects::default(),
