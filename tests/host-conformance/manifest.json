@@ -45,6 +45,20 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.css3-background-origin-border-box",
+      "feature": "background-origin-border-box",
+      "fixture": "wpt/css/css-backgrounds/css3-background-origin-border-box.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.clip-padding-box-with-size",
+      "feature": "background-clip-padding-box",
+      "fixture": "wpt/css/css-backgrounds/clip-padding-box-with-size.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.test1",
       "feature": "border-radius",
       "fixture": "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json",
