@@ -13,7 +13,9 @@ use whisker::{
 use whisker_engine::whisker_protocol::{
     FrameMode, InputEvent, InputEventKind, InputPoint, MeasuredSize, MeasurementMetrics,
     MeasurementPayload, MeasurementReady, MeasurementRequest, MeasurementRequestId,
-    MeasurementResponse, Operation, PointerId, PointerInput, PointerKind, SurfaceId, WhiskerValue,
+    MeasurementResponse, Operation, PointerId, PointerInput, PointerKind, ResourceCommand,
+    ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
+    SurfaceId, WhiskerValue,
 };
 use whisker_engine::whisker_style::{StyleEnvironment, StyleResolutionError};
 use whisker_engine::{LayoutOptions, MeasurementProvider, RecordingRenderer};
@@ -156,6 +158,61 @@ fn host_drives_mount_frame_pause_resume_and_unmount() {
     assert_eq!(runtime.lifecycle(), RuntimeLifecycle::Running);
     runtime.unmount().unwrap();
     assert_eq!(runtime.lifecycle(), RuntimeLifecycle::Unmounted);
+}
+
+#[test]
+fn current_resource_completion_wakes_running_but_not_paused_runtime() {
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let wake_count = Arc::clone(&wakes);
+    let surface = surface(39);
+    let mut runtime = RuntimeInstance::new(
+        surface.clone(),
+        RuntimeWakeHandle::new(move || {
+            wake_count.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
+    runtime.mount(|| render! { view() }).unwrap();
+    let resource = ResourceId::new(5).unwrap();
+    surface
+        .enqueue_resource_command(ResourceCommand::Load(ResourceRequest {
+            resource,
+            generation: 1,
+            kind: ResourceKind::RasterImage,
+            source: ResourceSource::BundledAsset("image.png".into()),
+        }))
+        .unwrap();
+    let ready = ResourceEvent::Ready {
+        resource,
+        generation: 1,
+        dimensions: Some(ResourceDimensions {
+            width: 10.0,
+            height: 5.0,
+            scale: 1.0,
+        }),
+    };
+
+    let before_running = wakes.load(Ordering::SeqCst);
+    runtime.dispatch_resource_event(&ready).unwrap();
+    assert!(wakes.load(Ordering::SeqCst) > before_running);
+
+    surface
+        .enqueue_resource_command(ResourceCommand::Load(ResourceRequest {
+            resource,
+            generation: 2,
+            kind: ResourceKind::RasterImage,
+            source: ResourceSource::BundledAsset("replacement.png".into()),
+        }))
+        .unwrap();
+    runtime.pause().unwrap();
+    let before_paused = wakes.load(Ordering::SeqCst);
+    runtime
+        .dispatch_resource_event(&ResourceEvent::Ready {
+            resource,
+            generation: 2,
+            dimensions: None,
+        })
+        .unwrap();
+    assert_eq!(wakes.load(Ordering::SeqCst), before_paused);
 }
 
 #[test]
