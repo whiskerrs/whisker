@@ -10,8 +10,10 @@ import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerMountedElement
 import rs.whisker.runtime.paint.HostBoxPaint
 import rs.whisker.runtime.paint.HostBackgroundLayers
+import rs.whisker.runtime.paint.HostBoxShadow
 import rs.whisker.runtime.paint.ResolvedBoxGeometry
 import rs.whisker.runtime.paint.normalizeRadii
+import rs.whisker.runtime.paint.drawHardBoxShadows
 
 /** Mutable logical geometry attached to one Host scene node. */
 internal data class HostGeometry(
@@ -35,6 +37,7 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
     val geometry = HostGeometry()
     var paint: HostBoxPaint? = null
     var backgroundLayers: HostBackgroundLayers? = null
+    var boxShadows: List<HostBoxShadow> = emptyList()
     var mountedElement: WhiskerMountedElement? = null
     var zOrder: Int = 0
 
@@ -42,8 +45,10 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
     private var hasLocalTransform = false
     private var overflowClipRect = RectF()
     private var overflowClipPath: Path? = null
+    private var resolvedBoxGeometry: ResolvedBoxGeometry? = null
 
     fun setOverflowClipGeometry(geometry: ResolvedBoxGeometry) {
+        resolvedBoxGeometry = geometry
         val top = geometry.borderWidths[0].coerceIn(0f, geometry.height)
         val right = geometry.borderWidths[1].coerceIn(0f, geometry.width)
         val bottom = geometry.borderWidths[2].coerceIn(0f, geometry.height)
@@ -93,11 +98,13 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
 
     override fun draw(canvas: Canvas) {
         if (!hasLocalTransform) {
+            drawHardBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
             super.draw(canvas)
             return
         }
         val save = canvas.save()
         canvas.concat(localTransform)
+        drawHardBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
         super.draw(canvas)
         canvas.restoreToCount(save)
     }

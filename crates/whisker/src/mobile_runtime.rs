@@ -14,7 +14,7 @@ use whisker_engine::whisker_protocol::{
     MeasurementResponse, NodeId, Operation, PaintBox, PaintColor, PaintImage,
     PaintLengthPercentage, PreparedContentId, RadialGradientExtent, RadialGradientShape,
     ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode, ResourceId,
-    ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason,
+    ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason, VisualEffects,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
@@ -843,6 +843,10 @@ impl FrameSink for MobileFrameSink {
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_engine::whisker_protocol::CapabilityEntry {
+                    capability: whisker_engine::whisker_protocol::RenderCapability::VisualEffects,
+                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_engine::whisker_protocol::CapabilityEntry {
                     capability: whisker_engine::whisker_protocol::RenderCapability::LinearGradients,
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
@@ -904,6 +908,7 @@ struct MobileFrameOwned {
     _arena: RawValueArena,
     _layouts: Vec<Box<MobileLayoutGeometry>>,
     _paints: Vec<Box<MobileBoxPaint>>,
+    _box_shadows: Vec<Box<[MobileBoxShadow]>>,
     _gradient_stops: Vec<Box<[MobileGradientStop]>>,
     _radial_gradients: Vec<Box<MobileRadialGradient>>,
     _conic_gradients: Vec<Box<MobileConicGradient>>,
@@ -921,6 +926,7 @@ impl MobileFrameOwned {
         let mut arena = RawValueArena::default();
         let mut layouts = Vec::<Box<MobileLayoutGeometry>>::new();
         let mut paints = Vec::<Box<MobileBoxPaint>>::new();
+        let mut box_shadows = Vec::<Box<[MobileBoxShadow]>>::new();
         let mut gradient_stops = Vec::<Box<[MobileGradientStop]>>::new();
         let mut radial_gradients = Vec::<Box<MobileRadialGradient>>::new();
         let mut conic_gradients = Vec::<Box<MobileConicGradient>>::new();
@@ -1153,6 +1159,38 @@ impl MobileFrameOwned {
                         raw.payload_count = layers.len();
                     }
                 }
+                Operation::SetVisualEffects { node, effects } => {
+                    let mut remainder = effects.clone();
+                    remainder.box_shadows.clear();
+                    if remainder != VisualEffects::default() {
+                        return Err(MobileFrameError);
+                    }
+                    raw.tag = OP_BOX_SHADOWS;
+                    raw.node = node.get();
+                    box_shadows.push(
+                        effects
+                            .box_shadows
+                            .iter()
+                            .map(|shadow| MobileBoxShadow {
+                                offset_x: shadow.offset_x,
+                                offset_y: shadow.offset_y,
+                                blur_radius: shadow.blur_radius,
+                                spread_radius: shadow.spread_radius,
+                                color: mobile_color(&shadow.color, &mut strings),
+                                inset: u8::from(shadow.inset),
+                                _pad: [0; 7],
+                            })
+                            .collect::<Vec<_>>()
+                            .into_boxed_slice(),
+                    );
+                    let shadows = box_shadows.last().unwrap();
+                    raw.payload = if shadows.is_empty() {
+                        std::ptr::null()
+                    } else {
+                        shadows.as_ptr().cast()
+                    };
+                    raw.payload_count = shadows.len();
+                }
                 Operation::SetClip { node, clip } => {
                     raw.tag = OP_CLIP;
                     raw.node = node.get();
@@ -1272,9 +1310,9 @@ impl MobileFrameOwned {
                     values.push(Box::new(arena.encode(arguments)));
                     raw.payload = values.last().unwrap().as_ref() as *const _ as *const c_void;
                 }
-                Operation::SetVisualEffects { .. }
-                | Operation::SetImage { .. }
-                | Operation::SetCursor { .. } => return Err(MobileFrameError),
+                Operation::SetImage { .. } | Operation::SetCursor { .. } => {
+                    return Err(MobileFrameError);
+                }
             }
             operations.push(raw);
         }
@@ -1302,6 +1340,7 @@ impl MobileFrameOwned {
             _arena: arena,
             _layouts: layouts,
             _paints: paints,
+            _box_shadows: box_shadows,
             _gradient_stops: gradient_stops,
             _radial_gradients: radial_gradients,
             _conic_gradients: conic_gradients,
@@ -1744,6 +1783,79 @@ mod tests {
             unsafe { *layers[2].image.payload.cast::<u64>() },
             resource.get()
         );
+    }
+
+    #[test]
+    fn mobile_frame_exposes_box_shadows_as_one_contiguous_slice() {
+        let node = NodeId::new(1).unwrap();
+        let packet = FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![
+                Operation::SetVisualEffects {
+                    node,
+                    effects: VisualEffects {
+                        box_shadows: vec![
+                            whisker_engine::whisker_protocol::BoxShadow {
+                                offset_x: 4.0,
+                                offset_y: 5.0,
+                                blur_radius: 0.0,
+                                spread_radius: 2.0,
+                                color: PaintColor::Named("black".into()),
+                                inset: false,
+                            },
+                            whisker_engine::whisker_protocol::BoxShadow {
+                                offset_x: -1.0,
+                                offset_y: 3.0,
+                                blur_radius: 6.0,
+                                spread_radius: -2.0,
+                                color: PaintColor::Srgba {
+                                    red: 10,
+                                    green: 20,
+                                    blue: 30,
+                                    alpha: 0.5,
+                                },
+                                inset: true,
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                },
+                Operation::SetVisualEffects {
+                    node,
+                    effects: VisualEffects::default(),
+                },
+            ],
+        };
+
+        let frame = MobileFrameOwned::new(&packet).unwrap();
+        let operation = &frame._operations[0];
+        assert_eq!(operation.tag, OP_BOX_SHADOWS);
+        assert_eq!(operation.payload_count, 2);
+        let shadows = unsafe {
+            std::slice::from_raw_parts(
+                operation.payload.cast::<MobileBoxShadow>(),
+                operation.payload_count,
+            )
+        };
+        assert_eq!(shadows[0].offset_x, 4.0);
+        assert_eq!(shadows[0].spread_radius, 2.0);
+        assert_eq!(shadows[0].color.kind, 0);
+        assert_eq!(shadows[1].blur_radius, 6.0);
+        assert_eq!(shadows[1].inset, 1);
+        assert_eq!(shadows[1].color.kind, 1);
+        assert_eq!(shadows[1].color.alpha, 0.5);
+        assert_eq!(frame._operations[1].tag, OP_BOX_SHADOWS);
+        assert_eq!(frame._operations[1].payload_count, 0);
+        assert!(frame._operations[1].payload.is_null());
     }
 
     #[test]

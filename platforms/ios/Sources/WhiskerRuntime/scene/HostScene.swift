@@ -157,6 +157,18 @@ final class HostScene {
                 guard layers.allSatisfy({ validBackgroundLayer($0, resources: resources) }) else {
                     return false
                 }
+            case UInt32(WHISKER_OP_BOX_SHADOWS):
+                guard existing.contains(operation.node) else { return false }
+                if operation.payload_count == 0 {
+                    guard operation.payload == nil else { return false }
+                    continue
+                }
+                guard operation.payload_count == 1,
+                      let pointer = operation.payload?.assumingMemoryBound(
+                          to: WhiskerMobileBoxShadow.self
+                      ) else { return false }
+                let shadows = UnsafeBufferPointer(start: pointer, count: operation.payload_count)
+                guard shadows.allSatisfy(validHardBoxShadow) else { return false }
             case UInt32(WHISKER_OP_OPACITY):
                 guard existing.contains(operation.node), operation.scalar.isFinite,
                       (0...1).contains(operation.scalar) else { return false }
@@ -235,6 +247,25 @@ final class HostScene {
             guard layers.count == rawLayers.count else { return false }
             node.boxPainter.updateBackgroundLayers(layers)
             node.setNeedsDisplay()
+        case UInt32(WHISKER_OP_BOX_SHADOWS):
+            guard let node = nodes[id] else { return false }
+            if operation.payload_count == 0 {
+                node.setBoxShadows([])
+                return true
+            }
+            guard let pointer = operation.payload?.assumingMemoryBound(
+                to: WhiskerMobileBoxShadow.self
+            ) else { return false }
+            let shadows = UnsafeBufferPointer(start: pointer, count: operation.payload_count).map {
+                HostBoxShadow(
+                    offset: CGSize(width: CGFloat($0.offset_x), height: CGFloat($0.offset_y)),
+                    blurRadius: CGFloat($0.blur_radius),
+                    spreadRadius: CGFloat($0.spread_radius),
+                    color: parsePaintColor($0.color),
+                    inset: $0.inset != 0
+                )
+            }
+            node.setBoxShadows(shadows)
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):
@@ -435,6 +466,13 @@ private func validGradientStops(
             stop.color.kind <= 1 && stop.color.alpha.isFinite &&
             (0...1).contains(stop.color.alpha)
     }
+}
+
+private func validHardBoxShadow(_ shadow: WhiskerMobileBoxShadow) -> Bool {
+    shadow.offset_x.isFinite && shadow.offset_y.isFinite &&
+        shadow.blur_radius == 0 && shadow.spread_radius.isFinite &&
+        shadow.inset == 0 && shadow.color.kind <= 1 && shadow.color.alpha.isFinite &&
+        (0...1).contains(shadow.color.alpha)
 }
 
 private func validBackgroundLayer(

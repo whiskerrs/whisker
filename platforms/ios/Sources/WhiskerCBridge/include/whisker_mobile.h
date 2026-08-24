@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "whisker_bridge.h"
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 9 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 10 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -15,7 +15,7 @@ enum {
   WHISKER_OP_Z_ORDER, WHISKER_OP_TEXT, WHISKER_OP_PROPERTY,
   WHISKER_OP_CLEAR_PROPERTY, WHISKER_OP_EVENT_MASK, WHISKER_OP_HIT_TEST,
   WHISKER_OP_CAPTURE, WHISKER_OP_RELEASE_CAPTURE, WHISKER_OP_COMMAND,
-  WHISKER_OP_BACKGROUND_LAYERS
+  WHISKER_OP_BACKGROUND_LAYERS, WHISKER_OP_BOX_SHADOWS
 };
 enum {
   WHISKER_BACKGROUND_LINEAR = 0, WHISKER_BACKGROUND_RADIAL = 1,
@@ -78,6 +78,11 @@ typedef struct {
   WhiskerMobileLengthPercentage radii_vertical[4];
 } WhiskerMobileBoxPaint;
 typedef struct {
+  float offset_x, offset_y, blur_radius, spread_radius;
+  WhiskerMobileColor color;
+  uint8_t inset, _pad[7];
+} WhiskerMobileBoxShadow;
+typedef struct {
   WhiskerMobileColor color;
   WhiskerMobileLengthPercentage position;
 } WhiskerMobileGradientStop;
@@ -124,6 +129,7 @@ _Static_assert(sizeof(WhiskerMobileRadialGradient) == 48, "WhiskerMobileRadialGr
 _Static_assert(sizeof(WhiskerMobileConicGradient) == 32, "WhiskerMobileConicGradient ABI drift");
 _Static_assert(sizeof(WhiskerMobileBackgroundImage) == 24, "WhiskerMobileBackgroundImage ABI drift");
 _Static_assert(sizeof(WhiskerMobileBackgroundLayer) == 88, "WhiskerMobileBackgroundLayer ABI drift");
+_Static_assert(sizeof(WhiskerMobileBoxShadow) == 56, "WhiskerMobileBoxShadow ABI drift");
 typedef struct {
   uint32_t id; uint8_t value_kind, optional_kind, _pad[2]; WhiskerStringRef name;
 } WhiskerMobileMemberRegistration;

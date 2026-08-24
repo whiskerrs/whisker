@@ -250,6 +250,34 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 for (int j=0;j<4;++j) storage[count++]=(float)p->styles[j];
                 numbers = floats(env, storage, count); names = color_names(env, p); break;
             }
+            case WHISKER_OP_BOX_SHADOWS: {
+                if ((op->payload == NULL) != (op->payload_count == 0) ||
+                    op->payload_count > 256) { ok = false; break; }
+                const WhiskerMobileBoxShadow* shadows = op->payload;
+                const size_t value_count = op->payload_count * 10;
+                float* values = malloc((value_count > 0 ? value_count : 1) * sizeof(float));
+                jclass cls = (*env)->FindClass(env, "java/lang/String");
+                names = cls == NULL ? NULL
+                    : (*env)->NewObjectArray(env, (jsize)op->payload_count, cls, NULL);
+                if (cls) (*env)->DeleteLocalRef(env, cls);
+                if (values == NULL || names == NULL) { free(values); ok = false; break; }
+                size_t cursor = 0;
+                for (size_t shadow_index = 0; shadow_index < op->payload_count; ++shadow_index) {
+                    const WhiskerMobileBoxShadow* shadow = &shadows[shadow_index];
+                    values[cursor++] = shadow->offset_x;
+                    values[cursor++] = shadow->offset_y;
+                    values[cursor++] = shadow->blur_radius;
+                    values[cursor++] = shadow->spread_radius;
+                    values[cursor++] = (float)shadow->inset;
+                    append_color(values, &cursor, &shadow->color);
+                    jstring name = new_string(env, shadow->color.name.ptr, shadow->color.name.len);
+                    (*env)->SetObjectArrayElement(env, names, (jsize)shadow_index, name);
+                    if (name) (*env)->DeleteLocalRef(env, name);
+                }
+                numbers = floats(env, values, value_count);
+                free(values);
+                break;
+            }
             case WHISKER_OP_BACKGROUND_LAYERS: {
                 if (op->payload == NULL) {
                     if (op->payload_count != 0) ok = false;

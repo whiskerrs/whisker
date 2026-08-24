@@ -295,7 +295,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.background-layers.size-cover" ||
                             command.getString("name") ==
-                            "paint.background-layers.round-auto-aspect-ratio",
+                            "paint.background-layers.round-auto-aspect-ratio" ||
+                            command.getString("name") ==
+                            "paint.visual-effects.box-shadow-offset",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -607,6 +609,27 @@ private class Driver(
                         node = id,
                         numbers = numbers.toFloatArray(),
                         names = names.toTypedArray(),
+                    ),
+                )
+            }
+            node.optJSONArray("box_shadows")?.let { shadows ->
+                val shadowNumbers = ArrayList<Float>(shadows.length() * 10)
+                val shadowNames = ArrayList<String>(shadows.length())
+                shadows.objects().forEach { shadow ->
+                    val offset = shadow.getJSONArray("offset")
+                    shadowNumbers += offset.getDouble(0).toFloat()
+                    shadowNumbers += offset.getDouble(1).toFloat()
+                    shadowNumbers += shadow.getDouble("blur_radius").toFloat()
+                    shadowNumbers += shadow.getDouble("spread_radius").toFloat()
+                    shadowNumbers += if (shadow.optBoolean("inset", false)) 1f else 0f
+                    appendColor(shadow.getJSONObject("color"), shadowNumbers, shadowNames)
+                }
+                check(
+                    stage(
+                        tag = 22,
+                        node = id,
+                        numbers = shadowNumbers.toFloatArray(),
+                        names = shadowNames.toTypedArray(),
                     ),
                 )
             }
