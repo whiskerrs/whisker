@@ -297,6 +297,7 @@ mod tests {
             s.to_string(),
             "background: linear-gradient(to bottom, red, blue) white;"
         );
+        assert!(s.to_specified_style().is_ok());
     }
 
     #[test]

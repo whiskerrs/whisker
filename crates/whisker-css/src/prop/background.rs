@@ -314,9 +314,40 @@ mod tests {
             s.to_string(),
             "background-image: linear-gradient(to bottom, red, blue);"
         );
-        assert_eq!(
-            s.to_specified_style().unwrap_err().property(),
-            "background-image"
+        assert!(s.to_specified_style().is_ok());
+    }
+
+    #[test]
+    fn background_radial_and_conic_gradients_are_typed() {
+        let stops = || {
+            vec![
+                ColorStop::at(NamedColor::Red.into(), Percentage(0.0)),
+                ColorStop::at(NamedColor::Blue.into(), Percentage(100.0)),
+            ]
+        };
+        let radial = Gradient::Radial {
+            shape: crate::RadialShape::EllipseSized(
+                crate::Length::Px(40.0).into(),
+                Percentage(25.0).into(),
+            ),
+            stops: stops(),
+        };
+        let conic = Gradient::Conic {
+            from: Some(crate::Angle::Turn(0.25)),
+            at: Some((Percentage(25.0).into(), Percentage(75.0).into())),
+            stops: stops(),
+        };
+        assert!(
+            Css::new()
+                .background_image(radial)
+                .to_specified_style()
+                .is_ok()
+        );
+        assert!(
+            Css::new()
+                .background_image(conic)
+                .to_specified_style()
+                .is_ok()
         );
     }
 
