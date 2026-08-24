@@ -2,6 +2,7 @@ package rs.whisker.runtime
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ScrollView
@@ -43,14 +44,29 @@ public open class WhiskerContainerView(context: Context) : ViewGroup(context) {
         }
         val visible = canvas.clipBounds
         val save = canvas.save()
-        canvas.clipRect(
-            if (clipDescendantsHorizontally) 0f else visible.left.toFloat(),
-            if (clipDescendantsVertically) 0f else visible.top.toFloat(),
-            if (clipDescendantsHorizontally) width.toFloat() else visible.right.toFloat(),
-            if (clipDescendantsVertically) height.toFloat() else visible.bottom.toFloat(),
+        clipDescendants(
+            canvas,
+            horizontal = clipDescendantsHorizontally,
+            vertical = clipDescendantsVertically,
+            visible = visible,
         )
         super.dispatchDraw(canvas)
         canvas.restoreToCount(save)
+    }
+
+    /** Hook for the runtime wrapper to project rounded overflow geometry. */
+    protected open fun clipDescendants(
+        canvas: Canvas,
+        horizontal: Boolean,
+        vertical: Boolean,
+        visible: Rect,
+    ) {
+        canvas.clipRect(
+            if (horizontal) 0f else visible.left.toFloat(),
+            if (vertical) 0f else visible.top.toFloat(),
+            if (horizontal) width.toFloat() else visible.right.toFloat(),
+            if (vertical) height.toFloat() else visible.bottom.toFloat(),
+        )
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {

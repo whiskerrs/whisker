@@ -135,46 +135,7 @@ impl Driver {
             &fixture_color_css(&expected.background),
         );
 
-        let (widths, styles, radii) = expected.border.as_ref().map_or(
-            (
-                [0.0; 4],
-                [BorderStyleFixture::None; 4],
-                [CornerRadiusFixture::Circular(0.0); 4],
-            ),
-            |border| (border.widths, border.styles, border.radii),
-        );
-        for (index, side) in ["top", "right", "bottom", "left"].iter().enumerate() {
-            assert_style(
-                &style,
-                &format!("border-{side}-width"),
-                &fixture_px(widths[index]),
-            );
-            assert_style(
-                &style,
-                &format!("border-{side}-color"),
-                &expected.border.as_ref().map_or_else(
-                    || "rgba(0, 0, 0, 1)".to_owned(),
-                    |border| fixture_color_css(&border.colors[index]),
-                ),
-            );
-            assert_style(
-                &style,
-                &format!("border-{side}-style"),
-                fixture_border_style_css(styles[index]),
-            );
-        }
-        for (index, corner) in ["top-left", "top-right", "bottom-right", "bottom-left"]
-            .iter()
-            .enumerate()
-        {
-            let horizontal = fixture_px(radii[index].horizontal());
-            let vertical = fixture_px(radii[index].vertical());
-            assert_style(
-                &style,
-                &format!("border-{corner}-radius"),
-                &format!("{horizontal} {vertical}"),
-            );
-        }
+        assert_border_is_projected(&style, expected.border.as_ref());
     }
 
     fn assert_scene_is_projected(&self, samples: &[PixelSampleFixture]) {
@@ -195,6 +156,7 @@ impl Driver {
                 "background-color",
                 &fixture_color_css(&fixture_node.background),
             );
+            assert_border_is_projected(&style, fixture_node.border.as_ref());
             assert_style(
                 &style,
                 "overflow-x",
@@ -358,6 +320,12 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-backgrounds/border-radius-004.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-004.json"
+        ),
+        "wpt/css/css-backgrounds/border-radius-overflow-hidden.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-overflow-hidden.json"
+        ),
+        "wpt/css/css-backgrounds/border-radius-clipping-with-transform-001.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-clipping-with-transform-001.json"
         ),
         "wpt/css/css-overflow/clip-002.json" => {
             include_str!("../../../../tests/host-conformance/wpt/css/css-overflow/clip-002.json")
@@ -698,6 +666,52 @@ fn assert_style(style: &web_sys::CssStyleDeclaration, property: &str, expected: 
         actual, expected,
         "production DOM projection for {property} did not match the fixture"
     );
+}
+
+fn assert_border_is_projected(
+    style: &web_sys::CssStyleDeclaration,
+    border: Option<&BorderFixture>,
+) {
+    let (widths, styles, radii) = border.map_or(
+        (
+            [0.0; 4],
+            [BorderStyleFixture::None; 4],
+            [CornerRadiusFixture::Circular(0.0); 4],
+        ),
+        |border| (border.widths, border.styles, border.radii),
+    );
+    for (index, side) in ["top", "right", "bottom", "left"].iter().enumerate() {
+        assert_style(
+            style,
+            &format!("border-{side}-width"),
+            &fixture_px(widths[index]),
+        );
+        assert_style(
+            style,
+            &format!("border-{side}-color"),
+            &border.map_or_else(
+                || "rgba(0, 0, 0, 1)".to_owned(),
+                |border| fixture_color_css(&border.colors[index]),
+            ),
+        );
+        assert_style(
+            style,
+            &format!("border-{side}-style"),
+            fixture_border_style_css(styles[index]),
+        );
+    }
+    for (index, corner) in ["top-left", "top-right", "bottom-right", "bottom-left"]
+        .iter()
+        .enumerate()
+    {
+        let horizontal = fixture_px(radii[index].horizontal());
+        let vertical = fixture_px(radii[index].vertical());
+        assert_style(
+            style,
+            &format!("border-{corner}-radius"),
+            &format!("{horizontal} {vertical}"),
+        );
+    }
 }
 
 fn fixture_px(value: f32) -> String {

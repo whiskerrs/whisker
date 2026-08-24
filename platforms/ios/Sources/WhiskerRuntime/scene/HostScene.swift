@@ -168,6 +168,7 @@ final class HostScene {
             mounted.view.frame = node.bounds
             mounted.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             node.addSubview(mounted.view)
+            node.mountedContentDidInstall()
             nodes[id] = node
             nodeOrder.append(id)
         case UInt32(WHISKER_OP_DELETE):
@@ -245,11 +246,8 @@ final class HostScene {
         )
         child.removeFromSuperview()
         parents[childID] = parentID
-        if let childrenHost = mounted.childrenHost() {
-            childrenHost.insertSubview(child, at: min(max(index, 0), childrenHost.subviews.count))
-        } else {
-            parent.insertSubview(child, at: min(max(index + 1, 1), parent.subviews.count))
-        }
+        let childrenHost = parent.sceneChildrenHost()
+        childrenHost.insertSubview(child, at: min(max(index, 0), childrenHost.subviews.count))
     }
 
     private func detachChild(parent parentID: UInt64, child childID: UInt64) {
@@ -277,7 +275,7 @@ final class HostScene {
         let creationOrder = Dictionary(uniqueKeysWithValues: nodeOrder.enumerated().map { ($1, $0) })
         let host: UIView?
         if let parentID, let parent = nodes[parentID] {
-            host = parent.mountedElement?.childrenHost() ?? parent
+            host = parent.sceneChildrenHost()
         } else {
             host = root
         }
@@ -371,6 +369,7 @@ final class HostScene {
     private func applyPaint(_ node: WhiskerNodeView, _ paint: HostBoxPaint) {
         node.paint = paint
         node.boxPainter.update(paint, bounds: node.bounds)
+        node.boxPaintDidChange()
         node.setNeedsLayout()
     }
 }

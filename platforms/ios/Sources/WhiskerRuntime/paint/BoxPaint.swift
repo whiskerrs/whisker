@@ -52,6 +52,76 @@ final class HostBoxPainter {
         drawBorders(in: bounds, clippedBy: path)
     }
 
+    func overflowClipPath(
+        in bounds: CGRect,
+        visibleBounds: CGRect,
+        horizontal: Bool,
+        vertical: Bool
+    ) -> CGPath {
+        let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
+        let top = min(widths[0], bounds.height)
+        let right = min(widths[1], bounds.width)
+        let bottom = min(widths[2], bounds.height)
+        let left = min(widths[3], bounds.width)
+        let innerRect = CGRect(
+            x: bounds.minX + left,
+            y: bounds.minY + top,
+            width: max(0, bounds.width - left - right),
+            height: max(0, bounds.height - top - bottom)
+        )
+        guard horizontal || vertical else { return UIBezierPath(rect: visibleBounds).cgPath }
+        let outer = normalizedRadii(cornerRadii, in: bounds)
+        let inner = [
+            CGSize(
+                width: max(0, outer[0].width - left),
+                height: max(0, outer[0].height - top)
+            ),
+            CGSize(
+                width: max(0, outer[1].width - right),
+                height: max(0, outer[1].height - top)
+            ),
+            CGSize(
+                width: max(0, outer[2].width - right),
+                height: max(0, outer[2].height - bottom)
+            ),
+            CGSize(
+                width: max(0, outer[3].width - left),
+                height: max(0, outer[3].height - bottom)
+            )
+        ]
+        let path = CGMutablePath()
+        path.addPath(roundedPath(in: innerRect, radii: inner).cgPath)
+        if !vertical {
+            path.addRect(CGRect(
+                x: innerRect.minX,
+                y: visibleBounds.minY,
+                width: innerRect.width,
+                height: max(0, innerRect.minY - visibleBounds.minY)
+            ))
+            path.addRect(CGRect(
+                x: innerRect.minX,
+                y: innerRect.maxY,
+                width: innerRect.width,
+                height: max(0, visibleBounds.maxY - innerRect.maxY)
+            ))
+        }
+        if !horizontal {
+            path.addRect(CGRect(
+                x: visibleBounds.minX,
+                y: innerRect.minY,
+                width: max(0, innerRect.minX - visibleBounds.minX),
+                height: innerRect.height
+            ))
+            path.addRect(CGRect(
+                x: innerRect.maxX,
+                y: innerRect.minY,
+                width: max(0, visibleBounds.maxX - innerRect.maxX),
+                height: innerRect.height
+            ))
+        }
+        return path
+    }
+
     private func drawBorders(in bounds: CGRect, clippedBy outerPath: UIBezierPath) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
         let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
@@ -259,25 +329,7 @@ private func resolve(_ value: WhiskerMobileLengthPercentage, axis: CGFloat) -> C
 }
 
 private func roundedPath(in rect: CGRect, radii: [CGSize]) -> UIBezierPath {
-    var normalized = Array((radii + [.zero, .zero, .zero, .zero]).prefix(4)).map {
-        CGSize(width: max($0.width, 0), height: max($0.height, 0))
-    }
-    let horizontalTop = normalized[0].width + normalized[1].width
-    let horizontalBottom = normalized[3].width + normalized[2].width
-    let verticalLeft = normalized[0].height + normalized[3].height
-    let verticalRight = normalized[1].height + normalized[2].height
-    let scale = [
-        CGFloat(1),
-        horizontalTop > 0 ? rect.width / horizontalTop : 1,
-        horizontalBottom > 0 ? rect.width / horizontalBottom : 1,
-        verticalLeft > 0 ? rect.height / verticalLeft : 1,
-        verticalRight > 0 ? rect.height / verticalRight : 1
-    ].min() ?? 1
-    if scale < 1 {
-        normalized = normalized.map {
-            CGSize(width: $0.width * scale, height: $0.height * scale)
-        }
-    }
+    let normalized = normalizedRadii(radii, in: rect)
 
     let k: CGFloat = 0.552_284_749_830_793_6
     let path = UIBezierPath()
@@ -332,6 +384,29 @@ private func roundedPath(in rect: CGRect, radii: [CGSize]) -> UIBezierPath {
     )
     path.close()
     return path
+}
+
+private func normalizedRadii(_ radii: [CGSize], in rect: CGRect) -> [CGSize] {
+    var normalized = Array((radii + [.zero, .zero, .zero, .zero]).prefix(4)).map {
+        CGSize(width: max($0.width, 0), height: max($0.height, 0))
+    }
+    let horizontalTop = normalized[0].width + normalized[1].width
+    let horizontalBottom = normalized[3].width + normalized[2].width
+    let verticalLeft = normalized[0].height + normalized[3].height
+    let verticalRight = normalized[1].height + normalized[2].height
+    let scale = [
+        CGFloat(1),
+        horizontalTop > 0 ? rect.width / horizontalTop : 1,
+        horizontalBottom > 0 ? rect.width / horizontalBottom : 1,
+        verticalLeft > 0 ? rect.height / verticalLeft : 1,
+        verticalRight > 0 ? rect.height / verticalRight : 1
+    ].min() ?? 1
+    if scale < 1 {
+        normalized = normalized.map {
+            CGSize(width: $0.width * scale, height: $0.height * scale)
+        }
+    }
+    return normalized
 }
 
 private let borderStyleSolid: UInt32 = 2

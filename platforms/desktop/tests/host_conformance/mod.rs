@@ -27,7 +27,7 @@ use crate::element::{DesktopElementRegistry, built_in_element_factories};
 use crate::gpu::{render_box_primitives_offscreen, render_clipped_box_primitives_offscreen};
 use crate::paint::box_paint::{BoxPrimitive, BoxPrimitiveKind, lower_box};
 use crate::paint::color::srgba;
-use crate::scene::{DesktopScene, LogicalClip, PaintCommand};
+use crate::scene::{DesktopScene, LogicalClip, PaintCommand, ShapeClipStack};
 use crate::text::NativeTextHost;
 
 const CAPABILITIES: &str = include_str!("../../../../tests/host-conformance/capabilities.json");
@@ -99,7 +99,7 @@ impl RecordingInputSink {
 
 struct Checkpoint {
     logical_size: [u32; 2],
-    primitives: Vec<(BoxPrimitive, LogicalClip, Transform)>,
+    primitives: Vec<(BoxPrimitive, LogicalClip, Transform, ShapeClipStack)>,
     samples: Vec<PixelSampleFixture>,
     relations: Vec<PixelRelationFixture>,
 }
@@ -372,7 +372,9 @@ impl Driver {
             .expect("canonical Host scene fixture is valid");
     }
 
-    fn clipped_box_primitives(&self) -> Vec<(BoxPrimitive, LogicalClip, Transform)> {
+    fn clipped_box_primitives(
+        &self,
+    ) -> Vec<(BoxPrimitive, LogicalClip, Transform, ShapeClipStack)> {
         let scene = self.scene.as_ref().expect("checkpoint follows attach");
         let mut primitives = Vec::new();
         for command in scene.paint_commands() {
@@ -380,13 +382,14 @@ impl Driver {
                 rect,
                 paint,
                 clip,
+                shape_clips,
                 transform,
                 opacity,
                 ..
             } = command
             {
                 lower_box(rect, paint, opacity, |primitive| {
-                    primitives.push((primitive, clip, transform));
+                    primitives.push((primitive, clip, transform, shape_clips.clone()));
                 });
             }
         }
