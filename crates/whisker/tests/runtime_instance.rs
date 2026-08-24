@@ -6,14 +6,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use whisker::css::{CssString, ImageRef};
 use whisker::prelude::*;
 use whisker::{
     RuntimeBindingError, RuntimeDriveError, RuntimeInstance, RuntimeLifecycle, SurfaceRuntime,
 };
 use whisker_engine::whisker_protocol::{
-    FrameMode, InputEvent, InputEventKind, InputPoint, MeasuredSize, MeasurementMetrics,
-    MeasurementPayload, MeasurementReady, MeasurementRequest, MeasurementRequestId,
-    MeasurementResponse, Operation, PointerId, PointerInput, PointerKind, ResourceCommand,
+    BackgroundAttachment, BackgroundSize, BlendMode, FrameMode, ImageRepeat, InputEvent,
+    InputEventKind, InputPoint, MeasuredSize, MeasurementMetrics, MeasurementPayload,
+    MeasurementReady, MeasurementRequest, MeasurementRequestId, MeasurementResponse, Operation,
+    PaintBox, PaintImage, PaintPosition, PointerId, PointerInput, PointerKind, ResourceCommand,
     ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
     SurfaceId, WhiskerValue,
 };
@@ -213,6 +215,99 @@ fn current_resource_completion_wakes_running_but_not_paused_runtime() {
         })
         .unwrap();
     assert_eq!(wakes.load(Ordering::SeqCst), before_paused);
+}
+
+#[test]
+fn background_url_loads_out_of_frame_and_is_emitted_only_after_ready() {
+    let surface = surface(40);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime
+        .mount(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(100))
+                    .height(px(100))
+                    .background_image(ImageRef::Url(CssString::new(
+                        "https://example.com/background.png",
+                    ))))
+            }
+        })
+        .unwrap();
+
+    let commands = surface.take_resource_commands();
+    assert_eq!(commands.len(), 1);
+    let ResourceCommand::Load(request) = &commands[0] else {
+        panic!("background URL must acquire a raster resource")
+    };
+    assert_eq!(request.generation, 1);
+    assert_eq!(request.kind, ResourceKind::RasterImage);
+    assert_eq!(
+        request.source,
+        ResourceSource::Url("https://example.com/background.png".into())
+    );
+    let resource = request.resource;
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(sink.frames()[0].packet.operations.iter().all(|operation| {
+        !matches!(operation, Operation::SetBackgroundLayers { layers, .. } if !layers.is_empty())
+    }));
+
+    assert_eq!(
+        runtime
+            .dispatch_resource_event(&ResourceEvent::Ready {
+                resource,
+                generation: 1,
+                dimensions: Some(ResourceDimensions {
+                    width: 2.0,
+                    height: 2.0,
+                    scale: 1.0,
+                }),
+            })
+            .unwrap(),
+        whisker::ResourceEventApply::Applied
+    );
+    runtime
+        .drive_frame(
+            2.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let root = surface.root().unwrap();
+    assert!(sink.frames()[1].packet.operations.iter().any(|operation| {
+        matches!(
+            operation,
+            Operation::SetBackgroundLayers { node, layers }
+                if *node == root
+                    && layers.len() == 1
+                    && layers[0].image == PaintImage::Resource(resource)
+                    && layers[0].position == PaintPosition::default()
+                    && layers[0].size == BackgroundSize::Auto
+                    && layers[0].repeat_x == ImageRepeat::Repeat
+                    && layers[0].repeat_y == ImageRepeat::Repeat
+                    && layers[0].origin == PaintBox::Padding
+                    && layers[0].clip == PaintBox::Border
+                    && layers[0].attachment == BackgroundAttachment::Scroll
+                    && layers[0].blend_mode == BlendMode::Normal
+        )
+    }));
+    assert!(surface.take_resource_commands().is_empty());
 }
 
 #[test]

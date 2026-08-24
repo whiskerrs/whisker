@@ -161,6 +161,7 @@ mod tests {
     fn paint_style() -> ComputedPaintStyle {
         ComputedPaintStyle {
             background_color: color("background"),
+            background_images: Vec::new(),
             border_colors: Edges {
                 top: color("top"),
                 right: color("right"),

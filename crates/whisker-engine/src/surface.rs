@@ -394,6 +394,19 @@ impl SurfaceEngine {
         Ok(impacts)
     }
 
+    /// Updates retained background image layers independently from computed
+    /// box paint. Resource identity is assigned by the runtime boundary, not
+    /// by the layout/style engine.
+    pub fn set_background_layers(
+        &mut self,
+        node: NodeId,
+        layers: Vec<whisker_protocol::BackgroundLayer>,
+    ) -> Result<(), SurfaceError> {
+        self.ensure_mutable()?;
+        self.scene.set_background_layers(node, layers)?;
+        Ok(())
+    }
+
     /// Marks or unmarks a leaf as requiring intrinsic Host measurement.
     ///
     /// Returns whether retained measurement behavior changed.

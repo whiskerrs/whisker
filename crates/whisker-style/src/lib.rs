@@ -38,7 +38,7 @@ pub use resolution::{
     resolve_text_style,
 };
 pub use value::{
-    BorderRadiusValue, CalcExpression, ColorValue, FontFamilyValue, FontStyleValue,
-    FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, StyleNumber,
-    StyleValue,
+    BackgroundImageValue, BorderRadiusValue, CalcExpression, ColorValue, FontFamilyValue,
+    FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue,
+    LineHeightValue, StyleNumber, StyleValue,
 };
