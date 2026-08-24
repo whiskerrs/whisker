@@ -6,18 +6,24 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use whisker::css::{CssString, ImageRef};
+use whisker::css::{
+    BackgroundAttachment as CssBackgroundAttachment, BackgroundClip as CssBackgroundClip,
+    BackgroundOrigin as CssBackgroundOrigin, BackgroundRepeat as CssBackgroundRepeat,
+    BackgroundSize as CssBackgroundSize, CalcExpr, CssString, ImageRef, LengthPercentage,
+    Percentage,
+};
 use whisker::prelude::*;
 use whisker::{
     RuntimeBindingError, RuntimeDriveError, RuntimeInstance, RuntimeLifecycle, SurfaceRuntime,
 };
 use whisker_engine::whisker_protocol::{
-    ApplyResult, BackgroundAttachment, BackgroundSize, BlendMode, FrameMode, FramePacket,
-    ImageRepeat, InputEvent, InputEventKind, InputPoint, MeasuredSize, MeasurementMetrics,
-    MeasurementPayload, MeasurementReady, MeasurementRequest, MeasurementRequestId,
-    MeasurementResponse, Operation, PaintBox, PaintImage, PaintPosition, PointerId, PointerInput,
-    PointerKind, RenderCapabilities, ResourceCommand, ResourceDimensions, ResourceEvent,
-    ResourceId, ResourceKind, ResourceRequest, ResourceSource, SurfaceId, WhiskerValue,
+    ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, FrameMode,
+    FramePacket, ImageRepeat, InputEvent, InputEventKind, InputPoint, MeasuredSize,
+    MeasurementMetrics, MeasurementPayload, MeasurementReady, MeasurementRequest,
+    MeasurementRequestId, MeasurementResponse, Operation, PaintBox, PaintCoordinate, PaintImage,
+    PaintLengthPercentage, PaintPosition, PointerId, PointerInput, PointerKind, RenderCapabilities,
+    ResourceCommand, ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest,
+    ResourceSource, SurfaceId, WhiskerValue,
 };
 use whisker_engine::whisker_style::{StyleEnvironment, StyleResolutionError};
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider, RecordingRenderer};
@@ -126,6 +132,48 @@ fn ready_raster(resource: ResourceId, generation: u64) -> ResourceEvent {
             scale: 1.0,
         }),
     }
+}
+
+fn render_ready_background(surface_id: u64, style: Css) -> BackgroundLayer {
+    let surface = surface(surface_id);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime
+        .mount(move || render! { view(style: style) })
+        .unwrap();
+    let commands = surface.take_resource_commands();
+    assert_eq!(commands.len(), 1, "one URL must produce one Host load");
+    let ResourceCommand::Load(request) = &commands[0] else {
+        panic!("URL background must produce a load")
+    };
+    let resource = request.resource;
+    runtime
+        .dispatch_resource_event(&ready_raster(resource, request.generation))
+        .unwrap();
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    sink.frames()
+        .iter()
+        .rev()
+        .flat_map(|frame| frame.packet.operations.iter().rev())
+        .find_map(|operation| match operation {
+            Operation::SetBackgroundLayers { layers, .. } if !layers.is_empty() => {
+                Some(layers[0].clone())
+            }
+            _ => None,
+        })
+        .expect("Ready URL must be lowered into SetBackgroundLayers")
 }
 
 fn dispatch_control_tap(runtime: &RuntimeInstance, surface: &SurfaceRuntime, timestamp_ms: f64) {
@@ -374,6 +422,116 @@ fn background_url_loads_out_of_frame_and_is_emitted_only_after_ready() {
         )
     }));
     assert!(surface.take_resource_commands().is_empty());
+}
+
+#[test]
+fn background_url_lowers_explicit_geometry_repeat_boxes_and_attachment() {
+    let x = LengthPercentage::calc(CalcExpr::value(px(12)).add(CalcExpr::value(Percentage(25.0))));
+    let y = LengthPercentage::calc(CalcExpr::value(px(8)).add(CalcExpr::value(Percentage(75.0))));
+    let layer = render_ready_background(
+        44,
+        Css::new()
+            .width(px(100))
+            .height(px(100))
+            .background_image(ImageRef::Url(CssString::new(BACKGROUND_URL)))
+            .background_position_x(x)
+            .background_position_y(y)
+            .background_size(CssBackgroundSize::Explicit(
+                px(40).into(),
+                Percentage(50.0).into(),
+            ))
+            .background_repeat(CssBackgroundRepeat::RepeatX)
+            .background_origin(CssBackgroundOrigin::ContentBox)
+            .background_clip(CssBackgroundClip::PaddingBox)
+            .background_attachment(CssBackgroundAttachment::Scroll),
+    );
+
+    assert_eq!(
+        layer.position,
+        PaintPosition {
+            x: PaintCoordinate {
+                length: 12.0,
+                fraction: 0.25,
+            },
+            y: PaintCoordinate {
+                length: 8.0,
+                fraction: 0.75,
+            },
+        }
+    );
+    assert_eq!(
+        layer.size,
+        BackgroundSize::Explicit {
+            width: Some(PaintLengthPercentage {
+                length: 40.0,
+                fraction: 0.0,
+            }),
+            height: Some(PaintLengthPercentage {
+                length: 0.0,
+                fraction: 0.5,
+            }),
+        }
+    );
+    assert_eq!(layer.repeat_x, ImageRepeat::Repeat);
+    assert_eq!(layer.repeat_y, ImageRepeat::NoRepeat);
+    assert_eq!(layer.origin, PaintBox::Content);
+    assert_eq!(layer.clip, PaintBox::Padding);
+    assert_eq!(layer.attachment, BackgroundAttachment::Scroll);
+}
+
+#[test]
+fn background_url_lowers_remaining_repeat_modes_with_explicit_size() {
+    let cases = [
+        (
+            "repeat",
+            CssBackgroundRepeat::Repeat,
+            ImageRepeat::Repeat,
+            ImageRepeat::Repeat,
+        ),
+        (
+            "no-repeat",
+            CssBackgroundRepeat::NoRepeat,
+            ImageRepeat::NoRepeat,
+            ImageRepeat::NoRepeat,
+        ),
+        (
+            "repeat-y",
+            CssBackgroundRepeat::RepeatY,
+            ImageRepeat::NoRepeat,
+            ImageRepeat::Repeat,
+        ),
+    ];
+
+    for (index, (name, css_repeat, repeat_x, repeat_y)) in cases.into_iter().enumerate() {
+        let layer = render_ready_background(
+            45 + index as u64,
+            Css::new()
+                .width(px(100))
+                .height(px(100))
+                .background_image(ImageRef::Url(CssString::new(BACKGROUND_URL)))
+                .background_size(CssBackgroundSize::Explicit(
+                    px(32).into(),
+                    Percentage(25.0).into(),
+                ))
+                .background_repeat(css_repeat),
+        );
+        assert_eq!(
+            layer.size,
+            BackgroundSize::Explicit {
+                width: Some(PaintLengthPercentage {
+                    length: 32.0,
+                    fraction: 0.0,
+                }),
+                height: Some(PaintLengthPercentage {
+                    length: 0.0,
+                    fraction: 0.25,
+                }),
+            },
+            "{name}"
+        );
+        assert_eq!(layer.repeat_x, repeat_x, "{name}");
+        assert_eq!(layer.repeat_y, repeat_y, "{name}");
+    }
 }
 
 #[test]
