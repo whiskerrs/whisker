@@ -1145,6 +1145,9 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/CSS2/borders/border-top-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-003.json"
         ),
+        "wpt/css/css-backgrounds/box-shadow-001.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-001.json"
+        ),
         "wpt/css/CSS2/borders/border-right-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-right-003.json"
         ),
@@ -1323,6 +1326,26 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
             operations.push(Operation::SetTransform {
                 node,
                 transform: Transform(transform),
+            });
+        }
+        if !fixture_node.box_shadows.is_empty() {
+            operations.push(Operation::SetVisualEffects {
+                node,
+                effects: whisker_protocol::VisualEffects {
+                    box_shadows: fixture_node
+                        .box_shadows
+                        .iter()
+                        .map(|shadow| whisker_protocol::BoxShadow {
+                            offset_x: shadow.offset[0],
+                            offset_y: shadow.offset[1],
+                            blur_radius: shadow.blur_radius,
+                            spread_radius: shadow.spread_radius,
+                            color: color(&shadow.color),
+                            inset: shadow.inset,
+                        })
+                        .collect(),
+                    ..Default::default()
+                },
             });
         }
         if let Some(opacity) = fixture_node.opacity {

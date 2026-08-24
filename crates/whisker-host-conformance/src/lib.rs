@@ -389,6 +389,23 @@ pub struct BorderFixture {
     pub radii: [CornerRadiusFixture; 4],
 }
 
+/// One resolved CSS box shadow.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BoxShadowFixture {
+    /// Horizontal and vertical logical-pixel offset.
+    pub offset: [f32; 2],
+    /// Non-negative logical-pixel blur radius.
+    pub blur_radius: f32,
+    /// Signed logical-pixel spread radius.
+    pub spread_radius: f32,
+    /// Shadow color.
+    pub color: ColorFixture,
+    /// Whether the shadow is painted inside the border box.
+    #[serde(default)]
+    pub inset: bool,
+}
+
 /// One node in a retained Host scene fixture.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -408,6 +425,9 @@ pub struct SceneNodeFixture {
     /// Optional border semantics.
     #[serde(default)]
     pub border: Option<BorderFixture>,
+    /// Box shadows in CSS front-to-back order.
+    #[serde(default)]
+    pub box_shadows: Vec<BoxShadowFixture>,
     /// Descendant overflow clipping semantics.
     #[serde(default)]
     pub clip: BoxClipFixture,
@@ -1217,6 +1237,13 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                 })
                 && valid_color(&node.background)
                 && node.border.as_ref().is_none_or(valid_border)
+                && node.box_shadows.iter().all(|shadow| {
+                    shadow.offset.into_iter().all(f32::is_finite)
+                        && shadow.blur_radius.is_finite()
+                        && shadow.blur_radius >= 0.0
+                        && shadow.spread_radius.is_finite()
+                        && valid_color(&shadow.color)
+                })
                 && node
                     .transform
                     .is_none_or(|transform| transform.into_iter().all(f32::is_finite))

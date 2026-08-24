@@ -693,6 +693,26 @@ impl Driver {
                 node,
                 paint: box_paint(&fixture.background, fixture.border.as_ref()),
             });
+            if !fixture.box_shadows.is_empty() {
+                operations.push(Operation::SetVisualEffects {
+                    node,
+                    effects: whisker_protocol::VisualEffects {
+                        box_shadows: fixture
+                            .box_shadows
+                            .iter()
+                            .map(|shadow| whisker_protocol::BoxShadow {
+                                offset_x: shadow.offset[0],
+                                offset_y: shadow.offset[1],
+                                blur_radius: shadow.blur_radius,
+                                spread_radius: shadow.spread_radius,
+                                color: color_protocol(&shadow.color),
+                                inset: shadow.inset,
+                            })
+                            .collect(),
+                        ..Default::default()
+                    },
+                });
+            }
             if !fixture.background_layers.is_empty() {
                 operations.push(Operation::SetBackgroundLayers {
                     node,
