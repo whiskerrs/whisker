@@ -185,6 +185,7 @@ pub use whisker_runtime::{RuntimeDispatcher, runtime_dispatcher};
 // Frame-driving internal used by the host tick loop, not app code.
 #[doc(hidden)]
 pub use whisker_runtime::tasks::run_until_stalled;
+mod background_resources;
 mod control_flow;
 mod element_registry;
 #[doc(hidden)]

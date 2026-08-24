@@ -8,6 +8,9 @@ use std::rc::Rc;
 
 use crate::ElementRegistry;
 use crate::ElementRegistryError;
+use crate::background_resources::{
+    BackgroundProjection, BackgroundResourceError, BackgroundResourceManager,
+};
 use crate::runtime::element::ElementTag;
 use crate::runtime::value::WhiskerValue;
 use crate::runtime::view::{BindType, DynRenderer, Element};
@@ -97,6 +100,10 @@ pub enum RuntimeBindingError {
     },
     /// Runtime element handles exhausted their reserved `u32` range.
     ElementIdExhausted,
+    /// Automatic paint resource IDs exhausted their non-zero `u64` range.
+    ResourceIdExhausted,
+    /// A typed background resource source was empty or otherwise malformed.
+    InvalidBackgroundResourceSource,
     /// Typed style resolution failed.
     Style(StyleResolutionError),
     /// The retained scene or layout engine rejected the mutation.
@@ -135,6 +142,15 @@ impl From<SurfaceError> for RuntimeBindingError {
 impl From<ElementRegistryError> for RuntimeBindingError {
     fn from(error: ElementRegistryError) -> Self {
         Self::ElementRegistry(error)
+    }
+}
+
+impl From<BackgroundResourceError> for RuntimeBindingError {
+    fn from(error: BackgroundResourceError) -> Self {
+        match error {
+            BackgroundResourceError::InvalidSource => Self::InvalidBackgroundResourceSource,
+            BackgroundResourceError::ResourceIdExhausted => Self::ResourceIdExhausted,
+        }
     }
 }
 
@@ -215,6 +231,11 @@ pub enum RuntimeResourceError {
         resource: ResourceId,
         /// Named generation.
         generation: u64,
+    },
+    /// Public/manual resource traffic attempted to claim a runtime-owned ID.
+    AutomaticResourceId {
+        /// ID reserved permanently by automatic style lowering.
+        resource: ResourceId,
     },
 }
 
@@ -361,6 +382,7 @@ impl SurfaceRuntime {
                 known_resource_generations: HashSet::new(),
                 released_resource_generations: HashSet::new(),
                 resource_events: HashMap::new(),
+                background_resources: BackgroundResourceManager::default(),
             })),
         }
     }
@@ -482,47 +504,8 @@ impl SurfaceRuntime {
         &self,
         command: ResourceCommand,
     ) -> Result<(), RuntimeResourceError> {
-        command
-            .validate()
-            .map_err(RuntimeResourceError::InvalidMessage)?;
         let mut state = self.state.borrow_mut();
-        match &command {
-            ResourceCommand::Load(request) => {
-                if let Some(current) = state.resource_generations.get(&request.resource).copied()
-                    && request.generation <= current
-                {
-                    return Err(RuntimeResourceError::NonMonotonicGeneration {
-                        resource: request.resource,
-                        current,
-                        received: request.generation,
-                    });
-                }
-                state
-                    .resource_generations
-                    .insert(request.resource, request.generation);
-                state
-                    .known_resource_generations
-                    .insert((request.resource, request.generation));
-            }
-            ResourceCommand::Release {
-                resource,
-                generation,
-            } => {
-                if !state
-                    .known_resource_generations
-                    .contains(&(*resource, *generation))
-                {
-                    return Err(RuntimeResourceError::UnknownGeneration {
-                        resource: *resource,
-                        generation: *generation,
-                    });
-                }
-                state
-                    .released_resource_generations
-                    .insert((*resource, *generation));
-            }
-        }
-        state.resource_commands.push_back(command);
+        state.enqueue_resource_command(command, false)?;
         crate::runtime::runtime_wake::wake_runtime();
         Ok(())
     }
@@ -574,6 +557,11 @@ impl SurfaceRuntime {
         {
             return Ok(ResourceEventApply::Stale);
         }
+        if state.background_resources.owns(resource) {
+            // This only changes manager state. Scene mutation is intentionally
+            // deferred to drive_layout/present, outside the Host callback.
+            debug_assert!(state.background_resources.apply_event(event));
+        }
         state
             .resource_events
             .insert((resource, generation), event.clone());
@@ -601,6 +589,9 @@ impl SurfaceRuntime {
         if let Some(error) = state.error.clone() {
             return Err(RuntimeLayoutError::Binding(error));
         }
+        state
+            .flush_background_projections()
+            .map_err(RuntimeLayoutError::Binding)?;
         let root = state.root.ok_or(RuntimeLayoutError::MissingRoot)?;
         state
             .surface
@@ -620,9 +611,20 @@ impl SurfaceRuntime {
         let mut state = self.state.borrow_mut();
         state.ensure_valid().map_err(RuntimePresentError::Binding)?;
         state
+            .flush_background_projections()
+            .map_err(RuntimePresentError::Binding)?;
+        let presentation = state
             .surface
             .present(viewport_epoch, sink)
-            .map_err(RuntimePresentError::Present)
+            .map_err(RuntimePresentError::Present)?;
+        if matches!(
+            presentation,
+            Some(whisker_engine::whisker_protocol::ApplyResult::Accepted { .. })
+        ) {
+            let commands = state.background_resources.accept_frame();
+            state.enqueue_automatic_commands(commands);
+        }
+        Ok(presentation)
     }
 
     /// Runs Host measurement, final layout, and transactional presentation.
@@ -720,6 +722,7 @@ struct BindingState {
     known_resource_generations: HashSet<(ResourceId, u64)>,
     released_resource_generations: HashSet<(ResourceId, u64)>,
     resource_events: HashMap<(ResourceId, u64), ResourceEvent>,
+    background_resources: BackgroundResourceManager,
 }
 
 struct EnvironmentStyleUpdate {
@@ -743,6 +746,89 @@ impl BindingState {
             Err(error) if self.error.is_none() => self.error = Some(error),
             Err(_) => {}
         }
+    }
+
+    fn enqueue_resource_command(
+        &mut self,
+        command: ResourceCommand,
+        automatic: bool,
+    ) -> Result<(), RuntimeResourceError> {
+        command
+            .validate()
+            .map_err(RuntimeResourceError::InvalidMessage)?;
+        let resource = match &command {
+            ResourceCommand::Load(request) => request.resource,
+            ResourceCommand::Release { resource, .. } => *resource,
+        };
+        if !automatic && self.background_resources.owns(resource) {
+            return Err(RuntimeResourceError::AutomaticResourceId { resource });
+        }
+        match &command {
+            ResourceCommand::Load(request) => {
+                if let Some(current) = self.resource_generations.get(&request.resource).copied()
+                    && request.generation <= current
+                {
+                    return Err(RuntimeResourceError::NonMonotonicGeneration {
+                        resource: request.resource,
+                        current,
+                        received: request.generation,
+                    });
+                }
+                self.resource_generations
+                    .insert(request.resource, request.generation);
+                self.known_resource_generations
+                    .insert((request.resource, request.generation));
+            }
+            ResourceCommand::Release {
+                resource,
+                generation,
+            } => {
+                if !self
+                    .known_resource_generations
+                    .contains(&(*resource, *generation))
+                {
+                    return Err(RuntimeResourceError::UnknownGeneration {
+                        resource: *resource,
+                        generation: *generation,
+                    });
+                }
+                self.released_resource_generations
+                    .insert((*resource, *generation));
+            }
+        }
+        self.resource_commands.push_back(command);
+        Ok(())
+    }
+
+    fn enqueue_automatic_commands(&mut self, commands: Vec<ResourceCommand>) {
+        for command in commands {
+            self.enqueue_resource_command(command, true)
+                .expect("automatic resource commands preserve lifecycle invariants");
+        }
+    }
+
+    fn externally_used_resource_ids(&self) -> HashSet<ResourceId> {
+        self.resource_generations.keys().copied().collect()
+    }
+
+    fn flush_background_projections(&mut self) -> Result<(), RuntimeBindingError> {
+        let projections = self.background_resources.dirty_projections();
+        if projections.is_empty() {
+            return Ok(());
+        }
+        let mut surface = self.surface.clone();
+        for BackgroundProjection { node, layers } in &projections {
+            // A node can be released between completion delivery and the next
+            // safe boundary. `remove_nodes` normally removes its dirty bit,
+            // while this guard keeps the boundary robust to duplicate release.
+            if surface.node(*node).is_some() {
+                surface.set_background_layers(*node, layers.clone())?;
+            }
+        }
+        self.surface = surface;
+        self.background_resources
+            .commit_dirty_projections(&projections);
+        Ok(())
     }
 
     fn update_environment(
@@ -769,8 +855,18 @@ impl BindingState {
         }
 
         let mut surface = self.surface.clone();
+        let mut background_resources = self.background_resources.clone();
+        let externally_used = self.externally_used_resource_ids();
+        let mut resource_commands = Vec::new();
         for update in &updates {
             surface.update_computed_style(update.node, update.resolved.computed())?;
+            let background = background_resources.reconcile_node(
+                update.node,
+                &update.resolved.computed().paint().background_images,
+                &externally_used,
+            )?;
+            surface.set_background_layers(update.node, background.layers)?;
+            resource_commands.extend(background.commands);
             if let Some(text) = &update.text {
                 surface.set_plain_text(
                     update.node,
@@ -781,6 +877,8 @@ impl BindingState {
         }
 
         self.surface = surface;
+        self.background_resources = background_resources;
+        self.enqueue_automatic_commands(resource_commands);
         self.environment = environment;
         for update in updates {
             self.element_mut(update.element)?.resolved = Some(update.resolved);
@@ -982,26 +1080,86 @@ impl BindingState {
             .and_then(|parent| self.elements.get(&parent))
             .and_then(|parent| parent.resolved.as_ref())
             .map(|resolved| resolved.inherited_for_children().clone());
-        let specified = self.element(element)?.specified.clone();
-        let Some(node) = self.element(element)?.node else {
+        let mut surface = self.surface.clone();
+        let mut background_resources = self.background_resources.clone();
+        let externally_used = self.externally_used_resource_ids();
+        let mut updates = Vec::new();
+        let mut resource_commands = Vec::new();
+        self.prepare_subtree(
+            element,
+            parent_style.as_ref(),
+            &mut surface,
+            &mut background_resources,
+            &externally_used,
+            &mut updates,
+            &mut resource_commands,
+        )?;
+
+        self.surface = surface;
+        self.background_resources = background_resources;
+        for (element, resolved) in updates {
+            self.element_mut(element)?.resolved = Some(resolved);
+        }
+        self.enqueue_automatic_commands(resource_commands);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_subtree(
+        &self,
+        element: Element,
+        parent_style: Option<&InheritedStyle>,
+        surface: &mut SurfaceEngine,
+        background_resources: &mut BackgroundResourceManager,
+        externally_used: &HashSet<ResourceId>,
+        updates: &mut Vec<(Element, ResolvedNodeStyle)>,
+        resource_commands: &mut Vec<ResourceCommand>,
+    ) -> Result<(), RuntimeBindingError> {
+        let entry = self.element(element)?;
+        let Some(node) = entry.node else {
             return Ok(());
         };
-        let resolved = resolve_style(&specified, parent_style.as_ref(), self.environment)?;
-        self.surface
-            .update_computed_style(node, resolved.computed())?;
-        let text = self.element(element)?.text.clone();
-        if let Some(input) = text {
-            self.surface
-                .set_plain_text(node, &input, resolved.computed().inherited_text())?;
+        let resolved = resolve_style(&entry.specified, parent_style, self.environment)?;
+        surface.update_computed_style(node, resolved.computed())?;
+        let background = background_resources.reconcile_node(
+            node,
+            &resolved.computed().paint().background_images,
+            externally_used,
+        )?;
+        surface.set_background_layers(node, background.layers)?;
+        resource_commands.extend(background.commands);
+        if let Some(text) = &entry.text {
+            surface.set_plain_text(node, text, resolved.computed().inherited_text())?;
         }
-        let children = self.element(element)?.children.clone();
-        self.element_mut(element)?.resolved = Some(resolved);
+        let children = entry.children.clone();
+        updates.push((element, resolved.clone()));
         for child in children {
             if self.element(child)?.node.is_some() {
-                self.apply_subtree(child)?;
+                self.prepare_subtree(
+                    child,
+                    Some(resolved.inherited_for_children()),
+                    surface,
+                    background_resources,
+                    externally_used,
+                    updates,
+                    resource_commands,
+                )?;
             }
         }
         Ok(())
+    }
+
+    fn surface_subtree(&self, root: NodeId) -> Vec<NodeId> {
+        let mut nodes = Vec::new();
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            let Some(entry) = self.surface.node(node) else {
+                continue;
+            };
+            nodes.push(node);
+            pending.extend(entry.children().iter().copied());
+        }
+        nodes
     }
 
     fn refresh_text(&mut self, text_element: Element) -> Result<(), RuntimeBindingError> {
@@ -1394,7 +1552,12 @@ impl DynRenderer for SurfaceRuntime {
             if let Some(node) = entry.node {
                 state.node_elements.remove(&node);
                 if state.surface.node(node).is_some() {
+                    let removed_nodes = state.surface_subtree(node);
+                    let mut background_resources = state.background_resources.clone();
+                    let resource_commands = background_resources.remove_nodes(&removed_nodes);
                     state.surface.delete_node(node)?;
+                    state.background_resources = background_resources;
+                    state.enqueue_automatic_commands(resource_commands);
                 }
             }
             Ok(())
@@ -1440,8 +1603,13 @@ impl DynRenderer for SurfaceRuntime {
     fn set_specified_style(&self, handle: Element, style: &SpecifiedStyle) -> bool {
         let mut state = self.state.borrow_mut();
         let result = (|| {
+            let previous = state.element(handle)?.specified.clone();
             state.element_mut(handle)?.specified = style.clone();
-            state.apply_subtree(handle)
+            if let Err(error) = state.apply_subtree(handle) {
+                state.element_mut(handle)?.specified = previous;
+                return Err(error);
+            }
+            Ok(())
         })();
         let accepted = result.is_ok();
         state.record(result);
