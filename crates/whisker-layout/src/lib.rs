@@ -803,7 +803,10 @@ fn justify(value: JustifyContentValue) -> AlignContent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whisker_style::{Axes, Edges, StyleNumber};
+    use whisker_style::{
+        Axes, ComputedGridTemplate, ComputedGridTrackSizing, Edges, GridPlacementLineValue,
+        StyleNumber,
+    };
 
     const MIXED: ComputedLengthPercentage = ComputedLengthPercentage::new(1.0, 0.5);
 
@@ -823,6 +826,129 @@ mod tests {
 
     fn zero_measure(_: NodeId, _: MeasureRequest) -> LayoutSize {
         LayoutSize::default()
+    }
+
+    #[test]
+    fn grid_tracks_and_explicit_placement_reach_taffy() {
+        let root = id(1);
+        let first = id(2);
+        let second = id(3);
+        let third = id(4);
+        let mut tree = LayoutTree::new();
+        let root_style = ComputedLayoutStyle {
+            display: DisplayValue::Grid,
+            size: Axes {
+                width: ComputedSizeValue::Value(ComputedLengthPercentage::new(300.0, 0.0)),
+                height: ComputedSizeValue::Value(ComputedLengthPercentage::new(100.0, 0.0)),
+            },
+            grid_template_columns: ComputedGridTemplate::tracks([
+                ComputedGridTrackSizing::length(100.0),
+                ComputedGridTrackSizing::fraction(1.0),
+                ComputedGridTrackSizing::length(50.0),
+            ]),
+            grid_template_rows: ComputedGridTemplate::tracks([
+                ComputedGridTrackSizing::length(40.0),
+                ComputedGridTrackSizing::length(60.0),
+            ]),
+            ..ComputedLayoutStyle::default()
+        };
+        tree.create_node(root, root_style).unwrap();
+        tree.create_node(first, ComputedLayoutStyle::default())
+            .unwrap();
+        tree.create_node(
+            second,
+            ComputedLayoutStyle {
+                grid_column: GridPlacementLineValue::lines(2, 3),
+                grid_row: GridPlacementLineValue::lines(2, 3),
+                ..ComputedLayoutStyle::default()
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            third,
+            ComputedLayoutStyle {
+                grid_column: GridPlacementLineValue::lines(3, 4),
+                grid_row: GridPlacementLineValue::lines(1, 2),
+                ..ComputedLayoutStyle::default()
+            },
+        )
+        .unwrap();
+        tree.set_children(root, &[first, second, third]).unwrap();
+
+        let snapshot = tree
+            .compute(root, LayoutSize::new(300.0, 100.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(
+            snapshot.get(first).unwrap().border_box,
+            LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 40.0,
+            }
+        );
+        assert_eq!(
+            snapshot.get(second).unwrap().border_box,
+            LayoutRect {
+                x: 100.0,
+                y: 40.0,
+                width: 150.0,
+                height: 60.0,
+            }
+        );
+        assert_eq!(
+            snapshot.get(third).unwrap().border_box,
+            LayoutRect {
+                x: 250.0,
+                y: 0.0,
+                width: 50.0,
+                height: 40.0,
+            }
+        );
+    }
+
+    #[test]
+    fn grid_justify_items_and_self_control_inline_alignment() {
+        let root = id(1);
+        let centered = id(2);
+        let ended = id(3);
+        let mut tree = LayoutTree::new();
+        tree.create_node(
+            root,
+            ComputedLayoutStyle {
+                display: DisplayValue::Grid,
+                size: Axes {
+                    width: ComputedSizeValue::Value(ComputedLengthPercentage::new(200.0, 0.0)),
+                    height: ComputedSizeValue::Value(ComputedLengthPercentage::new(50.0, 0.0)),
+                },
+                grid_template_columns: ComputedGridTemplate::tracks([
+                    ComputedGridTrackSizing::length(100.0),
+                    ComputedGridTrackSizing::length(100.0),
+                ]),
+                grid_template_rows: ComputedGridTemplate::tracks([
+                    ComputedGridTrackSizing::length(50.0),
+                ]),
+                justify_items: Some(AlignItemsValue::Center),
+                ..ComputedLayoutStyle::default()
+            },
+        )
+        .unwrap();
+        tree.create_node(centered, sized(20.0, 10.0)).unwrap();
+        tree.create_node(
+            ended,
+            ComputedLayoutStyle {
+                justify_self: Some(AlignSelfValue::End),
+                ..sized(20.0, 10.0)
+            },
+        )
+        .unwrap();
+        tree.set_children(root, &[centered, ended]).unwrap();
+
+        let snapshot = tree
+            .compute(root, LayoutSize::new(200.0, 50.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(snapshot.get(centered).unwrap().border_box.x, 40.0);
+        assert_eq!(snapshot.get(ended).unwrap().border_box.x, 180.0);
     }
 
     fn assert_unsupported(style: ComputedLayoutStyle, feature: UnsupportedLayoutFeature) {
