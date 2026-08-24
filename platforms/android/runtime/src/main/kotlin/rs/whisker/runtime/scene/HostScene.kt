@@ -573,6 +573,7 @@ internal class HostScene(
         when (value) {
             BACKGROUND_BOX_BORDER.toFloat() -> HostBackgroundBox.Border
             BACKGROUND_BOX_PADDING.toFloat() -> HostBackgroundBox.Padding
+            BACKGROUND_BOX_BORDER_AREA.toFloat() -> HostBackgroundBox.BorderArea
             else -> HostBackgroundBox.Content
         }
 
@@ -632,8 +633,8 @@ internal class HostScene(
         return validBackgroundSize(sizeKind) &&
             validBackgroundRepeat(repeatX) &&
             validBackgroundRepeat(repeatY) &&
-            validBackgroundBox(numbers[11]) &&
-            validBackgroundBox(numbers[12]) &&
+            validBackgroundOrigin(numbers[11]) &&
+            validBackgroundClip(numbers[12]) &&
             numbers[13] == BACKGROUND_ATTACHMENT_SCROLL.toFloat() &&
             numbers[14] == BACKGROUND_BLEND_NORMAL.toFloat()
     }
@@ -652,10 +653,13 @@ internal class HostScene(
             value == BACKGROUND_SPACE.toFloat() ||
             value == BACKGROUND_ROUND.toFloat()
 
-    private fun validBackgroundBox(value: Float): Boolean =
+    private fun validBackgroundOrigin(value: Float): Boolean =
         value == BACKGROUND_BOX_BORDER.toFloat() ||
             value == BACKGROUND_BOX_PADDING.toFloat() ||
             value == BACKGROUND_BOX_CONTENT.toFloat()
+
+    private fun validBackgroundClip(value: Float): Boolean =
+        validBackgroundOrigin(value) || value == BACKGROUND_BOX_BORDER_AREA.toFloat()
 
     private companion object {
         const val BACKGROUND_GEOMETRY_PACKED_SIZE = 15
@@ -683,6 +687,7 @@ internal class HostScene(
         const val BACKGROUND_BOX_BORDER = 0
         const val BACKGROUND_BOX_PADDING = 1
         const val BACKGROUND_BOX_CONTENT = 2
+        const val BACKGROUND_BOX_BORDER_AREA = 3
         const val BACKGROUND_ATTACHMENT_SCROLL = 0
         const val BACKGROUND_BLEND_NORMAL = 0
     }

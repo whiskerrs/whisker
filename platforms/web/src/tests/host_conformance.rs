@@ -560,6 +560,17 @@ impl Driver {
                                         nodes
                                             .iter()
                                             .any(|node| {
+                                                node.background_layer.clip
+                                                    == BackgroundBoxFixture::BorderArea
+                                            })
+                                            .then_some(
+                                                "paint.background-layers.clip-border-area",
+                                            )
+                                    })
+                                    .or_else(|| {
+                                        nodes
+                                            .iter()
+                                            .any(|node| {
                                                 node.background_layer.origin
                                                     == BackgroundBoxFixture::Border
                                             })
@@ -1084,6 +1095,11 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-backgrounds/background-clip-content-box.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-clip-content-box.json"
         ),
+        "wpt/css/css-backgrounds/background-clip-border-area-background-geometry.json" => {
+            include_str!(
+                "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-clip-border-area-background-geometry.json"
+            )
+        }
         "wpt/css/css-backgrounds/background-layer-stacking.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-layer-stacking.json"
         ),
@@ -2088,6 +2104,14 @@ fn fixture_background_layer_paints_at(
     let positioning_area = fixture_background_area(node, border_widths, layer.origin);
     let clip_area = fixture_background_area(node, border_widths, layer.clip);
     if !fixture_rect_contains(clip_area, point) {
+        return false;
+    }
+    if layer.clip == BackgroundBoxFixture::BorderArea
+        && fixture_rect_contains(
+            fixture_background_area(node, border_widths, BackgroundBoxFixture::Padding),
+            point,
+        )
+    {
         return false;
     }
     let mut size = fixture_background_image_size(layer.size, positioning_area, intrinsic_size);

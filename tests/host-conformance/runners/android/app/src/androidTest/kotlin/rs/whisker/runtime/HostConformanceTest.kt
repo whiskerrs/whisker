@@ -281,6 +281,8 @@ private class Driver(
                             command.getString("name") ==
                             "paint.background-layers.clip-content-box" ||
                             command.getString("name") ==
+                            "paint.background-layers.clip-border-area" ||
+                            command.getString("name") ==
                             "paint.background-layers.stacking" ||
                             command.getString("name") ==
                             "paint.background-layers.resource-image" ||
@@ -824,6 +826,7 @@ private class Driver(
         "border" -> 0
         "padding" -> 1
         "content" -> 2
+        "border_area" -> 3
         else -> error("unsupported background box: $value")
     }
 

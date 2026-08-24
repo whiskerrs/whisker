@@ -524,6 +524,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         );
         inner_coverage = shape_coverage(inner_distance);
     }
+    if input.mode > 1.5 {
+        let color = linear_gradient_color(input.draw_index, input.logical_position);
+        let coverage = max(outer_coverage - inner_coverage, 0.0);
+        return vec4<f32>(color.rgb, color.a * coverage * clip_coverage);
+    }
     let side_and_depth = border_side(
         input.logical_position,
         input.outer_rect,

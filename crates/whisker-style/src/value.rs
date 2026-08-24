@@ -298,6 +298,8 @@ pub enum BackgroundBoxValue {
     Padding,
     /// The content box.
     Content,
+    /// The area painted by the border.
+    BorderArea,
 }
 
 /// Scrolling relationship of one background layer.

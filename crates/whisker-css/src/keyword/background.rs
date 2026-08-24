@@ -51,8 +51,8 @@ pub enum BackgroundClip {
     PaddingBox,
     /// `content-box` — clip to the content box.
     ContentBox,
-    /// `text` — clip to the foreground text.
-    Text,
+    /// `border-area` — clip to the area painted by the border.
+    BorderArea,
 }
 
 impl ToCss for BackgroundClip {
@@ -61,7 +61,7 @@ impl ToCss for BackgroundClip {
             BackgroundClip::BorderBox => "border-box",
             BackgroundClip::PaddingBox => "padding-box",
             BackgroundClip::ContentBox => "content-box",
-            BackgroundClip::Text => "text",
+            BackgroundClip::BorderArea => "border-area",
         })
     }
 }
@@ -199,7 +199,7 @@ mod tests {
             (BackgroundClip::BorderBox, "border-box"),
             (BackgroundClip::PaddingBox, "padding-box"),
             (BackgroundClip::ContentBox, "content-box"),
-            (BackgroundClip::Text, "text"),
+            (BackgroundClip::BorderArea, "border-area"),
         ];
         for (k, expected) in cases {
             assert_eq!(k.to_css_string(), expected);
