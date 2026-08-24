@@ -705,7 +705,17 @@ mod tests {
     }
 
     #[test]
-    fn background_geometry_resolves_keywords_and_reports_axis_errors() {
+    fn background_geometry_resolves_keywords_auto_axes_and_axis_errors() {
+        let resolve_size = |size| {
+            crate::resolve_style(
+                &SpecifiedStyle::new().push(
+                    StyleProperty::BackgroundSize,
+                    StyleValue::BackgroundSize(size),
+                ),
+                None,
+                StyleEnvironment::default(),
+            )
+        };
         for (specified, computed) in [
             (BackgroundSizeValue::Auto, ComputedBackgroundSize::Auto),
             (BackgroundSizeValue::Cover, ComputedBackgroundSize::Cover),
@@ -713,17 +723,43 @@ mod tests {
                 BackgroundSizeValue::Contain,
                 ComputedBackgroundSize::Contain,
             ),
+            (
+                BackgroundSizeValue::Explicit {
+                    width: None,
+                    height: None,
+                },
+                ComputedBackgroundSize::Auto,
+            ),
+            (
+                BackgroundSizeValue::Explicit {
+                    width: Some(px_length(12.0)),
+                    height: None,
+                },
+                ComputedBackgroundSize::Explicit {
+                    width: Some(ComputedLengthPercentage::new(12.0, 0.0)),
+                    height: None,
+                },
+            ),
+            (
+                BackgroundSizeValue::Explicit {
+                    width: None,
+                    height: Some(percentage(25.0)),
+                },
+                ComputedBackgroundSize::Explicit {
+                    width: None,
+                    height: Some(ComputedLengthPercentage::new(0.0, 0.25)),
+                },
+            ),
         ] {
-            let resolved = crate::resolve_style(
-                &SpecifiedStyle::new().push(
-                    StyleProperty::BackgroundSize,
-                    StyleValue::BackgroundSize(specified),
-                ),
-                None,
-                StyleEnvironment::default(),
-            )
-            .unwrap();
-            assert_eq!(resolved.computed().paint().background_layer.size, computed);
+            assert_eq!(
+                resolve_size(specified)
+                    .unwrap()
+                    .computed()
+                    .paint()
+                    .background_layer
+                    .size,
+                computed
+            );
         }
 
         for position in [
@@ -751,22 +787,22 @@ mod tests {
             );
         }
 
-        for (width, height) in [
-            (px_length(f32::NAN), px_length(1.0)),
-            (px_length(1.0), px_length(f32::NAN)),
-            (percentage(-1.0), px_length(1.0)),
-            (px_length(1.0), px_length(-1.0)),
-            (px_length(1.0), percentage(-1.0)),
+        for size in [
+            BackgroundSizeValue::Explicit {
+                width: Some(px_length(f32::NAN)),
+                height: None,
+            },
+            BackgroundSizeValue::Explicit {
+                width: None,
+                height: Some(px_length(f32::NAN)),
+            },
+            BackgroundSizeValue::Explicit {
+                width: None,
+                height: Some(px_length(-1.0)),
+            },
         ] {
             assert_eq!(
-                crate::resolve_style(
-                    &SpecifiedStyle::new().push(
-                        StyleProperty::BackgroundSize,
-                        StyleValue::BackgroundSize(BackgroundSizeValue::Explicit { width, height }),
-                    ),
-                    None,
-                    StyleEnvironment::default(),
-                ),
+                resolve_size(size),
                 Err(StyleResolutionError::InvalidPropertyValue(
                     StyleProperty::BackgroundSize
                 ))
