@@ -56,11 +56,15 @@ struct HostBackgroundGeometry {
 
     func imageBounds(in positioningBox: CGRect) -> CGRect {
         guard let sizeWidth, let sizeHeight else { return positioningBox }
+        let width = resolve(sizeWidth, extent: positioningBox.width)
+        let height = resolve(sizeHeight, extent: positioningBox.height)
         return CGRect(
-            x: positioningBox.minX + resolve(positionX, extent: positioningBox.width),
-            y: positioningBox.minY + resolve(positionY, extent: positioningBox.height),
-            width: resolve(sizeWidth, extent: positioningBox.width),
-            height: resolve(sizeHeight, extent: positioningBox.height)
+            x: positioningBox.minX + CGFloat(positionX.length) +
+                CGFloat(positionX.fraction) * (positioningBox.width - width),
+            y: positioningBox.minY + CGFloat(positionY.length) +
+                CGFloat(positionY.fraction) * (positioningBox.height - height),
+            width: width,
+            height: height
         )
     }
 
@@ -109,7 +113,25 @@ final class HostBackgroundPainter {
         context.addPath(clipPath)
         context.clip()
         if geometry.clipsToSingleImage {
-            context.clip(to: imageBounds)
+            var imageClip = imageBounds
+            let deviceScale = max(
+                hypot(context.ctm.a, context.ctm.c),
+                hypot(context.ctm.b, context.ctm.d),
+                1
+            )
+            // A rect clip includes coverage from the device pixel touching its
+            // leading edge. Move that edge to the next pixel center so a
+            // no-repeat image cannot bleed into the preceding CSS pixel.
+            let leadingEdgeInset = backgroundLeadingEdgeInset(deviceScale: deviceScale)
+            if imageClip.minX > bounds.minX {
+                imageClip.origin.x += leadingEdgeInset
+                imageClip.size.width = max(0, imageClip.width - leadingEdgeInset)
+            }
+            if imageClip.minY > bounds.minY {
+                imageClip.origin.y += leadingEdgeInset
+                imageClip.size.height = max(0, imageClip.height - leadingEdgeInset)
+            }
+            context.clip(to: imageClip)
         }
         defer { context.restoreGState() }
         switch image {
@@ -231,6 +253,10 @@ final class HostBackgroundPainter {
 
         UIImage(cgImage: image, scale: scale, orientation: .up).draw(in: bounds)
     }
+}
+
+func backgroundLeadingEdgeInset(deviceScale: CGFloat) -> CGFloat {
+    0.5 / max(deviceScale, 1)
 }
 
 private struct ResolvedGradient {

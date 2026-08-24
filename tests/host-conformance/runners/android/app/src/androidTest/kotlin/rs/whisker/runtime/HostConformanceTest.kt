@@ -141,7 +141,9 @@ private class Driver(
                             command.getString("name") == "paint.background-layers.radial-gradient" ||
                             command.getString("name") == "paint.background-layers.conic-gradient" ||
                             command.getString("name") ==
-                            "paint.background-layers.explicit-size-no-repeat",
+                            "paint.background-layers.explicit-size-no-repeat" ||
+                            command.getString("name") ==
+                            "paint.background-layers.position-length-percentage",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->

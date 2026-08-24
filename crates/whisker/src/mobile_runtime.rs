@@ -801,8 +801,7 @@ impl MobileFrameOwned {
                         let [layer] = layers.as_slice() else {
                             return Err(MobileFrameError);
                         };
-                        if layer.position != Default::default()
-                            || layer.origin != PaintBox::Padding
+                        if layer.origin != PaintBox::Padding
                             || layer.clip != PaintBox::Border
                             || layer.attachment != BackgroundAttachment::Scroll
                             || layer.blend_mode != BlendMode::Normal
@@ -815,7 +814,7 @@ impl MobileFrameOwned {
                                     BackgroundSize::Auto,
                                     ImageRepeat::Repeat,
                                     ImageRepeat::Repeat,
-                                ) => (
+                                ) if layer.position == Default::default() => (
                                     BACKGROUND_SIZE_AUTO,
                                     MobileLengthPercentage::default(),
                                     MobileLengthPercentage::default(),

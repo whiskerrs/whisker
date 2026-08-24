@@ -105,9 +105,21 @@ impl Driver {
                                 nodes
                                     .iter()
                                     .any(|node| {
-                                        node.background_layer != BackgroundLayerFixture::default()
+                                        node.background_layer.position
+                                            != [LengthPercentageFixture::default(); 2]
                                     })
-                                    .then_some("paint.background-layers.explicit-size-no-repeat")
+                                    .then_some("paint.background-layers.position-length-percentage")
+                                    .or_else(|| {
+                                        nodes
+                                            .iter()
+                                            .any(|node| {
+                                                node.background_layer
+                                                    != BackgroundLayerFixture::default()
+                                            })
+                                            .then_some(
+                                                "paint.background-layers.explicit-size-no-repeat",
+                                            )
+                                    })
                                     .or_else(|| {
                                         nodes.iter().find_map(|node| {
                                             node.linear_gradient
@@ -397,6 +409,9 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-backgrounds/background-size-009.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-size-009.json"
+        ),
+        "wpt/css/css-backgrounds/background-position-three-four-values.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-position-three-four-values.json"
         ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
@@ -1064,7 +1079,11 @@ fn assert_background_layer_is_projected(
     style: &web_sys::CssStyleDeclaration,
     layer: BackgroundLayerFixture,
 ) {
-    assert_style(style, "background-position", "0px 0px");
+    assert_style(
+        style,
+        "background-position",
+        &fixture_background_position(layer),
+    );
     assert_style(style, "background-size", &fixture_background_size(layer));
     assert_style(style, "background-repeat", fixture_background_repeat(layer));
     assert_style(
@@ -1075,6 +1094,18 @@ fn assert_background_layer_is_projected(
     assert_style(style, "background-clip", fixture_background_box(layer.clip));
     assert_style(style, "background-attachment", "scroll");
     assert_style(style, "background-blend-mode", "normal");
+}
+
+fn fixture_background_position(layer: BackgroundLayerFixture) -> String {
+    if layer.position == [LengthPercentageFixture::default(); 2] {
+        "0px 0px".into()
+    } else {
+        format!(
+            "{} {}",
+            fixture_coordinate(layer.position[0]),
+            fixture_coordinate(layer.position[1])
+        )
+    }
 }
 
 fn fixture_background_size(layer: BackgroundLayerFixture) -> String {
@@ -1119,6 +1150,10 @@ fn fixture_length_percentage(value: LengthPercentageFixture) -> String {
     }
 }
 
+fn fixture_coordinate(value: LengthPercentageFixture) -> String {
+    fixture_length_percentage(value)
+}
+
 fn fixture_node_paints_at(node: &SceneNodeFixture, point: [f32; 2]) -> bool {
     if !fixture_color_is_transparent(&node.background) {
         return true;
@@ -1137,8 +1172,12 @@ fn fixture_node_paints_at(node: &SceneNodeFixture, point: [f32; 2]) -> bool {
         ]
     });
     let position = [
-        node.rect[0] + layer.position[0].length + layer.position[0].fraction * node.rect[2],
-        node.rect[1] + layer.position[1].length + layer.position[1].fraction * node.rect[3],
+        node.rect[0]
+            + layer.position[0].length
+            + layer.position[0].fraction * (node.rect[2] - size[0]),
+        node.rect[1]
+            + layer.position[1].length
+            + layer.position[1].fraction * (node.rect[3] - size[1]),
     ];
     let paints_x = layer.repeat_x != ImageRepeatFixture::NoRepeat
         || (position[0]..position[0] + size[0]).contains(&point[0]);

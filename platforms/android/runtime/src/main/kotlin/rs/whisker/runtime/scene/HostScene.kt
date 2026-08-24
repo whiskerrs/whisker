@@ -503,7 +503,7 @@ internal class HostScene(
                         repeatY == BACKGROUND_NO_REPEAT.toFloat()
                 )
         return supportedGeometry &&
-            (0..3).all { numbers[it] == 0f } &&
+            (sizeKind == BACKGROUND_SIZE_EXPLICIT.toFloat() || (0..3).all { numbers[it] == 0f }) &&
             numbers[11] == BACKGROUND_BOX_PADDING.toFloat() &&
             numbers[12] == BACKGROUND_BOX_BORDER.toFloat() &&
             numbers[13] == BACKGROUND_ATTACHMENT_SCROLL.toFloat() &&

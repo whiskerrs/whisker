@@ -889,7 +889,6 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
             && layer.repeat_y == ImageRepeat::NoRepeat);
     supported_image
         && supported_geometry
-        && layer.position == Default::default()
         && layer.origin == PaintBox::Padding
         && layer.clip == PaintBox::Border
         && layer.attachment == BackgroundAttachment::Scroll
