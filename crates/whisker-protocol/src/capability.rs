@@ -31,14 +31,16 @@ pub enum RenderCapability {
     /// One resolved, non-repeating conic-gradient background image using the
     /// initial layer geometry and explicit fractional color-stop positions.
     ConicGradients,
-    /// Explicit two-axis background image sizing and no-repeat geometry for a
-    /// single otherwise supported background image.
+    /// Explicit two-axis geometry for otherwise supported background images.
     BackgroundGeometry,
+    /// Ordered stacking of multiple otherwise independently supported
+    /// background layers.
+    BackgroundLayerStacking,
 }
 
 impl RenderCapability {
     /// Every optional capability in stable declaration order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::EllipticalBorderRadius,
         Self::BackgroundLayers,
         Self::VisualEffects,
@@ -51,6 +53,7 @@ impl RenderCapability {
         Self::RadialGradients,
         Self::ConicGradients,
         Self::BackgroundGeometry,
+        Self::BackgroundLayerStacking,
     ];
 
     /// Stable diagnostic spelling shared by Host errors and checklists.
@@ -68,6 +71,7 @@ impl RenderCapability {
             Self::RadialGradients => "radial-gradients",
             Self::ConicGradients => "conic-gradients",
             Self::BackgroundGeometry => "background-geometry",
+            Self::BackgroundLayerStacking => "background-layer-stacking",
         }
     }
 
@@ -216,7 +220,7 @@ impl FramePacket {
     }
 }
 
-fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 2] {
+fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 5] {
     if let Operation::SetBackgroundLayers { layers, .. } = operation {
         return background_capabilities(layers);
     }
@@ -247,26 +251,52 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 2
         }
         _ => None,
     };
-    [first, second]
+    [first, second, None, None, None]
 }
 
-fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderCapability>; 2] {
-    let [] = layers else {
-        let [layer] = layers else {
-            return [Some(RenderCapability::BackgroundLayers), None];
-        };
-        let Some(image) = gradient_image_capability(layer) else {
-            return [Some(RenderCapability::BackgroundLayers), None];
-        };
-        if has_initial_background_geometry(layer) {
-            return [Some(image), None];
+fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderCapability>; 5] {
+    if layers.is_empty() {
+        return [None; 5];
+    }
+    let mut linear = false;
+    let mut radial = false;
+    let mut conic = false;
+    let mut geometry = false;
+    for layer in layers {
+        match gradient_image_capability(layer) {
+            Some(RenderCapability::LinearGradients) => linear = true,
+            Some(RenderCapability::RadialGradients) => radial = true,
+            Some(RenderCapability::ConicGradients) => conic = true,
+            _ => {
+                return [
+                    Some(RenderCapability::BackgroundLayers),
+                    None,
+                    None,
+                    None,
+                    None,
+                ];
+            }
         }
-        if has_explicit_background_geometry(layer) {
-            return [Some(image), Some(RenderCapability::BackgroundGeometry)];
+        if !has_initial_background_geometry(layer) {
+            if !has_explicit_background_geometry(layer) {
+                return [
+                    Some(RenderCapability::BackgroundLayers),
+                    None,
+                    None,
+                    None,
+                    None,
+                ];
+            }
+            geometry = true;
         }
-        return [Some(RenderCapability::BackgroundLayers), None];
-    };
-    [None, None]
+    }
+    [
+        linear.then_some(RenderCapability::LinearGradients),
+        radial.then_some(RenderCapability::RadialGradients),
+        conic.then_some(RenderCapability::ConicGradients),
+        geometry.then_some(RenderCapability::BackgroundGeometry),
+        (layers.len() > 1).then_some(RenderCapability::BackgroundLayerStacking),
+    ]
 }
 
 fn gradient_image_capability(layer: &crate::BackgroundLayer) -> Option<RenderCapability> {
@@ -529,7 +559,10 @@ mod tests {
                 layers: vec![basic_linear_layer(), basic_linear_layer()],
             }])
             .required_capabilities(),
-            vec![RenderCapability::BackgroundLayers]
+            vec![
+                RenderCapability::LinearGradients,
+                RenderCapability::BackgroundLayerStacking,
+            ]
         );
         assert_eq!(
             packet(vec![Operation::SetBackgroundLayers {
@@ -764,6 +797,7 @@ mod tests {
                 "radial-gradients",
                 "conic-gradients",
                 "background-geometry",
+                "background-layer-stacking",
             ]
         );
 
