@@ -35,6 +35,7 @@ struct HostConicGradient {
 enum HostBackgroundRepeat {
     case `repeat`
     case noRepeat
+    case space
 }
 
 enum HostBackgroundBox {
@@ -82,12 +83,14 @@ struct HostBackgroundGeometry {
         let xOrigins = backgroundTileOrigins(
             base: image.minX,
             tileSize: image.width,
+            positioning: positioningBox.minX..<positioningBox.maxX,
             coverage: paintBounds.minX..<paintBounds.maxX,
             repeatMode: repeatX
         )
         let yOrigins = backgroundTileOrigins(
             base: image.minY,
             tileSize: image.height,
+            positioning: positioningBox.minY..<positioningBox.maxY,
             coverage: paintBounds.minY..<paintBounds.maxY,
             repeatMode: repeatY
         )
@@ -299,16 +302,32 @@ func backgroundLeadingEdgeInset(deviceScale: CGFloat) -> CGFloat {
 func backgroundTileOrigins(
     base: CGFloat,
     tileSize: CGFloat,
+    positioning: Range<CGFloat>,
     coverage: Range<CGFloat>,
     repeatMode: HostBackgroundRepeat
 ) -> [CGFloat] {
-    guard tileSize > 0, coverage.lowerBound < coverage.upperBound else { return [] }
-    guard repeatMode == .repeat else { return [base] }
-    let first = base + floor((coverage.lowerBound - base) / tileSize) * tileSize
-    let rawCount = ceil((coverage.upperBound - first) / tileSize)
-    guard rawCount.isFinite, rawCount > 0, rawCount <= 65_536 else { return [] }
-    let count = Int(rawCount)
-    return (0..<count).map { first + CGFloat($0) * tileSize }
+    guard tileSize > 0, positioning.lowerBound < positioning.upperBound,
+          coverage.lowerBound < coverage.upperBound else { return [] }
+    switch repeatMode {
+    case .noRepeat:
+        return [base]
+    case .repeat:
+        let first = base + floor((coverage.lowerBound - base) / tileSize) * tileSize
+        let rawCount = ceil((coverage.upperBound - first) / tileSize)
+        guard rawCount.isFinite, rawCount > 0, rawCount <= 65_536 else { return [] }
+        let count = Int(rawCount)
+        return (0..<count).map { first + CGFloat($0) * tileSize }
+    case .space:
+        let extent = positioning.upperBound - positioning.lowerBound
+        let rawCount = floor(extent / tileSize)
+        guard rawCount.isFinite, rawCount <= 65_536 else { return [] }
+        let count = Int(rawCount)
+        guard count >= 2 else { return [base] }
+        let gap = (extent - CGFloat(count) * tileSize) / CGFloat(count - 1)
+        return (0..<count).map {
+            positioning.lowerBound + CGFloat($0) * (tileSize + gap)
+        }
+    }
 }
 
 private struct ResolvedGradient {

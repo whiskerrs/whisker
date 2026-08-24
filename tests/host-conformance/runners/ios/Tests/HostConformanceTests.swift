@@ -57,6 +57,7 @@ final class HostConformanceTests: XCTestCase {
             backgroundTileOrigins(
                 base: 20,
                 tileSize: 20,
+                positioning: 0..<100,
                 coverage: 0..<100,
                 repeatMode: .repeat
             ),
@@ -66,10 +67,53 @@ final class HostConformanceTests: XCTestCase {
             backgroundTileOrigins(
                 base: 20,
                 tileSize: 20,
+                positioning: 0..<100,
                 coverage: 0..<100,
                 repeatMode: .noRepeat
             ),
             [20]
+        )
+        XCTAssertEqual(
+            backgroundTileOrigins(
+                base: 7,
+                tileSize: 30,
+                positioning: 0..<100,
+                coverage: 0..<100,
+                repeatMode: .space
+            ),
+            [0, 35, 70]
+        )
+        XCTAssertEqual(
+            backgroundTileOrigins(
+                base: 5,
+                tileSize: 32,
+                positioning: 0..<48,
+                coverage: 0..<48,
+                repeatMode: .space
+            ),
+            [5]
+        )
+
+        let mixed = HostBackgroundGeometry(
+            positionX: WhiskerMobileLengthPercentage(),
+            positionY: WhiskerMobileLengthPercentage(length: 7, fraction: 0),
+            sizeWidth: WhiskerMobileLengthPercentage(length: 30, fraction: 0),
+            sizeHeight: WhiskerMobileLengthPercentage(length: 20, fraction: 0),
+            repeatX: .space,
+            repeatY: .noRepeat,
+            origin: .padding,
+            clip: .border
+        )
+        XCTAssertEqual(
+            mixed.tileRects(
+                in: CGRect(x: 0, y: 0, width: 100, height: 60),
+                covering: CGRect(x: 0, y: 0, width: 100, height: 60)
+            ),
+            [
+                CGRect(x: 0, y: 7, width: 30, height: 20),
+                CGRect(x: 35, y: 7, width: 30, height: 20),
+                CGRect(x: 70, y: 7, width: 30, height: 20)
+            ]
         )
     }
 }
@@ -79,6 +123,7 @@ private final class Driver {
     private let id: String
     private let view = WhiskerView(frame: .zero)
     private var logicalSize = CGSize.zero
+    private var surfaceScale: CGFloat = 1
     private var checkpoint: Pixels?
 
     init(id: String) throws {
@@ -102,6 +147,7 @@ private final class Driver {
                     width: try number(command, "width"),
                     height: try number(command, "height")
                 )
+                surfaceScale = CGFloat(try number(command, "scale"))
             case "present_box":
                 try present(command)
             case "present_scene":
@@ -117,7 +163,9 @@ private final class Driver {
                     name == "paint.background-layers.origin-border-box" ||
                     name == "paint.background-layers.clip-padding-box" ||
                     name == "paint.background-layers.repeat-x" ||
-                    name == "paint.background-layers.repeat-y" else {
+                    name == "paint.background-layers.repeat-y" ||
+                    name == "paint.background-layers.repeat-space" ||
+                    name == "paint.background-layers.repeat-space-single" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -431,6 +479,8 @@ private final class Driver {
         view.frame = CGRect(origin: .zero, size: logicalSize)
         view.setNeedsLayout()
         view.layoutIfNeeded()
+        setContentScale(surfaceScale, in: view)
+        view.layoutIfNeeded()
         let width = Int(logicalSize.width.rounded())
         let height = Int(logicalSize.height.rounded())
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
@@ -449,6 +499,12 @@ private final class Driver {
         view.layer.render(in: context)
         return Pixels(width: width, height: height, bytes: bytes)
     }
+}
+
+private func setContentScale(_ scale: CGFloat, in view: UIView) {
+    view.contentScaleFactor = scale
+    view.setNeedsDisplay()
+    view.subviews.forEach { setContentScale(scale, in: $0) }
 }
 
 private struct Pixels {
@@ -705,6 +761,7 @@ private func backgroundRepeat(_ value: String) throws -> UInt32 {
     switch value {
     case "repeat": UInt32(WHISKER_BACKGROUND_REPEAT)
     case "no_repeat": UInt32(WHISKER_BACKGROUND_NO_REPEAT)
+    case "space": UInt32(WHISKER_BACKGROUND_SPACE)
     default: throw Failure("unsupported background repeat")
     }
 }
