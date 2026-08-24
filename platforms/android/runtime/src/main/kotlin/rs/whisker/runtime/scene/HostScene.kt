@@ -509,14 +509,13 @@ internal class HostScene(
             ) ||
                 (
                     sizeKind == BACKGROUND_SIZE_EXPLICIT.toFloat() &&
-                        repeatX == BACKGROUND_NO_REPEAT.toFloat() &&
-                        repeatY == BACKGROUND_NO_REPEAT.toFloat()
+                        validBackgroundRepeat(repeatX) &&
+                        validBackgroundRepeat(repeatY)
                 )
         return supportedGeometry &&
             (sizeKind == BACKGROUND_SIZE_EXPLICIT.toFloat() || (0..3).all { numbers[it] == 0f }) &&
             if (sizeKind == BACKGROUND_SIZE_EXPLICIT.toFloat()) {
-                numbers[11] in BACKGROUND_BOX_BORDER.toFloat()..BACKGROUND_BOX_PADDING.toFloat() &&
-                    numbers[12] in BACKGROUND_BOX_BORDER.toFloat()..BACKGROUND_BOX_PADDING.toFloat()
+                validBackgroundBox(numbers[11]) && validBackgroundBox(numbers[12])
             } else {
                 numbers[11] == BACKGROUND_BOX_PADDING.toFloat() &&
                     numbers[12] == BACKGROUND_BOX_BORDER.toFloat()
@@ -524,6 +523,12 @@ internal class HostScene(
             numbers[13] == BACKGROUND_ATTACHMENT_SCROLL.toFloat() &&
             numbers[14] == BACKGROUND_BLEND_NORMAL.toFloat()
     }
+
+    private fun validBackgroundRepeat(value: Float): Boolean =
+        value == BACKGROUND_REPEAT.toFloat() || value == BACKGROUND_NO_REPEAT.toFloat()
+
+    private fun validBackgroundBox(value: Float): Boolean =
+        value == BACKGROUND_BOX_BORDER.toFloat() || value == BACKGROUND_BOX_PADDING.toFloat()
 
     private companion object {
         const val BACKGROUND_GEOMETRY_PACKED_SIZE = 15
