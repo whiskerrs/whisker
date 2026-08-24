@@ -809,10 +809,16 @@ impl Driver {
                         _ => continue,
                     };
                     let (gradient, resource) = match &layer.image {
-                        PaintImage::Resource(_) => {
-                            let Some((draw, resource)) =
-                                background_resource_draw(positioning_rect, layer, opacity)
-                            else {
+                        PaintImage::Resource(resource) => {
+                            let Some(raster) = self.raster_resources.get(resource) else {
+                                continue;
+                            };
+                            let Some((draw, resource)) = background_resource_draw(
+                                positioning_rect,
+                                layer,
+                                [raster.width as f32, raster.height as f32],
+                                opacity,
+                            ) else {
                                 continue;
                             };
                             (draw, Some(resource))

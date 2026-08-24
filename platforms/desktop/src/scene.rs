@@ -884,6 +884,7 @@ impl From<DesktopElementError> for DesktopPresentError {
 }
 
 fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
+    let resource_image = matches!(&layer.image, PaintImage::Resource(_));
     let supported_image = matches!(
         &layer.image,
         PaintImage::LinearGradient {
@@ -910,22 +911,23 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
         } if stops.iter().all(|stop| {
             stop.position.is_some_and(|position| position.length == 0.0)
         })
-    ) || matches!(&layer.image, PaintImage::Resource(_));
+    ) || resource_image;
     let initial_geometry = layer.position == Default::default()
         && layer.size == BackgroundSize::Auto
         && layer.repeat_x == ImageRepeat::Repeat
         && layer.repeat_y == ImageRepeat::Repeat
         && layer.origin == PaintBox::Padding
         && layer.clip == PaintBox::Border;
-    let explicit_geometry = matches!(
-        layer.size,
-        BackgroundSize::Explicit {
-            width: Some(_),
-            height: Some(_)
+    let supported_geometry = match layer.size {
+        BackgroundSize::Auto => resource_image || initial_geometry,
+        BackgroundSize::Cover | BackgroundSize::Contain => resource_image,
+        BackgroundSize::Explicit { width, height } => {
+            width.is_some() && height.is_some()
+                || resource_image && (width.is_some() || height.is_some())
         }
-    );
+    };
     supported_image
-        && (initial_geometry || explicit_geometry)
+        && supported_geometry
         && layer.attachment == BackgroundAttachment::Scroll
         && layer.blend_mode == BlendMode::Normal
 }
