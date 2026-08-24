@@ -436,7 +436,8 @@ private final class Driver {
                     name == "paint.background-layers.resource-lifecycle" ||
                     name == "paint.background-layers.intrinsic-auto" ||
                     name == "paint.background-layers.size-cover" ||
-                    name == "paint.background-layers.size-contain" else {
+                    name == "paint.background-layers.size-contain" ||
+                    name == "paint.background-layers.round-auto-aspect-ratio" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
