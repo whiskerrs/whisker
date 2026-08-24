@@ -1,6 +1,7 @@
 package rs.whisker.runtime.scene
 
 import android.content.Context
+import android.graphics.RectF
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -354,6 +355,12 @@ internal class HostScene(
             node.geometry.height,
             root.resources.displayMetrics.density,
             node.backgroundLayers,
+            RectF(
+                node.geometry.contentX,
+                node.geometry.contentY,
+                node.geometry.contentX + node.geometry.contentWidth,
+                node.geometry.contentY + node.geometry.contentHeight,
+            ),
         )
         node.setOverflowClipGeometry(geometry)
     }
@@ -459,10 +466,10 @@ internal class HostScene(
         }
 
     private fun backgroundBox(value: Float): HostBackgroundBox =
-        if (value == BACKGROUND_BOX_BORDER.toFloat()) {
-            HostBackgroundBox.Border
-        } else {
-            HostBackgroundBox.Padding
+        when (value) {
+            BACKGROUND_BOX_BORDER.toFloat() -> HostBackgroundBox.Border
+            BACKGROUND_BOX_PADDING.toFloat() -> HostBackgroundBox.Padding
+            else -> HostBackgroundBox.Content
         }
 
     private fun validBackgroundLayers(
@@ -532,7 +539,9 @@ internal class HostScene(
             value == BACKGROUND_ROUND.toFloat()
 
     private fun validBackgroundBox(value: Float): Boolean =
-        value == BACKGROUND_BOX_BORDER.toFloat() || value == BACKGROUND_BOX_PADDING.toFloat()
+        value == BACKGROUND_BOX_BORDER.toFloat() ||
+            value == BACKGROUND_BOX_PADDING.toFloat() ||
+            value == BACKGROUND_BOX_CONTENT.toFloat()
 
     private companion object {
         const val BACKGROUND_GEOMETRY_PACKED_SIZE = 15
@@ -547,6 +556,7 @@ internal class HostScene(
         const val BACKGROUND_ROUND = 3
         const val BACKGROUND_BOX_BORDER = 0
         const val BACKGROUND_BOX_PADDING = 1
+        const val BACKGROUND_BOX_CONTENT = 2
         const val BACKGROUND_ATTACHMENT_SCROLL = 0
         const val BACKGROUND_BLEND_NORMAL = 0
     }
