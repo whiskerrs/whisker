@@ -92,6 +92,25 @@ impl LogicalClip {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PresentationContext {
+    origin: [f32; 2],
+    transform: Transform,
+    clip: LogicalClip,
+    opacity: f32,
+}
+
+impl Default for PresentationContext {
+    fn default() -> Self {
+        Self {
+            origin: [0.0; 2],
+            transform: Transform::IDENTITY,
+            clip: LogicalClip::default(),
+            opacity: 1.0,
+        }
+    }
+}
+
 fn multiply_transform(left: Transform, right: Transform) -> Transform {
     let mut result = [0.0; 16];
     for column in 0..4 {
@@ -173,15 +192,7 @@ impl DesktopScene {
         roots.sort_by_key(|(id, z)| (*z, id.get()));
         let mut commands = Vec::new();
         for (root, _) in roots {
-            self.collect_commands(
-                root,
-                0.0,
-                0.0,
-                Transform::IDENTITY,
-                LogicalClip::default(),
-                1.0,
-                &mut commands,
-            );
+            self.collect_commands(root, PresentationContext::default(), &mut commands);
         }
         commands
     }
@@ -189,24 +200,20 @@ impl DesktopScene {
     fn collect_commands<'a>(
         &'a self,
         id: NodeId,
-        parent_x: f32,
-        parent_y: f32,
-        ancestor_transform: Transform,
-        ancestor_clip: LogicalClip,
-        ancestor_opacity: f32,
+        context: PresentationContext,
         commands: &mut Vec<PaintCommand<'a>>,
     ) {
         let node = self.nodes.get(&id).expect("retained child remains live");
         let presentation = &node.presentation;
         let border = LayoutRect {
-            x: parent_x + presentation.layout.border_box.x,
-            y: parent_y + presentation.layout.border_box.y,
+            x: context.origin[0] + presentation.layout.border_box.x,
+            y: context.origin[1] + presentation.layout.border_box.y,
             width: presentation.layout.border_box.width,
             height: presentation.layout.border_box.height,
         };
-        let opacity = ancestor_opacity * presentation.opacity;
+        let opacity = context.opacity * presentation.opacity;
         let transform = multiply_transform(
-            ancestor_transform,
+            context.transform,
             transform_around(presentation.transform, border.x, border.y),
         );
         if presentation.visibility == Visibility::Visible {
@@ -214,14 +221,14 @@ impl DesktopScene {
                 commands.push(PaintCommand::Box {
                     rect: border,
                     paint,
-                    clip: ancestor_clip,
+                    clip: context.clip,
                     transform,
                     opacity,
                 });
             }
         }
 
-        let descendant_clip = ancestor_clip.intersect(
+        let descendant_clip = context.clip.intersect(
             border,
             presentation.clip.horizontal == OverflowClip::Hidden,
             presentation.clip.vertical == OverflowClip::Hidden,
@@ -264,11 +271,12 @@ impl DesktopScene {
         for (child, _, _) in children {
             self.collect_commands(
                 child,
-                border.x,
-                border.y,
-                transform,
-                descendant_clip,
-                opacity,
+                PresentationContext {
+                    origin: [border.x, border.y],
+                    transform,
+                    clip: descendant_clip,
+                    opacity,
+                },
                 commands,
             );
         }

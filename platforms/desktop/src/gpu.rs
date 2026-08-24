@@ -910,6 +910,7 @@ impl GpuRenderer {
     }
 }
 
+#[cfg(test)]
 fn push_quad(vertices: &mut Vec<BoxVertex>, primitive: BoxPrimitive) {
     push_transformed_quad(vertices, primitive, Transform::IDENTITY);
 }
