@@ -20,7 +20,7 @@ let package = Package(
         .library(name: "WhiskerPaths", targets: ["WhiskerPaths"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.10"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.11"),
     ],
     targets: [
         .target(

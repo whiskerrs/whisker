@@ -5,9 +5,9 @@
 // (no host-side `WhiskerActivity` / `WhiskerView` /
 // `WhiskerModuleRegistry`).
 //
-// Published as `rs.whisker:whisker-module-android`. The `lynxFork`
-// / `whiskerSdkRelease` Gradle property toggle works the same way
-// as in `:whisker-runtime` — see that file's header comment.
+// Published independently as `rs.whisker:whisker-module-android` so native
+// modules can depend on the authoring API without pulling in WhiskerView and
+// the Host renderer.
 
 plugins {
     id("com.android.library")

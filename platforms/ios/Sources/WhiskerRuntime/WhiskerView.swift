@@ -1,0 +1,234 @@
+import UIKit
+import WhiskerModule
+
+/** The single iOS View that owns a Whisker runtime and its native scene. */
+public final class WhiskerView: UIView {
+    private var displayLink: CADisplayLink?
+    private var hostToken: UnsafeMutableRawPointer?
+    private var runtimeHandle: UnsafeMutableRawPointer?
+    private var isApplicationActive = true
+    private let modules = HostModuleDispatcher()
+    private lazy var scene = HostScene(
+        root: self,
+        logicalBounds: { [unowned self] in self.logicalBounds },
+        emitElementEvent: { [weak self] node, name, detail in
+            self?.dispatchElementEvent(node: node, name: name, detail: detail)
+        }
+    )
+
+    private var logicalBounds: CGRect { bounds.inset(by: safeAreaInsets) }
+
+    public override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
+    }
+
+    public required init?(coder: NSCoder) { nil }
+
+    deinit {
+        unmount()
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    public override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            WhiskerInsetsDispatcher.attach(self)
+            mountWhenSized()
+        } else {
+            unmount()
+            WhiskerInsetsDispatcher.detach(self)
+        }
+    }
+
+    public override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        WhiskerInsetsDispatcher.update(self)
+        if runtimeHandle != nil { requestFrame() }
+    }
+
+    public override func layoutSubviews() {
+        super.layoutSubviews()
+        mountWhenSized()
+        if runtimeHandle != nil { requestFrame() }
+    }
+
+    private func mountWhenSized() {
+        let viewport = logicalBounds
+        guard runtimeHandle == nil, window != nil, viewport.width > 0, viewport.height > 0 else { return }
+        let token = Unmanaged.passRetained(self).toOpaque()
+        hostToken = token
+        WhiskerModuleEventCenter.installEventSink { [weak self] module, event, payload in
+            self?.dispatchModuleEvent(module: module, event: event, payload: payload)
+        }
+        runtimeHandle = whiskerViewCreate(
+            Float(viewport.width), Float(viewport.height), Float(window?.screen.scale ?? 1),
+            whiskerIOSRequestFrame, token,
+            whiskerIOSBootstrap, token,
+            whiskerIOSMeasure, token,
+            whiskerIOSPresentFrame, token,
+            whiskerIOSInvokeModule, whiskerIOSObserveModule, token
+        )
+        if runtimeHandle != nil {
+            driveRuntimeFrame(timestampMs: ProcessInfo.processInfo.systemUptime * 1_000)
+            requestFrame()
+        } else {
+            Unmanaged<WhiskerView>.fromOpaque(token).release()
+            hostToken = nil
+        }
+    }
+
+    private func unmount() {
+        guard let handle = runtimeHandle else { return }
+        runtimeHandle = nil
+        displayLink?.invalidate()
+        displayLink = nil
+        whiskerViewDestroy(handle)
+        WhiskerModuleEventCenter.installEventSink(nil)
+        scene.clear()
+        if let token = hostToken {
+            Unmanaged<WhiskerView>.fromOpaque(token).release()
+            hostToken = nil
+        }
+    }
+
+    func requestFrame() {
+        guard runtimeHandle != nil, isApplicationActive, window != nil else { return }
+        if displayLink == nil {
+            displayLink = CADisplayLink(target: self, selector: #selector(driveFrame(_:)))
+            displayLink?.add(to: .main, forMode: .common)
+        }
+        displayLink?.isPaused = false
+    }
+
+    @objc private func driveFrame(_ link: CADisplayLink) {
+        guard runtimeHandle != nil, isApplicationActive else { link.isPaused = true; return }
+        let idle = driveRuntimeFrame(timestampMs: link.timestamp * 1_000)
+        link.isPaused = idle
+    }
+
+    @discardableResult
+    private func driveRuntimeFrame(timestampMs: Double) -> Bool {
+        guard let handle = runtimeHandle else { return true }
+        return whiskerViewTick(
+            handle,
+            timestampMs,
+            Float(logicalBounds.width), Float(logicalBounds.height), Float(window?.screen.scale ?? 1)
+        )
+    }
+
+    @objc private func applicationDidBecomeActive() {
+        isApplicationActive = true
+        mountWhenSized()
+        requestFrame()
+    }
+
+    @objc private func applicationWillResignActive() {
+        isApplicationActive = false
+        displayLink?.isPaused = true
+    }
+
+    func bootstrap(_ raw: WhiskerMobileBootstrap) -> Bool {
+        HostElementBootstrap.bind(raw)
+    }
+
+    func applyFrame(
+        _ frame: WhiskerMobileFrame,
+        response: inout WhiskerMobileApplyResponse
+    ) -> Bool {
+        scene.applyFrame(frame, response: &response)
+    }
+
+#if WHISKER_HOST_CONFORMANCE
+    func applyConformanceFrame(
+        _ frame: WhiskerMobileFrame,
+        response: inout WhiskerMobileApplyResponse
+    ) -> Bool {
+        scene.applyFrame(frame, response: &response)
+    }
+#endif
+    private func dispatchElementEvent(node: UInt64, name: String, detail: WhiskerValue) {
+        scene.dispatchOrDefer { [weak self] in
+            guard let self, let handle = runtimeHandle else { return }
+            var raw = detail.toRaw()
+            defer { WhiskerValue.releaseRaw(&raw) }
+            let nameBytes = Array(name.utf8)
+            nameBytes.withUnsafeBytes { nameBuffer in
+                _ = whiskerViewDispatchEvent(
+                    handle,
+                    ProcessInfo.processInfo.systemUptime * 1_000,
+                    node,
+                    nameBuffer.bindMemory(to: UInt8.self).baseAddress,
+                    nameBytes.count,
+                    &raw
+                )
+            }
+        }
+    }
+
+    func invokeModule(
+        module name: String,
+        method: String,
+        rawArgs: UnsafePointer<WhiskerValueRaw>?,
+        argumentCount: Int,
+        isAsync: Bool,
+        result: @escaping WhiskerModuleResult,
+        resultData: UnsafeMutableRawPointer?
+    ) -> Bool {
+        modules.invoke(
+            module: name,
+            method: method,
+            rawArgs: rawArgs,
+            argumentCount: argumentCount,
+            isAsync: isAsync,
+            result: result,
+            resultData: resultData
+        )
+    }
+
+    func observeModule(module: String, event: String, observing: Bool) {
+        modules.observe(module: module, event: event, observing: observing)
+    }
+
+    private func dispatchModuleEvent(module: String, event: String, payload: WhiskerValue) {
+        scene.dispatchOrDefer { [weak self] in
+            guard let self else { return }
+            guard let handle = runtimeHandle else {
+                DispatchQueue.main.async { [weak self] in
+                    guard self?.runtimeHandle != nil else { return }
+                    self?.dispatchModuleEvent(module: module, event: event, payload: payload)
+                }
+                return
+            }
+            var raw = payload.toRaw()
+            defer { WhiskerValue.releaseRaw(&raw) }
+            let moduleBytes = Array(module.utf8)
+            let eventBytes = Array(event.utf8)
+            moduleBytes.withUnsafeBytes { moduleBuffer in
+                eventBytes.withUnsafeBytes { eventBuffer in
+                    _ = whiskerViewDispatchModuleEvent(
+                        handle,
+                        moduleBuffer.bindMemory(to: UInt8.self).baseAddress,
+                        moduleBytes.count,
+                        eventBuffer.bindMemory(to: UInt8.self).baseAddress,
+                        eventBytes.count,
+                        &raw
+                    )
+                }
+            }
+        }
+    }
+}

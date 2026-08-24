@@ -10,6 +10,7 @@ let package = Package(
     platforms: [.iOS(.v13), .macOS(.v13)],
     products: [
         .library(name: "WhiskerModule", targets: ["WhiskerModule"]),
+        .library(name: "WhiskerRuntime", targets: ["WhiskerRuntime"]),
         .plugin(
             name: "WhiskerModuleCodegenPlugin",
             targets: ["WhiskerModuleCodegenPlugin"]
@@ -33,6 +34,11 @@ let package = Package(
             name: "WhiskerModule",
             dependencies: ["WhiskerCBridge", "WhiskerModuleMacros"],
             path: "Sources/WhiskerModule"
+        ),
+        .target(
+            name: "WhiskerRuntime",
+            dependencies: ["WhiskerModule"],
+            path: "Sources/WhiskerRuntime"
         ),
         .executableTarget(
             name: "WhiskerModuleCodegen",

@@ -1,0 +1,221 @@
+package rs.whisker.runtime.paint
+
+import android.graphics.Canvas
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
+import android.graphics.RectF
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.view.View
+import kotlin.math.min
+
+/** Packed Android projection of one protocol `SetBoxPaint` payload. */
+internal data class HostBoxPaint(val values: FloatArray, val names: Array<String>)
+
+/** Applies renderer-independent box paint to the common Host node wrapper. */
+internal fun applyBoxPaint(
+    node: View,
+    paint: HostBoxPaint,
+    logicalWidth: Float,
+    logicalHeight: Float,
+    density: Float,
+) {
+    val values = paint.values
+    require(values.size >= 45)
+    val background = if (values[0] == 0f) {
+        parseNamedColor(paint.names[0])
+    } else {
+        rgba(values[1], values[2], values[3], values[4])
+    }
+    val borderWidths = floatArrayOf(
+        resolveLength(values[5], values[6], logicalHeight) * density,
+        resolveLength(values[7], values[8], logicalWidth) * density,
+        resolveLength(values[9], values[10], logicalHeight) * density,
+        resolveLength(values[11], values[12], logicalWidth) * density,
+    )
+    val borderColors = IntArray(4) { index ->
+        val offset = 13 + index * 5
+        if (values[offset] == 0f) {
+            parseNamedColor(paint.names[index + 1])
+        } else {
+            rgba(values[offset + 1], values[offset + 2], values[offset + 3], values[offset + 4])
+        }
+    }
+    val radii = FloatArray(8) { index ->
+        val offset = 33 + (index / 2) * 2
+        val axis = if (index % 2 == 0) logicalWidth else logicalHeight
+        resolveLength(values[offset], values[offset + 1], axis) * density
+    }
+    val borderStyles = IntArray(4) { index -> values[41 + index].toInt() }
+    val uniformSolidBorder = borderStyles.all { it == BORDER_STYLE_SOLID } &&
+        borderWidths.all { it == borderWidths[0] } &&
+        borderColors.all { it == borderColors[0] }
+    node.background = if (uniformSolidBorder) {
+        GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(background)
+            if (borderWidths[0] > 0f) {
+                setStroke(borderWidths[0].toInt().coerceAtLeast(1), borderColors[0])
+            }
+            cornerRadii = radii
+        }
+    } else {
+        WhiskerBoxDrawable(background, borderWidths, borderColors, borderStyles, radii)
+    }
+}
+
+private fun resolveLength(length: Float, fraction: Float, axis: Float): Float =
+    length + fraction * axis
+
+/** Draws the CSS box model without relying on Android's uniform stroke. */
+private class WhiskerBoxDrawable(
+    private val fillColor: Int,
+    private val borderWidths: FloatArray,
+    private val borderColors: IntArray,
+    private val borderStyles: IntArray,
+    private val cornerRadii: FloatArray,
+) : Drawable() {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+    override fun draw(canvas: Canvas) {
+        val box = RectF(bounds)
+        if (box.isEmpty) return
+        val radii = normalizedRadii(box.width(), box.height())
+        val outer = roundedPath(box, radii)
+        paint.color = fillColor
+        canvas.drawPath(outer, paint)
+
+        val top = borderWidths[0].coerceIn(0f, box.height())
+        val right = borderWidths[1].coerceIn(0f, box.width())
+        val bottom = borderWidths[2].coerceIn(0f, box.height())
+        val left = borderWidths[3].coerceIn(0f, box.width())
+        if (top == 0f && right == 0f && bottom == 0f && left == 0f) return
+
+        if (radii.all { it == 0f }) {
+            drawRectangularEdges(canvas, box, top, right, bottom, left)
+            return
+        }
+
+        val inner = RectF(box.left + left, box.top + top, box.right - right, box.bottom - bottom)
+        val innerPath = if (inner.width() > 0f && inner.height() > 0f) {
+            roundedPath(
+                inner,
+                floatArrayOf(
+                    (radii[0] - left).coerceAtLeast(0f),
+                    (radii[1] - top).coerceAtLeast(0f),
+                    (radii[2] - right).coerceAtLeast(0f),
+                    (radii[3] - top).coerceAtLeast(0f),
+                    (radii[4] - right).coerceAtLeast(0f),
+                    (radii[5] - bottom).coerceAtLeast(0f),
+                    (radii[6] - left).coerceAtLeast(0f),
+                    (radii[7] - bottom).coerceAtLeast(0f),
+                ),
+            )
+        } else {
+            null
+        }
+        val sidePaths = arrayOf(
+            Path().apply {
+                moveTo(box.left, box.top)
+                lineTo(box.right, box.top)
+                lineTo(inner.right, inner.top)
+                lineTo(inner.left, inner.top)
+                close()
+            },
+            Path().apply {
+                moveTo(box.right, box.top)
+                lineTo(box.right, box.bottom)
+                lineTo(inner.right, inner.bottom)
+                lineTo(inner.right, inner.top)
+                close()
+            },
+            Path().apply {
+                moveTo(box.right, box.bottom)
+                lineTo(box.left, box.bottom)
+                lineTo(inner.left, inner.bottom)
+                lineTo(inner.right, inner.bottom)
+                close()
+            },
+            Path().apply {
+                moveTo(box.left, box.bottom)
+                lineTo(box.left, box.top)
+                lineTo(inner.left, inner.top)
+                lineTo(inner.left, inner.bottom)
+                close()
+            },
+        )
+        repeat(4) { side ->
+            if (!paintsSolidSide(side) || borderWidths[side] <= 0f) return@repeat
+            val save = canvas.save()
+            @Suppress("DEPRECATION")
+            canvas.clipPath(outer)
+            if (innerPath != null) {
+                @Suppress("DEPRECATION")
+                canvas.clipPath(innerPath, android.graphics.Region.Op.DIFFERENCE)
+            }
+            paint.color = borderColors[side]
+            canvas.drawPath(sidePaths[side], paint)
+            canvas.restoreToCount(save)
+        }
+    }
+
+    private fun drawRectangularEdges(
+        canvas: Canvas,
+        box: RectF,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        left: Float,
+    ) {
+        val widths = floatArrayOf(top, right, bottom, left)
+        val edges = arrayOf(
+            RectF(box.left, box.top, box.right, box.top + top),
+            RectF(box.right - right, box.top, box.right, box.bottom),
+            RectF(box.left, box.bottom - bottom, box.right, box.bottom),
+            RectF(box.left, box.top, box.left + left, box.bottom),
+        )
+        repeat(4) { side ->
+            if (!paintsSolidSide(side) || widths[side] <= 0f) return@repeat
+            paint.color = borderColors[side]
+            canvas.drawRect(edges[side], paint)
+        }
+    }
+
+    private fun paintsSolidSide(side: Int): Boolean = borderStyles[side] == BORDER_STYLE_SOLID
+
+    private fun normalizedRadii(width: Float, height: Float): FloatArray {
+        val result = cornerRadii.map { it.coerceAtLeast(0f) }.toFloatArray()
+        val denominators = floatArrayOf(
+            result[0] + result[2],
+            result[6] + result[4],
+            result[1] + result[7],
+            result[3] + result[5],
+        )
+        val limits = floatArrayOf(width, width, height, height)
+        var scale = 1f
+        repeat(4) { index ->
+            if (denominators[index] > 0f) scale = min(scale, limits[index] / denominators[index])
+        }
+        if (scale < 1f) repeat(result.size) { result[it] *= scale }
+        return result
+    }
+
+    private fun roundedPath(rect: RectF, radii: FloatArray): Path = Path().apply {
+        addRoundRect(rect, radii, Path.Direction.CW)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+
+    override fun setAlpha(alpha: Int) {
+        paint.alpha = alpha
+    }
+
+    override fun setColorFilter(colorFilter: ColorFilter?) {
+        paint.colorFilter = colorFilter
+    }
+}
+
+private const val BORDER_STYLE_SOLID = 2

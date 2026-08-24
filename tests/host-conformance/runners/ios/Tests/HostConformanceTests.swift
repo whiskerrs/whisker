@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import UIKit
 import WhiskerCBridge
-@testable import WhiskerIOSHost
+@testable import WhiskerRuntime
 @testable import WhiskerModule
 import XCTest
 
@@ -214,6 +214,7 @@ private func color(_ fixture: [String: Any]) throws -> WhiskerMobileColor {
         switch try string(fixture, "value") {
         case "aqua": rgba = (0, 255, 255, 1)
         case "black": rgba = (0, 0, 0, 1)
+        case "blue": rgba = (0, 0, 255, 1)
         case "transparent": rgba = (0, 0, 0, 0)
         default: throw Failure("unsupported fixture named color")
         }

@@ -77,12 +77,13 @@ jobs:
           done
           exit $fail
 
-      # The module API is Swift, and a Swift-only break is invisible to
-      # every Rust job in `ci`.
-      - name: Build the module API
+      # The Host runtime and module API are Swift, and a Swift-only break is
+      # invisible to every Rust job in `ci`. WhiskerRuntime depends on
+      # WhiskerModule, so this validates both products before creating the tag.
+      - name: Build the iOS Host SDK
         working-directory: platforms/ios
         run: |
-          xcodebuild -scheme WhiskerModule \
+          xcodebuild -scheme WhiskerRuntime \
             -destination 'generic/platform=iOS Simulator' \
             -skipPackagePluginValidation \
             build

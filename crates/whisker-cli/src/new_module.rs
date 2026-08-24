@@ -366,9 +366,9 @@ let package = Package(
 /// The exact iOS SwiftPM tag the scaffolded `Package.swift` pins for
 /// the `whisker` git dependency. This is the iOS SPM release tag, which
 /// is versioned independently from the cargo crate version — it must
-/// match whatever the first-party modules pin (see
-/// `packages/whisker-webview/Package.swift`, currently `exact: "0.1.0"`).
-const WHISKER_IOS_SPM_TAG: &str = "0.1.0";
+/// match [`whisker_build::ios::WHISKER_IOS_SPM_VERSION`] and every
+/// first-party module manifest.
+const WHISKER_IOS_SPM_TAG: &str = whisker_build::ios::WHISKER_IOS_SPM_VERSION;
 
 fn build_gradle(v: &Vars) -> String {
     format!(

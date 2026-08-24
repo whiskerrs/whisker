@@ -153,7 +153,9 @@ private class Driver(private val context: android.content.Context) {
         }
         val radii = border?.getJSONArray("radii")?.floats() ?: FloatArray(4)
         radii.forEach { radius -> numbers += listOf(radius, 0f) }
-        check(numbers.size == 41)
+        val styles = border?.getJSONArray("styles")?.strings() ?: Array(4) { "none" }
+        styles.forEach { style -> numbers += borderStyle(style).toFloat() }
+        check(numbers.size == 45)
         check(names.size == 5)
         return numbers.toFloatArray() to names.toTypedArray()
     }
@@ -172,6 +174,14 @@ private class Driver(private val context: android.content.Context) {
             )
             names += ""
         }
+    }
+
+    private fun borderStyle(value: String): Int {
+        val names = arrayOf(
+            "none", "hidden", "solid", "dashed", "dotted",
+            "double", "groove", "ridge", "inset", "outset",
+        )
+        return names.indexOf(value).also { check(it >= 0) { "unknown border style: $value" } }
     }
 
     private fun capture(): Bitmap {
@@ -194,6 +204,9 @@ private fun JSONArray.objects(): Sequence<JSONObject> =
 
 private fun JSONArray.floats(): FloatArray =
     FloatArray(length()) { index -> getDouble(index).toFloat() }
+
+private fun JSONArray.strings(): Array<String> =
+    Array(length()) { index -> getString(index) }
 
 private fun assertPixelsClose(id: String, actual: Bitmap, expected: Bitmap) {
     val actualPixels = IntArray(actual.width * actual.height)

@@ -40,7 +40,6 @@ const XCSCHEME: &str =
     include_str!("templates/ios/Project.xcodeproj/xcshareddata/xcschemes/scheme.xcscheme");
 const INFO_PLIST: &str = include_str!("templates/ios/Info.plist");
 const APP_DELEGATE_SWIFT: &str = include_str!("templates/ios/Sources/AppDelegate.swift");
-const WHISKER_VIEW_SWIFT: &str = include_str!("templates/ios/Sources/WhiskerView.swift");
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct IosInputs {
@@ -117,18 +116,6 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
     v.insert("ios_scheme", inputs.scheme.clone());
     v.insert("ios_bundle_id", inputs.bundle_id.clone());
     v.insert("ios_deployment_target", inputs.deployment_target.clone());
-    // WhiskerRuntime resolves from the remote `whisker` SwiftPM
-    // package (`XCRemoteSwiftPackageReference`) so the generated
-    // project builds outside the monorepo. Module `Package.swift`
-    // pins must name the same version, or SwiftPM sees two identities.
-    v.insert(
-        "whisker_ios_spm_url",
-        whisker_build::ios::WHISKER_IOS_SPM_URL.to_string(),
-    );
-    v.insert(
-        "whisker_ios_spm_version",
-        whisker_build::ios::WHISKER_IOS_SPM_VERSION.to_string(),
-    );
     v.insert(
         "whisker_modules_ios_path",
         inputs.whisker_modules_path.display().to_string(),
@@ -462,10 +449,6 @@ fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
             out_dir.join("Sources/AppDelegate.swift"),
             APP_DELEGATE_SWIFT,
         ),
-        (
-            out_dir.join("Sources/WhiskerView.swift"),
-            WHISKER_VIEW_SWIFT,
-        ),
     ];
     for (path, template) in text_files {
         let rendered =
@@ -657,7 +640,7 @@ pub fn inputs_from_with_engine(
         // Bump on any template or renderer change: it feeds the sync
         // fingerprint, and without it existing `gen/ios/` trees keep
         // their stale output.
-        template_version: 33,
+        template_version: 34,
     })
 }
 
@@ -689,30 +672,14 @@ mod tests {
             extra_info_plist: BTreeMap::new(),
             extra_files: BTreeMap::new(),
             pbxproj_ops: Vec::new(),
-            template_version: 33,
+            template_version: 34,
         }
     }
 
     #[test]
-    fn whisker_view_delegates_text_to_the_registered_element_factory() {
-        assert!(!WHISKER_VIEW_SWIFT.contains("UILabel"));
-        assert!(WHISKER_VIEW_SWIFT.contains("mounted.setText("));
-        assert!(!WHISKER_VIEW_SWIFT.contains("layoutContent("));
-        assert!(WHISKER_VIEW_SWIFT.contains("mountedElement.view.frame = contentFrame"));
-    }
-
-    #[test]
-    fn whisker_view_uses_typed_bootstrap_measure_and_transactional_frames() {
-        for expected in [
-            "fileprivate func bootstrap(",
-            "private let whiskerIOSMeasure:",
-            "fileprivate func applyFrame(",
-            "validate(values, snapshot:",
-            "deferredEvents",
-        ] {
-            assert!(WHISKER_VIEW_SWIFT.contains(expected), "missing {expected}");
-        }
-        assert!(!WHISKER_VIEW_SWIFT.contains("JSONSerialization"));
+    fn generated_delegate_only_composes_the_sdk_view() {
+        assert!(APP_DELEGATE_SWIFT.contains("WhiskerView(frame:"));
+        assert!(!APP_DELEGATE_SWIFT.contains("class WhiskerView"));
     }
 
     #[test]
@@ -724,7 +691,6 @@ mod tests {
         for expected in [
             "Info.plist",
             "Sources/AppDelegate.swift",
-            "Sources/WhiskerView.swift",
             "HelloWorld.xcodeproj/project.pbxproj",
             "HelloWorld.xcodeproj/project.xcworkspace/contents.xcworkspacedata",
             "HelloWorld.xcodeproj/xcshareddata/xcschemes/HelloWorld.xcscheme",
@@ -732,6 +698,10 @@ mod tests {
         ] {
             assert!(out.join(expected).exists(), "missing: {expected}");
         }
+        assert!(
+            !out.join("Sources/WhiskerView.swift").exists(),
+            "the generated app must consume WhiskerView from the iOS SDK"
+        );
         assert!(!out.join("project.yml").exists());
         let _ = std::fs::remove_dir_all(&tmp);
     }

@@ -1,10 +1,11 @@
 name: publish-sdk
 
-# Publishes the two Whisker Android SDK artifacts to the same
+# Publishes the Whisker Android SDK artifacts to the same
 # `gh-pages` Maven repository the Gradle plugin ships from
 # (https://whiskerrs.github.io/whisker/maven/):
 #
 #   * `rs.whisker:whisker-module-android:<ver>`  (AAR)
+#   * `rs.whisker:whisker-runtime-android:<ver>` (AAR)
 #   * `rs.whisker:ksp:<ver>`                     (jar)
 #
 # Triggers:
@@ -68,7 +69,7 @@ jobs:
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "Resolved SDK version: $VER"
 
-      - name: Stamp version into the two build.gradle.kts files
+      - name: Stamp version into the SDK build.gradle.kts files
         # Same `sed` pattern as `publish-gradle-plugin.yml`: anchor on
         # the start-of-line `version = "..."` assignment so unrelated
         # `version = ...` strings inside dependency coords are left
@@ -80,6 +81,7 @@ jobs:
           VER="${{ steps.ver.outputs.version }}"
           for FILE in \
             platforms/android/module/build.gradle.kts \
+            platforms/android/runtime/build.gradle.kts \
             platforms/android/ksp/ksp/build.gradle.kts; do
             sed -i -E "s/^version = \"[^\"]*\"$/version = \"${VER}\"/" "$FILE"
             echo "After sed in $FILE:"

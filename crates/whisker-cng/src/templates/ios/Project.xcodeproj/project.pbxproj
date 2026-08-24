@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		46E97003F6597438A0AC93C0 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BCE /* AppDelegate.swift */; };
-		46E97003F6597438A0AC93C1 /* WhiskerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BCF /* WhiskerView.swift */; };
 		46E97003F6597438A0AC93C2 /* WhiskerDriver.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BD0 /* WhiskerDriver.framework */; };
 		46E97003F6597438A0AC93C3 /* WhiskerDriver.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BD0 /* WhiskerDriver.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		46E97003F6597438A0AC93C4 /* WhiskerModules in Frameworks */ = {isa = PBXBuildFile; productRef = 4BEF20C6F91CCD1A10D66BD2 /* WhiskerModules */; };
@@ -18,7 +17,6 @@
 /* Begin PBXFileReference section */
 		35D466DB8920E7A52C599EBC /* {{ios_scheme}}.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "{{ios_scheme}}.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		4BEF20C6F91CCD1A10D66BCE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		4BEF20C6F91CCD1A10D66BCF /* WhiskerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiskerView.swift; sourceTree = "<group>"; };
 		4BEF20C6F91CCD1A10D66BD0 /* WhiskerDriver.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = Frameworks/WhiskerDriver.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 {{extra_pbxproj_file_reference_entries}}
 /* End PBXFileReference section */
@@ -63,7 +61,6 @@
 			isa = PBXGroup;
 			children = (
 				4BEF20C6F91CCD1A10D66BCE /* AppDelegate.swift */,
-				4BEF20C6F91CCD1A10D66BCF /* WhiskerView.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -158,7 +155,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				46E97003F6597438A0AC93C0 /* AppDelegate.swift in Sources */,
-				46E97003F6597438A0AC93C1 /* WhiskerView.swift in Sources */,
 {{extra_pbxproj_sources_phase_files}}
 			);
 			runOnlyForDeploymentPostprocessing = 0;

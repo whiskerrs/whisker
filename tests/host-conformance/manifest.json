@@ -17,6 +17,13 @@
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel"]
     },
     {
+      "id": "wpt.css2.borders.border-left-003",
+      "feature": "border-left",
+      "fixture": "wpt/css/CSS2/borders/border-left-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel"]
+    },
+    {
       "id": "host.measure.text.basic",
       "feature": "text-measurement",
       "fixture": "core/text-measure-basic.json",

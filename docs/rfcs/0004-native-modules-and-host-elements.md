@@ -671,6 +671,31 @@ providers. Re-running CNG after a clean checkout or after changing Cargo
 dependencies is expected, but invoking `whisker run` or `whisker build` is not
 required to compile an already generated Xcode or Gradle project.
 
+The checked-in mobile Host itself is an SDK dependency rather than generated
+application source. Android packages `WhiskerView`, measurement, scene
+projection, module dispatch, and paint as the `whisker-runtime-android` Gradle
+library under `platforms/android`. iOS exposes the symmetric source target as
+the `WhiskerRuntime` SwiftPM product under `platforms/ios`. Consequently the
+only generated application source is `MainActivity.kt` on Android and
+`AppDelegate.swift` on iOS; those files load/register the application and
+compose the SDK-owned `WhiskerView`.
+
+Android publishes `whisker-module-android` and `whisker-runtime-android` as
+separate AARs at the same SDK version. Native module libraries depend only on
+the smaller module API AAR; an application depends on the runtime AAR, whose
+published metadata pulls the module API transitively. CNG uses local Gradle
+projects when developing inside the Whisker repository and otherwise emits the
+runtime Maven coordinate plus Whisker's public Maven repository.
+
+iOS publishes both products as source in one tagged `Whisker` SwiftPM package.
+The generated Xcode project links one local, generated `WhiskerModules`
+aggregator product. That aggregator pins the released Whisker package, depends
+on `WhiskerRuntime` and every discovered native module package, and re-exports
+the runtime so the generated `AppDelegate` has one import and registration
+entry point. `WhiskerDriver.framework` is separate: it is the app-specific Rust
+dynamic library built and embedded by the generated Xcode build phase, not a
+distributed Host SDK framework.
+
 Every platform uses an explicit `WhiskerModule` declaration signal. Rust
 annotates an `impl WhiskerModule` block with `#[WhiskerModule]`; Android
 annotates a concrete `Module` subclass with `@WhiskerModule`; iOS applies the

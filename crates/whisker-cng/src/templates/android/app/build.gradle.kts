@@ -58,10 +58,10 @@ android {
 }
 
 dependencies {
-    if (rootProject.findProject(":whisker-module") != null) {
-        implementation(project(":whisker-module"))
+    if (rootProject.findProject(":whisker-runtime") != null) {
+        implementation(project(":whisker-runtime"))
     } else {
-        implementation("rs.whisker:whisker-module-android:{{whisker_sdk_version}}")
+        implementation("rs.whisker:whisker-runtime-android:{{whisker_sdk_version}}")
     }
 {{extra_gradle_dependencies}}
 }
