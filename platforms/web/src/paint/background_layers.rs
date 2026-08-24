@@ -9,12 +9,10 @@ use crate::{WebError, set_style};
 
 /// Whether every layer belongs to the subset currently implemented by the DOM Host.
 pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
-    if layers.is_empty() {
-        return true;
-    }
-    let [layer] = layers else {
-        return false;
-    };
+    layers.iter().all(supports_layer)
+}
+
+fn supports_layer(layer: &BackgroundLayer) -> bool {
     let supported_image = match &layer.image {
         PaintImage::LinearGradient {
             repeating: false,
@@ -78,7 +76,7 @@ pub(crate) fn apply(
 ) -> Result<(), WebError> {
     if !supports(layers) {
         return Err(WebError(
-            "DOM Host only implements one supported gradient with explicit stops, supported border/padding boxes, two-axis auto or explicit size, and supported repeat modes"
+            "DOM Host only implements supported gradients with explicit stops, supported boxes, two-axis auto or explicit size, and supported repeat modes"
                 .into(),
         ));
     }
@@ -92,29 +90,37 @@ pub(crate) fn apply(
             .collect::<Result<Vec<_>, _>>()?
             .join(", ")
     };
-    let position = layers
-        .first()
-        .map_or_else(|| "0px 0px".into(), background_position);
-    let size = layers
-        .first()
-        .map_or_else(|| "auto".into(), background_size);
-    let repeat = layers
-        .first()
-        .map_or_else(|| "repeat".into(), background_repeat);
-    let origin = layers
-        .first()
-        .map_or("padding-box", |layer| background_box(layer.origin));
-    let clip = layers
-        .first()
-        .map_or("border-box", |layer| background_box(layer.clip));
+    let position = layer_values(layers, "0px 0px", background_position);
+    let size = layer_values(layers, "auto", background_size);
+    let repeat = layer_values(layers, "repeat", background_repeat);
+    let origin = layer_values(layers, "padding-box", |layer| {
+        background_box(layer.origin).into()
+    });
+    let clip = layer_values(layers, "border-box", |layer| {
+        background_box(layer.clip).into()
+    });
+    let attachment = layer_values(layers, "scroll", |_| "scroll".into());
+    let blend_mode = layer_values(layers, "normal", |_| "normal".into());
     set_style(element, "background-image", &images)?;
     set_style(element, "background-position", &position)?;
     set_style(element, "background-size", &size)?;
     set_style(element, "background-repeat", &repeat)?;
-    set_style(element, "background-origin", origin)?;
-    set_style(element, "background-clip", clip)?;
-    set_style(element, "background-attachment", "scroll")?;
-    set_style(element, "background-blend-mode", "normal")
+    set_style(element, "background-origin", &origin)?;
+    set_style(element, "background-clip", &clip)?;
+    set_style(element, "background-attachment", &attachment)?;
+    set_style(element, "background-blend-mode", &blend_mode)
+}
+
+fn layer_values(
+    layers: &[BackgroundLayer],
+    empty: &str,
+    value: impl Fn(&BackgroundLayer) -> String,
+) -> String {
+    if layers.is_empty() {
+        empty.into()
+    } else {
+        layers.iter().map(value).collect::<Vec<_>>().join(", ")
+    }
 }
 
 fn background_image(layer: &BackgroundLayer) -> Result<String, WebError> {
