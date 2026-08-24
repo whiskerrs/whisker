@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-size-009",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/background-size-009.html",
+    "reference_path": "css/css-backgrounds/reference/background-size-006-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "A percentage background width resolves against the positioning area and no-repeat paints only the resolved image rectangle.",
+    "adaptation": "Percentage and intrinsic-ratio resolution remain Rust responsibilities. The Host receives the WPT result as an explicit 45 by 45 logical-pixel background size in a 100 by 50 box. A constant green gradient replaces the upstream 1 by 1 green resource so this case isolates layer sizing and no-repeat geometry from resource loading."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 50.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 50.0],
+            "background": { "kind": "srgba", "red": 255, "green": 255, "blue": 255, "alpha": 0.0 },
+            "background_layer": {
+              "size": [
+                { "length": 45.0, "fraction": 0.0 },
+                { "length": 45.0, "fraction": 0.0 }
+              ],
+              "repeat_x": "no_repeat",
+              "repeat_y": "no_repeat"
+            },
+            "linear_gradient": {
+              "angle_degrees": 180.0,
+              "stops": [
+                { "color": { "kind": "named", "value": "green" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "green" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.explicit-size-no-repeat",
+        "samples": [
+          { "point": [1.0, 1.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [43.0, 43.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [46.0, 20.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [20.0, 46.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [90.0, 20.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

@@ -31,6 +31,13 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.background-size-009",
+      "feature": "background-size-no-repeat",
+      "fixture": "wpt/css/css-backgrounds/background-size-009.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.test1",
       "feature": "border-radius",
       "fixture": "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json",
