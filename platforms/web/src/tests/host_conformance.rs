@@ -110,6 +110,22 @@ impl Driver {
                                             node.background_layer.repeat_y,
                                         ) {
                                             (
+                                                ImageRepeatFixture::Round,
+                                                ImageRepeatFixture::Round,
+                                            ) if node.background_layer.position
+                                                != [LengthPercentageFixture::default(); 2] =>
+                                            {
+                                                Some("paint.background-layers.repeat-round-position")
+                                            }
+                                            (
+                                                ImageRepeatFixture::Round,
+                                                ImageRepeatFixture::NoRepeat,
+                                            ) => Some("paint.background-layers.repeat-round-x"),
+                                            (
+                                                ImageRepeatFixture::NoRepeat,
+                                                ImageRepeatFixture::Round,
+                                            ) => Some("paint.background-layers.repeat-round-y"),
+                                            (
                                                 ImageRepeatFixture::Repeat,
                                                 ImageRepeatFixture::NoRepeat,
                                             ) => Some("paint.background-layers.repeat-x"),
@@ -488,6 +504,15 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-backgrounds/background-repeat-space-single.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-repeat-space-single.json"
+        ),
+        "wpt/css/css-backgrounds/background-repeat-round-x.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-repeat-round-x.json"
+        ),
+        "wpt/css/css-backgrounds/background-repeat-round-y.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-repeat-round-y.json"
+        ),
+        "wpt/css/css-backgrounds/background-repeat-round-position.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-repeat-round-position.json"
         ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
@@ -1208,7 +1233,13 @@ fn fixture_background_repeat(layer: BackgroundLayerFixture) -> &'static str {
         (ImageRepeatFixture::Space, ImageRepeatFixture::NoRepeat) => "space no-repeat",
         (ImageRepeatFixture::Repeat, ImageRepeatFixture::Space) => "repeat space",
         (ImageRepeatFixture::NoRepeat, ImageRepeatFixture::Space) => "no-repeat space",
-        (ImageRepeatFixture::Round, _) | (_, ImageRepeatFixture::Round) => "round",
+        (ImageRepeatFixture::Round, ImageRepeatFixture::Round) => "round",
+        (ImageRepeatFixture::Round, ImageRepeatFixture::Repeat) => "round repeat",
+        (ImageRepeatFixture::Round, ImageRepeatFixture::NoRepeat) => "round no-repeat",
+        (ImageRepeatFixture::Round, ImageRepeatFixture::Space) => "round space",
+        (ImageRepeatFixture::Repeat, ImageRepeatFixture::Round) => "repeat round",
+        (ImageRepeatFixture::NoRepeat, ImageRepeatFixture::Round) => "no-repeat round",
+        (ImageRepeatFixture::Space, ImageRepeatFixture::Round) => "space round",
     }
 }
 
