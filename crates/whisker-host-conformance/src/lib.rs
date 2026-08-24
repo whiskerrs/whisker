@@ -146,6 +146,13 @@ pub enum Command {
         #[serde(default)]
         border: Option<BorderFixture>,
     },
+    /// Presents a retained tree of semantic boxes through the production Host path.
+    PresentScene {
+        /// Frame target revision.
+        revision: u64,
+        /// Nodes ordered independently of their parent relationships.
+        nodes: Vec<SceneNodeFixture>,
+    },
     /// Captures one named presentation checkpoint.
     Checkpoint {
         /// Checkpoint contract name.
@@ -303,6 +310,49 @@ pub struct BorderFixture {
     pub styles: [BorderStyleFixture; 4],
     /// Corner radii in top-left, top-right, bottom-right, bottom-left order.
     pub radii: [CornerRadiusFixture; 4],
+}
+
+/// One node in a retained Host scene fixture.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SceneNodeFixture {
+    /// Stable non-zero node identifier.
+    pub id: u64,
+    /// Optional parent node identifier.
+    pub parent: Option<u64>,
+    /// Parent-relative x, y, width, and height in logical pixels.
+    pub rect: [f32; 4],
+    /// Box background color.
+    pub background: ColorFixture,
+    /// Optional border semantics.
+    #[serde(default)]
+    pub border: Option<BorderFixture>,
+    /// Descendant overflow clipping semantics.
+    #[serde(default)]
+    pub clip: BoxClipFixture,
+}
+
+/// Independent horizontal and vertical descendant clipping.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BoxClipFixture {
+    /// Horizontal overflow behavior.
+    #[serde(default)]
+    pub horizontal: OverflowClipFixture,
+    /// Vertical overflow behavior.
+    #[serde(default)]
+    pub vertical: OverflowClipFixture,
+}
+
+/// One Host-protocol overflow axis.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OverflowClipFixture {
+    /// Descendants remain visible outside this axis.
+    #[default]
+    Visible,
+    /// Descendants are clipped to this axis.
+    Hidden,
 }
 
 /// One circular or elliptical CSS border radius.
@@ -616,6 +666,8 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
                 && rect[3] >= 0.0
                 && valid_color(background)
                 && border.as_ref().is_none_or(valid_border) => {}
+            Command::PresentScene { revision, nodes }
+                if *revision > 0 && valid_scene_nodes(nodes) => {}
             Command::Checkpoint {
                 name,
                 samples,
@@ -694,6 +746,41 @@ fn valid_border(border: &BorderFixture) -> bool {
         .all(|value| value.is_finite() && *value >= 0.0)
         && border.radii.iter().all(|radius| radius.is_valid())
         && border.colors.iter().all(valid_color)
+}
+
+fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
+    if nodes.is_empty() {
+        return false;
+    }
+    let ids = nodes
+        .iter()
+        .map(|node| node.id)
+        .collect::<std::collections::BTreeSet<_>>();
+    ids.len() == nodes.len()
+        && !ids.contains(&0)
+        && nodes.iter().all(|node| {
+            node.parent
+                .is_none_or(|parent| parent != node.id && ids.contains(&parent))
+                && node.rect.iter().all(|value| value.is_finite())
+                && node.rect[2] >= 0.0
+                && node.rect[3] >= 0.0
+                && valid_color(&node.background)
+                && node.border.as_ref().is_none_or(valid_border)
+        })
+        && nodes.iter().all(|node| {
+            let mut seen = std::collections::BTreeSet::new();
+            let mut current = Some(node.id);
+            while let Some(id) = current {
+                if !seen.insert(id) {
+                    return false;
+                }
+                current = nodes
+                    .iter()
+                    .find(|candidate| candidate.id == id)
+                    .and_then(|candidate| candidate.parent);
+            }
+            true
+        })
 }
 
 #[cfg(test)]

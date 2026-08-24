@@ -20,11 +20,10 @@ pub(crate) fn apply(
 }
 
 fn overflow(value: OverflowClip, scroll_content: bool) -> &'static str {
-    if value == OverflowClip::Hidden {
-        "hidden"
-    } else if scroll_content {
-        "auto"
-    } else {
-        "visible"
+    match (value, scroll_content) {
+        (OverflowClip::Hidden, true) => "hidden",
+        (OverflowClip::Visible, true) => "auto",
+        (OverflowClip::Hidden, false) => "clip",
+        (OverflowClip::Visible, false) => "visible",
     }
 }

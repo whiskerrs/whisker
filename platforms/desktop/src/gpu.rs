@@ -947,6 +947,19 @@ pub(crate) async fn render_box_primitives_offscreen(
     primitives: &[BoxPrimitive],
     logical_size: [u32; 2],
 ) -> Result<Vec<u8>, GpuError> {
+    let clipped = primitives
+        .iter()
+        .copied()
+        .map(|primitive| (primitive, LogicalClip::default()))
+        .collect::<Vec<_>>();
+    render_clipped_box_primitives_offscreen(&clipped, logical_size).await
+}
+
+#[cfg(all(test, feature = "host-conformance"))]
+pub(crate) async fn render_clipped_box_primitives_offscreen(
+    primitives: &[(BoxPrimitive, LogicalClip)],
+    logical_size: [u32; 2],
+) -> Result<Vec<u8>, GpuError> {
     let [width, height] = logical_size;
     if width == 0 || height == 0 {
         return Err(GpuError(
@@ -968,8 +981,11 @@ pub(crate) async fn render_box_primitives_offscreen(
     box_gpu.update_viewport(&queue, [width as f32, height as f32]);
 
     let mut vertices = Vec::new();
-    for primitive in primitives {
+    let mut draws = Vec::new();
+    for (primitive, clip) in primitives {
+        let start = vertices.len() as u32;
         push_quad(&mut vertices, *primitive);
+        draws.push((start..vertices.len() as u32, *clip));
     }
     let vertex_buffer = (!vertices.is_empty()).then(|| {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1007,8 +1023,8 @@ pub(crate) async fn render_box_primitives_offscreen(
         label: Some("whisker Desktop conformance encoder"),
     });
     {
-        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-            label: Some("whisker Desktop conformance boxes"),
+        encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("whisker Desktop conformance clear"),
             color_attachments: &[Some(RenderPassColorAttachment {
                 view: &view,
                 resolve_target: None,
@@ -1021,11 +1037,32 @@ pub(crate) async fn render_box_primitives_offscreen(
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        if let Some(vertex_buffer) = &vertex_buffer {
+    }
+    if let Some(vertex_buffer) = &vertex_buffer {
+        for (range, clip) in draws {
+            let Some((x, y, clip_width, clip_height)) = offscreen_scissor(clip, width, height)
+            else {
+                continue;
+            };
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("whisker Desktop conformance boxes"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Load,
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_scissor_rect(x, y, clip_width, clip_height);
             pass.set_pipeline(&box_gpu.pipeline);
             pass.set_bind_group(0, &box_gpu.viewport_bind_group, &[]);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            pass.draw(0..vertices.len() as u32, 0..1);
+            pass.draw(range, 0..1);
         }
     }
     encoder.copy_texture_to_buffer(
@@ -1072,6 +1109,23 @@ pub(crate) async fn render_box_primitives_offscreen(
     drop(mapped);
     readback.unmap();
     Ok(pixels)
+}
+
+#[cfg(all(test, feature = "host-conformance"))]
+fn offscreen_scissor(clip: LogicalClip, width: u32, height: u32) -> Option<(u32, u32, u32, u32)> {
+    let left = clip.left.unwrap_or(0.0).floor().max(0.0) as u32;
+    let top = clip.top.unwrap_or(0.0).floor().max(0.0) as u32;
+    let right = clip
+        .right
+        .unwrap_or(width as f32)
+        .ceil()
+        .clamp(0.0, width as f32) as u32;
+    let bottom = clip
+        .bottom
+        .unwrap_or(height as f32)
+        .ceil()
+        .clamp(0.0, height as f32) as u32;
+    (right > left && bottom > top).then_some((left, top, right - left, bottom - top))
 }
 
 #[cfg(test)]

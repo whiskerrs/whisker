@@ -4,12 +4,13 @@ use whisker::ElementRegistry;
 use whisker_engine::FrameSink;
 use whisker_host_conformance::{
     BorderFixture, BorderStyleFixture, ColorFixture, Command, CornerRadiusFixture, Manifest,
-    SCHEMA_VERSION, Scenario, ScenarioSide,
+    OverflowClipFixture, PixelSampleFixture, SCHEMA_VERSION, Scenario, ScenarioSide,
+    SceneNodeFixture,
 };
 use whisker_protocol::{
-    BorderLineStyle, BoxPaint, FrameHeader, FrameMode, FramePacket, LayoutGeometry, LayoutRect,
-    NodeId, Operation, PaintColor, PaintCornerRadius, PaintCorners, PaintEdges,
-    PaintLengthPercentage, ProtocolVersion, SurfaceId,
+    BorderLineStyle, BoxClip, BoxPaint, FrameHeader, FrameMode, FramePacket, LayoutGeometry,
+    LayoutRect, NodeId, Operation, OverflowClip, PaintColor, PaintCornerRadius, PaintCorners,
+    PaintEdges, PaintLengthPercentage, ProtocolVersion, SurfaceId,
 };
 
 use crate::module_api::built_in_element_factories;
@@ -23,6 +24,7 @@ struct Driver {
     root: web_sys::Element,
     sink: DomFrameSink,
     expected_box: Option<ExpectedBox>,
+    expected_scene: Option<Vec<SceneNodeFixture>>,
 }
 
 #[derive(Clone, Debug)]
@@ -53,6 +55,7 @@ impl Driver {
             root,
             sink,
             expected_box: None,
+            expected_scene: None,
         }
     }
 
@@ -82,10 +85,20 @@ impl Driver {
                         background: background.clone(),
                         border: border.clone(),
                     });
+                    self.expected_scene = None;
                 }
-                Command::Checkpoint { name, .. } => {
+                Command::PresentScene { revision, nodes } => {
+                    self.sink.present(&scene_packet(*revision, nodes)).unwrap();
+                    self.expected_scene = Some(nodes.clone());
+                    self.expected_box = None;
+                }
+                Command::Checkpoint { name, samples, .. } => {
                     assert_eq!(name, "paint.box");
-                    self.assert_box_is_projected();
+                    if self.expected_scene.is_some() {
+                        self.assert_scene_is_projected(samples);
+                    } else {
+                        self.assert_box_is_projected();
+                    }
                 }
                 Command::MeasureText { .. }
                 | Command::CheckpointMeasurement { .. }
@@ -163,6 +176,87 @@ impl Driver {
             );
         }
     }
+
+    fn assert_scene_is_projected(&self, samples: &[PixelSampleFixture]) {
+        let expected = self
+            .expected_scene
+            .as_ref()
+            .expect("paint checkpoint must follow present_scene");
+        for fixture_node in expected {
+            let node = self.node(fixture_node.id);
+            let html = node.dyn_ref::<web_sys::HtmlElement>().unwrap();
+            let style = html.style();
+            assert_style(&style, "left", &fixture_px(fixture_node.rect[0]));
+            assert_style(&style, "top", &fixture_px(fixture_node.rect[1]));
+            assert_style(&style, "width", &fixture_px(fixture_node.rect[2]));
+            assert_style(&style, "height", &fixture_px(fixture_node.rect[3]));
+            assert_style(
+                &style,
+                "background-color",
+                &fixture_color_css(&fixture_node.background),
+            );
+            assert_style(
+                &style,
+                "overflow-x",
+                fixture_overflow_css(fixture_node.clip.horizontal),
+            );
+            assert_style(
+                &style,
+                "overflow-y",
+                fixture_overflow_css(fixture_node.clip.vertical),
+            );
+
+            let actual_parent = node.parent_element().unwrap();
+            match fixture_node.parent {
+                Some(parent) => {
+                    let parent = parent.to_string();
+                    assert_eq!(
+                        actual_parent.get_attribute("data-whisker-node").as_deref(),
+                        Some(parent.as_str()),
+                        "fixture node {} was attached to the wrong DOM parent",
+                        fixture_node.id
+                    );
+                }
+                None => assert!(
+                    actual_parent.has_attribute("data-whisker-conformance-root"),
+                    "fixture root node {} was not attached to the Host surface",
+                    fixture_node.id
+                ),
+            }
+        }
+
+        let document = web_sys::window().unwrap().document().unwrap();
+        let bounds = self.root.get_bounding_client_rect();
+        for sample in samples {
+            let hit = document
+                .element_from_point(
+                    (bounds.left() + f64::from(sample.point[0])) as f32,
+                    (bounds.top() + f64::from(sample.point[1])) as f32,
+                )
+                .expect("fixture sample lies inside the browser viewport");
+            let hit_node = hit.get_attribute("data-whisker-node");
+            match &sample.color {
+                ColorFixture::Named { value } if value == "red" => assert_eq!(
+                    hit_node.as_deref(),
+                    Some("2"),
+                    "visible overflow sample did not hit the child DOM node"
+                ),
+                ColorFixture::Named { value } if value == "transparent" => assert_ne!(
+                    hit_node.as_deref(),
+                    Some("2"),
+                    "clipped overflow sample unexpectedly hit the child DOM node"
+                ),
+                _ => {}
+            }
+        }
+    }
+
+    fn node(&self, id: u64) -> web_sys::Element {
+        self.root
+            .query_selector(&format!("[data-whisker-node='{id}']"))
+            .unwrap()
+            .unwrap_or_else(|| panic!("fixture DOM node {id}"))
+    }
 }
 
 impl Drop for Driver {
@@ -181,12 +275,12 @@ fn every_shared_paint_fixture_reaches_the_production_dom_sink() {
         let scenario: Scenario = serde_json::from_str(json).unwrap();
         assert_eq!(scenario.schema, SCHEMA_VERSION);
         assert_eq!(scenario.id, entry.id);
-        if !scenario
-            .test
-            .commands
-            .iter()
-            .any(|command| matches!(command, Command::PresentBox { .. }))
-        {
+        if !scenario.test.commands.iter().any(|command| {
+            matches!(
+                command,
+                Command::PresentBox { .. } | Command::PresentScene { .. }
+            )
+        }) {
             continue;
         }
         Driver::new().execute(&scenario.test);
@@ -208,6 +302,12 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-backgrounds/border-radius-004.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-004.json"
+        ),
+        "wpt/css/css-overflow/clip-002.json" => {
+            include_str!("../../../../tests/host-conformance/wpt/css/css-overflow/clip-002.json")
+        }
+        "wpt/css/css-overflow/clip-002-vertical.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-overflow/clip-002-vertical.json"
         ),
         "wpt/css/CSS2/borders/border-top-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-003.json"
@@ -297,6 +397,84 @@ fn packet(
                 paint: box_paint(background, border),
             },
         ],
+    }
+}
+
+fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
+    let surface = SurfaceId::new(1).unwrap();
+    let view = ElementRegistry::standard()
+        .registration_for_builtin(whisker::ElementTag::View)
+        .unwrap()
+        .element_type;
+    let mut operations = Vec::with_capacity(nodes.len() * 5);
+    for fixture_node in nodes {
+        let node = fixture_node_id(fixture_node.id);
+        operations.extend([
+            Operation::CreateNode {
+                node,
+                element_type: view,
+            },
+            Operation::SetLayout {
+                node,
+                geometry: LayoutGeometry {
+                    border_box: LayoutRect {
+                        x: fixture_node.rect[0],
+                        y: fixture_node.rect[1],
+                        width: fixture_node.rect[2],
+                        height: fixture_node.rect[3],
+                    },
+                    content_box: LayoutRect::default(),
+                },
+            },
+            Operation::SetBoxPaint {
+                node,
+                paint: box_paint(&fixture_node.background, fixture_node.border.as_ref()),
+            },
+            Operation::SetClip {
+                node,
+                clip: BoxClip {
+                    horizontal: overflow_clip(fixture_node.clip.horizontal),
+                    vertical: overflow_clip(fixture_node.clip.vertical),
+                },
+            },
+        ]);
+    }
+    for (node_index, fixture_node) in nodes.iter().enumerate() {
+        if let Some(parent) = fixture_node.parent {
+            let index = nodes[..node_index]
+                .iter()
+                .filter(|candidate| candidate.parent == Some(parent))
+                .count() as u32;
+            operations.push(Operation::InsertChild {
+                parent: fixture_node_id(parent),
+                child: fixture_node_id(fixture_node.id),
+                index,
+            });
+        }
+    }
+    FramePacket {
+        header: FrameHeader {
+            version: ProtocolVersion::CURRENT,
+            surface,
+            scene_epoch: 1,
+            frame_id: revision,
+            base_revision: 0,
+            target_revision: revision,
+            viewport_epoch: 1,
+            mode: FrameMode::Snapshot,
+        },
+        operations,
+    }
+}
+
+fn fixture_node_id(id: u64) -> NodeId {
+    NodeId::new(id).expect("fixture node ids are validated as non-zero")
+}
+
+fn overflow_clip(value: OverflowClipFixture) -> OverflowClip {
+    match value {
+        OverflowClipFixture::Visible => OverflowClip::Visible,
+        OverflowClipFixture::Hidden => OverflowClip::Hidden,
     }
 }
 
@@ -458,5 +636,12 @@ fn fixture_border_style_css(value: BorderStyleFixture) -> &'static str {
         BorderStyleFixture::Ridge => "ridge",
         BorderStyleFixture::Inset => "inset",
         BorderStyleFixture::Outset => "outset",
+    }
+}
+
+fn fixture_overflow_css(value: OverflowClipFixture) -> &'static str {
+    match value {
+        OverflowClipFixture::Visible => "visible",
+        OverflowClipFixture::Hidden => "clip",
     }
 }

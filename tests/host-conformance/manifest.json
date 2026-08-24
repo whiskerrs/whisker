@@ -24,6 +24,20 @@
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-overflow.clip-002.horizontal",
+      "feature": "overflow-x",
+      "fixture": "wpt/css/css-overflow/clip-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-overflow.clip-002.vertical",
+      "feature": "overflow-y",
+      "fixture": "wpt/css/css-overflow/clip-002-vertical.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css2.borders.border-top-003",
       "feature": "border-top",
       "fixture": "wpt/css/CSS2/borders/border-top-003.json",
