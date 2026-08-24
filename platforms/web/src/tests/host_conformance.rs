@@ -326,6 +326,7 @@ struct Driver {
     resources: WebResourceStore,
     resource_service: WebResourceService,
     resource_urls: HashMap<u64, String>,
+    resource_dimensions: HashMap<u64, [f32; 2]>,
     resource_lifecycle: bool,
     expected_box: Option<ExpectedBox>,
     expected_scene: Option<Vec<SceneNodeFixture>>,
@@ -364,6 +365,7 @@ impl Driver {
             resources,
             resource_service,
             resource_urls: HashMap::new(),
+            resource_dimensions: HashMap::new(),
             resource_lifecycle: false,
             expected_box: None,
             expected_scene: None,
@@ -463,12 +465,35 @@ impl Driver {
                             .and_then(|nodes| {
                                 nodes
                                     .iter()
-                                    .any(|node| {
-                                        node.background_layers.iter().any(|layer| {
-                                            matches!(layer.image, BackgroundImageFixture::Resource(_))
-                                        })
+                                    .flat_map(|node| &node.background_layers)
+                                    .find_map(|layer| match layer.geometry.size {
+                                        BackgroundSizeFixture::Keyword(
+                                            BackgroundSizeKeywordFixture::Cover,
+                                        ) => Some("paint.background-layers.size-cover"),
+                                        BackgroundSizeFixture::Keyword(
+                                            BackgroundSizeKeywordFixture::Contain,
+                                        ) => Some("paint.background-layers.size-contain"),
+                                        BackgroundSizeFixture::Keyword(
+                                            BackgroundSizeKeywordFixture::Auto,
+                                        )
+                                        | BackgroundSizeFixture::ExplicitAxes { .. } => {
+                                            Some("paint.background-layers.intrinsic-auto")
+                                        }
+                                        BackgroundSizeFixture::ExplicitPair(_) => None,
                                     })
-                                    .then_some("paint.background-layers.resource-image")
+                                    .or_else(|| {
+                                        nodes
+                                            .iter()
+                                            .any(|node| {
+                                                node.background_layers.iter().any(|layer| {
+                                                    matches!(
+                                                        layer.image,
+                                                        BackgroundImageFixture::Resource(_)
+                                                    )
+                                                })
+                                            })
+                                            .then_some("paint.background-layers.resource-image")
+                                    })
                                     .or_else(|| {
                                         nodes
                                             .iter()
@@ -614,6 +639,8 @@ impl Driver {
             .register_url(ResourceId::new(id).unwrap(), url.clone())
             .unwrap();
         self.resource_urls.insert(id, url);
+        self.resource_dimensions
+            .insert(id, [width as f32, height as f32]);
     }
 
     fn assert_resource_state(
@@ -647,6 +674,8 @@ impl Driver {
                 );
                 self.resource_urls
                     .insert(id, self.resources.url(resource).unwrap());
+                self.resource_dimensions
+                    .insert(id, [dimensions.width, dimensions.height]);
             }
             ResourceStateFixture::Failed => {
                 let WebResourceState::Failed { code, diagnostic } = state else {
@@ -823,7 +852,13 @@ impl Driver {
                 .collect::<Vec<_>>();
             let opaque_hit = hit_nodes.iter().find(|id| {
                 expected.iter().any(|node| {
-                    node.id.to_string() == id.as_str() && fixture_node_paints_at(node, sample.point)
+                    node.id.to_string() == id.as_str()
+                        && fixture_node_paints_at(
+                            node,
+                            sample.point,
+                            &sample.color,
+                            &self.resource_dimensions,
+                        )
                 })
             });
             match &sample.color {
@@ -834,8 +869,23 @@ impl Driver {
                 ColorFixture::Srgba { .. } => {
                     let expected_node = expected
                         .iter()
-                        .rev()
-                        .find(|node| node.opacity.is_some())
+                        .find(|node| {
+                            node.background == sample.color
+                                && fixture_rect_contains(node.rect, sample.point)
+                        })
+                        .or_else(|| {
+                            expected.iter().find(|node| {
+                                node.background_layers.iter().any(|layer| {
+                                    matches!(layer.image, BackgroundImageFixture::Resource(_))
+                                }) && fixture_node_paints_at(
+                                    node,
+                                    sample.point,
+                                    &sample.color,
+                                    &self.resource_dimensions,
+                                )
+                            })
+                        })
+                        .or_else(|| expected.iter().rev().find(|node| node.opacity.is_some()))
                         .or_else(|| {
                             expected.iter().find(|node| {
                                 !node.background_layers.is_empty()
@@ -850,7 +900,8 @@ impl Driver {
                     assert_eq!(
                         opaque_hit.map(String::as_str),
                         Some(expected_node.as_str()),
-                        "composited sample did not hit the opacity source node"
+                        "sRGBA sample at {:?} did not hit its expected source node",
+                        sample.point
                     );
                 }
                 expected_color => {
@@ -1950,8 +2001,19 @@ fn fixture_coordinate(value: LengthPercentageFixture) -> String {
     fixture_length_percentage(value)
 }
 
-fn fixture_node_paints_at(node: &SceneNodeFixture, point: [f32; 2]) -> bool {
-    if !fixture_color_is_transparent(&node.background) {
+fn fixture_node_paints_at(
+    node: &SceneNodeFixture,
+    point: [f32; 2],
+    sample_color: &ColorFixture,
+    resource_dimensions: &HashMap<u64, [f32; 2]>,
+) -> bool {
+    let has_resource_layer = node
+        .background_layers
+        .iter()
+        .any(|layer| matches!(layer.image, BackgroundImageFixture::Resource(_)));
+    if !fixture_color_is_transparent(&node.background)
+        && (!has_resource_layer || node.background == *sample_color)
+    {
         return true;
     }
     if node.background_layers.is_empty()
@@ -1962,17 +2024,21 @@ fn fixture_node_paints_at(node: &SceneNodeFixture, point: [f32; 2]) -> bool {
         return false;
     }
     if !node.background_layers.is_empty() {
-        return node
-            .background_layers
-            .iter()
-            .any(|layer| fixture_background_layer_paints_at(node, layer.geometry, point));
+        return node.background_layers.iter().any(|layer| {
+            let intrinsic_size = match layer.image {
+                BackgroundImageFixture::Resource(id) => resource_dimensions.get(&id).copied(),
+                _ => None,
+            };
+            fixture_background_layer_paints_at(node, layer.geometry, intrinsic_size, point)
+        });
     }
-    fixture_background_layer_paints_at(node, node.background_layer, point)
+    fixture_background_layer_paints_at(node, node.background_layer, None, point)
 }
 
 fn fixture_background_layer_paints_at(
     node: &SceneNodeFixture,
     layer: BackgroundLayerFixture,
+    intrinsic_size: Option<[f32; 2]>,
     point: [f32; 2],
 ) -> bool {
     let border_widths = node
@@ -1984,14 +2050,7 @@ fn fixture_background_layer_paints_at(
     if !fixture_rect_contains(clip_area, point) {
         return false;
     }
-    let size = layer
-        .size
-        .map_or([positioning_area[2], positioning_area[3]], |size| {
-            [
-                size[0].length + size[0].fraction * positioning_area[2],
-                size[1].length + size[1].fraction * positioning_area[3],
-            ]
-        });
+    let size = fixture_background_image_size(layer.size, positioning_area, intrinsic_size);
     let position = [
         positioning_area[0]
             + layer.position[0].length
@@ -2017,6 +2076,57 @@ fn fixture_background_layer_paints_at(
         point[1],
     );
     paints_x && paints_y
+}
+
+fn fixture_background_image_size(
+    size: BackgroundSizeFixture,
+    positioning_area: [f32; 4],
+    intrinsic_size: Option<[f32; 2]>,
+) -> [f32; 2] {
+    let area = [positioning_area[2], positioning_area[3]];
+    let intrinsic = intrinsic_size.filter(|size| size[0] > 0.0 && size[1] > 0.0);
+    let preserve_ratio = |resolved: Option<f32>, axis: usize| match (resolved, intrinsic) {
+        (Some(value), _) => value,
+        (None, Some(intrinsic)) => intrinsic[axis],
+        (None, None) => area[axis],
+    };
+    match size {
+        BackgroundSizeFixture::Keyword(BackgroundSizeKeywordFixture::Auto) => {
+            intrinsic.unwrap_or(area)
+        }
+        BackgroundSizeFixture::Keyword(
+            keyword @ (BackgroundSizeKeywordFixture::Cover | BackgroundSizeKeywordFixture::Contain),
+        ) => {
+            let Some(intrinsic) = intrinsic else {
+                return area;
+            };
+            let width_scale = area[0] / intrinsic[0];
+            let height_scale = area[1] / intrinsic[1];
+            let scale = match keyword {
+                BackgroundSizeKeywordFixture::Cover => width_scale.max(height_scale),
+                BackgroundSizeKeywordFixture::Contain => width_scale.min(height_scale),
+                BackgroundSizeKeywordFixture::Auto => unreachable!(),
+            };
+            [intrinsic[0] * scale, intrinsic[1] * scale]
+        }
+        BackgroundSizeFixture::ExplicitPair(size) => [
+            size[0].length + size[0].fraction * area[0],
+            size[1].length + size[1].fraction * area[1],
+        ],
+        BackgroundSizeFixture::ExplicitAxes { width, height } => {
+            let width = width.map(|value| value.length + value.fraction * area[0]);
+            let height = height.map(|value| value.length + value.fraction * area[1]);
+            match (width, height, intrinsic) {
+                (Some(width), None, Some(intrinsic)) => {
+                    [width, width * intrinsic[1] / intrinsic[0]]
+                }
+                (None, Some(height), Some(intrinsic)) => {
+                    [height * intrinsic[0] / intrinsic[1], height]
+                }
+                (width, height, _) => [preserve_ratio(width, 0), preserve_ratio(height, 1)],
+            }
+        }
+    }
 }
 
 fn fixture_background_axis_paints_at(
@@ -2079,9 +2189,11 @@ fn fixture_padding(node: &SceneNodeFixture) -> [f32; 4] {
     let content_box = node.resolved_content_box();
     let border_widths = node.border.as_ref().map_or([0.0; 4], |border| {
         std::array::from_fn(|index| {
-            (border.styles[index] != BorderStyleFixture::None)
-                .then_some(border.widths[index])
-                .unwrap_or(0.0)
+            if border.styles[index] != BorderStyleFixture::None {
+                border.widths[index]
+            } else {
+                0.0
+            }
         })
     });
     [
