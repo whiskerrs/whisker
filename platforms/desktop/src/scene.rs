@@ -888,12 +888,6 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
             width: Some(_),
             height: Some(_)
         }
-    ) && matches!(
-        layer.repeat_x,
-        ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space
-    ) && matches!(
-        layer.repeat_y,
-        ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space
     ) && matches!(layer.origin, PaintBox::Border | PaintBox::Padding)
         && matches!(layer.clip, PaintBox::Border | PaintBox::Padding);
     supported_image

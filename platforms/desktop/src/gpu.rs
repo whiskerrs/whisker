@@ -1109,6 +1109,13 @@ struct BackgroundTileGeometry {
     flags: u32,
 }
 
+struct BackgroundAxisGeometry {
+    origin: f32,
+    tile_size: f32,
+    stride: f32,
+    flags: u32,
+}
+
 fn background_axis_geometry(
     start: f32,
     area_size: f32,
@@ -1117,22 +1124,51 @@ fn background_axis_geometry(
     repeat: whisker_protocol::ImageRepeat,
     no_repeat_flag: u32,
     space_flag: u32,
-) -> Option<(f32, f32, u32)> {
+) -> BackgroundAxisGeometry {
     use whisker_protocol::ImageRepeat;
 
-    let positioned = start + position.length + position.fraction * (area_size - image_size);
     match repeat {
-        ImageRepeat::Repeat => Some((positioned, image_size, 0)),
-        ImageRepeat::NoRepeat => Some((positioned, image_size, no_repeat_flag)),
+        ImageRepeat::Repeat | ImageRepeat::NoRepeat => {
+            let origin = start + position.length + position.fraction * (area_size - image_size);
+            BackgroundAxisGeometry {
+                origin,
+                tile_size: image_size,
+                stride: image_size,
+                flags: if repeat == ImageRepeat::NoRepeat {
+                    no_repeat_flag
+                } else {
+                    0
+                },
+            }
+        }
         ImageRepeat::Space => {
             let count = (area_size / image_size).floor();
             if count >= 2.0 {
-                Some((start, (area_size - image_size) / (count - 1.0), space_flag))
+                BackgroundAxisGeometry {
+                    origin: start,
+                    tile_size: image_size,
+                    stride: (area_size - image_size) / (count - 1.0),
+                    flags: space_flag,
+                }
             } else {
-                Some((positioned, image_size, no_repeat_flag))
+                BackgroundAxisGeometry {
+                    origin: start + position.length + position.fraction * (area_size - image_size),
+                    tile_size: image_size,
+                    stride: image_size,
+                    flags: no_repeat_flag,
+                }
             }
         }
-        ImageRepeat::Round => None,
+        ImageRepeat::Round => {
+            let count = (area_size / image_size).round().max(1.0);
+            let tile_size = area_size / count;
+            BackgroundAxisGeometry {
+                origin: start + position.length + position.fraction * (area_size - tile_size),
+                tile_size,
+                stride: tile_size,
+                flags: 0,
+            }
+        }
     }
 }
 
@@ -1156,20 +1192,13 @@ fn background_tile_geometry(
         BackgroundSize::Explicit {
             width: Some(width),
             height: Some(height),
-        } if matches!(
-            layer.repeat_x,
-            ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space
-        ) && matches!(
-            layer.repeat_y,
-            ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space
-        ) =>
-        {
+        } => {
             let width = width.length + width.fraction * positioning_rect.width;
             let height = height.length + height.fraction * positioning_rect.height;
             if width <= 0.0 || height <= 0.0 {
                 return None;
             }
-            let (x, stride_x, flags_x) = background_axis_geometry(
+            let x = background_axis_geometry(
                 positioning_rect.x,
                 positioning_rect.width,
                 width,
@@ -1177,8 +1206,8 @@ fn background_tile_geometry(
                 layer.repeat_x,
                 1,
                 4,
-            )?;
-            let (y, stride_y, flags_y) = background_axis_geometry(
+            );
+            let y = background_axis_geometry(
                 positioning_rect.y,
                 positioning_rect.height,
                 height,
@@ -1186,17 +1215,17 @@ fn background_tile_geometry(
                 layer.repeat_y,
                 2,
                 8,
-            )?;
+            );
             Some(BackgroundTileGeometry {
                 rect: LayoutRect {
-                    x,
-                    y,
-                    width,
-                    height,
+                    x: x.origin,
+                    y: y.origin,
+                    width: x.tile_size,
+                    height: y.tile_size,
                 },
-                stride: [stride_x, stride_y],
+                stride: [x.stride, y.stride],
                 domain: positioning_rect,
-                flags: flags_x | flags_y,
+                flags: x.flags | y.flags,
             })
         }
         _ => None,
