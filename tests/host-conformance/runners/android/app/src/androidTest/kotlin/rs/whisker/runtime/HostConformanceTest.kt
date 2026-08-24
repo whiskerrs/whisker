@@ -26,7 +26,7 @@ class HostConformanceTest {
     }
 
     @Test
-    fun everySharedPaintReftestUsesTheProductionAndroidView() {
+    fun everySharedPaintScenarioUsesTheProductionAndroidView() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
             .runOnMainSync {
@@ -37,15 +37,21 @@ class HostConformanceTest {
                     val scenario = JSONObject(asset(entry.getString("fixture")))
                     check(scenario.getInt("schema") == 1)
                     check(scenario.getString("id") == entry.getString("id"))
-                    val reference = scenario.optJSONObject("reference") ?: return@forEach
-                    val test = Driver(context).execute(scenario.getJSONObject("test"))
-                    val expected = Driver(context).execute(reference)
-                    assertEquals(scenario.getString("id"), expected.width, test.width)
-                    assertEquals(scenario.getString("id"), expected.height, test.height)
-                    assertPixelsClose(scenario.getString("id"), test, expected)
+                    val testSide = scenario.getJSONObject("test")
+                    if (testSide.getJSONArray("commands").objects().none {
+                            it.getString("type") == "present_box"
+                        }) return@forEach
+                    val id = scenario.getString("id")
+                    val test = Driver(context, id).execute(testSide)
+                    scenario.optJSONObject("reference")?.let { reference ->
+                        val expected = Driver(context, id).execute(reference)
+                        assertEquals(id, expected.width, test.width)
+                        assertEquals(id, expected.height, test.height)
+                        assertPixelsClose(id, test, expected)
+                    }
                     count += 1
                 }
-                assertTrue("at least one shared paint reftest", count > 0)
+                assertTrue("at least one shared paint scenario", count > 0)
             }
     }
 
@@ -59,7 +65,10 @@ class HostConformanceTest {
             .use { it.readText() }
 }
 
-private class Driver(private val context: android.content.Context) {
+private class Driver(
+    private val context: android.content.Context,
+    private val id: String,
+) {
     private val view = WhiskerView(context)
     private var logicalWidth = 0f
     private var logicalHeight = 0f
@@ -96,6 +105,14 @@ private class Driver(private val context: android.content.Context) {
                 "checkpoint" -> {
                     check(command.getString("name") == "paint.box")
                     checkpoint = capture()
+                    command.optJSONArray("samples")?.let { samples ->
+                        assertPixelSamples(
+                            id,
+                            checkNotNull(checkpoint),
+                            samples,
+                            context.resources.displayMetrics.density,
+                        )
+                    }
                 }
                 else -> error("unsupported Android paint command: ${command.getString("type")}")
             }
@@ -207,6 +224,37 @@ private fun JSONArray.floats(): FloatArray =
 
 private fun JSONArray.strings(): Array<String> =
     Array(length()) { index -> getString(index) }
+
+private fun assertPixelSamples(id: String, bitmap: Bitmap, samples: JSONArray, density: Float) {
+    samples.objects().forEach { sample ->
+        val point = sample.getJSONArray("point")
+        val x = (point.getDouble(0) * density).toInt()
+        val y = (point.getDouble(1) * density).toInt()
+        check(x in 0 until bitmap.width && y in 0 until bitmap.height)
+        val actual = bitmap.getPixel(x, y)
+        val expected = fixtureColor(sample.getJSONObject("color"))
+        val tolerance = sample.optInt("tolerance", 0)
+        val difference = listOf(
+            android.graphics.Color.alpha(actual) to android.graphics.Color.alpha(expected),
+            android.graphics.Color.red(actual) to android.graphics.Color.red(expected),
+            android.graphics.Color.green(actual) to android.graphics.Color.green(expected),
+            android.graphics.Color.blue(actual) to android.graphics.Color.blue(expected),
+        ).maxOf { (left, right) -> abs(left - right) }
+        assertTrue("$id sample ($x, $y) differs by $difference", difference <= tolerance)
+    }
+}
+
+private fun fixtureColor(value: JSONObject): Int =
+    if (value.getString("kind") == "named") {
+        android.graphics.Color.parseColor(value.getString("value"))
+    } else {
+        android.graphics.Color.argb(
+            (value.getDouble("alpha") * 255.0).roundToInt(),
+            value.getInt("red"),
+            value.getInt("green"),
+            value.getInt("blue"),
+        )
+    }
 
 private fun assertPixelsClose(id: String, actual: Bitmap, expected: Bitmap) {
     val actualPixels = IntArray(actual.width * actual.height)

@@ -150,6 +150,10 @@ pub enum Command {
     Checkpoint {
         /// Checkpoint contract name.
         name: String,
+        /// Optional logical-pixel samples for visual tests without a WPT
+        /// reference document.
+        #[serde(default)]
+        samples: Vec<PixelSampleFixture>,
     },
     /// Sends a text measurement request to the production Host measurer.
     MeasureText {
@@ -243,6 +247,19 @@ pub enum ColorFixture {
         /// Alpha channel in `[0, 1]`.
         alpha: f32,
     },
+}
+
+/// One logical-pixel color assertion captured at a paint checkpoint.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PixelSampleFixture {
+    /// Logical x/y coordinate within the attached surface.
+    pub point: [f32; 2],
+    /// Expected unpremultiplied sRGB color.
+    pub color: ColorFixture,
+    /// Maximum per-channel difference accepted by native rasterizers.
+    #[serde(default)]
+    pub tolerance: u8,
 }
 
 /// Physical border semantics in top, right, bottom, left order.
@@ -403,7 +420,12 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), FixtureError> {
         for checkpoint in &case.checkpoints {
             if !matches!(
                 checkpoint.as_str(),
-                "rust-layout-protocol" | "semantic-projection" | "pixel" | "measurement" | "input"
+                "rust-layout-protocol"
+                    | "semantic-projection"
+                    | "pixel"
+                    | "pixel-samples"
+                    | "measurement"
+                    | "input"
             ) {
                 return Err(FixtureError(format!(
                     "case {} names unknown checkpoint {checkpoint}",
@@ -447,6 +469,22 @@ fn validate_scenario(
         )));
     }
     validate_side(&scenario.id, "test", &scenario.test)?;
+    if entry
+        .checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint == "pixel-samples")
+        && !scenario.test.commands.iter().any(|command| {
+            matches!(
+                command,
+                Command::Checkpoint { samples, .. } if !samples.is_empty()
+            )
+        })
+    {
+        return Err(FixtureError(format!(
+            "scenario {} declares pixel-samples without sample assertions",
+            scenario.id
+        )));
+    }
     if let Some(reference) = &scenario.reference {
         validate_side(&scenario.id, "reference", reference)?;
     }
@@ -500,7 +538,15 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
                 && rect[3] >= 0.0
                 && valid_color(background)
                 && border.as_ref().is_none_or(valid_border) => {}
-            Command::Checkpoint { name } if !name.trim().is_empty() => {}
+            Command::Checkpoint { name, samples }
+                if !name.trim().is_empty()
+                    && samples.iter().all(|sample| {
+                        sample
+                            .point
+                            .iter()
+                            .all(|value| value.is_finite() && *value >= 0.0)
+                            && valid_color(&sample.color)
+                    }) => {}
             Command::MeasureText {
                 key,
                 font_size,

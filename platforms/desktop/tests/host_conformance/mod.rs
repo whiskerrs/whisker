@@ -6,7 +6,7 @@ use whisker::{SurfaceRuntime, standard_element_registrations};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
-    BorderFixture, BorderStyleFixture, ColorFixture, Command, Host, LoadedCase,
+    BorderFixture, BorderStyleFixture, ColorFixture, Command, Host, LoadedCase, PixelSampleFixture,
     PointerEventFixture, Scenario, ScenarioSide, load_required,
 };
 use whisker_protocol::{
@@ -23,6 +23,7 @@ use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 use crate::element::{DesktopElementRegistry, built_in_element_factories};
 use crate::gpu::render_box_primitives_offscreen;
 use crate::paint::box_paint::{BoxPrimitive, BoxPrimitiveKind, lower_box};
+use crate::paint::color::srgba;
 use crate::scene::{DesktopScene, PaintCommand};
 use crate::text::NativeTextHost;
 
@@ -96,6 +97,7 @@ impl RecordingInputSink {
 struct Checkpoint {
     logical_size: [u32; 2],
     primitives: Vec<BoxPrimitive>,
+    samples: Vec<PixelSampleFixture>,
 }
 
 fn standard_element_type(name: &str) -> ElementTypeId {
@@ -158,7 +160,7 @@ impl Driver {
                     background,
                     border,
                 } => self.present_box(*revision, *rect, background, border.as_ref()),
-                Command::Checkpoint { name } => {
+                Command::Checkpoint { name, samples } => {
                     assert_eq!(name, "paint.box", "unsupported Desktop checkpoint");
                     checkpoints.push(Checkpoint {
                         logical_size: [
@@ -166,6 +168,7 @@ impl Driver {
                             self.logical_size[1].round() as u32,
                         ],
                         primitives: self.box_primitives(),
+                        samples: samples.clone(),
                     });
                 }
                 Command::MeasureText {
@@ -528,6 +531,45 @@ fn run_reftest(scenario: &Scenario) {
     );
 }
 
+fn run_pixel_samples(scenario: &Scenario) {
+    let checkpoints = Driver::new().execute(&scenario.test);
+    for checkpoint in checkpoints
+        .iter()
+        .filter(|checkpoint| !checkpoint.samples.is_empty())
+    {
+        let pixels = pollster::block_on(render_box_primitives_offscreen(
+            &checkpoint.primitives,
+            checkpoint.logical_size,
+        ))
+        .expect("Desktop pixel-sample checkpoint");
+        let [width, height] = checkpoint.logical_size;
+        for sample in &checkpoint.samples {
+            let x = sample.point[0].floor() as u32;
+            let y = sample.point[1].floor() as u32;
+            assert!(
+                x < width && y < height,
+                "{} sample is outside the surface",
+                scenario.id
+            );
+            let offset = ((y * width + x) * 4) as usize;
+            let actual: [u8; 4] = pixels[offset..offset + 4].try_into().unwrap();
+            let expected = srgba(&color_protocol(&sample.color), 1.0)
+                .map(|channel| (channel * 255.0).round() as u8);
+            let difference = actual
+                .into_iter()
+                .zip(expected)
+                .map(|(actual, expected)| actual.abs_diff(expected))
+                .max()
+                .unwrap_or(0);
+            assert!(
+                difference <= sample.tolerance,
+                "{} sample ({x}, {y}) differs by {difference}: {actual:?} != {expected:?}",
+                scenario.id
+            );
+        }
+    }
+}
+
 #[test]
 fn every_manifest_case_required_by_desktop_executes() {
     let root =
@@ -543,7 +585,7 @@ fn every_manifest_case_required_by_desktop_executes() {
             );
             run_reftest(&scenario);
         } else {
-            Driver::new().execute(&scenario.test);
+            run_pixel_samples(&scenario);
         }
     }
 }

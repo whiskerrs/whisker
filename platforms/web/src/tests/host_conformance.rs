@@ -83,7 +83,7 @@ impl Driver {
                         border: border.clone(),
                     });
                 }
-                Command::Checkpoint { name } => {
+                Command::Checkpoint { name, .. } => {
                     assert_eq!(name, "paint.box");
                     self.assert_box_is_projected();
                 }
@@ -212,6 +212,12 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/CSS2/borders/border-left-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-left-003.json"
+        ),
+        "wpt/css/CSS2/borders/border-top-style-003.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-style-003.json"
+        ),
+        "wpt/css/CSS2/borders/border-top-style-004.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-style-004.json"
         ),
         "core/text-measure-basic.json" => {
             include_str!("../../../../tests/host-conformance/core/text-measure-basic.json")

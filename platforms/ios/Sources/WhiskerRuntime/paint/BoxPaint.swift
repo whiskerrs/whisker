@@ -47,15 +47,15 @@ final class HostBoxPainter {
         let path = roundedPath(in: bounds, radii: cornerRadii)
         fillColor.setFill()
         path.fill()
-        drawSolidBorders(in: bounds, clippedBy: path)
+        drawBorders(in: bounds, clippedBy: path)
     }
 
-    private func drawSolidBorders(in bounds: CGRect, clippedBy outerPath: UIBezierPath) {
+    private func drawBorders(in bounds: CGRect, clippedBy outerPath: UIBezierPath) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
         let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
         let colors = Array((borderColors + [.clear, .clear, .clear, .clear]).prefix(4))
         let styles = Array((borderStyles + [0, 0, 0, 0]).prefix(4))
-        guard zip(widths, styles).contains(where: { $0.0 > 0 && $0.1 == borderStyleSolid }) else {
+        guard zip(widths, styles).contains(where: { $0.0 > 0 && paintsBorderStyle($0.1) }) else {
             return
         }
 
@@ -81,15 +81,75 @@ final class HostBoxPainter {
         context.saveGState()
         context.addPath(outerPath.cgPath)
         context.clip()
-        for index in 0..<4 where widths[index] > 0 && styles[index] == borderStyleSolid {
+        for index in 0..<4 where widths[index] > 0 && paintsBorderStyle(styles[index]) {
             let region = UIBezierPath()
             region.move(to: regions[index][0])
             for point in regions[index].dropFirst() { region.addLine(to: point) }
             region.close()
+            context.saveGState()
+            context.addPath(region.cgPath)
+            context.clip()
             colors[index].setFill()
-            region.fill()
+            if styles[index] == borderStyleSolid {
+                region.fill()
+            } else {
+                drawPatternedBorder(
+                    in: edgeRect(bounds: bounds, side: index, width: widths[index]),
+                    side: index,
+                    width: widths[index],
+                    style: styles[index],
+                    context: context
+                )
+            }
+            context.restoreGState()
         }
         context.restoreGState()
+    }
+
+    private func edgeRect(bounds: CGRect, side: Int, width: CGFloat) -> CGRect {
+        switch side {
+        case 0: return CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: width)
+        case 1: return CGRect(x: bounds.maxX - width, y: bounds.minY, width: width, height: bounds.height)
+        case 2: return CGRect(x: bounds.minX, y: bounds.maxY - width, width: bounds.width, height: width)
+        default: return CGRect(x: bounds.minX, y: bounds.minY, width: width, height: bounds.height)
+        }
+    }
+
+    private func drawPatternedBorder(
+        in edge: CGRect,
+        side: Int,
+        width: CGFloat,
+        style: UInt32,
+        context: CGContext
+    ) {
+        guard width > 0, !edge.isEmpty else { return }
+        let horizontal = side == 0 || side == 2
+        let start = horizontal ? edge.minX : edge.minY
+        let end = horizontal ? edge.maxX : edge.maxY
+        let center = horizontal ? edge.midY : edge.midX
+        if style == borderStyleDashed {
+            let dash = width * 3
+            let period = width * 4
+            var position = start
+            while position < end {
+                let dashEnd = min(position + dash, end)
+                let rect = horizontal
+                    ? CGRect(x: position, y: edge.minY, width: dashEnd - position, height: edge.height)
+                    : CGRect(x: edge.minX, y: position, width: edge.width, height: dashEnd - position)
+                context.fill(rect)
+                position += period
+            }
+        } else {
+            let radius = width / 2
+            var position = start + width
+            while position - radius < end {
+                let rect = horizontal
+                    ? CGRect(x: position - radius, y: center - radius, width: width, height: width)
+                    : CGRect(x: center - radius, y: position - radius, width: width, height: width)
+                context.fillEllipse(in: rect)
+                position += width * 2
+            }
+        }
     }
 }
 
@@ -178,3 +238,9 @@ private func roundedPath(in rect: CGRect, radii: [CGSize]) -> UIBezierPath {
 }
 
 private let borderStyleSolid: UInt32 = 2
+private let borderStyleDashed: UInt32 = 3
+private let borderStyleDotted: UInt32 = 4
+
+private func paintsBorderStyle(_ style: UInt32) -> Bool {
+    style == borderStyleSolid || style == borderStyleDashed || style == borderStyleDotted
+}

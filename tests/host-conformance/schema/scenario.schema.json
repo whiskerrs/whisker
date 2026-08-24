@@ -87,7 +87,26 @@
       "required": ["type", "name"],
       "properties": {
         "type": { "const": "checkpoint" },
-        "name": { "type": "string", "minLength": 1 }
+        "name": { "type": "string", "minLength": 1 },
+        "samples": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/pixelSample" }
+        }
+      }
+    },
+    "pixelSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["point", "color"],
+      "properties": {
+        "point": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "number", "minimum": 0 }
+        },
+        "color": { "$ref": "#/$defs/color" },
+        "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 }
       }
     },
     "measureText": {
