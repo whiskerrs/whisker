@@ -433,7 +433,10 @@ private final class Driver {
                     name == "paint.background-layers.clip-content-box" ||
                     name == "paint.background-layers.stacking" ||
                     name == "paint.background-layers.resource-image" ||
-                    name == "paint.background-layers.resource-lifecycle" else {
+                    name == "paint.background-layers.resource-lifecycle" ||
+                    name == "paint.background-layers.intrinsic-auto" ||
+                    name == "paint.background-layers.size-cover" ||
+                    name == "paint.background-layers.size-contain" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -704,12 +707,35 @@ private final class Driver {
                                 let geometry = layer.geometry
                                 backgroundPayloads[index].position_x = geometry.position[0]
                                 backgroundPayloads[index].position_y = geometry.position[1]
-                                backgroundPayloads[index].size_kind = geometry.size == nil
-                                    ? UInt32(WHISKER_BACKGROUND_SIZE_AUTO)
-                                    : UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT)
-                                if let size = geometry.size {
-                                    backgroundPayloads[index].size_width = size[0]
-                                    backgroundPayloads[index].size_height = size[1]
+                                switch geometry.size {
+                                case .auto:
+                                    backgroundPayloads[index].size_kind = UInt32(
+                                        WHISKER_BACKGROUND_SIZE_AUTO
+                                    )
+                                case let .explicit(width, height):
+                                    backgroundPayloads[index].size_kind = UInt32(
+                                        WHISKER_BACKGROUND_SIZE_EXPLICIT
+                                    )
+                                    backgroundPayloads[index].size_width = width
+                                    backgroundPayloads[index].size_height = height
+                                case .cover:
+                                    backgroundPayloads[index].size_kind = UInt32(
+                                        WHISKER_BACKGROUND_SIZE_COVER
+                                    )
+                                case .contain:
+                                    backgroundPayloads[index].size_kind = UInt32(
+                                        WHISKER_BACKGROUND_SIZE_CONTAIN
+                                    )
+                                case let .width(width):
+                                    backgroundPayloads[index].size_kind = UInt32(
+                                        WHISKER_BACKGROUND_SIZE_WIDTH
+                                    )
+                                    backgroundPayloads[index].size_width = width
+                                case let .height(height):
+                                    backgroundPayloads[index].size_kind = UInt32(
+                                        WHISKER_BACKGROUND_SIZE_HEIGHT
+                                    )
+                                    backgroundPayloads[index].size_height = height
                                 }
                                 backgroundPayloads[index].repeat_x = geometry.repeatX
                                 backgroundPayloads[index].repeat_y = geometry.repeatY
@@ -1036,7 +1062,7 @@ private extension SceneFixtureNode {
 
 private struct SceneBackgroundLayer {
     let position: [WhiskerMobileLengthPercentage]
-    let size: [WhiskerMobileLengthPercentage]?
+    let size: SceneBackgroundSize
     let repeatX: UInt32
     let repeatY: UInt32
     let origin: UInt32
@@ -1044,12 +1070,21 @@ private struct SceneBackgroundLayer {
 
     static let initial = SceneBackgroundLayer(
         position: [WhiskerMobileLengthPercentage(), WhiskerMobileLengthPercentage()],
-        size: nil,
+        size: .auto,
         repeatX: UInt32(WHISKER_BACKGROUND_REPEAT),
         repeatY: UInt32(WHISKER_BACKGROUND_REPEAT),
         origin: UInt32(WHISKER_BACKGROUND_BOX_PADDING),
         clip: UInt32(WHISKER_BACKGROUND_BOX_BORDER)
     )
+}
+
+private enum SceneBackgroundSize {
+    case auto
+    case explicit(WhiskerMobileLengthPercentage, WhiskerMobileLengthPercentage)
+    case cover
+    case contain
+    case width(WhiskerMobileLengthPercentage)
+    case height(WhiskerMobileLengthPercentage)
 }
 
 private struct SceneLinearGradient {
@@ -1268,10 +1303,8 @@ private func sceneBackgroundLayer(_ value: Any) throws -> SceneBackgroundLayer {
     }
     let position = try (object["position"] as? [Any])?
         .map(lengthPercentage) ?? SceneBackgroundLayer.initial.position
-    let size = try (object["size"] as? [Any])?.map(lengthPercentage)
-    guard position.count == 2, size?.count ?? 2 == 2 else {
-        throw Failure("background layer position and size need two axes")
-    }
+    let size = try sceneBackgroundSize(object["size"])
+    guard position.count == 2 else { throw Failure("background layer position needs two axes") }
     return SceneBackgroundLayer(
         position: position,
         size: size,
@@ -1280,6 +1313,40 @@ private func sceneBackgroundLayer(_ value: Any) throws -> SceneBackgroundLayer {
         origin: try backgroundBox(object["origin"] as? String ?? "padding"),
         clip: try backgroundBox(object["clip"] as? String ?? "border")
     )
+}
+
+private func sceneBackgroundSize(_ value: Any?) throws -> SceneBackgroundSize {
+    guard let value else { return .auto }
+    if let keyword = value as? String {
+        return switch keyword {
+        case "auto": .auto
+        case "cover": .cover
+        case "contain": .contain
+        default: throw Failure("unsupported background size keyword")
+        }
+    }
+    if let pair = value as? [Any] {
+        guard pair.count == 2 else { throw Failure("background size needs two axes") }
+        return .explicit(try lengthPercentage(pair[0]), try lengthPercentage(pair[1]))
+    }
+    if let object = value as? [String: Any] {
+        let width = try optionalLengthPercentage(object["width"])
+        let height = try optionalLengthPercentage(object["height"])
+        switch (width, height) {
+        case let (width?, height?): return .explicit(width, height)
+        case let (width?, nil): return .width(width)
+        case let (nil, height?): return .height(height)
+        case (nil, nil): return .auto
+        }
+    }
+    throw Failure("background size must be a keyword, pair, or width/height object")
+}
+
+private func optionalLengthPercentage(
+    _ value: Any?
+) throws -> WhiskerMobileLengthPercentage? {
+    guard let value, !(value is NSNull) else { return nil }
+    return try lengthPercentage(value)
 }
 
 private func lengthPercentage(_ value: Any) throws -> WhiskerMobileLengthPercentage {
