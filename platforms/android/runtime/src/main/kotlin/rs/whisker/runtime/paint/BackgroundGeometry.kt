@@ -19,6 +19,15 @@ internal enum class HostBackgroundBox {
     Content,
 }
 
+internal enum class HostBackgroundSize {
+    Auto,
+    Explicit,
+    Cover,
+    Contain,
+    Width,
+    Height,
+}
+
 internal data class HostBackgroundPaintBox(
     val rect: RectF,
     val clip: Path,
@@ -42,6 +51,7 @@ internal data class HostBackgroundGeometry(
     val positionY: HostPaintCoordinate = HostPaintCoordinate(0f, 0f),
     val sizeWidth: HostPaintCoordinate? = null,
     val sizeHeight: HostPaintCoordinate? = null,
+    val size: HostBackgroundSize = HostBackgroundSize.Auto,
     val repeatX: HostBackgroundRepeat = HostBackgroundRepeat.Repeat,
     val repeatY: HostBackgroundRepeat = HostBackgroundRepeat.Repeat,
     val origin: HostBackgroundBox = HostBackgroundBox.Padding,
@@ -62,10 +72,15 @@ internal data class HostBackgroundGeometry(
     fun forEachImageBox(
         positioningBox: RectF,
         paintingBox: RectF,
+        intrinsicWidth: Float?,
+        intrinsicHeight: Float?,
         draw: (RectF) -> Unit,
     ) {
-        val originalWidth = sizeWidth?.resolve(positioningBox.width()) ?: positioningBox.width()
-        val originalHeight = sizeHeight?.resolve(positioningBox.height()) ?: positioningBox.height()
+        val (originalWidth, originalHeight) = originalTileSize(
+            positioningBox,
+            intrinsicWidth,
+            intrinsicHeight,
+        )
         if (originalWidth <= 0f || originalHeight <= 0f) return
         val tileWidth = adjustedTileSize(originalWidth, positioningBox.width(), repeatX)
         val tileHeight = adjustedTileSize(originalHeight, positioningBox.height(), repeatY)
@@ -105,6 +120,60 @@ internal data class HostBackgroundGeometry(
                 // the Host UI thread. Normal viewport-sized CSS tiling remains
                 // well below this ceiling.
                 if (tileCount >= MAX_BACKGROUND_TILES) return
+            }
+        }
+    }
+
+    private fun originalTileSize(
+        positioningBox: RectF,
+        intrinsicWidth: Float?,
+        intrinsicHeight: Float?,
+    ): Pair<Float, Float> {
+        val boxWidth = positioningBox.width()
+        val boxHeight = positioningBox.height()
+        val intrinsicWidthValue = intrinsicWidth ?: 0f
+        val intrinsicHeightValue = intrinsicHeight ?: 0f
+        val hasIntrinsicSize = intrinsicWidthValue > 0f && intrinsicHeightValue > 0f &&
+            intrinsicWidthValue.isFinite() && intrinsicHeightValue.isFinite()
+        return when (size) {
+            HostBackgroundSize.Auto -> if (hasIntrinsicSize) {
+                intrinsicWidthValue to intrinsicHeightValue
+            } else {
+                boxWidth to boxHeight
+            }
+            HostBackgroundSize.Explicit -> {
+                checkNotNull(sizeWidth).resolve(boxWidth) to
+                    checkNotNull(sizeHeight).resolve(boxHeight)
+            }
+            HostBackgroundSize.Width -> {
+                val width = checkNotNull(sizeWidth).resolve(boxWidth)
+                width to if (hasIntrinsicSize) {
+                    width * intrinsicHeightValue / intrinsicWidthValue
+                } else {
+                    boxHeight
+                }
+            }
+            HostBackgroundSize.Height -> {
+                val height = checkNotNull(sizeHeight).resolve(boxHeight)
+                if (hasIntrinsicSize) {
+                    height * intrinsicWidthValue / intrinsicHeightValue
+                } else {
+                    boxWidth
+                } to height
+            }
+            HostBackgroundSize.Cover,
+            HostBackgroundSize.Contain,
+            -> if (hasIntrinsicSize) {
+                val widthScale = boxWidth / intrinsicWidthValue
+                val heightScale = boxHeight / intrinsicHeightValue
+                val scale = if (size == HostBackgroundSize.Cover) {
+                    maxOf(widthScale, heightScale)
+                } else {
+                    minOf(widthScale, heightScale)
+                }
+                intrinsicWidthValue * scale to intrinsicHeightValue * scale
+            } else {
+                boxWidth to boxHeight
             }
         }
     }
