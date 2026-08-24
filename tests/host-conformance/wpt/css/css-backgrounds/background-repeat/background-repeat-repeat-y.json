@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-repeat.repeat-y",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/background-repeat/background-repeat-repeat-y.xht",
+    "reference_path": "css/css-backgrounds/background-repeat/reference/background-repeat-repeat-y.xht",
+    "license": "BSD-3-Clause",
+    "assertion": "The image is repeated vertically as often as needed to cover the background painting area.",
+    "adaptation": "The upstream resource is replaced by a constant green gradient tile and its dimensions are reduced to 20 by 20 logical pixels in a 100 by 100 box. Samples verify that repeat-y covers the full vertical axis while the no-repeat horizontal axis leaves the gray background visible to the right of the first tile column."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 100.0],
+            "background": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 },
+            "background_layer": {
+              "size": [
+                { "length": 20.0, "fraction": 0.0 },
+                { "length": 20.0, "fraction": 0.0 }
+              ],
+              "repeat_x": "no_repeat",
+              "repeat_y": "repeat"
+            },
+            "linear_gradient": {
+              "angle_degrees": 180.0,
+              "stops": [
+                { "color": { "kind": "named", "value": "green" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "green" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.repeat-y",
+        "samples": [
+          { "point": [1.0, 1.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [10.0, 39.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [10.0, 99.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [21.0, 10.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [90.0, 90.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}
