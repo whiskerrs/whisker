@@ -1162,6 +1162,152 @@ mod tests {
         assert_eq!(snapshot.get(children[2]).unwrap().border_box.x, 100.0);
     }
 
+    #[test]
+    fn every_grid_value_lowers_to_taffy_or_reports_mixed_units() {
+        for value in [
+            AlignSelfValue::Auto,
+            AlignSelfValue::Stretch,
+            AlignSelfValue::FlexStart,
+            AlignSelfValue::FlexEnd,
+            AlignSelfValue::Center,
+            AlignSelfValue::Baseline,
+            AlignSelfValue::Start,
+            AlignSelfValue::End,
+        ] {
+            let _ = align_self(value);
+        }
+
+        for flow in [
+            GridAutoFlowValue::Row,
+            GridAutoFlowValue::Column,
+            GridAutoFlowValue::RowDense,
+            GridAutoFlowValue::ColumnDense,
+        ] {
+            convert_style(&ComputedLayoutStyle {
+                grid_auto_flow: flow,
+                ..ComputedLayoutStyle::default()
+            })
+            .unwrap();
+        }
+
+        let percent = ComputedLengthPercentage::new(0.0, 0.5);
+        let min_values = [
+            ComputedGridMinTrackSizing::Fixed(percent),
+            ComputedGridMinTrackSizing::MinContent,
+            ComputedGridMinTrackSizing::MaxContent,
+            ComputedGridMinTrackSizing::Auto,
+        ];
+        for min in min_values {
+            grid_track(ComputedGridTrackSizing {
+                min,
+                max: ComputedGridMaxTrackSizing::Auto,
+            })
+            .unwrap();
+        }
+
+        let max_values = [
+            ComputedGridMaxTrackSizing::Fixed(percent),
+            ComputedGridMaxTrackSizing::MinContent,
+            ComputedGridMaxTrackSizing::MaxContent,
+            ComputedGridMaxTrackSizing::FitContent(ComputedLengthPercentage::new(10.0, 0.0)),
+            ComputedGridMaxTrackSizing::FitContent(percent),
+            ComputedGridMaxTrackSizing::Auto,
+            ComputedGridMaxTrackSizing::Fraction(StyleNumber::new(2.0)),
+        ];
+        for max in max_values {
+            grid_track(ComputedGridTrackSizing {
+                min: ComputedGridMinTrackSizing::Auto,
+                max,
+            })
+            .unwrap();
+        }
+
+        for count in [
+            GridRepetitionCountValue::AutoFill,
+            GridRepetitionCountValue::AutoFit,
+        ] {
+            grid_template(&ComputedGridTemplate {
+                components: vec![ComputedGridTemplateComponent::Repeat(
+                    ComputedGridTemplateRepetition {
+                        count,
+                        tracks: vec![ComputedGridTrackSizing::auto()],
+                        line_names: vec![Vec::new(), Vec::new()],
+                    },
+                )],
+                line_names: vec![Vec::new(), Vec::new()],
+            })
+            .unwrap();
+        }
+
+        for placement in [
+            GridPlacementValue::Auto,
+            GridPlacementValue::Line(2),
+            GridPlacementValue::NamedLine("line".into(), 1),
+            GridPlacementValue::Span(2),
+            GridPlacementValue::NamedSpan("span".into(), 2),
+        ] {
+            let _ = grid_placement(&placement);
+        }
+
+        let mixed_min = ComputedGridTrackSizing {
+            min: ComputedGridMinTrackSizing::Fixed(MIXED),
+            max: ComputedGridMaxTrackSizing::Auto,
+        };
+        let mixed_max = ComputedGridTrackSizing {
+            min: ComputedGridMinTrackSizing::Auto,
+            max: ComputedGridMaxTrackSizing::Fixed(MIXED),
+        };
+        let mixed_fit_content = ComputedGridTrackSizing {
+            min: ComputedGridMinTrackSizing::Auto,
+            max: ComputedGridMaxTrackSizing::FitContent(MIXED),
+        };
+        for track in [mixed_min, mixed_max, mixed_fit_content] {
+            assert_eq!(
+                grid_track(track),
+                Err(LayoutError::UnsupportedStyle(
+                    UnsupportedLayoutFeature::MixedLengthPercentage
+                ))
+            );
+        }
+
+        let invalid_template = ComputedGridTemplate {
+            components: vec![ComputedGridTemplateComponent::Repeat(
+                ComputedGridTemplateRepetition {
+                    count: GridRepetitionCountValue::Count(1),
+                    tracks: vec![mixed_min],
+                    line_names: vec![Vec::new(), Vec::new()],
+                },
+            )],
+            line_names: vec![Vec::new(), Vec::new()],
+        };
+        assert!(grid_template(&invalid_template).is_err());
+
+        for (columns, rows) in [
+            (invalid_template.clone(), ComputedGridTemplate::default()),
+            (ComputedGridTemplate::default(), invalid_template),
+        ] {
+            assert!(
+                convert_style(&ComputedLayoutStyle {
+                    grid_template_columns: columns,
+                    grid_template_rows: rows,
+                    ..ComputedLayoutStyle::default()
+                })
+                .is_err()
+            );
+        }
+
+        for (columns, rows) in [(vec![mixed_min], Vec::new()), (Vec::new(), vec![mixed_max])] {
+            assert!(
+                convert_style(&ComputedLayoutStyle {
+                    grid_auto_columns: columns,
+                    grid_auto_rows: rows,
+                    ..ComputedLayoutStyle::default()
+                })
+                .is_err()
+            );
+        }
+    }
+
     fn assert_unsupported(style: ComputedLayoutStyle, feature: UnsupportedLayoutFeature) {
         assert_eq!(
             convert_style(&style),
