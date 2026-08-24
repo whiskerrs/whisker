@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-repeat.round-position",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/background-repeat-round-4.html",
+    "reference_path": "css/css-backgrounds/background-repeat-round-4-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "After round repetition adjusts the image size, ordinary repeat tiling remains anchored by background-position.",
+    "adaptation": "The 32 by 32 image resolves to 36 by 36 in a 72 by 72 area and retains the upstream 5px 5px position. A sharp horizontal transition exposes the resulting 5px phase while both axes use round."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 72.0, "height": 72.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 72.0, 72.0],
+            "background": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 },
+            "background_layer": {
+              "position": [
+                { "length": 5.0, "fraction": 0.0 },
+                { "length": 5.0, "fraction": 0.0 }
+              ],
+              "size": [
+                { "length": 32.0, "fraction": 0.0 },
+                { "length": 32.0, "fraction": 0.0 }
+              ],
+              "repeat_x": "round",
+              "repeat_y": "round"
+            },
+            "linear_gradient": {
+              "angle_degrees": 90.0,
+              "stops": [
+                { "color": { "kind": "named", "value": "red" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "red" }, "position": 0.49 },
+                { "color": { "kind": "named", "value": "blue" }, "position": 0.51 },
+                { "color": { "kind": "named", "value": "blue" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.repeat-round-position",
+        "samples": [
+          { "point": [1.0, 10.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 12 },
+          { "point": [6.0, 10.0], "color": { "kind": "named", "value": "red" }, "tolerance": 12 },
+          { "point": [22.0, 10.0], "color": { "kind": "named", "value": "red" }, "tolerance": 12 },
+          { "point": [24.0, 10.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 12 },
+          { "point": [40.0, 10.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 12 },
+          { "point": [42.0, 10.0], "color": { "kind": "named", "value": "red" }, "tolerance": 12 }
+        ]
+      }
+    ]
+  }
+}
