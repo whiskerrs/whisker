@@ -418,10 +418,38 @@
           "items": { "$ref": "#/$defs/lengthPercentage" }
         },
         "size": {
-          "type": "array",
-          "minItems": 2,
-          "maxItems": 2,
-          "items": { "$ref": "#/$defs/lengthPercentage" }
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "$ref": "#/$defs/lengthPercentage" }
+            },
+            { "enum": ["auto", "cover", "contain"] },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["width", "height"],
+              "properties": {
+                "width": {
+                  "oneOf": [
+                    { "$ref": "#/$defs/lengthPercentage" },
+                    { "type": "null" }
+                  ]
+                },
+                "height": {
+                  "oneOf": [
+                    { "$ref": "#/$defs/lengthPercentage" },
+                    { "type": "null" }
+                  ]
+                }
+              },
+              "anyOf": [
+                { "properties": { "width": { "$ref": "#/$defs/lengthPercentage" } } },
+                { "properties": { "height": { "$ref": "#/$defs/lengthPercentage" } } }
+              ]
+            }
+          ]
         },
         "repeat_x": { "enum": ["repeat", "no_repeat", "space", "round"] },
         "repeat_y": { "enum": ["repeat", "no_repeat", "space", "round"] },

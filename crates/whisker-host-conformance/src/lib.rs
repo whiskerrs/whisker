@@ -531,9 +531,9 @@ pub struct BackgroundLayerFixture {
     /// X/y position as a length plus a fraction of the positioning area.
     #[serde(default)]
     pub position: [LengthPercentageFixture; 2],
-    /// Explicit width/height, or `None` for the CSS `auto` initial value.
+    /// Intrinsic, cover/contain, or explicit per-axis sizing.
     #[serde(default)]
-    pub size: Option<[LengthPercentageFixture; 2]>,
+    pub size: BackgroundSizeFixture,
     /// Horizontal image repetition.
     #[serde(default)]
     pub repeat_x: ImageRepeatFixture,
@@ -552,13 +552,51 @@ impl Default for BackgroundLayerFixture {
     fn default() -> Self {
         Self {
             position: Default::default(),
-            size: None,
+            size: BackgroundSizeFixture::default(),
             repeat_x: ImageRepeatFixture::Repeat,
             repeat_y: ImageRepeatFixture::Repeat,
             origin: default_background_origin(),
             clip: default_background_clip(),
         }
     }
+}
+
+/// Background image sizing accepted by the shared fixture DSL.
+///
+/// The pair variant preserves the original fixture spelling. The axes variant
+/// represents one-axis `auto` with `null` on that axis.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum BackgroundSizeFixture {
+    /// Legacy explicit width and height pair.
+    ExplicitPair([LengthPercentageFixture; 2]),
+    /// Explicit axes where either width or height may retain intrinsic sizing.
+    ExplicitAxes {
+        /// Explicit width or `auto` when absent/null.
+        width: Option<LengthPercentageFixture>,
+        /// Explicit height or `auto` when absent/null.
+        height: Option<LengthPercentageFixture>,
+    },
+    /// One CSS sizing keyword.
+    Keyword(BackgroundSizeKeywordFixture),
+}
+
+impl Default for BackgroundSizeFixture {
+    fn default() -> Self {
+        Self::Keyword(BackgroundSizeKeywordFixture::Auto)
+    }
+}
+
+/// Keyword forms of `background-size`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundSizeKeywordFixture {
+    /// Preserve intrinsic dimensions.
+    Auto,
+    /// Cover the positioning area while preserving aspect ratio.
+    Cover,
+    /// Fit within the positioning area while preserving aspect ratio.
+    Contain,
 }
 
 /// One resolved CSS length-percentage pair.
@@ -1102,9 +1140,17 @@ fn valid_background_geometry(geometry: &BackgroundLayerFixture) -> bool {
         .position
         .iter()
         .all(LengthPercentageFixture::is_finite)
-        && geometry
-            .size
-            .is_none_or(|size| size.iter().all(LengthPercentageFixture::is_finite))
+        && match geometry.size {
+            BackgroundSizeFixture::ExplicitPair(size) => {
+                size.iter().all(LengthPercentageFixture::is_finite)
+            }
+            BackgroundSizeFixture::ExplicitAxes { width, height } => {
+                (width.is_some() || height.is_some())
+                    && width.is_none_or(|value| value.is_finite())
+                    && height.is_none_or(|value| value.is_finite())
+            }
+            BackgroundSizeFixture::Keyword(_) => true,
+        }
 }
 
 fn valid_linear_gradient(gradient: &LinearGradientFixture) -> bool {

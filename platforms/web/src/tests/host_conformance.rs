@@ -14,11 +14,12 @@ use whisker::{ElementRegistry, RuntimeInstance, SurfaceRuntime};
 use whisker_engine::FrameSink;
 use whisker_host_conformance::{
     BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture,
-    BackgroundPaintLayerFixture, BorderFixture, BorderStyleFixture, ColorFixture, Command,
-    ConicGradientFixture, CornerRadiusFixture, ImageRepeatFixture, LengthPercentageFixture,
-    LinearGradientFixture, Manifest, OverflowClipFixture, PixelSampleFixture,
-    RadialGradientFixture, ResourceSourceFixture, ResourceStateFixture, SCHEMA_VERSION, Scenario,
-    ScenarioSide, SceneNodeFixture, VisibilityFixture,
+    BackgroundPaintLayerFixture, BackgroundSizeFixture, BackgroundSizeKeywordFixture,
+    BorderFixture, BorderStyleFixture, ColorFixture, Command, ConicGradientFixture,
+    CornerRadiusFixture, ImageRepeatFixture, LengthPercentageFixture, LinearGradientFixture,
+    Manifest, OverflowClipFixture, PixelSampleFixture, RadialGradientFixture,
+    ResourceSourceFixture, ResourceStateFixture, SCHEMA_VERSION, Scenario, ScenarioSide,
+    SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
@@ -945,6 +946,15 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-backgrounds/background-size-009.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-size-009.json"
         ),
+        "wpt/css/css-backgrounds/background-size-intrinsic-auto.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-size-intrinsic-auto.json"
+        ),
+        "wpt/css/css-backgrounds/background-size-contain-001-intrinsic.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-size-contain-001-intrinsic.json"
+        ),
+        "wpt/css/css-backgrounds/background-size-cover-001-intrinsic.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-size-cover-001-intrinsic.json"
+        ),
         "wpt/css/css-backgrounds/background-position-three-four-values.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-position-three-four-values.json"
         ),
@@ -1439,12 +1449,23 @@ fn with_background_geometry(
         x: paint_coordinate(geometry.position[0]),
         y: paint_coordinate(geometry.position[1]),
     };
-    layer.size = geometry
-        .size
-        .map_or(BackgroundSize::Auto, |size| BackgroundSize::Explicit {
+    layer.size = match geometry.size {
+        BackgroundSizeFixture::ExplicitPair(size) => BackgroundSize::Explicit {
             width: Some(paint_length_percentage(size[0])),
             height: Some(paint_length_percentage(size[1])),
-        });
+        },
+        BackgroundSizeFixture::ExplicitAxes { width, height } => BackgroundSize::Explicit {
+            width: width.map(paint_length_percentage),
+            height: height.map(paint_length_percentage),
+        },
+        BackgroundSizeFixture::Keyword(BackgroundSizeKeywordFixture::Auto) => BackgroundSize::Auto,
+        BackgroundSizeFixture::Keyword(BackgroundSizeKeywordFixture::Cover) => {
+            BackgroundSize::Cover
+        }
+        BackgroundSizeFixture::Keyword(BackgroundSizeKeywordFixture::Contain) => {
+            BackgroundSize::Contain
+        }
+    };
     layer.repeat_x = image_repeat(geometry.repeat_x);
     layer.repeat_y = image_repeat(geometry.repeat_y);
     layer.origin = background_box(geometry.origin);
@@ -1868,16 +1889,22 @@ fn fixture_background_position(layer: BackgroundLayerFixture) -> String {
 }
 
 fn fixture_background_size(layer: BackgroundLayerFixture) -> String {
-    layer.size.map_or_else(
-        || "auto".into(),
-        |size| {
-            format!(
-                "{} {}",
-                fixture_length_percentage(size[0]),
-                fixture_length_percentage(size[1])
-            )
-        },
-    )
+    let axis = |value: Option<LengthPercentageFixture>| {
+        value.map_or_else(|| "auto".into(), fixture_length_percentage)
+    };
+    match layer.size {
+        BackgroundSizeFixture::ExplicitPair(size) => format!(
+            "{} {}",
+            fixture_length_percentage(size[0]),
+            fixture_length_percentage(size[1])
+        ),
+        BackgroundSizeFixture::ExplicitAxes { width, height } => {
+            format!("{} {}", axis(width), axis(height))
+        }
+        BackgroundSizeFixture::Keyword(BackgroundSizeKeywordFixture::Auto) => "auto".into(),
+        BackgroundSizeFixture::Keyword(BackgroundSizeKeywordFixture::Cover) => "cover".into(),
+        BackgroundSizeFixture::Keyword(BackgroundSizeKeywordFixture::Contain) => "contain".into(),
+    }
 }
 
 fn fixture_background_repeat(layer: BackgroundLayerFixture) -> &'static str {

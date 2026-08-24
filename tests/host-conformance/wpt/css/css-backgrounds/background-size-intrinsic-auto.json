@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-size-intrinsic-auto",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/background-size-aspect-ratio.htm",
+    "license": "BSD-3-Clause",
+    "assertion": "An auto background-size axis uses the raster's intrinsic aspect ratio.",
+    "adaptation": "A deterministic four-by-two raster replaces the upstream cat image. Separate boxes exercise auto, 60px auto, and auto 30px without round-repeat coupling. Pixel samples verify intrinsic dimensions, preserved 2:1 aspect ratio, orientation, and uncovered background color."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 340.0, "height": 80.0, "scale": 1.0 },
+      {
+        "type": "register_raster_resource",
+        "id": 1,
+        "width": 4,
+        "height": 2,
+        "pixels": [
+          { "kind": "srgba", "red": 255, "green": 0, "blue": 0, "alpha": 1.0 },
+          { "kind": "srgba", "red": 255, "green": 0, "blue": 0, "alpha": 1.0 },
+          { "kind": "srgba", "red": 0, "green": 128, "blue": 0, "alpha": 1.0 },
+          { "kind": "srgba", "red": 0, "green": 128, "blue": 0, "alpha": 1.0 },
+          { "kind": "srgba", "red": 0, "green": 0, "blue": 255, "alpha": 1.0 },
+          { "kind": "srgba", "red": 0, "green": 0, "blue": 255, "alpha": 1.0 },
+          { "kind": "srgba", "red": 255, "green": 255, "blue": 0, "alpha": 1.0 },
+          { "kind": "srgba", "red": 255, "green": 255, "blue": 0, "alpha": 1.0 }
+        ]
+      },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 80.0],
+            "background": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 },
+            "background_layers": [{
+              "geometry": {
+                "position": [{ "length": 10.0, "fraction": 0.0 }, { "length": 10.0, "fraction": 0.0 }],
+                "size": "auto",
+                "repeat_x": "no_repeat",
+                "repeat_y": "no_repeat"
+              },
+              "image": { "resource": 1 }
+            }]
+          },
+          {
+            "id": 2,
+            "parent": null,
+            "rect": [120.0, 0.0, 100.0, 80.0],
+            "background": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 },
+            "background_layers": [{
+              "geometry": {
+                "position": [{ "length": 0.0, "fraction": 0.5 }, { "length": 0.0, "fraction": 0.5 }],
+                "size": { "width": { "length": 60.0, "fraction": 0.0 }, "height": null },
+                "repeat_x": "no_repeat",
+                "repeat_y": "no_repeat"
+              },
+              "image": { "resource": 1 }
+            }]
+          },
+          {
+            "id": 3,
+            "parent": null,
+            "rect": [240.0, 0.0, 100.0, 80.0],
+            "background": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 },
+            "background_layers": [{
+              "geometry": {
+                "position": [{ "length": 0.0, "fraction": 0.5 }, { "length": 0.0, "fraction": 0.5 }],
+                "size": { "width": null, "height": { "length": 30.0, "fraction": 0.0 } },
+                "repeat_x": "no_repeat",
+                "repeat_y": "no_repeat"
+              },
+              "image": { "resource": 1 }
+            }]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.intrinsic-auto",
+        "samples": [
+          { "point": [10.5, 10.5], "color": { "kind": "srgba", "red": 255, "green": 0, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [13.5, 11.5], "color": { "kind": "srgba", "red": 255, "green": 255, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [16.0, 11.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [145.0, 30.0], "color": { "kind": "srgba", "red": 255, "green": 0, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [195.0, 50.0], "color": { "kind": "srgba", "red": 255, "green": 255, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [125.0, 40.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [265.0, 30.0], "color": { "kind": "srgba", "red": 255, "green": 0, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [315.0, 50.0], "color": { "kind": "srgba", "red": 255, "green": 255, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [245.0, 40.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

@@ -66,6 +66,27 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.background-size-intrinsic-auto",
+      "feature": "background-size-intrinsic-auto",
+      "fixture": "wpt/css/css-backgrounds/background-size-intrinsic-auto.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-size-contain-001-intrinsic",
+      "feature": "background-size-contain",
+      "fixture": "wpt/css/css-backgrounds/background-size-contain-001-intrinsic.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-size-cover-001-intrinsic",
+      "feature": "background-size-cover",
+      "fixture": "wpt/css/css-backgrounds/background-size-cover-001-intrinsic.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.background-position-three-four-values.test1",
       "feature": "background-position",
       "fixture": "wpt/css/css-backgrounds/background-position-three-four-values.json",
