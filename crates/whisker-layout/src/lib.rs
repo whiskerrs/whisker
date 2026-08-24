@@ -972,7 +972,8 @@ mod tests {
         Axes, ClearValue, ComputedGridTemplate, ComputedGridTemplateComponent,
         ComputedGridTemplateRepetition, ComputedGridTrackSizing, Edges, FloatValue,
         GridPlacementLineValue, GridRepetitionCountValue, GridTemplateAreaValue,
-        GridTemplateAreasValue, StyleNumber,
+        GridTemplateAreasValue, OverflowValue, SpecifiedStyle, StyleEnvironment, StyleNumber,
+        StyleProperty, StyleValue, resolve_style,
     };
 
     const MIXED: ComputedLengthPercentage = ComputedLengthPercentage::new(1.0, 0.5);
@@ -993,6 +994,77 @@ mod tests {
 
     fn zero_measure(_: NodeId, _: MeasureRequest) -> LayoutSize {
         LayoutSize::default()
+    }
+
+    fn resolved_layout(specified: &SpecifiedStyle) -> ComputedLayoutStyle {
+        resolve_style(
+            specified,
+            None,
+            StyleEnvironment::new(100.0, 100.0, 1.0, 16.0),
+        )
+        .unwrap()
+        .computed()
+        .layout()
+        .clone()
+    }
+
+    #[test]
+    fn intrinsic_leaf_uses_replaced_block_sizing() {
+        let root = id(1);
+        let leaf = id(2);
+        let mut tree = LayoutTree::new();
+        tree.create_node(
+            root,
+            ComputedLayoutStyle {
+                display: DisplayValue::Block,
+                size: Axes {
+                    width: ComputedSizeValue::Value(ComputedLengthPercentage::new(200.0, 0.0)),
+                    height: ComputedSizeValue::Auto,
+                },
+                ..ComputedLayoutStyle::default()
+            },
+        )
+        .unwrap();
+        tree.create_node(leaf, ComputedLayoutStyle::default())
+            .unwrap();
+        tree.set_measurable(leaf, true).unwrap();
+        tree.set_children(root, &[leaf]).unwrap();
+
+        let snapshot = tree
+            .compute(root, LayoutSize::new(200.0, 100.0), &mut |_, _| {
+                LayoutSize::new(50.0, 20.0)
+            })
+            .unwrap();
+        assert_eq!(snapshot.get(leaf).unwrap().border_box.width, 50.0);
+    }
+
+    #[test]
+    fn overflow_controls_flex_automatic_minimum_size() {
+        fn child_width(overflow: OverflowValue) -> f32 {
+            let root = id(1);
+            let child = id(2);
+            let mut tree = LayoutTree::new();
+            tree.create_node(root, sized(100.0, 20.0)).unwrap();
+            let child_style = resolved_layout(
+                &SpecifiedStyle::new()
+                    .push(StyleProperty::OverflowX, StyleValue::Overflow(overflow))
+                    .push(StyleProperty::OverflowY, StyleValue::Overflow(overflow)),
+            );
+            tree.create_node(child, child_style).unwrap();
+            tree.set_measurable(child, true).unwrap();
+            tree.set_children(root, &[child]).unwrap();
+            tree.compute(root, LayoutSize::new(100.0, 20.0), &mut |_, _| {
+                LayoutSize::new(200.0, 20.0)
+            })
+            .unwrap()
+            .get(child)
+            .unwrap()
+            .border_box
+            .width
+        }
+
+        assert_eq!(child_width(OverflowValue::Visible), 200.0);
+        assert_eq!(child_width(OverflowValue::Hidden), 100.0);
     }
 
     #[test]

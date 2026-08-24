@@ -1507,10 +1507,7 @@ mod tests {
         assert_eq!(style.direction, DirectionValue::Ltr);
         assert_eq!(style.box_sizing, BoxSizingValue::BorderBox);
         assert_eq!(style.size, Axes::all(ComputedSizeValue::Auto));
-        assert_eq!(
-            style.min_size,
-            Axes::all(ComputedSizeValue::Value(ComputedLengthPercentage::ZERO))
-        );
+        assert_eq!(style.min_size, Axes::all(ComputedSizeValue::Auto));
         assert_eq!(style.max_size, Axes::all(ComputedSizeValue::None));
         assert_eq!(
             style.margin,
