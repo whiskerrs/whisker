@@ -78,7 +78,6 @@
         "type": { "const": "present_box" },
         "revision": { "type": "integer", "minimum": 1 },
         "rect": { "$ref": "#/$defs/quadNumber" },
-        "content_box": { "$ref": "#/$defs/quadNumber" },
         "background": { "$ref": "#/$defs/color" },
         "border": { "$ref": "#/$defs/border" }
       }
@@ -100,14 +99,23 @@
     "sceneNode": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "parent", "rect", "background", "clip"],
+      "required": ["id", "parent", "rect", "background"],
       "properties": {
         "id": { "type": "integer", "minimum": 1 },
         "parent": { "type": ["integer", "null"], "minimum": 1 },
         "rect": { "$ref": "#/$defs/quadNumber" },
+        "content_box": { "$ref": "#/$defs/quadNumber" },
         "background": { "$ref": "#/$defs/color" },
         "border": { "$ref": "#/$defs/border" },
         "clip": { "$ref": "#/$defs/boxClip" },
+        "background_layer": { "$ref": "#/$defs/backgroundGeometry" },
+        "background_layers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/backgroundPaintLayer" }
+        },
+        "linear_gradient": { "$ref": "#/$defs/linearGradient" },
+        "radial_gradient": { "$ref": "#/$defs/radialGradient" },
+        "conic_gradient": { "$ref": "#/$defs/conicGradient" },
         "transform": {
           "type": "array",
           "minItems": 16,
@@ -305,6 +313,119 @@
           "items": { "type": "number", "minimum": 0 }
         }
       ]
+    },
+    "lengthPercentage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["length", "fraction"],
+      "properties": {
+        "length": { "type": "number" },
+        "fraction": { "type": "number" }
+      }
+    },
+    "backgroundGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "position": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/lengthPercentage" }
+        },
+        "size": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/lengthPercentage" }
+        },
+        "repeat_x": { "enum": ["repeat", "no_repeat", "space", "round"] },
+        "repeat_y": { "enum": ["repeat", "no_repeat", "space", "round"] },
+        "origin": { "enum": ["border", "padding", "content"] },
+        "clip": { "enum": ["border", "padding", "content"] }
+      }
+    },
+    "gradientStop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["color", "position"],
+      "properties": {
+        "color": { "$ref": "#/$defs/color" },
+        "position": { "type": "number" }
+      }
+    },
+    "linearGradient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["angle_degrees", "stops"],
+      "properties": {
+        "angle_degrees": { "type": "number" },
+        "repeating": { "type": "boolean" },
+        "stops": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/gradientStop" }
+        }
+      }
+    },
+    "radialGradient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["center", "radii", "stops"],
+      "properties": {
+        "center": { "$ref": "#/$defs/point" },
+        "radii": { "$ref": "#/$defs/point" },
+        "stops": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/gradientStop" }
+        }
+      }
+    },
+    "conicGradient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from_degrees", "center", "stops"],
+      "properties": {
+        "from_degrees": { "type": "number" },
+        "center": { "$ref": "#/$defs/point" },
+        "stops": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/gradientStop" }
+        }
+      }
+    },
+    "backgroundImage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["linear_gradient"],
+          "properties": { "linear_gradient": { "$ref": "#/$defs/linearGradient" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["radial_gradient"],
+          "properties": { "radial_gradient": { "$ref": "#/$defs/radialGradient" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["conic_gradient"],
+          "properties": { "conic_gradient": { "$ref": "#/$defs/conicGradient" } }
+        }
+      ]
+    },
+    "backgroundPaintLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image"],
+      "properties": {
+        "geometry": { "$ref": "#/$defs/backgroundGeometry" },
+        "image": { "$ref": "#/$defs/backgroundImage" }
+      }
     },
     "quadNumber": {
       "type": "array",

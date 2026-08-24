@@ -31,6 +31,13 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.background-layer-stacking",
+      "feature": "background-image-layer-stacking",
+      "fixture": "wpt/css/css-backgrounds/background-layer-stacking.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.background-size-009",
       "feature": "background-size-no-repeat",
       "fixture": "wpt/css/css-backgrounds/background-size-009.json",

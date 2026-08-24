@@ -349,6 +349,11 @@ pub struct SceneNodeFixture {
     /// Resolved geometry shared by the optional background image below.
     #[serde(default)]
     pub background_layer: BackgroundLayerFixture,
+    /// Ordered CSS background layers, with the first entry painted nearest
+    /// the user. This is mutually exclusive with the legacy single-image
+    /// fields below.
+    #[serde(default)]
+    pub background_layers: Vec<BackgroundPaintLayerFixture>,
     /// Optional resolved linear-gradient background image. The fixture DSL
     /// supplies the remaining `BackgroundLayer` fields as their CSS initial
     /// values so every Host receives the same protocol operation.
@@ -415,6 +420,29 @@ pub struct ConicGradientFixture {
     pub center: [f32; 2],
     /// Ordered, explicitly resolved color stops expressed as turns.
     pub stops: Vec<GradientStopFixture>,
+}
+
+/// One image and its independently resolved CSS background geometry.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BackgroundPaintLayerFixture {
+    /// Position, size, repetition, origin, and clip for this layer.
+    #[serde(default)]
+    pub geometry: BackgroundLayerFixture,
+    /// Resolved image painted by this layer.
+    pub image: BackgroundImageFixture,
+}
+
+/// Image vocabulary used by shared background-layer fixtures.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundImageFixture {
+    /// Resolved linear gradient.
+    LinearGradient(LinearGradientFixture),
+    /// Resolved radial gradient.
+    RadialGradient(RadialGradientFixture),
+    /// Resolved conic gradient.
+    ConicGradient(ConicGradientFixture),
 }
 
 /// Resolved geometry for the one background image supported by the fixture DSL.
@@ -925,6 +953,56 @@ fn valid_border(border: &BorderFixture) -> bool {
         && border.colors.iter().all(valid_color)
 }
 
+fn valid_background_geometry(geometry: &BackgroundLayerFixture) -> bool {
+    geometry
+        .position
+        .iter()
+        .all(LengthPercentageFixture::is_finite)
+        && geometry
+            .size
+            .is_none_or(|size| size.iter().all(LengthPercentageFixture::is_finite))
+}
+
+fn valid_linear_gradient(gradient: &LinearGradientFixture) -> bool {
+    gradient.angle_degrees.is_finite()
+        && gradient.stops.len() >= 2
+        && gradient
+            .stops
+            .iter()
+            .all(|stop| valid_color(&stop.color) && stop.position.is_finite())
+}
+
+fn valid_radial_gradient(gradient: &RadialGradientFixture) -> bool {
+    gradient.center.iter().all(|value| value.is_finite())
+        && gradient
+            .radii
+            .iter()
+            .all(|value| value.is_finite() && *value > 0.0)
+        && gradient.stops.len() >= 2
+        && gradient
+            .stops
+            .iter()
+            .all(|stop| valid_color(&stop.color) && stop.position.is_finite())
+}
+
+fn valid_conic_gradient(gradient: &ConicGradientFixture) -> bool {
+    gradient.from_degrees.is_finite()
+        && gradient.center.iter().all(|value| value.is_finite())
+        && gradient.stops.len() >= 2
+        && gradient
+            .stops
+            .iter()
+            .all(|stop| valid_color(&stop.color) && stop.position.is_finite())
+}
+
+fn valid_background_image(image: &BackgroundImageFixture) -> bool {
+    match image {
+        BackgroundImageFixture::LinearGradient(gradient) => valid_linear_gradient(gradient),
+        BackgroundImageFixture::RadialGradient(gradient) => valid_radial_gradient(gradient),
+        BackgroundImageFixture::ConicGradient(gradient) => valid_conic_gradient(gradient),
+    }
+}
+
 fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
     if nodes.is_empty() {
         return false;
@@ -952,44 +1030,23 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                 && node
                     .opacity
                     .is_none_or(|opacity| opacity.is_finite() && (0.0..=1.0).contains(&opacity))
+                && valid_background_geometry(&node.background_layer)
+                && node.background_layers.iter().all(|layer| {
+                    valid_background_geometry(&layer.geometry)
+                        && valid_background_image(&layer.image)
+                })
                 && node
-                    .background_layer
-                    .position
-                    .iter()
-                    .all(LengthPercentageFixture::is_finite)
+                    .linear_gradient
+                    .as_ref()
+                    .is_none_or(valid_linear_gradient)
                 && node
-                    .background_layer
-                    .size
-                    .is_none_or(|size| size.iter().all(LengthPercentageFixture::is_finite))
-                && node.linear_gradient.as_ref().is_none_or(|gradient| {
-                    gradient.angle_degrees.is_finite()
-                        && gradient.stops.len() >= 2
-                        && gradient
-                            .stops
-                            .iter()
-                            .all(|stop| valid_color(&stop.color) && stop.position.is_finite())
-                })
-                && node.radial_gradient.as_ref().is_none_or(|gradient| {
-                    gradient.center.iter().all(|value| value.is_finite())
-                        && gradient
-                            .radii
-                            .iter()
-                            .all(|value| value.is_finite() && *value > 0.0)
-                        && gradient.stops.len() >= 2
-                        && gradient
-                            .stops
-                            .iter()
-                            .all(|stop| valid_color(&stop.color) && stop.position.is_finite())
-                })
-                && node.conic_gradient.as_ref().is_none_or(|gradient| {
-                    gradient.from_degrees.is_finite()
-                        && gradient.center.iter().all(|value| value.is_finite())
-                        && gradient.stops.len() >= 2
-                        && gradient
-                            .stops
-                            .iter()
-                            .all(|stop| valid_color(&stop.color) && stop.position.is_finite())
-                })
+                    .radial_gradient
+                    .as_ref()
+                    .is_none_or(valid_radial_gradient)
+                && node
+                    .conic_gradient
+                    .as_ref()
+                    .is_none_or(valid_conic_gradient)
                 && [
                     node.linear_gradient.is_some(),
                     node.radial_gradient.is_some(),
@@ -999,6 +1056,10 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                 .filter(|present| *present)
                 .count()
                     <= 1
+                && (node.background_layers.is_empty()
+                    || (node.linear_gradient.is_none()
+                        && node.radial_gradient.is_none()
+                        && node.conic_gradient.is_none()))
         })
         && nodes.iter().all(|node| {
             let mut seen = std::collections::BTreeSet::new();
