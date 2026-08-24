@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-resource-image",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/background-size-009.html",
+    "reference_path": "css/css-backgrounds/reference/background-size-006-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "A decoded image resource is painted inside its independently resolved background image rectangle.",
+    "adaptation": "The upstream external image is represented as a four-pixel decoded raster registered directly with the mock Host resource store. URL acquisition is tested separately from paint. The image is enlarged to an explicit 80 by 80 logical-pixel no-repeat rectangle so quadrant samples verify ResourceId lookup, orientation, scaling, and clipping without network timing."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "register_raster_resource",
+        "id": 1,
+        "width": 2,
+        "height": 2,
+        "pixels": [
+          { "kind": "srgba", "red": 255, "green": 0, "blue": 0, "alpha": 1.0 },
+          { "kind": "srgba", "red": 0, "green": 128, "blue": 0, "alpha": 1.0 },
+          { "kind": "srgba", "red": 0, "green": 0, "blue": 255, "alpha": 1.0 },
+          { "kind": "srgba", "red": 255, "green": 255, "blue": 0, "alpha": 1.0 }
+        ]
+      },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 100.0],
+            "background": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 },
+            "background_layers": [
+              {
+                "geometry": {
+                  "position": [
+                    { "length": 10.0, "fraction": 0.0 },
+                    { "length": 10.0, "fraction": 0.0 }
+                  ],
+                  "size": [
+                    { "length": 80.0, "fraction": 0.0 },
+                    { "length": 80.0, "fraction": 0.0 }
+                  ],
+                  "repeat_x": "no_repeat",
+                  "repeat_y": "no_repeat"
+                },
+                "image": { "resource": 1 }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.resource-image",
+        "samples": [
+          { "point": [5.0, 5.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [25.0, 25.0], "color": { "kind": "srgba", "red": 255, "green": 0, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [75.0, 25.0], "color": { "kind": "srgba", "red": 0, "green": 128, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [25.0, 75.0], "color": { "kind": "srgba", "red": 0, "green": 0, "blue": 255, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [75.0, 75.0], "color": { "kind": "srgba", "red": 255, "green": 255, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [95.0, 95.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

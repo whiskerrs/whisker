@@ -134,6 +134,19 @@ pub enum Command {
         /// Physical pixels per logical pixel.
         scale: f32,
     },
+    /// Registers one already-decoded raster in the mock Host resource store.
+    /// Production providers reach the same store after URL, asset, or byte
+    /// acquisition succeeds.
+    RegisterRasterResource {
+        /// Stable non-zero resource identifier referenced by paint commands.
+        id: u64,
+        /// Raster width in physical pixels.
+        width: u32,
+        /// Raster height in physical pixels.
+        height: u32,
+        /// Row-major pixels from top-left to bottom-right.
+        pixels: Vec<ColorFixture>,
+    },
     /// Presents one semantic box through the production Host path.
     PresentBox {
         /// Frame target revision.
@@ -437,6 +450,8 @@ pub struct BackgroundPaintLayerFixture {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum BackgroundImageFixture {
+    /// A raster already registered with the mock Host resource store.
+    Resource(u64),
     /// Resolved linear gradient.
     LinearGradient(LinearGradientFixture),
     /// Resolved radial gradient.
@@ -741,6 +756,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), FixtureError> {
                     | "pixel"
                     | "pixel-samples"
                     | "pixel-relations"
+                    | "resource-registration"
                     | "measurement"
                     | "input"
             ) {
@@ -860,6 +876,18 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
                 scale,
             } if finite_positive(*width) && finite_positive(*height) && finite_positive(*scale) => {
             }
+            Command::RegisterRasterResource {
+                id,
+                width,
+                height,
+                pixels,
+            } if *id > 0
+                && *width > 0
+                && *height > 0
+                && width
+                    .checked_mul(*height)
+                    .is_some_and(|count| count as usize == pixels.len())
+                && pixels.iter().all(valid_color) => {}
             Command::PresentBox {
                 revision,
                 rect,
@@ -997,6 +1025,7 @@ fn valid_conic_gradient(gradient: &ConicGradientFixture) -> bool {
 
 fn valid_background_image(image: &BackgroundImageFixture) -> bool {
     match image {
+        BackgroundImageFixture::Resource(resource) => *resource != 0,
         BackgroundImageFixture::LinearGradient(gradient) => valid_linear_gradient(gradient),
         BackgroundImageFixture::RadialGradient(gradient) => valid_radial_gradient(gradient),
         BackgroundImageFixture::ConicGradient(gradient) => valid_conic_gradient(gradient),
