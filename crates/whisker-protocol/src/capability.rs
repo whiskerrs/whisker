@@ -25,11 +25,14 @@ pub enum RenderCapability {
     /// One resolved, non-repeating linear-gradient background image using the
     /// initial layer geometry and explicit color-stop positions.
     LinearGradients,
+    /// One resolved, non-repeating explicit radial-gradient background image
+    /// using the initial layer geometry and explicit color-stop positions.
+    RadialGradients,
 }
 
 impl RenderCapability {
     /// Every optional capability in stable declaration order.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::EllipticalBorderRadius,
         Self::BackgroundLayers,
         Self::VisualEffects,
@@ -39,6 +42,7 @@ impl RenderCapability {
         Self::Cursor,
         Self::ResourceLifecycle,
         Self::LinearGradients,
+        Self::RadialGradients,
     ];
 
     /// Stable diagnostic spelling shared by Host errors and checklists.
@@ -53,6 +57,7 @@ impl RenderCapability {
             Self::Cursor => "cursor",
             Self::ResourceLifecycle => "resource-lifecycle",
             Self::LinearGradients => "linear-gradients",
+            Self::RadialGradients => "radial-gradients",
         }
     }
 
@@ -219,6 +224,9 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 2
         Operation::SetBackgroundLayers { layers, .. } if is_basic_linear_gradient(layers) => {
             Some(RenderCapability::LinearGradients)
         }
+        Operation::SetBackgroundLayers { layers, .. } if is_basic_radial_gradient(layers) => {
+            Some(RenderCapability::RadialGradients)
+        }
         Operation::SetBackgroundLayers { .. } => Some(RenderCapability::BackgroundLayers),
         Operation::SetVisualEffects { .. } => Some(RenderCapability::VisualEffects),
         Operation::SetText { content, .. } if content.paint.uses_extended_features() => {
@@ -246,6 +254,32 @@ fn is_basic_linear_gradient(layers: &[crate::BackgroundLayer]) -> bool {
             stops,
             ..
         } if stops.iter().all(|stop| stop.position.is_some())
+    ) && layer.position == Default::default()
+        && layer.size == crate::BackgroundSize::Auto
+        && layer.repeat_x == crate::ImageRepeat::Repeat
+        && layer.repeat_y == crate::ImageRepeat::Repeat
+        && layer.origin == crate::PaintBox::Padding
+        && layer.clip == crate::PaintBox::Border
+        && layer.attachment == crate::BackgroundAttachment::Scroll
+        && layer.blend_mode == crate::BlendMode::Normal
+}
+
+fn is_basic_radial_gradient(layers: &[crate::BackgroundLayer]) -> bool {
+    let [layer] = layers else {
+        return false;
+    };
+    matches!(
+        &layer.image,
+        crate::PaintImage::RadialGradient {
+            shape: crate::RadialGradientShape::Ellipse,
+            extent: crate::RadialGradientExtent::Explicit,
+            radii: Some(_),
+            repeating: false,
+            stops,
+            ..
+        } if stops.iter().all(|stop| {
+            stop.position.is_some_and(|position| position.length == 0.0)
+        })
     ) && layer.position == Default::default()
         && layer.size == crate::BackgroundSize::Auto
         && layer.repeat_x == crate::ImageRepeat::Repeat
@@ -319,6 +353,31 @@ mod tests {
         })
     }
 
+    fn basic_radial_layer() -> BackgroundLayer {
+        let mut layer = basic_linear_layer();
+        let PaintImage::LinearGradient { stops, .. } = layer.image else {
+            unreachable!()
+        };
+        layer.image = PaintImage::RadialGradient {
+            shape: crate::RadialGradientShape::Ellipse,
+            extent: crate::RadialGradientExtent::Explicit,
+            center: PaintPosition::default(),
+            radii: Some((
+                PaintLengthPercentage {
+                    length: 10.0,
+                    fraction: 0.0,
+                },
+                PaintLengthPercentage {
+                    length: 20.0,
+                    fraction: 0.0,
+                },
+            )),
+            repeating: false,
+            stops,
+        };
+        layer
+    }
+
     #[test]
     fn discovers_elliptical_radius_without_classifying_base_box_paint() {
         let node = NodeId::new(1).unwrap();
@@ -379,6 +438,14 @@ mod tests {
             .required_capabilities(),
             vec![RenderCapability::BackgroundLayers]
         );
+        assert_eq!(
+            packet(vec![Operation::SetBackgroundLayers {
+                node,
+                layers: vec![basic_radial_layer()],
+            }])
+            .required_capabilities(),
+            vec![RenderCapability::RadialGradients]
+        );
         assert!(
             packet(vec![Operation::SetBackgroundLayers {
                 node,
@@ -403,6 +470,7 @@ mod tests {
                 "cursor",
                 "resource-lifecycle",
                 "linear-gradients",
+                "radial-gradients",
             ]
         );
 

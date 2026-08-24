@@ -13,6 +13,8 @@ import rs.whisker.runtime.paint.HostBoxPaint
 import rs.whisker.runtime.paint.HostBackgroundLayers
 import rs.whisker.runtime.paint.HostGradientStop
 import rs.whisker.runtime.paint.HostLinearGradient
+import rs.whisker.runtime.paint.HostPaintCoordinate
+import rs.whisker.runtime.paint.HostRadialGradient
 import rs.whisker.runtime.paint.applyBoxPaint
 import rs.whisker.runtime.paint.parseNamedColor
 import rs.whisker.runtime.paint.rgba
@@ -359,44 +361,78 @@ internal class HostScene(
         } else {
             val density = root.resources.displayMetrics.density
             val names = requireNotNull(operation.names)
-            val stops = List(numbers.size / 7) { index ->
-                val offset = index * 7
-                HostGradientStop(
-                    color = if (numbers[offset] == 0f) {
-                        parseNamedColor(names[index])
-                    } else {
-                        rgba(
-                            numbers[offset + 1],
-                            numbers[offset + 2],
-                            numbers[offset + 3],
-                            numbers[offset + 4],
-                        )
-                    },
-                    length = numbers[offset + 5] * density,
-                    fraction = numbers[offset + 6],
+            val stopOffset = if (operation.flags == 1) 8 else 0
+            val stops = decodeGradientStops(numbers, stopOffset, names, density)
+            node.backgroundLayers = if (operation.flags == 1) {
+                fun coordinate(offset: Int) = HostPaintCoordinate(
+                    length = numbers[offset] * density,
+                    fraction = numbers[offset + 1],
+                )
+                HostBackgroundLayers(
+                    linearGradient = null,
+                    radialGradient = HostRadialGradient(
+                        centerX = coordinate(0),
+                        centerY = coordinate(2),
+                        radiusX = coordinate(4),
+                        radiusY = coordinate(6),
+                        stops = stops,
+                    ),
+                )
+            } else {
+                HostBackgroundLayers(
+                    linearGradient = HostLinearGradient(operation.scalar, stops),
                 )
             }
-            node.backgroundLayers = HostBackgroundLayers(
-                linearGradient = HostLinearGradient(operation.scalar, stops),
-            )
         }
         node.paint?.let { applyPaint(node, it) }
+    }
+
+    private fun decodeGradientStops(
+        numbers: FloatArray,
+        start: Int,
+        names: Array<String>,
+        density: Float,
+    ): List<HostGradientStop> = List((numbers.size - start) / 7) { index ->
+        val offset = start + index * 7
+        HostGradientStop(
+            color = if (numbers[offset] == 0f) {
+                parseNamedColor(names[index])
+            } else {
+                rgba(
+                    numbers[offset + 1],
+                    numbers[offset + 2],
+                    numbers[offset + 3],
+                    numbers[offset + 4],
+                )
+            },
+            length = numbers[offset + 5] * density,
+            fraction = numbers[offset + 6],
+        )
     }
 
     private fun validBackgroundLayers(
         operation: HostSceneOperation,
         existing: Set<Long>,
     ): Boolean {
-        if (operation.node !in existing || operation.flags != 0 || !operation.scalar.isFinite()) {
+        if (
+            operation.node !in existing || operation.flags !in 0..1 ||
+            !operation.scalar.isFinite()
+        ) {
             return false
         }
         val numbers = operation.numbers ?: FloatArray(0)
         val names = operation.names ?: emptyArray()
-        if (numbers.isEmpty()) return names.isEmpty()
-        if (numbers.size < 14 || numbers.size % 7 != 0 || names.size != numbers.size / 7) {
+        if (numbers.isEmpty()) return operation.flags == 0 && names.isEmpty()
+        val stopOffset = if (operation.flags == 1) 8 else 0
+        if (
+            numbers.size < stopOffset + 14 || (numbers.size - stopOffset) % 7 != 0 ||
+            names.size != (numbers.size - stopOffset) / 7
+        ) {
             return false
         }
         return numbers.indices.all { index -> numbers[index].isFinite() } &&
-            (numbers.indices step 7).all { offset -> numbers[offset] == 0f || numbers[offset] == 1f }
+            (stopOffset until numbers.size step 7).all { offset ->
+                numbers[offset] == 0f || numbers[offset] == 1f
+            }
     }
 }

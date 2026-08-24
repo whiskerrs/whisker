@@ -58,7 +58,7 @@ struct LinearGradientDraw {
     start_end: vec4<f32>,
     stop_offset: u32,
     stop_count: u32,
-    repeating: u32,
+    kind: u32,
     _padding: u32,
 };
 
@@ -368,7 +368,11 @@ fn linear_gradient_color(draw_index: u32, position: vec2<f32>) -> vec4<f32> {
     }
     let line = gradient.start_end.zw - gradient.start_end.xy;
     var progress = dot(position - gradient.start_end.xy, line) / max(dot(line, line), 0.0001);
-    if gradient.repeating != 0u {
+    if gradient.kind == 2u {
+        let normalized = (position - gradient.start_end.xy)
+            / max(gradient.start_end.zw, vec2<f32>(0.0001));
+        progress = length(normalized);
+    } else if gradient.kind == 1u {
         progress = fract(progress);
     }
     let first = linear_gradient_stops[gradient.stop_offset];
@@ -624,7 +628,7 @@ struct LinearGradientDrawGpu {
     start_end: [f32; 4],
     stop_offset: u32,
     stop_count: u32,
-    repeating: u32,
+    kind: u32,
     padding: u32,
 }
 
@@ -641,6 +645,7 @@ pub(crate) struct LinearGradientDraw {
     start_end: [f32; 4],
     stops: Vec<LinearGradientStopGpu>,
     repeating: bool,
+    radial: bool,
 }
 
 struct BoxGpuPipeline {
@@ -823,7 +828,11 @@ impl BoxGpuPipeline {
                     start_end: gradient.start_end,
                     stop_offset,
                     stop_count: gradient.stops.len() as u32,
-                    repeating: u32::from(gradient.repeating),
+                    kind: if gradient.radial {
+                        2
+                    } else {
+                        u32::from(gradient.repeating)
+                    },
                     padding: 0,
                 }
             })
@@ -937,6 +946,40 @@ pub(crate) fn linear_gradient_draw(
             })
             .collect(),
         repeating,
+        radial: false,
+    }
+}
+
+pub(crate) fn radial_gradient_draw(
+    positioning_rect: LayoutRect,
+    center: whisker_protocol::PaintPosition,
+    radii: (
+        whisker_protocol::PaintLengthPercentage,
+        whisker_protocol::PaintLengthPercentage,
+    ),
+    stops: &[GradientStop],
+    opacity: f32,
+) -> LinearGradientDraw {
+    let center = [
+        positioning_rect.x + center.x.length + center.x.fraction * positioning_rect.width,
+        positioning_rect.y + center.y.length + center.y.fraction * positioning_rect.height,
+    ];
+    let radii = [
+        radii.0.length + radii.0.fraction * positioning_rect.width,
+        radii.1.length + radii.1.fraction * positioning_rect.height,
+    ];
+    LinearGradientDraw {
+        start_end: [center[0], center[1], radii[0], radii[1]],
+        stops: stops
+            .iter()
+            .map(|stop| LinearGradientStopGpu {
+                position: stop.position.map_or(0.0, |position| position.fraction),
+                padding: [0.0; 3],
+                color: gpu_color(&stop.color, opacity),
+            })
+            .collect(),
+        repeating: false,
+        radial: true,
     }
 }
 
@@ -1104,13 +1147,31 @@ impl GpuRenderer {
                     }
                     let positioning_rect = resolve_box_geometry(*rect, paint).inner_rect;
                     for layer in background_layers.iter().rev() {
-                        let PaintImage::LinearGradient {
-                            angle_degrees,
-                            repeating,
-                            stops,
-                        } = &layer.image
-                        else {
-                            continue;
+                        let gradient = match &layer.image {
+                            PaintImage::LinearGradient {
+                                angle_degrees,
+                                repeating,
+                                stops,
+                            } => linear_gradient_draw(
+                                positioning_rect,
+                                *angle_degrees,
+                                *repeating,
+                                stops,
+                                *opacity,
+                            ),
+                            PaintImage::RadialGradient {
+                                center,
+                                radii: Some(radii),
+                                stops,
+                                ..
+                            } => radial_gradient_draw(
+                                positioning_rect,
+                                *center,
+                                *radii,
+                                stops,
+                                *opacity,
+                            ),
+                            _ => continue,
                         };
                         push_quad_draw(
                             &mut vertices,
@@ -1119,13 +1180,7 @@ impl GpuRenderer {
                             *transform,
                             *clip,
                             shape_clips,
-                            Some(linear_gradient_draw(
-                                positioning_rect,
-                                *angle_degrees,
-                                *repeating,
-                                stops,
-                                *opacity,
-                            )),
+                            Some(gradient),
                         );
                     }
                     for primitive in box_primitives

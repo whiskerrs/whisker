@@ -8,8 +8,8 @@ use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
     BorderFixture, BorderStyleFixture, ColorFixture, Command, Host, LinearGradientFixture,
     LoadedCase, OverflowClipFixture, PixelRelationFixture, PixelRelationKind, PixelSampleFixture,
-    PointerEventFixture, Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
-    load_required,
+    PointerEventFixture, RadialGradientFixture, Scenario, ScenarioSide, SceneNodeFixture,
+    VisibilityFixture, load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
@@ -20,14 +20,15 @@ use whisker_protocol::{
     MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
     PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
     PaintLengthPercentage, PaintPosition, PointerId, PointerInput, PointerKind, ProtocolVersion,
-    SurfaceId, TextMeasurePayload, TextMeasureStyle, Transform, Visibility, WhiskerValue,
+    RadialGradientExtent, RadialGradientShape, SurfaceId, TextMeasurePayload, TextMeasureStyle,
+    Transform, Visibility, WhiskerValue,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
 use crate::element::{DesktopElementRegistry, built_in_element_factories};
 use crate::gpu::{
-    LinearGradientDraw, linear_gradient_draw, render_box_primitives_offscreen,
-    render_clipped_box_primitives_offscreen,
+    LinearGradientDraw, linear_gradient_draw, radial_gradient_draw,
+    render_box_primitives_offscreen, render_clipped_box_primitives_offscreen,
 };
 use crate::paint::box_paint::{
     BoxPrimitive, BoxPrimitiveKind, linear_gradient_primitive, lower_box, resolve_box_geometry,
@@ -69,6 +70,55 @@ fn linear_gradient_protocol(value: &LinearGradientFixture) -> BackgroundLayer {
         image: PaintImage::LinearGradient {
             angle_degrees: value.angle_degrees,
             repeating: value.repeating,
+            stops: value
+                .stops
+                .iter()
+                .map(|stop| GradientStop {
+                    color: color_protocol(&stop.color),
+                    position: Some(PaintCoordinate {
+                        length: 0.0,
+                        fraction: stop.position,
+                    }),
+                })
+                .collect(),
+        },
+        position: PaintPosition::default(),
+        size: BackgroundSize::Auto,
+        repeat_x: ImageRepeat::Repeat,
+        repeat_y: ImageRepeat::Repeat,
+        origin: PaintBox::Padding,
+        clip: PaintBox::Border,
+        attachment: BackgroundAttachment::Scroll,
+        blend_mode: BlendMode::Normal,
+    }
+}
+
+fn radial_gradient_protocol(value: &RadialGradientFixture) -> BackgroundLayer {
+    BackgroundLayer {
+        image: PaintImage::RadialGradient {
+            shape: RadialGradientShape::Ellipse,
+            extent: RadialGradientExtent::Explicit,
+            center: PaintPosition {
+                x: PaintCoordinate {
+                    length: value.center[0],
+                    fraction: 0.0,
+                },
+                y: PaintCoordinate {
+                    length: value.center[1],
+                    fraction: 0.0,
+                },
+            },
+            radii: Some((
+                PaintLengthPercentage {
+                    length: value.radii[0],
+                    fraction: 0.0,
+                },
+                PaintLengthPercentage {
+                    length: value.radii[1],
+                    fraction: 0.0,
+                },
+            )),
+            repeating: false,
             stops: value
                 .stops
                 .iter()
@@ -370,6 +420,12 @@ impl Driver {
                     layers: vec![linear_gradient_protocol(gradient)],
                 });
             }
+            if let Some(gradient) = &fixture.radial_gradient {
+                operations.push(Operation::SetBackgroundLayers {
+                    node,
+                    layers: vec![radial_gradient_protocol(gradient)],
+                });
+            }
             operations.push(Operation::SetClip {
                 node,
                 clip: BoxClip {
@@ -454,26 +510,34 @@ impl Driver {
                 );
                 let positioning_rect = resolve_box_geometry(rect, paint).inner_rect;
                 for layer in background_layers.iter().rev() {
-                    let PaintImage::LinearGradient {
-                        angle_degrees,
-                        repeating,
-                        stops,
-                    } = &layer.image
-                    else {
-                        continue;
+                    let gradient = match &layer.image {
+                        PaintImage::LinearGradient {
+                            angle_degrees,
+                            repeating,
+                            stops,
+                        } => linear_gradient_draw(
+                            positioning_rect,
+                            *angle_degrees,
+                            *repeating,
+                            stops,
+                            opacity,
+                        ),
+                        PaintImage::RadialGradient {
+                            center,
+                            radii: Some(radii),
+                            stops,
+                            ..
+                        } => {
+                            radial_gradient_draw(positioning_rect, *center, *radii, stops, opacity)
+                        }
+                        _ => continue,
                     };
                     primitives.push((
                         linear_gradient_primitive(rect, paint),
                         clip,
                         transform,
                         shape_clips.clone(),
-                        Some(linear_gradient_draw(
-                            positioning_rect,
-                            *angle_degrees,
-                            *repeating,
-                            stops,
-                            opacity,
-                        )),
+                        Some(gradient),
                     ));
                 }
                 primitives.extend(

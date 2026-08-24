@@ -4,15 +4,16 @@ use whisker::ElementRegistry;
 use whisker_engine::FrameSink;
 use whisker_host_conformance::{
     BorderFixture, BorderStyleFixture, ColorFixture, Command, CornerRadiusFixture,
-    LinearGradientFixture, Manifest, OverflowClipFixture, PixelSampleFixture, SCHEMA_VERSION,
-    Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
+    LinearGradientFixture, Manifest, OverflowClipFixture, PixelSampleFixture,
+    RadialGradientFixture, SCHEMA_VERSION, Scenario, ScenarioSide, SceneNodeFixture,
+    VisibilityFixture,
 };
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
     BoxPaint, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat, LayoutGeometry,
     LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
     PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
-    ProtocolVersion, SurfaceId, Transform, Visibility,
+    ProtocolVersion, RadialGradientExtent, RadialGradientShape, SurfaceId, Transform, Visibility,
 };
 
 use crate::module_api::built_in_element_factories;
@@ -96,17 +97,23 @@ impl Driver {
                 }
                 Command::Checkpoint { name, samples, .. } => {
                     if self.expected_scene.is_some() {
-                        let has_gradient = self.expected_scene.as_ref().is_some_and(|nodes| {
-                            nodes.iter().any(|node| node.linear_gradient.is_some())
-                        });
-                        assert_eq!(
-                            name,
-                            if has_gradient {
-                                "paint.background-layers.linear-gradient"
-                            } else {
-                                "paint.box"
-                            }
-                        );
+                        let expected_checkpoint = self
+                            .expected_scene
+                            .as_ref()
+                            .and_then(|nodes| {
+                                nodes.iter().find_map(|node| {
+                                    node.linear_gradient
+                                        .as_ref()
+                                        .map(|_| "paint.background-layers.linear-gradient")
+                                        .or_else(|| {
+                                            node.radial_gradient
+                                                .as_ref()
+                                                .map(|_| "paint.background-layers.radial-gradient")
+                                        })
+                                })
+                            })
+                            .unwrap_or("paint.box");
+                        assert_eq!(name, expected_checkpoint);
                         self.assert_scene_is_projected(samples);
                     } else {
                         assert_eq!(name, "paint.box");
@@ -208,13 +215,14 @@ impl Driver {
                     "background-image",
                     &fixture_linear_gradient_css(gradient),
                 );
-                assert_style(&style, "background-position", "0px 0px");
-                assert_style(&style, "background-size", "auto");
-                assert_style(&style, "background-repeat", "repeat");
-                assert_style(&style, "background-origin", "padding-box");
-                assert_style(&style, "background-clip", "border-box");
-                assert_style(&style, "background-attachment", "scroll");
-                assert_style(&style, "background-blend-mode", "normal");
+                assert_initial_background_layer_is_projected(&style);
+            } else if let Some(gradient) = &fixture_node.radial_gradient {
+                assert_style(
+                    &style,
+                    "background-image",
+                    &fixture_radial_gradient_css(gradient),
+                );
+                assert_initial_background_layer_is_projected(&style);
             } else {
                 assert_eq!(style.get_property_value("background-image").unwrap(), "");
             }
@@ -258,6 +266,7 @@ impl Driver {
                 expected.iter().any(|node| {
                     node.id.to_string() == id.as_str()
                         && (node.linear_gradient.is_some()
+                            || node.radial_gradient.is_some()
                             || !fixture_color_is_transparent(&node.background))
                 })
             });
@@ -271,7 +280,11 @@ impl Driver {
                         .iter()
                         .rev()
                         .find(|node| node.opacity.is_some())
-                        .or_else(|| expected.iter().find(|node| node.linear_gradient.is_some()))
+                        .or_else(|| {
+                            expected.iter().find(|node| {
+                                node.linear_gradient.is_some() || node.radial_gradient.is_some()
+                            })
+                        })
                         .expect("sRGBA sample requires an opacity or gradient source node")
                         .id
                         .to_string();
@@ -285,7 +298,11 @@ impl Driver {
                     let expected_node = expected
                         .iter()
                         .find(|node| node.background == *expected_color)
-                        .or_else(|| expected.iter().find(|node| node.linear_gradient.is_some()))
+                        .or_else(|| {
+                            expected.iter().find(|node| {
+                                node.linear_gradient.is_some() || node.radial_gradient.is_some()
+                            })
+                        })
                         .unwrap_or_else(|| {
                             panic!("sample color {expected_color:?} has no matching scene node")
                         })
@@ -349,6 +366,9 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-images/linear-gradient-1.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-images/linear-gradient-1.json"
+        ),
+        "wpt/css/css-images/radial-gradient-container-relative-units-001.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-images/radial-gradient-container-relative-units-001.json"
         ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
@@ -538,6 +558,11 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
                 node,
                 layers: vec![linear_gradient_layer(gradient)],
             });
+        } else if let Some(gradient) = &fixture_node.radial_gradient {
+            operations.push(Operation::SetBackgroundLayers {
+                node,
+                layers: vec![radial_gradient_layer(gradient)],
+            });
         }
     }
     for (node_index, fixture_node) in nodes.iter().enumerate() {
@@ -584,6 +609,55 @@ fn linear_gradient_layer(gradient: &LinearGradientFixture) -> BackgroundLayer {
         image: PaintImage::LinearGradient {
             angle_degrees: gradient.angle_degrees,
             repeating: gradient.repeating,
+            stops: gradient
+                .stops
+                .iter()
+                .map(|stop| GradientStop {
+                    color: color(&stop.color),
+                    position: Some(PaintCoordinate {
+                        length: 0.0,
+                        fraction: stop.position,
+                    }),
+                })
+                .collect(),
+        },
+        position: PaintPosition::default(),
+        size: BackgroundSize::Auto,
+        repeat_x: ImageRepeat::Repeat,
+        repeat_y: ImageRepeat::Repeat,
+        origin: PaintBox::Padding,
+        clip: PaintBox::Border,
+        attachment: BackgroundAttachment::Scroll,
+        blend_mode: BlendMode::Normal,
+    }
+}
+
+fn radial_gradient_layer(gradient: &RadialGradientFixture) -> BackgroundLayer {
+    BackgroundLayer {
+        image: PaintImage::RadialGradient {
+            shape: RadialGradientShape::Ellipse,
+            extent: RadialGradientExtent::Explicit,
+            center: PaintPosition {
+                x: PaintCoordinate {
+                    length: gradient.center[0],
+                    fraction: 0.0,
+                },
+                y: PaintCoordinate {
+                    length: gradient.center[1],
+                    fraction: 0.0,
+                },
+            },
+            radii: Some((
+                PaintLengthPercentage {
+                    length: gradient.radii[0],
+                    fraction: 0.0,
+                },
+                PaintLengthPercentage {
+                    length: gradient.radii[1],
+                    fraction: 0.0,
+                },
+            )),
+            repeating: false,
             stops: gradient
                 .stops
                 .iter()
@@ -820,6 +894,35 @@ fn fixture_linear_gradient_css(gradient: &LinearGradientFixture) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("linear-gradient({}deg, {stops})", gradient.angle_degrees)
+}
+
+fn fixture_radial_gradient_css(gradient: &RadialGradientFixture) -> String {
+    let stops = gradient
+        .stops
+        .iter()
+        .map(|stop| {
+            format!(
+                "{} {}%",
+                fixture_color_css(&stop.color),
+                stop.position * 100.0
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "radial-gradient(ellipse {}px {}px at {}px {}px, {stops})",
+        gradient.radii[0], gradient.radii[1], gradient.center[0], gradient.center[1]
+    )
+}
+
+fn assert_initial_background_layer_is_projected(style: &web_sys::CssStyleDeclaration) {
+    assert_style(style, "background-position", "0px 0px");
+    assert_style(style, "background-size", "auto");
+    assert_style(style, "background-repeat", "repeat");
+    assert_style(style, "background-origin", "padding-box");
+    assert_style(style, "background-clip", "border-box");
+    assert_style(style, "background-attachment", "scroll");
+    assert_style(style, "background-blend-mode", "normal");
 }
 
 fn fixture_border_style_css(value: BorderStyleFixture) -> &'static str {
