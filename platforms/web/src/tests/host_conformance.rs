@@ -1590,6 +1590,7 @@ fn background_box(value: BackgroundBoxFixture) -> PaintBox {
         BackgroundBoxFixture::Border => PaintBox::Border,
         BackgroundBoxFixture::Padding => PaintBox::Padding,
         BackgroundBoxFixture::Content => PaintBox::Content,
+        BackgroundBoxFixture::BorderArea => PaintBox::BorderArea,
     }
 }
 
@@ -2022,6 +2023,7 @@ fn fixture_background_box(value: BackgroundBoxFixture) -> &'static str {
         BackgroundBoxFixture::Border => "border-box",
         BackgroundBoxFixture::Padding => "padding-box",
         BackgroundBoxFixture::Content => "content-box",
+        BackgroundBoxFixture::BorderArea => "border-area",
     }
 }
 
@@ -2252,6 +2254,7 @@ fn fixture_background_area(
                 content_box[3],
             ]
         }
+        BackgroundBoxFixture::BorderArea => node.rect,
     }
 }
 

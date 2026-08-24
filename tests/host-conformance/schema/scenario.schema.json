@@ -454,7 +454,7 @@
         "repeat_x": { "enum": ["repeat", "no_repeat", "space", "round"] },
         "repeat_y": { "enum": ["repeat", "no_repeat", "space", "round"] },
         "origin": { "enum": ["border", "padding", "content"] },
-        "clip": { "enum": ["border", "padding", "content"] }
+        "clip": { "enum": ["border", "padding", "content", "border_area"] }
       }
     },
     "gradientStop": {
