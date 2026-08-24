@@ -6,11 +6,11 @@ use whisker::{SurfaceRuntime, standard_element_registrations};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
-    BackgroundBoxFixture, BackgroundLayerFixture, BorderFixture, BorderStyleFixture, ColorFixture,
-    Command, ConicGradientFixture, Host, ImageRepeatFixture, LinearGradientFixture, LoadedCase,
-    OverflowClipFixture, PixelRelationFixture, PixelRelationKind, PixelSampleFixture,
-    PointerEventFixture, RadialGradientFixture, Scenario, ScenarioSide, SceneNodeFixture,
-    VisibilityFixture, load_required,
+    BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture, BorderFixture,
+    BorderStyleFixture, ColorFixture, Command, ConicGradientFixture, Host, ImageRepeatFixture,
+    LinearGradientFixture, LoadedCase, OverflowClipFixture, PixelRelationFixture,
+    PixelRelationKind, PixelSampleFixture, PointerEventFixture, RadialGradientFixture, Scenario,
+    ScenarioSide, SceneNodeFixture, VisibilityFixture, load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
@@ -237,6 +237,23 @@ fn conic_gradient_protocol(
         },
         geometry,
     )
+}
+
+fn background_image_protocol(
+    image: &BackgroundImageFixture,
+    geometry: &BackgroundLayerFixture,
+) -> BackgroundLayer {
+    match image {
+        BackgroundImageFixture::LinearGradient(gradient) => {
+            linear_gradient_protocol(gradient, geometry)
+        }
+        BackgroundImageFixture::RadialGradient(gradient) => {
+            radial_gradient_protocol(gradient, geometry)
+        }
+        BackgroundImageFixture::ConicGradient(gradient) => {
+            conic_gradient_protocol(gradient, geometry)
+        }
+    }
 }
 
 const fn border_style_protocol(value: BorderStyleFixture) -> BorderLineStyle {
@@ -511,7 +528,16 @@ impl Driver {
                 node,
                 paint: box_paint(&fixture.background, fixture.border.as_ref()),
             });
-            if let Some(gradient) = &fixture.linear_gradient {
+            if !fixture.background_layers.is_empty() {
+                operations.push(Operation::SetBackgroundLayers {
+                    node,
+                    layers: fixture
+                        .background_layers
+                        .iter()
+                        .map(|layer| background_image_protocol(&layer.image, &layer.geometry))
+                        .collect(),
+                });
+            } else if let Some(gradient) = &fixture.linear_gradient {
                 operations.push(Operation::SetBackgroundLayers {
                     node,
                     layers: vec![linear_gradient_protocol(
@@ -519,8 +545,7 @@ impl Driver {
                         &fixture.background_layer,
                     )],
                 });
-            }
-            if let Some(gradient) = &fixture.radial_gradient {
+            } else if let Some(gradient) = &fixture.radial_gradient {
                 operations.push(Operation::SetBackgroundLayers {
                     node,
                     layers: vec![radial_gradient_protocol(
@@ -528,8 +553,7 @@ impl Driver {
                         &fixture.background_layer,
                     )],
                 });
-            }
-            if let Some(gradient) = &fixture.conic_gradient {
+            } else if let Some(gradient) = &fixture.conic_gradient {
                 operations.push(Operation::SetBackgroundLayers {
                     node,
                     layers: vec![conic_gradient_protocol(gradient, &fixture.background_layer)],
