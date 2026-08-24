@@ -524,15 +524,19 @@ decoding to the Host resource service. Background resources do not influence
 Taffy layout; intrinsic dimensions returned by the Host are retained for
 future replaced-content consumers but do not resize a CSS background.
 
-The next slice lowers the Host-independent background geometry that every
-current receiver can apply symmetrically: two-axis explicit size, affine
-position, all repeat modes, border/padding/content origin and clip boxes, and
-scroll attachment. CSS initial `auto` remains valid for the initial geometry.
-Intrinsic `auto`, one-axis `auto`, `cover`, `contain`, fixed/local attachment,
-text clipping, and non-normal blend modes stay outside this slice until their
-resource-size or scrolling semantics and all four Host receivers land
-together. Unsupported combinations are rejected transactionally rather than
-silently approximated.
+Host-independent background geometry is lowered symmetrically for two-axis
+explicit size, affine position, all repeat modes, border/padding/content origin
+and clip boxes, and scroll attachment. Resource-backed images additionally
+support intrinsic `auto`, one-axis `auto`, `cover`, and `contain` on all four
+Hosts. Their natural dimensions remain in each Host resource cache: the frame
+continues to identify the image only by `ResourceId`, and the receiver resolves
+the final tile size from that cached metadata. This avoids duplicating mutable
+resource facts in `FramePacket` while keeping the geometry operation semantic.
+Gradients have no intrinsic dimensions, so only their initial `auto` and
+two-axis explicit sizes are currently accepted. Fixed/local attachment, the
+aspect-ratio coupling required when `round` changes only one tile axis, text
+clipping, and non-normal blend modes remain deferred. Unsupported combinations
+are rejected transactionally rather than silently approximated.
 
 Adding the semantic value does not declare a Host implementation complete.
 Until a Host advertises and implements the corresponding capability, its
