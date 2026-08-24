@@ -702,23 +702,32 @@ Hydration identity is based on stable scene/node markers and application
 state, not generated class names. The exact HTML format, streaming model, and
 hydration protocol remain a later RFC.
 
-## Lynx styling coverage
+## Styling coverage
 
-The initial conformance target is fixed at 175 standard CSS features:
+The conformance target has two normative sources:
 
-- 156 standard properties from Lynx's 191-property inventory pinned at
-  `18a0a91009809de1d52a5637b82f573dc924e32a` after excluding 32 Lynx-specific
-  properties and three non-standard unprefixed `text-stroke*` properties;
-- 19 standard features present in Whisker's existing registry but absent from
-  that Lynx inventory;
-- represented in code as 174 `StyleProperty` entries plus CSS Custom
-  Properties as one non-fixed-property mechanism.
+- layout properties follow the CSS semantics represented by Taffy 0.13;
+- all other properties follow the standard, non-vendor Lynx 4.0 inventory
+  pinned at `18a0a91009809de1d52a5637b82f573dc924e32a`.
+
+This produces 158 target features: 157 properties plus CSS Custom Properties
+as one non-fixed-property mechanism. Of the current 174 `StyleProperty`
+entries, 154 remain in the target and 20 are deliberately unsupported. The
+Taffy baseline additionally requires `float`, `clear`, and
+`grid-template-areas`, which receive new stable IDs when registered.
+
+Taffy-supported Block, Flexbox, and Grid semantics are in scope. Browser
+layout modes or values that Taffy 0.13 cannot represent, including inline and
+table layout, subgrid, masonry, `position: static/fixed/sticky`, and
+`overflow: auto`, are deliberately outside the target. Taffy's feature-gated
+float layout and `calc()` resolution are part of the target and must be
+enabled by the Whisker layout integration.
 
 The deprecated aliases `grid-column-gap`, `grid-row-gap`, and `word-wrap` are
 not separate target features. Their canonical spellings are used. Retired
 numeric property IDs stay reserved and must not be reassigned. The normative
-machine-readable partition is
-`tests/host-conformance/capabilities.json`.
+machine-readable partition, including exclusion rationale, implementation
+status, and browser-subset notes, is `tests/host-conformance/capabilities.json`.
 
 Migration tracks semantic capability rather than CSS syntax. A generated
 property registry and coverage table must classify every Lynx style feature

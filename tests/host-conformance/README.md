@@ -78,12 +78,12 @@ treated as successful no-op support. `partial` means at least one value family
 or required checkpoint is still missing, even when the common operation is
 already consumed.
 
-The target is pinned to 175 standard CSS conformance features: 174 registered
-property spellings plus the CSS Custom Properties mechanism. It starts from
-the 191-property Lynx inventory at the recorded upstream revision, excludes 32
-Lynx-only properties and the three unprefixed non-standard `text-stroke*`
-spellings, then adds 19 standard properties that were already part of
-Whisker's registry. The legacy aliases `grid-column-gap`, `grid-row-gap`, and
-`word-wrap` are intentionally absent; their canonical spellings are tracked
-instead. Stable IDs previously assigned to removed compatibility spellings are
-reserved and are never reused.
+The target follows two explicit baselines. Layout semantics are the CSS subset
+represented by Taffy 0.13. Non-layout properties follow the standard,
+non-vendor Lynx 4.0 inventory at the recorded upstream revision. The resulting
+target is 158 conformance features: 157 properties plus the CSS Custom
+Properties mechanism. Of the 174 currently registered spellings, 154 remain
+in the target, 20 are deliberately unsupported, and `float`, `clear`, and
+`grid-template-areas` still need registry entries. The legacy aliases
+`grid-column-gap`, `grid-row-gap`, and `word-wrap` remain absent. Stable IDs
+assigned to excluded spellings are reserved and are never reused.
