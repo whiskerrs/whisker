@@ -24,46 +24,22 @@ impl Css {
     pub fn background_image(self, v: impl Into<ImageRef>) -> Self {
         let image = v.into();
         let lynx_value = image.to_css_string();
-        match image {
-            ImageRef::None => self.push_semantic(
+        match background_image_value(&image) {
+            Some(image) => self.push_semantic(
                 crate::StyleProperty::BackgroundImage,
-                whisker_style::StyleValue::BackgroundImages(vec![
-                    whisker_style::BackgroundImageValue::None,
-                ]),
+                whisker_style::StyleValue::BackgroundImages(vec![image]),
                 lynx_value,
             ),
-            ImageRef::Url(value) => self.push_semantic(
-                crate::StyleProperty::BackgroundImage,
-                whisker_style::StyleValue::BackgroundImages(vec![
-                    whisker_style::BackgroundImageValue::Url(value.0),
-                ]),
-                lynx_value,
-            ),
-            ImageRef::Gradient(_) => {
-                self.push_raw(crate::StyleProperty::BackgroundImage, lynx_value)
-            }
+            None => self.push_raw(crate::StyleProperty::BackgroundImage, lynx_value),
         }
     }
 
     /// Sets `background-repeat`.
     /// <https://lynxjs.org/api/css/properties/background-repeat>
     pub fn background_repeat(self, v: BackgroundRepeat) -> Self {
-        use whisker_style::{BackgroundRepeatModeValue as Mode, BackgroundRepeatValue};
-
-        let (horizontal, vertical) = match v {
-            BackgroundRepeat::Repeat => (Mode::Repeat, Mode::Repeat),
-            BackgroundRepeat::NoRepeat => (Mode::NoRepeat, Mode::NoRepeat),
-            BackgroundRepeat::RepeatX => (Mode::Repeat, Mode::NoRepeat),
-            BackgroundRepeat::RepeatY => (Mode::NoRepeat, Mode::Repeat),
-            BackgroundRepeat::Space => (Mode::Space, Mode::Space),
-            BackgroundRepeat::Round => (Mode::Round, Mode::Round),
-        };
         self.push_semantic(
             crate::StyleProperty::BackgroundRepeat,
-            whisker_style::StyleValue::BackgroundRepeat(BackgroundRepeatValue {
-                horizontal,
-                vertical,
-            }),
+            whisker_style::StyleValue::BackgroundRepeat(background_repeat_value(v)),
             v.to_css_string(),
         )
     }
@@ -98,20 +74,9 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/background-size>
     pub fn background_size(self, v: BackgroundSize) -> Self {
         let lynx_value = v.to_css_string();
-        let value = match v {
-            BackgroundSize::Auto => whisker_style::BackgroundSizeValue::Auto,
-            BackgroundSize::Explicit(width, height) => {
-                whisker_style::BackgroundSizeValue::Explicit {
-                    width: background_size_axis(width),
-                    height: background_size_axis(height),
-                }
-            }
-            BackgroundSize::Cover => whisker_style::BackgroundSizeValue::Cover,
-            BackgroundSize::Contain => whisker_style::BackgroundSizeValue::Contain,
-        };
         self.push_semantic(
             crate::StyleProperty::BackgroundSize,
-            whisker_style::StyleValue::BackgroundSize(value),
+            whisker_style::StyleValue::BackgroundSize(background_size_value(v)),
             lynx_value,
         )
     }
@@ -175,6 +140,47 @@ impl Css {
     }
 }
 
+pub(crate) fn background_image_value(
+    value: &ImageRef,
+) -> Option<whisker_style::BackgroundImageValue> {
+    match value {
+        ImageRef::None => Some(whisker_style::BackgroundImageValue::None),
+        ImageRef::Url(value) => Some(whisker_style::BackgroundImageValue::Url(value.0.clone())),
+        ImageRef::Gradient(_) => None,
+    }
+}
+
+pub(crate) fn background_repeat_value(
+    value: BackgroundRepeat,
+) -> whisker_style::BackgroundRepeatValue {
+    use whisker_style::{BackgroundRepeatModeValue as Mode, BackgroundRepeatValue};
+
+    let (horizontal, vertical) = match value {
+        BackgroundRepeat::Repeat => (Mode::Repeat, Mode::Repeat),
+        BackgroundRepeat::NoRepeat => (Mode::NoRepeat, Mode::NoRepeat),
+        BackgroundRepeat::RepeatX => (Mode::Repeat, Mode::NoRepeat),
+        BackgroundRepeat::RepeatY => (Mode::NoRepeat, Mode::Repeat),
+        BackgroundRepeat::Space => (Mode::Space, Mode::Space),
+        BackgroundRepeat::Round => (Mode::Round, Mode::Round),
+    };
+    BackgroundRepeatValue {
+        horizontal,
+        vertical,
+    }
+}
+
+pub(crate) fn background_size_value(value: BackgroundSize) -> whisker_style::BackgroundSizeValue {
+    match value {
+        BackgroundSize::Auto => whisker_style::BackgroundSizeValue::Auto,
+        BackgroundSize::Explicit(width, height) => whisker_style::BackgroundSizeValue::Explicit {
+            width: background_size_axis(width),
+            height: background_size_axis(height),
+        },
+        BackgroundSize::Cover => whisker_style::BackgroundSizeValue::Cover,
+        BackgroundSize::Contain => whisker_style::BackgroundSizeValue::Contain,
+    }
+}
+
 fn background_size_axis(value: BackgroundSizeAxis) -> Option<whisker_style::LengthPercentageValue> {
     match value {
         BackgroundSizeAxis::Auto => None,
@@ -205,7 +211,9 @@ fn keyword_value(
     })
 }
 
-fn background_position_value(position: Position) -> Option<whisker_style::BackgroundPositionValue> {
+pub(crate) fn background_position_value(
+    position: Position,
+) -> Option<whisker_style::BackgroundPositionValue> {
     use crate::data_type_ext::PositionKeyword;
 
     let center = || keyword_value(PositionKeyword::Center);

@@ -45,8 +45,9 @@ pub use resolution::{
     resolve_text_style,
 };
 pub use value::{
-    BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue, BackgroundPositionValue,
-    BackgroundRepeatModeValue, BackgroundRepeatValue, BackgroundSizeValue, BorderRadiusValue,
-    CalcExpression, ColorValue, FontFamilyValue, FontStyleValue, FontWeightValue,
-    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, StyleNumber, StyleValue,
+    BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue, BackgroundLayerValue,
+    BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundRepeatValue, BackgroundSizeValue,
+    BackgroundValue, BorderRadiusValue, CalcExpression, ColorValue, FontFamilyValue,
+    FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue,
+    LineHeightValue, StyleNumber, StyleValue,
 };

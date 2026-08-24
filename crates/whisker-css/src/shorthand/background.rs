@@ -8,6 +8,7 @@ use crate::data_type_ext::Position;
 use crate::keyword::{
     BackgroundAttachment, BackgroundClip, BackgroundOrigin, BackgroundRepeat, BackgroundSize,
 };
+use crate::style_value::ToStyleValue;
 use crate::to_css::ToCss;
 use crate::value::ImageRef;
 
@@ -176,8 +177,84 @@ impl Css {
     /// Sets the `background` shorthand.
     /// <https://lynxjs.org/api/css/properties/background>
     pub fn background(self, b: Background) -> Self {
-        self.push(crate::StyleProperty::Background, b)
+        let lynx_value = b.to_css_string();
+        let Some(value) = background_value(&b) else {
+            return self.push_raw(crate::StyleProperty::Background, lynx_value);
+        };
+        self.push_semantic(crate::StyleProperty::Background, value, lynx_value)
     }
+}
+
+fn background_value(background: &Background) -> Option<whisker_style::StyleValue> {
+    use whisker_style::{
+        BackgroundAttachmentValue, BackgroundBoxValue, BackgroundLayerValue,
+        BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundRepeatValue,
+        BackgroundSizeValue, BackgroundValue, ColorValue, LengthPercentageValue, StyleNumber,
+        StyleValue,
+    };
+
+    let zero = || LengthPercentageValue::Percentage(StyleNumber::new(0.0));
+    let default_position = || BackgroundPositionValue {
+        horizontal: zero(),
+        vertical: zero(),
+    };
+    let default_repeat = BackgroundRepeatValue {
+        horizontal: BackgroundRepeatModeValue::Repeat,
+        vertical: BackgroundRepeatModeValue::Repeat,
+    };
+    let layers = background
+        .layers
+        .iter()
+        .map(|layer| {
+            Some(BackgroundLayerValue {
+                image: crate::prop::background::background_image_value(&layer.image)?,
+                position: match layer.position.clone() {
+                    Some(position) => crate::prop::background::background_position_value(position)?,
+                    None => default_position(),
+                },
+                size: layer
+                    .size
+                    .clone()
+                    .map(crate::prop::background::background_size_value)
+                    .unwrap_or(BackgroundSizeValue::Auto),
+                repeat: layer
+                    .repeat
+                    .map(crate::prop::background::background_repeat_value)
+                    .unwrap_or(default_repeat),
+                origin: match layer.origin.unwrap_or(BackgroundOrigin::PaddingBox) {
+                    BackgroundOrigin::BorderBox => BackgroundBoxValue::Border,
+                    BackgroundOrigin::PaddingBox => BackgroundBoxValue::Padding,
+                    BackgroundOrigin::ContentBox => BackgroundBoxValue::Content,
+                },
+                clip: match layer.clip.unwrap_or(BackgroundClip::BorderBox) {
+                    BackgroundClip::BorderBox => BackgroundBoxValue::Border,
+                    BackgroundClip::PaddingBox => BackgroundBoxValue::Padding,
+                    BackgroundClip::ContentBox => BackgroundBoxValue::Content,
+                    BackgroundClip::Text => return None,
+                },
+                attachment: match layer.attachment.unwrap_or(BackgroundAttachment::Scroll) {
+                    BackgroundAttachment::Scroll => BackgroundAttachmentValue::Scroll,
+                    BackgroundAttachment::Fixed => BackgroundAttachmentValue::Fixed,
+                    BackgroundAttachment::Local => BackgroundAttachmentValue::Local,
+                },
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let color = background.color.as_ref().map_or_else(
+        || ColorValue::Rgba {
+            red: 0,
+            green: 0,
+            blue: 0,
+            alpha: StyleNumber::new(0.0),
+        },
+        |color| {
+            let StyleValue::Color(value) = color.to_style_value() else {
+                unreachable!("Color always has a semantic style value")
+            };
+            value
+        },
+    );
+    Some(StyleValue::Background(BackgroundValue { layers, color }))
 }
 
 #[cfg(test)]
