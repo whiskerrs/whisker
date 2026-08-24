@@ -336,7 +336,16 @@ fn has_explicit_no_repeat_geometry(layer: &crate::BackgroundLayer) -> bool {
         )
         && layer.repeat_x == crate::ImageRepeat::NoRepeat
         && layer.repeat_y == crate::ImageRepeat::NoRepeat
-        && has_initial_background_environment(layer)
+        && matches!(
+            layer.origin,
+            crate::PaintBox::Border | crate::PaintBox::Padding
+        )
+        && matches!(
+            layer.clip,
+            crate::PaintBox::Border | crate::PaintBox::Padding
+        )
+        && layer.attachment == crate::BackgroundAttachment::Scroll
+        && layer.blend_mode == crate::BlendMode::Normal
 }
 
 fn has_initial_background_environment(layer: &crate::BackgroundLayer) -> bool {
@@ -643,6 +652,36 @@ mod tests {
         non_finite_position.position.x.fraction = f32::NAN;
         assert_eq!(
             packet(vec![operation(non_finite_position)]).required_capabilities(),
+            vec![RenderCapability::BackgroundLayers]
+        );
+
+        for (origin, clip) in [
+            (PaintBox::Border, PaintBox::Border),
+            (PaintBox::Border, PaintBox::Padding),
+            (PaintBox::Padding, PaintBox::Padding),
+        ] {
+            let mut layer = explicit_no_repeat(basic_linear_layer());
+            layer.origin = origin;
+            layer.clip = clip;
+            assert_eq!(
+                packet(vec![operation(layer)]).required_capabilities(),
+                vec![
+                    RenderCapability::LinearGradients,
+                    RenderCapability::BackgroundGeometry,
+                ]
+            );
+        }
+
+        let mut unsupported_box = explicit_no_repeat(basic_linear_layer());
+        unsupported_box.origin = PaintBox::Content;
+        assert_eq!(
+            packet(vec![operation(unsupported_box)]).required_capabilities(),
+            vec![RenderCapability::BackgroundLayers]
+        );
+        let mut unsupported_clip = explicit_no_repeat(basic_linear_layer());
+        unsupported_clip.clip = PaintBox::Content;
+        assert_eq!(
+            packet(vec![operation(unsupported_clip)]).required_capabilities(),
             vec![RenderCapability::BackgroundLayers]
         );
 

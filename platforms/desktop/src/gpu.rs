@@ -16,10 +16,10 @@ use wgpu::{
     TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
     VertexStepMode,
 };
-use whisker_protocol::{GradientStop, LayoutRect, NodeId, PaintImage, Transform};
+use whisker_protocol::{GradientStop, LayoutRect, NodeId, PaintBox, PaintImage, Transform};
 
 use crate::paint::box_paint::{
-    BoxPrimitive, BoxPrimitiveKind, linear_gradient_primitive, lower_box, resolve_box_geometry,
+    BoxPrimitive, BoxPrimitiveKind, background_gradient_primitive, lower_box, resolve_box_geometry,
 };
 use crate::paint::color::{gpu_color, text_color};
 use crate::scene::{LogicalClip, PaintCommand, ShapeClipStack};
@@ -1267,8 +1267,13 @@ impl GpuRenderer {
                             None,
                         );
                     }
-                    let positioning_rect = resolve_box_geometry(*rect, paint).inner_rect;
+                    let box_geometry = resolve_box_geometry(*rect, paint);
                     for layer in background_layers.iter().rev() {
+                        let positioning_rect = match layer.origin {
+                            PaintBox::Border => box_geometry.outer_rect,
+                            PaintBox::Padding => box_geometry.inner_rect,
+                            _ => continue,
+                        };
                         let Some(gradient) =
                             background_gradient_draw(positioning_rect, layer, *opacity)
                         else {
@@ -1277,7 +1282,7 @@ impl GpuRenderer {
                         push_quad_draw(
                             &mut vertices,
                             &mut draws,
-                            linear_gradient_primitive(*rect, paint),
+                            background_gradient_primitive(*rect, paint, layer.clip),
                             *transform,
                             *clip,
                             shape_clips,

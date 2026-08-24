@@ -105,10 +105,30 @@ impl Driver {
                                 nodes
                                     .iter()
                                     .any(|node| {
-                                        node.background_layer.position
-                                            != [LengthPercentageFixture::default(); 2]
+                                        node.background_layer.clip
+                                            == BackgroundBoxFixture::Padding
                                     })
-                                    .then_some("paint.background-layers.position-length-percentage")
+                                    .then_some("paint.background-layers.clip-padding-box")
+                                    .or_else(|| {
+                                        nodes
+                                            .iter()
+                                            .any(|node| {
+                                                node.background_layer.origin
+                                                    == BackgroundBoxFixture::Border
+                                            })
+                                            .then_some("paint.background-layers.origin-border-box")
+                                    })
+                                    .or_else(|| {
+                                        nodes
+                                            .iter()
+                                            .any(|node| {
+                                                node.background_layer.position
+                                                    != [LengthPercentageFixture::default(); 2]
+                                            })
+                                            .then_some(
+                                                "paint.background-layers.position-length-percentage",
+                                            )
+                                    })
                                     .or_else(|| {
                                         nodes
                                             .iter()
@@ -412,6 +432,12 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-backgrounds/background-position-three-four-values.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-position-three-four-values.json"
+        ),
+        "wpt/css/css-backgrounds/css3-background-origin-border-box.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/css3-background-origin-border-box.json"
+        ),
+        "wpt/css/css-backgrounds/clip-padding-box-with-size.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/clip-padding-box-with-size.json"
         ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
@@ -1165,25 +1191,57 @@ fn fixture_node_paints_at(node: &SceneNodeFixture, point: [f32; 2]) -> bool {
         return false;
     }
     let layer = node.background_layer;
-    let size = layer.size.map_or([node.rect[2], node.rect[3]], |size| {
-        [
-            size[0].length + size[0].fraction * node.rect[2],
-            size[1].length + size[1].fraction * node.rect[3],
-        ]
-    });
+    let border_widths = node
+        .border
+        .as_ref()
+        .map_or([0.0; 4], |border| border.widths);
+    let positioning_area = fixture_background_area(node.rect, border_widths, layer.origin);
+    let clip_area = fixture_background_area(node.rect, border_widths, layer.clip);
+    if !fixture_rect_contains(clip_area, point) {
+        return false;
+    }
+    let size = layer
+        .size
+        .map_or([positioning_area[2], positioning_area[3]], |size| {
+            [
+                size[0].length + size[0].fraction * positioning_area[2],
+                size[1].length + size[1].fraction * positioning_area[3],
+            ]
+        });
     let position = [
-        node.rect[0]
+        positioning_area[0]
             + layer.position[0].length
-            + layer.position[0].fraction * (node.rect[2] - size[0]),
-        node.rect[1]
+            + layer.position[0].fraction * (positioning_area[2] - size[0]),
+        positioning_area[1]
             + layer.position[1].length
-            + layer.position[1].fraction * (node.rect[3] - size[1]),
+            + layer.position[1].fraction * (positioning_area[3] - size[1]),
     ];
     let paints_x = layer.repeat_x != ImageRepeatFixture::NoRepeat
         || (position[0]..position[0] + size[0]).contains(&point[0]);
     let paints_y = layer.repeat_y != ImageRepeatFixture::NoRepeat
         || (position[1]..position[1] + size[1]).contains(&point[1]);
     paints_x && paints_y
+}
+
+fn fixture_background_area(
+    border_box: [f32; 4],
+    border_widths: [f32; 4],
+    background_box: BackgroundBoxFixture,
+) -> [f32; 4] {
+    match background_box {
+        BackgroundBoxFixture::Border => border_box,
+        BackgroundBoxFixture::Padding | BackgroundBoxFixture::Content => [
+            border_box[0] + border_widths[3],
+            border_box[1] + border_widths[0],
+            border_box[2] - border_widths[1] - border_widths[3],
+            border_box[3] - border_widths[0] - border_widths[2],
+        ],
+    }
+}
+
+fn fixture_rect_contains(rect: [f32; 4], point: [f32; 2]) -> bool {
+    (rect[0]..rect[0] + rect[2]).contains(&point[0])
+        && (rect[1]..rect[1] + rect[3]).contains(&point[1])
 }
 
 fn fixture_border_style_css(value: BorderStyleFixture) -> &'static str {

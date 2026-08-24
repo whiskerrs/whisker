@@ -507,8 +507,6 @@ private func validGradientStops(
 
 private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> Bool {
     guard layer.position_x.isFinite, layer.position_y.isFinite,
-          layer.origin == UInt32(WHISKER_BACKGROUND_BOX_PADDING),
-          layer.clip == UInt32(WHISKER_BACKGROUND_BOX_BORDER),
           layer.attachment == UInt32(WHISKER_BACKGROUND_ATTACHMENT_SCROLL),
           layer.blend_mode == UInt32(WHISKER_BACKGROUND_BLEND_NORMAL) else {
         return false
@@ -517,12 +515,18 @@ private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> B
         return layer.position_x.isZero && layer.position_y.isZero &&
             layer.size_width.isZero && layer.size_height.isZero &&
             layer.repeat_x == UInt32(WHISKER_BACKGROUND_REPEAT) &&
-            layer.repeat_y == UInt32(WHISKER_BACKGROUND_REPEAT)
+            layer.repeat_y == UInt32(WHISKER_BACKGROUND_REPEAT) &&
+            layer.origin == UInt32(WHISKER_BACKGROUND_BOX_PADDING) &&
+            layer.clip == UInt32(WHISKER_BACKGROUND_BOX_BORDER)
     }
     return layer.size_kind == UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT) &&
         layer.size_width.isNonNegativeFinite && layer.size_height.isNonNegativeFinite &&
         layer.repeat_x == UInt32(WHISKER_BACKGROUND_NO_REPEAT) &&
-        layer.repeat_y == UInt32(WHISKER_BACKGROUND_NO_REPEAT)
+        layer.repeat_y == UInt32(WHISKER_BACKGROUND_NO_REPEAT) &&
+        [UInt32(WHISKER_BACKGROUND_BOX_BORDER), UInt32(WHISKER_BACKGROUND_BOX_PADDING)]
+            .contains(layer.origin) &&
+        [UInt32(WHISKER_BACKGROUND_BOX_BORDER), UInt32(WHISKER_BACKGROUND_BOX_PADDING)]
+            .contains(layer.clip)
 }
 
 private func hostBackgroundGeometry(
@@ -536,7 +540,9 @@ private func hostBackgroundGeometry(
         sizeWidth: explicit ? layer.size_width : nil,
         sizeHeight: explicit ? layer.size_height : nil,
         repeatX: layer.repeat_x == UInt32(WHISKER_BACKGROUND_NO_REPEAT) ? .noRepeat : .repeat,
-        repeatY: layer.repeat_y == UInt32(WHISKER_BACKGROUND_NO_REPEAT) ? .noRepeat : .repeat
+        repeatY: layer.repeat_y == UInt32(WHISKER_BACKGROUND_NO_REPEAT) ? .noRepeat : .repeat,
+        origin: layer.origin == UInt32(WHISKER_BACKGROUND_BOX_BORDER) ? .border : .padding,
+        clip: layer.clip == UInt32(WHISKER_BACKGROUND_BOX_BORDER) ? .border : .padding
     )
 }
 

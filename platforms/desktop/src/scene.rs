@@ -876,21 +876,24 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
             stop.position.is_some_and(|position| position.length == 0.0)
         })
     );
-    let supported_geometry = (layer.size == BackgroundSize::Auto
+    let initial_geometry = layer.position == Default::default()
+        && layer.size == BackgroundSize::Auto
         && layer.repeat_x == ImageRepeat::Repeat
-        && layer.repeat_y == ImageRepeat::Repeat)
-        || (matches!(
-            layer.size,
-            BackgroundSize::Explicit {
-                width: Some(_),
-                height: Some(_)
-            }
-        ) && layer.repeat_x == ImageRepeat::NoRepeat
-            && layer.repeat_y == ImageRepeat::NoRepeat);
-    supported_image
-        && supported_geometry
+        && layer.repeat_y == ImageRepeat::Repeat
         && layer.origin == PaintBox::Padding
-        && layer.clip == PaintBox::Border
+        && layer.clip == PaintBox::Border;
+    let explicit_geometry = matches!(
+        layer.size,
+        BackgroundSize::Explicit {
+            width: Some(_),
+            height: Some(_)
+        }
+    ) && layer.repeat_x == ImageRepeat::NoRepeat
+        && layer.repeat_y == ImageRepeat::NoRepeat
+        && matches!(layer.origin, PaintBox::Border | PaintBox::Padding)
+        && matches!(layer.clip, PaintBox::Border | PaintBox::Padding);
+    supported_image
+        && (initial_geometry || explicit_geometry)
         && layer.attachment == BackgroundAttachment::Scroll
         && layer.blend_mode == BlendMode::Normal
 }

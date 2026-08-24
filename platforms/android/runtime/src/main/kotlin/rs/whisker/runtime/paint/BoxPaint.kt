@@ -124,22 +124,9 @@ private class WhiskerBoxDrawable(
             box.right - right,
             box.bottom - bottom,
         )
-        paint.color = fillColor
-        canvas.drawPath(outer, paint)
-        drawBackgroundLayers(canvas, outer, paddingBox, backgroundLayers, paint)
-
-        val widths = floatArrayOf(top, right, bottom, left)
-        if (top == 0f && right == 0f && bottom == 0f && left == 0f) return
-
-        if (radii.all { it == 0f }) {
-            drawRectangularEdges(canvas, box, top, right, bottom, left)
-            return
-        }
-
-        val inner = RectF(box.left + left, box.top + top, box.right - right, box.bottom - bottom)
-        val innerPath = if (inner.width() > 0f && inner.height() > 0f) {
+        val paddingPath = if (paddingBox.width() > 0f && paddingBox.height() > 0f) {
             roundedPath(
-                inner,
+                paddingBox,
                 floatArrayOf(
                     (radii[0] - left).coerceAtLeast(0f),
                     (radii[1] - top).coerceAtLeast(0f),
@@ -152,8 +139,30 @@ private class WhiskerBoxDrawable(
                 ),
             )
         } else {
-            null
+            Path()
         }
+        paint.color = fillColor
+        canvas.drawPath(outer, paint)
+        drawBackgroundLayers(
+            canvas,
+            HostBackgroundPaintBoxes(
+                border = HostBackgroundPaintBox(box, outer),
+                padding = HostBackgroundPaintBox(paddingBox, paddingPath),
+            ),
+            backgroundLayers,
+            paint,
+        )
+
+        val widths = floatArrayOf(top, right, bottom, left)
+        if (top == 0f && right == 0f && bottom == 0f && left == 0f) return
+
+        if (radii.all { it == 0f }) {
+            drawRectangularEdges(canvas, box, top, right, bottom, left)
+            return
+        }
+
+        val inner = paddingBox
+        val innerPath = if (paddingPath.isEmpty) null else paddingPath
         val sidePaths = arrayOf(
             Path().apply {
                 moveTo(box.left, box.top)

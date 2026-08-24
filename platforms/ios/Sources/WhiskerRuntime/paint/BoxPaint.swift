@@ -55,9 +55,34 @@ final class HostBoxPainter {
             width: max(0, bounds.width - min(widths[3], bounds.width) - min(widths[1], bounds.width)),
             height: max(0, bounds.height - min(widths[0], bounds.height) - min(widths[2], bounds.height))
         )
+        let outerRadii = normalizedRadii(cornerRadii, in: bounds)
+        let paddingRadii = [
+            CGSize(
+                width: max(0, outerRadii[0].width - widths[3]),
+                height: max(0, outerRadii[0].height - widths[0])
+            ),
+            CGSize(
+                width: max(0, outerRadii[1].width - widths[1]),
+                height: max(0, outerRadii[1].height - widths[0])
+            ),
+            CGSize(
+                width: max(0, outerRadii[2].width - widths[1]),
+                height: max(0, outerRadii[2].height - widths[2])
+            ),
+            CGSize(
+                width: max(0, outerRadii[3].width - widths[3]),
+                height: max(0, outerRadii[3].height - widths[2])
+            )
+        ]
+        let paddingPath = roundedPath(in: paddingBox, radii: paddingRadii)
         fillColor.setFill()
         path.fill()
-        backgroundPainter.draw(in: paddingBox, clippedBy: path.cgPath)
+        backgroundPainter.draw(
+            borderBox: bounds,
+            paddingBox: paddingBox,
+            borderClip: path.cgPath,
+            paddingClip: paddingPath.cgPath
+        )
         drawBorders(in: bounds, clippedBy: path)
     }
 

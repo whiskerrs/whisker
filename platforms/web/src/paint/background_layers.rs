@@ -50,10 +50,13 @@ pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
         }
     ) && layer.repeat_x == ImageRepeat::NoRepeat
         && layer.repeat_y == ImageRepeat::NoRepeat;
+    let supported_geometry =
+        (initial_geometry && layer.origin == PaintBox::Padding && layer.clip == PaintBox::Border)
+            || (explicit_no_repeat_geometry
+                && matches!(layer.origin, PaintBox::Border | PaintBox::Padding)
+                && matches!(layer.clip, PaintBox::Border | PaintBox::Padding));
     supported_image
-        && (initial_geometry || explicit_no_repeat_geometry)
-        && layer.origin == PaintBox::Padding
-        && layer.clip == PaintBox::Border
+        && supported_geometry
         && layer.attachment == BackgroundAttachment::Scroll
         && layer.blend_mode == BlendMode::Normal
 }
@@ -64,7 +67,7 @@ pub(crate) fn apply(
 ) -> Result<(), WebError> {
     if !supports(layers) {
         return Err(WebError(
-            "DOM Host only implements one supported gradient with explicit stops, initial position and boxes, two-axis auto or explicit size, and repeat/no-repeat"
+            "DOM Host only implements one supported gradient with explicit stops, supported border/padding boxes, two-axis auto or explicit size, and repeat/no-repeat"
                 .into(),
         ));
     }
@@ -87,12 +90,18 @@ pub(crate) fn apply(
     let repeat = layers
         .first()
         .map_or_else(|| "repeat".into(), background_repeat);
+    let origin = layers
+        .first()
+        .map_or("padding-box", |layer| background_box(layer.origin));
+    let clip = layers
+        .first()
+        .map_or("border-box", |layer| background_box(layer.clip));
     set_style(element, "background-image", &images)?;
     set_style(element, "background-position", &position)?;
     set_style(element, "background-size", &size)?;
     set_style(element, "background-repeat", &repeat)?;
-    set_style(element, "background-origin", "padding-box")?;
-    set_style(element, "background-clip", "border-box")?;
+    set_style(element, "background-origin", origin)?;
+    set_style(element, "background-clip", clip)?;
     set_style(element, "background-attachment", "scroll")?;
     set_style(element, "background-blend-mode", "normal")
 }
@@ -237,5 +246,13 @@ fn background_repeat(layer: &BackgroundLayer) -> String {
         (ImageRepeat::Repeat, ImageRepeat::Repeat) => "repeat".into(),
         (ImageRepeat::NoRepeat, ImageRepeat::NoRepeat) => "no-repeat".into(),
         _ => unreachable!("unsupported background repeat passed preflight"),
+    }
+}
+
+fn background_box(value: PaintBox) -> &'static str {
+    match value {
+        PaintBox::Border => "border-box",
+        PaintBox::Padding => "padding-box",
+        _ => unreachable!("unsupported background box passed preflight"),
     }
 }

@@ -10,6 +10,7 @@ import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerTextContent
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.paint.HostBackgroundGeometry
+import rs.whisker.runtime.paint.HostBackgroundBox
 import rs.whisker.runtime.paint.HostBoxPaint
 import rs.whisker.runtime.paint.HostBackgroundLayers
 import rs.whisker.runtime.paint.HostBackgroundRepeat
@@ -390,6 +391,8 @@ internal class HostScene(
                 },
                 repeatX = backgroundRepeat(numbers[9]),
                 repeatY = backgroundRepeat(numbers[10]),
+                origin = backgroundBox(numbers[11]),
+                clip = backgroundBox(numbers[12]),
             )
             node.backgroundLayers = if (operation.flags == BACKGROUND_RADIAL) {
                 HostBackgroundLayers(
@@ -454,6 +457,13 @@ internal class HostScene(
             HostBackgroundRepeat.NoRepeat
         }
 
+    private fun backgroundBox(value: Float): HostBackgroundBox =
+        if (value == BACKGROUND_BOX_BORDER.toFloat()) {
+            HostBackgroundBox.Border
+        } else {
+            HostBackgroundBox.Padding
+        }
+
     private fun validBackgroundLayers(
         operation: HostSceneOperation,
         existing: Set<Long>,
@@ -504,8 +514,13 @@ internal class HostScene(
                 )
         return supportedGeometry &&
             (sizeKind == BACKGROUND_SIZE_EXPLICIT.toFloat() || (0..3).all { numbers[it] == 0f }) &&
-            numbers[11] == BACKGROUND_BOX_PADDING.toFloat() &&
-            numbers[12] == BACKGROUND_BOX_BORDER.toFloat() &&
+            if (sizeKind == BACKGROUND_SIZE_EXPLICIT.toFloat()) {
+                numbers[11] in BACKGROUND_BOX_BORDER.toFloat()..BACKGROUND_BOX_PADDING.toFloat() &&
+                    numbers[12] in BACKGROUND_BOX_BORDER.toFloat()..BACKGROUND_BOX_PADDING.toFloat()
+            } else {
+                numbers[11] == BACKGROUND_BOX_PADDING.toFloat() &&
+                    numbers[12] == BACKGROUND_BOX_BORDER.toFloat()
+            } &&
             numbers[13] == BACKGROUND_ATTACHMENT_SCROLL.toFloat() &&
             numbers[14] == BACKGROUND_BLEND_NORMAL.toFloat()
     }
