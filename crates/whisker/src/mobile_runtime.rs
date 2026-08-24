@@ -674,6 +674,11 @@ impl FrameSink for MobileFrameSink {
                         whisker_engine::whisker_protocol::RenderCapability::BackgroundLayerStacking,
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_engine::whisker_protocol::CapabilityEntry {
+                    capability:
+                        whisker_engine::whisker_protocol::RenderCapability::BackgroundImageResources,
+                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("mobile capability profile is unique")
@@ -713,6 +718,7 @@ struct MobileFrameOwned {
     _radial_gradients: Vec<Box<MobileRadialGradient>>,
     _conic_gradients: Vec<Box<MobileConicGradient>>,
     _background_layers: Vec<Box<[MobileBackgroundLayer]>>,
+    _background_resource_ids: Vec<Box<u64>>,
     _texts: Vec<Box<MobileText>>,
     _transforms: Vec<Box<[f32; 16]>>,
     _values: Vec<Box<WhiskerValueRaw>>,
@@ -729,6 +735,7 @@ impl MobileFrameOwned {
         let mut radial_gradients = Vec::<Box<MobileRadialGradient>>::new();
         let mut conic_gradients = Vec::<Box<MobileConicGradient>>::new();
         let mut background_layers = Vec::<Box<[MobileBackgroundLayer]>>::new();
+        let mut background_resource_ids = Vec::<Box<u64>>::new();
         let mut texts = Vec::<Box<MobileText>>::new();
         let mut transforms = Vec::<Box<[f32; 16]>>::new();
         let mut values = Vec::<Box<WhiskerValueRaw>>::new();
@@ -857,6 +864,17 @@ impl MobileFrameOwned {
                                 _ => return Err(MobileFrameError),
                             };
                             let image = match &layer.image {
+                                PaintImage::Resource(resource) => {
+                                    background_resource_ids.push(Box::new(resource.get()));
+                                    MobileBackgroundImage {
+                                        kind: BACKGROUND_RESOURCE,
+                                        scalar: 0.0,
+                                        payload: background_resource_ids.last().unwrap().as_ref()
+                                            as *const _
+                                            as *const c_void,
+                                        payload_count: 1,
+                                    }
+                                }
                                 PaintImage::LinearGradient {
                                     angle_degrees,
                                     repeating: false,
@@ -1103,6 +1121,7 @@ impl MobileFrameOwned {
             _radial_gradients: radial_gradients,
             _conic_gradients: conic_gradients,
             _background_layers: background_layers,
+            _background_resource_ids: background_resource_ids,
             _texts: texts,
             _transforms: transforms,
             _values: values,
@@ -1346,6 +1365,9 @@ mod tests {
     #[test]
     fn mobile_frame_exposes_background_layers_as_one_contiguous_slice() {
         let node = NodeId::new(1).unwrap();
+        let resource = whisker_engine::whisker_protocol::ResourceId::new(u64::MAX - 1).unwrap();
+        let mut resource_background = linear_background("transparent");
+        resource_background.image = PaintImage::Resource(resource);
         let packet = FramePacket {
             header: FrameHeader {
                 version: ProtocolVersion::CURRENT,
@@ -1359,13 +1381,17 @@ mod tests {
             },
             operations: vec![Operation::SetBackgroundLayers {
                 node,
-                layers: vec![linear_background("red"), linear_background("blue")],
+                layers: vec![
+                    linear_background("red"),
+                    linear_background("blue"),
+                    resource_background,
+                ],
             }],
         };
         let frame = MobileFrameOwned::new(&packet).unwrap();
         let operation = &frame._operations[0];
         assert_eq!(operation.tag, OP_BACKGROUND_LAYERS);
-        assert_eq!(operation.payload_count, 2);
+        assert_eq!(operation.payload_count, 3);
         let layers = unsafe {
             std::slice::from_raw_parts(
                 operation.payload.cast::<MobileBackgroundLayer>(),
@@ -1374,6 +1400,12 @@ mod tests {
         };
         assert_eq!(layers[0].image.kind, BACKGROUND_LINEAR);
         assert_eq!(layers[1].image.kind, BACKGROUND_LINEAR);
+        assert_eq!(layers[2].image.kind, BACKGROUND_RESOURCE);
         assert_ne!(layers[0].image.payload, layers[1].image.payload);
+        assert_eq!(layers[2].image.payload_count, 1);
+        assert_eq!(
+            unsafe { *layers[2].image.payload.cast::<u64>() },
+            resource.get()
+        );
     }
 }
