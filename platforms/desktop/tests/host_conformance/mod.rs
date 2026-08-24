@@ -21,21 +21,21 @@ use whisker_protocol::{
     MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
     PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
     PaintLengthPercentage, PaintPosition, PointerId, PointerInput, PointerKind, ProtocolVersion,
-    RadialGradientExtent, RadialGradientShape, SurfaceId, TextMeasurePayload, TextMeasureStyle,
-    Transform, Visibility, WhiskerValue,
+    RadialGradientExtent, RadialGradientShape, ResourceId, SurfaceId, TextMeasurePayload,
+    TextMeasureStyle, Transform, Visibility, WhiskerValue,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
 use crate::element::{DesktopElementRegistry, built_in_element_factories};
 use crate::gpu::{
-    LinearGradientDraw, background_gradient_draw, render_box_primitives_offscreen,
-    render_clipped_box_primitives_offscreen,
+    ClippedBoxPrimitive, RasterResource, background_gradient_draw, background_resource_draw,
+    render_box_primitives_offscreen, render_clipped_box_primitives_offscreen,
 };
 use crate::paint::box_paint::{
-    BoxPrimitive, BoxPrimitiveKind, background_gradient_primitive, lower_box, resolve_box_geometry,
+    BoxPrimitiveKind, background_gradient_primitive, lower_box, resolve_box_geometry,
 };
 use crate::paint::color::srgba;
-use crate::scene::{DesktopScene, LogicalClip, PaintCommand, ShapeClipStack};
+use crate::scene::{DesktopScene, PaintCommand};
 use crate::text::NativeTextHost;
 
 const CAPABILITIES: &str = include_str!("../../../../tests/host-conformance/capabilities.json");
@@ -253,6 +253,22 @@ fn background_image_protocol(
         BackgroundImageFixture::ConicGradient(gradient) => {
             conic_gradient_protocol(gradient, geometry)
         }
+        BackgroundImageFixture::Resource(resource) => apply_background_geometry(
+            BackgroundLayer {
+                image: PaintImage::Resource(
+                    ResourceId::new(*resource).expect("validated fixture resource id"),
+                ),
+                position: PaintPosition::default(),
+                size: BackgroundSize::Auto,
+                repeat_x: ImageRepeat::Repeat,
+                repeat_y: ImageRepeat::Repeat,
+                origin: PaintBox::Padding,
+                clip: PaintBox::Border,
+                attachment: BackgroundAttachment::Scroll,
+                blend_mode: BlendMode::Normal,
+            },
+            geometry,
+        ),
     }
 }
 
@@ -279,6 +295,7 @@ struct Driver {
     text: NativeTextHost,
     measurement_responses: Vec<MeasurementResponse>,
     input: RecordingInputSink,
+    raster_resources: std::collections::HashMap<ResourceId, RasterResource>,
 }
 
 #[derive(Default)]
@@ -297,13 +314,8 @@ impl RecordingInputSink {
 
 struct Checkpoint {
     logical_size: [u32; 2],
-    primitives: Vec<(
-        BoxPrimitive,
-        LogicalClip,
-        Transform,
-        ShapeClipStack,
-        Option<LinearGradientDraw>,
-    )>,
+    primitives: Vec<ClippedBoxPrimitive>,
+    raster_resources: std::collections::HashMap<ResourceId, RasterResource>,
     samples: Vec<PixelSampleFixture>,
     relations: Vec<PixelRelationFixture>,
 }
@@ -343,6 +355,7 @@ impl Driver {
             ),
             measurement_responses: Vec::new(),
             input: RecordingInputSink::default(),
+            raster_resources: std::collections::HashMap::new(),
         }
     }
 
@@ -361,6 +374,29 @@ impl Driver {
                     self.scene = Some(desktop_scene(surface));
                     self.logical_size = [*width, *height];
                     self.scale = *scale;
+                }
+                Command::RegisterRasterResource {
+                    id,
+                    width,
+                    height,
+                    pixels,
+                } => {
+                    assert_eq!(pixels.len(), (*width * *height) as usize);
+                    let resource = ResourceId::new(*id).expect("validated fixture resource id");
+                    let rgba = pixels
+                        .iter()
+                        .flat_map(|color| {
+                            srgba(&color_protocol(color), 1.0)
+                                .map(|channel| (channel * 255.0).round() as u8)
+                        })
+                        .collect();
+                    let raster = RasterResource::new(*width, *height, rgba)
+                        .expect("validated fixture raster");
+                    self.scene
+                        .as_mut()
+                        .expect("attach_surface precedes resource registration")
+                        .register_raster_resource(resource);
+                    self.raster_resources.insert(resource, raster);
                 }
                 Command::PresentBox {
                     revision,
@@ -381,6 +417,7 @@ impl Driver {
                             self.logical_size[1].round() as u32,
                         ],
                         primitives: self.clipped_box_primitives(),
+                        raster_resources: self.raster_resources.clone(),
                         samples: samples.clone(),
                         relations: relations.clone(),
                     });
@@ -607,15 +644,7 @@ impl Driver {
             .expect("canonical Host scene fixture is valid");
     }
 
-    fn clipped_box_primitives(
-        &self,
-    ) -> Vec<(
-        BoxPrimitive,
-        LogicalClip,
-        Transform,
-        ShapeClipStack,
-        Option<LinearGradientDraw>,
-    )> {
+    fn clipped_box_primitives(&self) -> Vec<ClippedBoxPrimitive> {
         let scene = self.scene.as_ref().expect("checkpoint follows attach");
         let mut primitives = Vec::new();
         for command in scene.paint_commands() {
@@ -640,7 +669,9 @@ impl Driver {
                         .iter()
                         .copied()
                         .filter(|primitive| primitive.kind == BoxPrimitiveKind::Fill)
-                        .map(|primitive| (primitive, clip, transform, shape_clips.clone(), None)),
+                        .map(|primitive| {
+                            (primitive, clip, transform, shape_clips.clone(), None, None)
+                        }),
                 );
                 let box_geometry = resolve_box_geometry(rect, paint);
                 for layer in background_layers.iter().rev() {
@@ -650,9 +681,23 @@ impl Driver {
                         PaintBox::Content => content_rect,
                         _ => continue,
                     };
-                    let Some(gradient) = background_gradient_draw(positioning_rect, layer, opacity)
-                    else {
-                        continue;
+                    let (gradient, resource) = match &layer.image {
+                        PaintImage::Resource(_) => {
+                            let Some((draw, resource)) =
+                                background_resource_draw(positioning_rect, layer, opacity)
+                            else {
+                                continue;
+                            };
+                            (draw, Some(resource))
+                        }
+                        _ => {
+                            let Some(draw) =
+                                background_gradient_draw(positioning_rect, layer, opacity)
+                            else {
+                                continue;
+                            };
+                            (draw, None)
+                        }
                     };
                     primitives.push((
                         background_gradient_primitive(rect, content_rect, paint, layer.clip),
@@ -660,13 +705,16 @@ impl Driver {
                         transform,
                         shape_clips.clone(),
                         Some(gradient),
+                        resource,
                     ));
                 }
                 primitives.extend(
                     boxes
                         .into_iter()
                         .filter(|primitive| primitive.kind == BoxPrimitiveKind::Border)
-                        .map(|primitive| (primitive, clip, transform, shape_clips.clone(), None)),
+                        .map(|primitive| {
+                            (primitive, clip, transform, shape_clips.clone(), None, None)
+                        }),
                 );
             }
         }
@@ -894,11 +942,13 @@ fn run_reftest(scenario: &Scenario) {
     let test_pixels = pollster::block_on(render_clipped_box_primitives_offscreen(
         &test[0].primitives,
         test[0].logical_size,
+        &test[0].raster_resources,
     ))
     .expect("Desktop test pixel checkpoint");
     let reference_pixels = pollster::block_on(render_clipped_box_primitives_offscreen(
         &reference[0].primitives,
         reference[0].logical_size,
+        &reference[0].raster_resources,
     ))
     .expect("Desktop reference pixel checkpoint");
     assert_eq!(test_pixels.len(), reference_pixels.len());
@@ -925,6 +975,7 @@ fn run_pixel_assertions(scenario: &Scenario) {
         let pixels = pollster::block_on(render_clipped_box_primitives_offscreen(
             &checkpoint.primitives,
             checkpoint.logical_size,
+            &checkpoint.raster_resources,
         ))
         .expect("Desktop pixel-sample checkpoint");
         let [width, height] = checkpoint.logical_size;

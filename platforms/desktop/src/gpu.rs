@@ -16,7 +16,9 @@ use wgpu::{
     TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
     VertexStepMode,
 };
-use whisker_protocol::{GradientStop, LayoutRect, NodeId, PaintBox, PaintImage, Transform};
+use whisker_protocol::{
+    GradientStop, LayoutRect, NodeId, PaintBox, PaintImage, ResourceId, Transform,
+};
 
 use crate::paint::box_paint::{
     BoxPrimitive, BoxPrimitiveKind, background_gradient_primitive, lower_box, resolve_box_geometry,
@@ -75,6 +77,12 @@ var<storage, read> linear_gradient_draws: array<LinearGradientDraw>;
 
 @group(1) @binding(3)
 var<storage, read> linear_gradient_stops: array<LinearGradientStop>;
+
+@group(2) @binding(0)
+var background_image_texture: texture_2d<f32>;
+
+@group(2) @binding(1)
+var background_image_sampler: sampler;
 
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -366,9 +374,6 @@ fn styled_color(color: vec4<f32>, style: f32, side: f32, depth: f32) -> vec4<f32
 
 fn linear_gradient_color(draw_index: u32, position: vec2<f32>) -> vec4<f32> {
     let gradient = linear_gradient_draws[draw_index];
-    if gradient.stop_count == 0u {
-        return vec4<f32>(0.0);
-    }
     let no_repeat_x = (gradient.geometry_flags & 1u) != 0u;
     let no_repeat_y = (gradient.geometry_flags & 2u) != 0u;
     let space_x = (gradient.geometry_flags & 4u) != 0u;
@@ -409,6 +414,19 @@ fn linear_gradient_color(draw_index: u32, position: vec2<f32>) -> vec4<f32> {
         sample_position.y = gradient.tile_rect.y
             + fract((position.y - gradient.tile_rect.y) / max(gradient.tile_rect.w, 0.0001))
                 * gradient.tile_rect.w;
+    }
+    if gradient.kind == 4u {
+        let coordinates = clamp(
+            (sample_position - gradient.tile_rect.xy)
+                / max(gradient.tile_rect.zw, vec2<f32>(0.0001)),
+            vec2<f32>(0.0),
+            vec2<f32>(1.0),
+        );
+        let color = textureSample(background_image_texture, background_image_sampler, coordinates);
+        return vec4<f32>(color.rgb, color.a * gradient.start_end.x);
+    }
+    if gradient.stop_count == 0u {
+        return vec4<f32>(0.0);
     }
     let line = gradient.start_end.zw - gradient.start_end.xy;
     var progress = dot(sample_position - gradient.start_end.xy, line)
@@ -703,15 +721,59 @@ pub(crate) struct LinearGradientDraw {
     geometry_flags: u32,
 }
 
+pub(crate) type ClippedBoxPrimitive = (
+    BoxPrimitive,
+    LogicalClip,
+    Transform,
+    ShapeClipStack,
+    Option<LinearGradientDraw>,
+    Option<ResourceId>,
+);
+
 struct BoxGpuPipeline {
     pipeline: RenderPipeline,
     viewport_buffer: Buffer,
     viewport_bind_group: wgpu::BindGroup,
     shape_clip_layout: wgpu::BindGroupLayout,
+    image_layout: wgpu::BindGroupLayout,
+    fallback_image: GpuImageResource,
+}
+
+struct GpuImageResource {
+    bind_group: wgpu::BindGroup,
+    _texture: wgpu::Texture,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RasterResource {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) pixels: Vec<u8>,
+}
+
+impl RasterResource {
+    pub(crate) fn new(width: u32, height: u32, pixels: Vec<u8>) -> Result<Self, GpuError> {
+        let expected = width
+            .checked_mul(height)
+            .and_then(|count| count.checked_mul(4))
+            .map(|count| count as usize)
+            .ok_or_else(|| GpuError("Desktop raster dimensions overflow".into()))?;
+        if width == 0 || height == 0 || pixels.len() != expected {
+            return Err(GpuError(format!(
+                "Desktop raster has {} bytes, expected {expected} for {width}x{height} RGBA8",
+                pixels.len()
+            )));
+        }
+        Ok(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
 }
 
 impl BoxGpuPipeline {
-    fn new(device: &Device, format: TextureFormat) -> Self {
+    fn new(device: &Device, queue: &Queue, format: TextureFormat) -> Self {
         let viewport_uniform = ViewportUniform {
             logical_size: [1.0, 1.0],
             physical_size: [1.0, 1.0],
@@ -787,13 +849,45 @@ impl BoxGpuPipeline {
                 },
             ],
         });
+        let image_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("whisker Desktop background image layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let fallback_image = Self::create_image_resource(
+            device,
+            queue,
+            &image_layout,
+            "whisker Desktop fallback background image",
+            &RasterResource {
+                width: 1,
+                height: 1,
+                pixels: vec![0; 4],
+            },
+        );
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("whisker Desktop box shader"),
             source: ShaderSource::Wgsl(BOX_SHADER.into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("whisker Desktop box pipeline layout"),
-            bind_group_layouts: &[&viewport_layout, &shape_clip_layout],
+            bind_group_layouts: &[&viewport_layout, &shape_clip_layout, &image_layout],
             push_constant_ranges: &[],
         });
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
@@ -826,7 +920,95 @@ impl BoxGpuPipeline {
             viewport_buffer,
             viewport_bind_group,
             shape_clip_layout,
+            image_layout,
+            fallback_image,
         }
+    }
+
+    fn create_image_resource(
+        device: &Device,
+        queue: &Queue,
+        layout: &wgpu::BindGroupLayout,
+        label: &str,
+        raster: &RasterResource,
+    ) -> GpuImageResource {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: raster.width,
+                height: raster.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &raster.pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(raster.width * 4),
+                rows_per_image: Some(raster.height),
+            },
+            wgpu::Extent3d {
+                width: raster.width,
+                height: raster.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = texture.create_view(&TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("whisker Desktop background image sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..wgpu::SamplerDescriptor::default()
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+        GpuImageResource {
+            bind_group,
+            _texture: texture,
+        }
+    }
+
+    fn upload_image(
+        &self,
+        device: &Device,
+        queue: &Queue,
+        raster: &RasterResource,
+    ) -> GpuImageResource {
+        Self::create_image_resource(
+            device,
+            queue,
+            &self.image_layout,
+            "whisker Desktop raster background image",
+            raster,
+        )
     }
 
     fn update_viewport(&self, queue: &Queue, logical_size: [f32; 2], physical_size: [f32; 2]) {
@@ -950,6 +1132,7 @@ enum DrawCommand {
         clip: LogicalClip,
         shape_clips: ShapeClipStack,
         gradient: Option<LinearGradientDraw>,
+        resource: Option<ResourceId>,
     },
     Text {
         index: usize,
@@ -1269,6 +1452,34 @@ pub(crate) fn background_gradient_draw(
     Some(gradient)
 }
 
+pub(crate) fn background_resource_draw(
+    positioning_rect: LayoutRect,
+    layer: &whisker_protocol::BackgroundLayer,
+    opacity: f32,
+) -> Option<(LinearGradientDraw, ResourceId)> {
+    let PaintImage::Resource(resource) = &layer.image else {
+        return None;
+    };
+    let tile = background_tile_geometry(positioning_rect, layer)?;
+    Some((
+        LinearGradientDraw {
+            start_end: [opacity, 0.0, 0.0, 0.0],
+            tile_rect: [tile.rect.x, tile.rect.y, tile.rect.width, tile.rect.height],
+            tile_stride: [tile.stride[0], tile.stride[1], 0.0, 0.0],
+            tile_domain: [
+                tile.domain.x,
+                tile.domain.y,
+                tile.domain.width,
+                tile.domain.height,
+            ],
+            stops: Vec::new(),
+            kind: 4,
+            geometry_flags: tile.flags,
+        },
+        *resource,
+    ))
+}
+
 fn push_quad_draw(
     vertices: &mut Vec<BoxVertex>,
     draws: &mut Vec<DrawCommand>,
@@ -1276,8 +1487,9 @@ fn push_quad_draw(
     transform: Transform,
     clip: LogicalClip,
     shape_clips: &ShapeClipStack,
-    gradient: Option<LinearGradientDraw>,
+    background: (Option<LinearGradientDraw>, Option<ResourceId>),
 ) {
+    let (gradient, resource) = background;
     let start = vertices.len() as u32;
     push_transformed_quad(vertices, primitive, transform);
     draws.push(DrawCommand::Quads {
@@ -1285,6 +1497,7 @@ fn push_quad_draw(
         clip,
         shape_clips: shape_clips.clone(),
         gradient,
+        resource,
     });
 }
 
@@ -1297,6 +1510,7 @@ pub(crate) struct GpuRenderer {
     text_viewport: Viewport,
     text_atlas: TextAtlas,
     text_renderers: HashMap<NodeId, TextRenderer>,
+    image_resources: HashMap<ResourceId, GpuImageResource>,
 }
 
 impl GpuRenderer {
@@ -1348,7 +1562,7 @@ impl GpuRenderer {
         };
         surface.configure(&device, &config);
 
-        let box_gpu = BoxGpuPipeline::new(&device, format);
+        let box_gpu = BoxGpuPipeline::new(&device, &queue, format);
 
         let text_cache = Cache::new(&device);
         let text_viewport = Viewport::new(&device, &text_cache);
@@ -1362,7 +1576,17 @@ impl GpuRenderer {
             text_viewport,
             text_atlas,
             text_renderers: HashMap::new(),
+            image_resources: HashMap::new(),
         })
+    }
+
+    pub(crate) fn register_raster_resource(
+        &mut self,
+        resource: ResourceId,
+        raster: &RasterResource,
+    ) {
+        let image = self.box_gpu.upload_image(&self.device, &self.queue, raster);
+        self.image_resources.insert(resource, image);
     }
 
     pub(crate) fn resize(&mut self, physical_size: [u32; 2]) {
@@ -1429,7 +1653,7 @@ impl GpuRenderer {
                             *transform,
                             *clip,
                             shape_clips,
-                            None,
+                            (None, None),
                         );
                     }
                     let box_geometry = resolve_box_geometry(*rect, paint);
@@ -1440,10 +1664,23 @@ impl GpuRenderer {
                             PaintBox::Content => *content_rect,
                             _ => continue,
                         };
-                        let Some(gradient) =
-                            background_gradient_draw(positioning_rect, layer, *opacity)
-                        else {
-                            continue;
+                        let (gradient, resource) = match &layer.image {
+                            PaintImage::Resource(_) => {
+                                let Some((draw, resource)) =
+                                    background_resource_draw(positioning_rect, layer, *opacity)
+                                else {
+                                    continue;
+                                };
+                                (draw, Some(resource))
+                            }
+                            _ => {
+                                let Some(draw) =
+                                    background_gradient_draw(positioning_rect, layer, *opacity)
+                                else {
+                                    continue;
+                                };
+                                (draw, None)
+                            }
                         };
                         push_quad_draw(
                             &mut vertices,
@@ -1452,7 +1689,7 @@ impl GpuRenderer {
                             *transform,
                             *clip,
                             shape_clips,
-                            Some(gradient),
+                            (Some(gradient), resource),
                         );
                     }
                     for primitive in box_primitives
@@ -1466,7 +1703,7 @@ impl GpuRenderer {
                             *transform,
                             *clip,
                             shape_clips,
-                            None,
+                            (None, None),
                         );
                     }
                 }
@@ -1595,7 +1832,12 @@ impl GpuRenderer {
 
         for (draw_index, draw) in draws.into_iter().enumerate() {
             match draw {
-                DrawCommand::Quads { vertices, clip, .. } => {
+                DrawCommand::Quads {
+                    vertices,
+                    clip,
+                    resource,
+                    ..
+                } => {
                     let Some((x, y, width, height)) = self.scissor(clip, scale) else {
                         continue;
                     };
@@ -1617,6 +1859,10 @@ impl GpuRenderer {
                     pass.set_pipeline(&self.box_gpu.pipeline);
                     pass.set_bind_group(0, &self.box_gpu.viewport_bind_group, &[]);
                     pass.set_bind_group(1, &shape_clip_bind_group, &[]);
+                    let image = resource
+                        .and_then(|resource| self.image_resources.get(&resource))
+                        .unwrap_or(&self.box_gpu.fallback_image);
+                    pass.set_bind_group(2, &image.bind_group, &[]);
                     pass.set_vertex_buffer(
                         0,
                         vertex_buffer
@@ -1754,22 +2000,18 @@ pub(crate) async fn render_box_primitives_offscreen(
                 Transform::IDENTITY,
                 ShapeClipStack::default(),
                 None,
+                None,
             )
         })
         .collect::<Vec<_>>();
-    render_clipped_box_primitives_offscreen(&clipped, logical_size).await
+    render_clipped_box_primitives_offscreen(&clipped, logical_size, &HashMap::new()).await
 }
 
 #[cfg(all(test, feature = "host-conformance"))]
 pub(crate) async fn render_clipped_box_primitives_offscreen(
-    primitives: &[(
-        BoxPrimitive,
-        LogicalClip,
-        Transform,
-        ShapeClipStack,
-        Option<LinearGradientDraw>,
-    )],
+    primitives: &[ClippedBoxPrimitive],
     logical_size: [u32; 2],
+    resources: &HashMap<ResourceId, RasterResource>,
 ) -> Result<Vec<u8>, GpuError> {
     let [width, height] = logical_size;
     if width == 0 || height == 0 {
@@ -1788,7 +2030,7 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
         .await
         .map_err(|error| GpuError(format!("create offscreen Desktop GPU device: {error}")))?;
     let format = TextureFormat::Rgba8Unorm;
-    let box_gpu = BoxGpuPipeline::new(&device, format);
+    let box_gpu = BoxGpuPipeline::new(&device, &queue, format);
     box_gpu.update_viewport(
         &queue,
         [width as f32, height as f32],
@@ -1797,7 +2039,7 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
 
     let mut vertices = Vec::new();
     let mut draws = Vec::new();
-    for (primitive, clip, transform, shape_clips, gradient) in primitives {
+    for (primitive, clip, transform, shape_clips, gradient, resource) in primitives {
         let start = vertices.len() as u32;
         push_transformed_quad(&mut vertices, *primitive, *transform);
         draws.push(DrawCommand::Quads {
@@ -1805,8 +2047,13 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
             clip: *clip,
             shape_clips: shape_clips.clone(),
             gradient: gradient.clone(),
+            resource: *resource,
         });
     }
+    let image_resources = resources
+        .iter()
+        .map(|(resource, raster)| (*resource, box_gpu.upload_image(&device, &queue, raster)))
+        .collect::<HashMap<_, _>>();
     let vertex_buffer = (!vertices.is_empty()).then(|| {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("whisker Desktop conformance box vertices"),
@@ -1864,6 +2111,7 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
             let DrawCommand::Quads {
                 vertices: range,
                 clip,
+                resource,
                 ..
             } = draw
             else {
@@ -1891,6 +2139,10 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
             pass.set_pipeline(&box_gpu.pipeline);
             pass.set_bind_group(0, &box_gpu.viewport_bind_group, &[]);
             pass.set_bind_group(1, &shape_clip_bind_group, &[]);
+            let image = resource
+                .and_then(|resource| image_resources.get(&resource))
+                .unwrap_or(&box_gpu.fallback_image);
+            pass.set_bind_group(2, &image.bind_group, &[]);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.draw(range, draw_index as u32..draw_index as u32 + 1);
         }

@@ -14,7 +14,7 @@ use std::fmt;
 
 use whisker::RuntimeInstance;
 use whisker_engine::LayoutOptions;
-use whisker_protocol::{ElementRegistration, InputEvent, InputEventKind, SurfaceId};
+use whisker_protocol::{ElementRegistration, InputEvent, InputEventKind, ResourceId, SurfaceId};
 use whisker_style::StyleEnvironment;
 
 /// Marks and defines a platform implementation contributed by a module.
@@ -40,6 +40,7 @@ pub use element::{
 };
 /// Desktop Host module declaration, named consistently with native Hosts.
 pub type ModuleDefinition = DesktopModuleDefinition;
+use gpu::RasterResource;
 use surface::DesktopSurface;
 use text::NativeTextHost;
 
@@ -116,6 +117,22 @@ impl DesktopRuntime {
     /// Reconfigures the GPU surface after an OS resize notification.
     pub fn resize(&mut self, physical_size: [u32; 2]) {
         self.surface.resize(physical_size);
+    }
+
+    /// Registers one already-decoded RGBA8 raster for later `ResourceId`
+    /// background-image references. Acquisition and decoding remain Host work
+    /// and do not run in the per-frame protocol path.
+    pub fn register_raster_resource(
+        &mut self,
+        resource: ResourceId,
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>,
+    ) -> Result<(), DesktopError> {
+        let raster = RasterResource::new(width, height, pixels)
+            .map_err(|error| DesktopError(format!("register Desktop raster: {error}")))?;
+        self.surface.register_raster_resource(resource, &raster);
+        Ok(())
     }
 
     /// Runs measurement, layout, frame presentation, and native painting once.
