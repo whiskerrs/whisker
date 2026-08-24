@@ -194,6 +194,7 @@ mod tests {
     fn background_color_only() {
         let s = Css::new().background(Background::new().color(Color::Named(NamedColor::Red)));
         assert_eq!(s.to_string(), "background: red;");
+        assert!(s.to_specified_style().is_ok());
     }
 
     #[test]
@@ -231,6 +232,7 @@ mod tests {
             s.to_string(),
             "background: url(\"top.png\") no-repeat, url(\"base.png\");"
         );
+        assert!(s.to_specified_style().is_ok());
     }
 
     #[test]
@@ -240,6 +242,7 @@ mod tests {
             .size(BackgroundSize::Cover);
         let s = Css::new().background(Background::new().layer(layer));
         assert_eq!(s.to_string(), "background: url(\"a.png\") center / cover;");
+        assert!(s.to_specified_style().is_ok());
     }
 
     #[test]
