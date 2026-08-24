@@ -115,6 +115,7 @@ struct HostBackgroundGeometry {
 }
 
 enum HostBackgroundImage {
+    case raster(CGImage)
     case linear(HostLinearGradient)
     case radial(HostRadialGradient)
     case conic(HostConicGradient)
@@ -210,6 +211,8 @@ final class HostBackgroundPainter {
             context.saveGState()
             context.clip(to: tileClip)
             switch layer.image {
+            case let .raster(image):
+                drawRaster(image, in: tile, context: context)
             case let .linear(gradient):
                 drawLinear(gradient, in: tile, context: context)
             case let .radial(gradient):
@@ -219,6 +222,13 @@ final class HostBackgroundPainter {
             }
             context.restoreGState()
         }
+    }
+
+    private func drawRaster(_ image: CGImage, in bounds: CGRect, context: CGContext) {
+        context.saveGState()
+        context.interpolationQuality = .none
+        UIImage(cgImage: image, scale: 1, orientation: .up).draw(in: bounds)
+        context.restoreGState()
     }
 
     private func drawLinear(

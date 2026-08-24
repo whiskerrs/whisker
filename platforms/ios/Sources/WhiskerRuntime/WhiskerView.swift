@@ -8,8 +8,10 @@ public final class WhiskerView: UIView {
     private var runtimeHandle: UnsafeMutableRawPointer?
     private var isApplicationActive = true
     private let modules = HostModuleDispatcher()
+    private let resources = HostResourceStore()
     private lazy var scene = HostScene(
         root: self,
+        resources: resources,
         logicalBounds: { [unowned self] in self.logicalBounds },
         emitElementEvent: { [weak self] node, name, detail in
             self?.dispatchElementEvent(node: node, name: name, detail: detail)
@@ -37,6 +39,12 @@ public final class WhiskerView: UIView {
     }
 
     public required init?(coder: NSCoder) { nil }
+
+    /// Registers an already-decoded raster for use by resource-backed paint images.
+    @discardableResult
+    public func registerRasterResource(id: UInt64, image: CGImage) -> Bool {
+        resources.registerRasterImage(image, id: id)
+    }
 
     deinit {
         unmount()
