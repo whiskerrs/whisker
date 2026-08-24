@@ -8,6 +8,10 @@ import android.view.View
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.measure.HostMeasurementProvider
 import rs.whisker.runtime.module.HostModuleDispatcher
+import rs.whisker.runtime.paint.HostRasterResourceStore
+import rs.whisker.runtime.resource.HostRasterSource
+import rs.whisker.runtime.resource.HostResourceService
+import rs.whisker.runtime.resource.HostResourceSnapshot
 import rs.whisker.runtime.scene.HostElementBootstrap
 import rs.whisker.runtime.scene.HostScene
 import rs.whisker.runtime.scene.HostSceneOperation
@@ -26,7 +30,9 @@ class WhiskerView(context: Context) :
     private var windowVisible = true
     private val measurements = HostMeasurementProvider(context)
     private val bootstrap = HostElementBootstrap()
-    private val scene = HostScene(this, context, ::dispatchElementEvent)
+    private val rasterResources = HostRasterResourceStore()
+    private val scene = HostScene(this, context, ::dispatchElementEvent, rasterResources)
+    private val resourceService = HostResourceService(rasterResources, ::handleResourceEvent)
     private val modules = HostModuleDispatcher(::nativeResolveModule)
 
     init {
@@ -158,7 +164,34 @@ class WhiskerView(context: Context) :
 
     /** Registers an already decoded raster. Acquisition and eviction are separate Host concerns. */
     fun registerRasterResourceFromNative(resourceId: Long, bitmap: Bitmap): Boolean =
-        scene.registerRasterResource(resourceId, bitmap)
+        rasterResources.register(resourceId, bitmap)
+
+    fun loadRasterResourceBytesFromNative(
+        resourceId: Long,
+        generation: Long,
+        mediaType: String,
+        data: ByteArray,
+    ): Boolean = resourceService.load(
+        resourceId,
+        generation,
+        HostRasterSource.Bytes(mediaType, data.copyOf()),
+    )
+
+    fun loadRasterResourceUrlFromNative(
+        resourceId: Long,
+        generation: Long,
+        url: String,
+    ): Boolean = resourceService.load(resourceId, generation, HostRasterSource.Url(url))
+
+    fun releaseRasterResourceFromNative(resourceId: Long, generation: Long): Boolean =
+        resourceService.release(resourceId, generation)
+
+    fun awaitRasterResourceFromNative(
+        resourceId: Long,
+        generation: Long,
+        timeoutMillis: Long,
+    ): HostResourceSnapshot? =
+        resourceService.awaitTerminal(resourceId, generation, timeoutMillis)
 
     @Suppress("LongParameterList")
     fun stageOperationFromNative(
@@ -196,6 +229,14 @@ class WhiskerView(context: Context) :
     )
 
     fun commitFrameFromNative(): Boolean = scene.commit()
+
+    private fun handleResourceEvent(@Suppress("UNUSED_PARAMETER") event: HostResourceSnapshot) {
+        post {
+            invalidate()
+            requestFrameFromNative()
+        }
+    }
+
     private fun dispatchElementEvent(node: Long, name: String, detail: WhiskerValue) {
         scene.dispatchOrDefer {
             val handle = nativeHandle

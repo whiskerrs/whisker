@@ -1,7 +1,6 @@
 package rs.whisker.runtime.scene
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.graphics.RectF
 import android.util.Log
 import android.view.View
@@ -50,9 +49,9 @@ internal class HostScene(
     private val root: WhiskerContainerView,
     private val context: Context,
     private val emitElementEvent: (Long, String, WhiskerValue) -> Unit,
+    private val rasterResources: HostRasterResourceStore,
 ) {
     private val nodes = LinkedHashMap<Long, HostNode>()
-    private val rasterResources = HostRasterResourceStore()
     private val parents = HashMap<Long, Long>()
     private var sceneEpoch = 0
     private var revision = 0L
@@ -75,9 +74,6 @@ internal class HostScene(
     }
 
     fun currentRevision(): Long = revision
-
-    fun registerRasterResource(resourceId: Long, bitmap: Bitmap): Boolean =
-        rasterResources.register(resourceId, bitmap)
 
     fun stage(operation: HostSceneOperation): Boolean {
         stagedOperations += operation

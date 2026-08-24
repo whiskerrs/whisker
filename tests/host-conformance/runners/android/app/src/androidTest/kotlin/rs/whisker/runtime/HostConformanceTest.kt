@@ -2,6 +2,7 @@ package rs.whisker.runtime
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.util.Base64
 import android.view.View
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -14,6 +15,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import rs.whisker.runtime.resource.HostResourceState
 
 private const val BACKGROUND_PACKED_LAYERS = 256
 
@@ -114,6 +116,16 @@ class HostConformanceTest {
             }
     }
 
+    @Test
+    fun reportsRasterDecodeFailure() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                assertTrue(Driver(context, "android.resource-failure").reportsRasterDecodeFailure())
+            }
+    }
+
     private fun asset(path: String): String =
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
@@ -161,6 +173,9 @@ private class Driver(
                     logicalHeight = command.getDouble("height").toFloat()
                 }
                 "register_raster_resource" -> registerRasterResource(command)
+                "load_raster_resource" -> loadRasterResource(command)
+                "release_raster_resource" -> releaseRasterResource(command)
+                "checkpoint_resource" -> checkpointRasterResource(command)
                 "present_box" -> present(command)
                 "present_scene" -> presentScene(command)
                 "checkpoint" -> {
@@ -193,7 +208,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.background-layers.stacking" ||
                             command.getString("name") ==
-                            "paint.background-layers.resource-image",
+                            "paint.background-layers.resource-image" ||
+                            command.getString("name") ==
+                            "paint.background-layers.resource-lifecycle",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -243,6 +260,19 @@ private class Driver(
         return commitRasterResource(resourceId)
     }
 
+    fun reportsRasterDecodeFailure(): Boolean {
+        check(
+            view.loadRasterResourceBytesFromNative(
+                7L,
+                1L,
+                "image/png",
+                byteArrayOf(0, 1, 2, 3),
+            ),
+        )
+        return view.awaitRasterResourceFromNative(7L, 1L, 5_000)?.state ==
+            HostResourceState.Failed
+    }
+
     private fun commitRasterResource(resourceId: Long): Boolean {
         check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
@@ -275,6 +305,57 @@ private class Driver(
             setPixels(colors, 0, width, 0, 0, width, height)
         }
         check(view.registerRasterResourceFromNative(command.getLong("id"), bitmap))
+    }
+
+    private fun loadRasterResource(command: JSONObject) {
+        val resourceId = command.getLong("id")
+        val generation = command.getLong("generation")
+        val source = command.getJSONObject("source")
+        val accepted = when (source.getString("kind")) {
+            "bytes" -> view.loadRasterResourceBytesFromNative(
+                resourceId,
+                generation,
+                source.getString("media_type"),
+                Base64.decode(source.getString("base64"), Base64.DEFAULT),
+            )
+            "url" -> view.loadRasterResourceUrlFromNative(
+                resourceId,
+                generation,
+                source.getString("value"),
+            )
+            else -> error("unsupported raster resource source: $source")
+        }
+        check(accepted)
+    }
+
+    private fun releaseRasterResource(command: JSONObject) {
+        check(
+            view.releaseRasterResourceFromNative(
+                command.getLong("id"),
+                command.getLong("generation"),
+            ),
+        )
+    }
+
+    private fun checkpointRasterResource(command: JSONObject) {
+        val snapshot = checkNotNull(
+            view.awaitRasterResourceFromNative(
+                command.getLong("id"),
+                command.getLong("generation"),
+                5_000,
+            ),
+        )
+        val expectedState = when (command.getString("state")) {
+            "ready" -> HostResourceState.Ready
+            "failed" -> HostResourceState.Failed
+            "released" -> HostResourceState.Released
+            else -> error("unsupported resource checkpoint: $command")
+        }
+        check(snapshot.state == expectedState)
+        if (expectedState == HostResourceState.Ready) {
+            check(snapshot.width == command.getInt("width"))
+            check(snapshot.height == command.getInt("height"))
+        }
     }
 
     private fun present(command: JSONObject) {
