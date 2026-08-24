@@ -10,6 +10,9 @@ import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerTextContent
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.paint.HostBoxPaint
+import rs.whisker.runtime.paint.HostBackgroundLayers
+import rs.whisker.runtime.paint.HostGradientStop
+import rs.whisker.runtime.paint.HostLinearGradient
 import rs.whisker.runtime.paint.applyBoxPaint
 import rs.whisker.runtime.paint.parseNamedColor
 import rs.whisker.runtime.paint.rgba
@@ -157,6 +160,7 @@ internal class HostScene(
                 operation.numbers?.size ?: 0 < 8 || operation.names?.isEmpty() != false
             ) return false
             14 -> if (operation.node !in existing || operation.value == null) return false
+            21 -> if (!validBackgroundLayers(operation, existing)) return false
             else -> return false
         }
         return true
@@ -215,6 +219,7 @@ internal class HostScene(
                 ?.setProperty(operation.member, requireNotNull(operation.value))
             15 -> (nodes[id] ?: return).mountedElement?.clearProperty(operation.member)
             16 -> (nodes[id] ?: return).mountedElement?.setEventMask(operation.wide)
+            21 -> applyBackgroundLayers(nodes[id] ?: return, operation)
         }
     }
 
@@ -342,7 +347,56 @@ internal class HostScene(
             node.geometry.width,
             node.geometry.height,
             root.resources.displayMetrics.density,
+            node.backgroundLayers,
         )
         node.setOverflowClipGeometry(geometry)
+    }
+
+    private fun applyBackgroundLayers(node: HostNode, operation: HostSceneOperation) {
+        val numbers = operation.numbers ?: FloatArray(0)
+        if (numbers.isEmpty()) {
+            node.backgroundLayers = null
+        } else {
+            val density = root.resources.displayMetrics.density
+            val names = requireNotNull(operation.names)
+            val stops = List(numbers.size / 7) { index ->
+                val offset = index * 7
+                HostGradientStop(
+                    color = if (numbers[offset] == 0f) {
+                        parseNamedColor(names[index])
+                    } else {
+                        rgba(
+                            numbers[offset + 1],
+                            numbers[offset + 2],
+                            numbers[offset + 3],
+                            numbers[offset + 4],
+                        )
+                    },
+                    length = numbers[offset + 5] * density,
+                    fraction = numbers[offset + 6],
+                )
+            }
+            node.backgroundLayers = HostBackgroundLayers(
+                linearGradient = HostLinearGradient(operation.scalar, stops),
+            )
+        }
+        node.paint?.let { applyPaint(node, it) }
+    }
+
+    private fun validBackgroundLayers(
+        operation: HostSceneOperation,
+        existing: Set<Long>,
+    ): Boolean {
+        if (operation.node !in existing || operation.flags != 0 || !operation.scalar.isFinite()) {
+            return false
+        }
+        val numbers = operation.numbers ?: FloatArray(0)
+        val names = operation.names ?: emptyArray()
+        if (numbers.isEmpty()) return names.isEmpty()
+        if (numbers.size < 14 || numbers.size % 7 != 0 || names.size != numbers.size / 7) {
+            return false
+        }
+        return numbers.indices.all { index -> numbers[index].isFinite() } &&
+            (numbers.indices step 7).all { offset -> numbers[offset] == 0f || numbers[offset] == 1f }
     }
 }

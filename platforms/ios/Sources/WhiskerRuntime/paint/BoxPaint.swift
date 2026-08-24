@@ -20,6 +20,7 @@ struct HostBoxPaint {
 }
 
 final class HostBoxPainter {
+    private let backgroundPainter = HostBackgroundPainter()
     private var fillColor = UIColor.clear
     /// CSS order: top, right, bottom, left.
     private var borderWidths = [CGFloat](repeating: 0, count: 4)
@@ -47,9 +48,21 @@ final class HostBoxPainter {
 
     func draw(in bounds: CGRect) {
         let path = roundedPath(in: bounds, radii: cornerRadii)
+        let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
+        let paddingBox = CGRect(
+            x: bounds.minX + min(widths[3], bounds.width),
+            y: bounds.minY + min(widths[0], bounds.height),
+            width: max(0, bounds.width - min(widths[3], bounds.width) - min(widths[1], bounds.width)),
+            height: max(0, bounds.height - min(widths[0], bounds.height) - min(widths[2], bounds.height))
+        )
         fillColor.setFill()
         path.fill()
+        backgroundPainter.draw(in: paddingBox, clippedBy: path.cgPath)
         drawBorders(in: bounds, clippedBy: path)
+    }
+
+    func updateBackgroundLayers(_ linearGradient: HostLinearGradient?) {
+        backgroundPainter.update(linearGradient: linearGradient)
     }
 
     func overflowClipPath(

@@ -30,6 +30,7 @@ internal fun applyBoxPaint(
     logicalWidth: Float,
     logicalHeight: Float,
     density: Float,
+    backgroundLayers: HostBackgroundLayers? = null,
 ): ResolvedBoxGeometry {
     val values = paint.values
     require(values.size >= BOX_PAINT_PACKED_SIZE)
@@ -63,7 +64,8 @@ internal fun applyBoxPaint(
     val physicalHeight = logicalHeight * density
     val normalizedRadii = normalizeRadii(radii, physicalWidth, physicalHeight)
     val borderStyles = IntArray(4) { index -> values[BORDER_STYLES_OFFSET + index].toInt() }
-    val uniformSolidBorder = borderStyles.all { it == BORDER_STYLE_SOLID } &&
+    val uniformSolidBorder = backgroundLayers == null &&
+        borderStyles.all { it == BORDER_STYLE_SOLID } &&
         borderWidths.all { it == borderWidths[0] } &&
         borderColors.all { it == borderColors[0] }
     node.background = if (uniformSolidBorder) {
@@ -76,7 +78,14 @@ internal fun applyBoxPaint(
             cornerRadii = normalizedRadii
         }
     } else {
-        WhiskerBoxDrawable(background, borderWidths, borderColors, borderStyles, normalizedRadii)
+        WhiskerBoxDrawable(
+            background,
+            borderWidths,
+            borderColors,
+            borderStyles,
+            normalizedRadii,
+            backgroundLayers,
+        )
     }
     return ResolvedBoxGeometry(
         width = physicalWidth,
@@ -96,6 +105,7 @@ private class WhiskerBoxDrawable(
     private val borderColors: IntArray,
     private val borderStyles: IntArray,
     private val cornerRadii: FloatArray,
+    private val backgroundLayers: HostBackgroundLayers?,
 ) : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
@@ -104,13 +114,20 @@ private class WhiskerBoxDrawable(
         if (box.isEmpty) return
         val radii = normalizeRadii(cornerRadii, box.width(), box.height())
         val outer = roundedPath(box, radii)
-        paint.color = fillColor
-        canvas.drawPath(outer, paint)
-
         val top = borderWidths[0].coerceIn(0f, box.height())
         val right = borderWidths[1].coerceIn(0f, box.width())
         val bottom = borderWidths[2].coerceIn(0f, box.height())
         val left = borderWidths[3].coerceIn(0f, box.width())
+        val paddingBox = RectF(
+            box.left + left,
+            box.top + top,
+            box.right - right,
+            box.bottom - bottom,
+        )
+        paint.color = fillColor
+        canvas.drawPath(outer, paint)
+        drawBackgroundLayers(canvas, outer, paddingBox, backgroundLayers, paint)
+
         val widths = floatArrayOf(top, right, bottom, left)
         if (top == 0f && right == 0f && bottom == 0f && left == 0f) return
 

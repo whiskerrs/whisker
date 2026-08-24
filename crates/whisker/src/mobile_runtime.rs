@@ -7,12 +7,12 @@ use whisker_driver::module::{
     InvokeModuleCallback, MobileModuleHost, ObserveModuleCallback, with_mobile_module_host,
 };
 use whisker_engine::whisker_protocol::{
-    ApplyResult, AvailableSpace, BorderLineStyle, ChildPolicy, ElementMeasurement,
-    ElementRegistration, ElementValueKind, FrameMode, FramePacket, MeasureFontFamily,
-    MeasureFontStyle, MeasureLineHeight, MeasureTextWrap, MeasuredSize, MeasurementMetrics,
-    MeasurementPayload, MeasurementRequest, MeasurementRequestId, MeasurementResponse, NodeId,
-    Operation, PaintColor, PaintLengthPercentage, PreparedContentId, SurfaceId,
-    UnsupportedMeasurementReason,
+    ApplyResult, AvailableSpace, BackgroundAttachment, BackgroundSize, BlendMode, BorderLineStyle,
+    ChildPolicy, ElementMeasurement, ElementRegistration, ElementValueKind, FrameMode, FramePacket,
+    ImageRepeat, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextWrap,
+    MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementRequestId,
+    MeasurementResponse, NodeId, Operation, PaintBox, PaintColor, PaintImage,
+    PaintLengthPercentage, PreparedContentId, SurfaceId, UnsupportedMeasurementReason,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
@@ -643,7 +643,21 @@ struct MobileFrameSink {
 impl FrameSink for MobileFrameSink {
     type Error = MobileFrameError;
     fn capabilities(&self) -> whisker_engine::whisker_protocol::RenderCapabilities {
-        whisker_engine::whisker_protocol::RenderCapabilities::base()
+        whisker_engine::whisker_protocol::RenderCapabilities::new(
+            whisker_engine::whisker_protocol::ProtocolVersion::CURRENT,
+            [
+                whisker_engine::whisker_protocol::CapabilityEntry {
+                    capability:
+                        whisker_engine::whisker_protocol::RenderCapability::EllipticalBorderRadius,
+                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_engine::whisker_protocol::CapabilityEntry {
+                    capability: whisker_engine::whisker_protocol::RenderCapability::LinearGradients,
+                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+                },
+            ],
+        )
+        .expect("mobile capability profile is unique")
     }
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
         let capabilities = self.capabilities();
@@ -676,6 +690,7 @@ struct MobileFrameOwned {
     _arena: RawValueArena,
     _layouts: Vec<Box<MobileLayoutGeometry>>,
     _paints: Vec<Box<MobileBoxPaint>>,
+    _gradient_stops: Vec<Box<[MobileGradientStop]>>,
     _texts: Vec<Box<MobileText>>,
     _transforms: Vec<Box<[f32; 16]>>,
     _values: Vec<Box<WhiskerValueRaw>>,
@@ -688,6 +703,7 @@ impl MobileFrameOwned {
         let mut arena = RawValueArena::default();
         let mut layouts = Vec::<Box<MobileLayoutGeometry>>::new();
         let mut paints = Vec::<Box<MobileBoxPaint>>::new();
+        let mut gradient_stops = Vec::<Box<[MobileGradientStop]>>::new();
         let mut texts = Vec::<Box<MobileText>>::new();
         let mut transforms = Vec::<Box<[f32; 16]>>::new();
         let mut values = Vec::<Box<WhiskerValueRaw>>::new();
@@ -757,6 +773,52 @@ impl MobileFrameOwned {
                     raw.node = node.get();
                     paints.push(Box::new(mobile_paint(paint, &mut strings)));
                     raw.payload = paints.last().unwrap().as_ref() as *const _ as *const c_void;
+                }
+                Operation::SetBackgroundLayers { node, layers } => {
+                    raw.tag = OP_BACKGROUND_LAYERS;
+                    raw.node = node.get();
+                    if !layers.is_empty() {
+                        let [layer] = layers.as_slice() else {
+                            return Err(MobileFrameError);
+                        };
+                        if layer.position != Default::default()
+                            || layer.size != BackgroundSize::Auto
+                            || layer.repeat_x != ImageRepeat::Repeat
+                            || layer.repeat_y != ImageRepeat::Repeat
+                            || layer.origin != PaintBox::Padding
+                            || layer.clip != PaintBox::Border
+                            || layer.attachment != BackgroundAttachment::Scroll
+                            || layer.blend_mode != BlendMode::Normal
+                        {
+                            return Err(MobileFrameError);
+                        }
+                        let PaintImage::LinearGradient {
+                            angle_degrees,
+                            repeating: false,
+                            stops,
+                        } = &layer.image
+                        else {
+                            return Err(MobileFrameError);
+                        };
+                        let stops = stops
+                            .iter()
+                            .map(|stop| {
+                                let position = stop.position.ok_or(MobileFrameError)?;
+                                Ok(MobileGradientStop {
+                                    color: mobile_color(&stop.color, &mut strings),
+                                    position: MobileLengthPercentage {
+                                        length: position.length,
+                                        fraction: position.fraction,
+                                    },
+                                })
+                            })
+                            .collect::<Result<Vec<_>, MobileFrameError>>()?
+                            .into_boxed_slice();
+                        raw.scalar = *angle_degrees;
+                        raw.payload_count = stops.len();
+                        gradient_stops.push(stops);
+                        raw.payload = gradient_stops.last().unwrap().as_ptr().cast();
+                    }
                 }
                 Operation::SetClip { node, clip } => {
                     raw.tag = OP_CLIP;
@@ -877,8 +939,7 @@ impl MobileFrameOwned {
                     values.push(Box::new(arena.encode(arguments)));
                     raw.payload = values.last().unwrap().as_ref() as *const _ as *const c_void;
                 }
-                Operation::SetBackgroundLayers { .. }
-                | Operation::SetVisualEffects { .. }
+                Operation::SetVisualEffects { .. }
                 | Operation::SetImage { .. }
                 | Operation::SetCursor { .. } => return Err(MobileFrameError),
             }
@@ -908,6 +969,7 @@ impl MobileFrameOwned {
             _arena: arena,
             _layouts: layouts,
             _paints: paints,
+            _gradient_stops: gradient_stops,
             _texts: texts,
             _transforms: transforms,
             _values: values,

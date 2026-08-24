@@ -27,7 +27,7 @@
       "id": "paint.background-layers",
       "properties": ["background", "background-attachment", "background-clip", "background-image", "background-origin", "background-position", "background-position-x", "background-position-y", "background-repeat", "background-size"],
       "protocol": ["SetBackgroundLayers"],
-      "hosts": {"desktop": "protocol-only", "web": "protocol-only", "android": "protocol-only", "ios": "protocol-only"}
+      "hosts": {"desktop": "partial", "web": "partial", "android": "partial", "ios": "partial"}
     },
     {
       "id": "paint.visual-effects",

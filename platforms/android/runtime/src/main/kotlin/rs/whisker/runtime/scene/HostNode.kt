@@ -9,6 +9,7 @@ import android.graphics.RectF
 import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerMountedElement
 import rs.whisker.runtime.paint.HostBoxPaint
+import rs.whisker.runtime.paint.HostBackgroundLayers
 import rs.whisker.runtime.paint.ResolvedBoxGeometry
 import rs.whisker.runtime.paint.normalizeRadii
 
@@ -33,6 +34,7 @@ internal data class HostGeometry(
 internal class HostNode(context: Context, val element: String) : WhiskerContainerView(context) {
     val geometry = HostGeometry()
     var paint: HostBoxPaint? = null
+    var backgroundLayers: HostBackgroundLayers? = null
     var mountedElement: WhiskerMountedElement? = null
     var zOrder: Int = 0
 

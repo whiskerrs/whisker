@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 0 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 1 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -19,7 +19,8 @@ enum {
   WHISKER_OP_TRANSFORM, WHISKER_OP_OPACITY, WHISKER_OP_VISIBILITY,
   WHISKER_OP_Z_ORDER, WHISKER_OP_TEXT, WHISKER_OP_PROPERTY,
   WHISKER_OP_CLEAR_PROPERTY, WHISKER_OP_EVENT_MASK, WHISKER_OP_HIT_TEST,
-  WHISKER_OP_CAPTURE, WHISKER_OP_RELEASE_CAPTURE, WHISKER_OP_COMMAND
+  WHISKER_OP_CAPTURE, WHISKER_OP_RELEASE_CAPTURE, WHISKER_OP_COMMAND,
+  WHISKER_OP_BACKGROUND_LAYERS
 };
 enum {
   WHISKER_MEASURE_TEXT = 1, WHISKER_MEASURE_REPLACED_CONTENT,
@@ -45,6 +46,10 @@ typedef struct {
   WhiskerMobileLengthPercentage radii_horizontal[4];
   WhiskerMobileLengthPercentage radii_vertical[4];
 } WhiskerMobileBoxPaint;
+typedef struct {
+  WhiskerMobileColor color;
+  WhiskerMobileLengthPercentage position;
+} WhiskerMobileGradientStop;
 typedef struct {
   WhiskerStringRef text;
   float font_size;
@@ -78,6 +83,7 @@ typedef struct { uint8_t status, _pad[7]; uint64_t revision; } WhiskerMobileAppl
 _Static_assert(sizeof(WhiskerMobileOperation) == 72, "WhiskerMobileOperation ABI drift");
 _Static_assert(sizeof(WhiskerMobileFrame) == 72, "WhiskerMobileFrame ABI drift");
 _Static_assert(sizeof(WhiskerMobileApplyResponse) == 16, "WhiskerMobileApplyResponse ABI drift");
+_Static_assert(sizeof(WhiskerMobileGradientStop) == 40, "WhiskerMobileGradientStop ABI drift");
 
 typedef struct {
   uint32_t id;

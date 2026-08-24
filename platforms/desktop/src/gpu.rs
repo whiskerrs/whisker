@@ -16,10 +16,12 @@ use wgpu::{
     TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
     VertexStepMode,
 };
-use whisker_protocol::{NodeId, Transform};
+use whisker_protocol::{GradientStop, LayoutRect, NodeId, PaintImage, Transform};
 
-use crate::paint::box_paint::{BoxPrimitive, lower_box};
-use crate::paint::color::text_color;
+use crate::paint::box_paint::{
+    BoxPrimitive, BoxPrimitiveKind, linear_gradient_primitive, lower_box, resolve_box_geometry,
+};
+use crate::paint::color::{gpu_color, text_color};
 use crate::scene::{LogicalClip, PaintCommand, ShapeClipStack};
 use crate::text::NativeTextHost;
 
@@ -51,6 +53,25 @@ var<storage, read> shape_clip_records: array<ShapeClipRecord>;
 
 @group(1) @binding(1)
 var<storage, read> shape_clip_spans: array<ShapeClipSpan>;
+
+struct LinearGradientDraw {
+    start_end: vec4<f32>,
+    stop_offset: u32,
+    stop_count: u32,
+    repeating: u32,
+    _padding: u32,
+};
+
+struct LinearGradientStop {
+    position_and_padding: vec4<f32>,
+    color: vec4<f32>,
+};
+
+@group(1) @binding(2)
+var<storage, read> linear_gradient_draws: array<LinearGradientDraw>;
+
+@group(1) @binding(3)
+var<storage, read> linear_gradient_stops: array<LinearGradientStop>;
 
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -340,6 +361,48 @@ fn styled_color(color: vec4<f32>, style: f32, side: f32, depth: f32) -> vec4<f32
     return color;
 }
 
+fn linear_gradient_color(draw_index: u32, position: vec2<f32>) -> vec4<f32> {
+    let gradient = linear_gradient_draws[draw_index];
+    if gradient.stop_count == 0u {
+        return vec4<f32>(0.0);
+    }
+    let line = gradient.start_end.zw - gradient.start_end.xy;
+    var progress = dot(position - gradient.start_end.xy, line) / max(dot(line, line), 0.0001);
+    if gradient.repeating != 0u {
+        progress = fract(progress);
+    }
+    let first = linear_gradient_stops[gradient.stop_offset];
+    if progress <= first.position_and_padding.x {
+        return first.color;
+    }
+    var previous = first;
+    for (var index = 1u; index < gradient.stop_count; index++) {
+        let current = linear_gradient_stops[gradient.stop_offset + index];
+        if progress <= current.position_and_padding.x {
+            let amount = clamp(
+                (progress - previous.position_and_padding.x)
+                    / max(current.position_and_padding.x - previous.position_and_padding.x, 0.0001),
+                0.0,
+                1.0,
+            );
+            let alpha = mix(previous.color.a, current.color.a, amount);
+            let premultiplied = mix(
+                previous.color.rgb * previous.color.a,
+                current.color.rgb * current.color.a,
+                amount,
+            );
+            let rgb = select(
+                vec3<f32>(0.0),
+                premultiplied / max(alpha, 0.0001),
+                alpha > 0.0001,
+            );
+            return vec4<f32>(rgb, alpha);
+        }
+        previous = current;
+    }
+    return previous.color;
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let span = shape_clip_spans[input.draw_index];
@@ -372,6 +435,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         input.outer_radii_y,
     );
     let outer_coverage = shape_coverage(outer_distance);
+    if input.mode < -1.5 {
+        let color = linear_gradient_color(input.draw_index, input.logical_position);
+        return vec4<f32>(color.rgb, color.a * outer_coverage * clip_coverage);
+    }
     if input.mode < 0.0 {
         return vec4<f32>(input.color.rgb, input.color.a * outer_coverage * clip_coverage);
     }
@@ -551,6 +618,31 @@ struct ShapeClipSpanGpu {
     padding: [u32; 2],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct LinearGradientDrawGpu {
+    start_end: [f32; 4],
+    stop_offset: u32,
+    stop_count: u32,
+    repeating: u32,
+    padding: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct LinearGradientStopGpu {
+    position: f32,
+    padding: [f32; 3],
+    color: [f32; 4],
+}
+
+#[derive(Clone)]
+pub(crate) struct LinearGradientDraw {
+    start_end: [f32; 4],
+    stops: Vec<LinearGradientStopGpu>,
+    repeating: bool,
+}
+
 struct BoxGpuPipeline {
     pipeline: RenderPipeline,
     viewport_buffer: Buffer,
@@ -605,6 +697,26 @@ impl BoxGpuPipeline {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -698,6 +810,32 @@ impl BoxGpuPipeline {
         } else {
             spans
         };
+        let mut gradient_stops = Vec::new();
+        let gradient_draws = draws
+            .iter()
+            .map(|draw| {
+                let Some(gradient) = draw.gradient() else {
+                    return LinearGradientDrawGpu::zeroed();
+                };
+                let stop_offset = gradient_stops.len() as u32;
+                gradient_stops.extend_from_slice(&gradient.stops);
+                LinearGradientDrawGpu {
+                    start_end: gradient.start_end,
+                    stop_offset,
+                    stop_count: gradient.stops.len() as u32,
+                    repeating: u32::from(gradient.repeating),
+                    padding: 0,
+                }
+            })
+            .collect::<Vec<_>>();
+        if gradient_stops.is_empty() {
+            gradient_stops.push(LinearGradientStopGpu::zeroed());
+        }
+        let gradient_draws = if gradient_draws.is_empty() {
+            vec![LinearGradientDrawGpu::zeroed()]
+        } else {
+            gradient_draws
+        };
         let record_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("whisker Desktop shape clip records"),
             contents: bytemuck::cast_slice(&records),
@@ -706,6 +844,16 @@ impl BoxGpuPipeline {
         let span_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("whisker Desktop shape clip spans"),
             contents: bytemuck::cast_slice(&spans),
+            usage: BufferUsages::STORAGE,
+        });
+        let gradient_draw_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("whisker Desktop linear gradient draws"),
+            contents: bytemuck::cast_slice(&gradient_draws),
+            usage: BufferUsages::STORAGE,
+        });
+        let gradient_stop_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("whisker Desktop linear gradient stops"),
+            contents: bytemuck::cast_slice(&gradient_stops),
             usage: BufferUsages::STORAGE,
         });
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -720,6 +868,14 @@ impl BoxGpuPipeline {
                     binding: 1,
                     resource: span_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: gradient_draw_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: gradient_stop_buffer.as_entire_binding(),
+                },
             ],
         })
     }
@@ -730,11 +886,77 @@ enum DrawCommand {
         vertices: Range<u32>,
         clip: LogicalClip,
         shape_clips: ShapeClipStack,
+        gradient: Option<LinearGradientDraw>,
     },
     Text {
         index: usize,
         node: NodeId,
     },
+}
+
+impl DrawCommand {
+    fn gradient(&self) -> Option<&LinearGradientDraw> {
+        match self {
+            Self::Quads { gradient, .. } => gradient.as_ref(),
+            Self::Text { .. } => None,
+        }
+    }
+}
+
+pub(crate) fn linear_gradient_draw(
+    positioning_rect: LayoutRect,
+    angle_degrees: f32,
+    repeating: bool,
+    stops: &[GradientStop],
+    opacity: f32,
+) -> LinearGradientDraw {
+    let angle = angle_degrees.to_radians();
+    let direction = [angle.sin(), -angle.cos()];
+    let center = [
+        positioning_rect.x + positioning_rect.width * 0.5,
+        positioning_rect.y + positioning_rect.height * 0.5,
+    ];
+    let half_length = direction[0].abs() * positioning_rect.width * 0.5
+        + direction[1].abs() * positioning_rect.height * 0.5;
+    let line_length = (half_length * 2.0).max(0.0001);
+    LinearGradientDraw {
+        start_end: [
+            center[0] - direction[0] * half_length,
+            center[1] - direction[1] * half_length,
+            center[0] + direction[0] * half_length,
+            center[1] + direction[1] * half_length,
+        ],
+        stops: stops
+            .iter()
+            .map(|stop| LinearGradientStopGpu {
+                position: stop.position.map_or(0.0, |position| {
+                    position.fraction + position.length / line_length
+                }),
+                padding: [0.0; 3],
+                color: gpu_color(&stop.color, opacity),
+            })
+            .collect(),
+        repeating,
+    }
+}
+
+fn push_quad_draw(
+    vertices: &mut Vec<BoxVertex>,
+    draws: &mut Vec<DrawCommand>,
+    primitive: BoxPrimitive,
+    transform: Transform,
+    clip: LogicalClip,
+    shape_clips: &ShapeClipStack,
+    gradient: Option<LinearGradientDraw>,
+) {
+    let start = vertices.len() as u32;
+    push_transformed_quad(vertices, primitive, transform);
+    draws.push(DrawCommand::Quads {
+        vertices: start..vertices.len() as u32,
+        clip,
+        shape_clips: shape_clips.clone(),
+        gradient,
+    });
 }
 
 pub(crate) struct GpuRenderer {
@@ -853,22 +1075,72 @@ impl GpuRenderer {
                 PaintCommand::Box {
                     rect,
                     paint,
+                    background_layers,
                     clip,
                     shape_clips,
                     transform,
                     opacity,
                 } => {
-                    let start = vertices.len() as u32;
+                    let default_paint = whisker_protocol::BoxPaint::default();
+                    let paint = paint.unwrap_or(&default_paint);
+                    let mut box_primitives = Vec::new();
                     lower_box(*rect, paint, *opacity, |primitive| {
-                        push_transformed_quad(&mut vertices, primitive, *transform);
+                        box_primitives.push(primitive)
                     });
-                    let end = vertices.len() as u32;
-                    if start != end {
-                        draws.push(DrawCommand::Quads {
-                            vertices: start..end,
-                            clip: *clip,
-                            shape_clips: shape_clips.clone(),
-                        });
+                    for primitive in box_primitives
+                        .iter()
+                        .copied()
+                        .filter(|primitive| primitive.kind == BoxPrimitiveKind::Fill)
+                    {
+                        push_quad_draw(
+                            &mut vertices,
+                            &mut draws,
+                            primitive,
+                            *transform,
+                            *clip,
+                            shape_clips,
+                            None,
+                        );
+                    }
+                    let positioning_rect = resolve_box_geometry(*rect, paint).inner_rect;
+                    for layer in background_layers.iter().rev() {
+                        let PaintImage::LinearGradient {
+                            angle_degrees,
+                            repeating,
+                            stops,
+                        } = &layer.image
+                        else {
+                            continue;
+                        };
+                        push_quad_draw(
+                            &mut vertices,
+                            &mut draws,
+                            linear_gradient_primitive(*rect, paint),
+                            *transform,
+                            *clip,
+                            shape_clips,
+                            Some(linear_gradient_draw(
+                                positioning_rect,
+                                *angle_degrees,
+                                *repeating,
+                                stops,
+                                *opacity,
+                            )),
+                        );
+                    }
+                    for primitive in box_primitives
+                        .into_iter()
+                        .filter(|primitive| primitive.kind == BoxPrimitiveKind::Border)
+                    {
+                        push_quad_draw(
+                            &mut vertices,
+                            &mut draws,
+                            primitive,
+                            *transform,
+                            *clip,
+                            shape_clips,
+                            None,
+                        );
                     }
                 }
                 PaintCommand::Text {
@@ -1154,6 +1426,7 @@ pub(crate) async fn render_box_primitives_offscreen(
                 LogicalClip::default(),
                 Transform::IDENTITY,
                 ShapeClipStack::default(),
+                None,
             )
         })
         .collect::<Vec<_>>();
@@ -1162,7 +1435,13 @@ pub(crate) async fn render_box_primitives_offscreen(
 
 #[cfg(all(test, feature = "host-conformance"))]
 pub(crate) async fn render_clipped_box_primitives_offscreen(
-    primitives: &[(BoxPrimitive, LogicalClip, Transform, ShapeClipStack)],
+    primitives: &[(
+        BoxPrimitive,
+        LogicalClip,
+        Transform,
+        ShapeClipStack,
+        Option<LinearGradientDraw>,
+    )],
     logical_size: [u32; 2],
 ) -> Result<Vec<u8>, GpuError> {
     let [width, height] = logical_size;
@@ -1191,13 +1470,14 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
 
     let mut vertices = Vec::new();
     let mut draws = Vec::new();
-    for (primitive, clip, transform, shape_clips) in primitives {
+    for (primitive, clip, transform, shape_clips, gradient) in primitives {
         let start = vertices.len() as u32;
         push_transformed_quad(&mut vertices, *primitive, *transform);
         draws.push(DrawCommand::Quads {
             vertices: start..vertices.len() as u32,
             clip: *clip,
             shape_clips: shape_clips.clone(),
+            gradient: gradient.clone(),
         });
     }
     let vertex_buffer = (!vertices.is_empty()).then(|| {

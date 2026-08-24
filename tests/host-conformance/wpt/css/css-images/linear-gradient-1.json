@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "wpt.css-images.linear-gradient-1",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-images/linear-gradient-1.html",
+    "reference_path": "css/css-images/linear-gradient-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "Implicit linear-gradient stop positions are distributed between the surrounding explicit positions.",
+    "adaptation": "CSS parsing and implicit-stop resolution remain Rust responsibilities, so the Host receives the equivalent resolved SetBackgroundLayers payload used by the WPT reference. The 400 by 300 box is reduced to 100 by 60 logical pixels and representative sRGB samples verify the gradient image."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 60.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 60.0],
+            "background": { "kind": "srgba", "red": 255, "green": 255, "blue": 255, "alpha": 0.0 },
+            "linear_gradient": {
+              "angle_degrees": 90.0,
+              "stops": [
+                { "color": { "kind": "named", "value": "black" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "red" }, "position": 0.5 },
+                { "color": { "kind": "named", "value": "gold" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.linear-gradient",
+        "samples": [
+          { "point": [25.0, 30.0], "color": { "kind": "srgba", "red": 128, "green": 0, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [50.0, 30.0], "color": { "kind": "named", "value": "red" }, "tolerance": 5 },
+          { "point": [75.0, 30.0], "color": { "kind": "srgba", "red": 255, "green": 108, "blue": 0, "alpha": 1.0 }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

@@ -3,14 +3,16 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use whisker::ElementRegistry;
 use whisker_engine::FrameSink;
 use whisker_host_conformance::{
-    BorderFixture, BorderStyleFixture, ColorFixture, Command, CornerRadiusFixture, Manifest,
-    OverflowClipFixture, PixelSampleFixture, SCHEMA_VERSION, Scenario, ScenarioSide,
-    SceneNodeFixture, VisibilityFixture,
+    BorderFixture, BorderStyleFixture, ColorFixture, Command, CornerRadiusFixture,
+    LinearGradientFixture, Manifest, OverflowClipFixture, PixelSampleFixture, SCHEMA_VERSION,
+    Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
-    BorderLineStyle, BoxClip, BoxPaint, FrameHeader, FrameMode, FramePacket, LayoutGeometry,
-    LayoutRect, NodeId, Operation, OverflowClip, PaintColor, PaintCornerRadius, PaintCorners,
-    PaintEdges, PaintLengthPercentage, ProtocolVersion, SurfaceId, Transform, Visibility,
+    BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
+    BoxPaint, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat, LayoutGeometry,
+    LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
+    PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
+    ProtocolVersion, SurfaceId, Transform, Visibility,
 };
 
 use crate::module_api::built_in_element_factories;
@@ -93,10 +95,21 @@ impl Driver {
                     self.expected_box = None;
                 }
                 Command::Checkpoint { name, samples, .. } => {
-                    assert_eq!(name, "paint.box");
                     if self.expected_scene.is_some() {
+                        let has_gradient = self.expected_scene.as_ref().is_some_and(|nodes| {
+                            nodes.iter().any(|node| node.linear_gradient.is_some())
+                        });
+                        assert_eq!(
+                            name,
+                            if has_gradient {
+                                "paint.background-layers.linear-gradient"
+                            } else {
+                                "paint.box"
+                            }
+                        );
                         self.assert_scene_is_projected(samples);
                     } else {
+                        assert_eq!(name, "paint.box");
                         self.assert_box_is_projected();
                     }
                 }
@@ -189,6 +202,22 @@ impl Driver {
             } else {
                 assert_eq!(style.get_property_value("z-index").unwrap(), "");
             }
+            if let Some(gradient) = &fixture_node.linear_gradient {
+                assert_style(
+                    &style,
+                    "background-image",
+                    &fixture_linear_gradient_css(gradient),
+                );
+                assert_style(&style, "background-position", "0px 0px");
+                assert_style(&style, "background-size", "auto");
+                assert_style(&style, "background-repeat", "repeat");
+                assert_style(&style, "background-origin", "padding-box");
+                assert_style(&style, "background-clip", "border-box");
+                assert_style(&style, "background-attachment", "scroll");
+                assert_style(&style, "background-blend-mode", "normal");
+            } else {
+                assert_eq!(style.get_property_value("background-image").unwrap(), "");
+            }
 
             let actual_parent = node.parent_element().unwrap();
             match fixture_node.parent {
@@ -228,7 +257,8 @@ impl Driver {
             let opaque_hit = hit_nodes.iter().find(|id| {
                 expected.iter().any(|node| {
                     node.id.to_string() == id.as_str()
-                        && !fixture_color_is_transparent(&node.background)
+                        && (node.linear_gradient.is_some()
+                            || !fixture_color_is_transparent(&node.background))
                 })
             });
             match &sample.color {
@@ -241,7 +271,8 @@ impl Driver {
                         .iter()
                         .rev()
                         .find(|node| node.opacity.is_some())
-                        .expect("composited sRGBA sample requires an opacity node")
+                        .or_else(|| expected.iter().find(|node| node.linear_gradient.is_some()))
+                        .expect("sRGBA sample requires an opacity or gradient source node")
                         .id
                         .to_string();
                     assert_eq!(
@@ -254,6 +285,7 @@ impl Driver {
                     let expected_node = expected
                         .iter()
                         .find(|node| node.background == *expected_color)
+                        .or_else(|| expected.iter().find(|node| node.linear_gradient.is_some()))
                         .unwrap_or_else(|| {
                             panic!("sample color {expected_color:?} has no matching scene node")
                         })
@@ -314,6 +346,9 @@ fn fixture(path: &str) -> &'static str {
     match path {
         "wpt/css/CSS2/backgrounds/background-color-129.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/backgrounds/background-color-129.json"
+        ),
+        "wpt/css/css-images/linear-gradient-1.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-images/linear-gradient-1.json"
         ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
@@ -498,6 +533,12 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
         if let Some(z_order) = fixture_node.z_order {
             operations.push(Operation::SetZOrder { node, z_order });
         }
+        if let Some(gradient) = &fixture_node.linear_gradient {
+            operations.push(Operation::SetBackgroundLayers {
+                node,
+                layers: vec![linear_gradient_layer(gradient)],
+            });
+        }
     }
     for (node_index, fixture_node) in nodes.iter().enumerate() {
         if let Some(parent) = fixture_node.parent {
@@ -535,6 +576,34 @@ fn overflow_clip(value: OverflowClipFixture) -> OverflowClip {
     match value {
         OverflowClipFixture::Visible => OverflowClip::Visible,
         OverflowClipFixture::Hidden => OverflowClip::Hidden,
+    }
+}
+
+fn linear_gradient_layer(gradient: &LinearGradientFixture) -> BackgroundLayer {
+    BackgroundLayer {
+        image: PaintImage::LinearGradient {
+            angle_degrees: gradient.angle_degrees,
+            repeating: gradient.repeating,
+            stops: gradient
+                .stops
+                .iter()
+                .map(|stop| GradientStop {
+                    color: color(&stop.color),
+                    position: Some(PaintCoordinate {
+                        length: 0.0,
+                        fraction: stop.position,
+                    }),
+                })
+                .collect(),
+        },
+        position: PaintPosition::default(),
+        size: BackgroundSize::Auto,
+        repeat_x: ImageRepeat::Repeat,
+        repeat_y: ImageRepeat::Repeat,
+        origin: PaintBox::Padding,
+        clip: PaintBox::Border,
+        attachment: BackgroundAttachment::Scroll,
+        blend_mode: BlendMode::Normal,
     }
 }
 
@@ -735,6 +804,22 @@ fn fixture_color_is_transparent(value: &ColorFixture) -> bool {
         ColorFixture::Named { value } => value == "transparent",
         ColorFixture::Srgba { alpha, .. } => *alpha == 0.0,
     }
+}
+
+fn fixture_linear_gradient_css(gradient: &LinearGradientFixture) -> String {
+    let stops = gradient
+        .stops
+        .iter()
+        .map(|stop| {
+            format!(
+                "{} {}%",
+                fixture_color_css(&stop.color),
+                stop.position * 100.0
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("linear-gradient({}deg, {stops})", gradient.angle_degrees)
 }
 
 fn fixture_border_style_css(value: BorderStyleFixture) -> &'static str {

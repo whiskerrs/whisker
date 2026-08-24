@@ -26,6 +26,7 @@ pub(crate) struct BoxPrimitive {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BoxPrimitiveKind {
     Fill,
+    LinearGradient,
     Border,
 }
 
@@ -33,9 +34,21 @@ impl BoxPrimitiveKind {
     pub(crate) const fn shader_mode(self) -> f32 {
         match self {
             Self::Fill => -1.0,
+            Self::LinearGradient => -2.0,
             Self::Border => 1.0,
         }
     }
+}
+
+/// Builds the border-box quad used by a background image layer. The shader
+/// evaluates the gradient against its independently resolved positioning box.
+pub(crate) fn linear_gradient_primitive(rect: LayoutRect, paint: &BoxPaint) -> BoxPrimitive {
+    resolve_box_geometry(rect, paint).primitive(
+        [0.0; 4],
+        [[0.0; 4]; 4],
+        [0.0; 4],
+        BoxPrimitiveKind::LinearGradient,
+    )
 }
 
 /// Lowers one semantic box without allocating or dynamically dispatching.
