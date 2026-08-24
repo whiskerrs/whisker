@@ -491,6 +491,16 @@ accepted frame references it. Ready events may carry intrinsic dimensions and
 therefore schedule measurement invalidation and a later frame. Encoded image
 bytes are never repeated in `FramePacket`.
 
+The resource channel is implemented as a typed, non-frame runtime boundary.
+Desktop and Web pass the protocol enums directly. Android and iOS use mobile
+ABI 2.9's borrowed `WhiskerMobileResourceCommand` and
+`WhiskerMobileResourceEvent`; each Host copies URL, asset, MIME, byte, and
+diagnostic payloads during the callback before starting asynchronous work.
+All four Hosts return generation-tagged completion to `RuntimeInstance`, which
+retains current completion state, ignores replaced or released generations,
+and wakes a running runtime only for a current Ready or Failed event. JSON and
+encoded resource bytes never enter the frame transaction path.
+
 Adding the semantic value does not declare a Host implementation complete.
 Until a Host advertises and implements the corresponding capability, its
 receiver rejects the operation before mutating retained state. It must not
