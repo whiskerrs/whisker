@@ -52,6 +52,7 @@ internal data class HostBackgroundLayers(
     val linearGradient: HostLinearGradient?,
     val radialGradient: HostRadialGradient? = null,
     val conicGradient: HostConicGradient? = null,
+    val geometry: HostBackgroundGeometry = HostBackgroundGeometry(),
 )
 
 internal fun drawBackgroundLayers(
@@ -61,16 +62,31 @@ internal fun drawBackgroundLayers(
     layers: HostBackgroundLayers?,
     paint: Paint,
 ) {
-    layers?.linearGradient?.let { gradient ->
-        drawLinearGradient(canvas, clip, box, gradient, paint)
-        return
+    val geometry = layers?.geometry ?: return
+    val imageBox = geometry.imageBox(box)
+    if (imageBox.isEmpty) return
+    val saveCount = if (geometry.clipsToSingleImage) {
+        canvas.save().also {
+            canvas.clipPath(clip)
+            canvas.clipRect(imageBox)
+        }
+    } else {
+        null
     }
-    layers?.radialGradient?.let { gradient ->
-        drawRadialGradient(canvas, clip, box, gradient, paint)
-        return
-    }
-    layers?.conicGradient?.let { gradient ->
-        drawConicGradient(canvas, clip, box, gradient, paint)
+    try {
+        layers.linearGradient?.let { gradient ->
+            drawLinearGradient(canvas, clip, imageBox, gradient, paint)
+            return
+        }
+        layers.radialGradient?.let { gradient ->
+            drawRadialGradient(canvas, clip, imageBox, gradient, paint)
+            return
+        }
+        layers.conicGradient?.let { gradient ->
+            drawConicGradient(canvas, clip, imageBox, gradient, paint)
+        }
+    } finally {
+        saveCount?.let(canvas::restoreToCount)
     }
 }
 

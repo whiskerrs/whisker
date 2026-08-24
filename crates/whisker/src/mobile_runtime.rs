@@ -664,6 +664,11 @@ impl FrameSink for MobileFrameSink {
                     capability: whisker_engine::whisker_protocol::RenderCapability::ConicGradients,
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_engine::whisker_protocol::CapabilityEntry {
+                    capability:
+                        whisker_engine::whisker_protocol::RenderCapability::BackgroundGeometry,
+                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("mobile capability profile is unique")
@@ -702,6 +707,7 @@ struct MobileFrameOwned {
     _gradient_stops: Vec<Box<[MobileGradientStop]>>,
     _radial_gradients: Vec<Box<MobileRadialGradient>>,
     _conic_gradients: Vec<Box<MobileConicGradient>>,
+    _background_layers: Vec<Box<MobileBackgroundLayer>>,
     _texts: Vec<Box<MobileText>>,
     _transforms: Vec<Box<[f32; 16]>>,
     _values: Vec<Box<WhiskerValueRaw>>,
@@ -717,6 +723,7 @@ impl MobileFrameOwned {
         let mut gradient_stops = Vec::<Box<[MobileGradientStop]>>::new();
         let mut radial_gradients = Vec::<Box<MobileRadialGradient>>::new();
         let mut conic_gradients = Vec::<Box<MobileConicGradient>>::new();
+        let mut background_layers = Vec::<Box<MobileBackgroundLayer>>::new();
         let mut texts = Vec::<Box<MobileText>>::new();
         let mut transforms = Vec::<Box<[f32; 16]>>::new();
         let mut values = Vec::<Box<WhiskerValueRaw>>::new();
@@ -795,9 +802,6 @@ impl MobileFrameOwned {
                             return Err(MobileFrameError);
                         };
                         if layer.position != Default::default()
-                            || layer.size != BackgroundSize::Auto
-                            || layer.repeat_x != ImageRepeat::Repeat
-                            || layer.repeat_y != ImageRepeat::Repeat
                             || layer.origin != PaintBox::Padding
                             || layer.clip != PaintBox::Border
                             || layer.attachment != BackgroundAttachment::Scroll
@@ -805,18 +809,50 @@ impl MobileFrameOwned {
                         {
                             return Err(MobileFrameError);
                         }
-                        match &layer.image {
+                        let (size_kind, size_width, size_height, repeat_x, repeat_y) =
+                            match (layer.size, layer.repeat_x, layer.repeat_y) {
+                                (
+                                    BackgroundSize::Auto,
+                                    ImageRepeat::Repeat,
+                                    ImageRepeat::Repeat,
+                                ) => (
+                                    BACKGROUND_SIZE_AUTO,
+                                    MobileLengthPercentage::default(),
+                                    MobileLengthPercentage::default(),
+                                    BACKGROUND_REPEAT_REPEAT,
+                                    BACKGROUND_REPEAT_REPEAT,
+                                ),
+                                (
+                                    BackgroundSize::Explicit {
+                                        width: Some(width),
+                                        height: Some(height),
+                                    },
+                                    ImageRepeat::NoRepeat,
+                                    ImageRepeat::NoRepeat,
+                                ) => (
+                                    BACKGROUND_SIZE_EXPLICIT,
+                                    mobile_length(width),
+                                    mobile_length(height),
+                                    BACKGROUND_REPEAT_NO_REPEAT,
+                                    BACKGROUND_REPEAT_NO_REPEAT,
+                                ),
+                                _ => return Err(MobileFrameError),
+                            };
+                        let image = match &layer.image {
                             PaintImage::LinearGradient {
                                 angle_degrees,
                                 repeating: false,
                                 stops,
                             } => {
                                 let stops = mobile_gradient_stops(stops, &mut strings)?;
-                                raw.flags = BACKGROUND_LINEAR;
-                                raw.scalar = *angle_degrees;
-                                raw.payload_count = stops.len();
                                 gradient_stops.push(stops);
-                                raw.payload = gradient_stops.last().unwrap().as_ptr().cast();
+                                let stops = gradient_stops.last().unwrap();
+                                MobileBackgroundImage {
+                                    kind: BACKGROUND_LINEAR,
+                                    scalar: *angle_degrees,
+                                    payload: stops.as_ptr().cast(),
+                                    payload_count: stops.len(),
+                                }
                             }
                             PaintImage::RadialGradient {
                                 shape: RadialGradientShape::Ellipse,
@@ -837,10 +873,13 @@ impl MobileFrameOwned {
                                     stops: stops.as_ptr(),
                                     stop_count: stops.len(),
                                 }));
-                                raw.flags = BACKGROUND_RADIAL;
-                                raw.payload_count = 1;
-                                raw.payload = radial_gradients.last().unwrap().as_ref() as *const _
-                                    as *const c_void;
+                                MobileBackgroundImage {
+                                    kind: BACKGROUND_RADIAL,
+                                    scalar: 0.0,
+                                    payload: radial_gradients.last().unwrap().as_ref() as *const _
+                                        as *const c_void,
+                                    payload_count: 1,
+                                }
                             }
                             PaintImage::ConicGradient {
                                 from_degrees,
@@ -860,14 +899,33 @@ impl MobileFrameOwned {
                                     stops: stops.as_ptr(),
                                     stop_count: stops.len(),
                                 }));
-                                raw.flags = BACKGROUND_CONIC;
-                                raw.scalar = *from_degrees;
-                                raw.payload_count = 1;
-                                raw.payload = conic_gradients.last().unwrap().as_ref() as *const _
-                                    as *const c_void;
+                                MobileBackgroundImage {
+                                    kind: BACKGROUND_CONIC,
+                                    scalar: *from_degrees,
+                                    payload: conic_gradients.last().unwrap().as_ref() as *const _
+                                        as *const c_void,
+                                    payload_count: 1,
+                                }
                             }
                             _ => return Err(MobileFrameError),
-                        }
+                        };
+                        background_layers.push(Box::new(MobileBackgroundLayer {
+                            image,
+                            position_x: mobile_coordinate(layer.position.x),
+                            position_y: mobile_coordinate(layer.position.y),
+                            size_width,
+                            size_height,
+                            size_kind,
+                            repeat_x,
+                            repeat_y,
+                            origin: BACKGROUND_BOX_PADDING,
+                            clip: BACKGROUND_BOX_BORDER,
+                            attachment: BACKGROUND_ATTACHMENT_SCROLL,
+                            blend_mode: BACKGROUND_BLEND_NORMAL,
+                        }));
+                        raw.payload =
+                            background_layers.last().unwrap().as_ref() as *const _ as *const c_void;
+                        raw.payload_count = 1;
                     }
                 }
                 Operation::SetClip { node, clip } => {
@@ -1022,6 +1080,7 @@ impl MobileFrameOwned {
             _gradient_stops: gradient_stops,
             _radial_gradients: radial_gradients,
             _conic_gradients: conic_gradients,
+            _background_layers: background_layers,
             _texts: texts,
             _transforms: transforms,
             _values: values,

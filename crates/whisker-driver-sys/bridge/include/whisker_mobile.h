@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 3 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 4 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -26,6 +26,14 @@ enum {
   WHISKER_BACKGROUND_LINEAR = 0, WHISKER_BACKGROUND_RADIAL = 1,
   WHISKER_BACKGROUND_CONIC = 2
 };
+enum { WHISKER_BACKGROUND_SIZE_AUTO = 0, WHISKER_BACKGROUND_SIZE_EXPLICIT = 1 };
+enum { WHISKER_BACKGROUND_REPEAT = 0, WHISKER_BACKGROUND_NO_REPEAT = 1 };
+enum {
+  WHISKER_BACKGROUND_BOX_BORDER = 0, WHISKER_BACKGROUND_BOX_PADDING = 1,
+  WHISKER_BACKGROUND_BOX_CONTENT = 2
+};
+enum { WHISKER_BACKGROUND_ATTACHMENT_SCROLL = 0 };
+enum { WHISKER_BACKGROUND_BLEND_NORMAL = 0 };
 enum {
   WHISKER_MEASURE_TEXT = 1, WHISKER_MEASURE_REPLACED_CONTENT,
   WHISKER_MEASURE_NATIVE_CONTROL, WHISKER_MEASURE_EMBEDDED_SURFACE,
@@ -65,6 +73,18 @@ typedef struct {
   size_t stop_count;
 } WhiskerMobileConicGradient;
 typedef struct {
+  uint32_t kind;
+  float scalar;
+  const void *payload;
+  size_t payload_count;
+} WhiskerMobileBackgroundImage;
+typedef struct {
+  WhiskerMobileBackgroundImage image;
+  WhiskerMobileLengthPercentage position_x, position_y;
+  WhiskerMobileLengthPercentage size_width, size_height;
+  uint32_t size_kind, repeat_x, repeat_y, origin, clip, attachment, blend_mode;
+} WhiskerMobileBackgroundLayer;
+typedef struct {
   WhiskerStringRef text;
   float font_size;
   uint16_t font_weight;
@@ -100,6 +120,8 @@ _Static_assert(sizeof(WhiskerMobileApplyResponse) == 16, "WhiskerMobileApplyResp
 _Static_assert(sizeof(WhiskerMobileGradientStop) == 40, "WhiskerMobileGradientStop ABI drift");
 _Static_assert(sizeof(WhiskerMobileRadialGradient) == 48, "WhiskerMobileRadialGradient ABI drift");
 _Static_assert(sizeof(WhiskerMobileConicGradient) == 32, "WhiskerMobileConicGradient ABI drift");
+_Static_assert(sizeof(WhiskerMobileBackgroundImage) == 24, "WhiskerMobileBackgroundImage ABI drift");
+_Static_assert(sizeof(WhiskerMobileBackgroundLayer) == 88, "WhiskerMobileBackgroundLayer ABI drift");
 
 typedef struct {
   uint32_t id;

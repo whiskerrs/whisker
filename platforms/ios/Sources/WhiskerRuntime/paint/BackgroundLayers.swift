@@ -32,6 +32,43 @@ struct HostConicGradient {
     let stops: [HostLinearGradientStop]
 }
 
+enum HostBackgroundRepeat {
+    case `repeat`
+    case noRepeat
+}
+
+struct HostBackgroundGeometry {
+    let positionX: WhiskerMobileLengthPercentage
+    let positionY: WhiskerMobileLengthPercentage
+    let sizeWidth: WhiskerMobileLengthPercentage?
+    let sizeHeight: WhiskerMobileLengthPercentage?
+    let repeatX: HostBackgroundRepeat
+    let repeatY: HostBackgroundRepeat
+
+    static let initial = HostBackgroundGeometry(
+        positionX: WhiskerMobileLengthPercentage(),
+        positionY: WhiskerMobileLengthPercentage(),
+        sizeWidth: nil,
+        sizeHeight: nil,
+        repeatX: .repeat,
+        repeatY: .repeat
+    )
+
+    func imageBounds(in positioningBox: CGRect) -> CGRect {
+        guard let sizeWidth, let sizeHeight else { return positioningBox }
+        return CGRect(
+            x: positioningBox.minX + resolve(positionX, extent: positioningBox.width),
+            y: positioningBox.minY + resolve(positionY, extent: positioningBox.height),
+            width: resolve(sizeWidth, extent: positioningBox.width),
+            height: resolve(sizeHeight, extent: positioningBox.height)
+        )
+    }
+
+    var clipsToSingleImage: Bool {
+        repeatX == .noRepeat && repeatY == .noRepeat
+    }
+}
+
 private enum HostBackgroundImage {
     case linear(HostLinearGradient)
     case radial(HostRadialGradient)
@@ -40,40 +77,54 @@ private enum HostBackgroundImage {
 
 final class HostBackgroundPainter {
     private var image: HostBackgroundImage?
+    private var geometry = HostBackgroundGeometry.initial
     private var conicCache: (size: CGSize, scale: CGFloat, image: CGImage)?
 
-    func update(linearGradient: HostLinearGradient?) {
+    func update(
+        linearGradient: HostLinearGradient?,
+        geometry: HostBackgroundGeometry = .initial
+    ) {
         image = linearGradient.map(HostBackgroundImage.linear)
+        self.geometry = geometry
         conicCache = nil
     }
 
-    func update(radialGradient: HostRadialGradient) {
+    func update(radialGradient: HostRadialGradient, geometry: HostBackgroundGeometry) {
         image = .radial(radialGradient)
+        self.geometry = geometry
         conicCache = nil
     }
 
-    func update(conicGradient: HostConicGradient) {
+    func update(conicGradient: HostConicGradient, geometry: HostBackgroundGeometry) {
         image = .conic(conicGradient)
+        self.geometry = geometry
         conicCache = nil
     }
 
     func draw(in bounds: CGRect, clippedBy clipPath: CGPath) {
-        guard let image, bounds.width > 0, bounds.height > 0,
+        let imageBounds = geometry.imageBounds(in: bounds)
+        guard let image, imageBounds.width > 0, imageBounds.height > 0,
               let context = UIGraphicsGetCurrentContext() else { return }
+        context.saveGState()
+        context.addPath(clipPath)
+        context.clip()
+        if geometry.clipsToSingleImage {
+            context.clip(to: imageBounds)
+        }
+        defer { context.restoreGState() }
         switch image {
         case let .linear(gradient):
-            drawLinear(gradient, in: bounds, clippedBy: clipPath, context: context)
+            drawLinear(gradient, in: imageBounds, context: context)
         case let .radial(gradient):
-            drawRadial(gradient, in: bounds, clippedBy: clipPath, context: context)
+            drawRadial(gradient, in: imageBounds, context: context)
         case let .conic(gradient):
-            drawConic(gradient, in: bounds, clippedBy: clipPath, context: context)
+            drawConic(gradient, in: imageBounds, context: context)
         }
     }
 
     private func drawLinear(
         _ linearGradient: HostLinearGradient,
         in bounds: CGRect,
-        clippedBy clipPath: CGPath,
         context: CGContext
     ) {
         let radians = linearGradient.angleDegrees * .pi / 180
@@ -118,22 +169,17 @@ final class HostBackgroundPainter {
             x: center.x + direction.dx * lineLength * (domainEnd - 0.5),
             y: center.y + direction.dy * lineLength * (domainEnd - 0.5)
         )
-        context.saveGState()
-        context.addPath(clipPath)
-        context.clip()
         context.drawLinearGradient(
             gradient,
             start: start,
             end: end,
             options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
         )
-        context.restoreGState()
     }
 
     private func drawRadial(
         _ radialGradient: HostRadialGradient,
         in bounds: CGRect,
-        clippedBy clipPath: CGPath,
         context: CGContext
     ) {
         let center = CGPoint(
@@ -147,8 +193,6 @@ final class HostBackgroundPainter {
         guard let gradient = makeGradient(resolved) else { return }
 
         context.saveGState()
-        context.addPath(clipPath)
-        context.clip()
         context.translateBy(x: center.x, y: center.y)
         context.scaleBy(x: 1, y: radiusY / radiusX)
         context.translateBy(x: -center.x, y: -center.y)
@@ -166,7 +210,6 @@ final class HostBackgroundPainter {
     private func drawConic(
         _ conicGradient: HostConicGradient,
         in bounds: CGRect,
-        clippedBy clipPath: CGPath,
         context: CGContext
     ) {
         let stops = normalizedConicStops(conicGradient.stops)
@@ -186,11 +229,7 @@ final class HostBackgroundPainter {
             image = rendered
         }
 
-        context.saveGState()
-        context.addPath(clipPath)
-        context.clip()
         UIImage(cgImage: image, scale: scale, orientation: .up).draw(in: bounds)
-        context.restoreGState()
     }
 }
 

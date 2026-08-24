@@ -38,11 +38,20 @@ pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
             .all(|stop| stop.position.is_some_and(|position| position.length == 0.0)),
         _ => false,
     };
+    let initial_geometry = layer.size == BackgroundSize::Auto
+        && layer.repeat_x == ImageRepeat::Repeat
+        && layer.repeat_y == ImageRepeat::Repeat;
+    let explicit_no_repeat_geometry = matches!(
+        layer.size,
+        BackgroundSize::Explicit {
+            width: Some(_),
+            height: Some(_),
+        }
+    ) && layer.repeat_x == ImageRepeat::NoRepeat
+        && layer.repeat_y == ImageRepeat::NoRepeat;
     supported_image
         && layer.position == Default::default()
-        && layer.size == BackgroundSize::Auto
-        && layer.repeat_x == ImageRepeat::Repeat
-        && layer.repeat_y == ImageRepeat::Repeat
+        && (initial_geometry || explicit_no_repeat_geometry)
         && layer.origin == PaintBox::Padding
         && layer.clip == PaintBox::Border
         && layer.attachment == BackgroundAttachment::Scroll
@@ -55,7 +64,7 @@ pub(crate) fn apply(
 ) -> Result<(), WebError> {
     if !supports(layers) {
         return Err(WebError(
-            "DOM Host only implements one non-repeating linear, explicit elliptical radial, or conic gradient with explicit stops and CSS initial layer values"
+            "DOM Host only implements one supported gradient with explicit stops, initial position and boxes, two-axis auto or explicit size, and repeat/no-repeat"
                 .into(),
         ));
     }
@@ -69,43 +78,23 @@ pub(crate) fn apply(
             .collect::<Result<Vec<_>, _>>()?
             .join(", ")
     };
-    let layer_count = layers.len().max(1);
+    let position = layers
+        .first()
+        .map_or_else(|| "0px 0px".into(), background_position);
+    let size = layers
+        .first()
+        .map_or_else(|| "auto".into(), background_size);
+    let repeat = layers
+        .first()
+        .map_or_else(|| "repeat".into(), background_repeat);
     set_style(element, "background-image", &images)?;
-    set_style(
-        element,
-        "background-position",
-        &initial_list("0px 0px", layer_count),
-    )?;
-    set_style(
-        element,
-        "background-size",
-        &initial_list("auto", layer_count),
-    )?;
-    set_style(
-        element,
-        "background-repeat",
-        &initial_list("repeat", layer_count),
-    )?;
-    set_style(
-        element,
-        "background-origin",
-        &initial_list("padding-box", layer_count),
-    )?;
-    set_style(
-        element,
-        "background-clip",
-        &initial_list("border-box", layer_count),
-    )?;
-    set_style(
-        element,
-        "background-attachment",
-        &initial_list("scroll", layer_count),
-    )?;
-    set_style(
-        element,
-        "background-blend-mode",
-        &initial_list("normal", layer_count),
-    )
+    set_style(element, "background-position", &position)?;
+    set_style(element, "background-size", &size)?;
+    set_style(element, "background-repeat", &repeat)?;
+    set_style(element, "background-origin", "padding-box")?;
+    set_style(element, "background-clip", "border-box")?;
+    set_style(element, "background-attachment", "scroll")?;
+    set_style(element, "background-blend-mode", "normal")
 }
 
 fn background_image(layer: &BackgroundLayer) -> Result<String, WebError> {
@@ -221,8 +210,32 @@ fn length_percentage(value: PaintLengthPercentage) -> String {
     }
 }
 
-fn initial_list(value: &str, count: usize) -> String {
-    std::iter::repeat_n(value, count)
-        .collect::<Vec<_>>()
-        .join(", ")
+fn background_position(layer: &BackgroundLayer) -> String {
+    if layer.position == Default::default() {
+        return "0px 0px".into();
+    }
+    format!(
+        "{} {}",
+        coordinate(layer.position.x),
+        coordinate(layer.position.y)
+    )
+}
+
+fn background_size(layer: &BackgroundLayer) -> String {
+    match layer.size {
+        BackgroundSize::Auto => "auto".into(),
+        BackgroundSize::Explicit {
+            width: Some(width),
+            height: Some(height),
+        } => format!("{} {}", length_percentage(width), length_percentage(height)),
+        _ => unreachable!("unsupported background size passed preflight"),
+    }
+}
+
+fn background_repeat(layer: &BackgroundLayer) -> String {
+    match (layer.repeat_x, layer.repeat_y) {
+        (ImageRepeat::Repeat, ImageRepeat::Repeat) => "repeat".into(),
+        (ImageRepeat::NoRepeat, ImageRepeat::NoRepeat) => "no-repeat".into(),
+        _ => unreachable!("unsupported background repeat passed preflight"),
+    }
 }

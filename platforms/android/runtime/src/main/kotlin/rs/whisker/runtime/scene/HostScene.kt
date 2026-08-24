@@ -9,8 +9,10 @@ import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerTextContent
 import rs.whisker.runtime.WhiskerValue
+import rs.whisker.runtime.paint.HostBackgroundGeometry
 import rs.whisker.runtime.paint.HostBoxPaint
 import rs.whisker.runtime.paint.HostBackgroundLayers
+import rs.whisker.runtime.paint.HostBackgroundRepeat
 import rs.whisker.runtime.paint.HostConicGradient
 import rs.whisker.runtime.paint.HostGradientStop
 import rs.whisker.runtime.paint.HostLinearGradient
@@ -362,9 +364,10 @@ internal class HostScene(
         } else {
             val density = root.resources.displayMetrics.density
             val names = requireNotNull(operation.names)
-            val stopOffset = when (operation.flags) {
-                1 -> 8
-                2 -> 4
+            val imageOffset = BACKGROUND_GEOMETRY_PACKED_SIZE
+            val stopOffset = imageOffset + when (operation.flags) {
+                BACKGROUND_RADIAL -> 8
+                BACKGROUND_CONIC -> 4
                 else -> 0
             }
             val stops = decodeGradientStops(numbers, stopOffset, names, density)
@@ -372,30 +375,49 @@ internal class HostScene(
                 length = numbers[offset] * density,
                 fraction = numbers[offset + 1],
             )
-            node.backgroundLayers = if (operation.flags == 1) {
+            val geometry = HostBackgroundGeometry(
+                positionX = coordinate(0),
+                positionY = coordinate(2),
+                sizeWidth = if (numbers[8] == BACKGROUND_SIZE_EXPLICIT.toFloat()) {
+                    coordinate(4)
+                } else {
+                    null
+                },
+                sizeHeight = if (numbers[8] == BACKGROUND_SIZE_EXPLICIT.toFloat()) {
+                    coordinate(6)
+                } else {
+                    null
+                },
+                repeatX = backgroundRepeat(numbers[9]),
+                repeatY = backgroundRepeat(numbers[10]),
+            )
+            node.backgroundLayers = if (operation.flags == BACKGROUND_RADIAL) {
                 HostBackgroundLayers(
                     linearGradient = null,
                     radialGradient = HostRadialGradient(
-                        centerX = coordinate(0),
-                        centerY = coordinate(2),
-                        radiusX = coordinate(4),
-                        radiusY = coordinate(6),
+                        centerX = coordinate(imageOffset),
+                        centerY = coordinate(imageOffset + 2),
+                        radiusX = coordinate(imageOffset + 4),
+                        radiusY = coordinate(imageOffset + 6),
                         stops = stops,
                     ),
+                    geometry = geometry,
                 )
-            } else if (operation.flags == 2) {
+            } else if (operation.flags == BACKGROUND_CONIC) {
                 HostBackgroundLayers(
                     linearGradient = null,
                     conicGradient = HostConicGradient(
                         fromDegrees = operation.scalar,
-                        centerX = coordinate(0),
-                        centerY = coordinate(2),
+                        centerX = coordinate(imageOffset),
+                        centerY = coordinate(imageOffset + 2),
                         stops = stops,
                     ),
+                    geometry = geometry,
                 )
             } else {
                 HostBackgroundLayers(
                     linearGradient = HostLinearGradient(operation.scalar, stops),
+                    geometry = geometry,
                 )
             }
         }
@@ -425,22 +447,32 @@ internal class HostScene(
         )
     }
 
+    private fun backgroundRepeat(value: Float): HostBackgroundRepeat =
+        if (value == BACKGROUND_REPEAT.toFloat()) {
+            HostBackgroundRepeat.Repeat
+        } else {
+            HostBackgroundRepeat.NoRepeat
+        }
+
     private fun validBackgroundLayers(
         operation: HostSceneOperation,
         existing: Set<Long>,
     ): Boolean {
         if (
-            operation.node !in existing || operation.flags !in 0..2 ||
+            operation.node !in existing || operation.flags !in BACKGROUND_LINEAR..BACKGROUND_CONIC ||
             !operation.scalar.isFinite()
         ) {
             return false
         }
         val numbers = operation.numbers ?: FloatArray(0)
         val names = operation.names ?: emptyArray()
-        if (numbers.isEmpty()) return operation.flags == 0 && names.isEmpty()
-        val stopOffset = when (operation.flags) {
-            1 -> 8
-            2 -> 4
+        if (numbers.isEmpty()) return operation.flags == BACKGROUND_LINEAR && names.isEmpty()
+        if (numbers.size < BACKGROUND_GEOMETRY_PACKED_SIZE || !validBackgroundGeometry(numbers)) {
+            return false
+        }
+        val stopOffset = BACKGROUND_GEOMETRY_PACKED_SIZE + when (operation.flags) {
+            BACKGROUND_RADIAL -> 8
+            BACKGROUND_CONIC -> 4
             else -> 0
         }
         if (
@@ -453,5 +485,43 @@ internal class HostScene(
             (stopOffset until numbers.size step 7).all { offset ->
                 numbers[offset] == 0f || numbers[offset] == 1f
             }
+    }
+
+    private fun validBackgroundGeometry(numbers: FloatArray): Boolean {
+        val sizeKind = numbers[8]
+        val repeatX = numbers[9]
+        val repeatY = numbers[10]
+        val supportedGeometry =
+            (
+                sizeKind == BACKGROUND_SIZE_AUTO.toFloat() &&
+                    repeatX == BACKGROUND_REPEAT.toFloat() &&
+                    repeatY == BACKGROUND_REPEAT.toFloat()
+            ) ||
+                (
+                    sizeKind == BACKGROUND_SIZE_EXPLICIT.toFloat() &&
+                        repeatX == BACKGROUND_NO_REPEAT.toFloat() &&
+                        repeatY == BACKGROUND_NO_REPEAT.toFloat()
+                )
+        return supportedGeometry &&
+            (0..3).all { numbers[it] == 0f } &&
+            numbers[11] == BACKGROUND_BOX_PADDING.toFloat() &&
+            numbers[12] == BACKGROUND_BOX_BORDER.toFloat() &&
+            numbers[13] == BACKGROUND_ATTACHMENT_SCROLL.toFloat() &&
+            numbers[14] == BACKGROUND_BLEND_NORMAL.toFloat()
+    }
+
+    private companion object {
+        const val BACKGROUND_GEOMETRY_PACKED_SIZE = 15
+        const val BACKGROUND_LINEAR = 0
+        const val BACKGROUND_RADIAL = 1
+        const val BACKGROUND_CONIC = 2
+        const val BACKGROUND_SIZE_AUTO = 0
+        const val BACKGROUND_SIZE_EXPLICIT = 1
+        const val BACKGROUND_REPEAT = 0
+        const val BACKGROUND_NO_REPEAT = 1
+        const val BACKGROUND_BOX_BORDER = 0
+        const val BACKGROUND_BOX_PADDING = 1
+        const val BACKGROUND_ATTACHMENT_SCROLL = 0
+        const val BACKGROUND_BLEND_NORMAL = 0
     }
 }

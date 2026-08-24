@@ -3,10 +3,11 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use whisker::ElementRegistry;
 use whisker_engine::FrameSink;
 use whisker_host_conformance::{
-    BorderFixture, BorderStyleFixture, ColorFixture, Command, ConicGradientFixture,
-    CornerRadiusFixture, LinearGradientFixture, Manifest, OverflowClipFixture, PixelSampleFixture,
-    RadialGradientFixture, SCHEMA_VERSION, Scenario, ScenarioSide, SceneNodeFixture,
-    VisibilityFixture,
+    BackgroundBoxFixture, BackgroundLayerFixture, BorderFixture, BorderStyleFixture, ColorFixture,
+    Command, ConicGradientFixture, CornerRadiusFixture, ImageRepeatFixture,
+    LengthPercentageFixture, LinearGradientFixture, Manifest, OverflowClipFixture,
+    PixelSampleFixture, RadialGradientFixture, SCHEMA_VERSION, Scenario, ScenarioSide,
+    SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
@@ -101,21 +102,29 @@ impl Driver {
                             .expected_scene
                             .as_ref()
                             .and_then(|nodes| {
-                                nodes.iter().find_map(|node| {
-                                    node.linear_gradient
-                                        .as_ref()
-                                        .map(|_| "paint.background-layers.linear-gradient")
-                                        .or_else(|| {
-                                            node.radial_gradient
+                                nodes
+                                    .iter()
+                                    .any(|node| {
+                                        node.background_layer != BackgroundLayerFixture::default()
+                                    })
+                                    .then_some("paint.background-layers.explicit-size-no-repeat")
+                                    .or_else(|| {
+                                        nodes.iter().find_map(|node| {
+                                            node.linear_gradient
                                                 .as_ref()
-                                                .map(|_| "paint.background-layers.radial-gradient")
+                                                .map(|_| "paint.background-layers.linear-gradient")
+                                                .or_else(|| {
+                                                    node.radial_gradient.as_ref().map(|_| {
+                                                        "paint.background-layers.radial-gradient"
+                                                    })
+                                                })
+                                                .or_else(|| {
+                                                    node.conic_gradient.as_ref().map(|_| {
+                                                        "paint.background-layers.conic-gradient"
+                                                    })
+                                                })
                                         })
-                                        .or_else(|| {
-                                            node.conic_gradient
-                                                .as_ref()
-                                                .map(|_| "paint.background-layers.conic-gradient")
-                                        })
-                                })
+                                    })
                             })
                             .unwrap_or("paint.box");
                         assert_eq!(name, expected_checkpoint);
@@ -220,21 +229,21 @@ impl Driver {
                     "background-image",
                     &fixture_linear_gradient_css(gradient),
                 );
-                assert_initial_background_layer_is_projected(&style);
+                assert_background_layer_is_projected(&style, fixture_node.background_layer);
             } else if let Some(gradient) = &fixture_node.radial_gradient {
                 assert_style(
                     &style,
                     "background-image",
                     &fixture_radial_gradient_css(gradient),
                 );
-                assert_initial_background_layer_is_projected(&style);
+                assert_background_layer_is_projected(&style, fixture_node.background_layer);
             } else if let Some(gradient) = &fixture_node.conic_gradient {
                 assert_style(
                     &style,
                     "background-image",
                     &fixture_conic_gradient_css(gradient),
                 );
-                assert_initial_background_layer_is_projected(&style);
+                assert_background_layer_is_projected(&style, fixture_node.background_layer);
             } else {
                 assert_eq!(style.get_property_value("background-image").unwrap(), "");
             }
@@ -276,11 +285,7 @@ impl Driver {
                 .collect::<Vec<_>>();
             let opaque_hit = hit_nodes.iter().find(|id| {
                 expected.iter().any(|node| {
-                    node.id.to_string() == id.as_str()
-                        && (node.linear_gradient.is_some()
-                            || node.radial_gradient.is_some()
-                            || node.conic_gradient.is_some()
-                            || !fixture_color_is_transparent(&node.background))
+                    node.id.to_string() == id.as_str() && fixture_node_paints_at(node, sample.point)
                 })
             });
             match &sample.color {
@@ -389,6 +394,9 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-images/conic-gradient-angle.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-images/conic-gradient-angle.json"
+        ),
+        "wpt/css/css-backgrounds/background-size-009.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-size-009.json"
         ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
@@ -576,17 +584,26 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
         if let Some(gradient) = &fixture_node.linear_gradient {
             operations.push(Operation::SetBackgroundLayers {
                 node,
-                layers: vec![linear_gradient_layer(gradient)],
+                layers: vec![with_background_geometry(
+                    linear_gradient_layer(gradient),
+                    fixture_node.background_layer,
+                )],
             });
         } else if let Some(gradient) = &fixture_node.radial_gradient {
             operations.push(Operation::SetBackgroundLayers {
                 node,
-                layers: vec![radial_gradient_layer(gradient)],
+                layers: vec![with_background_geometry(
+                    radial_gradient_layer(gradient),
+                    fixture_node.background_layer,
+                )],
             });
         } else if let Some(gradient) = &fixture_node.conic_gradient {
             operations.push(Operation::SetBackgroundLayers {
                 node,
-                layers: vec![conic_gradient_layer(gradient)],
+                layers: vec![with_background_geometry(
+                    conic_gradient_layer(gradient),
+                    fixture_node.background_layer,
+                )],
             });
         }
     }
@@ -741,6 +758,58 @@ fn conic_gradient_layer(gradient: &ConicGradientFixture) -> BackgroundLayer {
         clip: PaintBox::Border,
         attachment: BackgroundAttachment::Scroll,
         blend_mode: BlendMode::Normal,
+    }
+}
+
+fn with_background_geometry(
+    mut layer: BackgroundLayer,
+    geometry: BackgroundLayerFixture,
+) -> BackgroundLayer {
+    layer.position = PaintPosition {
+        x: paint_coordinate(geometry.position[0]),
+        y: paint_coordinate(geometry.position[1]),
+    };
+    layer.size = geometry
+        .size
+        .map_or(BackgroundSize::Auto, |size| BackgroundSize::Explicit {
+            width: Some(paint_length_percentage(size[0])),
+            height: Some(paint_length_percentage(size[1])),
+        });
+    layer.repeat_x = image_repeat(geometry.repeat_x);
+    layer.repeat_y = image_repeat(geometry.repeat_y);
+    layer.origin = background_box(geometry.origin);
+    layer.clip = background_box(geometry.clip);
+    layer
+}
+
+fn paint_coordinate(value: LengthPercentageFixture) -> PaintCoordinate {
+    PaintCoordinate {
+        length: value.length,
+        fraction: value.fraction,
+    }
+}
+
+fn paint_length_percentage(value: LengthPercentageFixture) -> PaintLengthPercentage {
+    PaintLengthPercentage {
+        length: value.length,
+        fraction: value.fraction,
+    }
+}
+
+fn image_repeat(value: ImageRepeatFixture) -> ImageRepeat {
+    match value {
+        ImageRepeatFixture::Repeat => ImageRepeat::Repeat,
+        ImageRepeatFixture::NoRepeat => ImageRepeat::NoRepeat,
+        ImageRepeatFixture::Space => ImageRepeat::Space,
+        ImageRepeatFixture::Round => ImageRepeat::Round,
+    }
+}
+
+fn background_box(value: BackgroundBoxFixture) -> PaintBox {
+    match value {
+        BackgroundBoxFixture::Border => PaintBox::Border,
+        BackgroundBoxFixture::Padding => PaintBox::Padding,
+        BackgroundBoxFixture::Content => PaintBox::Content,
     }
 }
 
@@ -991,14 +1060,91 @@ fn fixture_conic_gradient_css(gradient: &ConicGradientFixture) -> String {
     )
 }
 
-fn assert_initial_background_layer_is_projected(style: &web_sys::CssStyleDeclaration) {
+fn assert_background_layer_is_projected(
+    style: &web_sys::CssStyleDeclaration,
+    layer: BackgroundLayerFixture,
+) {
     assert_style(style, "background-position", "0px 0px");
-    assert_style(style, "background-size", "auto");
-    assert_style(style, "background-repeat", "repeat");
-    assert_style(style, "background-origin", "padding-box");
-    assert_style(style, "background-clip", "border-box");
+    assert_style(style, "background-size", &fixture_background_size(layer));
+    assert_style(style, "background-repeat", fixture_background_repeat(layer));
+    assert_style(
+        style,
+        "background-origin",
+        fixture_background_box(layer.origin),
+    );
+    assert_style(style, "background-clip", fixture_background_box(layer.clip));
     assert_style(style, "background-attachment", "scroll");
     assert_style(style, "background-blend-mode", "normal");
+}
+
+fn fixture_background_size(layer: BackgroundLayerFixture) -> String {
+    layer.size.map_or_else(
+        || "auto".into(),
+        |size| {
+            format!(
+                "{} {}",
+                fixture_length_percentage(size[0]),
+                fixture_length_percentage(size[1])
+            )
+        },
+    )
+}
+
+fn fixture_background_repeat(layer: BackgroundLayerFixture) -> &'static str {
+    match (layer.repeat_x, layer.repeat_y) {
+        (ImageRepeatFixture::Repeat, ImageRepeatFixture::Repeat) => "repeat",
+        (ImageRepeatFixture::NoRepeat, ImageRepeatFixture::NoRepeat) => "no-repeat",
+        (ImageRepeatFixture::Repeat, ImageRepeatFixture::NoRepeat) => "repeat no-repeat",
+        (ImageRepeatFixture::NoRepeat, ImageRepeatFixture::Repeat) => "no-repeat repeat",
+        (ImageRepeatFixture::Space, _) | (_, ImageRepeatFixture::Space) => "space",
+        (ImageRepeatFixture::Round, _) | (_, ImageRepeatFixture::Round) => "round",
+    }
+}
+
+fn fixture_background_box(value: BackgroundBoxFixture) -> &'static str {
+    match value {
+        BackgroundBoxFixture::Border => "border-box",
+        BackgroundBoxFixture::Padding => "padding-box",
+        BackgroundBoxFixture::Content => "content-box",
+    }
+}
+
+fn fixture_length_percentage(value: LengthPercentageFixture) -> String {
+    if value.length == 0.0 {
+        format!("{}%", value.fraction * 100.0)
+    } else if value.fraction == 0.0 {
+        format!("{}px", value.length)
+    } else {
+        format!("calc({}px + {}%)", value.length, value.fraction * 100.0)
+    }
+}
+
+fn fixture_node_paints_at(node: &SceneNodeFixture, point: [f32; 2]) -> bool {
+    if !fixture_color_is_transparent(&node.background) {
+        return true;
+    }
+    if node.linear_gradient.is_none()
+        && node.radial_gradient.is_none()
+        && node.conic_gradient.is_none()
+    {
+        return false;
+    }
+    let layer = node.background_layer;
+    let size = layer.size.map_or([node.rect[2], node.rect[3]], |size| {
+        [
+            size[0].length + size[0].fraction * node.rect[2],
+            size[1].length + size[1].fraction * node.rect[3],
+        ]
+    });
+    let position = [
+        node.rect[0] + layer.position[0].length + layer.position[0].fraction * node.rect[2],
+        node.rect[1] + layer.position[1].length + layer.position[1].fraction * node.rect[3],
+    ];
+    let paints_x = layer.repeat_x != ImageRepeatFixture::NoRepeat
+        || (position[0]..position[0] + size[0]).contains(&point[0]);
+    let paints_y = layer.repeat_y != ImageRepeatFixture::NoRepeat
+        || (position[1]..position[1] + size[1]).contains(&point[1]);
+    paints_x && paints_y
 }
 
 fn fixture_border_style_css(value: BorderStyleFixture) -> &'static str {

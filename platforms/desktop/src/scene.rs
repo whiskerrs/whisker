@@ -781,6 +781,10 @@ impl FrameSink for DesktopScene {
                     capability: whisker_protocol::RenderCapability::ConicGradients,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::BackgroundGeometry,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("Desktop capability profile is unique")
@@ -845,7 +849,7 @@ impl From<DesktopElementError> for DesktopPresentError {
 }
 
 fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
-    (matches!(
+    let supported_image = matches!(
         &layer.image,
         PaintImage::LinearGradient {
             repeating: false,
@@ -871,10 +875,21 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
         } if stops.iter().all(|stop| {
             stop.position.is_some_and(|position| position.length == 0.0)
         })
-    )) && layer.position == Default::default()
-        && layer.size == BackgroundSize::Auto
+    );
+    let supported_geometry = (layer.size == BackgroundSize::Auto
         && layer.repeat_x == ImageRepeat::Repeat
-        && layer.repeat_y == ImageRepeat::Repeat
+        && layer.repeat_y == ImageRepeat::Repeat)
+        || (matches!(
+            layer.size,
+            BackgroundSize::Explicit {
+                width: Some(_),
+                height: Some(_)
+            }
+        ) && layer.repeat_x == ImageRepeat::NoRepeat
+            && layer.repeat_y == ImageRepeat::NoRepeat);
+    supported_image
+        && supported_geometry
+        && layer.position == Default::default()
         && layer.origin == PaintBox::Padding
         && layer.clip == PaintBox::Border
         && layer.attachment == BackgroundAttachment::Scroll
