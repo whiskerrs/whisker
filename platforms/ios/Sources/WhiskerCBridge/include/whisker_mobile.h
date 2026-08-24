@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "whisker_bridge.h"
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 2 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 3 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -17,7 +17,10 @@ enum {
   WHISKER_OP_CAPTURE, WHISKER_OP_RELEASE_CAPTURE, WHISKER_OP_COMMAND,
   WHISKER_OP_BACKGROUND_LAYERS
 };
-enum { WHISKER_BACKGROUND_LINEAR = 0, WHISKER_BACKGROUND_RADIAL = 1 };
+enum {
+  WHISKER_BACKGROUND_LINEAR = 0, WHISKER_BACKGROUND_RADIAL = 1,
+  WHISKER_BACKGROUND_CONIC = 2
+};
 enum {
   WHISKER_MEASURE_TEXT = 1, WHISKER_MEASURE_REPLACED_CONTENT,
   WHISKER_MEASURE_NATIVE_CONTROL, WHISKER_MEASURE_EMBEDDED_SURFACE,
@@ -49,6 +52,11 @@ typedef struct {
   size_t stop_count;
 } WhiskerMobileRadialGradient;
 typedef struct {
+  WhiskerMobileLengthPercentage center_x, center_y;
+  const WhiskerMobileGradientStop *stops;
+  size_t stop_count;
+} WhiskerMobileConicGradient;
+typedef struct {
   WhiskerStringRef text; float font_size; uint16_t font_weight;
   uint8_t font_style, wrap; uint32_t max_lines; float line_height, letter_spacing;
   WhiskerMobileColor color; uint64_t prepared_content;
@@ -69,6 +77,7 @@ _Static_assert(sizeof(WhiskerMobileFrame) == 72, "WhiskerMobileFrame ABI drift")
 _Static_assert(sizeof(WhiskerMobileApplyResponse) == 16, "WhiskerMobileApplyResponse ABI drift");
 _Static_assert(sizeof(WhiskerMobileGradientStop) == 40, "WhiskerMobileGradientStop ABI drift");
 _Static_assert(sizeof(WhiskerMobileRadialGradient) == 48, "WhiskerMobileRadialGradient ABI drift");
+_Static_assert(sizeof(WhiskerMobileConicGradient) == 32, "WhiskerMobileConicGradient ABI drift");
 typedef struct {
   uint32_t id; uint8_t value_kind, optional_kind, _pad[2]; WhiskerStringRef name;
 } WhiskerMobileMemberRegistration;

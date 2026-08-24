@@ -28,11 +28,14 @@ pub enum RenderCapability {
     /// One resolved, non-repeating explicit radial-gradient background image
     /// using the initial layer geometry and explicit color-stop positions.
     RadialGradients,
+    /// One resolved, non-repeating conic-gradient background image using the
+    /// initial layer geometry and explicit fractional color-stop positions.
+    ConicGradients,
 }
 
 impl RenderCapability {
     /// Every optional capability in stable declaration order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::EllipticalBorderRadius,
         Self::BackgroundLayers,
         Self::VisualEffects,
@@ -43,6 +46,7 @@ impl RenderCapability {
         Self::ResourceLifecycle,
         Self::LinearGradients,
         Self::RadialGradients,
+        Self::ConicGradients,
     ];
 
     /// Stable diagnostic spelling shared by Host errors and checklists.
@@ -58,6 +62,7 @@ impl RenderCapability {
             Self::ResourceLifecycle => "resource-lifecycle",
             Self::LinearGradients => "linear-gradients",
             Self::RadialGradients => "radial-gradients",
+            Self::ConicGradients => "conic-gradients",
         }
     }
 
@@ -227,6 +232,9 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 2
         Operation::SetBackgroundLayers { layers, .. } if is_basic_radial_gradient(layers) => {
             Some(RenderCapability::RadialGradients)
         }
+        Operation::SetBackgroundLayers { layers, .. } if is_basic_conic_gradient(layers) => {
+            Some(RenderCapability::ConicGradients)
+        }
         Operation::SetBackgroundLayers { .. } => Some(RenderCapability::BackgroundLayers),
         Operation::SetVisualEffects { .. } => Some(RenderCapability::VisualEffects),
         Operation::SetText { content, .. } if content.paint.uses_extended_features() => {
@@ -274,6 +282,29 @@ fn is_basic_radial_gradient(layers: &[crate::BackgroundLayer]) -> bool {
             shape: crate::RadialGradientShape::Ellipse,
             extent: crate::RadialGradientExtent::Explicit,
             radii: Some(_),
+            repeating: false,
+            stops,
+            ..
+        } if stops.iter().all(|stop| {
+            stop.position.is_some_and(|position| position.length == 0.0)
+        })
+    ) && layer.position == Default::default()
+        && layer.size == crate::BackgroundSize::Auto
+        && layer.repeat_x == crate::ImageRepeat::Repeat
+        && layer.repeat_y == crate::ImageRepeat::Repeat
+        && layer.origin == crate::PaintBox::Padding
+        && layer.clip == crate::PaintBox::Border
+        && layer.attachment == crate::BackgroundAttachment::Scroll
+        && layer.blend_mode == crate::BlendMode::Normal
+}
+
+fn is_basic_conic_gradient(layers: &[crate::BackgroundLayer]) -> bool {
+    let [layer] = layers else {
+        return false;
+    };
+    matches!(
+        &layer.image,
+        crate::PaintImage::ConicGradient {
             repeating: false,
             stops,
             ..
@@ -377,6 +408,21 @@ mod tests {
         })
     }
 
+    fn conic_layer(repeating: bool, first_stop_length: f32) -> BackgroundLayer {
+        let mut stops = basic_gradient_stops();
+        stops[0].position.as_mut().unwrap().length = first_stop_length;
+        background_layer(PaintImage::ConicGradient {
+            from_degrees: 90.0,
+            center: PaintPosition::default(),
+            repeating,
+            stops,
+        })
+    }
+
+    fn basic_conic_layer() -> BackgroundLayer {
+        conic_layer(false, 0.0)
+    }
+
     #[test]
     fn discovers_elliptical_radius_without_classifying_base_box_paint() {
         let node = NodeId::new(1).unwrap();
@@ -456,6 +502,52 @@ mod tests {
     }
 
     #[test]
+    fn conic_gradient_capability_is_limited_to_the_resolved_host_subset() {
+        let node = NodeId::new(1).unwrap();
+        assert_eq!(
+            packet(vec![Operation::SetBackgroundLayers {
+                node,
+                layers: vec![basic_conic_layer()],
+            }])
+            .required_capabilities(),
+            vec![RenderCapability::ConicGradients]
+        );
+
+        assert_eq!(
+            packet(vec![Operation::SetBackgroundLayers {
+                node,
+                layers: vec![conic_layer(true, 0.0)],
+            }])
+            .required_capabilities(),
+            vec![RenderCapability::BackgroundLayers]
+        );
+
+        assert_eq!(
+            packet(vec![Operation::SetBackgroundLayers {
+                node,
+                layers: vec![conic_layer(false, 1.0)],
+            }])
+            .required_capabilities(),
+            vec![RenderCapability::BackgroundLayers]
+        );
+
+        assert_eq!(
+            packet(vec![
+                Operation::SetBackgroundLayers {
+                    node,
+                    layers: vec![basic_conic_layer()],
+                },
+                Operation::SetBackgroundLayers {
+                    node,
+                    layers: vec![basic_conic_layer()],
+                },
+            ])
+            .required_capabilities(),
+            vec![RenderCapability::ConicGradients]
+        );
+    }
+
+    #[test]
     fn profiles_and_packets_cover_every_optional_capability() {
         assert_eq!(
             RenderCapability::ALL.map(RenderCapability::as_str),
@@ -470,6 +562,7 @@ mod tests {
                 "resource-lifecycle",
                 "linear-gradients",
                 "radial-gradients",
+                "conic-gradients",
             ]
         );
 
@@ -538,6 +631,10 @@ mod tests {
                 node,
                 layers: vec![basic_linear_layer()],
             },
+            Operation::SetBackgroundLayers {
+                node,
+                layers: vec![basic_conic_layer()],
+            },
             Operation::SetVisualEffects {
                 node,
                 effects: VisualEffects::default(),
@@ -583,6 +680,7 @@ mod tests {
             vec![
                 RenderCapability::EllipticalBorderRadius,
                 RenderCapability::LinearGradients,
+                RenderCapability::ConicGradients,
                 RenderCapability::VisualEffects,
                 RenderCapability::TextEffects,
                 RenderCapability::TextTypography,

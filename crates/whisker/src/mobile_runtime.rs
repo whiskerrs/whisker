@@ -660,6 +660,10 @@ impl FrameSink for MobileFrameSink {
                     capability: whisker_engine::whisker_protocol::RenderCapability::RadialGradients,
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_engine::whisker_protocol::CapabilityEntry {
+                    capability: whisker_engine::whisker_protocol::RenderCapability::ConicGradients,
+                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("mobile capability profile is unique")
@@ -697,6 +701,7 @@ struct MobileFrameOwned {
     _paints: Vec<Box<MobileBoxPaint>>,
     _gradient_stops: Vec<Box<[MobileGradientStop]>>,
     _radial_gradients: Vec<Box<MobileRadialGradient>>,
+    _conic_gradients: Vec<Box<MobileConicGradient>>,
     _texts: Vec<Box<MobileText>>,
     _transforms: Vec<Box<[f32; 16]>>,
     _values: Vec<Box<WhiskerValueRaw>>,
@@ -711,6 +716,7 @@ impl MobileFrameOwned {
         let mut paints = Vec::<Box<MobileBoxPaint>>::new();
         let mut gradient_stops = Vec::<Box<[MobileGradientStop]>>::new();
         let mut radial_gradients = Vec::<Box<MobileRadialGradient>>::new();
+        let mut conic_gradients = Vec::<Box<MobileConicGradient>>::new();
         let mut texts = Vec::<Box<MobileText>>::new();
         let mut transforms = Vec::<Box<[f32; 16]>>::new();
         let mut values = Vec::<Box<WhiskerValueRaw>>::new();
@@ -834,6 +840,30 @@ impl MobileFrameOwned {
                                 raw.flags = BACKGROUND_RADIAL;
                                 raw.payload_count = 1;
                                 raw.payload = radial_gradients.last().unwrap().as_ref() as *const _
+                                    as *const c_void;
+                            }
+                            PaintImage::ConicGradient {
+                                from_degrees,
+                                center,
+                                repeating: false,
+                                stops,
+                            } if stops.iter().all(|stop| {
+                                stop.position.is_some_and(|position| position.length == 0.0)
+                            }) =>
+                            {
+                                let stops = mobile_gradient_stops(stops, &mut strings)?;
+                                gradient_stops.push(stops);
+                                let stops = gradient_stops.last().unwrap();
+                                conic_gradients.push(Box::new(MobileConicGradient {
+                                    center_x: mobile_coordinate(center.x),
+                                    center_y: mobile_coordinate(center.y),
+                                    stops: stops.as_ptr(),
+                                    stop_count: stops.len(),
+                                }));
+                                raw.flags = BACKGROUND_CONIC;
+                                raw.scalar = *from_degrees;
+                                raw.payload_count = 1;
+                                raw.payload = conic_gradients.last().unwrap().as_ref() as *const _
                                     as *const c_void;
                             }
                             _ => return Err(MobileFrameError),
@@ -991,6 +1021,7 @@ impl MobileFrameOwned {
             _paints: paints,
             _gradient_stops: gradient_stops,
             _radial_gradients: radial_gradients,
+            _conic_gradients: conic_gradients,
             _texts: texts,
             _transforms: transforms,
             _values: values,

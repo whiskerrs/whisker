@@ -368,7 +368,11 @@ fn linear_gradient_color(draw_index: u32, position: vec2<f32>) -> vec4<f32> {
     }
     let line = gradient.start_end.zw - gradient.start_end.xy;
     var progress = dot(position - gradient.start_end.xy, line) / max(dot(line, line), 0.0001);
-    if gradient.kind == 2u {
+    if gradient.kind == 3u {
+        let delta = position - gradient.start_end.xy;
+        let clockwise_turns = atan2(delta.x, -delta.y) / (2.0 * 3.141592653589793);
+        progress = fract(clockwise_turns - gradient.start_end.z);
+    } else if gradient.kind == 2u {
         let normalized = (position - gradient.start_end.xy)
             / max(gradient.start_end.zw, vec2<f32>(0.0001));
         progress = length(normalized);
@@ -644,8 +648,7 @@ struct LinearGradientStopGpu {
 pub(crate) struct LinearGradientDraw {
     start_end: [f32; 4],
     stops: Vec<LinearGradientStopGpu>,
-    repeating: bool,
-    radial: bool,
+    kind: u32,
 }
 
 struct BoxGpuPipeline {
@@ -828,11 +831,7 @@ impl BoxGpuPipeline {
                     start_end: gradient.start_end,
                     stop_offset,
                     stop_count: gradient.stops.len() as u32,
-                    kind: if gradient.radial {
-                        2
-                    } else {
-                        u32::from(gradient.repeating)
-                    },
+                    kind: gradient.kind,
                     padding: 0,
                 }
             })
@@ -945,8 +944,7 @@ pub(crate) fn linear_gradient_draw(
                 color: gpu_color(&stop.color, opacity),
             })
             .collect(),
-        repeating,
-        radial: false,
+        kind: u32::from(repeating),
     }
 }
 
@@ -978,8 +976,32 @@ pub(crate) fn radial_gradient_draw(
                 color: gpu_color(&stop.color, opacity),
             })
             .collect(),
-        repeating: false,
-        radial: true,
+        kind: 2,
+    }
+}
+
+pub(crate) fn conic_gradient_draw(
+    positioning_rect: LayoutRect,
+    from_degrees: f32,
+    center: whisker_protocol::PaintPosition,
+    stops: &[GradientStop],
+    opacity: f32,
+) -> LinearGradientDraw {
+    let center = [
+        positioning_rect.x + center.x.length + center.x.fraction * positioning_rect.width,
+        positioning_rect.y + center.y.length + center.y.fraction * positioning_rect.height,
+    ];
+    LinearGradientDraw {
+        start_end: [center[0], center[1], from_degrees / 360.0, 0.0],
+        stops: stops
+            .iter()
+            .map(|stop| LinearGradientStopGpu {
+                position: stop.position.map_or(0.0, |position| position.fraction),
+                padding: [0.0; 3],
+                color: gpu_color(&stop.color, opacity),
+            })
+            .collect(),
+        kind: 3,
     }
 }
 
@@ -1168,6 +1190,18 @@ impl GpuRenderer {
                                 positioning_rect,
                                 *center,
                                 *radii,
+                                stops,
+                                *opacity,
+                            ),
+                            PaintImage::ConicGradient {
+                                from_degrees,
+                                center,
+                                repeating: false,
+                                stops,
+                            } => conic_gradient_draw(
+                                positioning_rect,
+                                *from_degrees,
+                                *center,
                                 stops,
                                 *opacity,
                             ),

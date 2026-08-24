@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 2;
+pub const MOBILE_ABI_MINOR: u16 = 3;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -48,6 +48,7 @@ pub const OP_BACKGROUND_LAYERS: u32 = 21;
 
 pub const BACKGROUND_LINEAR: u32 = 0;
 pub const BACKGROUND_RADIAL: u32 = 1;
+pub const BACKGROUND_CONIC: u32 = 2;
 
 pub const MEASURE_TEXT: u32 = 1;
 pub const MEASURE_REPLACED_CONTENT: u32 = 2;
@@ -122,6 +123,16 @@ pub struct MobileRadialGradient {
     pub center_y: MobileLengthPercentage,
     pub radius_x: MobileLengthPercentage,
     pub radius_y: MobileLengthPercentage,
+    pub stops: *const MobileGradientStop,
+    pub stop_count: usize,
+}
+
+/// One non-repeating conic gradient with explicit fractional stops.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileConicGradient {
+    pub center_x: MobileLengthPercentage,
+    pub center_y: MobileLengthPercentage,
     pub stops: *const MobileGradientStop,
     pub stop_count: usize,
 }
@@ -454,6 +465,7 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);
             assert_eq!(std::mem::size_of::<MobileGradientStop>(), 40);
             assert_eq!(std::mem::size_of::<MobileRadialGradient>(), 48);
+            assert_eq!(std::mem::size_of::<MobileConicGradient>(), 32);
             assert_eq!(std::mem::align_of::<MobileFrame>(), 8);
             assert_eq!(std::mem::align_of::<MobileMeasureRequest>(), 8);
         }

@@ -164,6 +164,21 @@ final class HostScene {
                           ) else {
                         return false
                     }
+                case UInt32(WHISKER_BACKGROUND_CONIC):
+                    guard operation.payload_count == 1,
+                          let conic = operation.payload?.assumingMemoryBound(
+                              to: WhiskerMobileConicGradient.self
+                          ).pointee,
+                          conic.center_x.isFinite, conic.center_y.isFinite,
+                          (2...4_096).contains(conic.stop_count),
+                          let stops = conic.stops,
+                          validGradientStops(
+                              UnsafeRawPointer(stops),
+                              count: conic.stop_count,
+                              requiresFractionOnly: true
+                          ) else {
+                        return false
+                    }
                 default:
                     return false
                 }
@@ -257,6 +272,20 @@ final class HostScene {
                     centerY: radial.center_y,
                     radiusX: radial.radius_x,
                     radiusY: radial.radius_y,
+                    stops: stops
+                ))
+            } else if operation.flags == UInt32(WHISKER_BACKGROUND_CONIC) {
+                guard let conic = operation.payload?.assumingMemoryBound(
+                    to: WhiskerMobileConicGradient.self
+                ).pointee, let stopPointer = conic.stops else { return false }
+                let stops = UnsafeBufferPointer(
+                    start: stopPointer,
+                    count: conic.stop_count
+                ).map(HostLinearGradientStop.init)
+                node.boxPainter.updateBackgroundLayers(HostConicGradient(
+                    fromDegrees: CGFloat(operation.scalar),
+                    centerX: conic.center_x,
+                    centerY: conic.center_y,
                     stops: stops
                 ))
             } else {
@@ -448,14 +477,19 @@ private func hostRect(_ value: WhiskerMobileRect) -> CGRect {
     )
 }
 
-private func validGradientStops(_ payload: UnsafeRawPointer, count: Int) -> Bool {
+private func validGradientStops(
+    _ payload: UnsafeRawPointer,
+    count: Int,
+    requiresFractionOnly: Bool = false
+) -> Bool {
     guard (2...4_096).contains(count) else { return false }
     let stops = UnsafeBufferPointer(
         start: payload.assumingMemoryBound(to: WhiskerMobileGradientStop.self),
         count: count
     )
     return stops.allSatisfy { stop in
-        stop.position.isFinite && stop.color.kind <= 1 && stop.color.alpha.isFinite &&
+        stop.position.isFinite && (!requiresFractionOnly || stop.position.length == 0) &&
+            stop.color.kind <= 1 && stop.color.alpha.isFinite &&
             (0...1).contains(stop.color.alpha)
     }
 }

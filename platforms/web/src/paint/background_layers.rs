@@ -15,15 +15,12 @@ pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
     let [layer] = layers else {
         return false;
     };
-    let supported_image = matches!(
-        &layer.image,
+    let supported_image = match &layer.image {
         PaintImage::LinearGradient {
             repeating: false,
             stops,
             ..
-        } if stops.iter().all(|stop| stop.position.is_some())
-    ) || matches!(
-        &layer.image,
+        } => stops.iter().all(|stop| stop.position.is_some()),
         PaintImage::RadialGradient {
             shape: RadialGradientShape::Ellipse,
             extent: RadialGradientExtent::Explicit,
@@ -31,8 +28,16 @@ pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
             repeating: false,
             stops,
             ..
-        } if stops.iter().all(|stop| stop.position.is_some())
-    );
+        } => stops.iter().all(|stop| stop.position.is_some()),
+        PaintImage::ConicGradient {
+            repeating: false,
+            stops,
+            ..
+        } => stops
+            .iter()
+            .all(|stop| stop.position.is_some_and(|position| position.length == 0.0)),
+        _ => false,
+    };
     supported_image
         && layer.position == Default::default()
         && layer.size == BackgroundSize::Auto
@@ -50,7 +55,7 @@ pub(crate) fn apply(
 ) -> Result<(), WebError> {
     if !supports(layers) {
         return Err(WebError(
-            "DOM Host only implements one non-repeating linear or explicit elliptical radial gradient with explicit stops and CSS initial layer values"
+            "DOM Host only implements one non-repeating linear, explicit elliptical radial, or conic gradient with explicit stops and CSS initial layer values"
                 .into(),
         ));
     }
@@ -118,6 +123,12 @@ fn background_image(layer: &BackgroundLayer) -> Result<String, WebError> {
             repeating: false,
             stops,
         } => radial_gradient(*center, *radii, stops),
+        PaintImage::ConicGradient {
+            from_degrees,
+            center,
+            repeating: false,
+            stops,
+        } => conic_gradient(*from_degrees, *center, stops),
         _ => Err(WebError("unsupported DOM background image".into())),
     }
 }
@@ -150,6 +161,23 @@ fn radial_gradient(
     ))
 }
 
+fn conic_gradient(
+    from_degrees: f32,
+    center: PaintPosition,
+    stops: &[GradientStop],
+) -> Result<String, WebError> {
+    let stops = stops
+        .iter()
+        .map(conic_gradient_stop)
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    Ok(format!(
+        "conic-gradient(from {from_degrees}deg at {} {}, {stops})",
+        coordinate(center.x),
+        coordinate(center.y),
+    ))
+}
+
 fn gradient_stop(stop: &GradientStop) -> Result<String, WebError> {
     let position = stop
         .position
@@ -158,6 +186,18 @@ fn gradient_stop(stop: &GradientStop) -> Result<String, WebError> {
         "{} {}",
         css_color(&stop.color),
         coordinate(position)
+    ))
+}
+
+fn conic_gradient_stop(stop: &GradientStop) -> Result<String, WebError> {
+    let position = stop
+        .position
+        .filter(|position| position.length == 0.0)
+        .ok_or_else(|| WebError("DOM conic-gradient requires resolved turn stops".into()))?;
+    Ok(format!(
+        "{} {}turn",
+        css_color(&stop.color),
+        position.fraction
     ))
 }
 

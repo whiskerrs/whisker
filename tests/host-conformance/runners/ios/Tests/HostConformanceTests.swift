@@ -83,7 +83,8 @@ private final class Driver {
                 let name = try string(command, "name")
                 guard name == "paint.box" ||
                     name == "paint.background-layers.linear-gradient" ||
-                    name == "paint.background-layers.radial-gradient" else {
+                    name == "paint.background-layers.radial-gradient" ||
+                    name == "paint.background-layers.conic-gradient" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -173,6 +174,9 @@ private final class Driver {
             } else if let gradient = fixture.radialGradient {
                 gradientOffsets.append(gradientStops.count)
                 gradientStops.append(contentsOf: gradient.stops)
+            } else if let gradient = fixture.conicGradient {
+                gradientOffsets.append(gradientStops.count)
+                gradientStops.append(contentsOf: gradient.stops)
             } else {
                 gradientOffsets.append(nil)
             }
@@ -181,31 +185,47 @@ private final class Driver {
             repeating: WhiskerMobileRadialGradient(),
             count: fixtures.count
         )
+        var conicPayloads = [WhiskerMobileConicGradient](
+            repeating: WhiskerMobileConicGradient(),
+            count: fixtures.count
+        )
         try layouts.withUnsafeMutableBufferPointer { layoutBuffer in
             try paints.withUnsafeMutableBufferPointer { paintBuffer in
                 try transforms.withUnsafeMutableBufferPointer { transformBuffer in
                     try gradientStops.withUnsafeMutableBufferPointer { gradientBuffer in
                         for (index, fixture) in fixtures.enumerated() {
-                            guard let radial = fixture.radialGradient,
-                                  let offset = gradientOffsets[index] else { continue }
-                            radialPayloads[index].center_x = WhiskerMobileLengthPercentage(
-                                length: radial.center[0], fraction: 0
-                            )
-                            radialPayloads[index].center_y = WhiskerMobileLengthPercentage(
-                                length: radial.center[1], fraction: 0
-                            )
-                            radialPayloads[index].radius_x = WhiskerMobileLengthPercentage(
-                                length: radial.radii[0], fraction: 0
-                            )
-                            radialPayloads[index].radius_y = WhiskerMobileLengthPercentage(
-                                length: radial.radii[1], fraction: 0
-                            )
-                            radialPayloads[index].stops = UnsafePointer(
+                            guard let offset = gradientOffsets[index] else { continue }
+                            let stops = UnsafePointer(
                                 gradientBuffer.baseAddress!.advanced(by: offset)
                             )
-                            radialPayloads[index].stop_count = radial.stops.count
+                            if let radial = fixture.radialGradient {
+                                radialPayloads[index].center_x = WhiskerMobileLengthPercentage(
+                                    length: radial.center[0], fraction: 0
+                                )
+                                radialPayloads[index].center_y = WhiskerMobileLengthPercentage(
+                                    length: radial.center[1], fraction: 0
+                                )
+                                radialPayloads[index].radius_x = WhiskerMobileLengthPercentage(
+                                    length: radial.radii[0], fraction: 0
+                                )
+                                radialPayloads[index].radius_y = WhiskerMobileLengthPercentage(
+                                    length: radial.radii[1], fraction: 0
+                                )
+                                radialPayloads[index].stops = stops
+                                radialPayloads[index].stop_count = radial.stops.count
+                            } else if let conic = fixture.conicGradient {
+                                conicPayloads[index].center_x = WhiskerMobileLengthPercentage(
+                                    length: conic.center[0], fraction: 0
+                                )
+                                conicPayloads[index].center_y = WhiskerMobileLengthPercentage(
+                                    length: conic.center[1], fraction: 0
+                                )
+                                conicPayloads[index].stops = stops
+                                conicPayloads[index].stop_count = conic.stops.count
+                            }
                         }
                         try radialPayloads.withUnsafeMutableBufferPointer { radialBuffer in
+                            try conicPayloads.withUnsafeMutableBufferPointer { conicBuffer in
                             var operations = fixtures.map {
                                 operation(tag: UInt32(WHISKER_OP_CREATE), node: $0.id, member: 1)
                             }
@@ -296,6 +316,17 @@ private final class Driver {
                                         ),
                                         count: 1
                                     ))
+                                } else if let conic = fixture.conicGradient {
+                                    operations.append(operation(
+                                        tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
+                                        node: fixture.id,
+                                        flags: UInt32(WHISKER_BACKGROUND_CONIC),
+                                        scalar: conic.fromDegrees,
+                                        payload: UnsafeRawPointer(
+                                            conicBuffer.baseAddress!.advanced(by: index)
+                                        ),
+                                        count: 1
+                                    ))
                                 }
                             }
                             try operations.withUnsafeMutableBufferPointer { buffer in
@@ -318,6 +349,7 @@ private final class Driver {
                                       response.status == UInt8(WHISKER_APPLY_ACCEPTED) else {
                                     throw Failure("UIKit Host rejected scene fixture frame")
                                 }
+                            }
                             }
                         }
                     }
@@ -371,6 +403,7 @@ private struct SceneFixtureNode {
     let zOrder: Int32?
     let linearGradient: SceneLinearGradient?
     let radialGradient: SceneRadialGradient?
+    let conicGradient: SceneConicGradient?
 }
 
 private struct SceneLinearGradient {
@@ -381,6 +414,12 @@ private struct SceneLinearGradient {
 private struct SceneRadialGradient {
     let center: [Float]
     let radii: [Float]
+    let stops: [WhiskerMobileGradientStop]
+}
+
+private struct SceneConicGradient {
+    let fromDegrees: Float
+    let center: [Float]
     let stops: [WhiskerMobileGradientStop]
 }
 
@@ -505,6 +544,29 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     } else {
         radialGradient = nil
     }
+    let conicGradient: SceneConicGradient?
+    if let gradient = fixture["conic_gradient"] as? [String: Any] {
+        let center = try numberArray(gradient, "center").map(Float.init)
+        let stops = try objectArray(gradient, "stops").map { stop -> WhiskerMobileGradientStop in
+            var raw = WhiskerMobileGradientStop()
+            raw.color = try color(try object(stop, "color"))
+            raw.position = WhiskerMobileLengthPercentage(
+                length: 0,
+                fraction: Float(try number(stop, "position"))
+            )
+            return raw
+        }
+        guard center.count == 2, stops.count >= 2 else {
+            throw Failure("conic gradient needs a center and at least two stops")
+        }
+        conicGradient = SceneConicGradient(
+            fromDegrees: Float(try number(gradient, "from_degrees")),
+            center: center,
+            stops: stops
+        )
+    } else {
+        conicGradient = nil
+    }
     return SceneFixtureNode(
         id: id,
         parent: parent,
@@ -516,7 +578,8 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         visible: visible,
         zOrder: zOrder,
         linearGradient: linearGradient,
-        radialGradient: radialGradient
+        radialGradient: radialGradient,
+        conicGradient: conicGradient
     )
 }
 

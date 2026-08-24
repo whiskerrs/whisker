@@ -458,6 +458,10 @@ impl FrameSink for DomFrameSink {
                     capability: whisker_protocol::RenderCapability::RadialGradients,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::ConicGradients,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("Web capability profile is unique")

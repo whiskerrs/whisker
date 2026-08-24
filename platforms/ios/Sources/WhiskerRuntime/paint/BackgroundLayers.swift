@@ -25,20 +25,36 @@ struct HostRadialGradient {
     let stops: [HostLinearGradientStop]
 }
 
+struct HostConicGradient {
+    let fromDegrees: CGFloat
+    let centerX: WhiskerMobileLengthPercentage
+    let centerY: WhiskerMobileLengthPercentage
+    let stops: [HostLinearGradientStop]
+}
+
 private enum HostBackgroundImage {
     case linear(HostLinearGradient)
     case radial(HostRadialGradient)
+    case conic(HostConicGradient)
 }
 
 final class HostBackgroundPainter {
     private var image: HostBackgroundImage?
+    private var conicCache: (size: CGSize, scale: CGFloat, image: CGImage)?
 
     func update(linearGradient: HostLinearGradient?) {
         image = linearGradient.map(HostBackgroundImage.linear)
+        conicCache = nil
     }
 
     func update(radialGradient: HostRadialGradient) {
         image = .radial(radialGradient)
+        conicCache = nil
+    }
+
+    func update(conicGradient: HostConicGradient) {
+        image = .conic(conicGradient)
+        conicCache = nil
     }
 
     func draw(in bounds: CGRect, clippedBy clipPath: CGPath) {
@@ -49,6 +65,8 @@ final class HostBackgroundPainter {
             drawLinear(gradient, in: bounds, clippedBy: clipPath, context: context)
         case let .radial(gradient):
             drawRadial(gradient, in: bounds, clippedBy: clipPath, context: context)
+        case let .conic(gradient):
+            drawConic(gradient, in: bounds, clippedBy: clipPath, context: context)
         }
     }
 
@@ -144,6 +162,36 @@ final class HostBackgroundPainter {
         )
         context.restoreGState()
     }
+
+    private func drawConic(
+        _ conicGradient: HostConicGradient,
+        in bounds: CGRect,
+        clippedBy clipPath: CGPath,
+        context: CGContext
+    ) {
+        let stops = normalizedConicStops(conicGradient.stops)
+        guard stops.count >= 2 else { return }
+        let scale = max(hypot(context.ctm.a, context.ctm.c), 1)
+        let image: CGImage
+        if let cache = conicCache, cache.size == bounds.size, cache.scale == scale {
+            image = cache.image
+        } else {
+            guard let rendered = rasterizeConic(
+                conicGradient,
+                stops: stops,
+                size: bounds.size,
+                scale: scale
+            ) else { return }
+            conicCache = (bounds.size, scale, rendered)
+            image = rendered
+        }
+
+        context.saveGState()
+        context.addPath(clipPath)
+        context.clip()
+        UIImage(cgImage: image, scale: scale, orientation: .up).draw(in: bounds)
+        context.restoreGState()
+    }
 }
 
 private struct ResolvedGradient {
@@ -197,6 +245,135 @@ private func makeGradient(
         count: resolved.count
     ) else { return nil }
     return ResolvedGradient(value: value, domainStart: domainStart, domainEnd: domainEnd)
+}
+
+private func normalizedConicStops(
+    _ input: [HostLinearGradientStop]
+) -> [(color: UIColor, position: CGFloat)] {
+    guard input.count >= 2 else { return [] }
+    var previous = -CGFloat.infinity
+    let ordered = input.map { stop -> (color: UIColor, position: CGFloat) in
+        let position = max(previous, CGFloat(stop.position.fraction))
+        previous = position
+        return (stop.color, position)
+    }
+    var result = [(color: color(at: 0, in: ordered), position: CGFloat(0))]
+    result.append(contentsOf: ordered.filter { (0...1).contains($0.position) })
+    result.append((color: color(at: 1, in: ordered), position: 1))
+    return result
+}
+
+/// Evaluates the resolved, non-repeating stop list at one turn fraction.
+private func color(
+    at position: CGFloat,
+    in stops: [(color: UIColor, position: CGFloat)]
+) -> UIColor {
+    guard let first = stops.first, position > first.position else {
+        return stops.first?.color ?? .clear
+    }
+    for (left, right) in zip(stops, stops.dropFirst()) where position <= right.position {
+        let distance = right.position - left.position
+        guard distance > 0 else { return right.color }
+        return interpolate(left.color, right.color, amount: (position - left.position) / distance)
+    }
+    return stops.last?.color ?? .clear
+}
+
+private func rasterizeConic(
+    _ gradient: HostConicGradient,
+    stops: [(color: UIColor, position: CGFloat)],
+    size: CGSize,
+    scale: CGFloat
+) -> CGImage? {
+    let width = max(Int(ceil(size.width * scale)), 1)
+    let height = max(Int(ceil(size.height * scale)), 1)
+    let centerX = resolve(gradient.centerX, extent: size.width) * scale
+    let centerY = resolve(gradient.centerY, extent: size.height) * scale
+    let startTurn = gradient.fromDegrees / 360
+    let rasterStops = stops.map { (color: rgba($0.color), position: $0.position) }
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    for y in 0..<height {
+        for x in 0..<width {
+            let dx = CGFloat(x) + 0.5 - centerX
+            let dy = CGFloat(y) + 0.5 - centerY
+            let turn = (atan2(dx, -dy) / (2 * .pi) - startTurn).truncatingRemainder(
+                dividingBy: 1
+            )
+            let components = conicColor(
+                at: turn < 0 ? turn + 1 : turn,
+                in: rasterStops
+            )
+            let alpha = max(0, min(1, components.alpha))
+            let offset = (y * width + x) * 4
+            pixels[offset] = byte(components.red * alpha)
+            pixels[offset + 1] = byte(components.green * alpha)
+            pixels[offset + 2] = byte(components.blue * alpha)
+            pixels[offset + 3] = byte(alpha)
+        }
+    }
+    guard let bitmap = CGContext(
+        data: &pixels,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return nil }
+    return bitmap.makeImage()
+}
+
+private struct RGBA {
+    let red: CGFloat
+    let green: CGFloat
+    let blue: CGFloat
+    let alpha: CGFloat
+}
+
+private func rgba(_ color: UIColor) -> RGBA {
+    let components = rgbaComponents(color)
+    return RGBA(
+        red: components[0],
+        green: components[1],
+        blue: components[2],
+        alpha: components[3]
+    )
+}
+
+private func conicColor(
+    at position: CGFloat,
+    in stops: [(color: RGBA, position: CGFloat)]
+) -> RGBA {
+    guard let first = stops.first, position > first.position else {
+        return stops.first?.color ?? RGBA(red: 0, green: 0, blue: 0, alpha: 0)
+    }
+    for (left, right) in zip(stops, stops.dropFirst()) where position <= right.position {
+        let distance = right.position - left.position
+        guard distance > 0 else { return right.color }
+        let amount = (position - left.position) / distance
+        return RGBA(
+            red: left.color.red + (right.color.red - left.color.red) * amount,
+            green: left.color.green + (right.color.green - left.color.green) * amount,
+            blue: left.color.blue + (right.color.blue - left.color.blue) * amount,
+            alpha: left.color.alpha + (right.color.alpha - left.color.alpha) * amount
+        )
+    }
+    return stops.last?.color ?? RGBA(red: 0, green: 0, blue: 0, alpha: 0)
+}
+
+private func byte(_ value: CGFloat) -> UInt8 {
+    UInt8((max(0, min(1, value)) * 255).rounded())
+}
+
+private func interpolate(_ left: UIColor, _ right: UIColor, amount: CGFloat) -> UIColor {
+    let lhs = rgbaComponents(left)
+    let rhs = rgbaComponents(right)
+    return UIColor(
+        red: lhs[0] + (rhs[0] - lhs[0]) * amount,
+        green: lhs[1] + (rhs[1] - lhs[1]) * amount,
+        blue: lhs[2] + (rhs[2] - lhs[2]) * amount,
+        alpha: lhs[3] + (rhs[3] - lhs[3]) * amount
+    )
 }
 
 private func rgbaComponents(_ color: UIColor) -> [CGFloat] {

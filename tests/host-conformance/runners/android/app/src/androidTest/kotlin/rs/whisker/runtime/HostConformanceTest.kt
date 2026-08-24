@@ -138,7 +138,8 @@ private class Driver(
                     check(
                         command.getString("name") == "paint.box" ||
                             command.getString("name") == "paint.background-layers.linear-gradient" ||
-                            command.getString("name") == "paint.background-layers.radial-gradient",
+                            command.getString("name") == "paint.background-layers.radial-gradient" ||
+                            command.getString("name") == "paint.background-layers.conic-gradient",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -269,6 +270,19 @@ private class Driver(
                     ),
                 )
             }
+            node.optJSONObject("conic_gradient")?.let { gradient ->
+                val (numbers, names) = conicGradient(gradient)
+                check(
+                    stage(
+                        tag = 21,
+                        flags = 2,
+                        node = id,
+                        scalar = gradient.getDouble("from_degrees").toFloat(),
+                        numbers = numbers,
+                        names = names,
+                    ),
+                )
+            }
         }
         check(view.commitFrameFromNative())
     }
@@ -380,6 +394,22 @@ private class Driver(
             center.getDouble(1).toFloat(), 0f,
             radii.getDouble(0).toFloat(), 0f,
             radii.getDouble(1).toFloat(), 0f,
+        )
+        gradient.getJSONArray("stops").objects().forEach { stop ->
+            appendColor(stop.getJSONObject("color"), numbers, names)
+            numbers += 0f
+            numbers += stop.getDouble("position").toFloat()
+        }
+        return numbers.toFloatArray() to names.toTypedArray()
+    }
+
+    private fun conicGradient(gradient: JSONObject): Pair<FloatArray, Array<String>> {
+        val numbers = ArrayList<Float>()
+        val names = ArrayList<String>()
+        val center = gradient.getJSONArray("center")
+        numbers += listOf(
+            center.getDouble(0).toFloat(), 0f,
+            center.getDouble(1).toFloat(), 0f,
         )
         gradient.getJSONArray("stops").objects().forEach { stop ->
             appendColor(stop.getJSONObject("color"), numbers, names)

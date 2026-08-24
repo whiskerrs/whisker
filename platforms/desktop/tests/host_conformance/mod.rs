@@ -6,10 +6,10 @@ use whisker::{SurfaceRuntime, standard_element_registrations};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
-    BorderFixture, BorderStyleFixture, ColorFixture, Command, Host, LinearGradientFixture,
-    LoadedCase, OverflowClipFixture, PixelRelationFixture, PixelRelationKind, PixelSampleFixture,
-    PointerEventFixture, RadialGradientFixture, Scenario, ScenarioSide, SceneNodeFixture,
-    VisibilityFixture, load_required,
+    BorderFixture, BorderStyleFixture, ColorFixture, Command, ConicGradientFixture, Host,
+    LinearGradientFixture, LoadedCase, OverflowClipFixture, PixelRelationFixture,
+    PixelRelationKind, PixelSampleFixture, PointerEventFixture, RadialGradientFixture, Scenario,
+    ScenarioSide, SceneNodeFixture, VisibilityFixture, load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
@@ -27,7 +27,7 @@ use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
 use crate::element::{DesktopElementRegistry, built_in_element_factories};
 use crate::gpu::{
-    LinearGradientDraw, linear_gradient_draw, radial_gradient_draw,
+    LinearGradientDraw, conic_gradient_draw, linear_gradient_draw, radial_gradient_draw,
     render_box_primitives_offscreen, render_clipped_box_primitives_offscreen,
 };
 use crate::paint::box_paint::{
@@ -118,6 +118,44 @@ fn radial_gradient_protocol(value: &RadialGradientFixture) -> BackgroundLayer {
                     fraction: 0.0,
                 },
             )),
+            repeating: false,
+            stops: value
+                .stops
+                .iter()
+                .map(|stop| GradientStop {
+                    color: color_protocol(&stop.color),
+                    position: Some(PaintCoordinate {
+                        length: 0.0,
+                        fraction: stop.position,
+                    }),
+                })
+                .collect(),
+        },
+        position: PaintPosition::default(),
+        size: BackgroundSize::Auto,
+        repeat_x: ImageRepeat::Repeat,
+        repeat_y: ImageRepeat::Repeat,
+        origin: PaintBox::Padding,
+        clip: PaintBox::Border,
+        attachment: BackgroundAttachment::Scroll,
+        blend_mode: BlendMode::Normal,
+    }
+}
+
+fn conic_gradient_protocol(value: &ConicGradientFixture) -> BackgroundLayer {
+    BackgroundLayer {
+        image: PaintImage::ConicGradient {
+            from_degrees: value.from_degrees,
+            center: PaintPosition {
+                x: PaintCoordinate {
+                    length: value.center[0],
+                    fraction: 0.0,
+                },
+                y: PaintCoordinate {
+                    length: value.center[1],
+                    fraction: 0.0,
+                },
+            },
             repeating: false,
             stops: value
                 .stops
@@ -426,6 +464,12 @@ impl Driver {
                     layers: vec![radial_gradient_protocol(gradient)],
                 });
             }
+            if let Some(gradient) = &fixture.conic_gradient {
+                operations.push(Operation::SetBackgroundLayers {
+                    node,
+                    layers: vec![conic_gradient_protocol(gradient)],
+                });
+            }
             operations.push(Operation::SetClip {
                 node,
                 clip: BoxClip {
@@ -530,6 +574,18 @@ impl Driver {
                         } => {
                             radial_gradient_draw(positioning_rect, *center, *radii, stops, opacity)
                         }
+                        PaintImage::ConicGradient {
+                            from_degrees,
+                            center,
+                            repeating: false,
+                            stops,
+                        } => conic_gradient_draw(
+                            positioning_rect,
+                            *from_degrees,
+                            *center,
+                            stops,
+                            opacity,
+                        ),
                         _ => continue,
                     };
                     primitives.push((
