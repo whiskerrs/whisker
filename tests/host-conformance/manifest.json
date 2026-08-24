@@ -45,6 +45,13 @@
       "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
     },
     {
+      "id": "core.resource-raster-lifecycle",
+      "feature": "resource-raster-lifecycle",
+      "fixture": "core/resource-raster-lifecycle.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["resource-lifecycle", "semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.background-size-009",
       "feature": "background-size-no-repeat",
       "fixture": "wpt/css/css-backgrounds/background-size-009.json",

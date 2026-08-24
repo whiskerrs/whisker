@@ -147,6 +147,39 @@ pub enum Command {
         /// Row-major pixels from top-left to bottom-right.
         pixels: Vec<ColorFixture>,
     },
+    /// Asks the production Host resource service to acquire and decode a
+    /// raster outside the frame transaction.
+    LoadRasterResource {
+        /// Stable non-zero resource identifier.
+        id: u64,
+        /// Monotonic non-zero generation for replacement safety.
+        generation: u64,
+        /// Encoded source consumed once by the Host resource service.
+        source: ResourceSourceFixture,
+    },
+    /// Releases one exact resource generation after accepted frames no longer
+    /// reference it.
+    ReleaseRasterResource {
+        /// Stable non-zero resource identifier.
+        id: u64,
+        /// Exact non-zero generation to release.
+        generation: u64,
+    },
+    /// Checks the latest event and retained state for one resource generation.
+    CheckpointResource {
+        /// Stable non-zero resource identifier.
+        id: u64,
+        /// Exact non-zero generation being observed.
+        generation: u64,
+        /// Expected resource lifecycle state.
+        state: ResourceStateFixture,
+        /// Expected intrinsic raster width for a ready resource.
+        #[serde(default)]
+        width: Option<u32>,
+        /// Expected intrinsic raster height for a ready resource.
+        #[serde(default)]
+        height: Option<u32>,
+    },
     /// Presents one semantic box through the production Host path.
     PresentBox {
         /// Frame target revision.
@@ -235,6 +268,37 @@ pub enum Command {
         /// Expected logical y coordinate.
         y: f32,
     },
+}
+
+/// Encoded source variants accepted by the mock Host resource boundary.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ResourceSourceFixture {
+    /// URL acquired under Host network and security policy. Data URLs keep
+    /// conformance deterministic while exercising the URL source path.
+    Url {
+        /// Absolute source URL.
+        value: String,
+    },
+    /// One-time encoded bytes represented as base64 in the language-neutral fixture.
+    Bytes {
+        /// Non-empty MIME media type.
+        media_type: String,
+        /// Standard padded base64 encoded contents.
+        base64: String,
+    },
+}
+
+/// Observable resource lifecycle states used by conformance checkpoints.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceStateFixture {
+    /// Decode completed and the image is retained for painting.
+    Ready,
+    /// The exact generation failed acquisition or decode.
+    Failed,
+    /// The exact generation was released and is no longer paintable.
+    Released,
 }
 
 /// Pointer phase used by input fixtures.
@@ -757,6 +821,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), FixtureError> {
                     | "pixel-samples"
                     | "pixel-relations"
                     | "resource-registration"
+                    | "resource-lifecycle"
                     | "measurement"
                     | "input"
             ) {
@@ -815,6 +880,21 @@ fn validate_scenario(
     {
         return Err(FixtureError(format!(
             "scenario {} declares pixel-samples without sample assertions",
+            scenario.id
+        )));
+    }
+    if entry
+        .checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint == "resource-lifecycle")
+        && !scenario
+            .test
+            .commands
+            .iter()
+            .any(|command| matches!(command, Command::CheckpointResource { .. }))
+    {
+        return Err(FixtureError(format!(
+            "scenario {} declares resource-lifecycle without a resource checkpoint",
             scenario.id
         )));
     }
@@ -888,6 +968,29 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
                     .checked_mul(*height)
                     .is_some_and(|count| count as usize == pixels.len())
                 && pixels.iter().all(valid_color) => {}
+            Command::LoadRasterResource {
+                id,
+                generation,
+                source,
+            } if *id > 0 && *generation > 0 && valid_resource_source(source) => {}
+            Command::ReleaseRasterResource { id, generation } if *id > 0 && *generation > 0 => {}
+            Command::CheckpointResource {
+                id,
+                generation,
+                state,
+                width,
+                height,
+            } if *id > 0
+                && *generation > 0
+                && match state {
+                    ResourceStateFixture::Ready => {
+                        width.is_some_and(|value| value > 0)
+                            && height.is_some_and(|value| value > 0)
+                    }
+                    ResourceStateFixture::Failed | ResourceStateFixture::Released => {
+                        width.is_none() && height.is_none()
+                    }
+                } => {}
             Command::PresentBox {
                 revision,
                 rect,
@@ -959,6 +1062,19 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
         }
     }
     Ok(())
+}
+
+fn valid_resource_source(source: &ResourceSourceFixture) -> bool {
+    match source {
+        ResourceSourceFixture::Url { value } => !value.trim().is_empty(),
+        ResourceSourceFixture::Bytes { media_type, base64 } => {
+            !media_type.trim().is_empty()
+                && !base64.trim().is_empty()
+                && base64
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
+        }
+    }
 }
 
 fn finite_positive(value: f32) -> bool {

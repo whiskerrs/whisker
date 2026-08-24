@@ -51,6 +51,9 @@
       "oneOf": [
         { "$ref": "#/$defs/attachSurface" },
         { "$ref": "#/$defs/registerRasterResource" },
+        { "$ref": "#/$defs/loadRasterResource" },
+        { "$ref": "#/$defs/releaseRasterResource" },
+        { "$ref": "#/$defs/checkpointResource" },
         { "$ref": "#/$defs/presentBox" },
         { "$ref": "#/$defs/presentScene" },
         { "$ref": "#/$defs/checkpoint" },
@@ -86,6 +89,70 @@
           "items": { "$ref": "#/$defs/color" }
         }
       }
+    },
+    "resourceSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "url" },
+            "value": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "media_type", "base64"],
+          "properties": {
+            "kind": { "const": "bytes" },
+            "media_type": { "type": "string", "minLength": 1 },
+            "base64": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9+/]+={0,2}$" }
+          }
+        }
+      ]
+    },
+    "loadRasterResource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "generation", "source"],
+      "properties": {
+        "type": { "const": "load_raster_resource" },
+        "id": { "type": "integer", "minimum": 1 },
+        "generation": { "type": "integer", "minimum": 1 },
+        "source": { "$ref": "#/$defs/resourceSource" }
+      }
+    },
+    "releaseRasterResource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "generation"],
+      "properties": {
+        "type": { "const": "release_raster_resource" },
+        "id": { "type": "integer", "minimum": 1 },
+        "generation": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "checkpointResource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "generation", "state"],
+      "properties": {
+        "type": { "const": "checkpoint_resource" },
+        "id": { "type": "integer", "minimum": 1 },
+        "generation": { "type": "integer", "minimum": 1 },
+        "state": { "enum": ["ready", "failed", "released"] },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "ready" } } },
+          "then": { "required": ["width", "height"] },
+          "else": { "not": { "anyOf": [{ "required": ["width"] }, { "required": ["height"] }] } }
+        }
+      ]
     },
     "presentBox": {
       "type": "object",
