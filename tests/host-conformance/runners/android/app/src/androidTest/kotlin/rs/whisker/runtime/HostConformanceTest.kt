@@ -149,7 +149,10 @@ private class Driver(
                             command.getString("name") ==
                             "paint.background-layers.clip-padding-box" ||
                             command.getString("name") == "paint.background-layers.repeat-x" ||
-                            command.getString("name") == "paint.background-layers.repeat-y",
+                            command.getString("name") == "paint.background-layers.repeat-y" ||
+                            command.getString("name") == "paint.background-layers.repeat-space" ||
+                            command.getString("name") ==
+                            "paint.background-layers.repeat-space-single",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -458,6 +461,7 @@ private class Driver(
     private fun backgroundRepeat(value: String): Int = when (value) {
         "repeat" -> 0
         "no_repeat" -> 1
+        "space" -> 2
         else -> error("unsupported background repeat: $value")
     }
 
