@@ -315,6 +315,59 @@ final class HostConformanceTests: XCTestCase {
             .failed
         )
     }
+
+    func testResourceChannelCopiesBorrowedBytesAndEncodesTypedEvents() throws {
+        let view = WhiskerView(frame: .zero)
+        var bytes = try fixturePNGData()
+        let mediaType = Array("image/png".utf8CString)
+        let accepted = mediaType.withUnsafeBufferPointer { mediaBuffer in
+            bytes.withUnsafeBytes { dataBuffer in
+                var command = WhiskerMobileResourceCommand()
+                command.command = UInt32(WHISKER_RESOURCE_COMMAND_LOAD)
+                command.kind = UInt32(WHISKER_RESOURCE_RASTER_IMAGE)
+                command.source = UInt32(WHISKER_RESOURCE_SOURCE_BYTES)
+                command.resource = 19
+                command.generation = 1
+                command.identifier = WhiskerStringRef(
+                    ptr: mediaBuffer.baseAddress,
+                    len: mediaBuffer.count - 1
+                )
+                command.data = WhiskerBytesRef(
+                    ptr: dataBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    len: dataBuffer.count
+                )
+                return withUnsafePointer(to: &command) { pointer in
+                    whiskerIOSResourceCommand(
+                        Unmanaged.passUnretained(view).toOpaque(),
+                        pointer
+                    )
+                }
+            }
+        }
+        XCTAssertTrue(accepted)
+        bytes.resetBytes(in: bytes.startIndex..<bytes.endIndex)
+        XCTAssertEqual(
+            try awaitResourceState(in: view, id: 19, generation: 1),
+            .ready(width: 2, height: 2)
+        )
+
+        let failed = WhiskerRasterResourceEvent(
+            id: 19,
+            generation: 2,
+            state: .failed,
+            failureCode: .decode,
+            diagnostic: "invalid png"
+        )
+        let encoded = withMobileResourceEvent(failed) { raw -> Bool in
+            XCTAssertEqual(raw.status, UInt32(WHISKER_RESOURCE_EVENT_FAILED))
+            XCTAssertEqual(raw.failure_code, UInt32(WHISKER_RESOURCE_FAILURE_DECODE))
+            XCTAssertEqual(raw.resource, 19)
+            XCTAssertEqual(raw.generation, 2)
+            XCTAssertEqual(hostString(raw.diagnostic), "invalid png")
+            return true
+        }
+        XCTAssertEqual(encoded, true)
+    }
 }
 
 @MainActor
@@ -433,28 +486,46 @@ private final class Driver {
         let id = UInt64(try number(command, "id"))
         let generation = UInt64(try number(command, "generation"))
         let fixture = try object(command, "source")
-        let source: WhiskerRasterResourceSource
+        let sourceKind: UInt32
+        let identifier: String
+        let data: Data
         switch try string(fixture, "kind") {
         case "bytes":
-            guard let data = Data(base64Encoded: try string(fixture, "base64")) else {
+            guard let decoded = Data(base64Encoded: try string(fixture, "base64")) else {
                 throw Failure("invalid base64 raster resource")
             }
-            source = .bytes(mediaType: try string(fixture, "media_type"), data: data)
+            sourceKind = UInt32(WHISKER_RESOURCE_SOURCE_BYTES)
+            identifier = try string(fixture, "media_type")
+            data = decoded
         case "url":
-            source = .url(try string(fixture, "value"))
+            sourceKind = UInt32(WHISKER_RESOURCE_SOURCE_URL)
+            identifier = try string(fixture, "value")
+            data = Data()
         default:
             throw Failure("unsupported raster resource source")
         }
-        guard view.loadRasterResource(id: id, generation: generation, source: source) else {
+        guard dispatchResourceLoad(
+            to: view,
+            id: id,
+            generation: generation,
+            source: sourceKind,
+            identifier: identifier,
+            data: data
+        ) else {
             throw Failure("load raster resource")
         }
     }
 
     private func releaseRasterResource(_ command: [String: Any]) throws {
-        guard view.releaseRasterResource(
-            id: UInt64(try number(command, "id")),
-            generation: UInt64(try number(command, "generation"))
-        ) else {
+        var raw = WhiskerMobileResourceCommand()
+        raw.command = UInt32(WHISKER_RESOURCE_COMMAND_RELEASE)
+        raw.source = UInt32(WHISKER_RESOURCE_SOURCE_NONE)
+        raw.resource = UInt64(try number(command, "id"))
+        raw.generation = UInt64(try number(command, "generation"))
+        let accepted = withUnsafePointer(to: &raw) { pointer in
+            whiskerIOSResourceCommand(Unmanaged.passUnretained(view).toOpaque(), pointer)
+        }
+        guard accepted else {
             throw Failure("release raster resource")
         }
     }
@@ -877,6 +948,39 @@ private func awaitResourceState(
 private func fixturePNGData() throws -> Data {
     let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAF0lEQVR4nAXBAQEAAACCIKb33EBkQpUOQdYIeRyCeLsAAAAASUVORK5CYII="
     return try unwrap(Data(base64Encoded: encoded), "fixture PNG")
+}
+
+@MainActor
+private func dispatchResourceLoad(
+    to view: WhiskerView,
+    id: UInt64,
+    generation: UInt64,
+    source: UInt32,
+    identifier: String,
+    data: Data
+) -> Bool {
+    let identifierBytes = Array(identifier.utf8CString)
+    return identifierBytes.withUnsafeBufferPointer { identifierBuffer in
+        data.withUnsafeBytes { dataBuffer in
+            var raw = WhiskerMobileResourceCommand()
+            raw.command = UInt32(WHISKER_RESOURCE_COMMAND_LOAD)
+            raw.kind = UInt32(WHISKER_RESOURCE_RASTER_IMAGE)
+            raw.source = source
+            raw.resource = id
+            raw.generation = generation
+            raw.identifier = WhiskerStringRef(
+                ptr: identifierBuffer.baseAddress,
+                len: identifierBuffer.count - 1
+            )
+            raw.data = WhiskerBytesRef(
+                ptr: dataBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                len: dataBuffer.count
+            )
+            return withUnsafePointer(to: &raw) { pointer in
+                whiskerIOSResourceCommand(Unmanaged.passUnretained(view).toOpaque(), pointer)
+            }
+        }
+    }
 }
 
 private struct Pixels {

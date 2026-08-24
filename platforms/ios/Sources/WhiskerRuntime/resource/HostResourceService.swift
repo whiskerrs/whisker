@@ -6,6 +6,16 @@ import ImageIO
 public enum WhiskerRasterResourceSource {
     case bytes(mediaType: String, data: Data)
     case url(String)
+    case bundledAsset(String)
+}
+
+public enum WhiskerRasterResourceFailureCode: Equatable {
+    case notFound
+    case denied
+    case network
+    case decode
+    case cancelled
+    case unsupported
 }
 
 /// Observable lifecycle state for one exact resource generation.
@@ -21,12 +31,22 @@ public struct WhiskerRasterResourceEvent: Equatable {
     public let id: UInt64
     public let generation: UInt64
     public let state: WhiskerRasterResourceState
+    public let failureCode: WhiskerRasterResourceFailureCode?
+    public let diagnostic: String?
 }
 
 typealias HostResourceURLLoader = (
     URL,
     @escaping (Result<Data, Error>) -> Void
 ) -> () -> Void
+
+typealias HostResourceAssetLoader = (String) -> Result<Data, Error>
+
+private enum HostResourceAcquisitionError: Error {
+    case notFound
+    case denied
+    case network
+}
 
 /// Acquires and decodes raster resources independently from frame application.
 ///
@@ -42,6 +62,7 @@ final class HostResourceService {
 
     private let store: HostResourceStore
     private let urlLoader: HostResourceURLLoader
+    private let assetLoader: HostResourceAssetLoader
     private let decodeQueue: DispatchQueue
     private var latestGenerations = [UInt64: UInt64]()
     private var currentGenerations = [UInt64: UInt64]()
@@ -57,11 +78,13 @@ final class HostResourceService {
             label: "dev.whisker.resource-decode",
             qos: .userInitiated
         ),
-        urlLoader: @escaping HostResourceURLLoader = HostResourceService.loadURL
+        urlLoader: @escaping HostResourceURLLoader = HostResourceService.loadURL,
+        assetLoader: @escaping HostResourceAssetLoader = HostResourceService.loadBundledAsset
     ) {
         self.store = store
         self.decodeQueue = decodeQueue
         self.urlLoader = urlLoader
+        self.assetLoader = assetLoader
     }
 
     @discardableResult
@@ -77,18 +100,18 @@ final class HostResourceService {
         switch source {
         case let .bytes(mediaType, data):
             guard !mediaType.isEmpty, mediaType.lowercased().hasPrefix("image/"), !data.isEmpty else {
-                failIfCurrent(id: id, generation: generation)
+                failIfCurrent(id: id, generation: generation, code: .unsupported)
                 return true
             }
             decode(data, id: id, generation: generation)
         case let .url(value):
             guard let url = URL(string: value), let scheme = url.scheme?.lowercased() else {
-                failIfCurrent(id: id, generation: generation)
+                failIfCurrent(id: id, generation: generation, code: .unsupported)
                 return true
             }
             if scheme == "data" {
                 guard let data = Self.pngData(from: value) else {
-                    failIfCurrent(id: id, generation: generation)
+                    failIfCurrent(id: id, generation: generation, code: .decode)
                     return true
                 }
                 decode(data, id: id, generation: generation)
@@ -101,18 +124,29 @@ final class HostResourceService {
                         switch result {
                         case let .success(data):
                             guard !data.isEmpty else {
-                                self.failIfCurrent(id: id, generation: generation)
+                                self.failIfCurrent(id: id, generation: generation, code: .network)
                                 return
                             }
                             self.decode(data, id: id, generation: generation)
-                        case .failure:
-                            self.failIfCurrent(id: id, generation: generation)
+                        case let .failure(error):
+                            self.failIfCurrent(
+                                id: id,
+                                generation: generation,
+                                code: Self.failureCode(for: error),
+                                diagnostic: error.localizedDescription
+                            )
                         }
                     }
                 }
             } else {
-                failIfCurrent(id: id, generation: generation)
+                failIfCurrent(id: id, generation: generation, code: .unsupported)
             }
+        case let .bundledAsset(identifier):
+            guard !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                failIfCurrent(id: id, generation: generation, code: .notFound)
+                return true
+            }
+            loadBundledAsset(identifier, id: id, generation: generation)
         }
         return true
     }
@@ -146,7 +180,7 @@ final class HostResourceService {
                       self.currentGenerations[id] == generation,
                       self.states[Key(id: id, generation: generation)] == .loading else { return }
                 guard let image, self.store.registerRasterImage(image, id: id) else {
-                    self.failIfCurrent(id: id, generation: generation)
+                    self.failIfCurrent(id: id, generation: generation, code: .decode)
                     return
                 }
                 self.installedGenerations[id] = generation
@@ -159,15 +193,63 @@ final class HostResourceService {
         }
     }
 
-    private func failIfCurrent(id: UInt64, generation: UInt64) {
-        guard currentGenerations[id] == generation else { return }
-        pendingCancellations.removeValue(forKey: id)
-        setState(.failed, id: id, generation: generation)
+    private func loadBundledAsset(_ identifier: String, id: UInt64, generation: UInt64) {
+        let loader = assetLoader
+        decodeQueue.async { [weak self] in
+            let result = loader(identifier)
+            DispatchQueue.main.async {
+                guard let self, self.currentGenerations[id] == generation else { return }
+                switch result {
+                case let .success(data):
+                    guard !data.isEmpty else {
+                        self.failIfCurrent(id: id, generation: generation, code: .notFound)
+                        return
+                    }
+                    self.decode(data, id: id, generation: generation)
+                case let .failure(error):
+                    self.failIfCurrent(
+                        id: id,
+                        generation: generation,
+                        code: Self.failureCode(for: error),
+                        diagnostic: error.localizedDescription
+                    )
+                }
+            }
+        }
     }
 
-    private func setState(_ state: WhiskerRasterResourceState, id: UInt64, generation: UInt64) {
+    private func failIfCurrent(
+        id: UInt64,
+        generation: UInt64,
+        code: WhiskerRasterResourceFailureCode,
+        diagnostic: String? = nil
+    ) {
+        guard currentGenerations[id] == generation else { return }
+        pendingCancellations.removeValue(forKey: id)
+        setState(
+            .failed,
+            id: id,
+            generation: generation,
+            failureCode: code,
+            diagnostic: diagnostic
+        )
+    }
+
+    private func setState(
+        _ state: WhiskerRasterResourceState,
+        id: UInt64,
+        generation: UInt64,
+        failureCode: WhiskerRasterResourceFailureCode? = nil,
+        diagnostic: String? = nil
+    ) {
         states[Key(id: id, generation: generation)] = state
-        eventHandler?(WhiskerRasterResourceEvent(id: id, generation: generation, state: state))
+        eventHandler?(WhiskerRasterResourceEvent(
+            id: id,
+            generation: generation,
+            state: state,
+            failureCode: failureCode,
+            diagnostic: diagnostic
+        ))
     }
 
     private nonisolated static func pngData(from value: String) -> Data? {
@@ -192,7 +274,13 @@ final class HostResourceService {
             }
             if let response = response as? HTTPURLResponse,
                !(200...299).contains(response.statusCode) {
-                completion(.failure(URLError(.badServerResponse)))
+                if response.statusCode == 404 {
+                    completion(.failure(HostResourceAcquisitionError.notFound))
+                } else if response.statusCode == 401 || response.statusCode == 403 {
+                    completion(.failure(HostResourceAcquisitionError.denied))
+                } else {
+                    completion(.failure(HostResourceAcquisitionError.network))
+                }
                 return
             }
             guard let data else {
@@ -203,5 +291,39 @@ final class HostResourceService {
         }
         task.resume()
         return { task.cancel() }
+    }
+
+    private nonisolated static func loadBundledAsset(_ identifier: String) -> Result<Data, Error> {
+        let path = identifier as NSString
+        let file = path.lastPathComponent as NSString
+        let extensionName = file.pathExtension
+        let name = extensionName.isEmpty ? file as String : file.deletingPathExtension
+        let directory = path.deletingLastPathComponent
+        guard let url = Bundle.main.url(
+            forResource: name,
+            withExtension: extensionName.isEmpty ? nil : extensionName,
+            subdirectory: directory.isEmpty || directory == "." ? nil : directory
+        ) else {
+            return .failure(HostResourceAcquisitionError.notFound)
+        }
+        do {
+            return .success(try Data(contentsOf: url, options: .mappedIfSafe))
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    private nonisolated static func failureCode(
+        for error: Error
+    ) -> WhiskerRasterResourceFailureCode {
+        if let error = error as? HostResourceAcquisitionError {
+            switch error {
+            case .notFound: return .notFound
+            case .denied: return .denied
+            case .network: return .network
+            }
+        }
+        if let error = error as? URLError, error.code == .cancelled { return .cancelled }
+        return .network
     }
 }

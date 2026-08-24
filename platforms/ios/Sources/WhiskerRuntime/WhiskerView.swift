@@ -10,6 +10,7 @@ public final class WhiskerView: UIView {
     private let modules = HostModuleDispatcher()
     private let resources = HostResourceStore()
     private lazy var resourceService = HostResourceService(store: resources)
+    private var rasterResourceObserver: ((WhiskerRasterResourceEvent) -> Void)?
     private lazy var scene = HostScene(
         root: self,
         resources: resources,
@@ -31,6 +32,9 @@ public final class WhiskerView: UIView {
             name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
+        resourceService.eventHandler = { [weak self] event in
+            DispatchQueue.main.async { self?.dispatchRasterResourceEvent(event) }
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(applicationWillResignActive),
@@ -75,7 +79,7 @@ public final class WhiskerView: UIView {
     public func observeRasterResourceEvents(
         _ handler: ((WhiskerRasterResourceEvent) -> Void)?
     ) {
-        resourceService.eventHandler = handler
+        rasterResourceObserver = handler
     }
 
     deinit {
@@ -120,6 +124,7 @@ public final class WhiskerView: UIView {
             whiskerIOSBootstrap, token,
             whiskerIOSMeasure, token,
             whiskerIOSPresentFrame, token,
+            whiskerIOSResourceCommand, token,
             whiskerIOSInvokeModule, whiskerIOSObserveModule, token
         )
         if runtimeHandle != nil {
@@ -128,6 +133,36 @@ public final class WhiskerView: UIView {
         } else {
             Unmanaged<WhiskerView>.fromOpaque(token).release()
             hostToken = nil
+        }
+    }
+
+    func applyResourceCommand(_ command: HostResourceCommand) -> Bool {
+        switch command {
+        case let .load(id, generation, kind, source):
+            guard kind == .rasterImage else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.dispatchRasterResourceEvent(WhiskerRasterResourceEvent(
+                        id: id,
+                        generation: generation,
+                        state: .failed,
+                        failureCode: .unsupported,
+                        diagnostic: "resource kind is unsupported by the iOS Host"
+                    ))
+                }
+                return true
+            }
+            return resourceService.load(id: id, generation: generation, source: source)
+        case let .release(id, generation):
+            _ = resourceService.release(id: id, generation: generation)
+            return true
+        }
+    }
+
+    private func dispatchRasterResourceEvent(_ event: WhiskerRasterResourceEvent) {
+        rasterResourceObserver?(event)
+        guard let handle = runtimeHandle else { return }
+        _ = withMobileResourceEvent(event) { raw in
+            whiskerViewDispatchResourceEvent(handle, &raw)
         }
     }
 

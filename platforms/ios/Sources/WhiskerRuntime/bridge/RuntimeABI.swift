@@ -13,6 +13,9 @@ typealias WhiskerPresentFrame = @convention(c) (
     UnsafeMutableRawPointer?, UnsafePointer<WhiskerMobileFrame>?,
     UnsafeMutablePointer<WhiskerMobileApplyResponse>?
 ) -> Bool
+typealias WhiskerResourceCommandHost = @convention(c) (
+    UnsafeMutableRawPointer?, UnsafePointer<WhiskerMobileResourceCommand>?
+) -> Bool
 typealias WhiskerModuleResult = @convention(c) (
     UnsafeMutableRawPointer?, UnsafePointer<WhiskerValueRaw>?
 ) -> Void
@@ -39,6 +42,7 @@ func whiskerViewCreate(
     _ bootstrap: WhiskerBootstrapHost, _ bootstrapData: UnsafeMutableRawPointer?,
     _ measure: WhiskerMeasureHost, _ measureData: UnsafeMutableRawPointer?,
     _ presentFrame: WhiskerPresentFrame, _ presentData: UnsafeMutableRawPointer?,
+    _ resourceCommand: WhiskerResourceCommandHost, _ resourceData: UnsafeMutableRawPointer?,
     _ invokeModule: WhiskerInvokeModule, _ observeModule: WhiskerObserveModule,
     _ moduleData: UnsafeMutableRawPointer?
 ) -> UnsafeMutableRawPointer?
@@ -67,6 +71,12 @@ func whiskerViewDispatchModuleEvent(
     _ payload: UnsafePointer<WhiskerValueRaw>?
 ) -> Bool
 
+@_silgen_name("whisker_view_dispatch_resource_event")
+func whiskerViewDispatchResourceEvent(
+    _ handle: UnsafeMutableRawPointer?,
+    _ event: UnsafePointer<WhiskerMobileResourceEvent>?
+) -> Bool
+
 let whiskerIOSRequestFrame: WhiskerRequestFrame = { data in
     guard let data else { return }
     let view = Unmanaged<WhiskerView>.fromOpaque(data).takeUnretainedValue()
@@ -88,6 +98,17 @@ let whiskerIOSPresentFrame: WhiskerPresentFrame = { data, frame, response in
     return DispatchQueue.main.sync {
         view.applyFrame(frame.pointee, response: &response.pointee)
     }
+}
+
+let whiskerIOSResourceCommand: WhiskerResourceCommandHost = { data, command in
+    guard let data, let command, let decoded = hostResourceCommand(command.pointee) else {
+        return false
+    }
+    let view = Unmanaged<WhiskerView>.fromOpaque(data).takeUnretainedValue()
+    if Thread.isMainThread {
+        return view.applyResourceCommand(decoded)
+    }
+    return DispatchQueue.main.sync { view.applyResourceCommand(decoded) }
 }
 
 let whiskerIOSInvokeModule: WhiskerInvokeModule = {
