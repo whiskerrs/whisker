@@ -361,6 +361,17 @@ fn has_initial_background_geometry(layer: &crate::BackgroundLayer) -> bool {
 }
 
 fn has_explicit_background_geometry(layer: &crate::BackgroundLayer) -> bool {
+    let resource_backed = matches!(layer.image, crate::PaintImage::Resource(_));
+    let supported_size = match layer.size {
+        crate::BackgroundSize::Auto
+        | crate::BackgroundSize::Cover
+        | crate::BackgroundSize::Contain => resource_backed,
+        crate::BackgroundSize::Explicit { width, height } => match (width, height) {
+            (Some(width), Some(height)) => width.is_valid() && height.is_valid(),
+            (Some(value), None) | (None, Some(value)) => resource_backed && value.is_valid(),
+            (None, None) => false,
+        },
+    };
     [
         layer.position.x.length,
         layer.position.x.fraction,
@@ -369,13 +380,7 @@ fn has_explicit_background_geometry(layer: &crate::BackgroundLayer) -> bool {
     ]
     .into_iter()
     .all(f32::is_finite)
-        && matches!(
-            layer.size,
-            crate::BackgroundSize::Explicit {
-                width: Some(width),
-                height: Some(height)
-            } if width.is_valid() && height.is_valid()
-        )
+        && supported_size
         && matches!(
             layer.origin,
             crate::PaintBox::Border | crate::PaintBox::Padding | crate::PaintBox::Content
@@ -761,6 +766,44 @@ mod tests {
         };
         assert_eq!(
             packet(vec![operation(incomplete_size)]).required_capabilities(),
+            vec![RenderCapability::BackgroundLayers]
+        );
+
+        for size in [
+            BackgroundSize::Auto,
+            BackgroundSize::Cover,
+            BackgroundSize::Contain,
+            BackgroundSize::Explicit {
+                width: Some(PaintLengthPercentage::default()),
+                height: None,
+            },
+            BackgroundSize::Explicit {
+                width: None,
+                height: Some(PaintLengthPercentage::default()),
+            },
+        ] {
+            let mut layer = explicit_no_repeat(background_layer(PaintImage::Resource(
+                ResourceId::new(1).unwrap(),
+            )));
+            layer.size = size;
+            assert_eq!(
+                packet(vec![operation(layer)]).required_capabilities(),
+                vec![
+                    RenderCapability::BackgroundImageResources,
+                    RenderCapability::BackgroundGeometry,
+                ]
+            );
+        }
+
+        let mut missing_resource_size = explicit_no_repeat(background_layer(PaintImage::Resource(
+            ResourceId::new(1).unwrap(),
+        )));
+        missing_resource_size.size = BackgroundSize::Explicit {
+            width: None,
+            height: None,
+        };
+        assert_eq!(
+            packet(vec![operation(missing_resource_size)]).required_capabilities(),
             vec![RenderCapability::BackgroundLayers]
         );
 
