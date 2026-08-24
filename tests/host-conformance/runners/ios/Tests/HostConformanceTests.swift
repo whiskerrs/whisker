@@ -266,6 +266,55 @@ final class HostConformanceTests: XCTestCase {
             ]
         )
     }
+
+    func testResourceServiceIgnoresStaleCompletionAndOldRelease() throws {
+        let store = HostResourceStore()
+        var completions = [(Result<Data, Error>) -> Void]()
+        let service = HostResourceService(store: store, urlLoader: { _, completion in
+            completions.append(completion)
+            return {}
+        })
+
+        XCTAssertTrue(service.load(
+            id: 7,
+            generation: 1,
+            source: .url("https://example.com/old.png")
+        ))
+        XCTAssertTrue(service.load(
+            id: 7,
+            generation: 2,
+            source: .url("https://example.com/new.png")
+        ))
+        XCTAssertEqual(completions.count, 2)
+
+        completions[1](.success(try fixturePNGData()))
+        XCTAssertEqual(
+            try awaitResourceState(in: service, id: 7, generation: 2),
+            .ready(width: 2, height: 2)
+        )
+        completions[0](.failure(URLError(.cancelled)))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        XCTAssertEqual(service.state(id: 7, generation: 2), .ready(width: 2, height: 2))
+
+        XCTAssertTrue(service.release(id: 7, generation: 1))
+        XCTAssertNotNil(store.rasterImage(id: 7))
+        XCTAssertEqual(service.state(id: 7, generation: 1), .released)
+        XCTAssertTrue(service.release(id: 7, generation: 2))
+        XCTAssertNil(store.rasterImage(id: 7))
+    }
+
+    func testResourceServiceReportsDecodeFailure() throws {
+        let service = HostResourceService(store: HostResourceStore())
+        XCTAssertTrue(service.load(
+            id: 8,
+            generation: 1,
+            source: .bytes(mediaType: "image/png", data: Data([0, 1, 2, 3]))
+        ))
+        XCTAssertEqual(
+            try awaitResourceState(in: service, id: 8, generation: 1),
+            .failed
+        )
+    }
 }
 
 @MainActor
@@ -300,6 +349,12 @@ private final class Driver {
                 surfaceScale = CGFloat(try number(command, "scale"))
             case "register_raster_resource":
                 try registerRasterResource(command)
+            case "load_raster_resource":
+                try loadRasterResource(command)
+            case "release_raster_resource":
+                try releaseRasterResource(command)
+            case "checkpoint_resource":
+                try checkpointRasterResource(command)
             case "present_box":
                 try present(command)
             case "present_scene":
@@ -324,7 +379,8 @@ private final class Driver {
                     name == "paint.background-layers.origin-content-box" ||
                     name == "paint.background-layers.clip-content-box" ||
                     name == "paint.background-layers.stacking" ||
-                    name == "paint.background-layers.resource-image" else {
+                    name == "paint.background-layers.resource-image" ||
+                    name == "paint.background-layers.resource-lifecycle" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -370,6 +426,54 @@ private final class Driver {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ), let image = context.makeImage(), view.registerRasterResource(id: id, image: image) else {
             throw Failure("register raster resource")
+        }
+    }
+
+    private func loadRasterResource(_ command: [String: Any]) throws {
+        let id = UInt64(try number(command, "id"))
+        let generation = UInt64(try number(command, "generation"))
+        let fixture = try object(command, "source")
+        let source: WhiskerRasterResourceSource
+        switch try string(fixture, "kind") {
+        case "bytes":
+            guard let data = Data(base64Encoded: try string(fixture, "base64")) else {
+                throw Failure("invalid base64 raster resource")
+            }
+            source = .bytes(mediaType: try string(fixture, "media_type"), data: data)
+        case "url":
+            source = .url(try string(fixture, "value"))
+        default:
+            throw Failure("unsupported raster resource source")
+        }
+        guard view.loadRasterResource(id: id, generation: generation, source: source) else {
+            throw Failure("load raster resource")
+        }
+    }
+
+    private func releaseRasterResource(_ command: [String: Any]) throws {
+        guard view.releaseRasterResource(
+            id: UInt64(try number(command, "id")),
+            generation: UInt64(try number(command, "generation"))
+        ) else {
+            throw Failure("release raster resource")
+        }
+    }
+
+    private func checkpointRasterResource(_ command: [String: Any]) throws {
+        let id = UInt64(try number(command, "id"))
+        let generation = UInt64(try number(command, "generation"))
+        let expected = try string(command, "state")
+        let state = try awaitResourceState(in: view, id: id, generation: generation)
+        switch (expected, state) {
+        case let ("ready", .ready(width, height)):
+            guard width == Int(try number(command, "width")),
+                  height == Int(try number(command, "height")) else {
+                throw Failure("raster resource dimensions disagree")
+            }
+        case ("failed", .failed), ("released", .released):
+            break
+        default:
+            throw Failure("raster resource state disagrees")
         }
     }
 
@@ -732,6 +836,47 @@ private func setContentScale(_ scale: CGFloat, in view: UIView) {
     view.contentScaleFactor = scale
     view.setNeedsDisplay()
     view.subviews.forEach { setContentScale(scale, in: $0) }
+}
+
+@MainActor
+private func awaitResourceState(
+    in view: WhiskerView,
+    id: UInt64,
+    generation: UInt64
+) throws -> WhiskerRasterResourceState {
+    try awaitResourceState(id: id, generation: generation) {
+        view.rasterResourceState(id: id, generation: generation)
+    }
+}
+
+@MainActor
+private func awaitResourceState(
+    in service: HostResourceService,
+    id: UInt64,
+    generation: UInt64
+) throws -> WhiskerRasterResourceState {
+    try awaitResourceState(id: id, generation: generation) {
+        service.state(id: id, generation: generation)
+    }
+}
+
+@MainActor
+private func awaitResourceState(
+    id: UInt64,
+    generation: UInt64,
+    read: () -> WhiskerRasterResourceState?
+) throws -> WhiskerRasterResourceState {
+    let deadline = Date().addingTimeInterval(5)
+    repeat {
+        if let state = read(), state != .loading { return state }
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+    } while Date() < deadline
+    throw Failure("timed out waiting for raster resource \(id):\(generation)")
+}
+
+private func fixturePNGData() throws -> Data {
+    let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAF0lEQVR4nAXBAQEAAACCIKb33EBkQpUOQdYIeRyCeLsAAAAASUVORK5CYII="
+    return try unwrap(Data(base64Encoded: encoded), "fixture PNG")
 }
 
 private struct Pixels {
