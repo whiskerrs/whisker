@@ -659,6 +659,13 @@ mod tests {
                 packet(vec![operation(layer)]).required_capabilities(),
                 vec![RenderCapability::BackgroundLayers]
             );
+
+            let mut layer = explicit_no_repeat(basic_linear_layer());
+            layer.repeat_y = unsupported_repeat;
+            assert_eq!(
+                packet(vec![operation(layer)]).required_capabilities(),
+                vec![RenderCapability::BackgroundLayers]
+            );
         }
 
         let mut positioned = explicit_no_repeat(basic_linear_layer());
