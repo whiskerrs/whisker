@@ -533,10 +533,12 @@ continues to identify the image only by `ResourceId`, and the receiver resolves
 the final tile size from that cached metadata. This avoids duplicating mutable
 resource facts in `FramePacket` while keeping the geometry operation semantic.
 Gradients have no intrinsic dimensions, so only their initial `auto` and
-two-axis explicit sizes are currently accepted. Fixed/local attachment, the
-aspect-ratio coupling required when `round` changes only one tile axis, text
-clipping, and non-normal blend modes remain deferred. Unsupported combinations
-are rejected transactionally rather than silently approximated.
+two-axis explicit sizes are currently accepted. When `round` changes exactly
+one tile axis of a resource-backed image and the opposite explicit-size axis is
+`auto`, every Host rescales that opposite axis to restore the intrinsic aspect
+ratio after rounding, as required by CSS Backgrounds. Fixed/local attachment,
+text clipping, and non-normal blend modes remain deferred. Unsupported
+combinations are rejected transactionally rather than silently approximated.
 
 Adding the semantic value does not declare a Host implementation complete.
 Until a Host advertises and implements the corresponding capability, its
