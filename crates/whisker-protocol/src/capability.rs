@@ -333,32 +333,32 @@ mod tests {
         }
     }
 
+    fn basic_gradient_stops() -> Vec<GradientStop> {
+        vec![
+            GradientStop {
+                color: PaintColor::Named("black".into()),
+                position: Some(PaintCoordinate::default()),
+            },
+            GradientStop {
+                color: PaintColor::Named("white".into()),
+                position: Some(PaintCoordinate {
+                    length: 0.0,
+                    fraction: 1.0,
+                }),
+            },
+        ]
+    }
+
     fn basic_linear_layer() -> BackgroundLayer {
         background_layer(PaintImage::LinearGradient {
             angle_degrees: 90.0,
             repeating: false,
-            stops: vec![
-                GradientStop {
-                    color: PaintColor::Named("black".into()),
-                    position: Some(PaintCoordinate::default()),
-                },
-                GradientStop {
-                    color: PaintColor::Named("white".into()),
-                    position: Some(PaintCoordinate {
-                        length: 0.0,
-                        fraction: 1.0,
-                    }),
-                },
-            ],
+            stops: basic_gradient_stops(),
         })
     }
 
     fn basic_radial_layer() -> BackgroundLayer {
-        let mut layer = basic_linear_layer();
-        let PaintImage::LinearGradient { stops, .. } = layer.image else {
-            unreachable!()
-        };
-        layer.image = PaintImage::RadialGradient {
+        background_layer(PaintImage::RadialGradient {
             shape: crate::RadialGradientShape::Ellipse,
             extent: crate::RadialGradientExtent::Explicit,
             center: PaintPosition::default(),
@@ -373,9 +373,8 @@ mod tests {
                 },
             )),
             repeating: false,
-            stops,
-        };
-        layer
+            stops: basic_gradient_stops(),
+        })
     }
 
     #[test]
