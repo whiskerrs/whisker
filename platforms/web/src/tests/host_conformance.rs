@@ -3,7 +3,8 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use whisker::ElementRegistry;
 use whisker_engine::FrameSink;
 use whisker_host_conformance::{
-    ColorFixture, Command, Manifest, SCHEMA_VERSION, Scenario, ScenarioSide,
+    BorderFixture, BorderStyleFixture, ColorFixture, Command, Manifest, SCHEMA_VERSION, Scenario,
+    ScenarioSide,
 };
 use whisker_protocol::{
     BorderLineStyle, BoxPaint, FrameHeader, FrameMode, FramePacket, LayoutGeometry, LayoutRect,
@@ -11,7 +12,8 @@ use whisker_protocol::{
     PaintLengthPercentage, ProtocolVersion, SurfaceId,
 };
 
-use super::{DomFrameSink, built_in_element_factories};
+use crate::module_api::built_in_element_factories;
+use crate::scene::frame_sink::DomFrameSink;
 
 const MANIFEST: &str = include_str!("../../../../tests/host-conformance/manifest.json");
 
@@ -20,6 +22,14 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 struct Driver {
     root: web_sys::Element,
     sink: DomFrameSink,
+    expected_box: Option<ExpectedBox>,
+}
+
+#[derive(Clone, Debug)]
+struct ExpectedBox {
+    rect: [f32; 4],
+    background: ColorFixture,
+    border: Option<BorderFixture>,
 }
 
 impl Driver {
@@ -39,7 +49,11 @@ impl Driver {
             &built_in_element_factories(),
         )
         .unwrap();
-        Self { root, sink }
+        Self {
+            root,
+            sink,
+            expected_box: None,
+        }
     }
 
     fn execute(&mut self, side: &ScenarioSide) {
@@ -63,6 +77,11 @@ impl Driver {
                 } => {
                     let packet = packet(*revision, *rect, background, border.as_ref());
                     self.sink.present(&packet).unwrap();
+                    self.expected_box = Some(ExpectedBox {
+                        rect: *rect,
+                        background: background.clone(),
+                        border: border.clone(),
+                    });
                 }
                 Command::Checkpoint { name } => {
                     assert_eq!(name, "paint.box");
@@ -79,24 +98,65 @@ impl Driver {
     }
 
     fn assert_box_is_projected(&self) {
+        let expected = self
+            .expected_box
+            .as_ref()
+            .expect("paint checkpoint must follow present_box");
         let node = self
             .root
             .query_selector("[data-whisker-node='1']")
             .unwrap()
             .expect("fixture box DOM node");
         let html = node.dyn_ref::<web_sys::HtmlElement>().unwrap();
-        assert_eq!(
-            html.style().get_property_value("position").unwrap(),
-            "absolute"
+        let style = html.style();
+
+        assert_style(&style, "position", "absolute");
+        assert_style(&style, "box-sizing", "border-box");
+        assert_style(&style, "left", &fixture_px(expected.rect[0]));
+        assert_style(&style, "top", &fixture_px(expected.rect[1]));
+        assert_style(&style, "width", &fixture_px(expected.rect[2]));
+        assert_style(&style, "height", &fixture_px(expected.rect[3]));
+        assert_style(
+            &style,
+            "background-color",
+            &fixture_color_css(&expected.background),
         );
-        assert!(!html.style().get_property_value("width").unwrap().is_empty());
-        assert!(
-            !html
-                .style()
-                .get_property_value("background-color")
-                .unwrap()
-                .is_empty()
+
+        let (widths, styles, radii) = expected.border.as_ref().map_or(
+            ([0.0; 4], [BorderStyleFixture::None; 4], [0.0; 4]),
+            |border| (border.widths, border.styles, border.radii),
         );
+        for (index, side) in ["top", "right", "bottom", "left"].iter().enumerate() {
+            assert_style(
+                &style,
+                &format!("border-{side}-width"),
+                &fixture_px(widths[index]),
+            );
+            assert_style(
+                &style,
+                &format!("border-{side}-color"),
+                &expected.border.as_ref().map_or_else(
+                    || "rgba(0, 0, 0, 1)".to_owned(),
+                    |border| fixture_color_css(&border.colors[index]),
+                ),
+            );
+            assert_style(
+                &style,
+                &format!("border-{side}-style"),
+                fixture_border_style_css(styles[index]),
+            );
+        }
+        for (index, corner) in ["top-left", "top-right", "bottom-right", "bottom-left"]
+            .iter()
+            .enumerate()
+        {
+            let radius = fixture_px(radii[index]);
+            assert_style(
+                &style,
+                &format!("border-{corner}-radius"),
+                &format!("{radius} {radius}"),
+            );
+        }
     }
 }
 
@@ -140,6 +200,9 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
+        ),
+        "wpt/css/CSS2/borders/border-left-003.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-left-003.json"
         ),
         "core/text-measure-basic.json" => {
             include_str!("../../../../tests/host-conformance/core/text-measure-basic.json")
@@ -310,4 +373,48 @@ fn set_style(element: &web_sys::Element, name: &str, value: &str) {
         .style()
         .set_property(name, value)
         .unwrap();
+}
+
+fn assert_style(style: &web_sys::CssStyleDeclaration, property: &str, expected: &str) {
+    let actual = style.get_property_value(property).unwrap();
+    let document = web_sys::window().unwrap().document().unwrap();
+    let probe = document.create_element("div").unwrap();
+    let probe_style = probe.dyn_ref::<web_sys::HtmlElement>().unwrap().style();
+    probe_style.set_property(property, expected).unwrap();
+    let expected = probe_style.get_property_value(property).unwrap();
+    assert_eq!(
+        actual, expected,
+        "production DOM projection for {property} did not match the fixture"
+    );
+}
+
+fn fixture_px(value: f32) -> String {
+    format!("{value}px")
+}
+
+fn fixture_color_css(value: &ColorFixture) -> String {
+    match value {
+        ColorFixture::Named { value } => value.clone(),
+        ColorFixture::Srgba {
+            red,
+            green,
+            blue,
+            alpha,
+        } => format!("rgba({red}, {green}, {blue}, {alpha})"),
+    }
+}
+
+fn fixture_border_style_css(value: BorderStyleFixture) -> &'static str {
+    match value {
+        BorderStyleFixture::None => "none",
+        BorderStyleFixture::Hidden => "hidden",
+        BorderStyleFixture::Solid => "solid",
+        BorderStyleFixture::Dashed => "dashed",
+        BorderStyleFixture::Dotted => "dotted",
+        BorderStyleFixture::Double => "double",
+        BorderStyleFixture::Groove => "groove",
+        BorderStyleFixture::Ridge => "ridge",
+        BorderStyleFixture::Inset => "inset",
+        BorderStyleFixture::Outset => "outset",
+    }
 }

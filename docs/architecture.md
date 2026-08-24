@@ -87,7 +87,14 @@ while that Host implementation is completed.
                          Rust artifacts return when the retained ABI is wired.
 
    whisker-cng         — Continuous Native Generation: renders
-                         complete gen/<platform>/ projects from Config.
+                         complete gen/<platform>/ projects from Config. Mobile
+                         application targets contain only their composition
+                         root; Host implementation comes from the platform SDK.
+
+   platforms/android   — Gradle SDK libraries: the module API plus the Android
+                         WhiskerView, measurement, retained scene, and paint.
+   platforms/ios       — SwiftPM SDK libraries with the same split between the
+                         module API and UIKit WhiskerRuntime.
 
    platforms/desktop   — shared native Desktop Host services: cosmic-text
                          measurement/prepared glyphs, retained FrameSink
@@ -122,6 +129,8 @@ while that Host implementation is completed.
 | `whisker-dev-server` | Host dev loop, manifest-agnostic. Android/iOS currently use explicit full rebuild → install → relaunch; the retained mobile ABI will re-enable Rust hot reload. | `whisker-cli` |
 | `whisker-build` | Per-platform builds and packaging, including generated mobile shell builds and native macOS `.app` assembly. Legacy artifact helpers remain until migration cleanup. | `whisker-cli`, `whisker-dev-server` |
 | `whisker-cng` | Continuous Native Generation: pure, fingerprint-gated renderer of complete `gen/<platform>/` projects from Config. No CLI surface. | `whisker-cli` |
+| `whisker-runtime-android` | Android Host SDK library. It owns `WhiskerView`, frame scheduling, intrinsic measurement, retained View projection, module dispatch, and paint. Generated apps only compose it from `MainActivity`. | generated `gen/android` app |
+| `WhiskerRuntime` | iOS Host SwiftPM library with the symmetric UIKit ownership. Generated apps receive it transitively through `WhiskerModules` and only compose it from `AppDelegate`. | generated `gen/ios` app |
 | `whisker-desktop` | Common native Rust Desktop Host services and direct runtime composition boundary. It owns cosmic-text intrinsic measurement with reusable prepared content, the transactionally retained Host projection, common frame driving, and wgpu scene lowering, batching, shaders, and painting. Host conformance scenarios can drive measurement and frame presentation without `RuntimeInstance`, record normalized input at a mock Rust sink, and run offscreen GPU checkpoints. It does not own a native event loop or window policy. | macOS/Windows/Linux application shells |
 | `whisker-macos` | macOS application shell preserving the public API consumed by generated projects. It owns winit lifecycle, window creation, viewport/scale observation, redraw scheduling, packaging hooks, and native services. | generated `gen/macos` app |
 | `whisker-windows` | Symmetric Windows application shell over `whisker-desktop`; CNG/build/run integration follows separately. | future generated `gen/windows` app |

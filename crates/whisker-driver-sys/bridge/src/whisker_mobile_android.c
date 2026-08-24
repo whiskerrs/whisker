@@ -244,6 +244,7 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 for (int j=0;j<4;++j) { storage[count++]=p->widths[j].length; storage[count++]=p->widths[j].fraction; }
                 for (int j=0;j<4;++j) append_color(storage, &count, &p->colors[j]);
                 for (int j=0;j<4;++j) { storage[count++]=p->radii[j].length; storage[count++]=p->radii[j].fraction; }
+                for (int j=0;j<4;++j) storage[count++]=(float)p->styles[j];
                 numbers = floats(env, storage, count); names = color_names(env, p); break;
             }
             case WHISKER_OP_TRANSFORM: numbers = floats(env, op->payload, op->payload_count); break;

@@ -228,6 +228,7 @@ impl Driver {
         assert!(rect[0] + rect[2] <= self.logical_size[0]);
         assert!(rect[1] + rect[3] <= self.logical_size[1]);
         let node = NodeId::new(1).unwrap();
+        let expected_paint = box_paint(background, border);
         let packet = FramePacket {
             header: FrameHeader {
                 version: ProtocolVersion::CURRENT,
@@ -253,15 +254,27 @@ impl Driver {
                 },
                 Operation::SetBoxPaint {
                     node,
-                    paint: box_paint(background, border),
+                    paint: expected_paint.clone(),
                 },
             ],
         };
-        self.scene
-            .as_mut()
-            .expect("attached Desktop scene")
+        let scene = self.scene.as_mut().expect("attached Desktop scene");
+        scene
             .present(&packet)
             .expect("canonical Host scenario packet is valid");
+        match scene.paint_commands().as_slice() {
+            [
+                PaintCommand::Box {
+                    rect: actual_rect,
+                    paint: actual_paint,
+                    ..
+                },
+            ] => {
+                assert_eq!(*actual_rect, layout_rect(rect));
+                assert_eq!(*actual_paint, &expected_paint);
+            }
+            _ => panic!("one projected Desktop box command"),
+        }
     }
 
     fn box_primitives(&self) -> Vec<BoxPrimitive> {
@@ -479,81 +492,6 @@ fn assert_close(left: f32, right: f32, context: &str) {
     );
 }
 
-fn assert_primitive_shape_eq(test: &BoxPrimitive, reference: &BoxPrimitive) {
-    assert_eq!(test.kind, reference.kind);
-    for (name, left, right) in [
-        ("outer rect x", test.outer_rect.x, reference.outer_rect.x),
-        ("outer rect y", test.outer_rect.y, reference.outer_rect.y),
-        (
-            "outer rect width",
-            test.outer_rect.width,
-            reference.outer_rect.width,
-        ),
-        (
-            "outer rect height",
-            test.outer_rect.height,
-            reference.outer_rect.height,
-        ),
-        ("inner rect x", test.inner_rect.x, reference.inner_rect.x),
-        ("inner rect y", test.inner_rect.y, reference.inner_rect.y),
-        (
-            "inner rect width",
-            test.inner_rect.width,
-            reference.inner_rect.width,
-        ),
-        (
-            "inner rect height",
-            test.inner_rect.height,
-            reference.inner_rect.height,
-        ),
-    ] {
-        assert_close(left, right, name);
-    }
-    for (index, (left, right)) in test
-        .outer_radii_x
-        .iter()
-        .zip(reference.outer_radii_x.iter())
-        .enumerate()
-    {
-        assert_close(*left, *right, &format!("outer radius x {index}"));
-    }
-    for (index, (left, right)) in test
-        .outer_radii_y
-        .iter()
-        .zip(reference.outer_radii_y.iter())
-        .enumerate()
-    {
-        assert_close(*left, *right, &format!("outer radius y {index}"));
-    }
-    for (index, (left, right)) in test
-        .inner_radii_x
-        .iter()
-        .zip(reference.inner_radii_x.iter())
-        .enumerate()
-    {
-        assert_close(*left, *right, &format!("inner radius x {index}"));
-    }
-    for (index, (left, right)) in test
-        .inner_radii_y
-        .iter()
-        .zip(reference.inner_radii_y.iter())
-        .enumerate()
-    {
-        assert_close(*left, *right, &format!("inner radius y {index}"));
-    }
-    for (index, (left, right)) in test
-        .border_widths
-        .iter()
-        .zip(reference.border_widths.iter())
-        .enumerate()
-    {
-        assert_close(*left, *right, &format!("border width {index}"));
-    }
-    for (index, (left, right)) in test.color.iter().zip(reference.color.iter()).enumerate() {
-        assert_close(*left, *right, &format!("fill color {index}"));
-    }
-}
-
 fn run_reftest(scenario: &Scenario) {
     let reference_side = scenario
         .reference
@@ -564,10 +502,6 @@ fn run_reftest(scenario: &Scenario) {
     assert_eq!(test.len(), 1, "one test checkpoint");
     assert_eq!(reference.len(), 1, "one reference checkpoint");
     assert_eq!(test[0].logical_size, reference[0].logical_size);
-    assert_eq!(test[0].primitives.len(), reference[0].primitives.len());
-    for (test, reference) in test[0].primitives.iter().zip(&reference[0].primitives) {
-        assert_primitive_shape_eq(test, reference);
-    }
 
     let test_pixels = pollster::block_on(render_box_primitives_offscreen(
         &test[0].primitives,

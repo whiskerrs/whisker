@@ -60,13 +60,11 @@ pub struct PlatformSync {
 /// Bumped alongside the `sdk-v*` release tag.
 ///
 /// Not every `sdk-v*` tag needs a bump here — read the SDK diff and
-/// move this only when apps must pick the release up. Two cases force
-/// that: a Kotlin API a module or the runtime now calls, and a roll of
-/// the transitive Lynx / PrimJS pin baked into the SDK's POM. The
-/// latter can be hard-breaking, because a per-app `WhiskerDriver`
-/// bridge built against a newer capi ABI refuses to attach to the Lynx
-/// an older SDK pulls in.
-const WHISKER_SDK_VERSION: &str = "0.1.19";
+/// move this only when apps must pick the release up, such as a Host
+/// runtime ABI change or a Kotlin API consumed by applications/modules.
+// 0.1.20 is the first Android SDK release that ships WhiskerView in the
+// standalone whisker-runtime-android AAR.
+const WHISKER_SDK_VERSION: &str = "0.1.20";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the

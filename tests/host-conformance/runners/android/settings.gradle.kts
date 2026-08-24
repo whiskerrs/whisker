@@ -15,5 +15,6 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "whisker-host-conformance-android"
-include(":app", ":whisker-module")
+include(":app", ":whisker-module", ":whisker-runtime")
 project(":whisker-module").projectDir = file("../../../../platforms/android/module")
+project(":whisker-runtime").projectDir = file("../../../../platforms/android/runtime")

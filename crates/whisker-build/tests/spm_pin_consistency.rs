@@ -62,10 +62,10 @@ fn module_package_swift_pins_match_whisker_ios_spm_version() {
     );
 }
 
-/// The remote and local manifests must remain module-only. Renderer
-/// binaries belong to the generated application, not to SwiftPM.
+/// The remote and local manifests ship the Host as source, never as a
+/// prebuilt renderer binary.
 #[test]
-fn swift_packages_do_not_ship_a_renderer_binary() {
+fn swift_packages_ship_the_source_runtime_without_a_binary_target() {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let root_manifest = workspace_root.join("Package.swift");
     let platform_manifest = workspace_root.join("platforms/ios/Package.swift");
@@ -83,8 +83,8 @@ fn swift_packages_do_not_ship_a_renderer_binary() {
             path.display()
         );
         assert!(
-            !manifest.contains("WhiskerRuntime"),
-            "{} exposes the deleted runtime target",
+            manifest.contains("WhiskerRuntime"),
+            "{} does not expose the source runtime target",
             path.display()
         );
         assert!(

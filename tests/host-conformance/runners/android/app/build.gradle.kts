@@ -11,16 +11,6 @@ val stageHostConformanceAssets by tasks.registering(Sync::class) {
     into(hostConformanceAssets)
 }
 
-val productionHostSource = layout.buildDirectory.dir("generated/productionHostSource")
-val stageProductionHostSource by tasks.registering(Sync::class) {
-    from(
-        file(
-            "../../../../../crates/whisker-cng/src/templates/android/app/src/main/kotlin/WhiskerView.kt",
-        ),
-    )
-    into(productionHostSource)
-}
-
 android {
     namespace = "rs.whisker.conformance"
     compileSdk = 34
@@ -40,19 +30,15 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
-    sourceSets {
-        getByName("main").kotlin.srcDir(productionHostSource)
-        getByName("androidTest").assets.srcDir(hostConformanceAssets)
-    }
+    sourceSets.getByName("androidTest").assets.srcDir(hostConformanceAssets)
 }
 
 tasks.configureEach {
-    if (name == "compileDebugKotlin") dependsOn(stageProductionHostSource)
     if (name == "mergeDebugAndroidTestAssets") dependsOn(stageHostConformanceAssets)
 }
 
 dependencies {
-    implementation(project(":whisker-module"))
+    implementation(project(":whisker-runtime"))
     androidTestImplementation("androidx.test:core-ktx:1.6.1")
     androidTestImplementation("androidx.test.ext:junit-ktx:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
