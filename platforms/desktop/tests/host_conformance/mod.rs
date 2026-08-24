@@ -504,7 +504,7 @@ impl Driver {
                 node,
                 geometry: LayoutGeometry {
                     border_box: layout_rect(fixture.rect),
-                    content_box: LayoutRect::default(),
+                    content_box: layout_rect(fixture.resolved_content_box()),
                 },
             });
             operations.push(Operation::SetBoxPaint {
@@ -597,6 +597,7 @@ impl Driver {
         for command in scene.paint_commands() {
             if let PaintCommand::Box {
                 rect,
+                content_rect,
                 paint,
                 background_layers,
                 clip,
@@ -622,6 +623,7 @@ impl Driver {
                     let positioning_rect = match layer.origin {
                         PaintBox::Border => box_geometry.outer_rect,
                         PaintBox::Padding => box_geometry.inner_rect,
+                        PaintBox::Content => content_rect,
                         _ => continue,
                     };
                     let Some(gradient) = background_gradient_draw(positioning_rect, layer, opacity)
@@ -629,7 +631,7 @@ impl Driver {
                         continue;
                     };
                     primitives.push((
-                        background_gradient_primitive(rect, paint, layer.clip),
+                        background_gradient_primitive(rect, content_rect, paint, layer.clip),
                         clip,
                         transform,
                         shape_clips.clone(),

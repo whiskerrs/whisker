@@ -44,6 +44,7 @@ impl BoxPrimitiveKind {
 /// gradient against its independently resolved positioning box.
 pub(crate) fn background_gradient_primitive(
     rect: LayoutRect,
+    content_rect: LayoutRect,
     paint: &BoxPaint,
     clip: PaintBox,
 ) -> BoxPrimitive {
@@ -57,6 +58,13 @@ pub(crate) fn background_gradient_primitive(
             inner_radii: geometry.inner_radii,
             border_widths: [0.0; 4],
         },
+        PaintBox::Content => BoxGeometry {
+            outer_rect: content_rect,
+            outer_radii: inset_radii(geometry.outer_rect, geometry.outer_radii, content_rect),
+            inner_rect: content_rect,
+            inner_radii: inset_radii(geometry.outer_rect, geometry.outer_radii, content_rect),
+            border_widths: [0.0; 4],
+        },
         _ => geometry,
     };
     geometry.primitive(
@@ -65,6 +73,46 @@ pub(crate) fn background_gradient_primitive(
         [0.0; 4],
         BoxPrimitiveKind::LinearGradient,
     )
+}
+
+fn inset_radii(
+    outer_rect: LayoutRect,
+    outer: ResolvedRadii,
+    inner_rect: LayoutRect,
+) -> ResolvedRadii {
+    let left = (inner_rect.x - outer_rect.x).max(0.0);
+    let top = (inner_rect.y - outer_rect.y).max(0.0);
+    let right = (outer_rect.x + outer_rect.width - inner_rect.x - inner_rect.width).max(0.0);
+    let bottom = (outer_rect.y + outer_rect.height - inner_rect.y - inner_rect.height).max(0.0);
+    let mut radii = ResolvedRadii {
+        horizontal: [
+            (outer.horizontal[0] - left).max(0.0),
+            (outer.horizontal[1] - right).max(0.0),
+            (outer.horizontal[2] - right).max(0.0),
+            (outer.horizontal[3] - left).max(0.0),
+        ],
+        vertical: [
+            (outer.vertical[0] - top).max(0.0),
+            (outer.vertical[1] - top).max(0.0),
+            (outer.vertical[2] - bottom).max(0.0),
+            (outer.vertical[3] - bottom).max(0.0),
+        ],
+    };
+    let scale = [
+        ratio(inner_rect.width, radii.horizontal[0] + radii.horizontal[1]),
+        ratio(inner_rect.width, radii.horizontal[3] + radii.horizontal[2]),
+        ratio(inner_rect.height, radii.vertical[0] + radii.vertical[3]),
+        ratio(inner_rect.height, radii.vertical[1] + radii.vertical[2]),
+    ]
+    .into_iter()
+    .fold(1.0_f32, f32::min);
+    for radius in &mut radii.horizontal {
+        *radius *= scale;
+    }
+    for radius in &mut radii.vertical {
+        *radius *= scale;
+    }
+    radii
 }
 
 /// Lowers one semantic box without allocating or dynamically dispatching.

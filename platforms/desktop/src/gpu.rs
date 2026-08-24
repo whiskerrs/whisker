@@ -1403,6 +1403,7 @@ impl GpuRenderer {
             match command {
                 PaintCommand::Box {
                     rect,
+                    content_rect,
                     paint,
                     background_layers,
                     clip,
@@ -1436,6 +1437,7 @@ impl GpuRenderer {
                         let positioning_rect = match layer.origin {
                             PaintBox::Border => box_geometry.outer_rect,
                             PaintBox::Padding => box_geometry.inner_rect,
+                            PaintBox::Content => *content_rect,
                             _ => continue,
                         };
                         let Some(gradient) =
@@ -1446,7 +1448,7 @@ impl GpuRenderer {
                         push_quad_draw(
                             &mut vertices,
                             &mut draws,
-                            background_gradient_primitive(*rect, paint, layer.clip),
+                            background_gradient_primitive(*rect, *content_rect, paint, layer.clip),
                             *transform,
                             *clip,
                             shape_clips,
