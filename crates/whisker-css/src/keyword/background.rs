@@ -9,7 +9,7 @@
 
 use core::fmt;
 
-use crate::data_type::LengthPercentage;
+use crate::data_type::{Length, LengthPercentage, Percentage};
 use crate::to_css::ToCss;
 
 /// The `background-repeat` keyword.
@@ -118,8 +118,44 @@ pub enum BackgroundSize {
     Cover,
     /// `contain` — scale to fit within the box without cropping.
     Contain,
-    /// Explicit width × height.
-    Explicit(LengthPercentage, LengthPercentage),
+    /// Explicit width × height; either axis may retain intrinsic sizing.
+    Explicit(BackgroundSizeAxis, BackgroundSizeAxis),
+}
+
+/// One axis of an explicit `background-size` pair.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BackgroundSizeAxis {
+    /// Retain the intrinsic size on this axis.
+    Auto,
+    /// Resolve one length-percentage against the positioning area.
+    Value(LengthPercentage),
+}
+
+impl From<LengthPercentage> for BackgroundSizeAxis {
+    fn from(value: LengthPercentage) -> Self {
+        Self::Value(value)
+    }
+}
+
+impl From<Length> for BackgroundSizeAxis {
+    fn from(value: Length) -> Self {
+        Self::Value(value.into())
+    }
+}
+
+impl From<Percentage> for BackgroundSizeAxis {
+    fn from(value: Percentage) -> Self {
+        Self::Value(value.into())
+    }
+}
+
+impl ToCss for BackgroundSizeAxis {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Auto => dest.write_str("auto"),
+            Self::Value(value) => value.to_css(dest),
+        }
+    }
 }
 
 impl ToCss for BackgroundSize {
@@ -201,5 +237,10 @@ mod tests {
         assert_eq!(BackgroundSize::Contain.to_css_string(), "contain");
         let explicit = BackgroundSize::Explicit(Length::Px(100.0).into(), Percentage(50.0).into());
         assert_eq!(explicit.to_css_string(), "100px 50%");
+        assert_eq!(
+            BackgroundSize::Explicit(BackgroundSizeAxis::Auto, Length::Px(40.0).into())
+                .to_css_string(),
+            "auto 40px"
+        );
     }
 }

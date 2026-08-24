@@ -23,6 +23,7 @@ pub use animation::{
 };
 pub use background::{
     BackgroundAttachment, BackgroundClip, BackgroundOrigin, BackgroundRepeat, BackgroundSize,
+    BackgroundSizeAxis,
 };
 pub use border::BorderStyle;
 pub use flex::{AlignContent, AlignItems, AlignSelf, FlexDirection, FlexWrap, JustifyContent};
