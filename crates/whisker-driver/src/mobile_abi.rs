@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 8;
+pub const MOBILE_ABI_MINOR: u16 = 9;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -75,6 +75,28 @@ pub const MEASURE_CUSTOM: u32 = 5;
 pub const MEASURE_READY: u32 = 1;
 pub const MEASURE_PENDING: u32 = 2;
 pub const MEASURE_UNSUPPORTED: u32 = 3;
+
+pub const RESOURCE_COMMAND_LOAD: u32 = 1;
+pub const RESOURCE_COMMAND_RELEASE: u32 = 2;
+pub const RESOURCE_RASTER_IMAGE: u32 = 1;
+pub const RESOURCE_VECTOR_IMAGE: u32 = 2;
+pub const RESOURCE_FONT: u32 = 3;
+pub const RESOURCE_CURSOR: u32 = 4;
+pub const RESOURCE_PAINT_SERVER: u32 = 5;
+pub const RESOURCE_SOURCE_NONE: u32 = 0;
+pub const RESOURCE_SOURCE_URL: u32 = 1;
+pub const RESOURCE_SOURCE_BUNDLED_ASSET: u32 = 2;
+pub const RESOURCE_SOURCE_BYTES: u32 = 3;
+pub const RESOURCE_EVENT_READY: u32 = 1;
+pub const RESOURCE_EVENT_FAILED: u32 = 2;
+pub const RESOURCE_FAILURE_NONE: u32 = 0;
+pub const RESOURCE_FAILURE_NOT_FOUND: u32 = 1;
+pub const RESOURCE_FAILURE_DENIED: u32 = 2;
+pub const RESOURCE_FAILURE_NETWORK: u32 = 3;
+pub const RESOURCE_FAILURE_DECODE: u32 = 4;
+pub const RESOURCE_FAILURE_CANCELLED: u32 = 5;
+pub const RESOURCE_FAILURE_UNSUPPORTED: u32 = 6;
+pub const RESOURCE_DIMENSIONS_PRESENT: u32 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -324,6 +346,36 @@ pub struct MobileMeasureResponse {
     pub prepared_content: u64,
 }
 
+/// One borrowed Rust-to-Host resource command. String and byte pointers are
+/// valid only during the callback.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileResourceCommand {
+    pub command: u32,
+    pub kind: u32,
+    pub source: u32,
+    pub _reserved: u32,
+    pub resource: u64,
+    pub generation: u64,
+    pub identifier: WhiskerStringRef,
+    pub data: WhiskerBytesRef,
+}
+
+/// One borrowed Host-to-Rust resource completion.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileResourceEvent {
+    pub status: u32,
+    pub failure_code: u32,
+    pub resource: u64,
+    pub generation: u64,
+    pub width: f32,
+    pub height: f32,
+    pub scale: f32,
+    pub dimensions_mask: u32,
+    pub diagnostic: WhiskerStringRef,
+}
+
 pub type BootstrapCallback = extern "C" fn(*mut c_void, *const MobileBootstrap) -> bool;
 pub type PresentFrameCallback =
     extern "C" fn(*mut c_void, *const MobileFrame, *mut MobileApplyResponse) -> bool;
@@ -333,6 +385,7 @@ pub type MeasureCallback = extern "C" fn(
     usize,
     *mut MobileMeasureResponse,
 ) -> bool;
+pub type ResourceCommandCallback = extern "C" fn(*mut c_void, *const MobileResourceCommand) -> bool;
 
 /// Pinned allocations referenced by borrowed `WhiskerValueRaw` trees.
 #[derive(Default)]
@@ -512,6 +565,8 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileConicGradient>(), 32);
             assert_eq!(std::mem::size_of::<MobileBackgroundImage>(), 24);
             assert_eq!(std::mem::size_of::<MobileBackgroundLayer>(), 88);
+            assert_eq!(std::mem::size_of::<MobileResourceCommand>(), 64);
+            assert_eq!(std::mem::size_of::<MobileResourceEvent>(), 56);
             assert_eq!(std::mem::align_of::<MobileFrame>(), 8);
             assert_eq!(std::mem::align_of::<MobileMeasureRequest>(), 8);
         }

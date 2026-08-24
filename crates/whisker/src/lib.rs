@@ -211,8 +211,9 @@ pub use standard_ui::{
 };
 pub use style::{Style, apply_style};
 pub use surface_runtime::{
-    InputDispatch, RuntimeBindingError, RuntimeFrame, RuntimeFrameError, RuntimeInputError,
-    RuntimeLayoutError, RuntimePresentError, SurfaceRuntime, standard_element_registrations,
+    InputDispatch, ResourceEventApply, RuntimeBindingError, RuntimeFrame, RuntimeFrameError,
+    RuntimeInputError, RuntimeLayoutError, RuntimePresentError, RuntimeResourceError,
+    SurfaceRuntime, standard_element_registrations,
 };
 
 pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
@@ -1824,7 +1825,9 @@ pub mod __main_runtime {
 #[doc(hidden)]
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub mod __mobile_runtime {
-    pub use crate::mobile_runtime::{create, destroy, dispatch_event, dispatch_module_event, tick};
+    pub use crate::mobile_runtime::{
+        create, destroy, dispatch_event, dispatch_module_event, dispatch_resource_event, tick,
+    };
 }
 
 /// Stable C-ABI types referenced by code emitted from [`main`](crate::main).

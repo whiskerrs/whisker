@@ -11,9 +11,12 @@ use crate::runtime::RuntimeContext;
 use crate::runtime::reactive::{self, Owner};
 use crate::runtime::runtime_wake::RuntimeWakeHandle;
 use crate::runtime::view::{self, Element};
-use crate::{InputDispatch, RuntimeFrame, RuntimeFrameError, RuntimeInputError, SurfaceRuntime};
+use crate::{
+    InputDispatch, ResourceEventApply, RuntimeFrame, RuntimeFrameError, RuntimeInputError,
+    RuntimeResourceError, SurfaceRuntime,
+};
 use whisker_engine::whisker_layout::LayoutSize;
-use whisker_engine::whisker_protocol::{ApplyResult, InputEvent, MeasurementReady};
+use whisker_engine::whisker_protocol::{ApplyResult, InputEvent, MeasurementReady, ResourceEvent};
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{DeferredMeasurementApply, FrameSink, LayoutOptions, MeasurementProvider};
 
@@ -58,6 +61,8 @@ pub enum RuntimeEventError {
     Lifecycle(RuntimeLifecycleError),
     /// Validation, hit testing, or listener lookup failed.
     Input(RuntimeInputError),
+    /// Resource completion validation or generation matching failed.
+    Resource(RuntimeResourceError),
 }
 
 impl fmt::Display for RuntimeEventError {
@@ -307,6 +312,34 @@ impl RuntimeInstance {
         if self.lifecycle == RuntimeLifecycle::Running
             && matches!(apply, DeferredMeasurementApply::Applied { .. })
         {
+            self.wake.wake();
+        }
+        Ok(apply)
+    }
+
+    /// Applies one typed Host resource completion.
+    ///
+    /// Replaced and released generations are accepted as stale no-ops. A
+    /// current completion requests a frame while the runtime is running; a
+    /// paused runtime retains it until [`Self::resume`].
+    pub fn dispatch_resource_event(
+        &self,
+        event: &ResourceEvent,
+    ) -> Result<ResourceEventApply, RuntimeEventError> {
+        if !matches!(
+            self.lifecycle,
+            RuntimeLifecycle::Running | RuntimeLifecycle::Paused
+        ) {
+            return Err(RuntimeEventError::Lifecycle(RuntimeLifecycleError {
+                state: self.lifecycle,
+                operation: "apply resource completion",
+            }));
+        }
+        let apply = self
+            .surface
+            .apply_resource_event(event)
+            .map_err(RuntimeEventError::Resource)?;
+        if self.lifecycle == RuntimeLifecycle::Running && apply == ResourceEventApply::Applied {
             self.wake.wake();
         }
         Ok(apply)

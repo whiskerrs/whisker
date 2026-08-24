@@ -12,8 +12,9 @@ use whisker_engine::whisker_protocol::{
     ImageRepeat, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextWrap,
     MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementRequestId,
     MeasurementResponse, NodeId, Operation, PaintBox, PaintColor, PaintImage,
-    PaintLengthPercentage, PreparedContentId, RadialGradientExtent, RadialGradientShape, SurfaceId,
-    UnsupportedMeasurementReason,
+    PaintLengthPercentage, PreparedContentId, RadialGradientExtent, RadialGradientShape,
+    ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode, ResourceId,
+    ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
@@ -29,6 +30,7 @@ struct MobileRuntime {
     modules: std::sync::Arc<MobileModuleHost>,
     measurement: MobileMeasurementHost,
     sink: MobileFrameSink,
+    resources: MobileResourceHost,
     environment_epoch: u64,
     viewport_epoch: u32,
     viewport: Viewport,
@@ -75,6 +77,8 @@ pub fn create(
     measure_data: *mut c_void,
     present_frame: PresentFrameCallback,
     present_data: *mut c_void,
+    resource_command: ResourceCommandCallback,
+    resource_data: *mut c_void,
     invoke_module: InvokeModuleCallback,
     observe_module: ObserveModuleCallback,
     module_data: *mut c_void,
@@ -103,7 +107,7 @@ pub fn create(
         let _ = with_mobile_module_host(&modules, || runtime.unmount());
         return std::ptr::null_mut();
     }
-    let mobile = Box::new(MobileRuntime {
+    let mut mobile = Box::new(MobileRuntime {
         runtime,
         modules,
         measurement: MobileMeasurementHost {
@@ -114,10 +118,19 @@ pub fn create(
             present: present_frame,
             data: present_data,
         },
+        resources: MobileResourceHost {
+            callback: resource_command,
+            data: resource_data,
+        },
         environment_epoch: 1,
         viewport_epoch: 1,
         viewport,
     });
+    if !mobile.drain_resource_commands() {
+        let modules = std::sync::Arc::clone(&mobile.modules);
+        let _ = with_mobile_module_host(&modules, || mobile.runtime.unmount());
+        return std::ptr::null_mut();
+    }
     request_frame(request_data);
     Box::into_raw(mobile).cast()
 }
@@ -143,7 +156,7 @@ pub unsafe fn tick(
         mobile.viewport_epoch = mobile.viewport_epoch.saturating_add(1);
     }
     let modules = std::sync::Arc::clone(&mobile.modules);
-    match with_mobile_module_host(&modules, || {
+    let frame_result = with_mobile_module_host(&modules, || {
         mobile.runtime.drive_frame(
             timestamp_ms,
             viewport.environment(),
@@ -153,7 +166,12 @@ pub unsafe fn tick(
             &mut mobile.sink,
             LayoutOptions::default(),
         )
-    }) {
+    });
+    if !mobile.drain_resource_commands() {
+        eprintln!("Whisker mobile Host rejected a resource command");
+        return true;
+    }
+    match frame_result {
         Ok(drive) => !drive.needs_frame,
         Err(error) => {
             eprintln!("Whisker mobile frame failed: {error}");
@@ -240,6 +258,178 @@ pub unsafe fn dispatch_module_event(
     let payload = unsafe { decode_value(payload) };
     let modules = std::sync::Arc::clone(&mobile.modules);
     with_mobile_module_host(&modules, || modules.dispatch_event(module, event, payload))
+}
+
+/// # Safety
+/// `event` and all borrowed members must remain valid for this call.
+pub unsafe fn dispatch_resource_event(
+    handle: *mut c_void,
+    event: *const MobileResourceEvent,
+) -> bool {
+    let Some(mobile) = (unsafe { handle.cast::<MobileRuntime>().as_ref() }) else {
+        return false;
+    };
+    let Some(event) = (unsafe { event.as_ref() }).and_then(decode_resource_event) else {
+        return false;
+    };
+    mobile
+        .runtime
+        .dispatch_resource_event(&event)
+        .map(|_| true)
+        .unwrap_or_else(|error| {
+            eprintln!("Whisker mobile resource event failed: {error}");
+            false
+        })
+}
+
+impl MobileRuntime {
+    fn drain_resource_commands(&mut self) -> bool {
+        self.runtime
+            .surface()
+            .take_resource_commands()
+            .iter()
+            .all(|command| self.resources.send(command))
+    }
+}
+
+struct MobileResourceHost {
+    callback: ResourceCommandCallback,
+    data: *mut c_void,
+}
+
+impl MobileResourceHost {
+    fn send(&self, command: &ResourceCommand) -> bool {
+        let empty_string = WhiskerStringRef {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
+        let empty_bytes = WhiskerBytesRef {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
+        let value = match command {
+            ResourceCommand::Load(request) => {
+                let (source, identifier, data) = match &request.source {
+                    ResourceSource::Url(value) => {
+                        (RESOURCE_SOURCE_URL, string_ref(value), empty_bytes)
+                    }
+                    ResourceSource::BundledAsset(value) => (
+                        RESOURCE_SOURCE_BUNDLED_ASSET,
+                        string_ref(value),
+                        empty_bytes,
+                    ),
+                    ResourceSource::Bytes { media_type, data } => (
+                        RESOURCE_SOURCE_BYTES,
+                        string_ref(media_type),
+                        WhiskerBytesRef {
+                            ptr: data.as_ptr(),
+                            len: data.len(),
+                        },
+                    ),
+                };
+                MobileResourceCommand {
+                    command: RESOURCE_COMMAND_LOAD,
+                    kind: encode_resource_kind(request.kind),
+                    source,
+                    _reserved: 0,
+                    resource: request.resource.get(),
+                    generation: request.generation,
+                    identifier,
+                    data,
+                }
+            }
+            ResourceCommand::Release {
+                resource,
+                generation,
+            } => MobileResourceCommand {
+                command: RESOURCE_COMMAND_RELEASE,
+                kind: 0,
+                source: RESOURCE_SOURCE_NONE,
+                _reserved: 0,
+                resource: resource.get(),
+                generation: *generation,
+                identifier: empty_string,
+                data: empty_bytes,
+            },
+        };
+        (self.callback)(self.data, &value)
+    }
+}
+
+fn string_ref(value: &str) -> WhiskerStringRef {
+    WhiskerStringRef {
+        ptr: value.as_ptr().cast(),
+        len: value.len(),
+    }
+}
+
+fn encode_resource_kind(kind: ResourceKind) -> u32 {
+    match kind {
+        ResourceKind::RasterImage => RESOURCE_RASTER_IMAGE,
+        ResourceKind::VectorImage => RESOURCE_VECTOR_IMAGE,
+        ResourceKind::Font => RESOURCE_FONT,
+        ResourceKind::Cursor => RESOURCE_CURSOR,
+        ResourceKind::PaintServer => RESOURCE_PAINT_SERVER,
+    }
+}
+
+fn decode_resource_event(event: &MobileResourceEvent) -> Option<ResourceEvent> {
+    let resource = ResourceId::new(event.resource)?;
+    match event.status {
+        RESOURCE_EVENT_READY => {
+            let dimensions = if event.dimensions_mask & RESOURCE_DIMENSIONS_PRESENT != 0 {
+                Some(ResourceDimensions {
+                    width: event.width,
+                    height: event.height,
+                    scale: event.scale,
+                })
+            } else {
+                None
+            };
+            let event = ResourceEvent::Ready {
+                resource,
+                generation: event.generation,
+                dimensions,
+            };
+            event.validate().ok()?;
+            Some(event)
+        }
+        RESOURCE_EVENT_FAILED => {
+            let diagnostic = decode_optional_string(event.diagnostic)?;
+            let event = ResourceEvent::Failed {
+                resource,
+                generation: event.generation,
+                code: decode_resource_failure(event.failure_code)?,
+                diagnostic,
+            };
+            event.validate().ok()?;
+            Some(event)
+        }
+        _ => None,
+    }
+}
+
+fn decode_optional_string(value: WhiskerStringRef) -> Option<Option<String>> {
+    if value.len == 0 {
+        return Some(None);
+    }
+    if value.ptr.is_null() {
+        return None;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(value.ptr.cast::<u8>(), value.len) };
+    Some(Some(std::str::from_utf8(bytes).ok()?.to_owned()))
+}
+
+fn decode_resource_failure(value: u32) -> Option<ResourceFailureCode> {
+    Some(match value {
+        RESOURCE_FAILURE_NOT_FOUND => ResourceFailureCode::NotFound,
+        RESOURCE_FAILURE_DENIED => ResourceFailureCode::Denied,
+        RESOURCE_FAILURE_NETWORK => ResourceFailureCode::Network,
+        RESOURCE_FAILURE_DECODE => ResourceFailureCode::Decode,
+        RESOURCE_FAILURE_CANCELLED => ResourceFailureCode::Cancelled,
+        RESOURCE_FAILURE_UNSUPPORTED => ResourceFailureCode::Unsupported,
+        _ => return None,
+    })
 }
 
 struct MobileBootstrapOwned {
@@ -1301,6 +1491,7 @@ fn border_style(value: BorderLineStyle) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
     use whisker_engine::whisker_protocol::{
         BackgroundLayer, FrameHeader, GradientStop, PaintCoordinate, PaintPosition, ProtocolVersion,
     };
@@ -1342,6 +1533,157 @@ mod tests {
     fn hsla_is_lowered_without_host_string_parsing() {
         assert_eq!(hsl_to_rgb(0.0, 1.0, 0.5), (255, 0, 0));
         assert_eq!(hsl_to_rgb(120.0, 1.0, 0.5), (0, 255, 0));
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct CapturedResourceCommand {
+        command: u32,
+        kind: u32,
+        source: u32,
+        resource: u64,
+        generation: u64,
+        identifier: Vec<u8>,
+        data: Vec<u8>,
+    }
+
+    extern "C" fn capture_resource_command(
+        data: *mut c_void,
+        command: *const MobileResourceCommand,
+    ) -> bool {
+        let commands = unsafe { &*(data.cast::<RefCell<Vec<CapturedResourceCommand>>>()) };
+        let command = unsafe { &*command };
+        let identifier = if command.identifier.len == 0 {
+            Vec::new()
+        } else {
+            unsafe {
+                std::slice::from_raw_parts(
+                    command.identifier.ptr.cast::<u8>(),
+                    command.identifier.len,
+                )
+                .to_vec()
+            }
+        };
+        let bytes = if command.data.len == 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(command.data.ptr, command.data.len).to_vec() }
+        };
+        commands.borrow_mut().push(CapturedResourceCommand {
+            command: command.command,
+            kind: command.kind,
+            source: command.source,
+            resource: command.resource,
+            generation: command.generation,
+            identifier,
+            data: bytes,
+        });
+        true
+    }
+
+    #[test]
+    fn mobile_resource_commands_are_typed_and_borrowed_only_for_the_callback() {
+        let captured = RefCell::new(Vec::new());
+        let host = MobileResourceHost {
+            callback: capture_resource_command,
+            data: (&captured as *const RefCell<Vec<CapturedResourceCommand>>)
+                .cast_mut()
+                .cast(),
+        };
+        let resource = ResourceId::new(42).unwrap();
+        host.send(&ResourceCommand::Load(
+            whisker_engine::whisker_protocol::ResourceRequest {
+                resource,
+                generation: 3,
+                kind: ResourceKind::RasterImage,
+                source: ResourceSource::Bytes {
+                    media_type: "image/png".into(),
+                    data: vec![1, 2, 3],
+                },
+            },
+        ));
+        host.send(&ResourceCommand::Release {
+            resource,
+            generation: 3,
+        });
+
+        assert_eq!(
+            captured.into_inner(),
+            vec![
+                CapturedResourceCommand {
+                    command: RESOURCE_COMMAND_LOAD,
+                    kind: RESOURCE_RASTER_IMAGE,
+                    source: RESOURCE_SOURCE_BYTES,
+                    resource: 42,
+                    generation: 3,
+                    identifier: b"image/png".to_vec(),
+                    data: vec![1, 2, 3],
+                },
+                CapturedResourceCommand {
+                    command: RESOURCE_COMMAND_RELEASE,
+                    kind: 0,
+                    source: RESOURCE_SOURCE_NONE,
+                    resource: 42,
+                    generation: 3,
+                    identifier: Vec::new(),
+                    data: Vec::new(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn mobile_resource_events_decode_without_json() {
+        let diagnostic = b"offline";
+        let failed = MobileResourceEvent {
+            status: RESOURCE_EVENT_FAILED,
+            failure_code: RESOURCE_FAILURE_NETWORK,
+            resource: 9,
+            generation: 2,
+            width: 0.0,
+            height: 0.0,
+            scale: 0.0,
+            dimensions_mask: 0,
+            diagnostic: WhiskerStringRef {
+                ptr: diagnostic.as_ptr().cast(),
+                len: diagnostic.len(),
+            },
+        };
+        assert_eq!(
+            decode_resource_event(&failed),
+            Some(ResourceEvent::Failed {
+                resource: ResourceId::new(9).unwrap(),
+                generation: 2,
+                code: ResourceFailureCode::Network,
+                diagnostic: Some("offline".into()),
+            })
+        );
+
+        let ready = MobileResourceEvent {
+            status: RESOURCE_EVENT_READY,
+            failure_code: RESOURCE_FAILURE_NONE,
+            resource: 9,
+            generation: 2,
+            width: 20.0,
+            height: 10.0,
+            scale: 2.0,
+            dimensions_mask: RESOURCE_DIMENSIONS_PRESENT,
+            diagnostic: WhiskerStringRef {
+                ptr: std::ptr::null(),
+                len: 0,
+            },
+        };
+        assert_eq!(
+            decode_resource_event(&ready),
+            Some(ResourceEvent::Ready {
+                resource: ResourceId::new(9).unwrap(),
+                generation: 2,
+                dimensions: Some(ResourceDimensions {
+                    width: 20.0,
+                    height: 10.0,
+                    scale: 2.0,
+                }),
+            })
+        );
     }
 
     #[test]

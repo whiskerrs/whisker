@@ -1,7 +1,7 @@
 //! Runtime ownership of one retained semantic surface.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
@@ -14,7 +14,8 @@ use crate::runtime::view::{BindType, DynRenderer, Element};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior, InputEvent,
-    InputEventError, MeasurementReady, NodeId, SurfaceId,
+    InputEventError, MeasurementReady, NodeId, ResourceCommand, ResourceEvent, ResourceId,
+    ResourceMessageError, SurfaceId,
 };
 use whisker_engine::whisker_style::{
     InheritedStyle, ResolvedNodeStyle, SpecifiedStyle, StyleEnvironment, StyleResolutionError,
@@ -193,6 +194,47 @@ pub struct InputDispatch {
     pub queued: bool,
 }
 
+/// Resource-channel command or completion rejected before Host/runtime state
+/// could change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RuntimeResourceError {
+    /// The protocol message itself is malformed.
+    InvalidMessage(ResourceMessageError),
+    /// A load generation must increase monotonically for one resource ID.
+    NonMonotonicGeneration {
+        /// Resource whose current generation won the race.
+        resource: ResourceId,
+        /// Latest generation already accepted.
+        current: u64,
+        /// Older or duplicate generation that was rejected.
+        received: u64,
+    },
+    /// A release or completion named a generation that was never loaded.
+    UnknownGeneration {
+        /// Named resource.
+        resource: ResourceId,
+        /// Named generation.
+        generation: u64,
+    },
+}
+
+impl fmt::Display for RuntimeResourceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "Whisker runtime resource error: {self:?}")
+    }
+}
+
+impl Error for RuntimeResourceError {}
+
+/// Whether one valid Host resource completion changed the current generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResourceEventApply {
+    /// The completion belongs to the current unreleased generation.
+    Applied,
+    /// A replacement or release made the completion stale before it arrived.
+    Stale,
+}
+
 /// Failure while driving layout for a surface populated through `render!`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RuntimeLayoutError<MeasurementError> {
@@ -314,6 +356,11 @@ impl SurfaceRuntime {
                 node_elements: HashMap::new(),
                 root: None,
                 error: None,
+                resource_commands: VecDeque::new(),
+                resource_generations: HashMap::new(),
+                known_resource_generations: HashSet::new(),
+                released_resource_generations: HashSet::new(),
+                resource_events: HashMap::new(),
             })),
         }
     }
@@ -427,6 +474,119 @@ impl SurfaceRuntime {
             .surface
             .apply_measurement_ready(ready)
             .map_err(RuntimeBindingError::from)
+    }
+
+    /// Enqueues one typed non-frame resource command for the Host. Loads for
+    /// one ID must use a strictly increasing generation.
+    pub fn enqueue_resource_command(
+        &self,
+        command: ResourceCommand,
+    ) -> Result<(), RuntimeResourceError> {
+        command
+            .validate()
+            .map_err(RuntimeResourceError::InvalidMessage)?;
+        let mut state = self.state.borrow_mut();
+        match &command {
+            ResourceCommand::Load(request) => {
+                if let Some(current) = state.resource_generations.get(&request.resource).copied()
+                    && request.generation <= current
+                {
+                    return Err(RuntimeResourceError::NonMonotonicGeneration {
+                        resource: request.resource,
+                        current,
+                        received: request.generation,
+                    });
+                }
+                state
+                    .resource_generations
+                    .insert(request.resource, request.generation);
+                state
+                    .known_resource_generations
+                    .insert((request.resource, request.generation));
+            }
+            ResourceCommand::Release {
+                resource,
+                generation,
+            } => {
+                if !state
+                    .known_resource_generations
+                    .contains(&(*resource, *generation))
+                {
+                    return Err(RuntimeResourceError::UnknownGeneration {
+                        resource: *resource,
+                        generation: *generation,
+                    });
+                }
+                state
+                    .released_resource_generations
+                    .insert((*resource, *generation));
+            }
+        }
+        state.resource_commands.push_back(command);
+        crate::runtime::runtime_wake::wake_runtime();
+        Ok(())
+    }
+
+    /// Drains pending resource commands in enqueue order. Hosts call this at a
+    /// short runtime boundary and copy borrowed byte payloads only once.
+    pub fn take_resource_commands(&self) -> Vec<ResourceCommand> {
+        self.state
+            .borrow_mut()
+            .resource_commands
+            .drain(..)
+            .collect()
+    }
+
+    /// Applies one typed Host completion with generation safety.
+    pub fn apply_resource_event(
+        &self,
+        event: &ResourceEvent,
+    ) -> Result<ResourceEventApply, RuntimeResourceError> {
+        event
+            .validate()
+            .map_err(RuntimeResourceError::InvalidMessage)?;
+        let (resource, generation) = match event {
+            ResourceEvent::Ready {
+                resource,
+                generation,
+                ..
+            }
+            | ResourceEvent::Failed {
+                resource,
+                generation,
+                ..
+            } => (*resource, *generation),
+        };
+        let mut state = self.state.borrow_mut();
+        if !state
+            .known_resource_generations
+            .contains(&(resource, generation))
+        {
+            return Err(RuntimeResourceError::UnknownGeneration {
+                resource,
+                generation,
+            });
+        }
+        if state.resource_generations.get(&resource).copied() != Some(generation)
+            || state
+                .released_resource_generations
+                .contains(&(resource, generation))
+        {
+            return Ok(ResourceEventApply::Stale);
+        }
+        state
+            .resource_events
+            .insert((resource, generation), event.clone());
+        Ok(ResourceEventApply::Applied)
+    }
+
+    /// Returns the accepted completion for one current resource generation.
+    pub fn resource_event(&self, resource: ResourceId, generation: u64) -> Option<ResourceEvent> {
+        self.state
+            .borrow()
+            .resource_events
+            .get(&(resource, generation))
+            .cloned()
     }
 
     /// Runs Taffy and all synchronously available Host measurements.
@@ -555,6 +715,11 @@ struct BindingState {
     node_elements: HashMap<NodeId, Element>,
     root: Option<NodeId>,
     error: Option<RuntimeBindingError>,
+    resource_commands: VecDeque<ResourceCommand>,
+    resource_generations: HashMap<ResourceId, u64>,
+    known_resource_generations: HashSet<(ResourceId, u64)>,
+    released_resource_generations: HashSet<(ResourceId, u64)>,
+    resource_events: HashMap<(ResourceId, u64), ResourceEvent>,
 }
 
 struct EnvironmentStyleUpdate {
