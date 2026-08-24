@@ -77,8 +77,27 @@ struct HostBackgroundGeometry {
         )
     }
 
-    var clipsToSingleImage: Bool {
-        repeatX == .noRepeat && repeatY == .noRepeat
+    func tileRects(in positioningBox: CGRect, covering paintBounds: CGRect) -> [CGRect] {
+        let image = imageBounds(in: positioningBox)
+        let xOrigins = backgroundTileOrigins(
+            base: image.minX,
+            tileSize: image.width,
+            coverage: paintBounds.minX..<paintBounds.maxX,
+            repeatMode: repeatX
+        )
+        let yOrigins = backgroundTileOrigins(
+            base: image.minY,
+            tileSize: image.height,
+            coverage: paintBounds.minY..<paintBounds.maxY,
+            repeatMode: repeatY
+        )
+        guard !yOrigins.isEmpty,
+              xOrigins.count <= 65_536 / yOrigins.count else { return [] }
+        return xOrigins.flatMap { x in
+            yOrigins.map { y in
+                CGRect(x: x, y: y, width: image.width, height: image.height)
+            }
+        }
     }
 }
 
@@ -128,35 +147,37 @@ final class HostBackgroundPainter {
         context.saveGState()
         context.addPath(clipPath)
         context.clip()
-        if geometry.clipsToSingleImage {
-            var imageClip = imageBounds
-            let deviceScale = max(
-                hypot(context.ctm.a, context.ctm.c),
-                hypot(context.ctm.b, context.ctm.d),
-                1
-            )
-            // A rect clip includes coverage from the device pixel touching its
-            // leading edge. Move that edge to the next pixel center so a
-            // no-repeat image cannot bleed into the preceding CSS pixel.
-            let leadingEdgeInset = backgroundLeadingEdgeInset(deviceScale: deviceScale)
-            if imageClip.minX > positioningBox.minX {
-                imageClip.origin.x += leadingEdgeInset
-                imageClip.size.width = max(0, imageClip.width - leadingEdgeInset)
-            }
-            if imageClip.minY > positioningBox.minY {
-                imageClip.origin.y += leadingEdgeInset
-                imageClip.size.height = max(0, imageClip.height - leadingEdgeInset)
-            }
-            context.clip(to: imageClip)
-        }
         defer { context.restoreGState() }
-        switch image {
-        case let .linear(gradient):
-            drawLinear(gradient, in: imageBounds, context: context)
-        case let .radial(gradient):
-            drawRadial(gradient, in: imageBounds, context: context)
-        case let .conic(gradient):
-            drawConic(gradient, in: imageBounds, context: context)
+        let deviceScale = max(
+            hypot(context.ctm.a, context.ctm.c),
+            hypot(context.ctm.b, context.ctm.d),
+            1
+        )
+        let leadingEdgeInset = backgroundLeadingEdgeInset(deviceScale: deviceScale)
+        for tile in geometry.tileRects(
+            in: positioningBox,
+            covering: clipPath.boundingBoxOfPath
+        ) {
+            var tileClip = tile
+            if geometry.repeatX == .noRepeat && tileClip.minX > positioningBox.minX {
+                tileClip.origin.x += leadingEdgeInset
+                tileClip.size.width = max(0, tileClip.width - leadingEdgeInset)
+            }
+            if geometry.repeatY == .noRepeat && tileClip.minY > positioningBox.minY {
+                tileClip.origin.y += leadingEdgeInset
+                tileClip.size.height = max(0, tileClip.height - leadingEdgeInset)
+            }
+            context.saveGState()
+            context.clip(to: tileClip)
+            switch image {
+            case let .linear(gradient):
+                drawLinear(gradient, in: tile, context: context)
+            case let .radial(gradient):
+                drawRadial(gradient, in: tile, context: context)
+            case let .conic(gradient):
+                drawConic(gradient, in: tile, context: context)
+            }
+            context.restoreGState()
         }
     }
 
@@ -273,6 +294,21 @@ final class HostBackgroundPainter {
 
 func backgroundLeadingEdgeInset(deviceScale: CGFloat) -> CGFloat {
     0.5 / max(deviceScale, 1)
+}
+
+func backgroundTileOrigins(
+    base: CGFloat,
+    tileSize: CGFloat,
+    coverage: Range<CGFloat>,
+    repeatMode: HostBackgroundRepeat
+) -> [CGFloat] {
+    guard tileSize > 0, coverage.lowerBound < coverage.upperBound else { return [] }
+    guard repeatMode == .repeat else { return [base] }
+    let first = base + floor((coverage.lowerBound - base) / tileSize) * tileSize
+    let rawCount = ceil((coverage.upperBound - first) / tileSize)
+    guard rawCount.isFinite, rawCount > 0, rawCount <= 65_536 else { return [] }
+    let count = Int(rawCount)
+    return (0..<count).map { first + CGFloat($0) * tileSize }
 }
 
 private struct ResolvedGradient {

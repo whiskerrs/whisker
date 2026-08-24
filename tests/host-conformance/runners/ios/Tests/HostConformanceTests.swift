@@ -51,6 +51,27 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(backgroundLeadingEdgeInset(deviceScale: 2), 0.25)
         XCTAssertEqual(backgroundLeadingEdgeInset(deviceScale: 3), 1.0 / 6.0, accuracy: 0.000_001)
     }
+
+    func testBackgroundTileOriginsRespectEachRepeatAxis() {
+        XCTAssertEqual(
+            backgroundTileOrigins(
+                base: 20,
+                tileSize: 20,
+                coverage: 0..<100,
+                repeatMode: .repeat
+            ),
+            [0, 20, 40, 60, 80]
+        )
+        XCTAssertEqual(
+            backgroundTileOrigins(
+                base: 20,
+                tileSize: 20,
+                coverage: 0..<100,
+                repeatMode: .noRepeat
+            ),
+            [20]
+        )
+    }
 }
 
 @MainActor
@@ -94,7 +115,9 @@ private final class Driver {
                     name == "paint.background-layers.explicit-size-no-repeat" ||
                     name == "paint.background-layers.position-length-percentage" ||
                     name == "paint.background-layers.origin-border-box" ||
-                    name == "paint.background-layers.clip-padding-box" else {
+                    name == "paint.background-layers.clip-padding-box" ||
+                    name == "paint.background-layers.repeat-x" ||
+                    name == "paint.background-layers.repeat-y" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
