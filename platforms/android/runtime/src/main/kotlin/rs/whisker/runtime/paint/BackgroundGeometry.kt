@@ -4,11 +4,13 @@ import android.graphics.Path
 import android.graphics.RectF
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.roundToInt
 
 internal enum class HostBackgroundRepeat {
     Repeat,
     NoRepeat,
     Space,
+    Round,
 }
 
 internal enum class HostBackgroundBox {
@@ -42,9 +44,11 @@ internal data class HostBackgroundGeometry(
     val origin: HostBackgroundBox = HostBackgroundBox.Padding,
     val clip: HostBackgroundBox = HostBackgroundBox.Border,
 ) {
-    fun imageBox(positioningBox: RectF): RectF {
-        val width = sizeWidth?.resolve(positioningBox.width()) ?: positioningBox.width()
-        val height = sizeHeight?.resolve(positioningBox.height()) ?: positioningBox.height()
+    private fun imageBox(
+        positioningBox: RectF,
+        width: Float,
+        height: Float,
+    ): RectF {
         val left = positioningBox.left +
             positionX.length + positionX.fraction * (positioningBox.width() - width)
         val top = positioningBox.top +
@@ -57,7 +61,12 @@ internal data class HostBackgroundGeometry(
         paintingBox: RectF,
         draw: (RectF) -> Unit,
     ) {
-        val base = imageBox(positioningBox)
+        val originalWidth = sizeWidth?.resolve(positioningBox.width()) ?: positioningBox.width()
+        val originalHeight = sizeHeight?.resolve(positioningBox.height()) ?: positioningBox.height()
+        if (originalWidth <= 0f || originalHeight <= 0f) return
+        val tileWidth = adjustedTileSize(originalWidth, positioningBox.width(), repeatX)
+        val tileHeight = adjustedTileSize(originalHeight, positioningBox.height(), repeatY)
+        val base = imageBox(positioningBox, tileWidth, tileHeight)
         if (
             base.isEmpty || paintingBox.isEmpty ||
             !base.width().isFinite() || !base.height().isFinite()
@@ -107,7 +116,7 @@ internal data class HostBackgroundGeometry(
         repeat: HostBackgroundRepeat,
     ): TileAxis = when (repeat) {
         HostBackgroundRepeat.NoRepeat -> TileAxis(base, tileSize, 1)
-        HostBackgroundRepeat.Repeat -> {
+        HostBackgroundRepeat.Repeat, HostBackgroundRepeat.Round -> {
             val first = base + floor((paintingStart - base) / tileSize) * tileSize
             val count = ceil((paintingEnd - first) / tileSize)
                 .toInt()
@@ -130,6 +139,18 @@ internal data class HostBackgroundGeometry(
                 TileAxis(base, tileSize, 1)
             }
         }
+    }
+
+    private fun adjustedTileSize(
+        originalSize: Float,
+        positioningSize: Float,
+        repeat: HostBackgroundRepeat,
+    ): Float {
+        if (repeat != HostBackgroundRepeat.Round) return originalSize
+        val count = (positioningSize / originalSize)
+            .roundToInt()
+            .coerceIn(1, MAX_BACKGROUND_TILES)
+        return positioningSize / count
     }
 
     private data class TileAxis(

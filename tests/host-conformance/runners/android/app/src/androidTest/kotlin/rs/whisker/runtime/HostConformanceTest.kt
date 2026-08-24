@@ -152,7 +152,11 @@ private class Driver(
                             command.getString("name") == "paint.background-layers.repeat-y" ||
                             command.getString("name") == "paint.background-layers.repeat-space" ||
                             command.getString("name") ==
-                            "paint.background-layers.repeat-space-single",
+                            "paint.background-layers.repeat-space-single" ||
+                            command.getString("name") == "paint.background-layers.repeat-round-x" ||
+                            command.getString("name") == "paint.background-layers.repeat-round-y" ||
+                            command.getString("name") ==
+                            "paint.background-layers.repeat-round-position",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -462,6 +466,7 @@ private class Driver(
         "repeat" -> 0
         "no_repeat" -> 1
         "space" -> 2
+        "round" -> 3
         else -> error("unsupported background repeat: $value")
     }
 
