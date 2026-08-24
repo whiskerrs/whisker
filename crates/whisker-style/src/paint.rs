@@ -693,6 +693,76 @@ mod tests {
     }
 
     #[test]
+    fn background_geometry_resolves_keywords_and_reports_axis_errors() {
+        for (specified, computed) in [
+            (BackgroundSizeValue::Auto, ComputedBackgroundSize::Auto),
+            (BackgroundSizeValue::Cover, ComputedBackgroundSize::Cover),
+            (
+                BackgroundSizeValue::Contain,
+                ComputedBackgroundSize::Contain,
+            ),
+        ] {
+            let resolved = crate::resolve_style(
+                &SpecifiedStyle::new().push(
+                    StyleProperty::BackgroundSize,
+                    StyleValue::BackgroundSize(specified),
+                ),
+                None,
+                StyleEnvironment::default(),
+            )
+            .unwrap();
+            assert_eq!(resolved.computed().paint().background_layer.size, computed);
+        }
+
+        for position in [
+            BackgroundPositionValue {
+                horizontal: px_length(f32::NAN),
+                vertical: px_length(0.0),
+            },
+            BackgroundPositionValue {
+                horizontal: px_length(0.0),
+                vertical: px_length(f32::NAN),
+            },
+        ] {
+            assert_eq!(
+                crate::resolve_style(
+                    &SpecifiedStyle::new().push(
+                        StyleProperty::BackgroundPosition,
+                        StyleValue::BackgroundPosition(position),
+                    ),
+                    None,
+                    StyleEnvironment::default(),
+                ),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::BackgroundPosition
+                ))
+            );
+        }
+
+        for (width, height) in [
+            (px_length(f32::NAN), px_length(1.0)),
+            (px_length(1.0), px_length(f32::NAN)),
+            (percentage(-1.0), px_length(1.0)),
+            (px_length(1.0), px_length(-1.0)),
+            (px_length(1.0), percentage(-1.0)),
+        ] {
+            assert_eq!(
+                crate::resolve_style(
+                    &SpecifiedStyle::new().push(
+                        StyleProperty::BackgroundSize,
+                        StyleValue::BackgroundSize(BackgroundSizeValue::Explicit { width, height }),
+                    ),
+                    None,
+                    StyleEnvironment::default(),
+                ),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::BackgroundSize
+                ))
+            );
+        }
+    }
+
+    #[test]
     fn invalid_paint_values_are_diagnostic() {
         for property in [
             StyleProperty::BackgroundColor,
