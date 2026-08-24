@@ -837,14 +837,28 @@ mod tests {
             StyleProperty::BorderBottomLeftRadius,
             StyleProperty::Opacity,
             StyleProperty::Visibility,
-            StyleProperty::OverflowX,
-            StyleProperty::OverflowY,
             StyleProperty::ZIndex,
         ] {
             assert_eq!(
                 crate::resolve_style(
                     &SpecifiedStyle::new().push(property, StyleValue::Bool(true)),
                     None,
+                    StyleEnvironment::default(),
+                ),
+                Err(StyleResolutionError::InvalidPropertyValue(property))
+            );
+        }
+        let inherited =
+            crate::resolve_style(&SpecifiedStyle::new(), None, StyleEnvironment::default())
+                .unwrap()
+                .computed()
+                .inherited_text()
+                .clone();
+        for property in [StyleProperty::OverflowX, StyleProperty::OverflowY] {
+            assert_eq!(
+                resolve_paint_style(
+                    &SpecifiedStyle::new().push(property, StyleValue::Bool(true)),
+                    &inherited,
                     StyleEnvironment::default(),
                 ),
                 Err(StyleResolutionError::InvalidPropertyValue(property))

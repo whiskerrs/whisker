@@ -5,9 +5,9 @@ use crate::{
     CalcExpression, ClearValue, DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue,
     FlexWrapValue, FloatValue, GridMaxTrackSizingValue, GridMinTrackSizingValue,
     GridTemplateComponentValue, GridTemplateValue, GridTrackSizingValue, JustifyContentValue,
-    LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue, PositionValue,
-    PropertyImpactSet, SizeValue, SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty,
-    StyleResolutionError, StyleValue,
+    LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue, OverflowValue,
+    PositionValue, PropertyImpactSet, SizeValue, SpecifiedStyle, StyleEnvironment, StyleNumber,
+    StyleProperty, StyleResolutionError, StyleValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -336,6 +336,8 @@ pub struct ComputedLayoutStyle {
     pub float: FloatValue,
     /// Clearance applied against preceding floats.
     pub clear: ClearValue,
+    /// Horizontal and vertical overflow behavior that also affects Taffy's automatic minimums.
+    pub overflow: Axes<OverflowValue>,
     /// Positioning model.
     pub position: PositionValue,
     /// Inline writing direction.
@@ -408,11 +410,12 @@ impl Default for ComputedLayoutStyle {
             display: DisplayValue::Linear,
             float: FloatValue::None,
             clear: ClearValue::None,
+            overflow: Axes::all(OverflowValue::Visible),
             position: PositionValue::Relative,
             direction: DirectionValue::Ltr,
             box_sizing: BoxSizingValue::BorderBox,
             size: Axes::all(ComputedSizeValue::Auto),
-            min_size: Axes::all(ComputedSizeValue::Value(ComputedLengthPercentage::ZERO)),
+            min_size: Axes::all(ComputedSizeValue::Auto),
             max_size: Axes::all(ComputedSizeValue::None),
             margin: Edges::all(ComputedLengthPercentageAuto::Value(
                 ComputedLengthPercentage::ZERO,
@@ -493,6 +496,26 @@ pub(crate) fn resolve_layout_style(
         },
     )?
     .unwrap_or(style.clear);
+    style.overflow.width =
+        copied(
+            declarations.overflow_x,
+            StyleProperty::OverflowX,
+            |value| match value {
+                StyleValue::Overflow(value) => Some(*value),
+                _ => None,
+            },
+        )?
+        .unwrap_or(style.overflow.width);
+    style.overflow.height =
+        copied(
+            declarations.overflow_y,
+            StyleProperty::OverflowY,
+            |value| match value {
+                StyleValue::Overflow(value) => Some(*value),
+                _ => None,
+            },
+        )?
+        .unwrap_or(style.overflow.height);
     style.position = copied(
         declarations.position,
         StyleProperty::Position,
@@ -1346,6 +1369,8 @@ struct LayoutDeclarations<'a> {
     display: Option<&'a StyleValue>,
     float: Option<&'a StyleValue>,
     clear: Option<&'a StyleValue>,
+    overflow_x: Option<&'a StyleValue>,
+    overflow_y: Option<&'a StyleValue>,
     position: Option<&'a StyleValue>,
     direction: Option<&'a StyleValue>,
     box_sizing: Option<&'a StyleValue>,
@@ -1402,6 +1427,8 @@ impl<'a> LayoutDeclarations<'a> {
                 StyleProperty::Display => &mut values.display,
                 StyleProperty::Float => &mut values.float,
                 StyleProperty::Clear => &mut values.clear,
+                StyleProperty::OverflowX => &mut values.overflow_x,
+                StyleProperty::OverflowY => &mut values.overflow_y,
                 StyleProperty::Position => &mut values.position,
                 StyleProperty::Direction => &mut values.direction,
                 StyleProperty::BoxSizing => &mut values.box_sizing,
@@ -1503,6 +1530,7 @@ mod tests {
         assert_eq!(style.display, DisplayValue::Linear);
         assert_eq!(style.float, FloatValue::None);
         assert_eq!(style.clear, ClearValue::None);
+        assert_eq!(style.overflow, Axes::all(OverflowValue::Visible));
         assert_eq!(style.position, PositionValue::Relative);
         assert_eq!(style.direction, DirectionValue::Ltr);
         assert_eq!(style.box_sizing, BoxSizingValue::BorderBox);
@@ -1941,11 +1969,20 @@ mod tests {
                 StyleValue::Display(DisplayValue::FlowRoot),
             )
             .push(StyleProperty::Float, StyleValue::Float(FloatValue::Right))
-            .push(StyleProperty::Clear, StyleValue::Clear(ClearValue::Both));
+            .push(StyleProperty::Clear, StyleValue::Clear(ClearValue::Both))
+            .push(
+                StyleProperty::OverflowX,
+                StyleValue::Overflow(OverflowValue::Hidden),
+            )
+            .push(
+                StyleProperty::OverflowY,
+                StyleValue::Overflow(OverflowValue::Hidden),
+            );
         let style = resolve(&specified).unwrap();
         assert_eq!(style.display, DisplayValue::FlowRoot);
         assert_eq!(style.float, FloatValue::Right);
         assert_eq!(style.clear, ClearValue::Both);
+        assert_eq!(style.overflow, Axes::all(OverflowValue::Hidden));
     }
 
     #[test]
@@ -2314,6 +2351,8 @@ mod tests {
             StyleProperty::Display,
             StyleProperty::Float,
             StyleProperty::Clear,
+            StyleProperty::OverflowX,
+            StyleProperty::OverflowY,
             StyleProperty::Position,
             StyleProperty::Direction,
             StyleProperty::BoxSizing,
