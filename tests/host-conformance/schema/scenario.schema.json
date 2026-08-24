@@ -78,6 +78,7 @@
         "type": { "const": "present_box" },
         "revision": { "type": "integer", "minimum": 1 },
         "rect": { "$ref": "#/$defs/quadNumber" },
+        "content_box": { "$ref": "#/$defs/quadNumber" },
         "background": { "$ref": "#/$defs/color" },
         "border": { "$ref": "#/$defs/border" }
       }

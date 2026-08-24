@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-origin.content-box",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/background-origin/origin-content-box_with_size.html",
+    "reference_path": "css/css-backgrounds/reference/origin-content-box_with_size-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "A content-box background origin positions the background image relative to the content box.",
+    "adaptation": "The Host receives a 100 by 100 border box, its resolved content box at 20,20 with size 60 by 60, and an explicit 20 by 20 no-repeat blue gradient. Samples isolate content-box positioning from CSS parsing and resource loading."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 100.0],
+            "content_box": [20.0, 20.0, 60.0, 60.0],
+            "background": { "kind": "named", "value": "transparent" },
+            "background_layer": {
+              "size": [
+                { "length": 20.0, "fraction": 0.0 },
+                { "length": 20.0, "fraction": 0.0 }
+              ],
+              "repeat_x": "no_repeat",
+              "repeat_y": "no_repeat",
+              "origin": "content",
+              "clip": "border"
+            },
+            "linear_gradient": {
+              "angle_degrees": 180.0,
+              "stops": [
+                { "color": { "kind": "named", "value": "blue" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "blue" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.origin-content-box",
+        "samples": [
+          { "point": [20.0, 20.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 5 },
+          { "point": [39.0, 39.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 5 },
+          { "point": [19.0, 30.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [40.0, 30.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [30.0, 40.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}
