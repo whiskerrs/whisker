@@ -6,8 +6,9 @@ use whisker::{SurfaceRuntime, standard_element_registrations};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
-    BorderFixture, BorderStyleFixture, ColorFixture, Command, Host, LoadedCase, PixelSampleFixture,
-    PointerEventFixture, Scenario, ScenarioSide, load_required,
+    BorderFixture, BorderStyleFixture, ColorFixture, Command, Host, LoadedCase,
+    PixelRelationFixture, PixelRelationKind, PixelSampleFixture, PointerEventFixture, Scenario,
+    ScenarioSide, load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BorderLineStyle, BoxPaint, ElementTypeId, FrameHeader, FrameMode, FramePacket,
@@ -98,6 +99,7 @@ struct Checkpoint {
     logical_size: [u32; 2],
     primitives: Vec<BoxPrimitive>,
     samples: Vec<PixelSampleFixture>,
+    relations: Vec<PixelRelationFixture>,
 }
 
 fn standard_element_type(name: &str) -> ElementTypeId {
@@ -160,7 +162,11 @@ impl Driver {
                     background,
                     border,
                 } => self.present_box(*revision, *rect, background, border.as_ref()),
-                Command::Checkpoint { name, samples } => {
+                Command::Checkpoint {
+                    name,
+                    samples,
+                    relations,
+                } => {
                     assert_eq!(name, "paint.box", "unsupported Desktop checkpoint");
                     checkpoints.push(Checkpoint {
                         logical_size: [
@@ -169,6 +175,7 @@ impl Driver {
                         ],
                         primitives: self.box_primitives(),
                         samples: samples.clone(),
+                        relations: relations.clone(),
                     });
                 }
                 Command::MeasureText {
@@ -531,11 +538,11 @@ fn run_reftest(scenario: &Scenario) {
     );
 }
 
-fn run_pixel_samples(scenario: &Scenario) {
+fn run_pixel_assertions(scenario: &Scenario) {
     let checkpoints = Driver::new().execute(&scenario.test);
     for checkpoint in checkpoints
         .iter()
-        .filter(|checkpoint| !checkpoint.samples.is_empty())
+        .filter(|checkpoint| !checkpoint.samples.is_empty() || !checkpoint.relations.is_empty())
     {
         let pixels = pollster::block_on(render_box_primitives_offscreen(
             &checkpoint.primitives,
@@ -567,7 +574,49 @@ fn run_pixel_samples(scenario: &Scenario) {
                 scenario.id
             );
         }
+        for relation in &checkpoint.relations {
+            let first = pixel_at(
+                &pixels,
+                checkpoint.logical_size,
+                relation.first,
+                &scenario.id,
+            );
+            let second = pixel_at(
+                &pixels,
+                checkpoint.logical_size,
+                relation.second,
+                &scenario.id,
+            );
+            let first_luminance = luminance(first);
+            let second_luminance = luminance(second);
+            let minimum = u32::from(relation.minimum_difference);
+            let matches = match relation.relation {
+                PixelRelationKind::Lighter => first_luminance >= second_luminance + minimum,
+                PixelRelationKind::Darker => first_luminance + minimum <= second_luminance,
+            };
+            assert!(
+                matches,
+                "{} relation {:?}: {first:?} ({first_luminance}) vs {second:?} ({second_luminance})",
+                scenario.id, relation.relation
+            );
+        }
     }
+}
+
+fn pixel_at(pixels: &[u8], size: [u32; 2], point: [f32; 2], id: &str) -> [u8; 4] {
+    let [width, height] = size;
+    let x = point[0].floor() as u32;
+    let y = point[1].floor() as u32;
+    assert!(
+        x < width && y < height,
+        "{id} sample is outside the surface"
+    );
+    let offset = ((y * width + x) * 4) as usize;
+    pixels[offset..offset + 4].try_into().unwrap()
+}
+
+fn luminance([red, green, blue, _]: [u8; 4]) -> u32 {
+    (u32::from(red) * 299 + u32::from(green) * 587 + u32::from(blue) * 114) / 1000
 }
 
 #[test]
@@ -585,7 +634,7 @@ fn every_manifest_case_required_by_desktop_executes() {
             );
             run_reftest(&scenario);
         } else {
-            run_pixel_samples(&scenario);
+            run_pixel_assertions(&scenario);
         }
     }
 }

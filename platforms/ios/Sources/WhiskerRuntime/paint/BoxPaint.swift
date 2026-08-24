@@ -92,6 +92,15 @@ final class HostBoxPainter {
             colors[index].setFill()
             if styles[index] == borderStyleSolid {
                 region.fill()
+            } else if isReliefBorderStyle(styles[index]) {
+                drawReliefBorder(
+                    in: edgeRect(bounds: bounds, side: index, width: widths[index]),
+                    side: index,
+                    width: widths[index],
+                    style: styles[index],
+                    color: colors[index],
+                    context: context
+                )
             } else {
                 drawPatternedBorder(
                     in: edgeRect(bounds: bounds, side: index, width: widths[index]),
@@ -181,6 +190,61 @@ final class HostBoxPainter {
         }
         context.fill(outer)
         context.fill(inner)
+    }
+
+    private func drawReliefBorder(
+        in edge: CGRect,
+        side: Int,
+        width: CGFloat,
+        style: UInt32,
+        color: UIColor,
+        context: CGContext
+    ) {
+        let topOrLeft = side == 0 || side == 3
+        if style == borderStyleInset || style == borderStyleOutset {
+            let lighter = style == borderStyleInset ? !topOrLeft : topOrLeft
+            shadedBorderColor(color, lighter: lighter).setFill()
+            context.fill(edge)
+            return
+        }
+
+        let outerLighter: Bool
+        if style == borderStyleGroove {
+            outerLighter = !topOrLeft
+        } else {
+            outerLighter = topOrLeft
+        }
+        let (outer, inner) = reliefBands(in: edge, side: side, width: width)
+        shadedBorderColor(color, lighter: outerLighter).setFill()
+        context.fill(outer)
+        shadedBorderColor(color, lighter: !outerLighter).setFill()
+        context.fill(inner)
+    }
+
+    private func reliefBands(in edge: CGRect, side: Int, width: CGFloat) -> (CGRect, CGRect) {
+        let band = width / 2
+        switch side {
+        case 0:
+            return (
+                CGRect(x: edge.minX, y: edge.minY, width: edge.width, height: band),
+                CGRect(x: edge.minX, y: edge.maxY - band, width: edge.width, height: band)
+            )
+        case 1:
+            return (
+                CGRect(x: edge.maxX - band, y: edge.minY, width: band, height: edge.height),
+                CGRect(x: edge.minX, y: edge.minY, width: band, height: edge.height)
+            )
+        case 2:
+            return (
+                CGRect(x: edge.minX, y: edge.maxY - band, width: edge.width, height: band),
+                CGRect(x: edge.minX, y: edge.minY, width: edge.width, height: band)
+            )
+        default:
+            return (
+                CGRect(x: edge.minX, y: edge.minY, width: band, height: edge.height),
+                CGRect(x: edge.maxX - band, y: edge.minY, width: band, height: edge.height)
+            )
+        }
     }
 }
 
@@ -272,8 +336,36 @@ private let borderStyleSolid: UInt32 = 2
 private let borderStyleDashed: UInt32 = 3
 private let borderStyleDotted: UInt32 = 4
 private let borderStyleDouble: UInt32 = 5
+private let borderStyleGroove: UInt32 = 6
+private let borderStyleRidge: UInt32 = 7
+private let borderStyleInset: UInt32 = 8
+private let borderStyleOutset: UInt32 = 9
 
 private func paintsBorderStyle(_ style: UInt32) -> Bool {
     style == borderStyleSolid || style == borderStyleDashed || style == borderStyleDotted ||
-        style == borderStyleDouble
+        style == borderStyleDouble || isReliefBorderStyle(style)
+}
+
+private func isReliefBorderStyle(_ style: UInt32) -> Bool {
+    style == borderStyleGroove || style == borderStyleRidge || style == borderStyleInset ||
+        style == borderStyleOutset
+}
+
+private func shadedBorderColor(_ color: UIColor, lighter: Bool) -> UIColor {
+    var red: CGFloat = 0
+    var green: CGFloat = 0
+    var blue: CGFloat = 0
+    var alpha: CGFloat = 0
+    guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return color }
+    let amount: CGFloat = 0.45
+    if lighter {
+        red += (1 - red) * amount
+        green += (1 - green) * amount
+        blue += (1 - blue) * amount
+    } else {
+        red *= 1 - amount
+        green *= 1 - amount
+        blue *= 1 - amount
+    }
+    return UIColor(red: red, green: green, blue: blue, alpha: alpha)
 }
