@@ -753,17 +753,6 @@ impl MobileFrameOwned {
                     raw.payload = layouts.last().unwrap().as_ref() as *const _ as *const c_void;
                 }
                 Operation::SetBoxPaint { node, paint } => {
-                    if [
-                        paint.border_radii.top_left,
-                        paint.border_radii.top_right,
-                        paint.border_radii.bottom_right,
-                        paint.border_radii.bottom_left,
-                    ]
-                    .into_iter()
-                    .any(|radius| !radius.is_circular())
-                    {
-                        return Err(MobileFrameError);
-                    }
                     raw.tag = OP_PAINT;
                     raw.node = node.get();
                     paints.push(Box::new(mobile_paint(paint, &mut strings)));
@@ -966,11 +955,17 @@ fn mobile_paint(
             border_style(value.border_styles.bottom),
             border_style(value.border_styles.left),
         ],
-        radii: [
+        radii_horizontal: [
             mobile_length(value.border_radii.top_left.horizontal),
             mobile_length(value.border_radii.top_right.horizontal),
             mobile_length(value.border_radii.bottom_right.horizontal),
             mobile_length(value.border_radii.bottom_left.horizontal),
+        ],
+        radii_vertical: [
+            mobile_length(value.border_radii.top_left.vertical),
+            mobile_length(value.border_radii.top_right.vertical),
+            mobile_length(value.border_radii.bottom_right.vertical),
+            mobile_length(value.border_radii.bottom_left.vertical),
         ],
     }
 }
@@ -1066,5 +1061,23 @@ mod tests {
     fn hsla_is_lowered_without_host_string_parsing() {
         assert_eq!(hsl_to_rgb(0.0, 1.0, 0.5), (255, 0, 0));
         assert_eq!(hsl_to_rgb(120.0, 1.0, 0.5), (0, 255, 0));
+    }
+
+    #[test]
+    fn mobile_box_paint_preserves_elliptical_radii() {
+        let mut paint = whisker_engine::whisker_protocol::BoxPaint::default();
+        paint.border_radii.top_left = whisker_engine::whisker_protocol::PaintCornerRadius {
+            horizontal: PaintLengthPercentage {
+                length: 40.0,
+                fraction: 0.0,
+            },
+            vertical: PaintLengthPercentage {
+                length: 10.0,
+                fraction: 0.0,
+            },
+        };
+        let raw = mobile_paint(&paint, &mut Vec::new());
+        assert_eq!(raw.radii_horizontal[0].length, 40.0);
+        assert_eq!(raw.radii_vertical[0].length, 10.0);
     }
 }

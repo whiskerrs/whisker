@@ -240,8 +240,24 @@
             ]
           }
         },
-        "radii": { "$ref": "#/$defs/quadNumber" }
+        "radii": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/cornerRadius" }
+        }
       }
+    },
+    "cornerRadius": {
+      "oneOf": [
+        { "type": "number", "minimum": 0 },
+        {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "number", "minimum": 0 }
+        }
+      ]
     },
     "quadNumber": {
       "type": "array",

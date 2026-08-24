@@ -460,11 +460,15 @@ fn box_paint(background: &ColorFixture, border: Option<&BorderFixture>) -> BoxPa
         length,
         fraction: 0.0,
     });
-    let radii = border.radii.map(|length| {
-        PaintCornerRadius::circular(PaintLengthPercentage {
-            length,
+    let radii = border.radii.map(|radius| PaintCornerRadius {
+        horizontal: PaintLengthPercentage {
+            length: radius.horizontal(),
             fraction: 0.0,
-        })
+        },
+        vertical: PaintLengthPercentage {
+            length: radius.vertical(),
+            fraction: 0.0,
+        },
     });
     BoxPaint {
         background_color: color_protocol(background),

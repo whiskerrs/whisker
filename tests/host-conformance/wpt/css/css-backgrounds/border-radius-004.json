@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.border-radius-004",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/border-radius-004.xht",
+    "reference_path": "css/css-backgrounds/border-radius-004-ref.xht",
+    "license": "BSD-3-Clause",
+    "assertion": "The slash syntax preserves independent horizontal and vertical border radii.",
+    "adaptation": "The WPT 200 by 100 box is represented as a 100 by 60 Host frame with proportionally similar 40 by 10 elliptical radii. Interior and exterior pixel samples distinguish the ellipse from both a circular radius and an unclipped box."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 60.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [0.0, 0.0, 100.0, 60.0],
+        "background": { "kind": "named", "value": "green" },
+        "border": {
+          "widths": [0.0, 0.0, 0.0, 0.0],
+          "colors": [
+            { "kind": "named", "value": "transparent" },
+            { "kind": "named", "value": "transparent" },
+            { "kind": "named", "value": "transparent" },
+            { "kind": "named", "value": "transparent" }
+          ],
+          "styles": ["none", "none", "none", "none"],
+          "radii": [[40.0, 10.0], [40.0, 10.0], [40.0, 10.0], [40.0, 10.0]]
+        }
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [12.0, 5.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 },
+          { "point": [2.0, 2.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

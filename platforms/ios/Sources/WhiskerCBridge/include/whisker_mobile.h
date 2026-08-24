@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "whisker_bridge.h"
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 1, WHISKER_MOBILE_ABI_MINOR = 0 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 0 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -34,7 +34,8 @@ typedef struct {
   WhiskerMobileLengthPercentage widths[4];
   WhiskerMobileColor colors[4];
   uint32_t styles[4];
-  WhiskerMobileLengthPercentage radii[4];
+  WhiskerMobileLengthPercentage radii_horizontal[4];
+  WhiskerMobileLengthPercentage radii_vertical[4];
 } WhiskerMobileBoxPaint;
 typedef struct {
   WhiskerStringRef text; float font_size; uint16_t font_weight;
@@ -89,5 +90,5 @@ _Static_assert(sizeof(WhiskerMobileBootstrap) == 24, "WhiskerMobileBootstrap ABI
 _Static_assert(sizeof(WhiskerMobileMeasureRequest) == 160, "WhiskerMobileMeasureRequest ABI drift");
 _Static_assert(sizeof(WhiskerMobileMeasureResponse) == 64, "WhiskerMobileMeasureResponse ABI drift");
 _Static_assert(sizeof(WhiskerMobileText) == 80, "WhiskerMobileText ABI drift");
-_Static_assert(sizeof(WhiskerMobileBoxPaint) == 240, "WhiskerMobileBoxPaint ABI drift");
+_Static_assert(sizeof(WhiskerMobileBoxPaint) == 272, "WhiskerMobileBoxPaint ABI drift");
 #endif

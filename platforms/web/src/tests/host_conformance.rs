@@ -3,8 +3,8 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use whisker::ElementRegistry;
 use whisker_engine::FrameSink;
 use whisker_host_conformance::{
-    BorderFixture, BorderStyleFixture, ColorFixture, Command, Manifest, SCHEMA_VERSION, Scenario,
-    ScenarioSide,
+    BorderFixture, BorderStyleFixture, ColorFixture, Command, CornerRadiusFixture, Manifest,
+    SCHEMA_VERSION, Scenario, ScenarioSide,
 };
 use whisker_protocol::{
     BorderLineStyle, BoxPaint, FrameHeader, FrameMode, FramePacket, LayoutGeometry, LayoutRect,
@@ -123,7 +123,11 @@ impl Driver {
         );
 
         let (widths, styles, radii) = expected.border.as_ref().map_or(
-            ([0.0; 4], [BorderStyleFixture::None; 4], [0.0; 4]),
+            (
+                [0.0; 4],
+                [BorderStyleFixture::None; 4],
+                [CornerRadiusFixture::Circular(0.0); 4],
+            ),
             |border| (border.widths, border.styles, border.radii),
         );
         for (index, side) in ["top", "right", "bottom", "left"].iter().enumerate() {
@@ -150,11 +154,12 @@ impl Driver {
             .iter()
             .enumerate()
         {
-            let radius = fixture_px(radii[index]);
+            let horizontal = fixture_px(radii[index].horizontal());
+            let vertical = fixture_px(radii[index].vertical());
             assert_style(
                 &style,
                 &format!("border-{corner}-radius"),
-                &format!("{radius} {radius}"),
+                &format!("{horizontal} {vertical}"),
             );
         }
     }
@@ -200,6 +205,9 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
+        ),
+        "wpt/css/css-backgrounds/border-radius-004.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-004.json"
         ),
         "wpt/css/CSS2/borders/border-top-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-003.json"
@@ -310,11 +318,15 @@ fn box_paint(
         length,
         fraction: 0.0,
     });
-    let radii = border.radii.map(|length| {
-        PaintCornerRadius::circular(PaintLengthPercentage {
-            length,
+    let radii = border.radii.map(|radius| PaintCornerRadius {
+        horizontal: PaintLengthPercentage {
+            length: radius.horizontal(),
             fraction: 0.0,
-        })
+        },
+        vertical: PaintLengthPercentage {
+            length: radius.vertical(),
+            fraction: 0.0,
+        },
     });
     BoxPaint {
         background_color: color(background),

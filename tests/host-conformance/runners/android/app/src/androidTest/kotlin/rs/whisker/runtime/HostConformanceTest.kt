@@ -162,7 +162,7 @@ private class Driver(
     )
 
     private fun paint(command: JSONObject): Pair<FloatArray, Array<String>> {
-        val numbers = ArrayList<Float>(41)
+        val numbers = ArrayList<Float>(53)
         val names = ArrayList<String>(5)
         appendColor(command.getJSONObject("background"), numbers, names)
         val border = command.optJSONObject("border")
@@ -176,11 +176,28 @@ private class Driver(
                 names,
             )
         }
-        val radii = border?.getJSONArray("radii")?.floats() ?: FloatArray(4)
-        radii.forEach { radius -> numbers += listOf(radius, 0f) }
+        val radii = border?.getJSONArray("radii")
+        val radiiHorizontal = FloatArray(4)
+        val radiiVertical = FloatArray(4)
+        repeat(4) { index ->
+            when (val radius = radii?.get(index)) {
+                is Number -> {
+                    radiiHorizontal[index] = radius.toFloat()
+                    radiiVertical[index] = radius.toFloat()
+                }
+                is JSONArray -> {
+                    radiiHorizontal[index] = radius.getDouble(0).toFloat()
+                    radiiVertical[index] = radius.getDouble(1).toFloat()
+                }
+                null -> Unit
+                else -> error("unsupported border radius: $radius")
+            }
+        }
+        radiiHorizontal.forEach { radius -> numbers += listOf(radius, 0f) }
+        radiiVertical.forEach { radius -> numbers += listOf(radius, 0f) }
         val styles = border?.getJSONArray("styles")?.strings() ?: Array(4) { "none" }
         styles.forEach { style -> numbers += borderStyle(style).toFloat() }
-        check(numbers.size == 45)
+        check(numbers.size == 53)
         check(names.size == 5)
         return numbers.toFloatArray() to names.toTypedArray()
     }
@@ -286,7 +303,9 @@ private fun luminance(color: Int): Int =
 
 private fun fixtureColor(value: JSONObject): Int =
     if (value.getString("kind") == "named") {
-        android.graphics.Color.parseColor(value.getString("value"))
+        val name = value.getString("value")
+        if (name == "transparent") android.graphics.Color.TRANSPARENT
+        else android.graphics.Color.parseColor(name)
     } else {
         android.graphics.Color.argb(
             (value.getDouble("alpha") * 255.0).roundToInt(),
