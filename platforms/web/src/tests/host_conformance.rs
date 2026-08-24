@@ -201,6 +201,15 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
         ),
+        "wpt/css/CSS2/borders/border-top-003.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-003.json"
+        ),
+        "wpt/css/CSS2/borders/border-right-003.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-right-003.json"
+        ),
+        "wpt/css/CSS2/borders/border-bottom-003.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-bottom-003.json"
+        ),
         "wpt/css/CSS2/borders/border-left-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-left-003.json"
         ),

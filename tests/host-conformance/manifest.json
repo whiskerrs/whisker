@@ -6,15 +6,36 @@
       "id": "wpt.css2.backgrounds.background-color-129",
       "feature": "background-color",
       "fixture": "wpt/css/CSS2/backgrounds/background-color-129.json",
-      "required_hosts": ["desktop", "android", "ios"],
+      "required_hosts": ["desktop", "web", "android", "ios"],
       "checkpoints": ["semantic-projection", "pixel"]
     },
     {
       "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.test1",
       "feature": "border-radius",
       "fixture": "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json",
-      "required_hosts": ["desktop", "android", "ios"],
+      "required_hosts": ["desktop", "web", "android", "ios"],
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel"]
+    },
+    {
+      "id": "wpt.css2.borders.border-top-003",
+      "feature": "border-top",
+      "fixture": "wpt/css/CSS2/borders/border-top-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel"]
+    },
+    {
+      "id": "wpt.css2.borders.border-right-003",
+      "feature": "border-right",
+      "fixture": "wpt/css/CSS2/borders/border-right-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel"]
+    },
+    {
+      "id": "wpt.css2.borders.border-bottom-003",
+      "feature": "border-bottom",
+      "fixture": "wpt/css/CSS2/borders/border-bottom-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel"]
     },
     {
       "id": "wpt.css2.borders.border-left-003",
