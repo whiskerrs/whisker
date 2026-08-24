@@ -669,6 +669,11 @@ impl FrameSink for MobileFrameSink {
                         whisker_engine::whisker_protocol::RenderCapability::BackgroundGeometry,
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_engine::whisker_protocol::CapabilityEntry {
+                    capability:
+                        whisker_engine::whisker_protocol::RenderCapability::BackgroundLayerStacking,
+                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("mobile capability profile is unique")
@@ -707,7 +712,7 @@ struct MobileFrameOwned {
     _gradient_stops: Vec<Box<[MobileGradientStop]>>,
     _radial_gradients: Vec<Box<MobileRadialGradient>>,
     _conic_gradients: Vec<Box<MobileConicGradient>>,
-    _background_layers: Vec<Box<MobileBackgroundLayer>>,
+    _background_layers: Vec<Box<[MobileBackgroundLayer]>>,
     _texts: Vec<Box<MobileText>>,
     _transforms: Vec<Box<[f32; 16]>>,
     _values: Vec<Box<WhiskerValueRaw>>,
@@ -723,7 +728,7 @@ impl MobileFrameOwned {
         let mut gradient_stops = Vec::<Box<[MobileGradientStop]>>::new();
         let mut radial_gradients = Vec::<Box<MobileRadialGradient>>::new();
         let mut conic_gradients = Vec::<Box<MobileConicGradient>>::new();
-        let mut background_layers = Vec::<Box<MobileBackgroundLayer>>::new();
+        let mut background_layers = Vec::<Box<[MobileBackgroundLayer]>>::new();
         let mut texts = Vec::<Box<MobileText>>::new();
         let mut transforms = Vec::<Box<[f32; 16]>>::new();
         let mut values = Vec::<Box<WhiskerValueRaw>>::new();
@@ -798,148 +803,151 @@ impl MobileFrameOwned {
                     raw.tag = OP_BACKGROUND_LAYERS;
                     raw.node = node.get();
                     if !layers.is_empty() {
-                        let [layer] = layers.as_slice() else {
-                            return Err(MobileFrameError);
-                        };
-                        if layer.attachment != BackgroundAttachment::Scroll
-                            || layer.blend_mode != BlendMode::Normal
-                        {
-                            return Err(MobileFrameError);
-                        }
-                        let (size_kind, size_width, size_height, repeat_x, repeat_y) =
-                            match (layer.size, layer.repeat_x, layer.repeat_y) {
-                                (
-                                    BackgroundSize::Auto,
-                                    ImageRepeat::Repeat,
-                                    ImageRepeat::Repeat,
-                                ) if layer.position == Default::default()
-                                    && layer.origin == PaintBox::Padding
-                                    && layer.clip == PaintBox::Border =>
-                                {
+                        let mut mobile_layers = Vec::with_capacity(layers.len());
+                        for layer in layers {
+                            if layer.attachment != BackgroundAttachment::Scroll
+                                || layer.blend_mode != BlendMode::Normal
+                            {
+                                return Err(MobileFrameError);
+                            }
+                            let (size_kind, size_width, size_height, repeat_x, repeat_y) =
+                                match (layer.size, layer.repeat_x, layer.repeat_y) {
                                     (
-                                        BACKGROUND_SIZE_AUTO,
-                                        MobileLengthPercentage::default(),
-                                        MobileLengthPercentage::default(),
-                                        BACKGROUND_REPEAT_REPEAT,
-                                        BACKGROUND_REPEAT_REPEAT,
-                                    )
-                                }
-                                (
-                                    BackgroundSize::Explicit {
-                                        width: Some(width),
-                                        height: Some(height),
-                                    },
-                                    repeat_x,
-                                    repeat_y,
-                                ) => (
-                                    BACKGROUND_SIZE_EXPLICIT,
-                                    mobile_length(width),
-                                    mobile_length(height),
-                                    mobile_background_repeat(repeat_x),
-                                    mobile_background_repeat(repeat_y),
-                                ),
+                                        BackgroundSize::Auto,
+                                        ImageRepeat::Repeat,
+                                        ImageRepeat::Repeat,
+                                    ) if layer.position == Default::default()
+                                        && layer.origin == PaintBox::Padding
+                                        && layer.clip == PaintBox::Border =>
+                                    {
+                                        (
+                                            BACKGROUND_SIZE_AUTO,
+                                            MobileLengthPercentage::default(),
+                                            MobileLengthPercentage::default(),
+                                            BACKGROUND_REPEAT_REPEAT,
+                                            BACKGROUND_REPEAT_REPEAT,
+                                        )
+                                    }
+                                    (
+                                        BackgroundSize::Explicit {
+                                            width: Some(width),
+                                            height: Some(height),
+                                        },
+                                        repeat_x,
+                                        repeat_y,
+                                    ) => (
+                                        BACKGROUND_SIZE_EXPLICIT,
+                                        mobile_length(width),
+                                        mobile_length(height),
+                                        mobile_background_repeat(repeat_x),
+                                        mobile_background_repeat(repeat_y),
+                                    ),
+                                    _ => return Err(MobileFrameError),
+                                };
+                            let origin = match layer.origin {
+                                PaintBox::Border => BACKGROUND_BOX_BORDER,
+                                PaintBox::Padding => BACKGROUND_BOX_PADDING,
+                                PaintBox::Content => BACKGROUND_BOX_CONTENT,
                                 _ => return Err(MobileFrameError),
                             };
-                        let origin = match layer.origin {
-                            PaintBox::Border => BACKGROUND_BOX_BORDER,
-                            PaintBox::Padding => BACKGROUND_BOX_PADDING,
-                            PaintBox::Content => BACKGROUND_BOX_CONTENT,
-                            _ => return Err(MobileFrameError),
-                        };
-                        let clip = match layer.clip {
-                            PaintBox::Border => BACKGROUND_BOX_BORDER,
-                            PaintBox::Padding => BACKGROUND_BOX_PADDING,
-                            PaintBox::Content => BACKGROUND_BOX_CONTENT,
-                            _ => return Err(MobileFrameError),
-                        };
-                        let image = match &layer.image {
-                            PaintImage::LinearGradient {
-                                angle_degrees,
-                                repeating: false,
-                                stops,
-                            } => {
-                                let stops = mobile_gradient_stops(stops, &mut strings)?;
-                                gradient_stops.push(stops);
-                                let stops = gradient_stops.last().unwrap();
-                                MobileBackgroundImage {
-                                    kind: BACKGROUND_LINEAR,
-                                    scalar: *angle_degrees,
-                                    payload: stops.as_ptr().cast(),
-                                    payload_count: stops.len(),
+                            let clip = match layer.clip {
+                                PaintBox::Border => BACKGROUND_BOX_BORDER,
+                                PaintBox::Padding => BACKGROUND_BOX_PADDING,
+                                PaintBox::Content => BACKGROUND_BOX_CONTENT,
+                                _ => return Err(MobileFrameError),
+                            };
+                            let image = match &layer.image {
+                                PaintImage::LinearGradient {
+                                    angle_degrees,
+                                    repeating: false,
+                                    stops,
+                                } => {
+                                    let stops = mobile_gradient_stops(stops, &mut strings)?;
+                                    gradient_stops.push(stops);
+                                    let stops = gradient_stops.last().unwrap();
+                                    MobileBackgroundImage {
+                                        kind: BACKGROUND_LINEAR,
+                                        scalar: *angle_degrees,
+                                        payload: stops.as_ptr().cast(),
+                                        payload_count: stops.len(),
+                                    }
                                 }
-                            }
-                            PaintImage::RadialGradient {
-                                shape: RadialGradientShape::Ellipse,
-                                extent: RadialGradientExtent::Explicit,
-                                center,
-                                radii: Some((radius_x, radius_y)),
-                                repeating: false,
-                                stops,
-                            } => {
-                                let stops = mobile_gradient_stops(stops, &mut strings)?;
-                                gradient_stops.push(stops);
-                                let stops = gradient_stops.last().unwrap();
-                                radial_gradients.push(Box::new(MobileRadialGradient {
-                                    center_x: mobile_coordinate(center.x),
-                                    center_y: mobile_coordinate(center.y),
-                                    radius_x: mobile_length(*radius_x),
-                                    radius_y: mobile_length(*radius_y),
-                                    stops: stops.as_ptr(),
-                                    stop_count: stops.len(),
-                                }));
-                                MobileBackgroundImage {
-                                    kind: BACKGROUND_RADIAL,
-                                    scalar: 0.0,
-                                    payload: radial_gradients.last().unwrap().as_ref() as *const _
-                                        as *const c_void,
-                                    payload_count: 1,
+                                PaintImage::RadialGradient {
+                                    shape: RadialGradientShape::Ellipse,
+                                    extent: RadialGradientExtent::Explicit,
+                                    center,
+                                    radii: Some((radius_x, radius_y)),
+                                    repeating: false,
+                                    stops,
+                                } => {
+                                    let stops = mobile_gradient_stops(stops, &mut strings)?;
+                                    gradient_stops.push(stops);
+                                    let stops = gradient_stops.last().unwrap();
+                                    radial_gradients.push(Box::new(MobileRadialGradient {
+                                        center_x: mobile_coordinate(center.x),
+                                        center_y: mobile_coordinate(center.y),
+                                        radius_x: mobile_length(*radius_x),
+                                        radius_y: mobile_length(*radius_y),
+                                        stops: stops.as_ptr(),
+                                        stop_count: stops.len(),
+                                    }));
+                                    MobileBackgroundImage {
+                                        kind: BACKGROUND_RADIAL,
+                                        scalar: 0.0,
+                                        payload: radial_gradients.last().unwrap().as_ref()
+                                            as *const _
+                                            as *const c_void,
+                                        payload_count: 1,
+                                    }
                                 }
-                            }
-                            PaintImage::ConicGradient {
-                                from_degrees,
-                                center,
-                                repeating: false,
-                                stops,
-                            } if stops.iter().all(|stop| {
-                                stop.position.is_some_and(|position| position.length == 0.0)
-                            }) =>
-                            {
-                                let stops = mobile_gradient_stops(stops, &mut strings)?;
-                                gradient_stops.push(stops);
-                                let stops = gradient_stops.last().unwrap();
-                                conic_gradients.push(Box::new(MobileConicGradient {
-                                    center_x: mobile_coordinate(center.x),
-                                    center_y: mobile_coordinate(center.y),
-                                    stops: stops.as_ptr(),
-                                    stop_count: stops.len(),
-                                }));
-                                MobileBackgroundImage {
-                                    kind: BACKGROUND_CONIC,
-                                    scalar: *from_degrees,
-                                    payload: conic_gradients.last().unwrap().as_ref() as *const _
-                                        as *const c_void,
-                                    payload_count: 1,
+                                PaintImage::ConicGradient {
+                                    from_degrees,
+                                    center,
+                                    repeating: false,
+                                    stops,
+                                } if stops.iter().all(|stop| {
+                                    stop.position.is_some_and(|position| position.length == 0.0)
+                                }) =>
+                                {
+                                    let stops = mobile_gradient_stops(stops, &mut strings)?;
+                                    gradient_stops.push(stops);
+                                    let stops = gradient_stops.last().unwrap();
+                                    conic_gradients.push(Box::new(MobileConicGradient {
+                                        center_x: mobile_coordinate(center.x),
+                                        center_y: mobile_coordinate(center.y),
+                                        stops: stops.as_ptr(),
+                                        stop_count: stops.len(),
+                                    }));
+                                    MobileBackgroundImage {
+                                        kind: BACKGROUND_CONIC,
+                                        scalar: *from_degrees,
+                                        payload: conic_gradients.last().unwrap().as_ref()
+                                            as *const _
+                                            as *const c_void,
+                                        payload_count: 1,
+                                    }
                                 }
-                            }
-                            _ => return Err(MobileFrameError),
-                        };
-                        background_layers.push(Box::new(MobileBackgroundLayer {
-                            image,
-                            position_x: mobile_coordinate(layer.position.x),
-                            position_y: mobile_coordinate(layer.position.y),
-                            size_width,
-                            size_height,
-                            size_kind,
-                            repeat_x,
-                            repeat_y,
-                            origin,
-                            clip,
-                            attachment: BACKGROUND_ATTACHMENT_SCROLL,
-                            blend_mode: BACKGROUND_BLEND_NORMAL,
-                        }));
-                        raw.payload =
-                            background_layers.last().unwrap().as_ref() as *const _ as *const c_void;
-                        raw.payload_count = 1;
+                                _ => return Err(MobileFrameError),
+                            };
+                            mobile_layers.push(MobileBackgroundLayer {
+                                image,
+                                position_x: mobile_coordinate(layer.position.x),
+                                position_y: mobile_coordinate(layer.position.y),
+                                size_width,
+                                size_height,
+                                size_kind,
+                                repeat_x,
+                                repeat_y,
+                                origin,
+                                clip,
+                                attachment: BACKGROUND_ATTACHMENT_SCROLL,
+                                blend_mode: BACKGROUND_BLEND_NORMAL,
+                            });
+                        }
+                        background_layers.push(mobile_layers.into_boxed_slice());
+                        let layers = background_layers.last().unwrap();
+                        raw.payload = layers.as_ptr().cast();
+                        raw.payload_count = layers.len();
                     }
                 }
                 Operation::SetClip { node, clip } => {
@@ -1274,6 +1282,37 @@ fn border_style(value: BorderLineStyle) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use whisker_engine::whisker_protocol::{
+        BackgroundLayer, FrameHeader, GradientStop, PaintCoordinate, PaintPosition, ProtocolVersion,
+    };
+
+    fn linear_background(name: &str) -> BackgroundLayer {
+        BackgroundLayer {
+            image: PaintImage::LinearGradient {
+                angle_degrees: 180.0,
+                repeating: false,
+                stops: [0.0, 1.0]
+                    .into_iter()
+                    .map(|fraction| GradientStop {
+                        color: PaintColor::Named(name.into()),
+                        position: Some(PaintCoordinate {
+                            length: 0.0,
+                            fraction,
+                        }),
+                    })
+                    .collect(),
+            },
+            position: PaintPosition::default(),
+            size: BackgroundSize::Auto,
+            repeat_x: ImageRepeat::Repeat,
+            repeat_y: ImageRepeat::Repeat,
+            origin: PaintBox::Padding,
+            clip: PaintBox::Border,
+            attachment: BackgroundAttachment::Scroll,
+            blend_mode: BlendMode::Normal,
+        }
+    }
+
     #[test]
     fn viewport_rejects_invalid_host_metrics() {
         assert!(Viewport::new(320.0, 640.0, 2.0).is_some());
@@ -1302,5 +1341,39 @@ mod tests {
         let raw = mobile_paint(&paint, &mut Vec::new());
         assert_eq!(raw.radii_horizontal[0].length, 40.0);
         assert_eq!(raw.radii_vertical[0].length, 10.0);
+    }
+
+    #[test]
+    fn mobile_frame_exposes_background_layers_as_one_contiguous_slice() {
+        let node = NodeId::new(1).unwrap();
+        let packet = FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![Operation::SetBackgroundLayers {
+                node,
+                layers: vec![linear_background("red"), linear_background("blue")],
+            }],
+        };
+        let frame = MobileFrameOwned::new(&packet).unwrap();
+        let operation = &frame._operations[0];
+        assert_eq!(operation.tag, OP_BACKGROUND_LAYERS);
+        assert_eq!(operation.payload_count, 2);
+        let layers = unsafe {
+            std::slice::from_raw_parts(
+                operation.payload.cast::<MobileBackgroundLayer>(),
+                operation.payload_count,
+            )
+        };
+        assert_eq!(layers[0].image.kind, BACKGROUND_LINEAR);
+        assert_eq!(layers[1].image.kind, BACKGROUND_LINEAR);
+        assert_ne!(layers[0].image.payload, layers[1].image.payload);
     }
 }
