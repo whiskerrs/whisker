@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.box-shadow-002",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/box-shadow-002.htm",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "Positive spread distance grows an outer shadow equally in every direction.",
+    "adaptation": "The upstream 100px box, 50px/10px offset, and 10px spread are retained. A white source box distinguishes the required shadow-below-background paint order, while direct samples replace the upstream red-underlay comparison."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 190.0, "height": 140.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [10.0, 10.0, 100.0, 100.0],
+            "background": { "kind": "named", "value": "white" },
+            "box_shadows": [
+              {
+                "offset": [50.0, 10.0],
+                "blur_radius": 0.0,
+                "spread_radius": 10.0,
+                "color": { "kind": "named", "value": "black" }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.visual-effects.box-shadow-spread",
+        "samples": [
+          { "point": [70.0, 50.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 },
+          { "point": [55.0, 125.0], "color": { "kind": "named", "value": "black" }, "tolerance": 5 },
+          { "point": [165.0, 125.0], "color": { "kind": "named", "value": "black" }, "tolerance": 5 },
+          { "point": [175.0, 125.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [5.0, 50.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}
