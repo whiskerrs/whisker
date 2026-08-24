@@ -1363,12 +1363,12 @@ fn background_tile_geometry(
     layer: &whisker_protocol::BackgroundLayer,
     intrinsic_size: Option<[f32; 2]>,
 ) -> Option<BackgroundTileGeometry> {
-    use whisker_protocol::BackgroundSize;
+    use whisker_protocol::{BackgroundSize, ImageRepeat};
 
     let resolve = |value: whisker_protocol::PaintLengthPercentage, extent: f32| {
         value.length + value.fraction * extent
     };
-    let [width, height] = match layer.size {
+    let [mut width, mut height] = match layer.size {
         BackgroundSize::Auto => {
             intrinsic_size.unwrap_or([positioning_rect.width, positioning_rect.height])
         }
@@ -1405,7 +1405,24 @@ fn background_tile_geometry(
     if width <= 0.0 || height <= 0.0 {
         return None;
     }
-    let x = background_axis_geometry(
+    let height_tracks_rounded_width = matches!(
+        layer.size,
+        BackgroundSize::Explicit {
+            width: Some(_),
+            height: None
+        }
+    ) && layer.repeat_x == ImageRepeat::Round
+        && layer.repeat_y != ImageRepeat::Round;
+    let width_tracks_rounded_height = matches!(
+        layer.size,
+        BackgroundSize::Explicit {
+            width: None,
+            height: Some(_)
+        }
+    ) && layer.repeat_y == ImageRepeat::Round
+        && layer.repeat_x != ImageRepeat::Round;
+
+    let mut x = background_axis_geometry(
         positioning_rect.x,
         positioning_rect.width,
         width,
@@ -1414,6 +1431,9 @@ fn background_tile_geometry(
         1,
         4,
     );
+    if height_tracks_rounded_width {
+        height *= x.tile_size / width;
+    }
     let y = background_axis_geometry(
         positioning_rect.y,
         positioning_rect.height,
@@ -1423,6 +1443,18 @@ fn background_tile_geometry(
         2,
         8,
     );
+    if width_tracks_rounded_height {
+        width *= y.tile_size / height;
+        x = background_axis_geometry(
+            positioning_rect.x,
+            positioning_rect.width,
+            width,
+            layer.position.x,
+            layer.repeat_x,
+            1,
+            4,
+        );
+    }
     Some(BackgroundTileGeometry {
         rect: LayoutRect {
             x: x.origin,
@@ -2404,6 +2436,43 @@ mod tests {
                 height: 30.0
             }
         );
+    }
+
+    #[test]
+    fn one_axis_round_rescales_the_opposite_auto_axis() {
+        let area = LayoutRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 80.0,
+        };
+        let intrinsic = [4.0, 2.0];
+
+        let mut round_width = resource_layer(BackgroundSize::Explicit {
+            width: Some(PaintLengthPercentage {
+                length: 40.0,
+                fraction: 0.0,
+            }),
+            height: None,
+        });
+        round_width.position = PaintPosition::default();
+        round_width.repeat_x = ImageRepeat::Round;
+        let horizontal = background_tile_geometry(area, &round_width, Some(intrinsic)).unwrap();
+        assert!((horizontal.rect.width - 100.0 / 3.0).abs() < 0.001);
+        assert!((horizontal.rect.height - 50.0 / 3.0).abs() < 0.001);
+
+        let mut round_height = resource_layer(BackgroundSize::Explicit {
+            width: None,
+            height: Some(PaintLengthPercentage {
+                length: 30.0,
+                fraction: 0.0,
+            }),
+        });
+        round_height.position = PaintPosition::default();
+        round_height.repeat_y = ImageRepeat::Round;
+        let vertical = background_tile_geometry(area, &round_height, Some(intrinsic)).unwrap();
+        assert!((vertical.rect.width - 160.0 / 3.0).abs() < 0.001);
+        assert!((vertical.rect.height - 80.0 / 3.0).abs() < 0.001);
     }
 
     #[test]
