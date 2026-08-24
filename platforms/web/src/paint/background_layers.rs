@@ -1,7 +1,7 @@
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, GradientStop, ImageRepeat,
     PaintBox, PaintCoordinate, PaintImage, PaintLengthPercentage, PaintPosition,
-    RadialGradientExtent, RadialGradientShape,
+    RadialGradientExtent, RadialGradientShape, ResourceId,
 };
 
 use super::color::css_color;
@@ -14,6 +14,7 @@ pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
 
 fn supports_layer(layer: &BackgroundLayer) -> bool {
     let supported_image = match &layer.image {
+        PaintImage::Resource(_) => true,
         PaintImage::LinearGradient {
             repeating: false,
             stops,
@@ -73,6 +74,7 @@ fn supports_layer(layer: &BackgroundLayer) -> bool {
 pub(crate) fn apply(
     element: &web_sys::Element,
     layers: &[BackgroundLayer],
+    resolve_resource: impl Fn(ResourceId) -> Option<String>,
 ) -> Result<(), WebError> {
     if !supports(layers) {
         return Err(WebError(
@@ -86,7 +88,7 @@ pub(crate) fn apply(
     } else {
         layers
             .iter()
-            .map(background_image)
+            .map(|layer| background_image(layer, &resolve_resource))
             .collect::<Result<Vec<_>, _>>()?
             .join(", ")
     };
@@ -123,8 +125,19 @@ fn layer_values(
     }
 }
 
-fn background_image(layer: &BackgroundLayer) -> Result<String, WebError> {
+fn background_image(
+    layer: &BackgroundLayer,
+    resolve_resource: &impl Fn(ResourceId) -> Option<String>,
+) -> Result<String, WebError> {
     match &layer.image {
+        PaintImage::Resource(resource) => resolve_resource(*resource)
+            .map(|url| format!("url(\"{}\")", escape_css_url(&url)))
+            .ok_or_else(|| {
+                WebError(format!(
+                    "DOM Host background resource {} is not registered",
+                    resource.get()
+                ))
+            }),
         PaintImage::LinearGradient {
             angle_degrees,
             repeating: false,
@@ -146,6 +159,13 @@ fn background_image(layer: &BackgroundLayer) -> Result<String, WebError> {
         } => conic_gradient(*from_degrees, *center, stops),
         _ => Err(WebError("unsupported DOM background image".into())),
     }
+}
+
+fn escape_css_url(url: &str) -> String {
+    url.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\a ")
+        .replace('\r', "\\d ")
 }
 
 fn linear_gradient(angle_degrees: f32, stops: &[GradientStop]) -> Result<String, WebError> {
