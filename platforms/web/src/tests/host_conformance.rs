@@ -927,6 +927,9 @@ fn fixture(path: &str) -> &'static str {
         "core/resource-raster-lifecycle.json" => {
             include_str!("../../../../tests/host-conformance/core/resource-raster-lifecycle.json")
         }
+        "core/background-layer-geometry-symmetry.json" => include_str!(
+            "../../../../tests/host-conformance/core/background-layer-geometry-symmetry.json"
+        ),
         "wpt/css/CSS2/backgrounds/background-color-129.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/backgrounds/background-color-129.json"
         ),
