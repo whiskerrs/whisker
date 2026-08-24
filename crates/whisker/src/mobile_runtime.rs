@@ -843,12 +843,12 @@ impl MobileFrameOwned {
                         let origin = match layer.origin {
                             PaintBox::Border => BACKGROUND_BOX_BORDER,
                             PaintBox::Padding => BACKGROUND_BOX_PADDING,
-                            _ => return Err(MobileFrameError),
+                            PaintBox::Content => BACKGROUND_BOX_CONTENT,
                         };
                         let clip = match layer.clip {
                             PaintBox::Border => BACKGROUND_BOX_BORDER,
                             PaintBox::Padding => BACKGROUND_BOX_PADDING,
-                            _ => return Err(MobileFrameError),
+                            PaintBox::Content => BACKGROUND_BOX_CONTENT,
                         };
                         let image = match &layer.image {
                             PaintImage::LinearGradient {
