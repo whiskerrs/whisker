@@ -524,6 +524,16 @@ decoding to the Host resource service. Background resources do not influence
 Taffy layout; intrinsic dimensions returned by the Host are retained for
 future replaced-content consumers but do not resize a CSS background.
 
+The next slice lowers the Host-independent background geometry that every
+current receiver can apply symmetrically: two-axis explicit size, affine
+position, all repeat modes, border/padding/content origin and clip boxes, and
+scroll attachment. CSS initial `auto` remains valid for the initial geometry.
+Intrinsic `auto`, one-axis `auto`, `cover`, `contain`, fixed/local attachment,
+text clipping, and non-normal blend modes stay outside this slice until their
+resource-size or scrolling semantics and all four Host receivers land
+together. Unsupported combinations are rejected transactionally rather than
+silently approximated.
+
 Adding the semantic value does not declare a Host implementation complete.
 Until a Host advertises and implements the corresponding capability, its
 receiver rejects the operation before mutating retained state. It must not
@@ -845,13 +855,12 @@ Visual snapshots supplement but do not replace semantic assertions.
    validation. It also retains elliptical radius axes, OpenType
    feature/variation/optical-sizing measurement inputs, image-rendering intent,
    optional capability profiles, and a generation-safe resource lifecycle.
-   Existing Desktop and Web Hosts advertise elliptical radius support; all
-   other newly introduced groups are rejected before retained-state mutation.
-   Mobile advertises the base profile until its packed ABI grows equivalent
-   fields. Except for box radius, these operations are intentionally not
-   emitted by style lowering yet; each property group lands next as a complete
-   specified-value -> computed-value -> operation slice and then advances the
-   per-Host checklist.
+   Existing Desktop and Web Hosts advertise elliptical radius support, while
+   the common background-layer subset is now represented in every Host ABI.
+   URL-backed backgrounds and their supported layer geometry are emitted by
+   style lowering; remaining operation groups are rejected before retained
+   state mutation. Each property group lands as a complete specified-value ->
+   computed-value -> operation slice and then advances the per-Host checklist.
 6. Route signal and `whisker-motion` writes through the shared property slots
    and incremental dirty classifier.
 7. Add the shared Host conformance scenario format, standalone runners, and
