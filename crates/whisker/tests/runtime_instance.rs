@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -12,15 +12,15 @@ use whisker::{
     RuntimeBindingError, RuntimeDriveError, RuntimeInstance, RuntimeLifecycle, SurfaceRuntime,
 };
 use whisker_engine::whisker_protocol::{
-    BackgroundAttachment, BackgroundSize, BlendMode, FrameMode, ImageRepeat, InputEvent,
-    InputEventKind, InputPoint, MeasuredSize, MeasurementMetrics, MeasurementPayload,
-    MeasurementReady, MeasurementRequest, MeasurementRequestId, MeasurementResponse, Operation,
-    PaintBox, PaintImage, PaintPosition, PointerId, PointerInput, PointerKind, ResourceCommand,
-    ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
-    SurfaceId, WhiskerValue,
+    ApplyResult, BackgroundAttachment, BackgroundSize, BlendMode, FrameMode, FramePacket,
+    ImageRepeat, InputEvent, InputEventKind, InputPoint, MeasuredSize, MeasurementMetrics,
+    MeasurementPayload, MeasurementReady, MeasurementRequest, MeasurementRequestId,
+    MeasurementResponse, Operation, PaintBox, PaintImage, PaintPosition, PointerId, PointerInput,
+    PointerKind, RenderCapabilities, ResourceCommand, ResourceDimensions, ResourceEvent,
+    ResourceId, ResourceKind, ResourceRequest, ResourceSource, SurfaceId, WhiskerValue,
 };
 use whisker_engine::whisker_style::{StyleEnvironment, StyleResolutionError};
-use whisker_engine::{LayoutOptions, MeasurementProvider, RecordingRenderer};
+use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider, RecordingRenderer};
 use whisker_runtime::RuntimeWakeHandle;
 
 #[derive(Default)]
@@ -105,6 +105,72 @@ fn surface(id: u64) -> SurfaceRuntime {
         SurfaceId::new(id).unwrap(),
         StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
     )
+}
+
+const BACKGROUND_URL: &str = "https://example.com/background.png";
+
+fn url_background_style() -> Css {
+    Css::new()
+        .width(px(100))
+        .height(px(100))
+        .background_image(ImageRef::Url(CssString::new(BACKGROUND_URL)))
+}
+
+fn ready_raster(resource: ResourceId, generation: u64) -> ResourceEvent {
+    ResourceEvent::Ready {
+        resource,
+        generation,
+        dimensions: Some(ResourceDimensions {
+            width: 2.0,
+            height: 2.0,
+            scale: 1.0,
+        }),
+    }
+}
+
+fn dispatch_control_tap(runtime: &RuntimeInstance, surface: &SurfaceRuntime, timestamp_ms: f64) {
+    let dispatch = runtime
+        .dispatch_input(&InputEvent {
+            surface: surface.surface(),
+            timestamp_ms,
+            kind: InputEventKind::Tap,
+            pointer: Some(PointerInput {
+                id: PointerId::new(99).unwrap(),
+                kind: PointerKind::Touch,
+                position: InputPoint { x: 1.0, y: 1.0 },
+                buttons: 1,
+                changed_button: 0,
+            }),
+            target: surface.root(),
+            detail: WhiskerValue::Null,
+        })
+        .expect("control tap must route through the runtime context");
+    assert!(dispatch.consumed);
+}
+
+struct NeedSnapshotOnceSink {
+    request_snapshot: bool,
+}
+
+impl FrameSink for NeedSnapshotOnceSink {
+    type Error = Infallible;
+
+    fn capabilities(&self) -> RenderCapabilities {
+        RenderCapabilities::all_frame_native()
+    }
+
+    fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
+        if self.request_snapshot {
+            self.request_snapshot = false;
+            Ok(ApplyResult::NeedSnapshot {
+                receiver_revision: packet.header.base_revision,
+            })
+        } else {
+            Ok(ApplyResult::Accepted {
+                revision: packet.header.target_revision,
+            })
+        }
+    }
 }
 
 #[test]
@@ -308,6 +374,409 @@ fn background_url_loads_out_of_frame_and_is_emitted_only_after_ready() {
         )
     }));
     assert!(surface.take_resource_commands().is_empty());
+}
+
+#[test]
+fn background_url_is_shared_and_released_only_after_the_last_clear_is_accepted() {
+    let surface = surface(41);
+    let desired_visibility = Rc::new(Cell::new((true, true)));
+    let mounted_visibility = Rc::clone(&desired_visibility);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime
+        .mount(move || {
+            let first = RwSignal::new(true);
+            let second = RwSignal::new(true);
+            render! {
+                view(
+                    style: css!(width: px(200), height: px(100)),
+                    on_tap: move |_| {
+                        let (show_first, show_second) = mounted_visibility.get();
+                        first.set(show_first);
+                        second.set(show_second);
+                    },
+                ) {
+                    Show(when: move || first.get()) {
+                        view(style: url_background_style())
+                    }
+                    Show(when: move || second.get()) {
+                        view(style: url_background_style())
+                    }
+                }
+            }
+        })
+        .unwrap();
+
+    let commands = surface.take_resource_commands();
+    assert_eq!(commands.len(), 1, "equal URLs must share one Host load");
+    let ResourceCommand::Load(request) = &commands[0] else {
+        panic!("shared background URL must load once")
+    };
+    assert_eq!(request.generation, 1);
+    assert_eq!(request.source, ResourceSource::Url(BACKGROUND_URL.into()));
+    let resource = request.resource;
+    assert_eq!(
+        runtime
+            .dispatch_resource_event(&ready_raster(resource, 1))
+            .unwrap(),
+        whisker::ResourceEventApply::Applied
+    );
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(surface.take_resource_commands().is_empty());
+
+    desired_visibility.set((false, true));
+    dispatch_control_tap(&runtime, &surface, 1.5);
+    runtime
+        .drive_frame(
+            2.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        surface.take_resource_commands().is_empty(),
+        "deleting one of two users must retain the shared generation"
+    );
+
+    desired_visibility.set((true, true));
+    dispatch_control_tap(&runtime, &surface, 2.5);
+    runtime
+        .drive_frame(
+            3.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        surface.take_resource_commands().is_empty(),
+        "reacquiring a still-shared URL must not reload it"
+    );
+
+    desired_visibility.set((false, true));
+    dispatch_control_tap(&runtime, &surface, 3.5);
+    runtime
+        .drive_frame(
+            4.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(surface.take_resource_commands().is_empty());
+
+    desired_visibility.set((false, false));
+    dispatch_control_tap(&runtime, &surface, 4.5);
+    assert!(
+        surface.take_resource_commands().is_empty(),
+        "Release must not precede the frame which removes the final user"
+    );
+    let removal_frame_index = sink.frames().len();
+    let removed = runtime
+        .drive_frame(
+            5.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(matches!(
+        removed.frame.presentation,
+        Some(ApplyResult::Accepted { .. })
+    ));
+    assert!(
+        sink.frames()[removal_frame_index]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| matches!(operation, Operation::DeleteNode { .. }))
+    );
+    assert_eq!(
+        surface.take_resource_commands(),
+        vec![ResourceCommand::Release {
+            resource,
+            generation: 1,
+        }],
+        "the accepted clear is the earliest safe Release point"
+    );
+}
+
+#[test]
+fn background_url_reacquired_before_clear_ack_keeps_the_current_generation() {
+    let surface = surface(42);
+    let desired_visibility = Rc::new(Cell::new(true));
+    let mounted_visibility = Rc::clone(&desired_visibility);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime
+        .mount(move || {
+            let visible = RwSignal::new(true);
+            render! {
+                view(
+                    style: css!(width: px(100), height: px(100)),
+                    on_tap: move |_| visible.set(mounted_visibility.get()),
+                ) {
+                    Show(when: move || visible.get()) {
+                        view(style: url_background_style())
+                    }
+                }
+            }
+        })
+        .unwrap();
+    let commands = surface.take_resource_commands();
+    let ResourceCommand::Load(request) = &commands[0] else {
+        panic!("initial background URL must load")
+    };
+    assert_eq!(request.generation, 1);
+    assert_eq!(request.source, ResourceSource::Url(BACKGROUND_URL.into()));
+    let resource = request.resource;
+    runtime
+        .dispatch_resource_event(&ready_raster(resource, request.generation))
+        .unwrap();
+
+    let mut measurements = NoMeasurement;
+    let mut accepted = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut accepted,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    desired_visibility.set(false);
+    dispatch_control_tap(&runtime, &surface, 1.5);
+    let mut recovery = NeedSnapshotOnceSink {
+        request_snapshot: true,
+    };
+    let clear = runtime
+        .drive_frame(
+            2.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut recovery,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(matches!(
+        clear.frame.presentation,
+        Some(ApplyResult::NeedSnapshot { .. })
+    ));
+    assert!(
+        surface.take_resource_commands().is_empty(),
+        "an unacknowledged clear must not release its resource"
+    );
+
+    desired_visibility.set(true);
+    dispatch_control_tap(&runtime, &surface, 2.5);
+    let reacquired = runtime
+        .drive_frame(
+            3.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut recovery,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(matches!(
+        reacquired.frame.presentation,
+        Some(ApplyResult::Accepted { .. })
+    ));
+    assert!(
+        surface.take_resource_commands().is_empty(),
+        "reacquiring before Release must cancel retirement without a new Load"
+    );
+}
+
+#[test]
+fn stale_ready_for_a_released_background_does_not_affect_its_replacement() {
+    let surface = surface(43);
+    let desired_visibility = Rc::new(Cell::new(true));
+    let mounted_visibility = Rc::clone(&desired_visibility);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime
+        .mount(move || {
+            let visible = RwSignal::new(true);
+            render! {
+                view(
+                    style: css!(width: px(100), height: px(100)),
+                    on_tap: move |_| visible.set(mounted_visibility.get()),
+                ) {
+                    Show(when: move || visible.get()) {
+                        view(style: url_background_style())
+                    }
+                }
+            }
+        })
+        .unwrap();
+    let first_commands = surface.take_resource_commands();
+    let ResourceCommand::Load(first_load) = &first_commands[0] else {
+        panic!("initial background URL must load")
+    };
+    let resource = first_load.resource;
+    assert_eq!(first_load.generation, 1);
+    runtime
+        .dispatch_resource_event(&ready_raster(resource, first_load.generation))
+        .unwrap();
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    desired_visibility.set(false);
+    dispatch_control_tap(&runtime, &surface, 1.5);
+    assert!(surface.take_resource_commands().is_empty());
+    runtime
+        .drive_frame(
+            2.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        surface.take_resource_commands(),
+        vec![ResourceCommand::Release {
+            resource,
+            generation: 1,
+        }]
+    );
+
+    desired_visibility.set(true);
+    dispatch_control_tap(&runtime, &surface, 2.5);
+    runtime
+        .drive_frame(
+            3.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let second_commands = surface.take_resource_commands();
+    assert_eq!(second_commands.len(), 1);
+    let ResourceCommand::Load(second_load) = &second_commands[0] else {
+        panic!("reacquiring a released URL must start a new load")
+    };
+    assert_ne!(
+        second_load.resource, resource,
+        "a resource ID published in FramePacket must not be reused"
+    );
+    assert_eq!(second_load.generation, 1);
+    assert_eq!(
+        second_load.source,
+        ResourceSource::Url(BACKGROUND_URL.into())
+    );
+    let replacement = second_load.resource;
+
+    let frames_before_stale = sink.frames().len();
+    assert_eq!(
+        runtime
+            .dispatch_resource_event(&ready_raster(resource, 1))
+            .unwrap(),
+        whisker::ResourceEventApply::Stale,
+        "a completion for the released ID must never become paintable again"
+    );
+    runtime
+        .drive_frame(
+            4.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(sink.frames()[frames_before_stale..].iter().all(|frame| {
+        frame.packet.operations.iter().all(|operation| {
+            !matches!(
+                operation,
+                Operation::SetBackgroundLayers { layers, .. }
+                    if layers.iter().any(|layer| {
+                        matches!(layer.image, PaintImage::Resource(id) if id == resource || id == replacement)
+                    })
+            )
+        })
+    }));
+
+    assert_eq!(
+        runtime
+            .dispatch_resource_event(&ready_raster(replacement, 1))
+            .unwrap(),
+        whisker::ResourceEventApply::Applied
+    );
+    runtime
+        .drive_frame(
+            5.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        sink.frames()
+            .last()
+            .unwrap()
+            .packet
+            .operations
+            .iter()
+            .any(|operation| matches!(
+                operation,
+                Operation::SetBackgroundLayers { layers, .. }
+                    if layers.iter().any(|layer| layer.image == PaintImage::Resource(replacement))
+            ))
+    );
 }
 
 #[test]

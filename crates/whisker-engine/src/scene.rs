@@ -1321,7 +1321,7 @@ mod tests {
             matches!(
                 operation,
                 Operation::SetBackgroundLayers { node, layers }
-                    if *node == root && layers == &[background.clone()]
+                    if *node == root && layers == std::slice::from_ref(&background)
             )
         }));
         assert!(!scene.has_pending_work());
