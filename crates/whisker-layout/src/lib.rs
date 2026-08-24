@@ -956,8 +956,8 @@ mod tests {
     use super::*;
     use whisker_style::{
         Axes, ComputedGridTemplate, ComputedGridTemplateComponent, ComputedGridTemplateRepetition,
-        ComputedGridTrackSizing, Edges, GridPlacementLineValue, GridRepetitionCountValue,
-        GridTemplateAreaValue, GridTemplateAreasValue, StyleNumber,
+        ClearValue, ComputedGridTrackSizing, Edges, FloatValue, GridPlacementLineValue,
+        GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue, StyleNumber,
     };
 
     const MIXED: ComputedLengthPercentage = ComputedLengthPercentage::new(1.0, 0.5);
@@ -1306,6 +1306,62 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn block_float_and_clear_follow_the_taffy_formatting_context() {
+        let root = id(1);
+        let left = id(2);
+        let right = id(3);
+        let cleared = id(4);
+        let mut tree = LayoutTree::new();
+        tree.create_node(
+            root,
+            ComputedLayoutStyle {
+                display: DisplayValue::Block,
+                size: Axes {
+                    width: ComputedSizeValue::Value(ComputedLengthPercentage::new(200.0, 0.0)),
+                    height: ComputedSizeValue::Auto,
+                },
+                ..ComputedLayoutStyle::default()
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            left,
+            ComputedLayoutStyle {
+                float: FloatValue::Left,
+                ..sized(50.0, 40.0)
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            right,
+            ComputedLayoutStyle {
+                float: FloatValue::Right,
+                ..sized(60.0, 30.0)
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            cleared,
+            ComputedLayoutStyle {
+                clear: ClearValue::Both,
+                ..sized(100.0, 10.0)
+            },
+        )
+        .unwrap();
+        tree.set_children(root, &[left, right, cleared]).unwrap();
+
+        let snapshot = tree
+            .compute(root, LayoutSize::new(200.0, 100.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(snapshot.get(left).unwrap().border_box.x, 0.0);
+        assert_eq!(snapshot.get(left).unwrap().border_box.y, 0.0);
+        assert_eq!(snapshot.get(right).unwrap().border_box.x, 140.0);
+        assert_eq!(snapshot.get(right).unwrap().border_box.y, 0.0);
+        assert_eq!(snapshot.get(cleared).unwrap().border_box.x, 0.0);
+        assert_eq!(snapshot.get(cleared).unwrap().border_box.y, 40.0);
     }
 
     fn assert_unsupported(style: ComputedLayoutStyle, feature: UnsupportedLayoutFeature) {
