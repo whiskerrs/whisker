@@ -5,11 +5,15 @@ use wasm_bindgen::closure::Closure;
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::{Element, ElementRegistry, RuntimeInstance, SurfaceRuntime, WhiskerModule};
 use whisker_engine::LayoutOptions;
-use whisker_protocol::{InputEvent, InputEventKind, ResourceId, SurfaceId};
+use whisker_protocol::{
+    InputEvent, InputEventKind, ResourceCommand, ResourceEvent, ResourceId, SurfaceId,
+};
 use whisker_style::StyleEnvironment;
 
 use crate::measure::text::DomMeasurementProvider;
 use crate::scene::frame_sink::DomFrameSink;
+use crate::scene::resource_service::WebResourceService;
+use crate::scene::resource_store::WebResourceStore;
 use crate::{
     BuiltInElementModule, WebAppConfig, WebError, WebModuleDefinition, js_error, set_style,
 };
@@ -72,10 +76,29 @@ pub fn register_resource_url(resource: ResourceId, url: impl Into<String>) -> Re
     Ok(())
 }
 
+/// Sends one out-of-frame protocol resource command to the mounted browser
+/// Host and returns the non-stale completion produced by a load.
+pub async fn handle_resource_command(
+    command: ResourceCommand,
+) -> Result<Option<ResourceEvent>, WebError> {
+    let resources = APPLICATION.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|application| application.resources.clone())
+            .ok_or_else(|| WebError("a Web application is not mounted".into()))
+    })?;
+    let event = resources.handle(command).await?;
+    if event.is_some() {
+        request_frame();
+    }
+    Ok(event)
+}
+
 struct WebApplication {
     runtime: RuntimeInstance,
     measurements: DomMeasurementProvider,
     frames: DomFrameSink,
+    resources: WebResourceService,
     viewport: (f32, f32, f32),
     viewport_epoch: u32,
     environment_epoch: u64,
@@ -116,16 +139,20 @@ impl WebApplication {
             elements,
         );
         let wake = RuntimeWakeHandle::new(request_frame);
+        let resource_store = WebResourceStore::new();
+        let resources = WebResourceService::new(resource_store.clone());
         Ok(Self {
             runtime: RuntimeInstance::new(surface, wake),
             measurements: DomMeasurementProvider::new(document.clone()),
-            frames: DomFrameSink::new(
+            frames: DomFrameSink::new_with_resources(
                 document,
                 root,
                 surface_id,
                 &registrations,
                 &element_factories,
+                resource_store,
             )?,
+            resources,
             viewport,
             viewport_epoch: 1,
             environment_epoch: 1,
