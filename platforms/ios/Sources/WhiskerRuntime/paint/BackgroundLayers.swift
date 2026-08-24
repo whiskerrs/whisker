@@ -42,6 +42,7 @@ enum HostBackgroundRepeat {
 enum HostBackgroundBox {
     case border
     case padding
+    case content
 }
 
 struct HostBackgroundGeometry {
@@ -148,11 +149,21 @@ final class HostBackgroundPainter {
     func draw(
         borderBox: CGRect,
         paddingBox: CGRect,
+        contentBox: CGRect,
         borderClip: CGPath,
-        paddingClip: CGPath
+        paddingClip: CGPath,
+        contentClip: CGPath
     ) {
-        let positioningBox = geometry.origin == .border ? borderBox : paddingBox
-        let clipPath = geometry.clip == .border ? borderClip : paddingClip
+        let positioningBox = switch geometry.origin {
+        case .border: borderBox
+        case .padding: paddingBox
+        case .content: contentBox
+        }
+        let clipPath = switch geometry.clip {
+        case .border: borderClip
+        case .padding: paddingClip
+        case .content: contentClip
+        }
         let imageBounds = geometry.imageBounds(in: positioningBox)
         guard let image, imageBounds.width > 0, imageBounds.height > 0,
               let context = UIGraphicsGetCurrentContext() else { return }

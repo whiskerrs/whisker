@@ -45,7 +45,7 @@ final class WhiskerNodeView: UIView {
     }
 
     override func draw(_ rect: CGRect) {
-        boxPainter.draw(in: bounds)
+        boxPainter.draw(in: bounds, contentBox: contentFrame)
     }
 
     func setLayoutFrame(_ frame: CGRect) {

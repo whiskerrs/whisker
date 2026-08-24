@@ -52,6 +52,25 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(backgroundLeadingEdgeInset(deviceScale: 3), 1.0 / 6.0, accuracy: 0.000_001)
     }
 
+    func testContentBoxRadiiUseTheCompleteInsetFromTheBorderBox() {
+        XCTAssertEqual(
+            insetCornerRadii(
+                [CGSize(width: 30, height: 30), CGSize(width: 30, height: 30),
+                 CGSize(width: 30, height: 30), CGSize(width: 30, height: 30)],
+                top: 10,
+                right: 20,
+                bottom: 20,
+                left: 20
+            ),
+            [
+                CGSize(width: 10, height: 20),
+                CGSize(width: 10, height: 20),
+                CGSize(width: 10, height: 10),
+                CGSize(width: 10, height: 10)
+            ]
+        )
+    }
+
     func testBackgroundTileOriginsRespectEachRepeatAxis() {
         XCTAssertEqual(
             backgroundTileOrigins(
@@ -215,7 +234,9 @@ private final class Driver {
                     name == "paint.background-layers.repeat-space-single" ||
                     name == "paint.background-layers.repeat-round-x" ||
                     name == "paint.background-layers.repeat-round-y" ||
-                    name == "paint.background-layers.repeat-round-position" else {
+                    name == "paint.background-layers.repeat-round-position" ||
+                    name == "paint.background-layers.origin-content-box" ||
+                    name == "paint.background-layers.clip-content-box" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -244,7 +265,16 @@ private final class Driver {
             width: Float(values[2]),
             height: Float(values[3])
         )
-        layout.content = WhiskerMobileRect()
+        let content = try command["content_box"].map { _ in
+            try numberArray(command, "content_box")
+        } ?? [0, 0, values[2], values[3]]
+        guard content.count == 4 else { throw Failure("content box needs four values") }
+        layout.content = WhiskerMobileRect(
+            x: Float(content[0]),
+            y: Float(content[1]),
+            width: Float(content[2]),
+            height: Float(content[3])
+        )
         var paint = try boxPaint(command)
 
         try withUnsafePointer(to: &layout) { layoutPointer in
@@ -659,7 +689,16 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         width: Float(rect[2]),
         height: Float(rect[3])
     )
-    layout.content = WhiskerMobileRect()
+    let content = try fixture["content_box"].map { _ in
+        try numberArray(fixture, "content_box")
+    } ?? [0, 0, rect[2], rect[3]]
+    guard content.count == 4 else { throw Failure("content box needs four values") }
+    layout.content = WhiskerMobileRect(
+        x: Float(content[0]),
+        y: Float(content[1]),
+        width: Float(content[2]),
+        height: Float(content[3])
+    )
     let clip = fixture["clip"] as? [String: Any]
     let horizontal = try clip.map { try string($0, "horizontal") } ?? "visible"
     let vertical = try clip.map { try string($0, "vertical") } ?? "visible"
