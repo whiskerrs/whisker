@@ -336,11 +336,11 @@ fn has_explicit_background_geometry(layer: &crate::BackgroundLayer) -> bool {
         )
         && matches!(
             layer.repeat_x,
-            crate::ImageRepeat::Repeat | crate::ImageRepeat::NoRepeat
+            crate::ImageRepeat::Repeat | crate::ImageRepeat::NoRepeat | crate::ImageRepeat::Space
         )
         && matches!(
             layer.repeat_y,
-            crate::ImageRepeat::Repeat | crate::ImageRepeat::NoRepeat
+            crate::ImageRepeat::Repeat | crate::ImageRepeat::NoRepeat | crate::ImageRepeat::Space
         )
         && matches!(
             layer.origin,
@@ -639,6 +639,9 @@ mod tests {
             (ImageRepeat::Repeat, ImageRepeat::NoRepeat),
             (ImageRepeat::NoRepeat, ImageRepeat::Repeat),
             (ImageRepeat::Repeat, ImageRepeat::Repeat),
+            (ImageRepeat::Space, ImageRepeat::NoRepeat),
+            (ImageRepeat::NoRepeat, ImageRepeat::Space),
+            (ImageRepeat::Space, ImageRepeat::Space),
         ] {
             let mut layer = explicit_no_repeat(basic_linear_layer());
             layer.repeat_x = repeat_x;
@@ -652,7 +655,7 @@ mod tests {
             );
         }
 
-        for unsupported_repeat in [ImageRepeat::Space, ImageRepeat::Round] {
+        for unsupported_repeat in [ImageRepeat::Round] {
             let mut layer = explicit_no_repeat(basic_linear_layer());
             layer.repeat_x = unsupported_repeat;
             assert_eq!(
