@@ -882,17 +882,20 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
         && layer.repeat_y == ImageRepeat::Repeat
         && layer.origin == PaintBox::Padding
         && layer.clip == PaintBox::Border;
-    let explicit_geometry =
-        matches!(
-            layer.size,
-            BackgroundSize::Explicit {
-                width: Some(_),
-                height: Some(_)
-            }
-        ) && matches!(layer.repeat_x, ImageRepeat::Repeat | ImageRepeat::NoRepeat)
-            && matches!(layer.repeat_y, ImageRepeat::Repeat | ImageRepeat::NoRepeat)
-            && matches!(layer.origin, PaintBox::Border | PaintBox::Padding)
-            && matches!(layer.clip, PaintBox::Border | PaintBox::Padding);
+    let explicit_geometry = matches!(
+        layer.size,
+        BackgroundSize::Explicit {
+            width: Some(_),
+            height: Some(_)
+        }
+    ) && matches!(
+        layer.repeat_x,
+        ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space
+    ) && matches!(
+        layer.repeat_y,
+        ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space
+    ) && matches!(layer.origin, PaintBox::Border | PaintBox::Padding)
+        && matches!(layer.clip, PaintBox::Border | PaintBox::Padding);
     supported_image
         && (initial_geometry || explicit_geometry)
         && layer.attachment == BackgroundAttachment::Scroll
