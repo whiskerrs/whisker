@@ -507,8 +507,8 @@ private fun JSONArray.strings(): Array<String> =
 private fun assertPixelSamples(id: String, bitmap: Bitmap, samples: JSONArray, density: Float) {
     samples.objects().forEach { sample ->
         val point = sample.getJSONArray("point")
-        val x = (point.getDouble(0) * density).toInt()
-        val y = (point.getDouble(1) * density).toInt()
+        val x = (point.getDouble(0) * density).roundToInt()
+        val y = (point.getDouble(1) * density).roundToInt()
         check(x in 0 until bitmap.width && y in 0 until bitmap.height)
         val actual = bitmap.getPixel(x, y)
         val expected = fixtureColor(sample.getJSONObject("color"))
@@ -549,8 +549,8 @@ private fun assertPixelRelations(id: String, bitmap: Bitmap, relations: JSONArra
 }
 
 private fun pixelAt(bitmap: Bitmap, point: JSONArray, density: Float): Int {
-    val x = (point.getDouble(0) * density).toInt()
-    val y = (point.getDouble(1) * density).toInt()
+    val x = (point.getDouble(0) * density).roundToInt()
+    val y = (point.getDouble(1) * density).roundToInt()
     check(x in 0 until bitmap.width && y in 0 until bitmap.height)
     return bitmap.getPixel(x, y)
 }
