@@ -305,6 +305,10 @@ impl DesktopScene {
         self.raster_resources.insert(resource);
     }
 
+    pub(crate) fn release_raster_resource(&mut self, resource: ResourceId) {
+        self.raster_resources.remove(&resource);
+    }
+
     pub(crate) fn take_events(&mut self) -> Vec<DesktopProviderEvent> {
         std::mem::take(&mut self.pending_events)
     }

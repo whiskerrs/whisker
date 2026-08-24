@@ -1590,6 +1590,10 @@ impl GpuRenderer {
         self.image_resources.insert(resource, image);
     }
 
+    pub(crate) fn release_raster_resource(&mut self, resource: ResourceId) {
+        self.image_resources.remove(&resource);
+    }
+
     pub(crate) fn resize(&mut self, physical_size: [u32; 2]) {
         if physical_size[0] == 0 || physical_size[1] == 0 {
             return;

@@ -170,6 +170,7 @@ impl MacosApplication {
             surface_id,
             &element_registrations,
             &self.config.element_factories,
+            wake.clone(),
         ))
         .map_err(|error| MacosError(error.to_string()))?;
         let mut runtime = RuntimeInstance::new(surface, wake);

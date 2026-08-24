@@ -170,6 +170,7 @@ impl LinuxApplication {
             surface_id,
             &element_registrations,
             &self.config.element_factories,
+            wake.clone(),
         ))
         .map_err(|error| LinuxError(error.to_string()))?;
         let mut runtime = RuntimeInstance::new(surface, wake);
