@@ -261,7 +261,7 @@ fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderC
         if has_initial_background_geometry(layer) {
             return [Some(image), None];
         }
-        if has_explicit_no_repeat_geometry(layer) {
+        if has_explicit_background_geometry(layer) {
             return [Some(image), Some(RenderCapability::BackgroundGeometry)];
         }
         return [Some(RenderCapability::BackgroundLayers), None];
@@ -318,7 +318,7 @@ fn has_initial_background_geometry(layer: &crate::BackgroundLayer) -> bool {
         && has_initial_background_environment(layer)
 }
 
-fn has_explicit_no_repeat_geometry(layer: &crate::BackgroundLayer) -> bool {
+fn has_explicit_background_geometry(layer: &crate::BackgroundLayer) -> bool {
     [
         layer.position.x.length,
         layer.position.x.fraction,
@@ -334,8 +334,14 @@ fn has_explicit_no_repeat_geometry(layer: &crate::BackgroundLayer) -> bool {
                 height: Some(height)
             } if width.is_valid() && height.is_valid()
         )
-        && layer.repeat_x == crate::ImageRepeat::NoRepeat
-        && layer.repeat_y == crate::ImageRepeat::NoRepeat
+        && matches!(
+            layer.repeat_x,
+            crate::ImageRepeat::Repeat | crate::ImageRepeat::NoRepeat
+        )
+        && matches!(
+            layer.repeat_y,
+            crate::ImageRepeat::Repeat | crate::ImageRepeat::NoRepeat
+        )
         && matches!(
             layer.origin,
             crate::PaintBox::Border | crate::PaintBox::Padding
@@ -628,6 +634,32 @@ mod tests {
                 RenderCapability::BackgroundGeometry,
             ]
         );
+
+        for (repeat_x, repeat_y) in [
+            (ImageRepeat::Repeat, ImageRepeat::NoRepeat),
+            (ImageRepeat::NoRepeat, ImageRepeat::Repeat),
+            (ImageRepeat::Repeat, ImageRepeat::Repeat),
+        ] {
+            let mut layer = explicit_no_repeat(basic_linear_layer());
+            layer.repeat_x = repeat_x;
+            layer.repeat_y = repeat_y;
+            assert_eq!(
+                packet(vec![operation(layer)]).required_capabilities(),
+                vec![
+                    RenderCapability::LinearGradients,
+                    RenderCapability::BackgroundGeometry,
+                ]
+            );
+        }
+
+        for unsupported_repeat in [ImageRepeat::Space, ImageRepeat::Round] {
+            let mut layer = explicit_no_repeat(basic_linear_layer());
+            layer.repeat_x = unsupported_repeat;
+            assert_eq!(
+                packet(vec![operation(layer)]).required_capabilities(),
+                vec![RenderCapability::BackgroundLayers]
+            );
+        }
 
         let mut positioned = explicit_no_repeat(basic_linear_layer());
         positioned.position = PaintPosition {
