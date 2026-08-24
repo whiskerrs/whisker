@@ -13,8 +13,13 @@ import org.junit.Assert.assertTrue
 import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import rs.whisker.runtime.resource.HostResourceFailureCode
+import rs.whisker.runtime.resource.HostResourceSnapshot
 import rs.whisker.runtime.resource.HostResourceState
 
 private const val BACKGROUND_PACKED_LAYERS = 256
@@ -124,6 +129,76 @@ class HostConformanceTest {
                 val context = ApplicationProvider.getApplicationContext<android.content.Context>()
                 assertTrue(Driver(context, "android.resource-failure").reportsRasterDecodeFailure())
             }
+    }
+
+    @Test
+    fun typedResourceCommandsCopyBytesAndEmitOwnedEvents() {
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val ready = CountDownLatch(1)
+        val received = AtomicReference<HostResourceSnapshot>()
+        lateinit var view: WhiskerView
+        val fixture = JSONObject(asset("core/resource-raster-lifecycle.json"))
+        val encoded = fixture.getJSONObject("test")
+            .getJSONArray("commands")
+            .objects()
+            .first { it.getString("type") == "load_raster_resource" }
+            .getJSONObject("source")
+            .getString("base64")
+        val borrowedBytes = Base64.decode(encoded, Base64.DEFAULT)
+
+        instrumentation.runOnMainSync {
+            val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+            view = WhiskerView(context)
+            view.observeRasterResourceEvents { event ->
+                received.set(event)
+                ready.countDown()
+            }
+            assertTrue(
+                view.resourceCommandFromNative(
+                    command = 1,
+                    kind = 1,
+                    source = 3,
+                    resourceId = 91L,
+                    generation = 1L,
+                    identifier = "image/png",
+                    data = borrowedBytes,
+                ),
+            )
+            borrowedBytes.fill(0)
+        }
+
+        assertTrue("typed Ready event", ready.await(5, TimeUnit.SECONDS))
+        val event = received.get()
+        assertEquals(HostResourceState.Ready, event.state)
+        assertEquals(91L, event.resourceId)
+        assertEquals(1L, event.generation)
+        assertEquals(2, event.width)
+        assertEquals(2, event.height)
+        assertEquals(HostResourceFailureCode.None, event.failureCode)
+
+        val failed = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            view.observeRasterResourceEvents { unsupported ->
+                received.set(unsupported)
+                failed.countDown()
+            }
+            assertTrue(
+                view.resourceCommandFromNative(
+                    command = 1,
+                    kind = 2,
+                    source = 1,
+                    resourceId = 92L,
+                    generation = 1L,
+                    identifier = "https://example.invalid/vector.svg",
+                    data = byteArrayOf(),
+                ),
+            )
+        }
+        assertTrue("typed Failed event", failed.await(5, TimeUnit.SECONDS))
+        val unsupported = received.get()
+        assertEquals(HostResourceState.Failed, unsupported.state)
+        assertEquals(92L, unsupported.resourceId)
+        assertEquals(HostResourceFailureCode.Unsupported, unsupported.failureCode)
     }
 
     private fun asset(path: String): String =

@@ -3,12 +3,16 @@ package rs.whisker.runtime
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
 import android.view.Choreographer
 import android.view.View
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.measure.HostMeasurementProvider
 import rs.whisker.runtime.module.HostModuleDispatcher
 import rs.whisker.runtime.paint.HostRasterResourceStore
+import rs.whisker.runtime.resource.HostResourceAbiEvent
+import rs.whisker.runtime.resource.HostResourceChannel
 import rs.whisker.runtime.resource.HostRasterSource
 import rs.whisker.runtime.resource.HostResourceService
 import rs.whisker.runtime.resource.HostResourceSnapshot
@@ -28,11 +32,18 @@ class WhiskerView(context: Context) :
     private var nativeHandle = 0L
     private var frameScheduled = false
     private var windowVisible = true
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val measurements = HostMeasurementProvider(context)
     private val bootstrap = HostElementBootstrap()
     private val rasterResources = HostRasterResourceStore()
     private val scene = HostScene(this, context, ::dispatchElementEvent, rasterResources)
-    private val resourceService = HostResourceService(rasterResources, ::handleResourceEvent)
+    private val resourceService = HostResourceService(
+        rasterResources,
+        ::handleResourceEvent,
+        { path -> context.assets.open(path) },
+    )
+    private val resourceChannel = HostResourceChannel(resourceService)
+    private var resourceEventObserver: ((HostResourceSnapshot) -> Unit)? = null
     private val modules = HostModuleDispatcher(::nativeResolveModule)
 
     init {
@@ -186,12 +197,37 @@ class WhiskerView(context: Context) :
     fun releaseRasterResourceFromNative(resourceId: Long, generation: Long): Boolean =
         resourceService.release(resourceId, generation)
 
+    /** Receives one typed command whose JNI-owned arguments outlive the C callback. */
+    @Suppress("LongParameterList")
+    fun resourceCommandFromNative(
+        command: Int,
+        kind: Int,
+        source: Int,
+        resourceId: Long,
+        generation: Long,
+        identifier: String,
+        data: ByteArray,
+    ): Boolean = resourceChannel.accept(
+        command,
+        kind,
+        source,
+        resourceId,
+        generation,
+        identifier,
+        data,
+    )
+
     fun awaitRasterResourceFromNative(
         resourceId: Long,
         generation: Long,
         timeoutMillis: Long,
     ): HostResourceSnapshot? =
         resourceService.awaitTerminal(resourceId, generation, timeoutMillis)
+
+    /** Observes owned Android lifecycle messages after asynchronous completion. */
+    fun observeRasterResourceEvents(observer: ((HostResourceSnapshot) -> Unit)?) {
+        resourceEventObserver = observer
+    }
 
     @Suppress("LongParameterList")
     fun stageOperationFromNative(
@@ -230,11 +266,32 @@ class WhiskerView(context: Context) :
 
     fun commitFrameFromNative(): Boolean = scene.commit()
 
-    private fun handleResourceEvent(@Suppress("UNUSED_PARAMETER") event: HostResourceSnapshot) {
-        post {
+    private fun handleResourceEvent(event: HostResourceSnapshot) {
+        val abiEvent = HostResourceChannel.encodeEvent(event)
+        mainHandler.post {
+            resourceEventObserver?.invoke(event)
+            val handle = nativeHandle
+            if (handle != 0L && abiEvent != null) {
+                dispatchResourceEvent(handle, abiEvent)
+            }
             invalidate()
             requestFrameFromNative()
         }
+    }
+
+    private fun dispatchResourceEvent(handle: Long, event: HostResourceAbiEvent) {
+        nativeDispatchResourceEvent(
+            handle,
+            event.status,
+            event.failureCode,
+            event.resourceId,
+            event.generation,
+            event.width,
+            event.height,
+            event.scale,
+            event.dimensionsMask,
+            event.diagnostic,
+        )
     }
 
     private fun dispatchElementEvent(node: Long, name: String, detail: WhiskerValue) {
@@ -331,5 +388,17 @@ class WhiskerView(context: Context) :
         module: String,
         event: String,
         payload: WhiskerValue,
+    ): Boolean
+    private external fun nativeDispatchResourceEvent(
+        handle: Long,
+        status: Int,
+        failureCode: Int,
+        resourceId: Long,
+        generation: Long,
+        width: Float,
+        height: Float,
+        scale: Float,
+        dimensionsMask: Int,
+        diagnostic: String,
     ): Boolean
 }
