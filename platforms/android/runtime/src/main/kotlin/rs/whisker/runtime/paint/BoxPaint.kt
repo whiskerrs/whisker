@@ -159,7 +159,7 @@ private class WhiskerBoxDrawable(
             paint.color = borderColors[side]
             when (borderStyles[side]) {
                 BORDER_STYLE_SOLID -> canvas.drawPath(sidePaths[side], paint)
-                BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED -> {
+                BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED, BORDER_STYLE_DOUBLE -> {
                     canvas.clipPath(sidePaths[side])
                     drawPatternedEdge(
                         canvas,
@@ -194,14 +194,14 @@ private class WhiskerBoxDrawable(
             paint.color = borderColors[side]
             when (borderStyles[side]) {
                 BORDER_STYLE_SOLID -> canvas.drawRect(edges[side], paint)
-                BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED ->
+                BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED, BORDER_STYLE_DOUBLE ->
                     drawPatternedEdge(canvas, edges[side], side, widths[side], borderStyles[side])
             }
         }
     }
 
     private fun paintsSide(side: Int): Boolean = when (borderStyles[side]) {
-        BORDER_STYLE_SOLID, BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED -> true
+        BORDER_STYLE_SOLID, BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED, BORDER_STYLE_DOUBLE -> true
         else -> false
     }
 
@@ -220,6 +220,10 @@ private class WhiskerBoxDrawable(
         style: Int,
     ) {
         if (width <= 0f || edge.isEmpty) return
+        if (style == BORDER_STYLE_DOUBLE) {
+            drawDoubleEdge(canvas, edge, side, width)
+            return
+        }
         val horizontal = side == 0 || side == 2
         val start = if (horizontal) edge.left else edge.top
         val end = if (horizontal) edge.right else edge.bottom
@@ -252,6 +256,37 @@ private class WhiskerBoxDrawable(
             }
         }
         canvas.restoreToCount(save)
+    }
+
+    private fun drawDoubleEdge(
+        canvas: Canvas,
+        edge: RectF,
+        side: Int,
+        width: Float,
+    ) {
+        val band = width / 3f
+        val outer: RectF
+        val inner: RectF
+        when (side) {
+            0 -> {
+                outer = RectF(edge.left, edge.top, edge.right, edge.top + band)
+                inner = RectF(edge.left, edge.bottom - band, edge.right, edge.bottom)
+            }
+            1 -> {
+                outer = RectF(edge.right - band, edge.top, edge.right, edge.bottom)
+                inner = RectF(edge.left, edge.top, edge.left + band, edge.bottom)
+            }
+            2 -> {
+                outer = RectF(edge.left, edge.bottom - band, edge.right, edge.bottom)
+                inner = RectF(edge.left, edge.top, edge.right, edge.top + band)
+            }
+            else -> {
+                outer = RectF(edge.left, edge.top, edge.left + band, edge.bottom)
+                inner = RectF(edge.right - band, edge.top, edge.right, edge.bottom)
+            }
+        }
+        canvas.drawRect(outer, paint)
+        canvas.drawRect(inner, paint)
     }
 
     private fun normalizedRadii(width: Float, height: Float): FloatArray {
@@ -290,3 +325,4 @@ private class WhiskerBoxDrawable(
 private const val BORDER_STYLE_SOLID = 2
 private const val BORDER_STYLE_DASHED = 3
 private const val BORDER_STYLE_DOTTED = 4
+private const val BORDER_STYLE_DOUBLE = 5

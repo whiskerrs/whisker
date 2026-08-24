@@ -123,6 +123,10 @@ final class HostBoxPainter {
         context: CGContext
     ) {
         guard width > 0, !edge.isEmpty else { return }
+        if style == borderStyleDouble {
+            drawDoubleBorder(in: edge, side: side, width: width, context: context)
+            return
+        }
         let horizontal = side == 0 || side == 2
         let start = horizontal ? edge.minX : edge.minY
         let end = horizontal ? edge.maxX : edge.maxY
@@ -150,6 +154,33 @@ final class HostBoxPainter {
                 position += width * 2
             }
         }
+    }
+
+    private func drawDoubleBorder(
+        in edge: CGRect,
+        side: Int,
+        width: CGFloat,
+        context: CGContext
+    ) {
+        let band = width / 3
+        let outer: CGRect
+        let inner: CGRect
+        switch side {
+        case 0:
+            outer = CGRect(x: edge.minX, y: edge.minY, width: edge.width, height: band)
+            inner = CGRect(x: edge.minX, y: edge.maxY - band, width: edge.width, height: band)
+        case 1:
+            outer = CGRect(x: edge.maxX - band, y: edge.minY, width: band, height: edge.height)
+            inner = CGRect(x: edge.minX, y: edge.minY, width: band, height: edge.height)
+        case 2:
+            outer = CGRect(x: edge.minX, y: edge.maxY - band, width: edge.width, height: band)
+            inner = CGRect(x: edge.minX, y: edge.minY, width: edge.width, height: band)
+        default:
+            outer = CGRect(x: edge.minX, y: edge.minY, width: band, height: edge.height)
+            inner = CGRect(x: edge.maxX - band, y: edge.minY, width: band, height: edge.height)
+        }
+        context.fill(outer)
+        context.fill(inner)
     }
 }
 
@@ -240,7 +271,9 @@ private func roundedPath(in rect: CGRect, radii: [CGSize]) -> UIBezierPath {
 private let borderStyleSolid: UInt32 = 2
 private let borderStyleDashed: UInt32 = 3
 private let borderStyleDotted: UInt32 = 4
+private let borderStyleDouble: UInt32 = 5
 
 private func paintsBorderStyle(_ style: UInt32) -> Bool {
-    style == borderStyleSolid || style == borderStyleDashed || style == borderStyleDotted
+    style == borderStyleSolid || style == borderStyleDashed || style == borderStyleDotted ||
+        style == borderStyleDouble
 }
