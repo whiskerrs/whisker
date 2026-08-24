@@ -82,8 +82,22 @@ internal data class HostBackgroundGeometry(
             intrinsicHeight,
         )
         if (originalWidth <= 0f || originalHeight <= 0f) return
-        val tileWidth = adjustedTileSize(originalWidth, positioningBox.width(), repeatX)
-        val tileHeight = adjustedTileSize(originalHeight, positioningBox.height(), repeatY)
+        var tileWidth = adjustedTileSize(originalWidth, positioningBox.width(), repeatX)
+        var tileHeight = adjustedTileSize(originalHeight, positioningBox.height(), repeatY)
+        val hasIntrinsicAspectRatio = intrinsicWidth != null && intrinsicHeight != null &&
+            intrinsicWidth > 0f && intrinsicHeight > 0f &&
+            intrinsicWidth.isFinite() && intrinsicHeight.isFinite()
+        if (
+            hasIntrinsicAspectRatio && size == HostBackgroundSize.Width &&
+            repeatX == HostBackgroundRepeat.Round && repeatY != HostBackgroundRepeat.Round
+        ) {
+            tileHeight = originalHeight * tileWidth / originalWidth
+        } else if (
+            hasIntrinsicAspectRatio && size == HostBackgroundSize.Height &&
+            repeatY == HostBackgroundRepeat.Round && repeatX != HostBackgroundRepeat.Round
+        ) {
+            tileWidth = originalWidth * tileHeight / originalHeight
+        }
         val base = imageBox(positioningBox, tileWidth, tileHeight)
         if (
             base.isEmpty || paintingBox.isEmpty ||
