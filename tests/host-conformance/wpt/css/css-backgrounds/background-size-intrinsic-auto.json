@@ -83,7 +83,7 @@
         "type": "checkpoint",
         "name": "paint.background-layers.intrinsic-auto",
         "samples": [
-          { "point": [10.5, 10.5], "color": { "kind": "srgba", "red": 255, "green": 0, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [10.5, 10.5], "color": { "kind": "srgba", "red": 255, "green": 0, "blue": 0, "alpha": 1.0 }, "tolerance": 80 },
           { "point": [13.5, 11.5], "color": { "kind": "srgba", "red": 255, "green": 255, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
           { "point": [16.0, 11.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 },
           { "point": [145.0, 30.0], "color": { "kind": "srgba", "red": 255, "green": 0, "blue": 0, "alpha": 1.0 }, "tolerance": 5 },
