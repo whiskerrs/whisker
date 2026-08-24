@@ -512,6 +512,141 @@ mod tests {
     }
 
     #[test]
+    fn logical_borders_resolve_to_physical_edges_and_corners() {
+        let specified = |direction| {
+            SpecifiedStyle::new()
+                .push(StyleProperty::Direction, StyleValue::Direction(direction))
+                .push(StyleProperty::BorderInlineStartWidth, px(2.0))
+                .push(StyleProperty::BorderInlineEndWidth, px(3.0))
+                .push(
+                    StyleProperty::BorderInlineStartColor,
+                    StyleValue::Color(ColorValue::Named("start".into())),
+                )
+                .push(
+                    StyleProperty::BorderInlineEndColor,
+                    StyleValue::Color(ColorValue::Named("end".into())),
+                )
+                .push(
+                    StyleProperty::BorderInlineStartStyle,
+                    StyleValue::BorderStyle(BorderStyleValue::Dotted),
+                )
+                .push(
+                    StyleProperty::BorderInlineEndStyle,
+                    StyleValue::BorderStyle(BorderStyleValue::Double),
+                )
+                .push(StyleProperty::BorderStartStartRadius, px(11.0))
+                .push(StyleProperty::BorderStartEndRadius, px(12.0))
+                .push(StyleProperty::BorderEndStartRadius, px(13.0))
+                .push(StyleProperty::BorderEndEndRadius, px(14.0))
+        };
+
+        for (direction, start_is_left) in [
+            (crate::DirectionValue::Ltr, true),
+            (crate::DirectionValue::Rtl, false),
+        ] {
+            let resolved =
+                crate::resolve_style(&specified(direction), None, StyleEnvironment::default())
+                    .unwrap();
+            let layout = resolved.computed().layout();
+            let paint = resolved.computed().paint();
+            let (start_width, end_width) = if start_is_left {
+                (layout.border.left.length(), layout.border.right.length())
+            } else {
+                (layout.border.right.length(), layout.border.left.length())
+            };
+            assert_eq!((start_width, end_width), (2.0, 3.0));
+
+            let (start_color, end_color, start_style, end_style) = if start_is_left {
+                (
+                    &paint.border_colors.left,
+                    &paint.border_colors.right,
+                    paint.border_styles.left,
+                    paint.border_styles.right,
+                )
+            } else {
+                (
+                    &paint.border_colors.right,
+                    &paint.border_colors.left,
+                    paint.border_styles.right,
+                    paint.border_styles.left,
+                )
+            };
+            assert_eq!(start_color, &ColorValue::Named("start".into()));
+            assert_eq!(end_color, &ColorValue::Named("end".into()));
+            assert_eq!(start_style, BorderStyleValue::Dotted);
+            assert_eq!(end_style, BorderStyleValue::Double);
+
+            let corners = &paint.border_radii;
+            let logical = if start_is_left {
+                [
+                    corners.top_left,
+                    corners.top_right,
+                    corners.bottom_left,
+                    corners.bottom_right,
+                ]
+            } else {
+                [
+                    corners.top_right,
+                    corners.top_left,
+                    corners.bottom_right,
+                    corners.bottom_left,
+                ]
+            };
+            assert_eq!(
+                logical.map(|corner| corner.horizontal.length()),
+                [11.0, 12.0, 13.0, 14.0]
+            );
+        }
+    }
+
+    #[test]
+    fn logical_and_physical_border_declarations_share_final_write_order() {
+        let resolved = crate::resolve_style(
+            &SpecifiedStyle::new()
+                .push(StyleProperty::BorderInlineStartWidth, px(2.0))
+                .push(StyleProperty::BorderLeftWidth, px(4.0))
+                .push(
+                    StyleProperty::BorderInlineStartColor,
+                    StyleValue::Color(ColorValue::Named("logical".into())),
+                )
+                .push(
+                    StyleProperty::BorderLeftColor,
+                    StyleValue::Color(ColorValue::Named("physical".into())),
+                ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(resolved.computed().layout().border.left.length(), 4.0);
+        assert_eq!(
+            resolved.computed().paint().border_colors.left,
+            ColorValue::Named("physical".into())
+        );
+
+        let resolved = crate::resolve_style(
+            &SpecifiedStyle::new()
+                .push(StyleProperty::BorderLeftWidth, px(4.0))
+                .push(StyleProperty::BorderInlineStartWidth, px(6.0))
+                .push(
+                    StyleProperty::BorderLeftColor,
+                    StyleValue::Color(ColorValue::Named("physical".into())),
+                )
+                .push(
+                    StyleProperty::BorderInlineStartColor,
+                    StyleValue::Color(ColorValue::Named("logical".into())),
+                ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(resolved.computed().layout().border.left.length(), 6.0);
+        assert_eq!(
+            resolved.computed().paint().border_colors.left,
+            ColorValue::Named("logical".into())
+        );
+    }
+
+    #[test]
     fn background_layer_initial_values_match_css() {
         let resolved =
             crate::resolve_style(&SpecifiedStyle::new(), None, StyleEnvironment::default())
