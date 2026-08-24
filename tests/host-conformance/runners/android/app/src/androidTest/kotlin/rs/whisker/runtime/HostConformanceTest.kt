@@ -56,6 +56,22 @@ class HostConformanceTest {
             }
     }
 
+    @Test
+    fun rejectsAThreeDimensionalTransformInsteadOfFlatteningIt() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val matrix = floatArrayOf(
+                    1f, 0f, 0f, 0f,
+                    0f, 1f, 0f, 0f,
+                    0f, 0f, 2f, 0f,
+                    0f, 0f, 0f, 1f,
+                )
+                assertTrue(Driver(context, "android.transform-3d-rejection").rejectTransform(matrix))
+            }
+    }
+
     private fun asset(path: String): String =
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
@@ -130,6 +146,13 @@ private class Driver(
         return checkNotNull(checkpoint)
     }
 
+    fun rejectTransform(transform: FloatArray): Boolean {
+        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(stage(tag = 1, member = 1))
+        check(stage(tag = 9, numbers = transform))
+        return !view.commitFrameFromNative()
+    }
+
     private fun present(command: JSONObject) {
         val revision = command.getLong("revision")
         check(view.beginFrameFromNative(0, 1, 0, revision) == 0)
@@ -182,6 +205,9 @@ private class Driver(
                 (if (clip.getString("horizontal") == "hidden") 1 else 0) or
                     (if (clip.getString("vertical") == "hidden") 2 else 0)
             check(stage(tag = 8, node = id, flags = flags))
+            node.optJSONArray("transform")?.let { transform ->
+                check(stage(tag = 9, node = id, numbers = transform.floats()))
+            }
         }
         check(view.commitFrameFromNative())
     }

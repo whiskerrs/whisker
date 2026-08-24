@@ -9,5 +9,6 @@ pub(crate) fn apply(element: &web_sys::Element, transform: Transform) -> Result<
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(",");
+    set_style(element, "transform-origin", "0 0")?;
     set_style(element, "transform", &format!("matrix3d({value})"))
 }

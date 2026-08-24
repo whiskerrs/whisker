@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "wpt.css-transforms.transform-matrix-001",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-transforms/transform-matrix-001.html",
+    "reference_path": "css/css-transforms/transform-matrix-001-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "A translation expressed as a matrix has the same visual effect as translated layout geometry.",
+    "adaptation": "The WPT matrix(1, 0, 0, 1, 100, 0) is scaled to a 40 logical-pixel translation and delivered as the equivalent column-major SetTransform matrix. Pixel samples distinguish transformed paint from its original layout position."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 70.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 20.0, 30.0, 30.0],
+            "background": { "kind": "named", "value": "green" },
+            "clip": { "horizontal": "visible", "vertical": "visible" },
+            "transform": [
+              1.0, 0.0, 0.0, 0.0,
+              0.0, 1.0, 0.0, 0.0,
+              0.0, 0.0, 1.0, 0.0,
+              40.0, 0.0, 0.0, 1.0
+            ]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [5.0, 25.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 },
+          { "point": [45.0, 25.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 },
+          { "point": [75.0, 25.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

@@ -122,6 +122,14 @@ final class HostScene {
             case UInt32(WHISKER_OP_LAYOUT), UInt32(WHISKER_OP_PAINT),
                  UInt32(WHISKER_OP_TEXT), UInt32(WHISKER_OP_PROPERTY):
                 guard existing.contains(operation.node), operation.payload != nil else { return false }
+            case UInt32(WHISKER_OP_TRANSFORM):
+                guard existing.contains(operation.node), operation.payload != nil,
+                      operation.payload_count == 16 else { return false }
+                let values = UnsafeBufferPointer(
+                    start: operation.payload?.assumingMemoryBound(to: Float.self),
+                    count: 16
+                )
+                guard values.allSatisfy(\.isFinite) else { return false }
             case UInt32(WHISKER_OP_CLIP), UInt32(WHISKER_OP_OPACITY),
                  UInt32(WHISKER_OP_VISIBILITY), UInt32(WHISKER_OP_Z_ORDER),
                  UInt32(WHISKER_OP_CLEAR_PROPERTY), UInt32(WHISKER_OP_EVENT_MASK):
@@ -172,6 +180,12 @@ final class HostScene {
                 horizontal: operation.flags & 1 != 0,
                 vertical: operation.flags & 2 != 0
             )
+        case UInt32(WHISKER_OP_TRANSFORM):
+            guard let payload = operation.payload else { return false }
+            nodes[id]?.setPresentationTransform(UnsafeBufferPointer(
+                start: payload.assumingMemoryBound(to: Float.self),
+                count: 16
+            ))
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):
@@ -269,7 +283,7 @@ final class HostScene {
             frame.origin.x += logicalBounds().origin.x
             frame.origin.y += logicalBounds().origin.y
         }
-        node.frame = frame
+        node.setLayoutFrame(frame)
         node.contentFrame = hostRect(geometry.content)
         node.superview?.setNeedsLayout()
         node.superview?.superview?.setNeedsLayout()

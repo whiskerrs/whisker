@@ -158,61 +158,76 @@ private final class Driver {
         let fixtures = try objectArray(command, "nodes").map(sceneNode)
         var layouts = fixtures.map(\.layout)
         var paints = fixtures.map(\.paint)
+        var transforms = fixtures.flatMap { fixture in
+            fixture.transform ?? [Float](repeating: 0, count: 16)
+        }
         try layouts.withUnsafeMutableBufferPointer { layoutBuffer in
             try paints.withUnsafeMutableBufferPointer { paintBuffer in
-                var operations = fixtures.map {
-                    operation(tag: UInt32(WHISKER_OP_CREATE), node: $0.id, member: 1)
-                }
-                var childCounts: [UInt64: UInt32] = [:]
-                for fixture in fixtures {
-                    guard let parent = fixture.parent else { continue }
-                    let index = childCounts[parent, default: 0]
-                    operations.append(operation(
-                        tag: UInt32(WHISKER_OP_INSERT),
-                        parent: parent,
-                        child: fixture.id,
-                        index: index
-                    ))
-                    childCounts[parent] = index + 1
-                }
-                for (index, fixture) in fixtures.enumerated() {
-                    operations.append(operation(
-                        tag: UInt32(WHISKER_OP_LAYOUT),
-                        node: fixture.id,
-                        payload: UnsafeRawPointer(layoutBuffer.baseAddress!.advanced(by: index)),
-                        count: 1
-                    ))
-                    operations.append(operation(
-                        tag: UInt32(WHISKER_OP_PAINT),
-                        node: fixture.id,
-                        payload: UnsafeRawPointer(paintBuffer.baseAddress!.advanced(by: index)),
-                        count: 1
-                    ))
-                    operations.append(operation(
-                        tag: UInt32(WHISKER_OP_CLIP),
-                        node: fixture.id,
-                        flags: fixture.clipFlags
-                    ))
-                }
-                try operations.withUnsafeMutableBufferPointer { buffer in
-                    var frame = WhiskerMobileFrame()
-                    frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
-                    frame.abi_minor = UInt16(WHISKER_MOBILE_ABI_MINOR)
-                    frame.protocol_major = 1
-                    frame.protocol_minor = 0
-                    frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
-                    frame.surface = 1
-                    frame.scene_epoch = 1
-                    frame.viewport_epoch = 1
-                    frame.frame_id = revision
-                    frame.base_revision = 0
-                    frame.target_revision = revision
-                    frame.operations = UnsafePointer(buffer.baseAddress!)
-                    frame.operation_count = buffer.count
-                    var response = WhiskerMobileApplyResponse()
-                    guard view.applyConformanceFrame(frame, response: &response),
-                          response.status == UInt8(WHISKER_APPLY_ACCEPTED) else {
-                        throw Failure("UIKit Host rejected scene fixture frame")
+                try transforms.withUnsafeMutableBufferPointer { transformBuffer in
+                    var operations = fixtures.map {
+                        operation(tag: UInt32(WHISKER_OP_CREATE), node: $0.id, member: 1)
+                    }
+                    var childCounts: [UInt64: UInt32] = [:]
+                    for fixture in fixtures {
+                        guard let parent = fixture.parent else { continue }
+                        let index = childCounts[parent, default: 0]
+                        operations.append(operation(
+                            tag: UInt32(WHISKER_OP_INSERT),
+                            parent: parent,
+                            child: fixture.id,
+                            index: index
+                        ))
+                        childCounts[parent] = index + 1
+                    }
+                    for (index, fixture) in fixtures.enumerated() {
+                        operations.append(operation(
+                            tag: UInt32(WHISKER_OP_LAYOUT),
+                            node: fixture.id,
+                            payload: UnsafeRawPointer(layoutBuffer.baseAddress!.advanced(by: index)),
+                            count: 1
+                        ))
+                        operations.append(operation(
+                            tag: UInt32(WHISKER_OP_PAINT),
+                            node: fixture.id,
+                            payload: UnsafeRawPointer(paintBuffer.baseAddress!.advanced(by: index)),
+                            count: 1
+                        ))
+                        operations.append(operation(
+                            tag: UInt32(WHISKER_OP_CLIP),
+                            node: fixture.id,
+                            flags: fixture.clipFlags
+                        ))
+                        if fixture.transform != nil {
+                            operations.append(operation(
+                                tag: UInt32(WHISKER_OP_TRANSFORM),
+                                node: fixture.id,
+                                payload: UnsafeRawPointer(
+                                    transformBuffer.baseAddress!.advanced(by: index * 16)
+                                ),
+                                count: 16
+                            ))
+                        }
+                    }
+                    try operations.withUnsafeMutableBufferPointer { buffer in
+                        var frame = WhiskerMobileFrame()
+                        frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                        frame.abi_minor = UInt16(WHISKER_MOBILE_ABI_MINOR)
+                        frame.protocol_major = 1
+                        frame.protocol_minor = 0
+                        frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
+                        frame.surface = 1
+                        frame.scene_epoch = 1
+                        frame.viewport_epoch = 1
+                        frame.frame_id = revision
+                        frame.base_revision = 0
+                        frame.target_revision = revision
+                        frame.operations = UnsafePointer(buffer.baseAddress!)
+                        frame.operation_count = buffer.count
+                        var response = WhiskerMobileApplyResponse()
+                        guard view.applyConformanceFrame(frame, response: &response),
+                              response.status == UInt8(WHISKER_APPLY_ACCEPTED) else {
+                            throw Failure("UIKit Host rejected scene fixture frame")
+                        }
                     }
                 }
             }
@@ -258,6 +273,7 @@ private struct SceneFixtureNode {
     let layout: WhiskerMobileLayoutGeometry
     let paint: WhiskerMobileBoxPaint
     let clipFlags: UInt32
+    let transform: [Float]?
 }
 
 private struct Failure: Error, CustomStringConvertible {
@@ -311,12 +327,20 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     }
     let flags = UInt32(horizontal == "hidden" ? 1 : 0) |
         UInt32(vertical == "hidden" ? 2 : 0)
+    let transform: [Float]?
+    if let raw = fixture["transform"] as? [NSNumber] {
+        guard raw.count == 16 else { throw Failure("transform needs sixteen values") }
+        transform = raw.map { $0.floatValue }
+    } else {
+        transform = nil
+    }
     return SceneFixtureNode(
         id: id,
         parent: parent,
         layout: layout,
         paint: try boxPaint(fixture),
-        clipFlags: flags
+        clipFlags: flags,
+        transform: transform
     )
 }
 
