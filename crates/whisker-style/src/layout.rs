@@ -121,6 +121,201 @@ pub struct Axes<T> {
     pub height: T,
 }
 
+/// Minimum sizing function for one computed CSS Grid track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedGridMinTrackSizing {
+    /// A fixed length or percentage.
+    Fixed(ComputedLengthPercentage),
+    /// The track's min-content contribution.
+    MinContent,
+    /// The track's max-content contribution.
+    MaxContent,
+    /// Automatic minimum sizing.
+    Auto,
+}
+
+/// Maximum sizing function for one computed CSS Grid track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedGridMaxTrackSizing {
+    /// A fixed length or percentage.
+    Fixed(ComputedLengthPercentage),
+    /// The track's min-content contribution.
+    MinContent,
+    /// The track's max-content contribution.
+    MaxContent,
+    /// Fit content up to the supplied limit.
+    FitContent(ComputedLengthPercentage),
+    /// Automatic maximum sizing.
+    Auto,
+    /// A flexible `fr` share.
+    Fraction(StyleNumber),
+}
+
+/// Computed minimum and maximum sizing functions for one CSS Grid track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedGridTrackSizing {
+    /// Minimum sizing function.
+    pub min: ComputedGridMinTrackSizing,
+    /// Maximum sizing function.
+    pub max: ComputedGridMaxTrackSizing,
+}
+
+impl ComputedGridTrackSizing {
+    /// Creates a fixed logical-pixel track.
+    pub const fn length(value: f32) -> Self {
+        let value = ComputedLengthPercentage::new(value, 0.0);
+        Self {
+            min: ComputedGridMinTrackSizing::Fixed(value),
+            max: ComputedGridMaxTrackSizing::Fixed(value),
+        }
+    }
+
+    /// Creates a flexible `fr` track with an automatic minimum.
+    pub const fn fraction(value: f32) -> Self {
+        Self {
+            min: ComputedGridMinTrackSizing::Auto,
+            max: ComputedGridMaxTrackSizing::Fraction(StyleNumber::new(value)),
+        }
+    }
+
+    /// Creates an automatic track.
+    pub const fn auto() -> Self {
+        Self {
+            min: ComputedGridMinTrackSizing::Auto,
+            max: ComputedGridMaxTrackSizing::Auto,
+        }
+    }
+}
+
+/// Repetition count used by `repeat()` in a computed Grid template.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GridRepetitionCountValue {
+    /// Repeat a fixed number of times.
+    Count(u16),
+    /// Add tracks while they fit.
+    AutoFill,
+    /// Add tracks while they fit and collapse empty tracks.
+    AutoFit,
+}
+
+/// One repeated fragment in a computed Grid template.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedGridTemplateRepetition {
+    /// Repetition count.
+    pub count: GridRepetitionCountValue,
+    /// Track sizing functions inside the repeated fragment.
+    pub tracks: Vec<ComputedGridTrackSizing>,
+    /// Named lines surrounding the repeated tracks.
+    pub line_names: Vec<Vec<String>>,
+}
+
+/// One component of a computed Grid template.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedGridTemplateComponent {
+    /// One non-repeated track.
+    Track(ComputedGridTrackSizing),
+    /// A `repeat()` fragment.
+    Repeat(ComputedGridTemplateRepetition),
+}
+
+/// Computed track components and named lines for one Grid axis.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ComputedGridTemplate {
+    /// Track or repetition components.
+    pub components: Vec<ComputedGridTemplateComponent>,
+    /// Named lines outside repetition components.
+    pub line_names: Vec<Vec<String>>,
+}
+
+impl ComputedGridTemplate {
+    /// Creates a template containing only non-repeated tracks.
+    pub fn tracks(tracks: impl IntoIterator<Item = ComputedGridTrackSizing>) -> Self {
+        let components = tracks
+            .into_iter()
+            .map(ComputedGridTemplateComponent::Track)
+            .collect::<Vec<_>>();
+        Self {
+            line_names: vec![Vec::new(); components.len() + 1],
+            components,
+        }
+    }
+}
+
+/// Placement of one edge of a Grid item.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GridPlacementValue {
+    /// Use auto-placement.
+    #[default]
+    Auto,
+    /// Place at a numbered Grid line.
+    Line(i16),
+    /// Place at the nth line with this name.
+    NamedLine(String, i16),
+    /// Span a number of tracks.
+    Span(u16),
+    /// Span to the nth line with this name.
+    NamedSpan(String, u16),
+}
+
+/// Start and end placement for one Grid item axis.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct GridPlacementLineValue {
+    /// Start edge placement.
+    pub start: GridPlacementValue,
+    /// End edge placement.
+    pub end: GridPlacementValue,
+}
+
+impl GridPlacementLineValue {
+    /// Places an item between two numbered lines.
+    pub const fn lines(start: i16, end: i16) -> Self {
+        Self {
+            start: GridPlacementValue::Line(start),
+            end: GridPlacementValue::Line(end),
+        }
+    }
+}
+
+/// Auto-placement direction and packing mode for Grid items.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GridAutoFlowValue {
+    /// Fill rows using sparse placement.
+    #[default]
+    Row,
+    /// Fill columns using sparse placement.
+    Column,
+    /// Fill rows and back-fill holes.
+    RowDense,
+    /// Fill columns and back-fill holes.
+    ColumnDense,
+}
+
+/// One named rectangle in a Grid area template.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GridTemplateAreaValue {
+    /// Area name.
+    pub name: String,
+    /// Zero-based starting row.
+    pub row_start: u16,
+    /// Exclusive ending row.
+    pub row_end: u16,
+    /// Zero-based starting column.
+    pub column_start: u16,
+    /// Exclusive ending column.
+    pub column_end: u16,
+}
+
+/// Named area rectangles and dimensions for `grid-template-areas`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GridTemplateAreasValue {
+    /// Named rectangles.
+    pub areas: Vec<GridTemplateAreaValue>,
+    /// Number of template rows.
+    pub row_count: u16,
+    /// Number of template columns.
+    pub column_count: u16,
+}
+
 impl<T: Copy> Axes<T> {
     const fn all(value: T) -> Self {
         Self {
@@ -171,6 +366,10 @@ pub struct ComputedLayoutStyle {
     pub align_items: AlignItemsValue,
     /// Per-item cross-axis alignment.
     pub align_self: AlignSelfValue,
+    /// Inline-axis child alignment for Grid containers.
+    pub justify_items: Option<AlignItemsValue>,
+    /// Inline-axis alignment for one Grid item.
+    pub justify_self: Option<AlignSelfValue>,
     /// Wrapped-line cross-axis distribution.
     pub align_content: AlignContentValue,
     /// Row and column gaps.
@@ -179,6 +378,22 @@ pub struct ComputedLayoutStyle {
     pub aspect_ratio: Option<StyleNumber>,
     /// Flex/grid ordering key.
     pub order: i32,
+    /// Explicit Grid column template.
+    pub grid_template_columns: ComputedGridTemplate,
+    /// Explicit Grid row template.
+    pub grid_template_rows: ComputedGridTemplate,
+    /// Implicit Grid column sizing functions.
+    pub grid_auto_columns: Vec<ComputedGridTrackSizing>,
+    /// Implicit Grid row sizing functions.
+    pub grid_auto_rows: Vec<ComputedGridTrackSizing>,
+    /// Grid auto-placement mode.
+    pub grid_auto_flow: GridAutoFlowValue,
+    /// Optional named area template.
+    pub grid_template_areas: Option<GridTemplateAreasValue>,
+    /// Grid column placement for this item.
+    pub grid_column: GridPlacementLineValue,
+    /// Grid row placement for this item.
+    pub grid_row: GridPlacementLineValue,
 }
 
 impl Default for ComputedLayoutStyle {
@@ -205,10 +420,20 @@ impl Default for ComputedLayoutStyle {
             justify_content: JustifyContentValue::FlexStart,
             align_items: AlignItemsValue::Stretch,
             align_self: AlignSelfValue::Auto,
+            justify_items: None,
+            justify_self: None,
             align_content: AlignContentValue::Stretch,
             gap: Axes::all(ComputedLengthPercentage::ZERO),
             aspect_ratio: None,
             order: 0,
+            grid_template_columns: ComputedGridTemplate::default(),
+            grid_template_rows: ComputedGridTemplate::default(),
+            grid_auto_columns: Vec::new(),
+            grid_auto_rows: Vec::new(),
+            grid_auto_flow: GridAutoFlowValue::Row,
+            grid_template_areas: None,
+            grid_column: GridPlacementLineValue::default(),
+            grid_row: GridPlacementLineValue::default(),
         }
     }
 }

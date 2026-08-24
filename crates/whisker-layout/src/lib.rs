@@ -10,15 +10,20 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 use taffy::{
     AlignContent, AlignItems, AvailableSpace as TaffyAvailableSpace, BoxSizing, Dimension,
-    Direction, Display, FlexDirection, FlexWrap, LengthPercentage, LengthPercentageAuto, Position,
-    Rect, Size, Style, TaffyTree,
+    Direction, Display, FlexDirection, FlexWrap, GridAutoFlow, GridPlacement, GridTemplateArea,
+    GridTemplateAreas, GridTemplateComponent, GridTemplateRepetition, LengthPercentage,
+    LengthPercentageAuto, Line, MaxTrackSizingFunction, MinTrackSizingFunction, Position, Rect,
+    RepetitionCount, Size, Style, TaffyTree, TrackSizingFunction,
 };
 pub use whisker_protocol::AvailableSpace;
 use whisker_protocol::{LayoutGeometry, LayoutRect, MeasureConstraints, NodeId};
 use whisker_style::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, BoxSizingValue, ComputedFlexBasis,
-    ComputedLayoutStyle, ComputedLengthPercentage, ComputedLengthPercentageAuto, ComputedSizeValue,
-    DirectionValue, DisplayValue, FlexDirectionValue, FlexWrapValue, JustifyContentValue,
+    ComputedGridMaxTrackSizing, ComputedGridMinTrackSizing, ComputedGridTemplate,
+    ComputedGridTemplateComponent, ComputedGridTrackSizing, ComputedLayoutStyle,
+    ComputedLengthPercentage, ComputedLengthPercentageAuto, ComputedSizeValue, DirectionValue,
+    DisplayValue, FlexDirectionValue, FlexWrapValue, GridAutoFlowValue, GridPlacementLineValue,
+    GridPlacementValue, GridRepetitionCountValue, GridTemplateAreasValue, JustifyContentValue,
     PositionValue, PropertyImpactSet,
 };
 
@@ -690,14 +695,160 @@ fn convert_style(input: &ComputedLayoutStyle) -> Result<Style, LayoutError> {
             AlignSelfValue::Start => Some(AlignItems::START),
             AlignSelfValue::End => Some(AlignItems::END),
         },
+        justify_items: input.justify_items.map(align_items),
+        justify_self: input.justify_self.map(align_self),
         align_content: Some(align_content(input.align_content)),
         gap: Size {
             width: length(input.gap.width, false)?,
             height: length(input.gap.height, false)?,
         },
         aspect_ratio: input.aspect_ratio.map(|ratio| ratio.get()),
+        grid_template_columns: grid_template(&input.grid_template_columns)?,
+        grid_template_column_names: input.grid_template_columns.line_names.clone(),
+        grid_template_rows: grid_template(&input.grid_template_rows)?,
+        grid_template_row_names: input.grid_template_rows.line_names.clone(),
+        grid_auto_columns: input
+            .grid_auto_columns
+            .iter()
+            .copied()
+            .map(grid_track)
+            .collect::<Result<Vec<_>, _>>()?,
+        grid_auto_rows: input
+            .grid_auto_rows
+            .iter()
+            .copied()
+            .map(grid_track)
+            .collect::<Result<Vec<_>, _>>()?,
+        grid_auto_flow: match input.grid_auto_flow {
+            GridAutoFlowValue::Row => GridAutoFlow::Row,
+            GridAutoFlowValue::Column => GridAutoFlow::Column,
+            GridAutoFlowValue::RowDense => GridAutoFlow::RowDense,
+            GridAutoFlowValue::ColumnDense => GridAutoFlow::ColumnDense,
+        },
+        grid_template_areas: input.grid_template_areas.as_ref().map(grid_template_areas),
+        grid_column: grid_placement_line(&input.grid_column),
+        grid_row: grid_placement_line(&input.grid_row),
         ..Style::default()
     })
+}
+
+fn align_self(value: AlignSelfValue) -> AlignItems {
+    match value {
+        AlignSelfValue::Auto | AlignSelfValue::Stretch => AlignItems::STRETCH,
+        AlignSelfValue::FlexStart => AlignItems::FLEX_START,
+        AlignSelfValue::FlexEnd => AlignItems::FLEX_END,
+        AlignSelfValue::Center => AlignItems::CENTER,
+        AlignSelfValue::Baseline => AlignItems::BASELINE,
+        AlignSelfValue::Start => AlignItems::START,
+        AlignSelfValue::End => AlignItems::END,
+    }
+}
+
+fn grid_template(
+    value: &ComputedGridTemplate,
+) -> Result<Vec<GridTemplateComponent<String>>, LayoutError> {
+    value
+        .components
+        .iter()
+        .map(|component| match component {
+            ComputedGridTemplateComponent::Track(track) => {
+                grid_track(*track).map(GridTemplateComponent::Single)
+            }
+            ComputedGridTemplateComponent::Repeat(repetition) => {
+                let count = match repetition.count {
+                    GridRepetitionCountValue::Count(value) => RepetitionCount::Count(value),
+                    GridRepetitionCountValue::AutoFill => RepetitionCount::AutoFill,
+                    GridRepetitionCountValue::AutoFit => RepetitionCount::AutoFit,
+                };
+                let tracks = repetition
+                    .tracks
+                    .iter()
+                    .copied()
+                    .map(grid_track)
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(GridTemplateComponent::Repeat(GridTemplateRepetition {
+                    count,
+                    tracks,
+                    line_names: repetition.line_names.clone(),
+                }))
+            }
+        })
+        .collect()
+}
+
+fn grid_track(value: ComputedGridTrackSizing) -> Result<TrackSizingFunction, LayoutError> {
+    Ok(TrackSizingFunction {
+        min: match value.min {
+            ComputedGridMinTrackSizing::Fixed(value) => grid_min_fixed(value)?,
+            ComputedGridMinTrackSizing::MinContent => MinTrackSizingFunction::min_content(),
+            ComputedGridMinTrackSizing::MaxContent => MinTrackSizingFunction::max_content(),
+            ComputedGridMinTrackSizing::Auto => MinTrackSizingFunction::auto(),
+        },
+        max: match value.max {
+            ComputedGridMaxTrackSizing::Fixed(value) => grid_max_fixed(value)?,
+            ComputedGridMaxTrackSizing::MinContent => MaxTrackSizingFunction::min_content(),
+            ComputedGridMaxTrackSizing::MaxContent => MaxTrackSizingFunction::max_content(),
+            ComputedGridMaxTrackSizing::FitContent(value) => match scalar(value)? {
+                Scalar::Length(value) => MaxTrackSizingFunction::fit_content_px(value),
+                Scalar::Percent(value) => MaxTrackSizingFunction::fit_content_percent(value),
+            },
+            ComputedGridMaxTrackSizing::Auto => MaxTrackSizingFunction::auto(),
+            ComputedGridMaxTrackSizing::Fraction(value) => MaxTrackSizingFunction::fr(value.get()),
+        },
+    })
+}
+
+fn grid_min_fixed(value: ComputedLengthPercentage) -> Result<MinTrackSizingFunction, LayoutError> {
+    scalar(value).map(|value| match value {
+        Scalar::Length(value) => MinTrackSizingFunction::length(value),
+        Scalar::Percent(value) => MinTrackSizingFunction::percent(value),
+    })
+}
+
+fn grid_max_fixed(value: ComputedLengthPercentage) -> Result<MaxTrackSizingFunction, LayoutError> {
+    scalar(value).map(|value| match value {
+        Scalar::Length(value) => MaxTrackSizingFunction::length(value),
+        Scalar::Percent(value) => MaxTrackSizingFunction::percent(value),
+    })
+}
+
+fn grid_template_areas(value: &GridTemplateAreasValue) -> GridTemplateAreas<String> {
+    GridTemplateAreas {
+        areas: value
+            .areas
+            .iter()
+            .map(|area| GridTemplateArea {
+                name: area.name.clone(),
+                row_start: area.row_start,
+                row_end: area.row_end,
+                column_start: area.column_start,
+                column_end: area.column_end,
+            })
+            .collect(),
+        row_count: value.row_count,
+        column_count: value.column_count,
+    }
+}
+
+fn grid_placement_line(value: &GridPlacementLineValue) -> Line<GridPlacement<String>> {
+    Line {
+        start: grid_placement(&value.start),
+        end: grid_placement(&value.end),
+    }
+}
+
+fn grid_placement(value: &GridPlacementValue) -> GridPlacement<String> {
+    match value {
+        GridPlacementValue::Auto => GridPlacement::Auto,
+        GridPlacementValue::Line(value) => GridPlacement::Line((*value).into()),
+        GridPlacementValue::NamedLine(name, index) => {
+            GridPlacement::NamedLine(name.clone(), *index)
+        }
+        GridPlacementValue::Span(value) => GridPlacement::Span(*value),
+        GridPlacementValue::NamedSpan(name, count) => {
+            GridPlacement::NamedSpan(name.clone(), *count)
+        }
+    }
 }
 
 fn unsupported<T>(feature: UnsupportedLayoutFeature) -> Result<T, LayoutError> {
@@ -1454,6 +1605,7 @@ mod tests {
             },
             aspect_ratio: Some(StyleNumber::new(1.5)),
             order: 7,
+            ..ComputedLayoutStyle::default()
         };
         let converted = convert_style(&style).unwrap();
         assert_eq!(converted.display, Display::None);

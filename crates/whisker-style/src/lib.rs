@@ -17,8 +17,12 @@ mod value;
 
 pub use declaration::{SpecifiedStyle, StyleDeclaration};
 pub use layout::{
-    Axes, ComputedFlexBasis, ComputedLayoutStyle, ComputedLengthPercentage,
-    ComputedLengthPercentageAuto, ComputedSizeValue, Edges,
+    Axes, ComputedFlexBasis, ComputedGridMaxTrackSizing, ComputedGridMinTrackSizing,
+    ComputedGridTemplate, ComputedGridTemplateComponent, ComputedGridTemplateRepetition,
+    ComputedGridTrackSizing, ComputedLayoutStyle, ComputedLengthPercentage,
+    ComputedLengthPercentageAuto, ComputedSizeValue, Edges, GridAutoFlowValue,
+    GridPlacementLineValue, GridPlacementValue, GridRepetitionCountValue, GridTemplateAreaValue,
+    GridTemplateAreasValue,
 };
 pub use layout_value::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, AspectRatioValue, BoxSizingValue,
