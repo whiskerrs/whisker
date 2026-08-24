@@ -12,6 +12,7 @@ import rs.whisker.runtime.WhiskerTextContent
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.paint.HostBackgroundGeometry
 import rs.whisker.runtime.paint.HostBackgroundBox
+import rs.whisker.runtime.paint.HostBackgroundLayer
 import rs.whisker.runtime.paint.HostBoxPaint
 import rs.whisker.runtime.paint.HostBackgroundLayers
 import rs.whisker.runtime.paint.HostBackgroundRepeat
@@ -370,68 +371,125 @@ internal class HostScene(
         if (numbers.isEmpty()) {
             node.backgroundLayers = null
         } else {
-            val density = root.resources.displayMetrics.density
-            val names = requireNotNull(operation.names)
-            val imageOffset = BACKGROUND_GEOMETRY_PACKED_SIZE
-            val stopOffset = imageOffset + when (operation.flags) {
+            node.backgroundLayers = HostBackgroundLayers(
+                requireNotNull(projectedBackgroundLayerOperations(operation)).map {
+                    decodeBackgroundLayer(it)
+                },
+            )
+        }
+        node.paint?.let { applyPaint(node, it) }
+    }
+
+    private fun decodeBackgroundLayer(operation: HostSceneOperation): HostBackgroundLayer {
+        val density = root.resources.displayMetrics.density
+        val numbers = requireNotNull(operation.numbers)
+        val names = requireNotNull(operation.names)
+        val imageOffset = BACKGROUND_GEOMETRY_PACKED_SIZE
+        val stopOffset = imageOffset + when (operation.flags) {
+            BACKGROUND_RADIAL -> 8
+            BACKGROUND_CONIC -> 4
+            else -> 0
+        }
+        val stops = decodeGradientStops(numbers, stopOffset, names, density)
+        fun coordinate(offset: Int) = HostPaintCoordinate(
+            length = numbers[offset] * density,
+            fraction = numbers[offset + 1],
+        )
+        val geometry = HostBackgroundGeometry(
+            positionX = coordinate(0),
+            positionY = coordinate(2),
+            sizeWidth = if (numbers[8] == BACKGROUND_SIZE_EXPLICIT.toFloat()) {
+                coordinate(4)
+            } else {
+                null
+            },
+            sizeHeight = if (numbers[8] == BACKGROUND_SIZE_EXPLICIT.toFloat()) {
+                coordinate(6)
+            } else {
+                null
+            },
+            repeatX = backgroundRepeat(numbers[9]),
+            repeatY = backgroundRepeat(numbers[10]),
+            origin = backgroundBox(numbers[11]),
+            clip = backgroundBox(numbers[12]),
+        )
+        return if (operation.flags == BACKGROUND_RADIAL) {
+            HostBackgroundLayer(
+                linearGradient = null,
+                radialGradient = HostRadialGradient(
+                    centerX = coordinate(imageOffset),
+                    centerY = coordinate(imageOffset + 2),
+                    radiusX = coordinate(imageOffset + 4),
+                    radiusY = coordinate(imageOffset + 6),
+                    stops = stops,
+                ),
+                geometry = geometry,
+            )
+        } else if (operation.flags == BACKGROUND_CONIC) {
+            HostBackgroundLayer(
+                linearGradient = null,
+                conicGradient = HostConicGradient(
+                    fromDegrees = operation.scalar,
+                    centerX = coordinate(imageOffset),
+                    centerY = coordinate(imageOffset + 2),
+                    stops = stops,
+                ),
+                geometry = geometry,
+            )
+        } else {
+            HostBackgroundLayer(
+                linearGradient = HostLinearGradient(operation.scalar, stops),
+                geometry = geometry,
+            )
+        }
+    }
+
+    private fun projectedBackgroundLayerOperations(
+        operation: HostSceneOperation,
+    ): List<HostSceneOperation>? {
+        if (operation.flags != BACKGROUND_PACKED_LAYERS) return listOf(operation)
+        val packed = operation.numbers ?: return null
+        val names = operation.names ?: return null
+        if (packed.isEmpty()) return null
+        val layerCount = packedCount(packed[0], MAX_BACKGROUND_LAYERS) ?: return null
+        if (layerCount == 0) return null
+        var cursor = 1
+        var nameCursor = 0
+        val result = ArrayList<HostSceneOperation>(layerCount)
+        repeat(layerCount) {
+            if (cursor + BACKGROUND_PACKED_LAYER_HEADER_SIZE > packed.size) return null
+            val kind = packedCount(packed[cursor], BACKGROUND_CONIC) ?: return null
+            val scalar = packed[cursor + 1]
+            val valueCount = packedCount(packed[cursor + 2], packed.size) ?: return null
+            cursor += BACKGROUND_PACKED_LAYER_HEADER_SIZE
+            if (valueCount > packed.size - cursor) return null
+            val values = packed.copyOfRange(cursor, cursor + valueCount)
+            cursor += valueCount
+            val imagePrefix = when (kind) {
                 BACKGROUND_RADIAL -> 8
                 BACKGROUND_CONIC -> 4
                 else -> 0
             }
-            val stops = decodeGradientStops(numbers, stopOffset, names, density)
-            fun coordinate(offset: Int) = HostPaintCoordinate(
-                length = numbers[offset] * density,
-                fraction = numbers[offset + 1],
+            val stopValues = valueCount - BACKGROUND_GEOMETRY_PACKED_SIZE - imagePrefix
+            if (stopValues < 0 || stopValues % BACKGROUND_GRADIENT_STOP_PACKED_SIZE != 0) return null
+            val nameCount = stopValues / BACKGROUND_GRADIENT_STOP_PACKED_SIZE
+            if (nameCount > names.size - nameCursor) return null
+            val layerNames = names.copyOfRange(nameCursor, nameCursor + nameCount)
+            nameCursor += nameCount
+            result += operation.copy(
+                flags = kind,
+                scalar = scalar,
+                numbers = values,
+                names = layerNames,
             )
-            val geometry = HostBackgroundGeometry(
-                positionX = coordinate(0),
-                positionY = coordinate(2),
-                sizeWidth = if (numbers[8] == BACKGROUND_SIZE_EXPLICIT.toFloat()) {
-                    coordinate(4)
-                } else {
-                    null
-                },
-                sizeHeight = if (numbers[8] == BACKGROUND_SIZE_EXPLICIT.toFloat()) {
-                    coordinate(6)
-                } else {
-                    null
-                },
-                repeatX = backgroundRepeat(numbers[9]),
-                repeatY = backgroundRepeat(numbers[10]),
-                origin = backgroundBox(numbers[11]),
-                clip = backgroundBox(numbers[12]),
-            )
-            node.backgroundLayers = if (operation.flags == BACKGROUND_RADIAL) {
-                HostBackgroundLayers(
-                    linearGradient = null,
-                    radialGradient = HostRadialGradient(
-                        centerX = coordinate(imageOffset),
-                        centerY = coordinate(imageOffset + 2),
-                        radiusX = coordinate(imageOffset + 4),
-                        radiusY = coordinate(imageOffset + 6),
-                        stops = stops,
-                    ),
-                    geometry = geometry,
-                )
-            } else if (operation.flags == BACKGROUND_CONIC) {
-                HostBackgroundLayers(
-                    linearGradient = null,
-                    conicGradient = HostConicGradient(
-                        fromDegrees = operation.scalar,
-                        centerX = coordinate(imageOffset),
-                        centerY = coordinate(imageOffset + 2),
-                        stops = stops,
-                    ),
-                    geometry = geometry,
-                )
-            } else {
-                HostBackgroundLayers(
-                    linearGradient = HostLinearGradient(operation.scalar, stops),
-                    geometry = geometry,
-                )
-            }
         }
-        node.paint?.let { applyPaint(node, it) }
+        return result.takeIf { cursor == packed.size && nameCursor == names.size }
+    }
+
+    private fun packedCount(value: Float, maximum: Int): Int? {
+        if (!value.isFinite() || value < 0f || value > maximum.toFloat()) return null
+        val integer = value.toInt()
+        return integer.takeIf { it.toFloat() == value }
     }
 
     private fun decodeGradientStops(
@@ -476,15 +534,24 @@ internal class HostScene(
         operation: HostSceneOperation,
         existing: Set<Long>,
     ): Boolean {
-        if (
-            operation.node !in existing || operation.flags !in BACKGROUND_LINEAR..BACKGROUND_CONIC ||
-            !operation.scalar.isFinite()
-        ) {
-            return false
-        }
+        if (operation.node !in existing) return false
         val numbers = operation.numbers ?: FloatArray(0)
         val names = operation.names ?: emptyArray()
-        if (numbers.isEmpty()) return operation.flags == BACKGROUND_LINEAR && names.isEmpty()
+        if (numbers.isEmpty()) {
+            return operation.flags == BACKGROUND_LINEAR &&
+                operation.scalar.isFinite() && names.isEmpty()
+        }
+        return projectedBackgroundLayerOperations(operation)
+            ?.all(::validBackgroundLayer) == true
+    }
+
+    private fun validBackgroundLayer(operation: HostSceneOperation): Boolean {
+        if (
+            operation.flags !in BACKGROUND_LINEAR..BACKGROUND_CONIC ||
+            !operation.scalar.isFinite()
+        ) return false
+        val numbers = operation.numbers ?: return false
+        val names = operation.names ?: return false
         if (numbers.size < BACKGROUND_GEOMETRY_PACKED_SIZE || !validBackgroundGeometry(numbers)) {
             return false
         }
@@ -545,6 +612,10 @@ internal class HostScene(
 
     private companion object {
         const val BACKGROUND_GEOMETRY_PACKED_SIZE = 15
+        const val BACKGROUND_GRADIENT_STOP_PACKED_SIZE = 7
+        const val BACKGROUND_PACKED_LAYER_HEADER_SIZE = 3
+        const val BACKGROUND_PACKED_LAYERS = 256
+        const val MAX_BACKGROUND_LAYERS = 256
         const val BACKGROUND_LINEAR = 0
         const val BACKGROUND_RADIAL = 1
         const val BACKGROUND_CONIC = 2
