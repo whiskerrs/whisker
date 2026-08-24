@@ -42,17 +42,18 @@ pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
         && layer.size == BackgroundSize::Auto
         && layer.repeat_x == ImageRepeat::Repeat
         && layer.repeat_y == ImageRepeat::Repeat;
-    let explicit_no_repeat_geometry = matches!(
-        layer.size,
-        BackgroundSize::Explicit {
-            width: Some(_),
-            height: Some(_),
-        }
-    ) && layer.repeat_x == ImageRepeat::NoRepeat
-        && layer.repeat_y == ImageRepeat::NoRepeat;
+    let explicit_geometry =
+        matches!(
+            layer.size,
+            BackgroundSize::Explicit {
+                width: Some(_),
+                height: Some(_),
+            }
+        ) && matches!(layer.repeat_x, ImageRepeat::Repeat | ImageRepeat::NoRepeat)
+            && matches!(layer.repeat_y, ImageRepeat::Repeat | ImageRepeat::NoRepeat);
     let supported_geometry =
         (initial_geometry && layer.origin == PaintBox::Padding && layer.clip == PaintBox::Border)
-            || (explicit_no_repeat_geometry
+            || (explicit_geometry
                 && matches!(layer.origin, PaintBox::Border | PaintBox::Padding)
                 && matches!(layer.clip, PaintBox::Border | PaintBox::Padding));
     supported_image
@@ -245,6 +246,8 @@ fn background_repeat(layer: &BackgroundLayer) -> String {
     match (layer.repeat_x, layer.repeat_y) {
         (ImageRepeat::Repeat, ImageRepeat::Repeat) => "repeat".into(),
         (ImageRepeat::NoRepeat, ImageRepeat::NoRepeat) => "no-repeat".into(),
+        (ImageRepeat::Repeat, ImageRepeat::NoRepeat) => "repeat no-repeat".into(),
+        (ImageRepeat::NoRepeat, ImageRepeat::Repeat) => "no-repeat repeat".into(),
         _ => unreachable!("unsupported background repeat passed preflight"),
     }
 }
