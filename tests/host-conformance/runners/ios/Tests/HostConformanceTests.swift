@@ -93,6 +93,32 @@ final class HostConformanceTests: XCTestCase {
             ),
             [5]
         )
+        XCTAssertEqual(
+            backgroundTileOrigins(
+                base: 5,
+                tileSize: 36,
+                positioning: 0..<72,
+                coverage: 0..<72,
+                repeatMode: .round
+            ),
+            [-31, 5, 41]
+        )
+        XCTAssertEqual(
+            backgroundRoundTileSize(
+                originalTileSize: 32,
+                positioningSize: 72,
+                repeatMode: .round
+            ),
+            36
+        )
+        XCTAssertEqual(
+            backgroundRoundTileSize(
+                originalTileSize: 32,
+                positioningSize: 72,
+                repeatMode: .repeat
+            ),
+            32
+        )
 
         let mixed = HostBackgroundGeometry(
             positionX: WhiskerMobileLengthPercentage(),
@@ -113,6 +139,27 @@ final class HostConformanceTests: XCTestCase {
                 CGRect(x: 0, y: 7, width: 30, height: 20),
                 CGRect(x: 35, y: 7, width: 30, height: 20),
                 CGRect(x: 70, y: 7, width: 30, height: 20)
+            ]
+        )
+
+        let roundMixed = HostBackgroundGeometry(
+            positionX: WhiskerMobileLengthPercentage(),
+            positionY: WhiskerMobileLengthPercentage(length: 7, fraction: 0),
+            sizeWidth: WhiskerMobileLengthPercentage(length: 32, fraction: 0),
+            sizeHeight: WhiskerMobileLengthPercentage(length: 20, fraction: 0),
+            repeatX: .round,
+            repeatY: .noRepeat,
+            origin: .padding,
+            clip: .border
+        )
+        XCTAssertEqual(
+            roundMixed.tileRects(
+                in: CGRect(x: 0, y: 0, width: 72, height: 60),
+                covering: CGRect(x: 0, y: 0, width: 72, height: 60)
+            ),
+            [
+                CGRect(x: 0, y: 7, width: 36, height: 20),
+                CGRect(x: 36, y: 7, width: 36, height: 20)
             ]
         )
     }
@@ -165,7 +212,10 @@ private final class Driver {
                     name == "paint.background-layers.repeat-x" ||
                     name == "paint.background-layers.repeat-y" ||
                     name == "paint.background-layers.repeat-space" ||
-                    name == "paint.background-layers.repeat-space-single" else {
+                    name == "paint.background-layers.repeat-space-single" ||
+                    name == "paint.background-layers.repeat-round-x" ||
+                    name == "paint.background-layers.repeat-round-y" ||
+                    name == "paint.background-layers.repeat-round-position" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -762,6 +812,7 @@ private func backgroundRepeat(_ value: String) throws -> UInt32 {
     case "repeat": UInt32(WHISKER_BACKGROUND_REPEAT)
     case "no_repeat": UInt32(WHISKER_BACKGROUND_NO_REPEAT)
     case "space": UInt32(WHISKER_BACKGROUND_SPACE)
+    case "round": UInt32(WHISKER_BACKGROUND_ROUND)
     default: throw Failure("unsupported background repeat")
     }
 }
