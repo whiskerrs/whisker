@@ -13,7 +13,7 @@ final class HostConformanceTests: XCTestCase {
         BuiltInElementModule().registerWithWhisker()
     }
 
-    func testEverySharedPaintReftestUsesProductionUIKitHost() throws {
+    func testEverySharedPaintScenarioUsesProductionUIKitHost() throws {
         let manifest = try json(at: fixtureRoot.appendingPathComponent("manifest.json"))
         let cases = try XCTUnwrap(manifest["cases"] as? [[String: Any]])
         var count = 0
@@ -24,17 +24,22 @@ final class HostConformanceTests: XCTestCase {
                   try string(scenario, "id") == string(entry, "id") else {
                 throw Failure("manifest and iOS fixture disagree")
             }
-            guard let reference = scenario["reference"] as? [String: Any] else { continue }
-            let test = try Driver().execute(try object(scenario, "test"))
-            let expected = try Driver().execute(reference)
             let id = try string(scenario, "id")
-            XCTAssertEqual(test.width, expected.width)
-            XCTAssertEqual(test.height, expected.height)
-            XCTAssertLessThanOrEqual(
-                largestDifference(test.bytes, expected.bytes),
-                1,
-                id
-            )
+            let testSide = try object(scenario, "test")
+            guard try array(testSide, "commands").contains(where: {
+                try string($0, "type") == "present_box"
+            }) else { continue }
+            let test = try Driver(id: id).execute(testSide)
+            if let reference = scenario["reference"] as? [String: Any] {
+                let expected = try Driver(id: id).execute(reference)
+                XCTAssertEqual(test.width, expected.width)
+                XCTAssertEqual(test.height, expected.height)
+                XCTAssertLessThanOrEqual(
+                    largestDifference(test.bytes, expected.bytes),
+                    1,
+                    id
+                )
+            }
             count += 1
         }
         XCTAssertGreaterThan(count, 0)
@@ -43,11 +48,13 @@ final class HostConformanceTests: XCTestCase {
 
 @MainActor
 private final class Driver {
+    private let id: String
     private let view = WhiskerView(frame: .zero)
     private var logicalSize = CGSize.zero
     private var checkpoint: Pixels?
 
-    init() throws {
+    init(id: String) throws {
+        self.id = id
         let registration = WhiskerElementRegistration(
             elementType: 1,
             name: WhiskerBuiltInElements.viewName,
@@ -73,7 +80,11 @@ private final class Driver {
                 guard try string(command, "name") == "paint.box" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
-                checkpoint = try capture()
+                let pixels = try capture()
+                checkpoint = pixels
+                if let samples = command["samples"] as? [[String: Any]] {
+                    try assertPixelSamples(id: id, pixels: pixels, samples: samples)
+                }
             default:
                 throw Failure("unsupported UIKit paint command")
             }
@@ -216,6 +227,7 @@ private func color(_ fixture: [String: Any]) throws -> WhiskerMobileColor {
         case "black": rgba = (0, 0, 0, 1)
         case "blue": rgba = (0, 0, 255, 1)
         case "transparent": rgba = (0, 0, 0, 0)
+        case "white": rgba = (255, 255, 255, 1)
         default: throw Failure("unsupported fixture named color")
         }
     } else {
@@ -291,4 +303,32 @@ private func unwrap<T>(_ value: T?, _ context: String) throws -> T {
 
 private func largestDifference(_ left: [UInt8], _ right: [UInt8]) -> UInt8 {
     zip(left, right).map { $0 > $1 ? $0 - $1 : $1 - $0 }.max() ?? 0
+}
+
+private func assertPixelSamples(
+    id: String,
+    pixels: Pixels,
+    samples: [[String: Any]]
+) throws {
+    for sample in samples {
+        let point = try numberArray(sample, "point")
+        guard point.count == 2 else { throw Failure("pixel sample needs two coordinates") }
+        let x = Int(point[0].rounded(.down))
+        let y = Int(point[1].rounded(.down))
+        guard x >= 0, x < pixels.width, y >= 0, y < pixels.height else {
+            throw Failure("pixel sample is outside the surface")
+        }
+        let offset = (y * pixels.width + x) * 4
+        let actual = Array(pixels.bytes[offset..<(offset + 4)])
+        let expectedColor = try color(try object(sample, "color"))
+        let expected = [
+            expectedColor.red,
+            expectedColor.green,
+            expectedColor.blue,
+            UInt8((expectedColor.alpha * 255).rounded())
+        ]
+        let tolerance = UInt8((sample["tolerance"] as? NSNumber)?.uint8Value ?? 0)
+        let difference = largestDifference(actual, expected)
+        XCTAssertLessThanOrEqual(difference, tolerance, "\(id) sample (\(x), \(y))")
+    }
 }

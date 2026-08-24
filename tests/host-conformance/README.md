@@ -35,6 +35,13 @@ bitmaps on an emulator. iOS compiles the generated production
 `WhiskerView.swift`, injects the mobile C ABI frame, and compares UIKit layer
 captures in a Simulator.
 
+Manual visual WPT adaptations may attach logical-pixel `samples` to a paint
+checkpoint instead of inventing an exact reference image for behavior whose
+fine geometry is intentionally implementation-defined by CSS. Desktop,
+Android, and iOS assert those samples against production raster output. Web
+asserts the equivalent CSS projection and leaves dash/dot distribution to the
+browser, while sharing the same scenario and semantic values.
+
 From the repository root, run one Host with:
 
 ```sh

@@ -91,6 +91,7 @@ private class WhiskerBoxDrawable(
         val right = borderWidths[1].coerceIn(0f, box.width())
         val bottom = borderWidths[2].coerceIn(0f, box.height())
         val left = borderWidths[3].coerceIn(0f, box.width())
+        val widths = floatArrayOf(top, right, bottom, left)
         if (top == 0f && right == 0f && bottom == 0f && left == 0f) return
 
         if (radii.all { it == 0f }) {
@@ -147,7 +148,7 @@ private class WhiskerBoxDrawable(
             },
         )
         repeat(4) { side ->
-            if (!paintsSolidSide(side) || borderWidths[side] <= 0f) return@repeat
+            if (!paintsSide(side) || borderWidths[side] <= 0f) return@repeat
             val save = canvas.save()
             @Suppress("DEPRECATION")
             canvas.clipPath(outer)
@@ -156,7 +157,19 @@ private class WhiskerBoxDrawable(
                 canvas.clipPath(innerPath, android.graphics.Region.Op.DIFFERENCE)
             }
             paint.color = borderColors[side]
-            canvas.drawPath(sidePaths[side], paint)
+            when (borderStyles[side]) {
+                BORDER_STYLE_SOLID -> canvas.drawPath(sidePaths[side], paint)
+                BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED -> {
+                    canvas.clipPath(sidePaths[side])
+                    drawPatternedEdge(
+                        canvas,
+                        edgeRect(box, side, widths[side]),
+                        side,
+                        borderWidths[side],
+                        borderStyles[side],
+                    )
+                }
+            }
             canvas.restoreToCount(save)
         }
     }
@@ -177,13 +190,69 @@ private class WhiskerBoxDrawable(
             RectF(box.left, box.top, box.left + left, box.bottom),
         )
         repeat(4) { side ->
-            if (!paintsSolidSide(side) || widths[side] <= 0f) return@repeat
+            if (!paintsSide(side) || widths[side] <= 0f) return@repeat
             paint.color = borderColors[side]
-            canvas.drawRect(edges[side], paint)
+            when (borderStyles[side]) {
+                BORDER_STYLE_SOLID -> canvas.drawRect(edges[side], paint)
+                BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED ->
+                    drawPatternedEdge(canvas, edges[side], side, widths[side], borderStyles[side])
+            }
         }
     }
 
-    private fun paintsSolidSide(side: Int): Boolean = borderStyles[side] == BORDER_STYLE_SOLID
+    private fun paintsSide(side: Int): Boolean = when (borderStyles[side]) {
+        BORDER_STYLE_SOLID, BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED -> true
+        else -> false
+    }
+
+    private fun edgeRect(box: RectF, side: Int, width: Float): RectF = when (side) {
+        0 -> RectF(box.left, box.top, box.right, box.top + width)
+        1 -> RectF(box.right - width, box.top, box.right, box.bottom)
+        2 -> RectF(box.left, box.bottom - width, box.right, box.bottom)
+        else -> RectF(box.left, box.top, box.left + width, box.bottom)
+    }
+
+    private fun drawPatternedEdge(
+        canvas: Canvas,
+        edge: RectF,
+        side: Int,
+        width: Float,
+        style: Int,
+    ) {
+        if (width <= 0f || edge.isEmpty) return
+        val horizontal = side == 0 || side == 2
+        val start = if (horizontal) edge.left else edge.top
+        val end = if (horizontal) edge.right else edge.bottom
+        val center = if (horizontal) edge.centerY() else edge.centerX()
+        val save = canvas.save()
+        canvas.clipRect(edge)
+        if (style == BORDER_STYLE_DASHED) {
+            val dash = width * 3f
+            val period = width * 4f
+            var position = start
+            while (position < end) {
+                val dashEnd = min(position + dash, end)
+                if (horizontal) {
+                    canvas.drawRect(position, edge.top, dashEnd, edge.bottom, paint)
+                } else {
+                    canvas.drawRect(edge.left, position, edge.right, dashEnd, paint)
+                }
+                position += period
+            }
+        } else {
+            val radius = width / 2f
+            var position = start + width
+            while (position - radius < end) {
+                if (horizontal) {
+                    canvas.drawCircle(position, center, radius, paint)
+                } else {
+                    canvas.drawCircle(center, position, radius, paint)
+                }
+                position += width * 2f
+            }
+        }
+        canvas.restoreToCount(save)
+    }
 
     private fun normalizedRadii(width: Float, height: Float): FloatArray {
         val result = cornerRadii.map { it.coerceAtLeast(0f) }.toFloatArray()
@@ -219,3 +288,5 @@ private class WhiskerBoxDrawable(
 }
 
 private const val BORDER_STYLE_SOLID = 2
+private const val BORDER_STYLE_DASHED = 3
+private const val BORDER_STYLE_DOTTED = 4

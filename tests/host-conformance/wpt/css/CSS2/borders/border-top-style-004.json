@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "wpt.css2.borders.border-top-style-004",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/CSS2/borders/border-top-style-004.xht",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "A dashed border-top renders separated dash segments with the specified border width.",
+    "adaptation": "The WPT manual visual assertion is represented by semantic style projection plus logical-pixel samples inside two dashes, one gap, and the white box background. Exact dash distribution outside those samples remains Host-defined as allowed by CSS."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 20.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [0.0, 0.0, 100.0, 20.0],
+        "background": { "kind": "named", "value": "white" },
+        "border": {
+          "widths": [3.0, 0.0, 0.0, 0.0],
+          "colors": [
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "transparent" },
+            { "kind": "named", "value": "transparent" },
+            { "kind": "named", "value": "transparent" }
+          ],
+          "styles": ["dashed", "none", "none", "none"],
+          "radii": [0.0, 0.0, 0.0, 0.0]
+        }
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [4.0, 1.0], "color": { "kind": "named", "value": "black" }, "tolerance": 16 },
+          { "point": [10.0, 1.0], "color": { "kind": "named", "value": "white" }, "tolerance": 16 },
+          { "point": [14.0, 1.0], "color": { "kind": "named", "value": "black" }, "tolerance": 16 },
+          { "point": [4.0, 10.0], "color": { "kind": "named", "value": "white" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  }
+}
