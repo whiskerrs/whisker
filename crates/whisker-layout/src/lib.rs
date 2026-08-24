@@ -1897,8 +1897,23 @@ mod tests {
             DisplayValue::Grid,
             DisplayValue::Linear,
             DisplayValue::Relative,
+            DisplayValue::Block,
+            DisplayValue::FlowRoot,
         ] {
             style.display = display;
+            convert_style(&style).unwrap();
+        }
+        for value in [FloatValue::None, FloatValue::Left, FloatValue::Right] {
+            style.float = value;
+            convert_style(&style).unwrap();
+        }
+        for value in [
+            ClearValue::None,
+            ClearValue::Left,
+            ClearValue::Right,
+            ClearValue::Both,
+        ] {
+            style.clear = value;
             convert_style(&style).unwrap();
         }
         for direction in [

@@ -2315,6 +2315,8 @@ mod tests {
     fn invalid_types_are_reported_for_each_layout_property_family() {
         let properties = [
             StyleProperty::Display,
+            StyleProperty::Float,
+            StyleProperty::Clear,
             StyleProperty::Position,
             StyleProperty::Direction,
             StyleProperty::BoxSizing,
