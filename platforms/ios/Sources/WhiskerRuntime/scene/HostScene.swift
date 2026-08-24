@@ -141,50 +141,17 @@ final class HostScene {
                     guard operation.payload == nil else { return false }
                     continue
                 }
-                guard operation.payload_count == 1,
-                      let layer = operation.payload?.assumingMemoryBound(
+                guard (1...4_096).contains(operation.payload_count),
+                      let pointer = operation.payload?.assumingMemoryBound(
                           to: WhiskerMobileBackgroundLayer.self
-                      ).pointee,
-                      validBackgroundGeometry(layer), layer.image.scalar.isFinite else {
+                      ) else {
                     return false
                 }
-                switch layer.image.kind {
-                case UInt32(WHISKER_BACKGROUND_LINEAR):
-                    guard let payload = layer.image.payload,
-                          validGradientStops(payload, count: layer.image.payload_count) else {
-                        return false
-                    }
-                case UInt32(WHISKER_BACKGROUND_RADIAL):
-                    guard layer.image.payload_count == 1,
-                          let radial = layer.image.payload?.assumingMemoryBound(
-                              to: WhiskerMobileRadialGradient.self
-                          ).pointee,
-                          radial.center_x.isFinite, radial.center_y.isFinite,
-                          radial.radius_x.isFinite, radial.radius_y.isFinite,
-                          (2...4_096).contains(radial.stop_count),
-                          let stops = radial.stops,
-                          validGradientStops(
-                              UnsafeRawPointer(stops),
-                              count: radial.stop_count
-                          ) else {
-                        return false
-                    }
-                case UInt32(WHISKER_BACKGROUND_CONIC):
-                    guard layer.image.payload_count == 1,
-                          let conic = layer.image.payload?.assumingMemoryBound(
-                              to: WhiskerMobileConicGradient.self
-                          ).pointee,
-                          conic.center_x.isFinite, conic.center_y.isFinite,
-                          (2...4_096).contains(conic.stop_count),
-                          let stops = conic.stops,
-                          validGradientStops(
-                              UnsafeRawPointer(stops),
-                              count: conic.stop_count,
-                              requiresFractionOnly: true
-                          ) else {
-                        return false
-                    }
-                default:
+                let layers = UnsafeBufferPointer(
+                    start: pointer,
+                    count: operation.payload_count
+                )
+                guard layers.allSatisfy(validBackgroundLayer) else {
                     return false
                 }
             case UInt32(WHISKER_OP_OPACITY):
@@ -253,55 +220,17 @@ final class HostScene {
         case UInt32(WHISKER_OP_BACKGROUND_LAYERS):
             guard let node = nodes[id] else { return false }
             if operation.payload_count == 0 {
-                node.boxPainter.updateBackgroundLayers(nil)
+                node.boxPainter.updateBackgroundLayers([])
                 node.setNeedsDisplay()
                 return true
             }
-            guard let layer = operation.payload?.assumingMemoryBound(
+            guard let pointer = operation.payload?.assumingMemoryBound(
                 to: WhiskerMobileBackgroundLayer.self
-            ).pointee, let geometry = hostBackgroundGeometry(layer) else { return false }
-            if layer.image.kind == UInt32(WHISKER_BACKGROUND_LINEAR) {
-                guard let payload = layer.image.payload else { return false }
-                let stops = UnsafeBufferPointer(
-                    start: payload.assumingMemoryBound(to: WhiskerMobileGradientStop.self),
-                    count: layer.image.payload_count
-                ).map(HostLinearGradientStop.init)
-                node.boxPainter.updateBackgroundLayers(HostLinearGradient(
-                    angleDegrees: CGFloat(layer.image.scalar),
-                    stops: stops
-                ), geometry: geometry)
-            } else if layer.image.kind == UInt32(WHISKER_BACKGROUND_RADIAL) {
-                guard let radial = layer.image.payload?.assumingMemoryBound(
-                    to: WhiskerMobileRadialGradient.self
-                ).pointee, let stopPointer = radial.stops else { return false }
-                let stops = UnsafeBufferPointer(
-                    start: stopPointer,
-                    count: radial.stop_count
-                ).map(HostLinearGradientStop.init)
-                node.boxPainter.updateBackgroundLayers(HostRadialGradient(
-                    centerX: radial.center_x,
-                    centerY: radial.center_y,
-                    radiusX: radial.radius_x,
-                    radiusY: radial.radius_y,
-                    stops: stops
-                ), geometry: geometry)
-            } else if layer.image.kind == UInt32(WHISKER_BACKGROUND_CONIC) {
-                guard let conic = layer.image.payload?.assumingMemoryBound(
-                    to: WhiskerMobileConicGradient.self
-                ).pointee, let stopPointer = conic.stops else { return false }
-                let stops = UnsafeBufferPointer(
-                    start: stopPointer,
-                    count: conic.stop_count
-                ).map(HostLinearGradientStop.init)
-                node.boxPainter.updateBackgroundLayers(HostConicGradient(
-                    fromDegrees: CGFloat(layer.image.scalar),
-                    centerX: conic.center_x,
-                    centerY: conic.center_y,
-                    stops: stops
-                ), geometry: geometry)
-            } else {
-                return false
-            }
+            ) else { return false }
+            let rawLayers = UnsafeBufferPointer(start: pointer, count: operation.payload_count)
+            let layers = rawLayers.compactMap(hostBackgroundLayer)
+            guard layers.count == rawLayers.count else { return false }
+            node.boxPainter.updateBackgroundLayers(layers)
             node.setNeedsDisplay()
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
@@ -505,6 +434,41 @@ private func validGradientStops(
     }
 }
 
+private func validBackgroundLayer(_ layer: WhiskerMobileBackgroundLayer) -> Bool {
+    guard validBackgroundGeometry(layer), layer.image.scalar.isFinite else { return false }
+    switch layer.image.kind {
+    case UInt32(WHISKER_BACKGROUND_LINEAR):
+        return layer.image.payload.map {
+            validGradientStops($0, count: layer.image.payload_count)
+        } ?? false
+    case UInt32(WHISKER_BACKGROUND_RADIAL):
+        guard layer.image.payload_count == 1,
+              let radial = layer.image.payload?.assumingMemoryBound(
+                  to: WhiskerMobileRadialGradient.self
+              ).pointee,
+              radial.center_x.isFinite, radial.center_y.isFinite,
+              radial.radius_x.isFinite, radial.radius_y.isFinite,
+              (2...4_096).contains(radial.stop_count),
+              let stops = radial.stops else { return false }
+        return validGradientStops(UnsafeRawPointer(stops), count: radial.stop_count)
+    case UInt32(WHISKER_BACKGROUND_CONIC):
+        guard layer.image.payload_count == 1,
+              let conic = layer.image.payload?.assumingMemoryBound(
+                  to: WhiskerMobileConicGradient.self
+              ).pointee,
+              conic.center_x.isFinite, conic.center_y.isFinite,
+              (2...4_096).contains(conic.stop_count),
+              let stops = conic.stops else { return false }
+        return validGradientStops(
+            UnsafeRawPointer(stops),
+            count: conic.stop_count,
+            requiresFractionOnly: true
+        )
+    default:
+        return false
+    }
+}
+
 private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> Bool {
     guard layer.position_x.isFinite, layer.position_y.isFinite,
           layer.attachment == UInt32(WHISKER_BACKGROUND_ATTACHMENT_SCROLL),
@@ -551,6 +515,52 @@ private func hostBackgroundGeometry(
         origin: hostBackgroundBox(layer.origin),
         clip: hostBackgroundBox(layer.clip)
     )
+}
+
+private func hostBackgroundLayer(_ layer: WhiskerMobileBackgroundLayer) -> HostBackgroundLayer? {
+    guard let geometry = hostBackgroundGeometry(layer) else { return nil }
+    let image: HostBackgroundImage
+    switch layer.image.kind {
+    case UInt32(WHISKER_BACKGROUND_LINEAR):
+        guard let payload = layer.image.payload else { return nil }
+        image = .linear(HostLinearGradient(
+            angleDegrees: CGFloat(layer.image.scalar),
+            stops: UnsafeBufferPointer(
+                start: payload.assumingMemoryBound(to: WhiskerMobileGradientStop.self),
+                count: layer.image.payload_count
+            ).map(HostLinearGradientStop.init)
+        ))
+    case UInt32(WHISKER_BACKGROUND_RADIAL):
+        guard let radial = layer.image.payload?.assumingMemoryBound(
+            to: WhiskerMobileRadialGradient.self
+        ).pointee, let stopPointer = radial.stops else { return nil }
+        image = .radial(HostRadialGradient(
+            centerX: radial.center_x,
+            centerY: radial.center_y,
+            radiusX: radial.radius_x,
+            radiusY: radial.radius_y,
+            stops: UnsafeBufferPointer(
+                start: stopPointer,
+                count: radial.stop_count
+            ).map(HostLinearGradientStop.init)
+        ))
+    case UInt32(WHISKER_BACKGROUND_CONIC):
+        guard let conic = layer.image.payload?.assumingMemoryBound(
+            to: WhiskerMobileConicGradient.self
+        ).pointee, let stopPointer = conic.stops else { return nil }
+        image = .conic(HostConicGradient(
+            fromDegrees: CGFloat(layer.image.scalar),
+            centerX: conic.center_x,
+            centerY: conic.center_y,
+            stops: UnsafeBufferPointer(
+                start: stopPointer,
+                count: conic.stop_count
+            ).map(HostLinearGradientStop.init)
+        ))
+    default:
+        return nil
+    }
+    return HostBackgroundLayer(image: image, geometry: geometry)
 }
 
 private func hostBackgroundRepeat(_ value: UInt32) -> HostBackgroundRepeat {
