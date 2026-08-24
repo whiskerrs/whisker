@@ -1,5 +1,6 @@
 package rs.whisker.runtime.paint
 
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -52,6 +53,7 @@ internal data class HostBackgroundLayer(
     val linearGradient: HostLinearGradient?,
     val radialGradient: HostRadialGradient? = null,
     val conicGradient: HostConicGradient? = null,
+    val rasterBitmap: Bitmap? = null,
     val geometry: HostBackgroundGeometry = HostBackgroundGeometry(),
 )
 
@@ -102,6 +104,12 @@ private fun drawBackgroundImage(
     layer: HostBackgroundLayer,
     paint: Paint,
 ) {
+    layer.rasterBitmap?.let { bitmap ->
+        paint.color = Color.WHITE
+        paint.shader = null
+        canvas.drawBitmap(bitmap, null, imageBox, paint)
+        return
+    }
     layer.linearGradient?.let { gradient ->
         drawLinearGradient(canvas, clip, imageBox, gradient, paint)
         return

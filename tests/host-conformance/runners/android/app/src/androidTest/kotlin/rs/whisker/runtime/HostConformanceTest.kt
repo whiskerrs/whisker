@@ -88,6 +88,32 @@ class HostConformanceTest {
             }
     }
 
+    @Test
+    fun rejectsAnUnregisteredBackgroundResourceTransactionally() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                assertTrue(
+                    Driver(context, "android.resource-rejection")
+                        .rejectUnregisteredRasterResource(42L),
+                )
+            }
+    }
+
+    @Test
+    fun preservesAllResourceIdBitsAcrossTheAndroidProjection() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                assertTrue(
+                    Driver(context, "android.resource-id-bits")
+                        .acceptRasterResource(-2L),
+                )
+            }
+    }
+
     private fun asset(path: String): String =
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
@@ -134,6 +160,7 @@ private class Driver(
                     logicalWidth = command.getDouble("width").toFloat()
                     logicalHeight = command.getDouble("height").toFloat()
                 }
+                "register_raster_resource" -> registerRasterResource(command)
                 "present_box" -> present(command)
                 "present_scene" -> presentScene(command)
                 "checkpoint" -> {
@@ -164,7 +191,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.background-layers.clip-content-box" ||
                             command.getString("name") ==
-                            "paint.background-layers.stacking",
+                            "paint.background-layers.stacking" ||
+                            command.getString("name") ==
+                            "paint.background-layers.resource-image",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -202,6 +231,50 @@ private class Driver(
         check(stage(tag = 1, member = 1))
         check(stage(tag = 10, scalar = opacity))
         return !view.commitFrameFromNative()
+    }
+
+    fun rejectUnregisteredRasterResource(resourceId: Long): Boolean {
+        return !commitRasterResource(resourceId)
+    }
+
+    fun acceptRasterResource(resourceId: Long): Boolean {
+        val bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        check(view.registerRasterResourceFromNative(resourceId, bitmap))
+        return commitRasterResource(resourceId)
+    }
+
+    private fun commitRasterResource(resourceId: Long): Boolean {
+        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(stage(tag = 1, member = 1))
+        val layer = backgroundGeometry(null).apply { appendResourceId(resourceId, this) }
+        val packed = ArrayList<Float>().apply {
+            add(1f)
+            add(3f)
+            add(0f)
+            add(layer.size.toFloat())
+            addAll(layer)
+        }
+        check(
+            stage(
+                tag = 21,
+                flags = BACKGROUND_PACKED_LAYERS,
+                numbers = packed.toFloatArray(),
+                names = emptyArray(),
+            ),
+        )
+        return view.commitFrameFromNative()
+    }
+
+    private fun registerRasterResource(command: JSONObject) {
+        val width = command.getInt("width")
+        val height = command.getInt("height")
+        val pixels = command.getJSONArray("pixels")
+        check(pixels.length() == width * height)
+        val colors = IntArray(pixels.length()) { index -> fixtureColor(pixels.getJSONObject(index)) }
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
+            setPixels(colors, 0, width, 0, 0, width, height)
+        }
+        check(view.registerRasterResourceFromNative(command.getLong("id"), bitmap))
     }
 
     private fun present(command: JSONObject) {
@@ -327,6 +400,11 @@ private class Driver(
                     val geometry = layer.optJSONObject("geometry")
                     val image = layer.getJSONObject("image")
                     val (kind, scalar, payload) = when {
+                        image.has("resource") -> {
+                            val numbers = backgroundGeometry(geometry)
+                            appendResourceId(image.getLong("resource"), numbers)
+                            Triple(3, 0f, numbers.toFloatArray() to emptyArray<String>())
+                        }
                         image.has("linear_gradient") -> {
                             val gradient = image.getJSONObject("linear_gradient")
                             Triple(
@@ -534,6 +612,13 @@ private class Driver(
     private fun appendLengthPercentage(value: JSONObject?, numbers: MutableList<Float>) {
         numbers += value?.optDouble("length", 0.0)?.toFloat() ?: 0f
         numbers += value?.optDouble("fraction", 0.0)?.toFloat() ?: 0f
+    }
+
+    private fun appendResourceId(resourceId: Long, numbers: MutableList<Float>) {
+        check(resourceId != 0L)
+        repeat(4) { wordIndex ->
+            numbers += ((resourceId ushr (wordIndex * 16)) and 0xffffL).toFloat()
+        }
     }
 
     private fun backgroundRepeat(value: String): Int = when (value) {

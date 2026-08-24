@@ -1,6 +1,7 @@
 package rs.whisker.runtime
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.view.Choreographer
 import android.view.View
@@ -154,6 +155,10 @@ class WhiskerView(context: Context) :
     ): Int = scene.beginFrame(mode, epoch, baseRevision, targetRevision)
 
     fun currentRevisionFromNative(): Long = scene.currentRevision()
+
+    /** Registers an already decoded raster. Acquisition and eviction are separate Host concerns. */
+    fun registerRasterResourceFromNative(resourceId: Long, bitmap: Bitmap): Boolean =
+        scene.registerRasterResource(resourceId, bitmap)
 
     @Suppress("LongParameterList")
     fun stageOperationFromNative(
