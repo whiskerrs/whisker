@@ -2,9 +2,9 @@
 
 use crate::{
     BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue, BackgroundPositionValue,
-    BackgroundRepeatModeValue, BackgroundSizeValue, ColorValue, ComputedLengthPercentage, Edges,
-    InheritedStyle, SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty,
-    StyleResolutionError, StyleValue, layout::resolve_affine,
+    BackgroundRepeatModeValue, BackgroundSizeValue, ColorValue, ComputedLengthPercentage,
+    DirectionValue, Edges, InheritedStyle, SpecifiedStyle, StyleEnvironment, StyleNumber,
+    StyleProperty, StyleResolutionError, StyleValue, layout::resolve_affine,
 };
 
 /// Four physical corners in top-left, top-right, bottom-right, bottom-left order.
@@ -233,6 +233,7 @@ impl ComputedPaintStyle {
 pub(crate) fn resolve_paint_style(
     specified: &SpecifiedStyle,
     inherited: &InheritedStyle,
+    direction: DirectionValue,
     environment: StyleEnvironment,
 ) -> Result<ComputedPaintStyle, StyleResolutionError> {
     let mut paint = ComputedPaintStyle::initial(inherited.color());
@@ -302,6 +303,18 @@ pub(crate) fn resolve_paint_style(
                 paint.border_colors.bottom = color(value, property)?;
             }
             StyleProperty::BorderLeftColor => paint.border_colors.left = color(value, property)?,
+            StyleProperty::BorderInlineStartColor if direction == DirectionValue::Ltr => {
+                paint.border_colors.left = color(value, property)?;
+            }
+            StyleProperty::BorderInlineStartColor => {
+                paint.border_colors.right = color(value, property)?;
+            }
+            StyleProperty::BorderInlineEndColor if direction == DirectionValue::Ltr => {
+                paint.border_colors.right = color(value, property)?;
+            }
+            StyleProperty::BorderInlineEndColor => {
+                paint.border_colors.left = color(value, property)?;
+            }
             StyleProperty::BorderTopStyle => {
                 paint.border_styles.top = border_style(value, property)?
             }
@@ -314,6 +327,18 @@ pub(crate) fn resolve_paint_style(
             StyleProperty::BorderLeftStyle => {
                 paint.border_styles.left = border_style(value, property)?;
             }
+            StyleProperty::BorderInlineStartStyle if direction == DirectionValue::Ltr => {
+                paint.border_styles.left = border_style(value, property)?;
+            }
+            StyleProperty::BorderInlineStartStyle => {
+                paint.border_styles.right = border_style(value, property)?;
+            }
+            StyleProperty::BorderInlineEndStyle if direction == DirectionValue::Ltr => {
+                paint.border_styles.right = border_style(value, property)?;
+            }
+            StyleProperty::BorderInlineEndStyle => {
+                paint.border_styles.left = border_style(value, property)?;
+            }
             StyleProperty::BorderTopLeftRadius => {
                 paint.border_radii.top_left = radius(value, inherited, environment, property)?;
             }
@@ -324,6 +349,30 @@ pub(crate) fn resolve_paint_style(
                 paint.border_radii.bottom_right = radius(value, inherited, environment, property)?;
             }
             StyleProperty::BorderBottomLeftRadius => {
+                paint.border_radii.bottom_left = radius(value, inherited, environment, property)?;
+            }
+            StyleProperty::BorderStartStartRadius if direction == DirectionValue::Ltr => {
+                paint.border_radii.top_left = radius(value, inherited, environment, property)?;
+            }
+            StyleProperty::BorderStartStartRadius => {
+                paint.border_radii.top_right = radius(value, inherited, environment, property)?;
+            }
+            StyleProperty::BorderStartEndRadius if direction == DirectionValue::Ltr => {
+                paint.border_radii.top_right = radius(value, inherited, environment, property)?;
+            }
+            StyleProperty::BorderStartEndRadius => {
+                paint.border_radii.top_left = radius(value, inherited, environment, property)?;
+            }
+            StyleProperty::BorderEndStartRadius if direction == DirectionValue::Ltr => {
+                paint.border_radii.bottom_left = radius(value, inherited, environment, property)?;
+            }
+            StyleProperty::BorderEndStartRadius => {
+                paint.border_radii.bottom_right = radius(value, inherited, environment, property)?;
+            }
+            StyleProperty::BorderEndEndRadius if direction == DirectionValue::Ltr => {
+                paint.border_radii.bottom_right = radius(value, inherited, environment, property)?;
+            }
+            StyleProperty::BorderEndEndRadius => {
                 paint.border_radii.bottom_left = radius(value, inherited, environment, property)?;
             }
             StyleProperty::Opacity => {
@@ -962,14 +1011,22 @@ mod tests {
             StyleProperty::BorderRightColor,
             StyleProperty::BorderBottomColor,
             StyleProperty::BorderLeftColor,
+            StyleProperty::BorderInlineStartColor,
+            StyleProperty::BorderInlineEndColor,
             StyleProperty::BorderTopStyle,
             StyleProperty::BorderRightStyle,
             StyleProperty::BorderBottomStyle,
             StyleProperty::BorderLeftStyle,
+            StyleProperty::BorderInlineStartStyle,
+            StyleProperty::BorderInlineEndStyle,
             StyleProperty::BorderTopLeftRadius,
             StyleProperty::BorderTopRightRadius,
             StyleProperty::BorderBottomRightRadius,
             StyleProperty::BorderBottomLeftRadius,
+            StyleProperty::BorderStartStartRadius,
+            StyleProperty::BorderStartEndRadius,
+            StyleProperty::BorderEndStartRadius,
+            StyleProperty::BorderEndEndRadius,
             StyleProperty::Opacity,
             StyleProperty::Visibility,
             StyleProperty::ZIndex,
@@ -994,6 +1051,31 @@ mod tests {
                 resolve_paint_style(
                     &SpecifiedStyle::new().push(property, StyleValue::Bool(true)),
                     &inherited,
+                    DirectionValue::Ltr,
+                    StyleEnvironment::default(),
+                ),
+                Err(StyleResolutionError::InvalidPropertyValue(property))
+            );
+        }
+        for property in [
+            StyleProperty::BorderInlineStartColor,
+            StyleProperty::BorderInlineEndColor,
+            StyleProperty::BorderInlineStartStyle,
+            StyleProperty::BorderInlineEndStyle,
+            StyleProperty::BorderStartStartRadius,
+            StyleProperty::BorderStartEndRadius,
+            StyleProperty::BorderEndStartRadius,
+            StyleProperty::BorderEndEndRadius,
+        ] {
+            assert_eq!(
+                crate::resolve_style(
+                    &SpecifiedStyle::new()
+                        .push(
+                            StyleProperty::Direction,
+                            StyleValue::Direction(DirectionValue::Rtl),
+                        )
+                        .push(property, StyleValue::Bool(true)),
+                    None,
                     StyleEnvironment::default(),
                 ),
                 Err(StyleResolutionError::InvalidPropertyValue(property))

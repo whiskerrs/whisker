@@ -1,6 +1,8 @@
 use std::convert::Infallible;
 
-use whisker::css::{BorderStyle, Clear, Float, GridLine, GridTemplate, GridTrack, Overflow};
+use whisker::css::{
+    BorderStyle, Clear, Direction, Float, GridLine, GridTemplate, GridTrack, Overflow,
+};
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
 use whisker::runtime::view::{
@@ -462,6 +464,70 @@ fn render_box_paint_and_clip_reach_the_frame_sink() {
                     alpha: 1.0,
                 }
     ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn render_logical_borders_reach_physical_frame_edges_in_rtl() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(21).expect("test surface"),
+        StyleEnvironment::new(100.0, 50.0, 1.0, 14.0),
+    );
+    let style = Css::new()
+        .direction(Direction::Rtl)
+        .width(px(100))
+        .height(px(50))
+        .border_inline_start_width(px(7))
+        .border_inline_end_width(px(3))
+        .border_inline_start_style(BorderStyle::Solid)
+        .border_inline_end_style(BorderStyle::Dotted)
+        .border_inline_start_color(Color::rgb(10, 20, 30))
+        .border_inline_end_color(Color::rgb(40, 50, 60))
+        .border_start_start_radius(px(11))
+        .border_start_end_radius(px(12))
+        .border_end_start_radius(px(13))
+        .border_end_end_radius(px(14));
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| render! { view(style: style) });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 50.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let root = surface.root().unwrap();
+    let packet = &renderer.frames()[0].packet;
+    assert!(packet.operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetLayout { node, geometry }
+            if *node == root
+                && geometry.content_box.x == 3.0
+                && geometry.content_box.width == 90.0
+    )));
+    assert!(packet.operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetBoxPaint { node, paint }
+            if *node == root
+                && paint.border_widths.left.length == 3.0
+                && paint.border_widths.right.length == 7.0
+                && paint.border_colors.left == PaintColor::Srgba { red: 40, green: 50, blue: 60, alpha: 1.0 }
+                && paint.border_colors.right == PaintColor::Srgba { red: 10, green: 20, blue: 30, alpha: 1.0 }
+                && paint.border_radii.top_left.horizontal.length == 12.0
+                && paint.border_radii.top_right.horizontal.length == 11.0
+                && paint.border_radii.bottom_right.horizontal.length == 13.0
+                && paint.border_radii.bottom_left.horizontal.length == 14.0
+    )));
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 

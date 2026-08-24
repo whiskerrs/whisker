@@ -475,7 +475,12 @@ pub fn resolve_style(
     };
     let layout =
         crate::layout::resolve_layout_style(specified, inherited_text.font_size(), environment)?;
-    let paint = crate::paint::resolve_paint_style(specified, &inherited_text, environment)?;
+    let paint = crate::paint::resolve_paint_style(
+        specified,
+        &inherited_text,
+        layout.direction,
+        environment,
+    )?;
 
     Ok(ResolvedNodeStyle {
         computed: ComputedStyle {
