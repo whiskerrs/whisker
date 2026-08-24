@@ -626,9 +626,12 @@ impl GpuRenderer {
             .formats
             .iter()
             .copied()
-            .find(TextureFormat::is_srgb)
-            .or_else(|| capabilities.formats.first().copied())
-            .ok_or_else(|| GpuError("Desktop GPU surface exposes no texture format".into()))?;
+            .find(|format| !format.is_srgb())
+            .ok_or_else(|| {
+                GpuError(
+                    "Desktop GPU surface exposes no non-sRGB format for CSS compositing".into(),
+                )
+            })?;
         let present_mode = capabilities
             .present_modes
             .iter()
@@ -1012,7 +1015,7 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
         .request_device(&DeviceDescriptor::default())
         .await
         .map_err(|error| GpuError(format!("create offscreen Desktop GPU device: {error}")))?;
-    let format = TextureFormat::Rgba8UnormSrgb;
+    let format = TextureFormat::Rgba8Unorm;
     let box_gpu = BoxGpuPipeline::new(&device, format);
     box_gpu.update_viewport(&queue, [width as f32, height as f32]);
 
@@ -1174,7 +1177,7 @@ mod tests {
     };
 
     use crate::paint::box_paint::{ResolvedRadii, resolve_box_geometry, resolve_radii};
-    use crate::paint::color::{srgb_to_linear, srgba};
+    use crate::paint::color::srgba;
 
     fn radius(length: f32, fraction: f32) -> PaintCornerRadius {
         PaintCornerRadius::circular(PaintLengthPercentage { length, fraction })
@@ -1407,8 +1410,6 @@ mod tests {
             srgba(&PaintColor::Named("not-a-css-color".into()), 1.0),
             [0.0; 4]
         );
-        assert!((srgb_to_linear(0.02) - 0.02 / 12.92).abs() < f32::EPSILON);
-        assert!(srgb_to_linear(1.0) > 0.99);
     }
 
     #[test]

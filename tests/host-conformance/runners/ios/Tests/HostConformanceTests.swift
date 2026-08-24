@@ -207,6 +207,27 @@ private final class Driver {
                                 count: 16
                             ))
                         }
+                        if let opacity = fixture.opacity {
+                            operations.append(operation(
+                                tag: UInt32(WHISKER_OP_OPACITY),
+                                node: fixture.id,
+                                scalar: opacity
+                            ))
+                        }
+                        if let visible = fixture.visible {
+                            operations.append(operation(
+                                tag: UInt32(WHISKER_OP_VISIBILITY),
+                                node: fixture.id,
+                                integer: visible ? 1 : 0
+                            ))
+                        }
+                        if let zOrder = fixture.zOrder {
+                            operations.append(operation(
+                                tag: UInt32(WHISKER_OP_Z_ORDER),
+                                node: fixture.id,
+                                integer: zOrder
+                            ))
+                        }
                     }
                     try operations.withUnsafeMutableBufferPointer { buffer in
                         var frame = WhiskerMobileFrame()
@@ -274,6 +295,9 @@ private struct SceneFixtureNode {
     let paint: WhiskerMobileBoxPaint
     let clipFlags: UInt32
     let transform: [Float]?
+    let opacity: Float?
+    let visible: Bool?
+    let zOrder: Int32?
 }
 
 private struct Failure: Error, CustomStringConvertible {
@@ -289,6 +313,8 @@ private func operation(
     index: UInt32 = 0,
     member: UInt32 = 0,
     flags: UInt32 = 0,
+    integer: Int32 = 0,
+    scalar: Float = 0,
     payload: UnsafeRawPointer? = nil,
     count: Int = 0
 ) -> WhiskerMobileOperation {
@@ -300,6 +326,8 @@ private func operation(
     value.child = child
     value.index = index
     value.member = member
+    value.integer = integer
+    value.scalar = scalar
     value.payload = payload
     value.payload_count = count
     return value
@@ -318,9 +346,9 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         height: Float(rect[3])
     )
     layout.content = WhiskerMobileRect()
-    let clip = try object(fixture, "clip")
-    let horizontal = try string(clip, "horizontal")
-    let vertical = try string(clip, "vertical")
+    let clip = fixture["clip"] as? [String: Any]
+    let horizontal = try clip.map { try string($0, "horizontal") } ?? "visible"
+    let vertical = try clip.map { try string($0, "vertical") } ?? "visible"
     guard horizontal == "visible" || horizontal == "hidden",
           vertical == "visible" || vertical == "hidden" else {
         throw Failure("unknown overflow clip")
@@ -334,13 +362,36 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     } else {
         transform = nil
     }
+    let opacity = (fixture["opacity"] as? NSNumber)?.floatValue
+    let visible: Bool?
+    if let visibility = fixture["visibility"] as? String {
+        guard visibility == "visible" || visibility == "hidden" else {
+            throw Failure("unknown visibility")
+        }
+        visible = visibility == "visible"
+    } else {
+        visible = nil
+    }
+    let zOrder: Int32?
+    if let number = fixture["z_order"] as? NSNumber {
+        let value = number.int64Value
+        guard value >= Int64(Int32.min), value <= Int64(Int32.max) else {
+            throw Failure("z-order is outside signed 32-bit range")
+        }
+        zOrder = Int32(value)
+    } else {
+        zOrder = nil
+    }
     return SceneFixtureNode(
         id: id,
         parent: parent,
         layout: layout,
         paint: try boxPaint(fixture),
         clipFlags: flags,
-        transform: transform
+        transform: transform,
+        opacity: opacity,
+        visible: visible,
+        zOrder: zOrder
     )
 }
 
@@ -492,7 +543,11 @@ private func assertPixelSamples(
         ]
         let tolerance = UInt8((sample["tolerance"] as? NSNumber)?.uint8Value ?? 0)
         let difference = largestDifference(actual, expected)
-        XCTAssertLessThanOrEqual(difference, tolerance, "\(id) sample (\(x), \(y))")
+        XCTAssertLessThanOrEqual(
+            difference,
+            tolerance,
+            "\(id) sample (\(x), \(y)): \(actual) != \(expected)"
+        )
     }
 }
 

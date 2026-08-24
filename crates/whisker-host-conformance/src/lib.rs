@@ -333,6 +333,25 @@ pub struct SceneNodeFixture {
     /// Optional column-major 4-by-4 transform matrix.
     #[serde(default)]
     pub transform: Option<[f32; 16]>,
+    /// Optional resolved group opacity in `[0, 1]`.
+    #[serde(default)]
+    pub opacity: Option<f32>,
+    /// Optional resolved paint visibility.
+    #[serde(default)]
+    pub visibility: Option<VisibilityFixture>,
+    /// Optional resolved sibling stacking order.
+    #[serde(default)]
+    pub z_order: Option<i32>,
+}
+
+/// Paint visibility delivered by `SetVisibility`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VisibilityFixture {
+    /// Paint the node and its descendants.
+    Visible,
+    /// Suppress the node subtree while preserving layout.
+    Hidden,
 }
 
 /// Independent horizontal and vertical descendant clipping.
@@ -772,6 +791,9 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                 && node
                     .transform
                     .is_none_or(|transform| transform.into_iter().all(f32::is_finite))
+                && node
+                    .opacity
+                    .is_none_or(|opacity| opacity.is_finite() && (0.0..=1.0).contains(&opacity))
         })
         && nodes.iter().all(|node| {
             let mut seen = std::collections::BTreeSet::new();

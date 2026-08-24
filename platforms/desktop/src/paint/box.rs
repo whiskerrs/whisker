@@ -3,7 +3,7 @@ use whisker_protocol::{
     PaintLengthPercentage,
 };
 
-use super::color::linear_color;
+use super::color::gpu_color;
 use crate::scene::is_transparent;
 
 /// One box fill or complete border ring ready for GPU vertex expansion.
@@ -50,7 +50,7 @@ pub(crate) fn lower_box(
         return;
     }
     if !is_transparent(&paint.background_color) {
-        let color = linear_color(&paint.background_color, opacity);
+        let color = gpu_color(&paint.background_color, opacity);
         if color[3] > 0.0 {
             emit(geometry.primitive(color, [[0.0; 4]; 4], [0.0; 4], BoxPrimitiveKind::Fill));
         }
@@ -117,7 +117,7 @@ fn paints_line(style: BorderLineStyle) -> bool {
 
 fn border_color(style: BorderLineStyle, width: f32, color: &PaintColor, opacity: f32) -> [f32; 4] {
     if paints_line(style) && width > 0.0 {
-        linear_color(color, opacity)
+        gpu_color(color, opacity)
     } else {
         [0.0; 4]
     }

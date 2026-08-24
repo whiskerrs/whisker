@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "wpt.css2.visibility-004",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/CSS2/visufx/visibility-004.xht",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "A child inheriting hidden visibility from its parent is not painted, while layout remains present.",
+    "adaptation": "The hidden parent retains a red child in the Host tree. A transparent sample at the child's laid-out position verifies that SetVisibility suppresses descendant paint without deleting or relaying out the subtree."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 80.0, "height": 60.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [20.0, 10.0, 40.0, 40.0],
+            "background": { "kind": "named", "value": "transparent" },
+            "visibility": "hidden"
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [5.0, 5.0, 30.0, 30.0],
+            "background": { "kind": "named", "value": "red" }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [30.0, 30.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

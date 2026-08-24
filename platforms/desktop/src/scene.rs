@@ -205,6 +205,9 @@ impl DesktopScene {
     ) {
         let node = self.nodes.get(&id).expect("retained child remains live");
         let presentation = &node.presentation;
+        if presentation.visibility == Visibility::Hidden {
+            return;
+        }
         let border = LayoutRect {
             x: context.origin[0] + presentation.layout.border_box.x,
             y: context.origin[1] + presentation.layout.border_box.y,
@@ -216,16 +219,14 @@ impl DesktopScene {
             context.transform,
             transform_around(presentation.transform, border.x, border.y),
         );
-        if presentation.visibility == Visibility::Visible {
-            if let Some(paint) = &presentation.paint {
-                commands.push(PaintCommand::Box {
-                    rect: border,
-                    paint,
-                    clip: context.clip,
-                    transform,
-                    opacity,
-                });
-            }
+        if let Some(paint) = &presentation.paint {
+            commands.push(PaintCommand::Box {
+                rect: border,
+                paint,
+                clip: context.clip,
+                transform,
+                opacity,
+            });
         }
 
         let descendant_clip = context.clip.intersect(
@@ -233,9 +234,7 @@ impl DesktopScene {
             presentation.clip.horizontal == OverflowClip::Hidden,
             presentation.clip.vertical == OverflowClip::Hidden,
         );
-        if presentation.visibility == Visibility::Visible
-            && let Some(content) = node.content.text()
-        {
+        if let Some(content) = node.content.text() {
             let content_rect = LayoutRect {
                 x: border.x + presentation.layout.content_box.x,
                 y: border.y + presentation.layout.content_box.y,

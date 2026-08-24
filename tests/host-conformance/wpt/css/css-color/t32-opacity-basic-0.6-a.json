@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "id": "wpt.css-color.opacity-basic-0.6",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-color/t32-opacity-basic-0.6-a.xht",
+    "reference_path": "css/css-color/t32-opacity-basic-0.6-a-ref.xht",
+    "license": "BSD-3-Clause",
+    "assertion": "Opacity of 0.6 makes a box partially opaque in the sRGB color space.",
+    "adaptation": "A red box with opacity 0.6 is composited over an opaque white sibling. The expected pink sample is the source-over sRGB result and distinguishes SetOpacity from an opaque projection."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 60.0, "height": 60.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [10.0, 10.0, 40.0, 40.0],
+            "background": { "kind": "named", "value": "white" }
+          },
+          {
+            "id": 2,
+            "parent": null,
+            "rect": [10.0, 10.0, 40.0, 40.0],
+            "background": { "kind": "named", "value": "red" },
+            "opacity": 0.6
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          {
+            "point": [30.0, 30.0],
+            "color": { "kind": "srgba", "red": 255, "green": 102, "blue": 102, "alpha": 1.0 },
+            "tolerance": 18
+          }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

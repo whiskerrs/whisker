@@ -5,12 +5,12 @@ use whisker_engine::FrameSink;
 use whisker_host_conformance::{
     BorderFixture, BorderStyleFixture, ColorFixture, Command, CornerRadiusFixture, Manifest,
     OverflowClipFixture, PixelSampleFixture, SCHEMA_VERSION, Scenario, ScenarioSide,
-    SceneNodeFixture,
+    SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
     BorderLineStyle, BoxClip, BoxPaint, FrameHeader, FrameMode, FramePacket, LayoutGeometry,
     LayoutRect, NodeId, Operation, OverflowClip, PaintColor, PaintCornerRadius, PaintCorners,
-    PaintEdges, PaintLengthPercentage, ProtocolVersion, SurfaceId, Transform,
+    PaintEdges, PaintLengthPercentage, ProtocolVersion, SurfaceId, Transform, Visibility,
 };
 
 use crate::module_api::built_in_element_factories;
@@ -212,6 +212,21 @@ impl Driver {
                 assert_eq!(style.get_property_value("transform").unwrap(), "");
                 assert_eq!(style.get_property_value("transform-origin").unwrap(), "");
             }
+            if let Some(opacity) = fixture_node.opacity {
+                assert_style(&style, "opacity", &opacity.to_string());
+            } else {
+                assert_eq!(style.get_property_value("opacity").unwrap(), "");
+            }
+            if let Some(visibility) = fixture_node.visibility {
+                assert_style(&style, "visibility", fixture_visibility_css(visibility));
+            } else {
+                assert_eq!(style.get_property_value("visibility").unwrap(), "");
+            }
+            if let Some(z_order) = fixture_node.z_order {
+                assert_style(&style, "z-index", &z_order.to_string());
+            } else {
+                assert_eq!(style.get_property_value("z-index").unwrap(), "");
+            }
 
             let actual_parent = node.parent_element().unwrap();
             match fixture_node.parent {
@@ -235,22 +250,44 @@ impl Driver {
         let document = web_sys::window().unwrap().document().unwrap();
         let bounds = self.root.get_bounding_client_rect();
         for sample in samples {
-            let hit = document
-                .element_from_point(
+            let hit_nodes = document
+                .elements_from_point(
                     (bounds.left() + f64::from(sample.point[0])) as f32,
                     (bounds.top() + f64::from(sample.point[1])) as f32,
                 )
-                .expect("fixture sample lies inside the browser viewport");
-            let hit_node = hit.get_attribute("data-whisker-node");
+                .iter()
+                .filter_map(|value| {
+                    value
+                        .dyn_into::<web_sys::Element>()
+                        .ok()?
+                        .get_attribute("data-whisker-node")
+                })
+                .collect::<Vec<_>>();
+            let opaque_hit = hit_nodes.iter().find(|id| {
+                expected.iter().any(|node| {
+                    node.id.to_string() == id.as_str()
+                        && !fixture_color_is_transparent(&node.background)
+                })
+            });
             match &sample.color {
                 ColorFixture::Named { value } if value == "transparent" => assert!(
-                    hit_node.as_deref().is_none_or(|id| {
-                        expected.iter().any(|node| {
-                            node.id.to_string() == id && node.background == sample.color
-                        })
-                    }),
-                    "transparent sample unexpectedly hit an opaque scene node {hit_node:?}"
+                    opaque_hit.is_none(),
+                    "transparent sample unexpectedly hit opaque scene stack {hit_nodes:?}"
                 ),
+                ColorFixture::Srgba { .. } => {
+                    let expected_node = expected
+                        .iter()
+                        .rev()
+                        .find(|node| node.opacity.is_some())
+                        .expect("composited sRGBA sample requires an opacity node")
+                        .id
+                        .to_string();
+                    assert_eq!(
+                        opaque_hit.map(String::as_str),
+                        Some(expected_node.as_str()),
+                        "composited sample did not hit the opacity source node"
+                    );
+                }
                 expected_color => {
                     let expected_node = expected
                         .iter()
@@ -261,7 +298,7 @@ impl Driver {
                         .id
                         .to_string();
                     assert_eq!(
-                        hit_node.as_deref(),
+                        opaque_hit.map(String::as_str),
                         Some(expected_node.as_str()),
                         "paint sample did not hit the expected transformed scene node"
                     );
@@ -337,6 +374,15 @@ fn fixture(path: &str) -> &'static str {
         "core/transform-parent-composition.json" => include_str!(
             "../../../../tests/host-conformance/core/transform-parent-composition.json"
         ),
+        "wpt/css/css-color/t32-opacity-basic-0.6-a.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-color/t32-opacity-basic-0.6-a.json"
+        ),
+        "wpt/css/CSS2/visufx/visibility-004.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/visufx/visibility-004.json"
+        ),
+        "wpt/css/CSS2/zindex/z-index-003.json" => {
+            include_str!("../../../../tests/host-conformance/wpt/css/CSS2/zindex/z-index-003.json")
+        }
         "wpt/css/CSS2/borders/border-top-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-003.json"
         ),
@@ -471,6 +517,18 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
                 node,
                 transform: Transform(transform),
             });
+        }
+        if let Some(opacity) = fixture_node.opacity {
+            operations.push(Operation::SetOpacity { node, opacity });
+        }
+        if let Some(visibility) = fixture_node.visibility {
+            operations.push(Operation::SetVisibility {
+                node,
+                visibility: protocol_visibility(visibility),
+            });
+        }
+        if let Some(z_order) = fixture_node.z_order {
+            operations.push(Operation::SetZOrder { node, z_order });
         }
     }
     for (node_index, fixture_node) in nodes.iter().enumerate() {
@@ -658,6 +716,13 @@ fn fixture_color_css(value: &ColorFixture) -> String {
     }
 }
 
+fn fixture_color_is_transparent(value: &ColorFixture) -> bool {
+    match value {
+        ColorFixture::Named { value } => value == "transparent",
+        ColorFixture::Srgba { alpha, .. } => *alpha == 0.0,
+    }
+}
+
 fn fixture_border_style_css(value: BorderStyleFixture) -> &'static str {
     match value {
         BorderStyleFixture::None => "none",
@@ -687,4 +752,18 @@ fn fixture_transform_css(transform: [f32; 16]) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!("matrix3d({values})")
+}
+
+fn protocol_visibility(value: VisibilityFixture) -> Visibility {
+    match value {
+        VisibilityFixture::Visible => Visibility::Visible,
+        VisibilityFixture::Hidden => Visibility::Hidden,
+    }
+}
+
+fn fixture_visibility_css(value: VisibilityFixture) -> &'static str {
+    match value {
+        VisibilityFixture::Visible => "visible",
+        VisibilityFixture::Hidden => "hidden",
+    }
 }

@@ -8,7 +8,8 @@ use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
     BorderFixture, BorderStyleFixture, ColorFixture, Command, Host, LoadedCase,
     OverflowClipFixture, PixelRelationFixture, PixelRelationKind, PixelSampleFixture,
-    PointerEventFixture, Scenario, ScenarioSide, SceneNodeFixture, load_required,
+    PointerEventFixture, Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
+    load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BorderLineStyle, BoxClip, BoxPaint, ElementTypeId, FrameHeader, FrameMode,
@@ -18,7 +19,7 @@ use whisker_protocol::{
     MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintColor,
     PaintCornerRadius, PaintCorners, PaintEdges, PaintLengthPercentage, PointerId, PointerInput,
     PointerKind, ProtocolVersion, SurfaceId, TextMeasurePayload, TextMeasureStyle, Transform,
-    WhiskerValue,
+    Visibility, WhiskerValue,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
@@ -335,6 +336,21 @@ impl Driver {
                     node,
                     transform: Transform(transform),
                 });
+            }
+            if let Some(opacity) = fixture.opacity {
+                operations.push(Operation::SetOpacity { node, opacity });
+            }
+            if let Some(visibility) = fixture.visibility {
+                operations.push(Operation::SetVisibility {
+                    node,
+                    visibility: match visibility {
+                        VisibilityFixture::Visible => Visibility::Visible,
+                        VisibilityFixture::Hidden => Visibility::Hidden,
+                    },
+                });
+            }
+            if let Some(z_order) = fixture.z_order {
+                operations.push(Operation::SetZOrder { node, z_order });
             }
         }
         self.scene
