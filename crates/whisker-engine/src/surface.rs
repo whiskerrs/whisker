@@ -788,14 +788,15 @@ mod tests {
 
     use whisker_layout::{AvailableSpace, LayoutSize, MeasureRequest, UnsupportedLayoutFeature};
     use whisker_protocol::{
-        ApplyResult, CustomMeasurePayload, ElementTypeId, EmbeddedSurfaceMeasurePayload, FrameMode,
-        HitTestBehavior, InputPoint, LayoutRect, MeasureFontFamily, MeasureFontStyle,
+        ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
+        CustomMeasurePayload, ElementTypeId, EmbeddedSurfaceMeasurePayload, FrameMode,
+        HitTestBehavior, ImageRepeat, InputPoint, LayoutRect, MeasureFontFamily, MeasureFontStyle,
         MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap,
         MeasuredSize, MeasurementKey, MeasurementKind, MeasurementMetrics, MeasurementPayload,
         MeasurementReady, MeasurementRequestId, MeasurementResponse, MeasurementSpec,
-        NativeControlMeasurePayload, NodeId, Operation, PendingMeasurePolicy, PointerId,
-        ReplacedContentMeasurePayload, SurfaceId, TextMeasurePayload, TextMeasureStyle,
-        UnsupportedMeasurementReason,
+        NativeControlMeasurePayload, NodeId, Operation, PaintBox, PaintCoordinate, PaintImage,
+        PaintPosition, PendingMeasurePolicy, PointerId, ReplacedContentMeasurePayload, ResourceId,
+        SurfaceId, TextMeasurePayload, TextMeasureStyle, UnsupportedMeasurementReason,
     };
     use whisker_style::{
         Axes, ComputedLengthPercentage, ComputedSizeValue, PositionValue, SpecifiedStyle,
@@ -824,6 +825,20 @@ mod tests {
                 height: ComputedSizeValue::Value(ComputedLengthPercentage::new(height, 0.0)),
             },
             ..ComputedLayoutStyle::default()
+        }
+    }
+
+    fn resource_background(resource: u64) -> BackgroundLayer {
+        BackgroundLayer {
+            image: PaintImage::Resource(ResourceId::new(resource).expect("test resource")),
+            position: PaintPosition::default(),
+            size: BackgroundSize::Auto,
+            repeat_x: ImageRepeat::Repeat,
+            repeat_y: ImageRepeat::Repeat,
+            origin: PaintBox::Padding,
+            clip: PaintBox::Border,
+            attachment: BackgroundAttachment::Scroll,
+            blend_mode: BlendMode::Normal,
         }
     }
 
@@ -1004,6 +1019,30 @@ mod tests {
             .create_node(element_type(), style.layout().clone())
             .unwrap();
         let missing = node_id(99);
+
+        let background = resource_background(1);
+        surface
+            .set_background_layers(root, vec![background.clone()])
+            .unwrap();
+        assert_eq!(
+            surface.node(root).unwrap().background_layers(),
+            std::slice::from_ref(&background)
+        );
+        assert_eq!(
+            surface.set_background_layers(missing, vec![background]),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        let mut invalid_background = resource_background(2);
+        invalid_background.position.x = PaintCoordinate {
+            length: f32::NAN,
+            fraction: 0.0,
+        };
+        assert_eq!(
+            surface.set_background_layers(root, vec![invalid_background]),
+            Err(SurfaceError::Scene(SceneError::InvalidBackgroundLayers))
+        );
 
         assert_eq!(
             surface.update_computed_style(missing, style),
@@ -1720,6 +1759,16 @@ mod tests {
         );
         assert_eq!(
             surface.scene.set_box_paint(root, lowered.box_paint),
+            Err(SceneError::FramePending)
+        );
+        assert_eq!(
+            surface.set_background_layers(root, vec![resource_background(1)]),
+            Err(SurfaceError::Scene(SceneError::FramePending))
+        );
+        assert_eq!(
+            surface
+                .scene
+                .set_background_layers(root, vec![resource_background(1)]),
             Err(SceneError::FramePending)
         );
         assert_eq!(
