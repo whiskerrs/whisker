@@ -131,6 +131,7 @@ macro_rules! define_style_properties {
                         | Self::LineHeight
                         | Self::LetterSpacing
                         | Self::Color
+                        | Self::TextShadow
                 );
                 let domain = self.domain();
                 PropertyMetadata {
@@ -579,6 +580,7 @@ mod tests {
                 StyleProperty::FontWeight,
                 StyleProperty::LetterSpacing,
                 StyleProperty::LineHeight,
+                StyleProperty::TextShadow,
             ]
         );
         assert!(!StyleProperty::Opacity.metadata().inherited);

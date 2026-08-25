@@ -25,11 +25,13 @@ use whisker_host_conformance::{
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
     BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat,
-    LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
-    PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
-    PaintLengthPercentage, PaintPosition, PathCommand, ProtocolVersion, RadialGradientExtent,
-    RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceId,
-    ResourceKind, ResourceRequest, ResourceSource, SurfaceId, Transform, Visibility,
+    LayoutGeometry, LayoutRect, MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, NodeId,
+    Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius,
+    PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand,
+    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand,
+    ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
+    SurfaceId, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform,
+    Visibility,
 };
 use whisker_style::StyleEnvironment;
 
@@ -47,7 +49,8 @@ fn padded_parent_preserves_child_border_box_coordinates() {
     let mut driver = Driver::new();
     let parent = NodeId::new(1).unwrap();
     let child = NodeId::new(2).unwrap();
-    let view = ElementRegistry::standard()
+    let registry = ElementRegistry::standard();
+    let view = registry
         .registration_for_builtin(whisker::ElementTag::View)
         .unwrap()
         .element_type;
@@ -459,6 +462,8 @@ impl Driver {
                     if self.expected_scene.is_some() {
                         let expected_checkpoint = if name.starts_with("paint.transform.") {
                             name.as_str()
+                        } else if name == "paint.text.shadow-single" {
+                            "paint.text.shadow-single"
                         } else if name == "paint.visual-effects.image-rendering-pixelated" {
                             "paint.visual-effects.image-rendering-pixelated"
                         } else if self.resource_lifecycle {
@@ -853,6 +858,33 @@ impl Driver {
                 &fixture_color_css(&fixture_node.background),
             );
             assert_border_is_projected(&style, fixture_node.border.as_ref());
+            if let Some(text) = &fixture_node.text {
+                let text_node = node
+                    .query_selector("[data-whisker-text]")
+                    .unwrap()
+                    .expect("text element has a native text projection");
+                let text_style = text_node.dyn_ref::<web_sys::HtmlElement>().unwrap().style();
+                assert_eq!(
+                    text_node.text_content().as_deref(),
+                    Some(text.value.as_str())
+                );
+                assert_style(&text_style, "font-size", &fixture_px(text.font_size));
+                assert_style(&text_style, "font-weight", &text.font_weight.to_string());
+                assert_style(&text_style, "color", &fixture_color_css(&text.color));
+                let expected_shadow = text.shadow.as_ref().map_or_else(
+                    || "none".to_string(),
+                    |shadow| {
+                        format!(
+                            "{}px {}px {}px {}",
+                            shadow.offset[0],
+                            shadow.offset[1],
+                            shadow.blur_radius,
+                            fixture_color_css(&shadow.color),
+                        )
+                    },
+                );
+                assert_style(&text_style, "text-shadow", &expected_shadow);
+            }
             let mut expected_shadows = fixture_node
                 .box_shadows
                 .iter()
@@ -1372,6 +1404,9 @@ fn fixture(path: &str) -> &'static str {
         "core/backdrop-filter-blur.json" => {
             include_str!("../../../../tests/host-conformance/core/backdrop-filter-blur.json")
         }
+        "core/text-shadow-single.json" => {
+            include_str!("../../../../tests/host-conformance/core/text-shadow-single.json")
+        }
         _ => panic!("manifest fixture is not embedded in the Web test: {path}"),
     }
 }
@@ -1466,17 +1501,21 @@ fn packet(
 
 fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
     let surface = SurfaceId::new(1).unwrap();
-    let view = ElementRegistry::standard()
-        .registration_for_builtin(whisker::ElementTag::View)
-        .unwrap()
-        .element_type;
+    let registry = ElementRegistry::standard();
     let mut operations = Vec::with_capacity(nodes.len() * 5);
     for fixture_node in nodes {
         let node = fixture_node_id(fixture_node.id);
         operations.extend([
             Operation::CreateNode {
                 node,
-                element_type: view,
+                element_type: registry
+                    .registration_for_builtin(if fixture_node.text.is_some() {
+                        whisker::ElementTag::Text
+                    } else {
+                        whisker::ElementTag::View
+                    })
+                    .unwrap()
+                    .element_type,
             },
             Operation::SetLayout {
                 node,
@@ -1510,6 +1549,12 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
                 },
             },
         ]);
+        if let Some(text) = &fixture_node.text {
+            operations.push(Operation::SetText {
+                node,
+                content: fixture_text_content(text),
+            });
+        }
         if let Some(transform) = fixture_node.transform {
             operations.push(Operation::SetTransform {
                 node,
@@ -1996,6 +2041,39 @@ fn color(value: &ColorFixture) -> PaintColor {
             blue: *blue,
             alpha: *alpha,
         },
+    }
+}
+
+fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextContent {
+    TextContent {
+        payload: TextMeasurePayload {
+            text: text.value.clone(),
+            style: TextMeasureStyle {
+                font_size: text.font_size,
+                font_weight: text.font_weight,
+                ..TextMeasureStyle::default()
+            },
+            locale: None,
+            direction: MeasureTextDirection::Auto,
+            wrap: MeasureTextWrap::Wrap,
+            max_lines: None,
+            overflow: MeasureTextOverflow::Clip,
+        },
+        paint: TextPaint {
+            foreground: color(&text.color),
+            shadows: text
+                .shadow
+                .iter()
+                .map(|shadow| TextShadow {
+                    offset_x: shadow.offset[0],
+                    offset_y: shadow.offset[1],
+                    blur_radius: shadow.blur_radius,
+                    color: color(&shadow.color),
+                })
+                .collect(),
+            ..TextPaint::default()
+        },
+        prepared_content: None,
     }
 }
 

@@ -26,8 +26,8 @@ use whisker_protocol::{
     PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
     PaintLengthPercentage, PaintPosition, PathCommand, PointerId, PointerInput, PointerKind,
     ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceId,
-    ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextMeasurePayload, TextMeasureStyle,
-    Transform, Visibility, WhiskerValue,
+    ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent, TextMeasurePayload,
+    TextMeasureStyle, TextPaint, TextShadow, Transform, Visibility, WhiskerValue,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
@@ -71,6 +71,39 @@ fn color_protocol(value: &ColorFixture) -> PaintColor {
             blue: *blue,
             alpha: *alpha,
         },
+    }
+}
+
+fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextContent {
+    TextContent {
+        payload: TextMeasurePayload {
+            text: text.value.clone(),
+            style: TextMeasureStyle {
+                font_size: text.font_size,
+                font_weight: text.font_weight,
+                ..TextMeasureStyle::default()
+            },
+            locale: None,
+            direction: MeasureTextDirection::Auto,
+            wrap: MeasureTextWrap::Wrap,
+            max_lines: None,
+            overflow: MeasureTextOverflow::Clip,
+        },
+        paint: TextPaint {
+            foreground: color_protocol(&text.color),
+            shadows: text
+                .shadow
+                .iter()
+                .map(|shadow| TextShadow {
+                    offset_x: shadow.offset[0],
+                    offset_y: shadow.offset[1],
+                    blur_radius: shadow.blur_radius,
+                    color: color_protocol(&shadow.color),
+                })
+                .collect(),
+            ..TextPaint::default()
+        },
+        prepared_content: None,
     }
 }
 
@@ -476,6 +509,9 @@ impl Driver {
                     relations,
                 } => {
                     assert!(name.starts_with("paint."), "unsupported Desktop checkpoint");
+                    if name == "paint.text.shadow-single" {
+                        self.assert_text_shadow();
+                    }
                     checkpoints.push(Checkpoint {
                         logical_size: [
                             self.logical_size[0].round() as u32,
@@ -667,12 +703,15 @@ impl Driver {
 
     fn present_scene(&mut self, revision: u64, nodes: &[SceneNodeFixture]) {
         let surface = self.surface.expect("attach_surface precedes present_scene");
-        let element_type = standard_element_type(whisker::VIEW_ELEMENT_NAME);
         let mut operations = Vec::new();
         for fixture in nodes {
             operations.push(Operation::CreateNode {
                 node: NodeId::new(fixture.id).expect("validated fixture node id"),
-                element_type,
+                element_type: standard_element_type(if fixture.text.is_some() {
+                    whisker::TEXT_ELEMENT_NAME
+                } else {
+                    whisker::VIEW_ELEMENT_NAME
+                }),
             });
         }
         let mut child_counts = std::collections::BTreeMap::<u64, u32>::new();
@@ -699,6 +738,12 @@ impl Driver {
                 node,
                 paint: box_paint(&fixture.background, fixture.border.as_ref()),
             });
+            if let Some(text) = &fixture.text {
+                operations.push(Operation::SetText {
+                    node,
+                    content: fixture_text_content(text),
+                });
+            }
             if !fixture.box_shadows.is_empty()
                 || fixture.clip_path.is_some()
                 || fixture.backdrop_blur.is_some()
@@ -807,6 +852,37 @@ impl Driver {
                 operations,
             })
             .expect("canonical Host scene fixture is valid");
+    }
+
+    fn assert_text_shadow(&self) {
+        let commands = self
+            .scene
+            .as_ref()
+            .expect("checkpoint follows attach")
+            .paint_commands();
+        let content = commands
+            .iter()
+            .find_map(|command| match command {
+                PaintCommand::Text { content, .. } => Some(content),
+                _ => None,
+            })
+            .expect("text fixture creates one text paint command");
+        let shadow = content
+            .paint
+            .shadows
+            .first()
+            .expect("text shadow is retained");
+        assert_eq!([shadow.offset_x, shadow.offset_y], [3.0, 4.0]);
+        assert_eq!(shadow.blur_radius, 2.0);
+        assert_eq!(
+            shadow.color,
+            PaintColor::Srgba {
+                red: 255,
+                green: 0,
+                blue: 0,
+                alpha: 0.75
+            }
+        );
     }
 
     fn clipped_box_primitives(&self) -> Vec<ClippedBoxPrimitive> {

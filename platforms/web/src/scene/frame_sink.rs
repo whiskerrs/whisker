@@ -96,7 +96,12 @@ impl DomFrameSink {
                 }
                 Operation::SetImage { .. } => Some("image-content"),
                 Operation::SetCursor { .. } => Some("cursor"),
-                Operation::SetText { content, .. } if content.paint.uses_extended_features() => {
+                Operation::SetText { content, .. }
+                    if content.paint.decoration.lines.underline
+                        || content.paint.decoration.lines.overline
+                        || content.paint.decoration.lines.line_through
+                        || content.paint.shadows.len() > 1 =>
+                {
                     Some("text-effects")
                 }
                 Operation::SetText { content, .. }
@@ -593,6 +598,10 @@ impl FrameSink for DomFrameSink {
                 },
                 whisker_protocol::CapabilityEntry {
                     capability: whisker_protocol::RenderCapability::VisualEffects,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::TextEffects,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_protocol::CapabilityEntry {

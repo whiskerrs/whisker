@@ -163,7 +163,35 @@
         "revision": { "type": "integer", "minimum": 1 },
         "rect": { "$ref": "#/$defs/quadNumber" },
         "background": { "$ref": "#/$defs/color" },
+        "text": { "$ref": "#/$defs/text" },
         "border": { "$ref": "#/$defs/border" }
+      }
+    },
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "font_size", "color"],
+      "properties": {
+        "value": { "type": "string" },
+        "font_size": { "type": "number", "exclusiveMinimum": 0 },
+        "font_weight": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "color": { "$ref": "#/$defs/color" },
+        "shadow": { "$ref": "#/$defs/textShadow" }
+      }
+    },
+    "textShadow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offset", "blur_radius", "color"],
+      "properties": {
+        "offset": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "number" }
+        },
+        "blur_radius": { "type": "number", "minimum": 0 },
+        "color": { "$ref": "#/$defs/color" }
       }
     },
     "presentScene": {

@@ -25,6 +25,15 @@ public object WhiskerBuiltInElements {
                 view.textSize = content.fontSize
                 view.setTextColor(content.color)
                 view.setTypeface(view.typeface, if (content.fontWeight >= 600) 1 else 0)
+                content.shadow?.let { shadow ->
+                    val density = view.resources.displayMetrics.density
+                    view.setShadowLayer(
+                        shadow.blurRadius * density,
+                        shadow.offsetX * density,
+                        shadow.offsetY * density,
+                        shadow.color,
+                    )
+                } ?: view.setShadowLayer(0f, 0f, 0f, 0)
             },
         ) { context ->
             TextView(context).apply {

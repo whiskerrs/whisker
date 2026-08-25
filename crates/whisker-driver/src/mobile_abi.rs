@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 15;
+pub const MOBILE_ABI_MINOR: u16 = 16;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -309,6 +309,11 @@ pub struct MobileText {
     pub line_height: f32,
     pub letter_spacing: f32,
     pub color: MobileColor,
+    pub shadow_offset_x: f32,
+    pub shadow_offset_y: f32,
+    pub shadow_blur_radius: f32,
+    pub shadow_flags: u32,
+    pub shadow_color: MobileColor,
     pub prepared_content: u64,
 }
 
@@ -652,7 +657,7 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileBootstrap>(), 24);
             assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 160);
             assert_eq!(std::mem::size_of::<MobileMeasureResponse>(), 64);
-            assert_eq!(std::mem::size_of::<MobileText>(), 80);
+            assert_eq!(std::mem::size_of::<MobileText>(), 128);
             assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);
             assert_eq!(std::mem::size_of::<MobileBoxShadow>(), 56);
             assert_eq!(std::mem::size_of::<MobileClipInset>(), 96);

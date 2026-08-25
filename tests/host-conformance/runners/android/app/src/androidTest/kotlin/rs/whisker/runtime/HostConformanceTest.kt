@@ -1,6 +1,8 @@
 package rs.whisker.runtime
 
 import android.graphics.Bitmap
+import android.view.ViewGroup
+import android.widget.TextView
 import android.graphics.Canvas
 import android.util.Base64
 import android.view.View
@@ -237,6 +239,15 @@ private class Driver(
             intArrayOf(),
             emptyArray(),
         )
+        view.registerElementFromNative(
+            2,
+            WhiskerBuiltInElements.TEXT,
+            WhiskerChildPolicy.PlainText.ordinal,
+            WhiskerMeasurement.Text.ordinal,
+            intArrayOf(), intArrayOf(), emptyArray(),
+            intArrayOf(), intArrayOf(), emptyArray(),
+            intArrayOf(), intArrayOf(), emptyArray(),
+        )
         check(view.finishBootstrapFromNative())
     }
 
@@ -254,6 +265,13 @@ private class Driver(
                 "present_box" -> present(command)
                 "present_scene" -> presentScene(command)
                 "checkpoint" -> {
+                    if (command.getString("name") == "paint.text.shadow-single") {
+                        val text = checkNotNull(findTextView(view))
+                        check(text.text.toString() == "Whisker")
+                        check(text.shadowDx == 3f * context.resources.displayMetrics.density)
+                        check(text.shadowDy == 4f * context.resources.displayMetrics.density)
+                        check(text.shadowRadius == 2f * context.resources.displayMetrics.density)
+                    }
                     check(
                         command.getString("name") == "paint.box" ||
                             command.getString("name") == "paint.background-layers.linear-gradient" ||
@@ -331,7 +349,8 @@ private class Driver(
                             command.getString("name") ==
                             "paint.transform.motion-path-inset" ||
                             command.getString("name") ==
-                            "paint.transform.motion-path-arcs",
+                            "paint.transform.motion-path-arcs" ||
+                            command.getString("name") == "paint.text.shadow-single",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -487,7 +506,7 @@ private class Driver(
         check(stage(tag = 6, numbers = rect + floatArrayOf(0f, 0f, 0f, 0f)))
         val (numbers, names) = paint(command)
         check(stage(tag = 7, numbers = numbers, names = names))
-        check(view.commitFrameFromNative())
+        check(view.commitFrameFromNative()) { "$id rejected present_box" }
     }
 
     private fun presentScene(command: JSONObject) {
@@ -495,7 +514,7 @@ private class Driver(
         val nodes = command.getJSONArray("nodes")
         check(view.beginFrameFromNative(0, 1, 0, revision) == 0)
         nodes.objects().forEach { node ->
-            check(stage(tag = 1, node = node.getLong("id"), member = 1))
+            check(stage(tag = 1, node = node.getLong("id"), member = if (node.has("text")) 2 else 1))
         }
         val childIndices = HashMap<Long, Int>()
         nodes.objects().forEach { node ->
@@ -528,6 +547,33 @@ private class Driver(
             )
             val (numbers, names) = paint(node)
             check(stage(tag = 7, node = id, numbers = numbers, names = names))
+            node.optJSONObject("text")?.let { text ->
+                val textNumbers = ArrayList<Float>(17)
+                val textNames = ArrayList<String>(2)
+                textNumbers += text.getDouble("font_size").toFloat()
+                textNumbers += text.optInt("font_weight", 400).toFloat()
+                textNumbers += 0f
+                appendColor(text.getJSONObject("color"), textNumbers, textNames)
+                val shadow = text.optJSONObject("shadow")
+                textNumbers += if (shadow == null) 0f else 1f
+                val offset = shadow?.getJSONArray("offset")
+                textNumbers += offset?.getDouble(0)?.toFloat() ?: 0f
+                textNumbers += offset?.getDouble(1)?.toFloat() ?: 0f
+                textNumbers += shadow?.getDouble("blur_radius")?.toFloat() ?: 0f
+                appendColor(
+                    shadow?.getJSONObject("color")
+                        ?: JSONObject("{\"kind\":\"srgba\",\"red\":0,\"green\":0,\"blue\":0,\"alpha\":0}"),
+                    textNumbers,
+                    textNames,
+                )
+                check(stage(
+                    tag = 13,
+                    node = id,
+                    text = text.getString("value"),
+                    numbers = textNumbers.toFloatArray(),
+                    names = textNames.toTypedArray(),
+                ))
+            }
             val clip = node.optJSONObject("clip") ?: JSONObject(
                 "{\"horizontal\":\"visible\",\"vertical\":\"visible\"}",
             )
@@ -766,6 +812,7 @@ private class Driver(
         integer: Int = 0,
         scalar: Float = 0f,
         numbers: FloatArray? = null,
+        text: String? = null,
         names: Array<String>? = null,
     ): Boolean = view.stageOperationFromNative(
         tag,
@@ -779,7 +826,7 @@ private class Driver(
         scalar,
         0,
         numbers,
-        null,
+        text,
         names,
         null,
     )
@@ -992,6 +1039,16 @@ private class Driver(
         view.draw(Canvas(bitmap))
         return bitmap
     }
+}
+
+private fun findTextView(view: android.view.View): TextView? {
+    if (view is TextView) return view
+    if (view is ViewGroup) {
+        for (index in 0 until view.childCount) {
+            findTextView(view.getChildAt(index))?.let { return it }
+        }
+    }
+    return null
 }
 
 private fun JSONArray.objects(): Sequence<JSONObject> =

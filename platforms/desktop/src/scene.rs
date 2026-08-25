@@ -545,8 +545,11 @@ impl DesktopScene {
                     }
                 }
                 Operation::SetText { node, content } => {
-                    if content.paint.uses_extended_features() {
-                        return Err(DesktopPresentError::Unsupported("text-effects"));
+                    if content.paint.decoration.lines.underline
+                        || content.paint.decoration.lines.overline
+                        || content.paint.decoration.lines.line_through
+                    {
+                        return Err(DesktopPresentError::Unsupported("text-decoration"));
                     }
                     if content.payload.style.uses_extended_typography() {
                         return Err(DesktopPresentError::Unsupported("text-typography"));
@@ -866,6 +869,10 @@ impl FrameSink for DesktopScene {
                 },
                 whisker_protocol::CapabilityEntry {
                     capability: whisker_protocol::RenderCapability::VisualEffects,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::TextEffects,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_protocol::CapabilityEntry {

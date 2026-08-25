@@ -386,7 +386,13 @@ private final class Driver {
             childPolicy: .elements,
             measurement: .none
         )
-        guard WhiskerElementRegistry.bind([registration]) else {
+        let textRegistration = WhiskerElementRegistration(
+            elementType: 2,
+            name: WhiskerBuiltInElements.textName,
+            childPolicy: .plainText,
+            measurement: .text
+        )
+        guard WhiskerElementRegistry.bind([registration, textRegistration]) else {
             throw Failure("bind built-in UIKit View")
         }
     }
@@ -456,7 +462,8 @@ private final class Driver {
                     name == "paint.transform.motion-path-curves" ||
                     name == "paint.transform.motion-path-ellipses" ||
                     name == "paint.transform.motion-path-inset" ||
-                    name == "paint.transform.motion-path-arcs" else {
+                    name == "paint.transform.motion-path-arcs" ||
+                    name == "paint.text.shadow-single" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 if name == "paint.visual-effects.backdrop-blur" {
@@ -470,6 +477,16 @@ private final class Driver {
                         containsProjectiveTransform(view),
                         "\(id) must project the 4x4 matrix to CATransform3D"
                     )
+                }
+                if name == "paint.text.shadow-single" {
+                    let label = try XCTUnwrap(findLabel(view))
+                    XCTAssertEqual(label.attributedText?.string ?? label.text, "Whisker")
+                    let shadow = try XCTUnwrap(
+                        label.attributedText?.attribute(.shadow, at: 0, effectiveRange: nil)
+                            as? NSShadow
+                    )
+                    XCTAssertEqual(shadow.shadowOffset, CGSize(width: 3, height: 4))
+                    XCTAssertEqual(shadow.shadowBlurRadius, 2)
                 }
                 let pixels = try capture()
                 checkpoint = pixels
@@ -652,6 +669,38 @@ private final class Driver {
     private func presentScene(_ command: [String: Any]) throws {
         let revision = UInt64(try number(command, "revision"))
         let fixtures = try objectArray(command, "nodes").map(sceneNode)
+        let textPayloads = UnsafeMutablePointer<WhiskerMobileText>.allocate(
+            capacity: max(fixtures.count, 1)
+        )
+        var textStrings = [UnsafeMutablePointer<CChar>?](repeating: nil, count: fixtures.count)
+        for (index, fixture) in fixtures.enumerated() {
+            var payload = WhiskerMobileText()
+            if let text = fixture.text {
+                let bytes = Array(text.value.utf8CString)
+                let storage = UnsafeMutablePointer<CChar>.allocate(capacity: bytes.count)
+                storage.initialize(from: bytes, count: bytes.count)
+                textStrings[index] = storage
+                payload.text = WhiskerStringRef(ptr: UnsafePointer(storage), len: bytes.count - 1)
+                payload.font_size = text.fontSize
+                payload.font_weight = text.fontWeight
+                payload.color = text.color
+                if let offset = text.shadowOffset {
+                    payload.shadow_flags = 1
+                    payload.shadow_offset_x = Float(offset.width)
+                    payload.shadow_offset_y = Float(offset.height)
+                    payload.shadow_blur_radius = text.shadowBlurRadius
+                    payload.shadow_color = text.shadowColor
+                }
+            }
+            textPayloads.advanced(by: index).initialize(to: payload)
+        }
+        defer {
+            textPayloads.deinitialize(count: fixtures.count)
+            textPayloads.deallocate()
+            for storage in textStrings {
+                storage?.deallocate()
+            }
+        }
         var layouts = fixtures.map(\.layout)
         var paints = fixtures.map(\.paint)
         var transforms = fixtures.flatMap { fixture in
@@ -895,7 +944,11 @@ private final class Driver {
                                 backgroundBuffer in
                             try stagedShadows.withUnsafeMutableBufferPointer { shadowBuffer in
                             var operations = fixtures.map {
-                                operation(tag: UInt32(WHISKER_OP_CREATE), node: $0.id, member: 1)
+                                operation(
+                                    tag: UInt32(WHISKER_OP_CREATE),
+                                    node: $0.id,
+                                    member: $0.text == nil ? 1 : 2
+                                )
                             }
                             var childCounts: [UInt64: UInt32] = [:]
                             for fixture in fixtures {
@@ -926,6 +979,14 @@ private final class Driver {
                                     ),
                                     count: 1
                                 ))
+                                if fixture.text != nil {
+                                    operations.append(operation(
+                                        tag: UInt32(WHISKER_OP_TEXT),
+                                        node: fixture.id,
+                                        payload: UnsafeRawPointer(textPayloads.advanced(by: index)),
+                                        count: 1
+                                    ))
+                                }
                                 operations.append(operation(
                                     tag: UInt32(WHISKER_OP_CLIP),
                                     node: fixture.id,
@@ -1168,6 +1229,7 @@ private struct SceneFixtureNode {
     let opacity: Float?
     let visible: Bool?
     let zOrder: Int32?
+    let text: SceneText?
     let backgroundLayer: SceneBackgroundLayer
     let backgroundLayers: [ScenePaintLayer]
     let boxShadows: [WhiskerMobileBoxShadow]
@@ -1177,6 +1239,16 @@ private struct SceneFixtureNode {
     let linearGradient: SceneLinearGradient?
     let radialGradient: SceneRadialGradient?
     let conicGradient: SceneConicGradient?
+}
+
+private struct SceneText {
+    let value: String
+    let fontSize: Float
+    let fontWeight: UInt16
+    let color: WhiskerMobileColor
+    let shadowOffset: CGSize?
+    let shadowBlurRadius: Float
+    let shadowColor: WhiskerMobileColor
 }
 
 private struct SceneClipPath {
@@ -1352,6 +1424,23 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     } else {
         zOrder = nil
     }
+    let text: SceneText?
+    if let raw = fixture["text"] as? [String: Any] {
+        let shadow = raw["shadow"] as? [String: Any]
+        let offset = try shadow.map { try numberArray($0, "offset") }
+        text = SceneText(
+            value: try string(raw, "value"),
+            fontSize: Float(try number(raw, "font_size")),
+            fontWeight: UInt16((raw["font_weight"] as? NSNumber)?.intValue ?? 400),
+            color: try color(object(raw, "color")),
+            shadowOffset: offset.map { CGSize(width: $0[0], height: $0[1]) },
+            shadowBlurRadius: Float(try shadow.map { try number($0, "blur_radius") } ?? 0),
+            shadowColor: try shadow.map { try color(object($0, "color")) }
+                ?? WhiskerMobileColor()
+        )
+    } else {
+        text = nil
+    }
     let backgroundLayer = try fixture["background_layer"]
         .map { try sceneBackgroundLayer($0) } ?? .initial
     let backgroundLayers = try (fixture["background_layers"] as? [[String: Any]] ?? []).map {
@@ -1412,6 +1501,7 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         opacity: opacity,
         visible: visible,
         zOrder: zOrder,
+        text: text,
         backgroundLayer: backgroundLayer,
         backgroundLayers: backgroundLayers,
         boxShadows: boxShadows,
@@ -1875,6 +1965,11 @@ private func containsActiveBackdropBlur(_ view: UIView) -> Bool {
         return true
     }
     return view.subviews.contains(where: containsActiveBackdropBlur)
+}
+
+private func findLabel(_ view: UIView) -> UILabel? {
+    if let label = view as? UILabel { return label }
+    return view.subviews.lazy.compactMap(findLabel).first
 }
 
 private func containsProjectiveTransform(_ view: UIView) -> Bool {

@@ -504,7 +504,15 @@ final class HostScene {
             value: hostString(content.text),
             fontSize: CGFloat(content.font_size),
             fontWeight: Int(content.font_weight),
-            color: parsePaintColor(content.color)
+            color: parsePaintColor(content.color),
+            shadow: content.shadow_flags == 0 ? nil : WhiskerTextShadow(
+                offset: CGSize(
+                    width: CGFloat(content.shadow_offset_x),
+                    height: CGFloat(content.shadow_offset_y)
+                ),
+                blurRadius: CGFloat(content.shadow_blur_radius),
+                color: parsePaintColor(content.shadow_color)
+            )
         )) else {
             preconditionFailure(
                 "text operation sent to element \(mounted.registration.name) without a text implementation"

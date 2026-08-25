@@ -2232,6 +2232,57 @@ impl GpuRenderer {
             }
             let bounds = text_bounds(*clip, self.config.width, self.config.height, scale);
             let color = text_color(&content.paint.foreground, *opacity);
+            let mut areas = Vec::with_capacity(content.paint.shadows.len() + 1);
+            for shadow in &content.paint.shadows {
+                if shadow.blur_radius <= 0.0 {
+                    let shadow_color = text_color(&shadow.color, *opacity);
+                    areas.push(TextArea {
+                        buffer: &prepared.buffer,
+                        left: (rect.x + shadow.offset_x) * scale,
+                        top: (rect.y + shadow.offset_y) * scale,
+                        scale,
+                        bounds,
+                        default_color: shadow_color,
+                        custom_glyphs: &[],
+                    });
+                } else {
+                    // Glyphon does not expose a blur primitive. Approximate the
+                    // single Lynx shadow with a compact, normalized sample disk.
+                    let radius = shadow.blur_radius.min(12.0);
+                    let offsets = [
+                        (0.0, 0.0),
+                        (-radius, 0.0),
+                        (radius, 0.0),
+                        (0.0, -radius),
+                        (0.0, radius),
+                        (-radius * 0.7, -radius * 0.7),
+                        (radius * 0.7, -radius * 0.7),
+                        (-radius * 0.7, radius * 0.7),
+                        (radius * 0.7, radius * 0.7),
+                    ];
+                    let sampled_color = text_color(&shadow.color, *opacity / offsets.len() as f32);
+                    for (x, y) in offsets {
+                        areas.push(TextArea {
+                            buffer: &prepared.buffer,
+                            left: (rect.x + shadow.offset_x + x) * scale,
+                            top: (rect.y + shadow.offset_y + y) * scale,
+                            scale,
+                            bounds,
+                            default_color: sampled_color,
+                            custom_glyphs: &[],
+                        });
+                    }
+                }
+            }
+            areas.push(TextArea {
+                buffer: &prepared.buffer,
+                left: rect.x * scale,
+                top: rect.y * scale,
+                scale,
+                bounds,
+                default_color: color,
+                custom_glyphs: &[],
+            });
             self.text_renderers
                 .get_mut(node)
                 .expect("renderer inserted for live text node")
@@ -2241,15 +2292,7 @@ impl GpuRenderer {
                     &mut text.font_system,
                     &mut self.text_atlas,
                     &self.text_viewport,
-                    [TextArea {
-                        buffer: &prepared.buffer,
-                        left: rect.x * scale,
-                        top: rect.y * scale,
-                        scale,
-                        bounds,
-                        default_color: color,
-                        custom_glyphs: &[],
-                    }],
+                    areas,
                     &mut text.swash_cache,
                 )
                 .map_err(|error| GpuError(format!("prepare glyph atlas: {error}")))?;

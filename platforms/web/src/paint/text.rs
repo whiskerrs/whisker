@@ -9,6 +9,22 @@ use crate::{WebError, px, set_style};
 pub(crate) fn apply(element: &web_sys::Element, content: &TextContent) -> Result<(), WebError> {
     apply_metrics_style(element, &content.payload)?;
     set_style(element, "color", &css_color(&content.paint.foreground))?;
+    set_style(
+        element,
+        "text-shadow",
+        &content.paint.shadows.first().map_or_else(
+            || "none".to_string(),
+            |shadow| {
+                format!(
+                    "{} {} {} {}",
+                    px(shadow.offset_x),
+                    px(shadow.offset_y),
+                    px(shadow.blur_radius),
+                    css_color(&shadow.color),
+                )
+            },
+        ),
+    )?;
     element.set_text_content(Some(&content.payload.text));
     Ok(())
 }

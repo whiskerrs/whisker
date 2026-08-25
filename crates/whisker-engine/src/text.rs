@@ -8,7 +8,7 @@ use std::{
 use whisker_protocol::{
     MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
     MeasureTextOverflow, MeasureTextWrap, MeasurementPayload, MeasurementSpec, PaintColor,
-    PendingMeasurePolicy, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint,
+    PendingMeasurePolicy, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow,
 };
 use whisker_style::{
     ColorValue, ComputedLineHeight, FontFamilyValue, FontStyleValue, InheritedStyle,
@@ -113,6 +113,16 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &InheritedStyle) -> Lower
             payload,
             paint: TextPaint {
                 foreground: lower_color(style.color()),
+                shadows: style
+                    .text_shadow()
+                    .into_iter()
+                    .map(|shadow| TextShadow {
+                        offset_x: shadow.offset_x(),
+                        offset_y: shadow.offset_y(),
+                        blur_radius: shadow.blur_radius(),
+                        color: lower_color(shadow.color()),
+                    })
+                    .collect(),
                 ..TextPaint::default()
             },
             prepared_content: None,
@@ -177,7 +187,7 @@ mod tests {
     use whisker_style::{
         FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
         SpecifiedStyle, StyleDeclaration, StyleEnvironment, StyleNumber, StyleProperty, StyleValue,
-        resolve_style,
+        TextShadowValue, resolve_style,
     };
 
     fn resolved(declarations: Vec<StyleDeclaration>) -> whisker_style::ResolvedNodeStyle {
@@ -345,5 +355,41 @@ mod tests {
             }
         );
         assert_eq!(named.measurement(), hsla.measurement());
+    }
+
+    #[test]
+    fn inherited_single_shadow_lowers_to_paint_without_changing_measurement() {
+        let input = PlainTextInput::new("shadow");
+        let plain = resolved(Vec::new());
+        let shadowed = resolved(vec![StyleDeclaration::new(
+            StyleProperty::TextShadow,
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: LengthValue::Dimension {
+                    value: StyleNumber::new(1.0),
+                    unit: LengthUnit::Em,
+                },
+                offset_y: LengthValue::Dimension {
+                    value: StyleNumber::new(2.0),
+                    unit: LengthUnit::Px,
+                },
+                blur_radius: LengthValue::Dimension {
+                    value: StyleNumber::new(3.0),
+                    unit: LengthUnit::Px,
+                },
+                color: ColorValue::Named("red".into()),
+            }),
+        )]);
+        let plain = lower_plain_text(&input, plain.computed().inherited_text());
+        let shadowed = lower_plain_text(&input, shadowed.computed().inherited_text());
+        assert_eq!(plain.measurement(), shadowed.measurement());
+        assert_eq!(
+            shadowed.content().paint.shadows,
+            vec![TextShadow {
+                offset_x: 14.0,
+                offset_y: 2.0,
+                blur_radius: 3.0,
+                color: PaintColor::Named("red".into()),
+            }]
+        );
     }
 }

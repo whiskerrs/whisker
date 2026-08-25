@@ -490,10 +490,17 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 storage[0]=p->font_size; storage[1]=(float)p->font_weight; storage[2]=(float)p->font_style;
                 storage[3]=(float)p->color.red; storage[4]=(float)p->color.green; storage[5]=(float)p->color.blue;
                 storage[6]=p->color.alpha; storage[7]=(float)p->color.kind;
-                numbers = floats(env, storage, 8);
-                jclass cls = (*env)->FindClass(env, "java/lang/String"); names = (*env)->NewObjectArray(env, 1, cls, NULL);
+                storage[8]=(float)p->shadow_flags; storage[9]=p->shadow_offset_x; storage[10]=p->shadow_offset_y;
+                storage[11]=p->shadow_blur_radius; storage[12]=(float)p->shadow_color.red;
+                storage[13]=(float)p->shadow_color.green; storage[14]=(float)p->shadow_color.blue;
+                storage[15]=p->shadow_color.alpha; storage[16]=(float)p->shadow_color.kind;
+                numbers = floats(env, storage, 17);
+                jclass cls = (*env)->FindClass(env, "java/lang/String"); names = (*env)->NewObjectArray(env, 2, cls, NULL);
                 jstring color_name = new_string(env, p->color.name.ptr, p->color.name.len); (*env)->SetObjectArrayElement(env, names, 0, color_name);
-                if (color_name) (*env)->DeleteLocalRef(env, color_name); (*env)->DeleteLocalRef(env, cls); break;
+                jstring shadow_name = new_string(env, p->shadow_color.name.ptr, p->shadow_color.name.len); (*env)->SetObjectArrayElement(env, names, 1, shadow_name);
+                if (color_name) (*env)->DeleteLocalRef(env, color_name);
+                if (shadow_name) (*env)->DeleteLocalRef(env, shadow_name);
+                (*env)->DeleteLocalRef(env, cls); break;
             }
             case WHISKER_OP_PROPERTY: case WHISKER_OP_COMMAND: value = raw_to_value(env, op->payload); break;
         }

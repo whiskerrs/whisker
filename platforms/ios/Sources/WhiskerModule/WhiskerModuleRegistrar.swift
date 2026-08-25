@@ -43,11 +43,31 @@ public struct WhiskerTextContent {
     public let fontSize: CGFloat
     public let fontWeight: Int
     public let color: UIColor
+    public let shadow: WhiskerTextShadow?
 
-    public init(value: String, fontSize: CGFloat, fontWeight: Int, color: UIColor) {
+    public init(
+        value: String,
+        fontSize: CGFloat,
+        fontWeight: Int,
+        color: UIColor,
+        shadow: WhiskerTextShadow? = nil
+    ) {
         self.value = value
         self.fontSize = fontSize
         self.fontWeight = fontWeight
+        self.color = color
+        self.shadow = shadow
+    }
+}
+
+public struct WhiskerTextShadow {
+    public let offset: CGSize
+    public let blurRadius: CGFloat
+    public let color: UIColor
+
+    public init(offset: CGSize, blurRadius: CGFloat, color: UIColor) {
+        self.offset = offset
+        self.blurRadius = blurRadius
         self.color = color
     }
 }

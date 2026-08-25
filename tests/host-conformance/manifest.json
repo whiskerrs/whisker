@@ -493,6 +493,13 @@
       "checkpoints": ["semantic-projection", "pixel-samples", "pixel-relations"]
     },
     {
+      "id": "core.text-shadow-single",
+      "feature": "text-shadow-single",
+      "fixture": "core/text-shadow-single.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
       "id": "host.measure.text.basic",
       "feature": "text-measurement",
       "fixture": "core/text-measure-basic.json",
