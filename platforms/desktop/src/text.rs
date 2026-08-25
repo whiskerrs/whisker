@@ -3,6 +3,7 @@ use std::convert::Infallible;
 
 use glyphon::{
     Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight, Wrap,
+    cosmic_text::Align,
 };
 use whisker_engine::MeasurementProvider;
 use whisker_protocol::{
@@ -23,6 +24,16 @@ pub(crate) struct NativeTextHost {
     pub(crate) font_system: FontSystem,
     pub(crate) swash_cache: SwashCache,
     pub(crate) prepared: HashMap<PreparedContentId, PreparedText>,
+}
+
+fn cosmic_alignment(value: whisker_protocol::MeasureTextAlignment) -> Option<Align> {
+    match value {
+        whisker_protocol::MeasureTextAlignment::Start => None,
+        whisker_protocol::MeasureTextAlignment::End => Some(Align::End),
+        whisker_protocol::MeasureTextAlignment::Left => Some(Align::Left),
+        whisker_protocol::MeasureTextAlignment::Right => Some(Align::Right),
+        whisker_protocol::MeasureTextAlignment::Center => Some(Align::Center),
+    }
 }
 
 impl NativeTextHost {
@@ -96,6 +107,10 @@ impl NativeTextHost {
             &attrs,
             Shaping::Advanced,
         );
+        let alignment = cosmic_alignment(payload.alignment);
+        for line in &mut buffer.lines {
+            line.set_align(alignment);
+        }
         buffer.shape_until_scroll(&mut self.font_system, false);
 
         let mut measured_width = 0.0_f32;
@@ -204,6 +219,16 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn every_protocol_alignment_maps_to_cosmic_text() {
+        use whisker_protocol::MeasureTextAlignment as Protocol;
+        assert_eq!(cosmic_alignment(Protocol::Start), None);
+        assert_eq!(cosmic_alignment(Protocol::End), Some(Align::End));
+        assert_eq!(cosmic_alignment(Protocol::Left), Some(Align::Left));
+        assert_eq!(cosmic_alignment(Protocol::Right), Some(Align::Right));
+        assert_eq!(cosmic_alignment(Protocol::Center), Some(Align::Center));
+    }
+
     fn text_element_type() -> ElementTypeId {
         standard_element_registrations()
             .into_iter()
@@ -241,6 +266,7 @@ mod tests {
             },
             locale: None,
             direction: whisker_protocol::MeasureTextDirection::Auto,
+            alignment: whisker_protocol::MeasureTextAlignment::Start,
             wrap: MeasureTextWrap::Wrap,
             max_lines: Some(2),
             overflow: whisker_protocol::MeasureTextOverflow::Clip,
@@ -285,6 +311,7 @@ mod tests {
             },
             locale: Some("en-US".into()),
             direction: whisker_protocol::MeasureTextDirection::LeftToRight,
+            alignment: whisker_protocol::MeasureTextAlignment::Start,
             wrap: MeasureTextWrap::NoWrap,
             max_lines: None,
             overflow: whisker_protocol::MeasureTextOverflow::Ellipsis,

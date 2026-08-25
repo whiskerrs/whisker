@@ -48,11 +48,11 @@ pub use input::{
 pub use measurement::{
     AvailableSpace, CustomMeasurePayload, EmbeddedSurfaceMeasurePayload, FontFeature,
     FontOpticalSizing, FontTag, FontVariation, MeasureConstraints, MeasureFontFamily,
-    MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
-    MeasureTextWrap, MeasuredSize, MeasurementBatchError, MeasurementKind, MeasurementMetrics,
-    MeasurementPayload, MeasurementPayloadError, MeasurementReady, MeasurementRequest,
-    MeasurementResponse, MeasurementSpec, NativeControlMeasurePayload, PendingMeasurePolicy,
-    ReplacedContentMeasurePayload, TextMeasurePayload, TextMeasureStyle,
+    MeasureFontStyle, MeasureLineHeight, MeasureTextAlignment, MeasureTextDirection,
+    MeasureTextOverflow, MeasureTextWrap, MeasuredSize, MeasurementBatchError, MeasurementKind,
+    MeasurementMetrics, MeasurementPayload, MeasurementPayloadError, MeasurementReady,
+    MeasurementRequest, MeasurementResponse, MeasurementSpec, NativeControlMeasurePayload,
+    PendingMeasurePolicy, ReplacedContentMeasurePayload, TextMeasurePayload, TextMeasureStyle,
     UnsupportedMeasurementReason, validate_measurement_batch,
 };
 pub use resource::{

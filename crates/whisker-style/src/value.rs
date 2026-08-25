@@ -86,6 +86,22 @@ pub enum FontFamilyValue {
     Named(String),
 }
 
+/// Lynx-supported inline text alignment.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextAlignValue {
+    /// Logical inline start.
+    #[default]
+    Start,
+    /// Logical inline end.
+    End,
+    /// Physical left edge.
+    Left,
+    /// Physical right edge.
+    Right,
+    /// Center each line.
+    Center,
+}
+
 /// The face style used to render text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FontStyleValue {
@@ -625,6 +641,8 @@ pub enum StyleValue {
     FontWeight(FontWeightValue),
     /// Text color.
     Color(ColorValue),
+    /// Inline text alignment.
+    TextAlign(TextAlignValue),
     /// Single inherited text shadow.
     TextShadow(TextShadowValue),
     /// Single inherited Lynx text decoration.

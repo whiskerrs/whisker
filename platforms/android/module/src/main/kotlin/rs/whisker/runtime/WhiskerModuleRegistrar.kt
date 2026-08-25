@@ -20,9 +20,12 @@ public data class WhiskerTextContent(
     public val fontSize: Float,
     public val fontWeight: Int,
     public val color: Int,
+    public val alignment: WhiskerTextAlignment = WhiskerTextAlignment.START,
     public val decoration: WhiskerTextDecoration? = null,
     public val shadow: WhiskerTextShadow? = null,
 )
+
+public enum class WhiskerTextAlignment { START, END, LEFT, RIGHT, CENTER }
 
 /** One inherited Lynx text decoration. */
 public data class WhiskerTextDecoration(

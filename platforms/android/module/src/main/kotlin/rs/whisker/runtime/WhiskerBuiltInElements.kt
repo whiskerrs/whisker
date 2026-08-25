@@ -24,6 +24,13 @@ public object WhiskerBuiltInElements {
                 view.textSize = content.fontSize
                 view.setTextColor(content.color)
                 view.setTypeface(view.typeface, if (content.fontWeight >= 600) 1 else 0)
+                view.gravity = Gravity.TOP or when (content.alignment) {
+                    WhiskerTextAlignment.START -> Gravity.START
+                    WhiskerTextAlignment.END -> Gravity.END
+                    WhiskerTextAlignment.LEFT -> Gravity.LEFT
+                    WhiskerTextAlignment.RIGHT -> Gravity.RIGHT
+                    WhiskerTextAlignment.CENTER -> Gravity.CENTER_HORIZONTAL
+                }
                 view.whiskerDecoration = content.decoration
                 content.shadow?.let { shadow ->
                     val density = view.resources.displayMetrics.density

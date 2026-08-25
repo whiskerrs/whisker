@@ -1438,6 +1438,13 @@ impl MobileFrameOwned {
                             whisker_engine::whisker_protocol::TextDecorationStyle::Wavy => 4,
                         },
                         decoration_color,
+                        alignment: match content.payload.alignment {
+                            whisker_engine::whisker_protocol::MeasureTextAlignment::Start => 0,
+                            whisker_engine::whisker_protocol::MeasureTextAlignment::End => 1,
+                            whisker_engine::whisker_protocol::MeasureTextAlignment::Left => 2,
+                            whisker_engine::whisker_protocol::MeasureTextAlignment::Right => 3,
+                            whisker_engine::whisker_protocol::MeasureTextAlignment::Center => 4,
+                        },
                         prepared_content: content.prepared_content.map_or(0, |value| value.get()),
                     }));
                     raw.payload = texts.last().unwrap().as_ref() as *const _ as *const c_void;
@@ -1797,6 +1804,7 @@ mod tests {
                 style: TextMeasureStyle::default(),
                 locale: None,
                 direction: Default::default(),
+                alignment: Default::default(),
                 wrap: MeasureTextWrap::Wrap,
                 max_lines: None,
                 overflow: Default::default(),

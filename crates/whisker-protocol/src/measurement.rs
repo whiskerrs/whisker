@@ -116,6 +116,22 @@ pub enum MeasureTextDirection {
     RightToLeft,
 }
 
+/// Inline-axis placement of shaped lines inside the text element's box.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MeasureTextAlignment {
+    /// Align to the logical inline start.
+    #[default]
+    Start,
+    /// Align to the logical inline end.
+    End,
+    /// Align to the physical left edge.
+    Left,
+    /// Align to the physical right edge.
+    Right,
+    /// Center each line.
+    Center,
+}
+
 /// Whether text may create additional lines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MeasureTextWrap {
@@ -193,6 +209,8 @@ pub struct TextMeasurePayload {
     pub locale: Option<String>,
     /// Base shaping direction.
     pub direction: MeasureTextDirection,
+    /// Inline-axis placement within the final layout box.
+    pub alignment: MeasureTextAlignment,
     /// Line-wrapping policy.
     pub wrap: MeasureTextWrap,
     /// Maximum visible line count, or `None` for no explicit limit.
@@ -721,6 +739,7 @@ mod tests {
             },
             locale: Some("en-US".into()),
             direction: MeasureTextDirection::Auto,
+            alignment: MeasureTextAlignment::Start,
             wrap: MeasureTextWrap::Wrap,
             max_lines: None,
             overflow: MeasureTextOverflow::Clip,

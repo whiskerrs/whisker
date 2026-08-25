@@ -6,6 +6,7 @@ import android.widget.TextView
 import android.graphics.Canvas
 import android.util.Base64
 import android.view.View
+import android.view.Gravity
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONArray
@@ -283,6 +284,18 @@ private class Driver(
                         check(texts[0].whiskerDecoration?.line == WhiskerTextDecorationLine.UNDERLINE)
                         check(texts[4].whiskerDecoration?.line == WhiskerTextDecorationLine.LINE_THROUGH)
                     }
+                    if (command.getString("name") == "paint.text.align-lynx") {
+                        val texts = findTextViews(view)
+                        check(texts.size == 5)
+                        val horizontal = texts.map { it.gravity and Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK }
+                        check(horizontal == listOf(
+                            Gravity.LEFT,
+                            Gravity.RIGHT,
+                            Gravity.CENTER_HORIZONTAL,
+                            Gravity.START,
+                            Gravity.END,
+                        ))
+                    }
                     check(
                         command.getString("name") == "paint.box" ||
                             command.getString("name") == "paint.background-layers.linear-gradient" ||
@@ -362,7 +375,8 @@ private class Driver(
                             command.getString("name") ==
                             "paint.transform.motion-path-arcs" ||
                             command.getString("name") == "paint.text.shadow-single" ||
-                            command.getString("name") == "paint.text.decoration-lynx",
+                            command.getString("name") == "paint.text.decoration-lynx" ||
+                            command.getString("name") == "paint.text.align-lynx",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -560,7 +574,7 @@ private class Driver(
             val (numbers, names) = paint(node)
             check(stage(tag = 7, node = id, numbers = numbers, names = names))
             node.optJSONObject("text")?.let { text ->
-                val textNumbers = ArrayList<Float>(24)
+                val textNumbers = ArrayList<Float>(25)
                 val textNames = ArrayList<String>(3)
                 textNumbers += text.getDouble("font_size").toFloat()
                 textNumbers += text.optInt("font_weight", 400).toFloat()
@@ -597,6 +611,13 @@ private class Driver(
                     textNumbers,
                     textNames,
                 )
+                textNumbers += when (text.optString("alignment", "start")) {
+                    "end" -> 1f
+                    "left" -> 2f
+                    "right" -> 3f
+                    "center" -> 4f
+                    else -> 0f
+                }
                 check(stage(
                     tag = 13,
                     node = id,

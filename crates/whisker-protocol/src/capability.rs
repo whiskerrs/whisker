@@ -946,6 +946,7 @@ mod tests {
                         style,
                         locale: None,
                         direction: MeasureTextDirection::Auto,
+                        alignment: crate::MeasureTextAlignment::Start,
                         wrap: MeasureTextWrap::Wrap,
                         max_lines: None,
                         overflow: MeasureTextOverflow::Clip,

@@ -52,7 +52,7 @@ pub use value::{
     ColorValue, FontFamilyValue, FontStyleValue, FontWeightValue, GradientStopValue, GradientValue,
     ImageRenderingValue, InsetPathValue, LengthPercentageValue, LengthUnit, LengthValue,
     LineHeightValue, MotionPathCommandValue, MotionPathPointValue, OffsetPathValue,
-    OffsetRotateValue, RadialGradientValue, StyleNumber, StyleValue, TextDecorationLineValue,
-    TextDecorationStyleValue, TextDecorationValue, TextShadowValue, TransformFunctionValue,
-    TransformOriginValue, TransformValue,
+    OffsetRotateValue, RadialGradientValue, StyleNumber, StyleValue, TextAlignValue,
+    TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextShadowValue,
+    TransformFunctionValue, TransformOriginValue, TransformValue,
 };

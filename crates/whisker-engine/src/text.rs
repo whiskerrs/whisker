@@ -6,13 +6,14 @@ use std::{
 };
 
 use whisker_protocol::{
-    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
-    MeasureTextOverflow, MeasureTextWrap, MeasurementPayload, MeasurementSpec, PaintColor,
-    PendingMeasurePolicy, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow,
+    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextAlignment,
+    MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasurementPayload,
+    MeasurementSpec, PaintColor, PendingMeasurePolicy, TextContent, TextMeasurePayload,
+    TextMeasureStyle, TextPaint, TextShadow,
 };
 use whisker_style::{
     ColorValue, ComputedLineHeight, FontFamilyValue, FontStyleValue, InheritedStyle,
-    TextDecorationLineValue, TextDecorationStyleValue,
+    TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
 };
 
 /// Plain UTF-8 text and the shaping behavior not supplied by inherited style.
@@ -99,6 +100,13 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &InheritedStyle) -> Lower
         },
         locale: input.locale.clone(),
         direction: input.direction,
+        alignment: match style.text_align() {
+            TextAlignValue::Start => MeasureTextAlignment::Start,
+            TextAlignValue::End => MeasureTextAlignment::End,
+            TextAlignValue::Left => MeasureTextAlignment::Left,
+            TextAlignValue::Right => MeasureTextAlignment::Right,
+            TextAlignValue::Center => MeasureTextAlignment::Center,
+        },
         wrap: input.wrap,
         max_lines: input.max_lines,
         overflow: input.overflow,
@@ -205,6 +213,7 @@ fn metric_style_hash(input: &PlainTextInput, style: &InheritedStyle) -> u64 {
     style.font_style().hash(&mut hasher);
     style.line_height().hash(&mut hasher);
     style.letter_spacing().to_bits().hash(&mut hasher);
+    style.text_align().hash(&mut hasher);
     input.locale.hash(&mut hasher);
     input.direction.hash(&mut hasher);
     input.wrap.hash(&mut hasher);
@@ -332,6 +341,37 @@ mod tests {
         assert_eq!(payload.wrap, MeasureTextWrap::NoWrap);
         assert_eq!(payload.max_lines, Some(1));
         assert_eq!(payload.overflow, MeasureTextOverflow::Ellipsis);
+    }
+
+    #[test]
+    fn every_lynx_text_alignment_reaches_the_host_payload_and_metric_key() {
+        for (value, expected) in [
+            (TextAlignValue::Start, MeasureTextAlignment::Start),
+            (TextAlignValue::End, MeasureTextAlignment::End),
+            (TextAlignValue::Left, MeasureTextAlignment::Left),
+            (TextAlignValue::Right, MeasureTextAlignment::Right),
+            (TextAlignValue::Center, MeasureTextAlignment::Center),
+        ] {
+            let style = resolved(vec![StyleDeclaration::new(
+                StyleProperty::TextAlign,
+                StyleValue::TextAlign(value),
+            )]);
+            let lowered = lower_plain_text(
+                &PlainTextInput::new("alignment"),
+                style.computed().inherited_text(),
+            );
+            assert_eq!(lowered.content().payload.alignment, expected);
+            if value != TextAlignValue::Start {
+                let initial = lower_plain_text(
+                    &PlainTextInput::new("alignment"),
+                    resolved(Vec::new()).computed().inherited_text(),
+                );
+                assert_ne!(
+                    lowered.measurement().style_hash,
+                    initial.measurement().style_hash
+                );
+            }
+        }
     }
 
     #[test]

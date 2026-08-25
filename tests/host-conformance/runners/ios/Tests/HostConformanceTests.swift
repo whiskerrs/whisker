@@ -464,7 +464,8 @@ private final class Driver {
                     name == "paint.transform.motion-path-inset" ||
                     name == "paint.transform.motion-path-arcs" ||
                     name == "paint.text.shadow-single" ||
-                    name == "paint.text.decoration-lynx" else {
+                    name == "paint.text.decoration-lynx" ||
+                    name == "paint.text.align-lynx" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 if name == "paint.visual-effects.backdrop-blur" {
@@ -499,6 +500,10 @@ private final class Driver {
                     XCTAssertEqual(labels[4].whiskerDecoration?.style, .wavy)
                     XCTAssertEqual(labels[0].whiskerDecoration?.line, .underline)
                     XCTAssertEqual(labels[4].whiskerDecoration?.line, .lineThrough)
+                }
+                if name == "paint.text.align-lynx" {
+                    let labels = findTextLabels(view)
+                    XCTAssertEqual(labels.map(\.textAlignment), [.left, .right, .center, .left, .right])
                 }
                 let pixels = try capture()
                 checkpoint = pixels
@@ -706,6 +711,7 @@ private final class Driver {
                 payload.decoration_flags = text.decorationFlags
                 payload.decoration_style = text.decorationStyle
                 payload.decoration_color = text.decorationColor
+                payload.alignment = text.alignment
             }
             textPayloads.advanced(by: index).initialize(to: payload)
         }
@@ -1261,6 +1267,7 @@ private struct SceneText {
     let fontSize: Float
     let fontWeight: UInt16
     let color: WhiskerMobileColor
+    let alignment: UInt32
     let decorationFlags: UInt32
     let decorationStyle: UInt32
     let decorationColor: WhiskerMobileColor
@@ -1447,11 +1454,21 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         let shadow = raw["shadow"] as? [String: Any]
         let decoration = raw["decoration"] as? [String: Any]
         let offset = try shadow.map { try numberArray($0, "offset") }
+        let alignment: UInt32
+        switch raw["alignment"] as? String ?? "start" {
+        case "start": alignment = 0
+        case "end": alignment = 1
+        case "left": alignment = 2
+        case "right": alignment = 3
+        case "center": alignment = 4
+        default: throw Failure("unknown text alignment")
+        }
         text = SceneText(
             value: try string(raw, "value"),
             fontSize: Float(try number(raw, "font_size")),
             fontWeight: UInt16((raw["font_weight"] as? NSNumber)?.intValue ?? 400),
             color: try color(object(raw, "color")),
+            alignment: alignment,
             decorationFlags: try decoration.map {
                 switch try string($0, "line") {
                 case "underline": 1
