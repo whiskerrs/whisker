@@ -1633,6 +1633,23 @@ mod tests {
         assert_eq!((x, y, angle), (50.0, 0.0, 0.0));
 
         for invalid_arc in [
+            OffsetPathValue::Path(vec![MotionPathCommandValue::ArcTo {
+                radius_x: StyleNumber::new(1.0),
+                radius_y: StyleNumber::new(1.0),
+                x_axis_rotation: StyleNumber::new(0.0),
+                large_arc: false,
+                sweep: true,
+                to: point(1.0, 0.0),
+            }]),
+            arc(
+                point(0.0, 0.0),
+                point(f32::NAN, 0.0),
+                1.0,
+                1.0,
+                0.0,
+                false,
+                true,
+            ),
             arc(
                 point(0.0, 0.0),
                 point(1.0, 0.0),
