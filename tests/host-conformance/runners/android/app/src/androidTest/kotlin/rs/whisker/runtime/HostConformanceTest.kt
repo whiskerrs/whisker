@@ -321,7 +321,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.transform.projective-plane" ||
                             command.getString("name") ==
-                            "paint.transform.motion-path-line",
+                            "paint.transform.motion-path-line" ||
+                            command.getString("name") ==
+                            "paint.transform.motion-path-curves",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->

@@ -235,21 +235,49 @@ fn motion_path_state(path: &OffsetPathValue, progress: f32) -> Option<(f32, f32,
     for command in commands {
         let next = match *command {
             MotionPathCommandValue::MoveTo(point) => {
-                let point = (point.x.get(), point.y.get());
+                let point = finite_motion_point(point)?;
                 current = Some(point);
                 subpath_start = Some(point);
                 continue;
             }
-            MotionPathCommandValue::LineTo(point) => (point.x.get(), point.y.get()),
-            MotionPathCommandValue::Close => subpath_start?,
+            MotionPathCommandValue::LineTo(point) => {
+                let next = finite_motion_point(point)?;
+                push_motion_line(&mut segments, current?, next);
+                next
+            }
+            MotionPathCommandValue::QuadraticTo { control, to } => {
+                let from = current?;
+                let control = finite_motion_point(control)?;
+                let to = finite_motion_point(to)?;
+                flatten_quadratic(&mut segments, from, control, to, 0);
+                to
+            }
+            MotionPathCommandValue::CubicTo {
+                control1,
+                control2,
+                to,
+            } => {
+                let from = current?;
+                let control1 = finite_motion_point(control1)?;
+                let control2 = finite_motion_point(control2)?;
+                let to = finite_motion_point(to)?;
+                flatten_cubic(&mut segments, from, control1, control2, to, 0);
+                to
+            }
+            MotionPathCommandValue::Close => {
+                let next = subpath_start?;
+                push_motion_line(
+                    &mut segments,
+                    current.expect("a subpath start implies a current motion point"),
+                    next,
+                );
+                next
+            }
         };
-        let from = current?;
-        let length = (next.0 - from.0).hypot(next.1 - from.1);
-        if length > 0.0 && length.is_finite() {
-            segments.push((from, next, length));
-            total_length += length;
-        }
         current = Some(next);
+    }
+    for segment in &segments {
+        total_length += segment.length;
     }
     if segments.is_empty() || !total_length.is_finite() {
         return None;
@@ -259,22 +287,220 @@ fn motion_path_state(path: &OffsetPathValue, progress: f32) -> Option<(f32, f32,
     let (last, preceding) = segments
         .split_last()
         .expect("motion path segments were checked as non-empty");
-    for (from, to, length) in preceding {
-        if target <= traversed + length {
-            let local = ((target - traversed) / length).clamp(0.0, 1.0);
-            let x = from.0 + (to.0 - from.0) * local;
-            let y = from.1 + (to.1 - from.1) * local;
-            let angle = (to.1 - from.1).atan2(to.0 - from.0).to_degrees();
-            return Some((x, y, angle.rem_euclid(360.0)));
+    for segment in preceding {
+        if target <= traversed + segment.length {
+            let local = ((target - traversed) / segment.length).clamp(0.0, 1.0);
+            return Some(segment.point_and_tangent(local));
         }
-        traversed += length;
+        traversed += segment.length;
     }
-    let (from, to, length) = *last;
-    let local = ((target - traversed) / length).clamp(0.0, 1.0);
-    let x = from.0 + (to.0 - from.0) * local;
-    let y = from.1 + (to.1 - from.1) * local;
-    let angle = (to.1 - from.1).atan2(to.0 - from.0).to_degrees();
-    Some((x, y, angle.rem_euclid(360.0)))
+    let local = ((target - traversed) / last.length).clamp(0.0, 1.0);
+    Some(last.point_and_tangent(local))
+}
+
+type MotionPoint = (f32, f32);
+
+const MOTION_CURVE_FLATNESS: f32 = 0.01;
+const MOTION_CURVE_MAX_DEPTH: u8 = 10;
+
+#[derive(Clone, Copy)]
+enum MotionCurve {
+    Line,
+    Quadratic {
+        start: MotionPoint,
+        control: MotionPoint,
+        end: MotionPoint,
+    },
+    Cubic {
+        start: MotionPoint,
+        control1: MotionPoint,
+        control2: MotionPoint,
+        end: MotionPoint,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct MotionSegment {
+    from: MotionPoint,
+    to: MotionPoint,
+    length: f32,
+    curve: MotionCurve,
+}
+
+impl MotionSegment {
+    fn point_and_tangent(self, local: f32) -> (f32, f32, f32) {
+        let (point, tangent) = match self.curve {
+            MotionCurve::Line => (
+                lerp_point(self.from, self.to, local),
+                (self.to.0 - self.from.0, self.to.1 - self.from.1),
+            ),
+            MotionCurve::Quadratic {
+                start,
+                control,
+                end,
+            } => {
+                let t = local;
+                let one_minus_t = 1.0 - t;
+                (
+                    (
+                        one_minus_t * one_minus_t * start.0
+                            + 2.0 * one_minus_t * t * control.0
+                            + t * t * end.0,
+                        one_minus_t * one_minus_t * start.1
+                            + 2.0 * one_minus_t * t * control.1
+                            + t * t * end.1,
+                    ),
+                    (
+                        2.0 * (one_minus_t * (control.0 - start.0) + t * (end.0 - control.0)),
+                        2.0 * (one_minus_t * (control.1 - start.1) + t * (end.1 - control.1)),
+                    ),
+                )
+            }
+            MotionCurve::Cubic {
+                start,
+                control1,
+                control2,
+                end,
+            } => {
+                let t = local;
+                let one_minus_t = 1.0 - t;
+                (
+                    (
+                        one_minus_t.powi(3) * start.0
+                            + 3.0 * one_minus_t * one_minus_t * t * control1.0
+                            + 3.0 * one_minus_t * t * t * control2.0
+                            + t.powi(3) * end.0,
+                        one_minus_t.powi(3) * start.1
+                            + 3.0 * one_minus_t * one_minus_t * t * control1.1
+                            + 3.0 * one_minus_t * t * t * control2.1
+                            + t.powi(3) * end.1,
+                    ),
+                    (
+                        3.0 * (one_minus_t * one_minus_t * (control1.0 - start.0)
+                            + 2.0 * one_minus_t * t * (control2.0 - control1.0)
+                            + t * t * (end.0 - control2.0)),
+                        3.0 * (one_minus_t * one_minus_t * (control1.1 - start.1)
+                            + 2.0 * one_minus_t * t * (control2.1 - control1.1)
+                            + t * t * (end.1 - control2.1)),
+                    ),
+                )
+            }
+        };
+        let tangent = if tangent.0.hypot(tangent.1) > f32::EPSILON {
+            tangent
+        } else {
+            (self.to.0 - self.from.0, self.to.1 - self.from.1)
+        };
+        let angle = tangent.1.atan2(tangent.0).to_degrees().rem_euclid(360.0);
+        (point.0, point.1, angle)
+    }
+}
+
+fn finite_motion_point(value: whisker_style::MotionPathPointValue) -> Option<MotionPoint> {
+    let point = (value.x.get(), value.y.get());
+    (point.0.is_finite() && point.1.is_finite()).then_some(point)
+}
+
+fn push_motion_line(segments: &mut Vec<MotionSegment>, from: MotionPoint, to: MotionPoint) {
+    push_motion_segment(segments, from, to, MotionCurve::Line);
+}
+
+fn push_motion_segment(
+    segments: &mut Vec<MotionSegment>,
+    from: MotionPoint,
+    to: MotionPoint,
+    curve: MotionCurve,
+) {
+    let length = (to.0 - from.0).hypot(to.1 - from.1);
+    if length > 0.0 && length.is_finite() {
+        segments.push(MotionSegment {
+            from,
+            to,
+            length,
+            curve,
+        });
+    }
+}
+
+fn flatten_quadratic(
+    segments: &mut Vec<MotionSegment>,
+    start: MotionPoint,
+    control: MotionPoint,
+    end: MotionPoint,
+    depth: u8,
+) {
+    if depth == MOTION_CURVE_MAX_DEPTH
+        || point_line_distance(control, start, end) <= MOTION_CURVE_FLATNESS
+    {
+        push_motion_segment(
+            segments,
+            start,
+            end,
+            MotionCurve::Quadratic {
+                start,
+                control,
+                end,
+            },
+        );
+        return;
+    }
+    let start_control = midpoint(start, control);
+    let control_end = midpoint(control, end);
+    let middle = midpoint(start_control, control_end);
+    flatten_quadratic(segments, start, start_control, middle, depth + 1);
+    flatten_quadratic(segments, middle, control_end, end, depth + 1);
+}
+
+fn flatten_cubic(
+    segments: &mut Vec<MotionSegment>,
+    start: MotionPoint,
+    control1: MotionPoint,
+    control2: MotionPoint,
+    end: MotionPoint,
+    depth: u8,
+) {
+    if depth == MOTION_CURVE_MAX_DEPTH
+        || point_line_distance(control1, start, end).max(point_line_distance(control2, start, end))
+            <= MOTION_CURVE_FLATNESS
+    {
+        push_motion_segment(
+            segments,
+            start,
+            end,
+            MotionCurve::Cubic {
+                start,
+                control1,
+                control2,
+                end,
+            },
+        );
+        return;
+    }
+    let p01 = midpoint(start, control1);
+    let p12 = midpoint(control1, control2);
+    let p23 = midpoint(control2, end);
+    let p012 = midpoint(p01, p12);
+    let p123 = midpoint(p12, p23);
+    let middle = midpoint(p012, p123);
+    flatten_cubic(segments, start, p01, p012, middle, depth + 1);
+    flatten_cubic(segments, middle, p123, p23, end, depth + 1);
+}
+
+fn point_line_distance(point: MotionPoint, start: MotionPoint, end: MotionPoint) -> f32 {
+    let delta = (end.0 - start.0, end.1 - start.1);
+    let chord = delta.0.hypot(delta.1);
+    if chord <= f32::EPSILON {
+        return (point.0 - start.0).hypot(point.1 - start.1);
+    }
+    ((point.0 - start.0) * delta.1 - (point.1 - start.1) * delta.0).abs() / chord
+}
+
+fn midpoint(a: MotionPoint, b: MotionPoint) -> MotionPoint {
+    ((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5)
+}
+
+fn lerp_point(a: MotionPoint, b: MotionPoint, t: f32) -> MotionPoint {
+    (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
 }
 
 fn rotation_z(degrees: f32) -> [f32; 16] {
@@ -714,7 +940,59 @@ mod tests {
 
         for offset_path in [
             OffsetPathValue::Path(Vec::new()),
+            OffsetPathValue::Path(vec![MotionPathCommandValue::MoveTo(point(f32::NAN, 0.0))]),
             OffsetPathValue::Path(vec![MotionPathCommandValue::LineTo(point(1.0, 0.0))]),
+            OffsetPathValue::Path(vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::LineTo(point(f32::NAN, 0.0)),
+            ]),
+            OffsetPathValue::Path(vec![MotionPathCommandValue::QuadraticTo {
+                control: point(1.0, 0.0),
+                to: point(2.0, 0.0),
+            }]),
+            OffsetPathValue::Path(vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::QuadraticTo {
+                    control: point(f32::NAN, 0.0),
+                    to: point(2.0, 0.0),
+                },
+            ]),
+            OffsetPathValue::Path(vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::QuadraticTo {
+                    control: point(1.0, 0.0),
+                    to: point(f32::NAN, 0.0),
+                },
+            ]),
+            OffsetPathValue::Path(vec![MotionPathCommandValue::CubicTo {
+                control1: point(1.0, 0.0),
+                control2: point(2.0, 0.0),
+                to: point(3.0, 0.0),
+            }]),
+            OffsetPathValue::Path(vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::CubicTo {
+                    control1: point(f32::NAN, 0.0),
+                    control2: point(2.0, 0.0),
+                    to: point(3.0, 0.0),
+                },
+            ]),
+            OffsetPathValue::Path(vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::CubicTo {
+                    control1: point(1.0, 0.0),
+                    control2: point(f32::NAN, 0.0),
+                    to: point(3.0, 0.0),
+                },
+            ]),
+            OffsetPathValue::Path(vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::CubicTo {
+                    control1: point(1.0, 0.0),
+                    control2: point(2.0, 0.0),
+                    to: point(f32::NAN, 0.0),
+                },
+            ]),
             OffsetPathValue::Path(vec![MotionPathCommandValue::Close]),
             OffsetPathValue::Path(vec![
                 MotionPathCommandValue::MoveTo(point(1.0, 1.0)),
@@ -733,6 +1011,45 @@ mod tests {
                 None
             );
         }
+
+        let quadratic = OffsetPathValue::Path(vec![
+            MotionPathCommandValue::MoveTo(point(0.0, 20.0)),
+            MotionPathCommandValue::QuadraticTo {
+                control: point(0.0, 0.0),
+                to: point(20.0, 0.0),
+            },
+        ]);
+        let (x, y, angle) = motion_path_state(&quadratic, 0.5).unwrap();
+        assert!((x - 5.0).abs() < 0.001, "{x}");
+        assert!((y - 5.0).abs() < 0.001, "{y}");
+        assert!((angle - 315.0).abs() < 0.001, "{angle}");
+
+        let cubic = OffsetPathValue::Path(vec![
+            MotionPathCommandValue::MoveTo(point(20.0, 0.0)),
+            MotionPathCommandValue::CubicTo {
+                control1: point(0.0, 0.0),
+                control2: point(0.0, 20.0),
+                to: point(20.0, 20.0),
+            },
+        ]);
+        let (x, y, angle) = motion_path_state(&cubic, 0.5).unwrap();
+        assert!((x - 5.0).abs() < 0.001, "{x}");
+        assert!((y - 10.0).abs() < 0.001, "{y}");
+        assert!((angle - 90.0).abs() < 0.001, "{angle}");
+
+        assert_eq!(point_line_distance((2.0, 0.0), (1.0, 0.0), (1.0, 0.0)), 1.0);
+        let cusp = MotionSegment {
+            from: (0.0, 0.0),
+            to: (2.0, 0.0),
+            length: 2.0,
+            curve: MotionCurve::Cubic {
+                start: (0.0, 0.0),
+                control1: (1.0, 0.0),
+                control2: (-1.0, 0.0),
+                end: (2.0, 0.0),
+            },
+        };
+        assert_eq!(cusp.point_and_tangent(0.5).2, 0.0);
     }
 
     #[test]

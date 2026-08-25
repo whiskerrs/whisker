@@ -832,12 +832,13 @@ children; Rust prepends its projection to the node transform before this same
 flat-plane normalization. Browser-style parent perspective,
 `perspective-origin`, and shared `preserve-3d` descendant spaces are outside
 this subset rather than silently changing semantics on any Host. The initial
-Lynx motion-path slice supports absolute `path()` polylines (`M`, `L`, `Z`),
-number/percentage `offset-distance`, and `offset-rotate: auto` or a fixed
-angle. Rust resolves the point and tangent, preserves Lynx's post-transform
-path translation, and emits the result through the existing `SetTransform`;
-no motion-path opcode or Host-side CSS parser is added. Curve commands, SVG
-arcs, and basic-shape paths remain pending follow-up slices.
+Lynx motion-path slice supports absolute `path()` lines and Bezier curves (`M`,
+`L`, `Q`, `C`, `Z`), number/percentage `offset-distance`, and
+`offset-rotate: auto` or a fixed angle. Rust adaptively measures curves,
+resolves their point and analytic tangent, preserves Lynx's post-transform path
+translation, and emits the result through the existing `SetTransform`; no
+motion-path opcode or Host-side CSS parser is added. SVG arcs and basic-shape
+paths remain pending follow-up slices.
 
 The final opcode set may combine common operations for compactness. The
 semantic separation matters because it enables dirty classification,

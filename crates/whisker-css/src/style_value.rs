@@ -70,6 +70,21 @@ impl ToStyleValue for OffsetPath {
                         MotionPathCommand::LineTo(value) => {
                             MotionPathCommandValue::LineTo(point(value))
                         }
+                        MotionPathCommand::QuadraticTo { control, to } => {
+                            MotionPathCommandValue::QuadraticTo {
+                                control: point(control),
+                                to: point(to),
+                            }
+                        }
+                        MotionPathCommand::CubicTo {
+                            control1,
+                            control2,
+                            to,
+                        } => MotionPathCommandValue::CubicTo {
+                            control1: point(control1),
+                            control2: point(control2),
+                            to: point(to),
+                        },
                         MotionPathCommand::Close => MotionPathCommandValue::Close,
                     })
                     .collect(),

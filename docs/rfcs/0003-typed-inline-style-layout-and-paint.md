@@ -487,12 +487,13 @@ pixel for rendering, prepends the projection, and emits the same canonical
 flat-plane matrix. Browser-style parent perspective, `perspective-origin`, and
 shared `preserve-3d` descendant spaces are outside the current subset. Lynx
 motion-path positioning is lowered through that same matrix operation: Rust
-measures absolute `path()` polylines (`M`, `L`, and `Z`), clamps normalized
-`offset-distance`, derives the tangent for `offset-rotate: auto` or uses a fixed
-angle, composes rotation before the ordinary transform list, and applies path
-translation after transform-origin. Quadratic/cubic commands, SVG arcs, and
-the `circle()`, `ellipse()`, and `inset()` path forms remain explicit pending
-subsets rather than Host-specific interpretations.
+adaptively measures absolute `path()` lines and Bezier curves (`M`, `L`, `Q`,
+`C`, and `Z`), clamps normalized `offset-distance`, derives the analytic
+tangent for `offset-rotate: auto` or uses a fixed angle, composes rotation
+before the ordinary transform list, and applies path translation after
+transform-origin. SVG arcs and the `circle()`, `ellipse()`, and `inset()` path
+forms remain explicit pending subsets rather than Host-specific
+interpretations.
 
 Protocol minor 1 groups those resolved meanings by Host capability rather
 than by CSS spelling. `SetBackgroundLayers` carries resource-backed images,

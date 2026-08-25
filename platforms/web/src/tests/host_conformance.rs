@@ -1239,6 +1239,9 @@ fn fixture(path: &str) -> &'static str {
         "core/transform-motion-path-line.json" => {
             include_str!("../../../../tests/host-conformance/core/transform-motion-path-line.json")
         }
+        "core/transform-motion-path-curves.json" => include_str!(
+            "../../../../tests/host-conformance/core/transform-motion-path-curves.json"
+        ),
         "wpt/css/css-color/t32-opacity-basic-0.6-a.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-color/t32-opacity-basic-0.6-a.json"
         ),

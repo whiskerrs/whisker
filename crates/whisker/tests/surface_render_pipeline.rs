@@ -720,6 +720,60 @@ fn render_motion_path_is_baked_into_the_existing_transform_operation() {
 }
 
 #[test]
+fn render_curved_motion_path_uses_rust_resolved_position_and_tangent() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(28).expect("test surface"),
+        StyleEnvironment::new(90.0, 50.0, 1.0, 14.0),
+    );
+    let style = Css::new()
+        .width(px(10))
+        .height(px(10))
+        .offset_path(OffsetPath::path(vec![
+            MotionPathCommand::MoveTo(MotionPathPoint::new(0.0, 20.0)),
+            MotionPathCommand::QuadraticTo {
+                control: MotionPathPoint::new(0.0, 0.0),
+                to: MotionPathPoint::new(20.0, 0.0),
+            },
+        ]))
+        .offset_distance(percent(50))
+        .offset_rotate(OffsetRotate::Auto);
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| render! { view(style: style) });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(90.0, 50.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("curved motion-path frame");
+    let root = surface.root().expect("surface root");
+    let transform = renderer.frames()[0]
+        .packet
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::SetTransform { node, transform } if *node == root => Some(*transform),
+            _ => None,
+        })
+        .expect("curve emits SetTransform");
+    assert!((transform.0[0] - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001);
+    assert!((transform.0[1] + std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001);
+    assert!((transform.0[12] - 2.928_932_2).abs() < 0.001);
+    assert!((transform.0[13] - 10.0).abs() < 0.001);
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
 fn render_logical_borders_reach_physical_frame_edges_in_rtl() {
     __reset_for_tests();
     let owner = Owner::new(None);

@@ -421,6 +421,22 @@ pub enum MotionPathCommandValue {
     MoveTo(MotionPathPointValue),
     /// Add a straight segment.
     LineTo(MotionPathPointValue),
+    /// Add a quadratic Bezier segment.
+    QuadraticTo {
+        /// Curve control point.
+        control: MotionPathPointValue,
+        /// Segment endpoint.
+        to: MotionPathPointValue,
+    },
+    /// Add a cubic Bezier segment.
+    CubicTo {
+        /// First curve control point.
+        control1: MotionPathPointValue,
+        /// Second curve control point.
+        control2: MotionPathPointValue,
+        /// Segment endpoint.
+        to: MotionPathPointValue,
+    },
     /// Close the current subpath with a straight segment.
     Close,
 }
