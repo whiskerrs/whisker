@@ -440,7 +440,8 @@ private final class Driver {
                     name == "paint.background-layers.size-contain" ||
                     name == "paint.background-layers.round-auto-aspect-ratio" ||
                     name == "paint.visual-effects.box-shadow-offset" ||
-                    name == "paint.visual-effects.box-shadow-spread" else {
+                    name == "paint.visual-effects.box-shadow-spread" ||
+                    name == "paint.visual-effects.box-shadow-blur" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
