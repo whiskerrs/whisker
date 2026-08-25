@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "id": "core.transform-motion-path-line",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 70.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [10.0, 15.0, 20.0, 10.0],
+            "background": { "kind": "named", "value": "green" },
+            "clip": { "horizontal": "visible", "vertical": "visible" },
+            "transform": [
+              0.0, 1.0, 0.0, 0.0,
+              -1.0, 0.0, 0.0, 0.0,
+              0.0, 0.0, 1.0, 0.0,
+              55.0, 7.5, 0.0, 1.0
+            ]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.transform.motion-path-line",
+        "samples": [
+          { "point": [56.0, 24.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 },
+          { "point": [63.0, 40.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 },
+          { "point": [52.0, 24.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 },
+          { "point": [66.0, 30.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

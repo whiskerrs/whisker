@@ -4,9 +4,10 @@ use crate::{
     BackdropFilterValue, BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue,
     BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundSizeValue, ColorValue,
     ComputedLengthPercentage, DirectionValue, Edges, GradientValue, InheritedStyle,
-    LengthPercentageValue, RadialGradientValue, SpecifiedStyle, StyleEnvironment, StyleNumber,
-    StyleProperty, StyleResolutionError, StyleValue, TransformFunctionValue, TransformOriginValue,
-    TransformValue, layout::resolve_affine,
+    LengthPercentageValue, MotionPathCommandValue, OffsetPathValue, OffsetRotateValue,
+    RadialGradientValue, SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty,
+    StyleResolutionError, StyleValue, TransformFunctionValue, TransformOriginValue, TransformValue,
+    layout::resolve_affine,
 };
 
 /// Four physical corners in top-left, top-right, bottom-right, bottom-left order.
@@ -216,6 +217,12 @@ pub enum ComputedTransformFunction {
 pub struct ComputedTransformStyle {
     /// Lynx-compatible perspective distance applied to this node, or none.
     pub perspective: Option<StyleNumber>,
+    /// Polyline path followed by the current node.
+    pub offset_path: OffsetPathValue,
+    /// Normalized progress along `offset_path`.
+    pub offset_distance: StyleNumber,
+    /// Tangent-following or fixed motion-path rotation.
+    pub offset_rotate: OffsetRotateValue,
     /// Ordered transform functions.
     pub functions: Vec<ComputedTransformFunction>,
     /// Horizontal origin relative to border-box width.
@@ -228,6 +235,9 @@ impl Default for ComputedTransformStyle {
     fn default() -> Self {
         Self {
             perspective: None,
+            offset_path: OffsetPathValue::None,
+            offset_distance: StyleNumber::new(0.0),
+            offset_rotate: OffsetRotateValue::Auto,
             functions: Vec::new(),
             origin_x: ComputedLengthPercentage::new(0.0, 0.5),
             origin_y: ComputedLengthPercentage::new(0.0, 0.5),
@@ -405,6 +415,37 @@ pub(crate) fn resolve_paint_style(
                     return Err(invalid(property));
                 }
                 paint.transform.perspective = Some(StyleNumber::new(distance));
+            }
+            StyleProperty::OffsetPath => {
+                let StyleValue::OffsetPath(value) = value else {
+                    return Err(invalid(property));
+                };
+                if !valid_offset_path(value) {
+                    return Err(invalid(property));
+                }
+                paint.transform.offset_path = value.clone();
+            }
+            StyleProperty::OffsetDistance => {
+                let distance = match value {
+                    StyleValue::Number(value) => value.get(),
+                    StyleValue::LengthPercentage(LengthPercentageValue::Percentage(value)) => {
+                        value.get() / 100.0
+                    }
+                    _ => return Err(invalid(property)),
+                };
+                if !distance.is_finite() || !(0.0..=1.0).contains(&distance) {
+                    return Err(invalid(property));
+                }
+                paint.transform.offset_distance = StyleNumber::new(distance);
+            }
+            StyleProperty::OffsetRotate => {
+                let StyleValue::OffsetRotate(value) = value else {
+                    return Err(invalid(property));
+                };
+                if matches!(value, OffsetRotateValue::Angle(angle) if !angle.get().is_finite()) {
+                    return Err(invalid(property));
+                }
+                paint.transform.offset_rotate = *value;
             }
             StyleProperty::TransformOrigin => {
                 let StyleValue::TransformOrigin(value) = value else {
@@ -651,6 +692,49 @@ pub(crate) fn resolve_paint_style(
         }
     }
     Ok(paint)
+}
+
+fn valid_offset_path(value: &OffsetPathValue) -> bool {
+    let OffsetPathValue::Path(commands) = value else {
+        return true;
+    };
+    let mut current = None;
+    let mut subpath_start = None;
+    let mut total_length = 0.0_f32;
+    for command in commands {
+        match *command {
+            MotionPathCommandValue::MoveTo(point) => {
+                if !point.x.get().is_finite() || !point.y.get().is_finite() {
+                    return false;
+                }
+                let point = (point.x.get(), point.y.get());
+                current = Some(point);
+                subpath_start = Some(point);
+            }
+            MotionPathCommandValue::LineTo(point) => {
+                let Some(from) = current else {
+                    return false;
+                };
+                if !point.x.get().is_finite() || !point.y.get().is_finite() {
+                    return false;
+                }
+                let to = (point.x.get(), point.y.get());
+                total_length += (to.0 - from.0).hypot(to.1 - from.1);
+                current = Some(to);
+            }
+            MotionPathCommandValue::Close => {
+                let (Some(from), Some(to)) = (current, subpath_start) else {
+                    return false;
+                };
+                total_length += (to.0 - from.0).hypot(to.1 - from.1);
+                current = Some(to);
+            }
+        }
+        if !total_length.is_finite() {
+            return false;
+        }
+    }
+    total_length > 0.0
 }
 
 fn resolve_transform_functions(
@@ -1484,6 +1568,157 @@ mod tests {
                 ))
             );
         }
+    }
+
+    #[test]
+    fn motion_path_resolves_progress_and_rotation_and_rejects_invalid_values() {
+        let point = |x, y| crate::MotionPathPointValue {
+            x: number(x),
+            y: number(y),
+        };
+        let path = OffsetPathValue::Path(vec![
+            MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+            MotionPathCommandValue::LineTo(point(40.0, 0.0)),
+            MotionPathCommandValue::LineTo(point(40.0, 30.0)),
+        ]);
+        let resolved = crate::resolve_style(
+            &SpecifiedStyle::new()
+                .push(
+                    StyleProperty::OffsetPath,
+                    StyleValue::OffsetPath(path.clone()),
+                )
+                .push(
+                    StyleProperty::OffsetDistance,
+                    StyleValue::LengthPercentage(percentage(75.0)),
+                )
+                .push(
+                    StyleProperty::OffsetRotate,
+                    StyleValue::OffsetRotate(OffsetRotateValue::Auto),
+                ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        let transform = &resolved.computed().paint().transform;
+        assert_eq!(transform.offset_path, path);
+        assert_eq!(transform.offset_distance, number(0.75));
+        assert_eq!(transform.offset_rotate, OffsetRotateValue::Auto);
+
+        let fixed = crate::resolve_style(
+            &SpecifiedStyle::new()
+                .push(
+                    StyleProperty::OffsetPath,
+                    StyleValue::OffsetPath(OffsetPathValue::None),
+                )
+                .push(
+                    StyleProperty::OffsetDistance,
+                    StyleValue::Number(number(0.5)),
+                )
+                .push(
+                    StyleProperty::OffsetRotate,
+                    StyleValue::OffsetRotate(OffsetRotateValue::Angle(number(45.0))),
+                ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            fixed.computed().paint().transform.offset_path,
+            OffsetPathValue::None
+        );
+        assert_eq!(
+            fixed.computed().paint().transform.offset_distance,
+            number(0.5)
+        );
+        assert_eq!(
+            fixed.computed().paint().transform.offset_rotate,
+            OffsetRotateValue::Angle(number(45.0))
+        );
+
+        let invalid_path = |path| {
+            crate::resolve_style(
+                &SpecifiedStyle::new().push(
+                    StyleProperty::OffsetPath,
+                    StyleValue::OffsetPath(OffsetPathValue::Path(path)),
+                ),
+                None,
+                StyleEnvironment::default(),
+            )
+        };
+        for commands in [
+            Vec::new(),
+            vec![MotionPathCommandValue::LineTo(point(1.0, 1.0))],
+            vec![MotionPathCommandValue::Close],
+            vec![MotionPathCommandValue::MoveTo(point(f32::NAN, 0.0))],
+            vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::LineTo(point(f32::NAN, 0.0)),
+            ],
+            vec![
+                MotionPathCommandValue::MoveTo(point(-f32::MAX, 0.0)),
+                MotionPathCommandValue::LineTo(point(f32::MAX, 0.0)),
+            ],
+            vec![
+                MotionPathCommandValue::MoveTo(point(1.0, 1.0)),
+                MotionPathCommandValue::LineTo(point(1.0, 1.0)),
+            ],
+        ] {
+            assert_eq!(
+                invalid_path(commands),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::OffsetPath
+                ))
+            );
+        }
+
+        let invalid_declaration = |property, value| {
+            crate::resolve_style(
+                &SpecifiedStyle::new().push(property, value),
+                None,
+                StyleEnvironment::default(),
+            )
+        };
+        for value in [
+            StyleValue::Text("invalid".into()),
+            StyleValue::Number(number(f32::NAN)),
+            StyleValue::Number(number(-0.1)),
+            StyleValue::Number(number(1.1)),
+            StyleValue::LengthPercentage(percentage(-1.0)),
+            StyleValue::LengthPercentage(percentage(101.0)),
+        ] {
+            assert_eq!(
+                invalid_declaration(StyleProperty::OffsetDistance, value),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::OffsetDistance
+                ))
+            );
+        }
+        for value in [
+            StyleValue::Number(number(0.0)),
+            StyleValue::OffsetRotate(OffsetRotateValue::Angle(number(f32::NAN))),
+        ] {
+            assert_eq!(
+                invalid_declaration(StyleProperty::OffsetRotate, value),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::OffsetRotate
+                ))
+            );
+        }
+        assert_eq!(
+            invalid_declaration(StyleProperty::OffsetPath, StyleValue::Number(number(0.0))),
+            Err(StyleResolutionError::InvalidPropertyValue(
+                StyleProperty::OffsetPath
+            ))
+        );
+
+        assert!(
+            invalid_path(vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::LineTo(point(10.0, 0.0)),
+                MotionPathCommandValue::Close,
+            ])
+            .is_ok()
+        );
     }
 
     #[test]

@@ -801,6 +801,7 @@ impl SurfaceEngine {
         border_height: f32,
     ) -> Result<Option<whisker_protocol::Transform>, SurfaceError> {
         if style.perspective.is_none()
+            && matches!(style.offset_path, whisker_style::OffsetPathValue::None)
             && style.functions.is_empty()
             && self
                 .scene
@@ -1187,6 +1188,27 @@ mod tests {
                 .resolve_node_transform(empty, &ComputedTransformStyle::default(), 1.0, 1.0)
                 .unwrap(),
             Some(whisker_protocol::Transform::IDENTITY)
+        );
+
+        let point = |x, y| whisker_style::MotionPathPointValue {
+            x: StyleNumber::new(x),
+            y: StyleNumber::new(y),
+        };
+        let motion = ComputedTransformStyle {
+            offset_path: whisker_style::OffsetPathValue::Path(vec![
+                whisker_style::MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                whisker_style::MotionPathCommandValue::LineTo(point(10.0, 0.0)),
+            ]),
+            offset_distance: StyleNumber::new(0.5),
+            ..ComputedTransformStyle::default()
+        };
+        assert_eq!(
+            empty_surface
+                .resolve_node_transform(empty, &motion, 1.0, 1.0)
+                .unwrap()
+                .unwrap()
+                .0[12],
+            5.0
         );
     }
 

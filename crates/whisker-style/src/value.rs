@@ -405,6 +405,46 @@ pub struct TransformOriginValue {
     pub vertical: LengthPercentageValue,
 }
 
+/// One absolute point in a Lynx `offset-path: path()` value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MotionPathPointValue {
+    /// Horizontal logical-pixel coordinate.
+    pub x: StyleNumber,
+    /// Vertical logical-pixel coordinate.
+    pub y: StyleNumber,
+}
+
+/// One command in the initially supported polyline motion-path subset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MotionPathCommandValue {
+    /// Start a new subpath.
+    MoveTo(MotionPathPointValue),
+    /// Add a straight segment.
+    LineTo(MotionPathPointValue),
+    /// Close the current subpath with a straight segment.
+    Close,
+}
+
+/// Typed value of `offset-path`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum OffsetPathValue {
+    /// Disable motion-path translation and rotation.
+    #[default]
+    None,
+    /// Follow an absolute path in the node's local logical-pixel space.
+    Path(Vec<MotionPathCommandValue>),
+}
+
+/// Typed value of `offset-rotate`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum OffsetRotateValue {
+    /// Follow the path tangent.
+    #[default]
+    Auto,
+    /// Use a fixed clockwise angle in degrees.
+    Angle(StyleNumber),
+}
+
 /// An owned value in a specified inline-style declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StyleValue {
@@ -442,6 +482,10 @@ pub enum StyleValue {
     Transform(TransformValue),
     /// Transform origin resolved against the node border box.
     TransformOrigin(TransformOriginValue),
+    /// Motion path followed by the current node.
+    OffsetPath(OffsetPathValue),
+    /// Motion-path tangent or fixed rotation.
+    OffsetRotate(OffsetRotateValue),
     /// Font family.
     FontFamily(FontFamilyValue),
     /// Font face style.

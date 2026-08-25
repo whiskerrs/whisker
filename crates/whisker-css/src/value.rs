@@ -10,7 +10,9 @@
 
 use core::fmt;
 
-use crate::data_type::{CssString, FitContent, Length, LengthPercentage, MaxContent, Percentage};
+use crate::data_type::{
+    CssString, FitContent, Length, LengthPercentage, MaxContent, Number, Percentage,
+};
 use crate::to_css::{ToCss, write_number};
 
 // ---------- BackdropFilter ----------
@@ -43,6 +45,129 @@ impl ToCss for BackdropFilter {
                 radius.to_css(dest)?;
                 dest.write_char(')')
             }
+        }
+    }
+}
+
+// ---------- Motion path ----------
+
+/// One absolute point in an `offset-path: path()` polyline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MotionPathPoint {
+    /// Horizontal logical-pixel coordinate.
+    pub x: f32,
+    /// Vertical logical-pixel coordinate.
+    pub y: f32,
+}
+
+impl MotionPathPoint {
+    /// Creates an absolute motion-path point.
+    pub const fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+}
+
+/// One command in a polyline `offset-path: path()` value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MotionPathCommand {
+    /// Start a new subpath.
+    MoveTo(MotionPathPoint),
+    /// Add a straight segment.
+    LineTo(MotionPathPoint),
+    /// Close the current subpath.
+    Close,
+}
+
+/// Supported `offset-path` value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OffsetPath {
+    /// Disable motion-path positioning.
+    None,
+    /// Follow an absolute polyline path.
+    Path(Vec<MotionPathCommand>),
+}
+
+impl OffsetPath {
+    /// Creates a polyline `path()` from absolute commands.
+    pub fn path(commands: impl Into<Vec<MotionPathCommand>>) -> Self {
+        Self::Path(commands.into())
+    }
+}
+
+impl ToCss for OffsetPath {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        let Self::Path(commands) = self else {
+            return dest.write_str("none");
+        };
+        dest.write_str("path(\"")?;
+        for (index, command) in commands.iter().enumerate() {
+            if index > 0 {
+                dest.write_char(' ')?;
+            }
+            match command {
+                MotionPathCommand::MoveTo(point) => {
+                    dest.write_str("M ")?;
+                    write_number(dest, point.x)?;
+                    dest.write_char(' ')?;
+                    write_number(dest, point.y)?;
+                }
+                MotionPathCommand::LineTo(point) => {
+                    dest.write_str("L ")?;
+                    write_number(dest, point.x)?;
+                    dest.write_char(' ')?;
+                    write_number(dest, point.y)?;
+                }
+                MotionPathCommand::Close => dest.write_char('Z')?,
+            }
+        }
+        dest.write_str("\")")
+    }
+}
+
+/// Supported `offset-distance` value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OffsetDistance {
+    /// Unitless normalized progress in the `0..=1` range.
+    Number(Number),
+    /// Percentage progress in the `0%..=100%` range.
+    Percentage(Percentage),
+}
+
+impl From<Number> for OffsetDistance {
+    fn from(value: Number) -> Self {
+        Self::Number(value)
+    }
+}
+
+impl From<Percentage> for OffsetDistance {
+    fn from(value: Percentage) -> Self {
+        Self::Percentage(value)
+    }
+}
+
+impl ToCss for OffsetDistance {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Number(value) => value.to_css(dest),
+            Self::Percentage(value) => value.to_css(dest),
+        }
+    }
+}
+
+/// Supported `offset-rotate` value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OffsetRotate {
+    /// Follow the path tangent.
+    Auto,
+    /// Use a fixed clockwise angle.
+    Angle(crate::Angle),
+}
+
+impl ToCss for OffsetRotate {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::Auto => dest.write_str("auto"),
+            Self::Angle(angle) => angle.to_css(dest),
         }
     }
 }

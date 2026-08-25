@@ -126,8 +126,9 @@
       "id": "paint.transform",
       "basis": "lynx-4.0",
       "properties": ["offset-distance", "offset-path", "offset-rotate", "perspective", "transform", "transform-origin"],
-      "supported_subset": ["transform-2d-functions", "flat-plane-3d-functions", "matrix", "projective-matrix3d", "length-percentage-translate", "border-box-transform-origin", "lynx-current-node-perspective", "flat-at-each-node"],
-      "unsupported_browser_subset": ["web-parent-perspective-semantics", "perspective-origin", "preserve-3d", "motion-path"],
+      "supported_subset": ["transform-2d-functions", "flat-plane-3d-functions", "matrix", "projective-matrix3d", "length-percentage-translate", "border-box-transform-origin", "lynx-current-node-perspective", "motion-path-polyline", "offset-distance-number-and-percentage", "offset-rotate-auto-or-angle", "flat-at-each-node"],
+      "pending_subset": ["motion-path-quadratic-and-cubic", "motion-path-circle", "motion-path-ellipse", "motion-path-inset", "motion-path-svg-arc"],
+      "unsupported_browser_subset": ["web-parent-perspective-semantics", "perspective-origin", "preserve-3d"],
       "protocol": ["SetTransform", "SetVisualEffects"],
       "rust": "partial",
       "hosts": {"desktop": "partial", "web": "partial", "android": "partial", "ios": "partial"}

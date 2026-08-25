@@ -829,9 +829,15 @@ local plane. Each Host applies the projective result and flattens at that node;
 Android maps the `z = 0` slice exactly to a density-adjusted 3-by-3 homography.
 Lynx-compatible `perspective` applies to the current node rather than its
 children; Rust prepends its projection to the node transform before this same
-flat-plane normalization. Browser-style parent perspective, `perspective-origin`,
-shared `preserve-3d` descendant spaces, and motion paths are outside this
-subset rather than silently changing semantics on any Host.
+flat-plane normalization. Browser-style parent perspective,
+`perspective-origin`, and shared `preserve-3d` descendant spaces are outside
+this subset rather than silently changing semantics on any Host. The initial
+Lynx motion-path slice supports absolute `path()` polylines (`M`, `L`, `Z`),
+number/percentage `offset-distance`, and `offset-rotate: auto` or a fixed
+angle. Rust resolves the point and tangent, preserves Lynx's post-transform
+path translation, and emits the result through the existing `SetTransform`;
+no motion-path opcode or Host-side CSS parser is added. Curve commands, SVG
+arcs, and basic-shape paths remain pending follow-up slices.
 
 The final opcode set may combine common operations for compactness. The
 semantic separation matters because it enables dirty classification,
