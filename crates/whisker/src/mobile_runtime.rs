@@ -1396,6 +1396,10 @@ impl MobileFrameOwned {
                     raw.tag = OP_TEXT;
                     raw.node = node.get();
                     let shadow = content.paint.shadows.first();
+                    let shadow_color = match shadow {
+                        Some(value) => mobile_color(&value.color, &mut strings),
+                        None => mobile_color(&PaintColor::default(), &mut strings),
+                    };
                     texts.push(Box::new(MobileText {
                         text: push_string(&mut strings, &content.payload.text),
                         font_size: content.payload.style.font_size,
@@ -1417,10 +1421,7 @@ impl MobileFrameOwned {
                         shadow_offset_y: shadow.map_or(0.0, |value| value.offset_y),
                         shadow_blur_radius: shadow.map_or(0.0, |value| value.blur_radius),
                         shadow_flags: u32::from(shadow.is_some()),
-                        shadow_color: shadow.map_or_else(
-                            || mobile_color(&PaintColor::default(), &mut strings),
-                            |value| mobile_color(&value.color, &mut strings),
-                        ),
+                        shadow_color,
                         prepared_content: content.prepared_content.map_or(0, |value| value.get()),
                     }));
                     raw.payload = texts.last().unwrap().as_ref() as *const _ as *const c_void;

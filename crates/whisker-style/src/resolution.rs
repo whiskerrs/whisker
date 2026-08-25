@@ -1264,6 +1264,7 @@ mod tests {
         let value = inherited(&child).text_shadow().unwrap();
         assert_eq!([value.offset_x(), value.offset_y()], [1.0, 14.0]);
         assert_eq!(value.blur_radius(), 3.0);
+        assert_eq!(value.color(), &ColorValue::Named("red".into()));
 
         let cleared = resolve_text_style(
             &declaration(
@@ -1288,6 +1289,64 @@ mod tests {
         assert_eq!(
             resolve_text_style(&invalid, None, environment).unwrap_err(),
             StyleResolutionError::InvalidPropertyValue(StyleProperty::TextShadow)
+        );
+
+        let invalid_offset_x = declaration(
+            StyleProperty::TextShadow,
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: px(f32::NAN),
+                offset_y: LengthValue::Zero,
+                blur_radius: LengthValue::Zero,
+                color: ColorValue::Named("black".into()),
+            }),
+        );
+        let invalid_offset_y = declaration(
+            StyleProperty::TextShadow,
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: LengthValue::Zero,
+                offset_y: px(f32::NAN),
+                blur_radius: LengthValue::Zero,
+                color: ColorValue::Named("black".into()),
+            }),
+        );
+        let invalid_blur = declaration(
+            StyleProperty::TextShadow,
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: LengthValue::Zero,
+                offset_y: LengthValue::Zero,
+                blur_radius: px(f32::NAN),
+                color: ColorValue::Named("black".into()),
+            }),
+        );
+        assert_eq!(
+            resolve_text_style(&invalid_offset_x, None, environment).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::TextShadow)
+        );
+        assert_eq!(
+            resolve_text_style(&invalid_offset_y, None, environment).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::TextShadow)
+        );
+        assert_eq!(
+            resolve_text_style(&invalid_blur, None, environment).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::TextShadow)
+        );
+        let invalid_color = declaration(
+            StyleProperty::TextShadow,
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: LengthValue::Zero,
+                offset_y: LengthValue::Zero,
+                blur_radius: LengthValue::Zero,
+                color: ColorValue::Rgba {
+                    red: 0,
+                    green: 0,
+                    blue: 0,
+                    alpha: number(f32::NAN),
+                },
+            }),
+        );
+        assert_eq!(
+            resolve_text_style(&invalid_color, None, environment).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::Color)
         );
     }
 
