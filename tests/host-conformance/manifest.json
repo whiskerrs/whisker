@@ -500,6 +500,13 @@
       "checkpoints": ["semantic-projection"]
     },
     {
+      "id": "core.text-decoration-lynx",
+      "feature": "text-decoration-lynx",
+      "fixture": "core/text-decoration-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
       "id": "host.measure.text.basic",
       "feature": "text-measurement",
       "fixture": "core/text-measure-basic.json",

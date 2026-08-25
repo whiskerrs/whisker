@@ -464,6 +464,8 @@ impl Driver {
                             name.as_str()
                         } else if name == "paint.text.shadow-single" {
                             "paint.text.shadow-single"
+                        } else if name == "paint.text.decoration-lynx" {
+                            "paint.text.decoration-lynx"
                         } else if name == "paint.visual-effects.image-rendering-pixelated" {
                             "paint.visual-effects.image-rendering-pixelated"
                         } else if self.resource_lifecycle {
@@ -884,6 +886,43 @@ impl Driver {
                     },
                 );
                 assert_style(&text_style, "text-shadow", &expected_shadow);
+                let expected_decoration = text.decoration.as_ref();
+                assert_style(
+                    &text_style,
+                    "text-decoration-line",
+                    expected_decoration.map_or("none", |decoration| match decoration.line {
+                        whisker_host_conformance::TextDecorationLineFixture::Underline => {
+                            "underline"
+                        }
+                        whisker_host_conformance::TextDecorationLineFixture::LineThrough => {
+                            "line-through"
+                        }
+                    }),
+                );
+                if let Some(decoration) = expected_decoration {
+                    assert_style(
+                        &text_style,
+                        "text-decoration-style",
+                        match decoration.style {
+                            whisker_host_conformance::TextDecorationStyleFixture::Solid => "solid",
+                            whisker_host_conformance::TextDecorationStyleFixture::Double => {
+                                "double"
+                            }
+                            whisker_host_conformance::TextDecorationStyleFixture::Dotted => {
+                                "dotted"
+                            }
+                            whisker_host_conformance::TextDecorationStyleFixture::Dashed => {
+                                "dashed"
+                            }
+                            whisker_host_conformance::TextDecorationStyleFixture::Wavy => "wavy",
+                        },
+                    );
+                    assert_style(
+                        &text_style,
+                        "text-decoration-color",
+                        &fixture_color_css(&decoration.color),
+                    );
+                }
             }
             let mut expected_shadows = fixture_node
                 .box_shadows
@@ -1406,6 +1445,9 @@ fn fixture(path: &str) -> &'static str {
         }
         "core/text-shadow-single.json" => {
             include_str!("../../../../tests/host-conformance/core/text-shadow-single.json")
+        }
+        "core/text-decoration-lynx.json" => {
+            include_str!("../../../../tests/host-conformance/core/text-decoration-lynx.json")
         }
         _ => panic!("manifest fixture is not embedded in the Web test: {path}"),
     }
@@ -2061,6 +2103,41 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
         },
         paint: TextPaint {
             foreground: color(&text.color),
+            decoration: text.decoration.as_ref().map_or_else(
+                whisker_protocol::TextDecoration::default,
+                |decoration| whisker_protocol::TextDecoration {
+                    lines: whisker_protocol::TextDecorationLines {
+                        underline: matches!(
+                            decoration.line,
+                            whisker_host_conformance::TextDecorationLineFixture::Underline
+                        ),
+                        overline: false,
+                        line_through: matches!(
+                            decoration.line,
+                            whisker_host_conformance::TextDecorationLineFixture::LineThrough
+                        ),
+                    },
+                    color: color(&decoration.color),
+                    style: match decoration.style {
+                        whisker_host_conformance::TextDecorationStyleFixture::Solid => {
+                            whisker_protocol::TextDecorationStyle::Solid
+                        }
+                        whisker_host_conformance::TextDecorationStyleFixture::Double => {
+                            whisker_protocol::TextDecorationStyle::Double
+                        }
+                        whisker_host_conformance::TextDecorationStyleFixture::Dotted => {
+                            whisker_protocol::TextDecorationStyle::Dotted
+                        }
+                        whisker_host_conformance::TextDecorationStyleFixture::Dashed => {
+                            whisker_protocol::TextDecorationStyle::Dashed
+                        }
+                        whisker_host_conformance::TextDecorationStyleFixture::Wavy => {
+                            whisker_protocol::TextDecorationStyle::Wavy
+                        }
+                    },
+                    thickness: whisker_protocol::TextDecorationThickness::Auto,
+                },
+            ),
             shadows: text
                 .shadow
                 .iter()

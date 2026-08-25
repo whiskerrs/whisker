@@ -48,6 +48,23 @@ impl BoxPrimitiveKind {
     }
 }
 
+/// Builds one axis-aligned solid fill used by non-box paint such as text decoration.
+pub(crate) fn solid_rect_primitive(rect: LayoutRect, color: [f32; 4]) -> BoxPrimitive {
+    BoxPrimitive {
+        outer_rect: rect,
+        outer_radii_x: [0.0; 4],
+        outer_radii_y: [0.0; 4],
+        inner_rect: rect,
+        inner_radii_x: [0.0; 4],
+        inner_radii_y: [0.0; 4],
+        border_widths: [0.0; 4],
+        color,
+        border_colors: [[0.0; 4]; 4],
+        border_styles: [0.0; 4],
+        kind: BoxPrimitiveKind::Fill,
+    }
+}
+
 /// Builds the quad used by a background image layer. The shader evaluates the
 /// gradient against its independently resolved positioning box.
 pub(crate) fn background_gradient_primitive(

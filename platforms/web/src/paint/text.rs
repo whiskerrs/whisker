@@ -9,6 +9,31 @@ use crate::{WebError, px, set_style};
 pub(crate) fn apply(element: &web_sys::Element, content: &TextContent) -> Result<(), WebError> {
     apply_metrics_style(element, &content.payload)?;
     set_style(element, "color", &css_color(&content.paint.foreground))?;
+    let decoration = &content.paint.decoration;
+    let line = if decoration.lines.underline {
+        "underline"
+    } else if decoration.lines.line_through {
+        "line-through"
+    } else {
+        "none"
+    };
+    set_style(element, "text-decoration-line", line)?;
+    set_style(
+        element,
+        "text-decoration-style",
+        match decoration.style {
+            whisker_protocol::TextDecorationStyle::Solid => "solid",
+            whisker_protocol::TextDecorationStyle::Double => "double",
+            whisker_protocol::TextDecorationStyle::Dotted => "dotted",
+            whisker_protocol::TextDecorationStyle::Dashed => "dashed",
+            whisker_protocol::TextDecorationStyle::Wavy => "wavy",
+        },
+    )?;
+    set_style(
+        element,
+        "text-decoration-color",
+        &css_color(&decoration.color),
+    )?;
     set_style(
         element,
         "text-shadow",

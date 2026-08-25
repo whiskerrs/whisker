@@ -20,8 +20,20 @@ public data class WhiskerTextContent(
     public val fontSize: Float,
     public val fontWeight: Int,
     public val color: Int,
-    public val shadow: WhiskerTextShadow?,
+    public val decoration: WhiskerTextDecoration? = null,
+    public val shadow: WhiskerTextShadow? = null,
 )
+
+/** One inherited Lynx text decoration. */
+public data class WhiskerTextDecoration(
+    public val line: WhiskerTextDecorationLine,
+    public val style: WhiskerTextDecorationStyle,
+    public val color: Int,
+)
+
+public enum class WhiskerTextDecorationLine { UNDERLINE, LINE_THROUGH }
+
+public enum class WhiskerTextDecorationStyle { SOLID, DOUBLE, DOTTED, DASHED, WAVY }
 
 /** One resolved shadow painted behind native text glyphs. */
 public data class WhiskerTextShadow(

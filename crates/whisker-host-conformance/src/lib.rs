@@ -606,9 +606,50 @@ pub struct TextFixture {
     pub font_weight: u16,
     /// Foreground glyph color.
     pub color: ColorFixture,
+    /// Optional single Lynx text decoration.
+    #[serde(default)]
+    pub decoration: Option<TextDecorationFixture>,
     /// Optional single Lynx-compatible shadow.
     #[serde(default)]
     pub shadow: Option<TextShadowFixture>,
+}
+
+/// One resolved Lynx text decoration.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TextDecorationFixture {
+    /// Single supported line kind.
+    pub line: TextDecorationLineFixture,
+    /// Stroke style.
+    pub style: TextDecorationStyleFixture,
+    /// Decoration color.
+    pub color: ColorFixture,
+}
+
+/// Lynx's single decoration line.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TextDecorationLineFixture {
+    /// A line below the glyphs.
+    Underline,
+    /// A line through the glyphs.
+    LineThrough,
+}
+
+/// Lynx decoration stroke styles.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TextDecorationStyleFixture {
+    /// One solid line.
+    Solid,
+    /// Two parallel lines.
+    Double,
+    /// A sequence of dots.
+    Dotted,
+    /// A sequence of dashes.
+    Dashed,
+    /// A wave-shaped line.
+    Wavy,
 }
 
 /// One resolved native text shadow.
@@ -1405,6 +1446,10 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                         && text.font_size > 0.0
                         && (1..=1000).contains(&text.font_weight)
                         && valid_color(&text.color)
+                        && text
+                            .decoration
+                            .as_ref()
+                            .is_none_or(|decoration| valid_color(&decoration.color))
                         && text.shadow.as_ref().is_none_or(|shadow| {
                             shadow.offset.into_iter().all(f32::is_finite)
                                 && shadow.blur_radius.is_finite()

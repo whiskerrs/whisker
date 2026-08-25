@@ -537,6 +537,43 @@ pub enum TextShadowValue {
     },
 }
 
+/// The single decoration line supported by Lynx's `text-decoration` shorthand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextDecorationLineValue {
+    /// No decoration.
+    None,
+    /// A line below the glyphs.
+    Underline,
+    /// A line through the glyphs.
+    LineThrough,
+}
+
+/// Lynx-compatible decoration stroke style.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextDecorationStyleValue {
+    /// One solid line.
+    Solid,
+    /// Two parallel lines.
+    Double,
+    /// A sequence of dots.
+    Dotted,
+    /// A sequence of dashes.
+    Dashed,
+    /// A wave-shaped line.
+    Wavy,
+}
+
+/// Typed value for Lynx's inherited, single-line `text-decoration` shorthand.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TextDecorationValue {
+    /// Selected line kind.
+    pub line: TextDecorationLineValue,
+    /// Selected stroke style.
+    pub style: TextDecorationStyleValue,
+    /// Explicit decoration color, or the resolved text color when omitted.
+    pub color: Option<ColorValue>,
+}
+
 /// An owned value in a specified inline-style declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StyleValue {
@@ -590,6 +627,8 @@ pub enum StyleValue {
     Color(ColorValue),
     /// Single inherited text shadow.
     TextShadow(TextShadowValue),
+    /// Single inherited Lynx text decoration.
+    TextDecoration(TextDecorationValue),
     /// Border line style.
     BorderStyle(crate::BorderStyleValue),
     /// Overflow behavior on one axis.

@@ -91,6 +91,41 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
         },
         paint: TextPaint {
             foreground: color_protocol(&text.color),
+            decoration: text.decoration.as_ref().map_or_else(
+                whisker_protocol::TextDecoration::default,
+                |decoration| whisker_protocol::TextDecoration {
+                    lines: whisker_protocol::TextDecorationLines {
+                        underline: matches!(
+                            decoration.line,
+                            whisker_host_conformance::TextDecorationLineFixture::Underline
+                        ),
+                        overline: false,
+                        line_through: matches!(
+                            decoration.line,
+                            whisker_host_conformance::TextDecorationLineFixture::LineThrough
+                        ),
+                    },
+                    color: color_protocol(&decoration.color),
+                    style: match decoration.style {
+                        whisker_host_conformance::TextDecorationStyleFixture::Solid => {
+                            whisker_protocol::TextDecorationStyle::Solid
+                        }
+                        whisker_host_conformance::TextDecorationStyleFixture::Double => {
+                            whisker_protocol::TextDecorationStyle::Double
+                        }
+                        whisker_host_conformance::TextDecorationStyleFixture::Dotted => {
+                            whisker_protocol::TextDecorationStyle::Dotted
+                        }
+                        whisker_host_conformance::TextDecorationStyleFixture::Dashed => {
+                            whisker_protocol::TextDecorationStyle::Dashed
+                        }
+                        whisker_host_conformance::TextDecorationStyleFixture::Wavy => {
+                            whisker_protocol::TextDecorationStyle::Wavy
+                        }
+                    },
+                    thickness: whisker_protocol::TextDecorationThickness::Auto,
+                },
+            ),
             shadows: text
                 .shadow
                 .iter()
@@ -511,6 +546,8 @@ impl Driver {
                     assert!(name.starts_with("paint."), "unsupported Desktop checkpoint");
                     if name == "paint.text.shadow-single" {
                         self.assert_text_shadow();
+                    } else if name == "paint.text.decoration-lynx" {
+                        self.assert_text_decoration();
                     }
                     checkpoints.push(Checkpoint {
                         logical_size: [
@@ -883,6 +920,48 @@ impl Driver {
                 alpha: 0.75
             }
         );
+    }
+
+    fn assert_text_decoration(&self) {
+        let commands = self
+            .scene
+            .as_ref()
+            .expect("checkpoint follows attach")
+            .paint_commands();
+        let decorations = commands
+            .iter()
+            .filter_map(|command| match command {
+                PaintCommand::Text { content, .. } => Some(&content.paint.decoration),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(decorations.len(), 5);
+        assert!(decorations[0].lines.underline);
+        assert_eq!(
+            decorations[0].style,
+            whisker_protocol::TextDecorationStyle::Solid
+        );
+        assert!(decorations[1].lines.underline);
+        assert_eq!(
+            decorations[1].style,
+            whisker_protocol::TextDecorationStyle::Double
+        );
+        assert!(decorations[2].lines.underline);
+        assert_eq!(
+            decorations[2].style,
+            whisker_protocol::TextDecorationStyle::Dotted
+        );
+        assert!(decorations[3].lines.line_through);
+        assert_eq!(
+            decorations[3].style,
+            whisker_protocol::TextDecorationStyle::Dashed
+        );
+        assert!(decorations[4].lines.line_through);
+        assert_eq!(
+            decorations[4].style,
+            whisker_protocol::TextDecorationStyle::Wavy
+        );
+        assert_eq!(decorations[0].color, PaintColor::Named("red".into()));
     }
 
     fn clipped_box_primitives(&self) -> Vec<ClippedBoxPrimitive> {

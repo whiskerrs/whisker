@@ -11,6 +11,9 @@ import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerView
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerTextContent
+import rs.whisker.runtime.WhiskerTextDecoration
+import rs.whisker.runtime.WhiskerTextDecorationLine
+import rs.whisker.runtime.WhiskerTextDecorationStyle
 import rs.whisker.runtime.WhiskerTextShadow
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.paint.HostBackgroundGeometry
@@ -184,10 +187,17 @@ internal class HostScene(
                 operation.scalar !in 0f..1f
             ) return false
             11 -> if (operation.node !in existing || operation.integer !in 0..1) return false
-            13 -> if (
-                operation.node !in existing || operation.text == null ||
-                operation.numbers?.size ?: 0 < 17 || operation.names?.size ?: 0 < 2
-            ) return false
+            13 -> {
+                val values = operation.numbers ?: return false
+                if (
+                    operation.node !in existing || operation.text == null ||
+                    values.size < 24 || operation.names?.size ?: 0 < 3 ||
+                    !values.all { it.isFinite() } || values[17].toInt() !in 0..2 ||
+                    values[17] != values[17].toInt().toFloat() ||
+                    values[18].toInt() !in 0..4 ||
+                    values[18] != values[18].toInt().toFloat()
+                ) return false
+            }
             14 -> if (operation.node !in existing || operation.value == null) return false
             21 -> if (!validBackgroundLayers(operation, existing)) return false
             else -> return false
@@ -358,7 +368,7 @@ internal class HostScene(
     }
 
     private fun applyText(node: HostNode, text: String, values: FloatArray, names: Array<String>) {
-        require(values.size >= 17)
+        require(values.size >= 24)
         val mounted = requireNotNull(node.mountedElement)
         require(
             mounted.setText(
@@ -371,6 +381,19 @@ internal class HostScene(
                     } else {
                         rgba(values[3], values[4], values[5], values[6])
                     },
+                    decoration = if (values[17] == 0f) null else WhiskerTextDecoration(
+                        line = if (values[17].toInt() and 1 != 0) {
+                            WhiskerTextDecorationLine.UNDERLINE
+                        } else {
+                            WhiskerTextDecorationLine.LINE_THROUGH
+                        },
+                        style = WhiskerTextDecorationStyle.entries[values[18].toInt()],
+                        color = if (values[23] == 0f) {
+                            parseNamedColor(names[2])
+                        } else {
+                            rgba(values[19], values[20], values[21], values[22])
+                        },
+                    ),
                     shadow = if (values[8] == 0f) null else WhiskerTextShadow(
                         offsetX = values[9],
                         offsetY = values[10],

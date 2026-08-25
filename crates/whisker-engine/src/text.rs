@@ -12,6 +12,7 @@ use whisker_protocol::{
 };
 use whisker_style::{
     ColorValue, ComputedLineHeight, FontFamilyValue, FontStyleValue, InheritedStyle,
+    TextDecorationLineValue, TextDecorationStyleValue,
 };
 
 /// Plain UTF-8 text and the shaping behavior not supplied by inherited style.
@@ -113,6 +114,38 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &InheritedStyle) -> Lower
             payload,
             paint: TextPaint {
                 foreground: lower_color(style.color()),
+                decoration: whisker_protocol::TextDecoration {
+                    lines: whisker_protocol::TextDecorationLines {
+                        underline: matches!(
+                            style.text_decoration().line(),
+                            TextDecorationLineValue::Underline
+                        ),
+                        overline: false,
+                        line_through: matches!(
+                            style.text_decoration().line(),
+                            TextDecorationLineValue::LineThrough
+                        ),
+                    },
+                    color: lower_color(style.text_decoration().color()),
+                    style: match style.text_decoration().style() {
+                        TextDecorationStyleValue::Solid => {
+                            whisker_protocol::TextDecorationStyle::Solid
+                        }
+                        TextDecorationStyleValue::Double => {
+                            whisker_protocol::TextDecorationStyle::Double
+                        }
+                        TextDecorationStyleValue::Dotted => {
+                            whisker_protocol::TextDecorationStyle::Dotted
+                        }
+                        TextDecorationStyleValue::Dashed => {
+                            whisker_protocol::TextDecorationStyle::Dashed
+                        }
+                        TextDecorationStyleValue::Wavy => {
+                            whisker_protocol::TextDecorationStyle::Wavy
+                        }
+                    },
+                    thickness: whisker_protocol::TextDecorationThickness::Auto,
+                },
                 shadows: style
                     .text_shadow()
                     .into_iter()
@@ -123,7 +156,6 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &InheritedStyle) -> Lower
                         color: lower_color(shadow.color()),
                     })
                     .collect(),
-                ..TextPaint::default()
             },
             prepared_content: None,
         },
@@ -187,7 +219,7 @@ mod tests {
     use whisker_style::{
         FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
         SpecifiedStyle, StyleDeclaration, StyleEnvironment, StyleNumber, StyleProperty, StyleValue,
-        TextShadowValue, resolve_style,
+        TextDecorationValue, TextShadowValue, resolve_style,
     };
 
     fn resolved(declarations: Vec<StyleDeclaration>) -> whisker_style::ResolvedNodeStyle {
@@ -390,6 +422,32 @@ mod tests {
                 blur_radius: 3.0,
                 color: PaintColor::Named("red".into()),
             }]
+        );
+    }
+
+    #[test]
+    fn lynx_text_decoration_lowers_to_paint_without_changing_measurement() {
+        let input = PlainTextInput::new("decoration");
+        let plain = lower_plain_text(&input, resolved(Vec::new()).computed().inherited_text());
+        let decorated = resolved(vec![StyleDeclaration::new(
+            StyleProperty::TextDecoration,
+            StyleValue::TextDecoration(TextDecorationValue {
+                line: TextDecorationLineValue::LineThrough,
+                style: TextDecorationStyleValue::Wavy,
+                color: Some(ColorValue::Named("red".into())),
+            }),
+        )]);
+        let decorated = lower_plain_text(&input, decorated.computed().inherited_text());
+        assert_eq!(plain.measurement(), decorated.measurement());
+        assert!(decorated.content().paint.decoration.lines.line_through);
+        assert!(!decorated.content().paint.decoration.lines.underline);
+        assert_eq!(
+            decorated.content().paint.decoration.style,
+            whisker_protocol::TextDecorationStyle::Wavy
+        );
+        assert_eq!(
+            decorated.content().paint.decoration.color,
+            PaintColor::Named("red".into())
         );
     }
 }

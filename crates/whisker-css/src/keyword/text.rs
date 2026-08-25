@@ -49,8 +49,6 @@ pub enum TextDecorationLine {
     None,
     /// `underline` — line below the text.
     Underline,
-    /// `overline` — line above the text.
-    Overline,
     /// `line-through` — line through the middle of the text.
     LineThrough,
 }
@@ -60,7 +58,6 @@ impl ToCss for TextDecorationLine {
         dest.write_str(match self {
             TextDecorationLine::None => "none",
             TextDecorationLine::Underline => "underline",
-            TextDecorationLine::Overline => "overline",
             TextDecorationLine::LineThrough => "line-through",
         })
     }
@@ -277,7 +274,6 @@ mod tests {
         assert_keyword_set!([
             (TextDecorationLine::None, "none"),
             (TextDecorationLine::Underline, "underline"),
-            (TextDecorationLine::Overline, "overline"),
             (TextDecorationLine::LineThrough, "line-through"),
         ]);
     }

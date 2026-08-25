@@ -22,7 +22,7 @@ use whisker_protocol::{
 
 use crate::paint::box_paint::{
     BoxPrimitive, BoxPrimitiveKind, background_gradient_primitive, box_shadow_primitive, lower_box,
-    resolve_box_geometry,
+    resolve_box_geometry, solid_rect_primitive,
 };
 use crate::paint::color::{gpu_color, text_color};
 use crate::scene::{LogicalClip, PaintCommand, ShapeClipStack};
@@ -2178,13 +2178,50 @@ impl GpuRenderer {
                 }
                 PaintCommand::Text {
                     node,
+                    rect,
+                    content,
+                    clip,
                     transform,
                     shape_clips,
+                    opacity,
                     ..
                 } => {
-                    // Glyph transforms and shape clips are implemented with the
-                    // SetText paint slice; retain both states on the command now.
-                    let _ = (transform, shape_clips);
+                    let decoration = &content.paint.decoration;
+                    if (decoration.lines.underline || decoration.lines.line_through)
+                        && let Some(prepared) = content
+                            .prepared_content
+                            .and_then(|id| text.prepared.get(&id))
+                    {
+                        let thickness = (content.payload.style.font_size / 16.0).max(1.0);
+                        for run in prepared.buffer.layout_runs() {
+                            let baseline = rect.y + run.line_y;
+                            let y = if decoration.lines.underline {
+                                baseline + thickness * 1.5
+                            } else {
+                                baseline - content.payload.style.font_size * 0.3
+                            };
+                            for line in text_decoration_rects(
+                                rect.x,
+                                run.line_w,
+                                y,
+                                thickness,
+                                decoration.style,
+                            ) {
+                                push_quad_draw(
+                                    &mut vertices,
+                                    &mut draws,
+                                    solid_rect_primitive(
+                                        line,
+                                        gpu_color(&decoration.color, *opacity),
+                                    ),
+                                    *transform,
+                                    *clip,
+                                    shape_clips,
+                                    (None, None, false),
+                                );
+                            }
+                        }
+                    }
                     draws.push(DrawCommand::Text { index, node: *node })
                 }
             }
@@ -2608,6 +2645,61 @@ fn transform_point(transform: Transform, [x, y]: [f32; 2]) -> [f32; 4] {
         transform.0[2] * x + transform.0[6] * y + transform.0[14],
         transform.0[3] * x + transform.0[7] * y + transform.0[15],
     ]
+}
+
+fn text_decoration_rects(
+    left: f32,
+    width: f32,
+    y: f32,
+    thickness: f32,
+    style: whisker_protocol::TextDecorationStyle,
+) -> Vec<LayoutRect> {
+    let line = |x: f32, y: f32, width: f32| LayoutRect {
+        x,
+        y: y - thickness * 0.5,
+        width: width.max(0.0),
+        height: thickness,
+    };
+    match style {
+        whisker_protocol::TextDecorationStyle::Solid => vec![line(left, y, width)],
+        whisker_protocol::TextDecorationStyle::Double => vec![
+            line(left, y - thickness, width),
+            line(left, y + thickness, width),
+        ],
+        whisker_protocol::TextDecorationStyle::Dotted
+        | whisker_protocol::TextDecorationStyle::Dashed => {
+            let segment = if matches!(style, whisker_protocol::TextDecorationStyle::Dotted) {
+                thickness
+            } else {
+                thickness * 4.0
+            };
+            let gap = thickness * 2.0;
+            let mut result = Vec::new();
+            let mut x = left;
+            while x < left + width {
+                result.push(line(x, y, segment.min(left + width - x)));
+                x += segment + gap;
+            }
+            result
+        }
+        whisker_protocol::TextDecorationStyle::Wavy => {
+            let segment = (thickness * 0.75).max(0.75);
+            let wavelength = (thickness * 4.0).max(3.0);
+            let mut result = Vec::new();
+            let mut x = left;
+            while x < left + width {
+                let center = x + segment * 0.5;
+                let phase = (center - left) / wavelength * std::f32::consts::TAU;
+                result.push(line(
+                    x,
+                    y + phase.sin() * thickness,
+                    (segment + thickness * 0.25).min(left + width - x),
+                ));
+                x += segment;
+            }
+            result
+        }
+    }
 }
 
 fn text_bounds(clip: LogicalClip, width: u32, height: u32, scale: f32) -> TextBounds {
@@ -3357,5 +3449,29 @@ mod tests {
                 bottom: 80
             }
         );
+    }
+
+    #[test]
+    fn text_decoration_styles_lower_to_bounded_line_segments() {
+        use whisker_protocol::TextDecorationStyle as Style;
+
+        assert_eq!(
+            text_decoration_rects(2.0, 20.0, 8.0, 2.0, Style::Solid).len(),
+            1
+        );
+        assert_eq!(
+            text_decoration_rects(2.0, 20.0, 8.0, 2.0, Style::Double).len(),
+            2
+        );
+        for style in [Style::Dotted, Style::Dashed, Style::Wavy] {
+            let segments = text_decoration_rects(2.0, 20.0, 8.0, 2.0, style);
+            assert!(!segments.is_empty());
+            assert!(segments.iter().all(|segment| {
+                segment.x >= 2.0
+                    && segment.x + segment.width <= 22.0
+                    && segment.width >= 0.0
+                    && segment.height == 2.0
+            }));
+        }
     }
 }

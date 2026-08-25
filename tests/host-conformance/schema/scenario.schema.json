@@ -176,7 +176,18 @@
         "font_size": { "type": "number", "exclusiveMinimum": 0 },
         "font_weight": { "type": "integer", "minimum": 1, "maximum": 1000 },
         "color": { "$ref": "#/$defs/color" },
+        "decoration": { "$ref": "#/$defs/textDecoration" },
         "shadow": { "$ref": "#/$defs/textShadow" }
+      }
+    },
+    "textDecoration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "style", "color"],
+      "properties": {
+        "line": { "enum": ["underline", "line_through"] },
+        "style": { "enum": ["solid", "double", "dotted", "dashed", "wavy"] },
+        "color": { "$ref": "#/$defs/color" }
       }
     },
     "textShadow": {

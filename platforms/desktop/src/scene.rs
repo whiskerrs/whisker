@@ -545,9 +545,13 @@ impl DesktopScene {
                     }
                 }
                 Operation::SetText { node, content } => {
-                    if content.paint.decoration.lines.underline
-                        || content.paint.decoration.lines.overline
-                        || content.paint.decoration.lines.line_through
+                    if content.paint.decoration.lines.overline
+                        || (content.paint.decoration.lines.underline
+                            && content.paint.decoration.lines.line_through)
+                        || !matches!(
+                            content.paint.decoration.thickness,
+                            whisker_protocol::TextDecorationThickness::Auto
+                        )
                     {
                         return Err(DesktopPresentError::Unsupported("text-decoration"));
                     }
