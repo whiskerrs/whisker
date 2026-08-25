@@ -442,7 +442,8 @@ private final class Driver {
                     name == "paint.visual-effects.box-shadow-offset" ||
                     name == "paint.visual-effects.box-shadow-spread" ||
                     name == "paint.visual-effects.box-shadow-blur" ||
-                    name == "paint.visual-effects.box-shadow-inset" else {
+                    name == "paint.visual-effects.box-shadow-inset" ||
+                    name == "paint.visual-effects.box-shadow-multiple" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
