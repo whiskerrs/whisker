@@ -219,6 +219,9 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/CSS2/borders/border-top-style-004.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-style-004.json"
         ),
+        "wpt/css/CSS2/borders/border-top-style-006.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-style-006.json"
+        ),
         "core/text-measure-basic.json" => {
             include_str!("../../../../tests/host-conformance/core/text-measure-basic.json")
         }
