@@ -449,5 +449,36 @@ mod tests {
             decorated.content().paint.decoration.color,
             PaintColor::Named("red".into())
         );
+        for (style, expected) in [
+            (
+                TextDecorationStyleValue::Double,
+                whisker_protocol::TextDecorationStyle::Double,
+            ),
+            (
+                TextDecorationStyleValue::Dotted,
+                whisker_protocol::TextDecorationStyle::Dotted,
+            ),
+            (
+                TextDecorationStyleValue::Dashed,
+                whisker_protocol::TextDecorationStyle::Dashed,
+            ),
+        ] {
+            let resolved = resolved(vec![StyleDeclaration::new(
+                StyleProperty::TextDecoration,
+                StyleValue::TextDecoration(TextDecorationValue {
+                    line: TextDecorationLineValue::Underline,
+                    style,
+                    color: None,
+                }),
+            )]);
+            assert_eq!(
+                lower_plain_text(&input, resolved.computed().inherited_text())
+                    .content()
+                    .paint
+                    .decoration
+                    .style,
+                expected
+            );
+        }
     }
 }
