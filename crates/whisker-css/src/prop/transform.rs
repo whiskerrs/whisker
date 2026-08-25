@@ -148,5 +148,31 @@ mod tests {
             "offset-path: ellipse(10px 25% at 50% 50%);"
         );
         assert!(ellipse.to_specified_style().is_ok());
+
+        let inset = Css::new().offset_path(OffsetPath::inset_round(
+            10.0.px(),
+            20.0.percent(),
+            5.0.px(),
+            15.0.percent(),
+            crate::BorderRadius::elliptical(
+                [
+                    2.0.px().into(),
+                    4.0.px().into(),
+                    6.0.px().into(),
+                    8.0.px().into(),
+                ],
+                [
+                    1.0.px().into(),
+                    3.0.px().into(),
+                    5.0.px().into(),
+                    7.0.px().into(),
+                ],
+            ),
+        ));
+        assert_eq!(
+            inset.to_string(),
+            "offset-path: inset(10px 20% 5px 15% round 2px 4px 6px 8px / 1px 3px 5px 7px);"
+        );
+        assert!(inset.to_specified_style().is_ok());
     }
 }

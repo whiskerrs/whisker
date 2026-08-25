@@ -269,6 +269,13 @@
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
     },
     {
+      "id": "core.transform-motion-path-inset",
+      "feature": "motion-path-inset",
+      "fixture": "core/transform-motion-path-inset.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-color.opacity-basic-0.6",
       "feature": "opacity",
       "fixture": "wpt/css/css-color/t32-opacity-basic-0.6-a.json",

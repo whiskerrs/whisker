@@ -94,6 +94,15 @@ pub enum MotionPathCommand {
     Close,
 }
 
+/// A typed `inset()` motion path.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InsetPath {
+    /// Top, right, bottom, and left offsets from the border box.
+    pub offsets: [LengthPercentage; 4],
+    /// Optional per-corner radii in CSS border-radius order.
+    pub radii: Option<BorderRadius>,
+}
+
 /// Supported `offset-path` value.
 #[derive(Clone, Debug, PartialEq)]
 pub enum OffsetPath {
@@ -121,6 +130,8 @@ pub enum OffsetPath {
         /// Vertical center position.
         center_y: LengthPercentage,
     },
+    /// Follow a possibly-rounded rectangle inset from the node border box.
+    Inset(Box<InsetPath>),
 }
 
 impl OffsetPath {
@@ -173,6 +184,33 @@ impl OffsetPath {
             center_x: center_x.into(),
             center_y: center_y.into(),
         }
+    }
+
+    /// Creates a rectangular `inset()` motion path.
+    pub fn inset(
+        top: impl Into<LengthPercentage>,
+        right: impl Into<LengthPercentage>,
+        bottom: impl Into<LengthPercentage>,
+        left: impl Into<LengthPercentage>,
+    ) -> Self {
+        Self::Inset(Box::new(InsetPath {
+            offsets: [top.into(), right.into(), bottom.into(), left.into()],
+            radii: None,
+        }))
+    }
+
+    /// Creates a rounded `inset()` motion path.
+    pub fn inset_round(
+        top: impl Into<LengthPercentage>,
+        right: impl Into<LengthPercentage>,
+        bottom: impl Into<LengthPercentage>,
+        left: impl Into<LengthPercentage>,
+        radii: BorderRadius,
+    ) -> Self {
+        Self::Inset(Box::new(InsetPath {
+            offsets: [top.into(), right.into(), bottom.into(), left.into()],
+            radii: Some(radii),
+        }))
     }
 }
 
@@ -259,6 +297,15 @@ impl ToCss for OffsetPath {
                 center_x.to_css(dest)?;
                 dest.write_char(' ')?;
                 center_y.to_css(dest)?;
+                dest.write_char(')')
+            }
+            Self::Inset(value) => {
+                dest.write_str("inset(")?;
+                write_four(dest, &value.offsets)?;
+                if let Some(radii) = &value.radii {
+                    dest.write_str(" round ")?;
+                    radii.to_css(dest)?;
+                }
                 dest.write_char(')')
             }
         }

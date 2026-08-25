@@ -34,8 +34,8 @@ pub use layout_value::{
 pub use paint::{
     BorderStyleValue, ComputedBackgroundImage, ComputedBackgroundLayerStyle,
     ComputedBackgroundPosition, ComputedBackgroundSize, ComputedCornerRadius, ComputedGradient,
-    ComputedGradientStop, ComputedOffsetPathValue, ComputedPaintStyle, ComputedTransformFunction,
-    ComputedTransformStyle, Corners, OverflowValue, VisibilityValue,
+    ComputedGradientStop, ComputedInsetPathValue, ComputedOffsetPathValue, ComputedPaintStyle,
+    ComputedTransformFunction, ComputedTransformStyle, Corners, OverflowValue, VisibilityValue,
 };
 pub use property::{
     PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyDomain, StylePropertyId,
@@ -50,7 +50,8 @@ pub use value::{
     BackgroundLayerValue, BackgroundPositionValue, BackgroundRepeatModeValue,
     BackgroundRepeatValue, BackgroundSizeValue, BackgroundValue, BorderRadiusValue, CalcExpression,
     ColorValue, FontFamilyValue, FontStyleValue, FontWeightValue, GradientStopValue, GradientValue,
-    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, MotionPathCommandValue,
-    MotionPathPointValue, OffsetPathValue, OffsetRotateValue, RadialGradientValue, StyleNumber,
-    StyleValue, TransformFunctionValue, TransformOriginValue, TransformValue,
+    InsetPathValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
+    MotionPathCommandValue, MotionPathPointValue, OffsetPathValue, OffsetRotateValue,
+    RadialGradientValue, StyleNumber, StyleValue, TransformFunctionValue, TransformOriginValue,
+    TransformValue,
 };

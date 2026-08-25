@@ -325,7 +325,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.transform.motion-path-curves" ||
                             command.getString("name") ==
-                            "paint.transform.motion-path-ellipses",
+                            "paint.transform.motion-path-ellipses" ||
+                            command.getString("name") ==
+                            "paint.transform.motion-path-inset",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->

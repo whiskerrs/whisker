@@ -240,6 +240,17 @@ pub enum ComputedOffsetPathValue {
         /// Vertical center relative to box height.
         center_y: ComputedLengthPercentage,
     },
+    /// Follow a possibly-rounded rectangle relative to the node border box.
+    Inset(Box<ComputedInsetPathValue>),
+}
+
+/// Border-box-resolvable `inset()` motion path.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedInsetPathValue {
+    /// Physical offsets from the border-box edges.
+    pub offsets: Edges<ComputedLengthPercentage>,
+    /// Optional physical corner radii.
+    pub radii: Option<Corners<ComputedCornerRadius>>,
 }
 
 /// Transform functions and origin retained until border-box layout is known.
@@ -841,6 +852,55 @@ fn resolve_offset_path(
             center_x: resolve(center_x)?,
             center_y: resolve(center_y)?,
         },
+        OffsetPathValue::Inset(value) => {
+            let [top, right, bottom, left] = &value.offsets;
+            let radii = value
+                .radii
+                .as_ref()
+                .map(|radii| {
+                    let [top_left, top_right, bottom_right, bottom_left] = radii;
+                    Ok(Corners {
+                        top_left: resolve_radius_axes(
+                            &top_left.horizontal,
+                            &top_left.vertical,
+                            inherited,
+                            environment,
+                            property,
+                        )?,
+                        top_right: resolve_radius_axes(
+                            &top_right.horizontal,
+                            &top_right.vertical,
+                            inherited,
+                            environment,
+                            property,
+                        )?,
+                        bottom_right: resolve_radius_axes(
+                            &bottom_right.horizontal,
+                            &bottom_right.vertical,
+                            inherited,
+                            environment,
+                            property,
+                        )?,
+                        bottom_left: resolve_radius_axes(
+                            &bottom_left.horizontal,
+                            &bottom_left.vertical,
+                            inherited,
+                            environment,
+                            property,
+                        )?,
+                    })
+                })
+                .transpose()?;
+            ComputedOffsetPathValue::Inset(Box::new(ComputedInsetPathValue {
+                offsets: Edges {
+                    top: resolve(top)?,
+                    right: resolve(right)?,
+                    bottom: resolve(bottom)?,
+                    left: resolve(left)?,
+                },
+                radii,
+            }))
+        }
     })
 }
 
@@ -1166,6 +1226,16 @@ fn radius(
         StyleValue::BorderRadius(value) => (&value.horizontal, &value.vertical),
         _ => return Err(invalid(property)),
     };
+    resolve_radius_axes(horizontal, vertical, inherited, environment, property)
+}
+
+fn resolve_radius_axes(
+    horizontal: &LengthPercentageValue,
+    vertical: &LengthPercentageValue,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedCornerRadius, StyleResolutionError> {
     let horizontal = resolve_affine(horizontal, inherited.font_size(), environment, property)?;
     let vertical = resolve_affine(vertical, inherited.font_size(), environment, property)?;
     if horizontal.length() < 0.0
@@ -1800,6 +1870,62 @@ mod tests {
             }
         );
 
+        let inset_radius = |horizontal, vertical| BorderRadiusValue {
+            horizontal,
+            vertical,
+        };
+        let inset = crate::resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::OffsetPath,
+                StyleValue::OffsetPath(OffsetPathValue::Inset(Box::new(crate::InsetPathValue {
+                    offsets: [
+                        percentage(10.0),
+                        px_length(20.0),
+                        percentage(25.0),
+                        px_length(5.0),
+                    ],
+                    radii: Some([
+                        inset_radius(px_length(2.0), percentage(5.0)),
+                        inset_radius(px_length(3.0), percentage(6.0)),
+                        inset_radius(px_length(4.0), percentage(7.0)),
+                        inset_radius(px_length(5.0), percentage(8.0)),
+                    ]),
+                }))),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            inset.computed().paint().transform.offset_path,
+            ComputedOffsetPathValue::Inset(Box::new(ComputedInsetPathValue {
+                offsets: Edges {
+                    top: ComputedLengthPercentage::new(0.0, 0.1),
+                    right: ComputedLengthPercentage::new(20.0, 0.0),
+                    bottom: ComputedLengthPercentage::new(0.0, 0.25),
+                    left: ComputedLengthPercentage::new(5.0, 0.0),
+                },
+                radii: Some(Corners {
+                    top_left: ComputedCornerRadius {
+                        horizontal: ComputedLengthPercentage::new(2.0, 0.0),
+                        vertical: ComputedLengthPercentage::new(0.0, 0.05),
+                    },
+                    top_right: ComputedCornerRadius {
+                        horizontal: ComputedLengthPercentage::new(3.0, 0.0),
+                        vertical: ComputedLengthPercentage::new(0.0, 0.06),
+                    },
+                    bottom_right: ComputedCornerRadius {
+                        horizontal: ComputedLengthPercentage::new(4.0, 0.0),
+                        vertical: ComputedLengthPercentage::new(0.0, 0.07),
+                    },
+                    bottom_left: ComputedCornerRadius {
+                        horizontal: ComputedLengthPercentage::new(5.0, 0.0),
+                        vertical: ComputedLengthPercentage::new(0.0, 0.08),
+                    },
+                }),
+            }))
+        );
+
         let invalid_path = |path| {
             crate::resolve_style(
                 &SpecifiedStyle::new().push(
@@ -1907,11 +2033,50 @@ mod tests {
                 radius_x: valid_length.clone(),
                 radius_y: valid_length.clone(),
                 center_x: valid_length.clone(),
-                center_y: invalid_length,
+                center_y: invalid_length.clone(),
             },
         ] {
             assert_eq!(
                 invalid_declaration(StyleProperty::OffsetPath, StyleValue::OffsetPath(path),),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::OffsetPath
+                ))
+            );
+        }
+        for index in 0..4 {
+            let mut offsets = std::array::from_fn(|_| valid_length.clone());
+            offsets[index] = invalid_length.clone();
+            assert_eq!(
+                invalid_declaration(
+                    StyleProperty::OffsetPath,
+                    StyleValue::OffsetPath(OffsetPathValue::Inset(Box::new(
+                        crate::InsetPathValue {
+                            offsets,
+                            radii: None,
+                        },
+                    ))),
+                ),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::OffsetPath
+                ))
+            );
+        }
+        for index in 0..4 {
+            let mut radii = std::array::from_fn(|_| BorderRadiusValue {
+                horizontal: valid_length.clone(),
+                vertical: valid_length.clone(),
+            });
+            radii[index].horizontal = invalid_length.clone();
+            assert_eq!(
+                invalid_declaration(
+                    StyleProperty::OffsetPath,
+                    StyleValue::OffsetPath(OffsetPathValue::Inset(Box::new(
+                        crate::InsetPathValue {
+                            offsets: std::array::from_fn(|_| valid_length.clone()),
+                            radii: Some(radii),
+                        },
+                    ))),
+                ),
                 Err(StyleResolutionError::InvalidPropertyValue(
                     StyleProperty::OffsetPath
                 ))

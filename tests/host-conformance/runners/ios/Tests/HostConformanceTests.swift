@@ -453,7 +453,8 @@ private final class Driver {
                     name == "paint.transform.projective-plane" ||
                     name == "paint.transform.motion-path-line" ||
                     name == "paint.transform.motion-path-curves" ||
-                    name == "paint.transform.motion-path-ellipses" else {
+                    name == "paint.transform.motion-path-ellipses" ||
+                    name == "paint.transform.motion-path-inset" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 if name == "paint.visual-effects.backdrop-blur" {
