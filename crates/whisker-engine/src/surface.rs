@@ -800,7 +800,8 @@ impl SurfaceEngine {
         border_width: f32,
         border_height: f32,
     ) -> Result<Option<whisker_protocol::Transform>, SurfaceError> {
-        if style.functions.is_empty()
+        if style.perspective.is_none()
+            && style.functions.is_empty()
             && self
                 .scene
                 .node(node)

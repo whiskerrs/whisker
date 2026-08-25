@@ -241,6 +241,13 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "core.transform-perspective-current-node",
+      "feature": "perspective-current-node",
+      "fixture": "core/transform-perspective-current-node.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-color.opacity-basic-0.6",
       "feature": "opacity",
       "fixture": "wpt/css/css-color/t32-opacity-basic-0.6-a.json",
