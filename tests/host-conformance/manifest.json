@@ -38,6 +38,27 @@
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-transforms.transform-matrix-001",
+      "feature": "transform",
+      "fixture": "wpt/css/css-transforms/transform-matrix-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.transform-local-origin",
+      "feature": "transform",
+      "fixture": "core/transform-local-origin.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "core.transform-parent-composition",
+      "feature": "transform",
+      "fixture": "core/transform-parent-composition.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css2.borders.border-top-003",
       "feature": "border-top",
       "fixture": "wpt/css/CSS2/borders/border-top-003.json",

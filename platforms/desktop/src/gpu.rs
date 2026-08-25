@@ -16,7 +16,7 @@ use wgpu::{
     TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
     VertexStepMode,
 };
-use whisker_protocol::NodeId;
+use whisker_protocol::{NodeId, Transform};
 
 use crate::paint::box_paint::{BoxPrimitive, lower_box};
 use crate::paint::color::text_color;
@@ -48,6 +48,7 @@ struct VertexInput {
     @location(12) border_bottom_color: vec4<f32>,
     @location(13) border_left_color: vec4<f32>,
     @location(14) border_styles: vec4<f32>,
+    @location(15) transformed_position: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -71,9 +72,14 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
-    let normalized = input.position / viewport.logical_size;
+    let transformed = input.transformed_position;
     var output: VertexOutput;
-    output.position = vec4<f32>(normalized.x * 2.0 - 1.0, 1.0 - normalized.y * 2.0, 0.0, 1.0);
+    output.position = vec4<f32>(
+        transformed.x / viewport.logical_size.x * 2.0 - transformed.w,
+        transformed.w - transformed.y / viewport.logical_size.y * 2.0,
+        transformed.z,
+        transformed.w,
+    );
     output.color = input.color;
     output.logical_position = input.position;
     output.outer_rect = input.outer_rect;
@@ -379,10 +385,11 @@ struct BoxVertex {
     mode: f32,
     border_colors: [[f32; 4]; 4],
     border_styles: [f32; 4],
+    transformed_position: [f32; 4],
 }
 
 impl BoxVertex {
-    const ATTRIBUTES: [VertexAttribute; 15] = [
+    const ATTRIBUTES: [VertexAttribute; 16] = [
         VertexAttribute {
             format: VertexFormat::Float32x2,
             offset: 0,
@@ -457,6 +464,11 @@ impl BoxVertex {
             format: VertexFormat::Float32x4,
             offset: std::mem::size_of::<[f32; 51]>() as u64,
             shader_location: 14,
+        },
+        VertexAttribute {
+            format: VertexFormat::Float32x4,
+            offset: std::mem::size_of::<[f32; 55]>() as u64,
+            shader_location: 15,
         },
     ];
 
@@ -688,11 +700,12 @@ impl GpuRenderer {
                     rect,
                     paint,
                     clip,
+                    transform,
                     opacity,
                 } => {
                     let start = vertices.len() as u32;
                     lower_box(*rect, paint, *opacity, |primitive| {
-                        push_quad(&mut vertices, primitive);
+                        push_transformed_quad(&mut vertices, primitive, *transform);
                     });
                     let end = vertices.len() as u32;
                     if start != end {
@@ -702,7 +715,11 @@ impl GpuRenderer {
                         });
                     }
                 }
-                PaintCommand::Text { node, .. } => {
+                PaintCommand::Text {
+                    node, transform, ..
+                } => {
+                    // Glyph transforms are implemented with the SetText paint slice.
+                    let _ = transform;
                     draws.push(DrawCommand::Text { index, node: *node })
                 }
             }
@@ -893,7 +910,16 @@ impl GpuRenderer {
     }
 }
 
+#[cfg(test)]
 fn push_quad(vertices: &mut Vec<BoxVertex>, primitive: BoxPrimitive) {
+    push_transformed_quad(vertices, primitive, Transform::IDENTITY);
+}
+
+fn push_transformed_quad(
+    vertices: &mut Vec<BoxVertex>,
+    primitive: BoxPrimitive,
+    transform: Transform,
+) {
     let rect = primitive.outer_rect;
     let left = rect.x;
     let top = rect.y;
@@ -925,8 +951,18 @@ fn push_quad(vertices: &mut Vec<BoxVertex>, primitive: BoxPrimitive) {
             mode: primitive.kind.shader_mode(),
             border_colors: primitive.border_colors,
             border_styles: primitive.border_styles,
+            transformed_position: transform_point(transform, position),
         });
     }
+}
+
+fn transform_point(transform: Transform, [x, y]: [f32; 2]) -> [f32; 4] {
+    [
+        transform.0[0] * x + transform.0[4] * y + transform.0[12],
+        transform.0[1] * x + transform.0[5] * y + transform.0[13],
+        transform.0[2] * x + transform.0[6] * y + transform.0[14],
+        transform.0[3] * x + transform.0[7] * y + transform.0[15],
+    ]
 }
 
 fn text_bounds(clip: LogicalClip, width: u32, height: u32, scale: f32) -> TextBounds {
@@ -950,14 +986,14 @@ pub(crate) async fn render_box_primitives_offscreen(
     let clipped = primitives
         .iter()
         .copied()
-        .map(|primitive| (primitive, LogicalClip::default()))
+        .map(|primitive| (primitive, LogicalClip::default(), Transform::IDENTITY))
         .collect::<Vec<_>>();
     render_clipped_box_primitives_offscreen(&clipped, logical_size).await
 }
 
 #[cfg(all(test, feature = "host-conformance"))]
 pub(crate) async fn render_clipped_box_primitives_offscreen(
-    primitives: &[(BoxPrimitive, LogicalClip)],
+    primitives: &[(BoxPrimitive, LogicalClip, Transform)],
     logical_size: [u32; 2],
 ) -> Result<Vec<u8>, GpuError> {
     let [width, height] = logical_size;
@@ -982,9 +1018,9 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
 
     let mut vertices = Vec::new();
     let mut draws = Vec::new();
-    for (primitive, clip) in primitives {
+    for (primitive, clip, transform) in primitives {
         let start = vertices.len() as u32;
-        push_quad(&mut vertices, *primitive);
+        push_transformed_quad(&mut vertices, *primitive, *transform);
         draws.push((start..vertices.len() as u32, *clip));
     }
     let vertex_buffer = (!vertices.is_empty()).then(|| {

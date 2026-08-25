@@ -106,7 +106,13 @@
         "rect": { "$ref": "#/$defs/quadNumber" },
         "background": { "$ref": "#/$defs/color" },
         "border": { "$ref": "#/$defs/border" },
-        "clip": { "$ref": "#/$defs/boxClip" }
+        "clip": { "$ref": "#/$defs/boxClip" },
+        "transform": {
+          "type": "array",
+          "minItems": 16,
+          "maxItems": 16,
+          "items": { "type": "number" }
+        }
       }
     },
     "boxClip": {

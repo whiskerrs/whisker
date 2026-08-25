@@ -330,6 +330,9 @@ pub struct SceneNodeFixture {
     /// Descendant overflow clipping semantics.
     #[serde(default)]
     pub clip: BoxClipFixture,
+    /// Optional column-major 4-by-4 transform matrix.
+    #[serde(default)]
+    pub transform: Option<[f32; 16]>,
 }
 
 /// Independent horizontal and vertical descendant clipping.
@@ -766,6 +769,9 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                 && node.rect[3] >= 0.0
                 && valid_color(&node.background)
                 && node.border.as_ref().is_none_or(valid_border)
+                && node
+                    .transform
+                    .is_none_or(|transform| transform.into_iter().all(f32::is_finite))
         })
         && nodes.iter().all(|node| {
             let mut seen = std::collections::BTreeSet::new();

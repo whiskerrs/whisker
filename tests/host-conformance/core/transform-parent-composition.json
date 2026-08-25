@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "core.transform-parent-composition",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 80.0, "height": 50.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [10.0, 10.0, 20.0, 20.0],
+            "background": { "kind": "named", "value": "transparent" },
+            "clip": { "horizontal": "visible", "vertical": "visible" },
+            "transform": [
+              1.0, 0.0, 0.0, 0.0,
+              0.0, 1.0, 0.0, 0.0,
+              0.0, 0.0, 1.0, 0.0,
+              20.0, 0.0, 0.0, 1.0
+            ]
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [5.0, 5.0, 10.0, 10.0],
+            "background": { "kind": "named", "value": "red" },
+            "clip": { "horizontal": "visible", "vertical": "visible" }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [16.0, 16.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 },
+          { "point": [36.0, 16.0], "color": { "kind": "named", "value": "red" }, "tolerance": 16 },
+          { "point": [47.0, 16.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

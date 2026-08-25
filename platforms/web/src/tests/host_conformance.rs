@@ -10,7 +10,7 @@ use whisker_host_conformance::{
 use whisker_protocol::{
     BorderLineStyle, BoxClip, BoxPaint, FrameHeader, FrameMode, FramePacket, LayoutGeometry,
     LayoutRect, NodeId, Operation, OverflowClip, PaintColor, PaintCornerRadius, PaintCorners,
-    PaintEdges, PaintLengthPercentage, ProtocolVersion, SurfaceId,
+    PaintEdges, PaintLengthPercentage, ProtocolVersion, SurfaceId, Transform,
 };
 
 use crate::module_api::built_in_element_factories;
@@ -205,6 +205,13 @@ impl Driver {
                 "overflow-y",
                 fixture_overflow_css(fixture_node.clip.vertical),
             );
+            if let Some(transform) = fixture_node.transform {
+                assert_style(&style, "transform-origin", "0 0");
+                assert_style(&style, "transform", &fixture_transform_css(transform));
+            } else {
+                assert_eq!(style.get_property_value("transform").unwrap(), "");
+                assert_eq!(style.get_property_value("transform-origin").unwrap(), "");
+            }
 
             let actual_parent = node.parent_element().unwrap();
             match fixture_node.parent {
@@ -236,17 +243,29 @@ impl Driver {
                 .expect("fixture sample lies inside the browser viewport");
             let hit_node = hit.get_attribute("data-whisker-node");
             match &sample.color {
-                ColorFixture::Named { value } if value == "red" => assert_eq!(
-                    hit_node.as_deref(),
-                    Some("2"),
-                    "visible overflow sample did not hit the child DOM node"
+                ColorFixture::Named { value } if value == "transparent" => assert!(
+                    hit_node.as_deref().is_none_or(|id| {
+                        expected.iter().any(|node| {
+                            node.id.to_string() == id && node.background == sample.color
+                        })
+                    }),
+                    "transparent sample unexpectedly hit an opaque scene node {hit_node:?}"
                 ),
-                ColorFixture::Named { value } if value == "transparent" => assert_ne!(
-                    hit_node.as_deref(),
-                    Some("2"),
-                    "clipped overflow sample unexpectedly hit the child DOM node"
-                ),
-                _ => {}
+                expected_color => {
+                    let expected_node = expected
+                        .iter()
+                        .find(|node| node.background == *expected_color)
+                        .unwrap_or_else(|| {
+                            panic!("sample color {expected_color:?} has no matching scene node")
+                        })
+                        .id
+                        .to_string();
+                    assert_eq!(
+                        hit_node.as_deref(),
+                        Some(expected_node.as_str()),
+                        "paint sample did not hit the expected transformed scene node"
+                    );
+                }
             }
         }
     }
@@ -308,6 +327,15 @@ fn fixture(path: &str) -> &'static str {
         }
         "wpt/css/css-overflow/clip-002-vertical.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-overflow/clip-002-vertical.json"
+        ),
+        "wpt/css/css-transforms/transform-matrix-001.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-transforms/transform-matrix-001.json"
+        ),
+        "core/transform-local-origin.json" => {
+            include_str!("../../../../tests/host-conformance/core/transform-local-origin.json")
+        }
+        "core/transform-parent-composition.json" => include_str!(
+            "../../../../tests/host-conformance/core/transform-parent-composition.json"
         ),
         "wpt/css/CSS2/borders/border-top-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-003.json"
@@ -438,6 +466,12 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
                 },
             },
         ]);
+        if let Some(transform) = fixture_node.transform {
+            operations.push(Operation::SetTransform {
+                node,
+                transform: Transform(transform),
+            });
+        }
     }
     for (node_index, fixture_node) in nodes.iter().enumerate() {
         if let Some(parent) = fixture_node.parent {
@@ -644,4 +678,13 @@ fn fixture_overflow_css(value: OverflowClipFixture) -> &'static str {
         OverflowClipFixture::Visible => "visible",
         OverflowClipFixture::Hidden => "clip",
     }
+}
+
+fn fixture_transform_css(transform: [f32; 16]) -> String {
+    let values = transform
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("matrix3d({values})")
 }

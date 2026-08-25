@@ -17,7 +17,8 @@ use whisker_protocol::{
     MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasurementKey, MeasurementPayload,
     MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintColor,
     PaintCornerRadius, PaintCorners, PaintEdges, PaintLengthPercentage, PointerId, PointerInput,
-    PointerKind, ProtocolVersion, SurfaceId, TextMeasurePayload, TextMeasureStyle, WhiskerValue,
+    PointerKind, ProtocolVersion, SurfaceId, TextMeasurePayload, TextMeasureStyle, Transform,
+    WhiskerValue,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
@@ -97,7 +98,7 @@ impl RecordingInputSink {
 
 struct Checkpoint {
     logical_size: [u32; 2],
-    primitives: Vec<(BoxPrimitive, LogicalClip)>,
+    primitives: Vec<(BoxPrimitive, LogicalClip, Transform)>,
     samples: Vec<PixelSampleFixture>,
     relations: Vec<PixelRelationFixture>,
 }
@@ -329,6 +330,12 @@ impl Driver {
                     vertical: overflow_clip_protocol(fixture.clip.vertical),
                 },
             });
+            if let Some(transform) = fixture.transform {
+                operations.push(Operation::SetTransform {
+                    node,
+                    transform: Transform(transform),
+                });
+            }
         }
         self.scene
             .as_mut()
@@ -349,7 +356,7 @@ impl Driver {
             .expect("canonical Host scene fixture is valid");
     }
 
-    fn clipped_box_primitives(&self) -> Vec<(BoxPrimitive, LogicalClip)> {
+    fn clipped_box_primitives(&self) -> Vec<(BoxPrimitive, LogicalClip, Transform)> {
         let scene = self.scene.as_ref().expect("checkpoint follows attach");
         let mut primitives = Vec::new();
         for command in scene.paint_commands() {
@@ -357,12 +364,13 @@ impl Driver {
                 rect,
                 paint,
                 clip,
+                transform,
                 opacity,
                 ..
             } = command
             {
                 lower_box(rect, paint, opacity, |primitive| {
-                    primitives.push((primitive, clip));
+                    primitives.push((primitive, clip, transform));
                 });
             }
         }

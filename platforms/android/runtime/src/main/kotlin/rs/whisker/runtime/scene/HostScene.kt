@@ -140,6 +140,10 @@ internal class HostScene(
                 operation.names?.size ?: 0 < 5
             ) return false
             8, 10, 11, 12, 15, 16 -> if (operation.node !in existing) return false
+            9 -> if (
+                operation.node !in existing ||
+                !isSupported2dTransform(operation.numbers ?: return false)
+            ) return false
             13 -> if (
                 operation.node !in existing || operation.text == null ||
                 operation.numbers?.size ?: 0 < 8 || operation.names?.isEmpty() != false
@@ -184,6 +188,10 @@ internal class HostScene(
             8 -> (nodes[id] ?: return).setDescendantClip(
                 horizontal = operation.flags and 1 != 0,
                 vertical = operation.flags and 2 != 0,
+            )
+            9 -> (nodes[id] ?: return).setLocalTransform(
+                requireNotNull(operation.numbers),
+                root.resources.displayMetrics.density,
             )
             10 -> (nodes[id] ?: return).alpha = operation.scalar
             11 -> (nodes[id] ?: return).visibility =
