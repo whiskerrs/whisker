@@ -180,6 +180,9 @@ final class HostScene {
                           to: WhiskerMobileClipPath.self
                       ).pointee,
                       validClipPath(clip) else { return false }
+            case UInt32(WHISKER_OP_BACKDROP_BLUR):
+                guard existing.contains(operation.node), operation.scalar.isFinite,
+                      operation.scalar >= 0 else { return false }
             case UInt32(WHISKER_OP_OPACITY):
                 guard existing.contains(operation.node), operation.scalar.isFinite,
                       (0...1).contains(operation.scalar) else { return false }
@@ -247,7 +250,7 @@ final class HostScene {
             guard let node = nodes[id] else { return false }
             if operation.payload_count == 0 {
                 node.boxPainter.updateBackgroundLayers([])
-                node.setNeedsDisplay()
+                node.boxPaintDidChange()
                 return true
             }
             guard let pointer = operation.payload?.assumingMemoryBound(
@@ -257,7 +260,7 @@ final class HostScene {
             let layers = rawLayers.compactMap { hostBackgroundLayer($0, resources: resources) }
             guard layers.count == rawLayers.count else { return false }
             node.boxPainter.updateBackgroundLayers(layers)
-            node.setNeedsDisplay()
+            node.boxPaintDidChange()
         case UInt32(WHISKER_OP_BOX_SHADOWS):
             guard let node = nodes[id] else { return false }
             if operation.payload_count == 0 {
@@ -332,6 +335,9 @@ final class HostScene {
                 )))
             default: return false
             }
+        case UInt32(WHISKER_OP_BACKDROP_BLUR):
+            guard let node = nodes[id] else { return false }
+            node.setBackdropBlur(CGFloat(operation.scalar))
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):

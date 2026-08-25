@@ -1,20 +1,20 @@
 //! Conversion from the compatibility authoring types to semantic style values.
 
 use whisker_style::{
-    AlignContentValue, AlignItemsValue, AlignSelfValue, BorderRadiusValue, BorderStyleValue,
-    BoxSizingValue, CalcExpression, ClearValue, ColorValue, DirectionValue, DisplayValue,
-    FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyleValue, FontWeightValue,
-    GridAutoFlowValue, GridMaxTrackSizingValue, GridMinTrackSizingValue, GridPlacementValue,
-    GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue,
+    AlignContentValue, AlignItemsValue, AlignSelfValue, BackdropFilterValue, BorderRadiusValue,
+    BorderStyleValue, BoxSizingValue, CalcExpression, ClearValue, ColorValue, DirectionValue,
+    DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyleValue,
+    FontWeightValue, GridAutoFlowValue, GridMaxTrackSizingValue, GridMinTrackSizingValue,
+    GridPlacementValue, GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue,
     GridTemplateComponentValue, GridTemplateRepetitionValue, GridTemplateValue,
     GridTrackSizingValue, JustifyContentValue, LengthPercentageAutoValue, LengthPercentageValue,
     LengthUnit, LengthValue, LineHeightValue, PositionValue, SizeValue, StyleNumber, StyleValue,
 };
 
 use crate::{
-    AlignContent, AlignItems, AlignSelf, Angle, BoxSizing, CalcExpr, Clear, Color, CssString,
-    Direction, Display, FlexBasis, FlexDirection, FlexWrap, Float, FontStyle, FontWeight,
-    GridAutoFlow, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
+    AlignContent, AlignItems, AlignSelf, Angle, BackdropFilter, BoxSizing, CalcExpr, Clear, Color,
+    CssString, Direction, Display, FlexBasis, FlexDirection, FlexWrap, Float, FontStyle,
+    FontWeight, GridAutoFlow, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
     GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, Integer, JustifyContent, Length,
     LengthPercentage, LineHeight, MarginValue, Number, Overflow, Percentage, PositionKind, Size,
     Visibility,
@@ -28,6 +28,15 @@ pub(crate) trait ToStyleValue {
 impl ToStyleValue for Length {
     fn to_style_value(&self) -> StyleValue {
         StyleValue::Length(to_length(*self))
+    }
+}
+
+impl ToStyleValue for BackdropFilter {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::BackdropFilter(match self {
+            Self::None => BackdropFilterValue::None,
+            Self::Blur(radius) => BackdropFilterValue::Blur(to_length(*radius)),
+        })
     }
 }
 

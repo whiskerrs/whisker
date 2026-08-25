@@ -448,15 +448,23 @@ private final class Driver {
                     name == "paint.visual-effects.clip-path-circle" ||
                     name == "paint.visual-effects.clip-path-ellipse" ||
                     name == "paint.visual-effects.clip-path-path-nonzero" ||
-                    name == "paint.visual-effects.clip-path-path-evenodd" else {
+                    name == "paint.visual-effects.clip-path-path-evenodd" ||
+                    name == "paint.visual-effects.backdrop-blur" else {
                     throw Failure("unsupported UIKit checkpoint")
+                }
+                if name == "paint.visual-effects.backdrop-blur" {
+                    XCTAssertTrue(
+                        containsActiveBackdropBlur(view),
+                        "\(id) must project backdrop blur to UIVisualEffectView"
+                    )
                 }
                 let pixels = try capture()
                 checkpoint = pixels
                 if let samples = command["samples"] as? [[String: Any]] {
                     try assertPixelSamples(id: id, pixels: pixels, samples: samples)
                 }
-                if let relations = command["relations"] as? [[String: Any]] {
+                if name != "paint.visual-effects.backdrop-blur",
+                   let relations = command["relations"] as? [[String: Any]] {
                     try assertPixelRelations(id: id, pixels: pixels, relations: relations)
                 }
             default:
@@ -976,6 +984,13 @@ private final class Driver {
                                         count: 1
                                     ))
                                 }
+                                if let backdropBlur = fixture.backdropBlur {
+                                    operations.append(operation(
+                                        tag: UInt32(WHISKER_OP_BACKDROP_BLUR),
+                                        node: fixture.id,
+                                        scalar: backdropBlur
+                                    ))
+                                }
                             }
                             try operations.withUnsafeMutableBufferPointer { buffer in
                                 var frame = WhiskerMobileFrame()
@@ -1137,6 +1152,7 @@ private struct SceneFixtureNode {
     let backgroundLayer: SceneBackgroundLayer
     let backgroundLayers: [ScenePaintLayer]
     let boxShadows: [WhiskerMobileBoxShadow]
+    let backdropBlur: Float?
     let clipPath: SceneClipPath?
     let linearGradient: SceneLinearGradient?
     let radialGradient: SceneRadialGradient?
@@ -1341,6 +1357,7 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     let boxShadows = try (fixture["box_shadows"] as? [[String: Any]] ?? []).map {
         try sceneBoxShadow($0)
     }
+    let backdropBlur = (fixture["backdrop_blur"] as? NSNumber)?.floatValue
     let clipPath = try (fixture["clip_path"] as? [String: Any]).map(sceneClipPath)
     let linearGradient: SceneLinearGradient?
     if let gradient = fixture["linear_gradient"] as? [String: Any] {
@@ -1373,6 +1390,7 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         backgroundLayer: backgroundLayer,
         backgroundLayers: backgroundLayers,
         boxShadows: boxShadows,
+        backdropBlur: backdropBlur,
         clipPath: clipPath,
         linearGradient: linearGradient,
         radialGradient: radialGradient,
@@ -1824,6 +1842,13 @@ private func pixel(at point: [Double], in pixels: Pixels) throws -> [UInt8] {
     }
     let offset = (y * pixels.width + x) * 4
     return Array(pixels.bytes[offset..<(offset + 4)])
+}
+
+private func containsActiveBackdropBlur(_ view: UIView) -> Bool {
+    if let blur = view as? HostBackdropBlurView, !blur.isHidden {
+        return true
+    }
+    return view.subviews.contains(where: containsActiveBackdropBlur)
 }
 
 private func luminance(_ color: [UInt8]) -> UInt32 {

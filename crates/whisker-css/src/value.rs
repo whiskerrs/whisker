@@ -13,6 +13,40 @@ use core::fmt;
 use crate::data_type::{CssString, FitContent, Length, LengthPercentage, MaxContent, Percentage};
 use crate::to_css::{ToCss, write_number};
 
+// ---------- BackdropFilter ----------
+
+/// Supported value of `backdrop-filter`.
+///
+/// Whisker deliberately exposes only the app-oriented blur subset rather than
+/// the complete CSS filter-function list.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BackdropFilter {
+    /// `none` — do not alter pixels behind the element.
+    None,
+    /// `blur(<length>)` — blur pixels already painted behind the element.
+    Blur(Length),
+}
+
+impl BackdropFilter {
+    /// Creates `blur(<radius>)`.
+    pub const fn blur(radius: Length) -> Self {
+        Self::Blur(radius)
+    }
+}
+
+impl ToCss for BackdropFilter {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Self::None => dest.write_str("none"),
+            Self::Blur(radius) => {
+                dest.write_str("blur(")?;
+                radius.to_css(dest)?;
+                dest.write_char(')')
+            }
+        }
+    }
+}
+
 // ---------- Size (width / height / min-/max-) ----------
 
 /// Value for `width`, `height`, `min-width`, `min-height`,

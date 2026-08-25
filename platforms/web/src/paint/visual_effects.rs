@@ -10,6 +10,7 @@ pub(crate) fn supports(effects: &VisualEffects) -> bool {
     let mut remainder = effects.clone();
     remainder.box_shadows.clear();
     remainder.clip_path = None;
+    remainder.backdrop_blur = None;
     remainder == VisualEffects::default()
         && effects.clip_path.as_ref().is_none_or(|(reference, shape)| {
             matches!(
@@ -25,7 +26,7 @@ pub(crate) fn supports(effects: &VisualEffects) -> bool {
 pub(crate) fn apply(element: &web_sys::Element, effects: &VisualEffects) -> Result<(), WebError> {
     if !supports(effects) {
         return Err(WebError(
-            "DOM Host only implements the supported box-shadow and clip-path subset".into(),
+            "DOM Host only implements box-shadow, clip-path, and backdrop blur".into(),
         ));
     }
     let value = if effects.box_shadows.is_empty() {
@@ -49,6 +50,12 @@ pub(crate) fn apply(element: &web_sys::Element, effects: &VisualEffects) -> Resu
             .join(", ")
     };
     set_style(element, "box-shadow", &value)?;
+    let backdrop_filter = effects
+        .backdrop_blur
+        .map(|radius| format!("blur({radius}px)"))
+        .unwrap_or_else(|| "none".into());
+    set_style(element, "backdrop-filter", &backdrop_filter)?;
+    set_style(element, "-webkit-backdrop-filter", &backdrop_filter)?;
     let clip_path = effects
         .clip_path
         .as_ref()

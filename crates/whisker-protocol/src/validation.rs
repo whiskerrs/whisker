@@ -1258,8 +1258,10 @@ mod tests {
         assert_eq!(error, ValidationError::InvalidBackgroundLayers);
         assert_eq!(scene.revision(), revision);
 
-        let mut effects = crate::VisualEffects::default();
-        effects.filters.push(crate::FilterOperation::Blur(-1.0));
+        let effects = crate::VisualEffects {
+            backdrop_blur: Some(-1.0),
+            ..crate::VisualEffects::default()
+        };
         let error = apply_next(
             &mut scene,
             vec![Operation::SetVisualEffects {
@@ -1267,7 +1269,7 @@ mod tests {
                 effects,
             }],
         )
-        .expect_err("invalid filter");
+        .expect_err("invalid backdrop blur");
         assert_eq!(error, ValidationError::InvalidVisualEffects);
         assert_eq!(scene.revision(), revision);
 

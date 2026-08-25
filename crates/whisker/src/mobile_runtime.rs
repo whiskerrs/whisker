@@ -1180,6 +1180,7 @@ impl MobileFrameOwned {
                     let mut remainder = effects.clone();
                     remainder.box_shadows.clear();
                     remainder.clip_path = None;
+                    remainder.backdrop_blur = None;
                     if remainder != VisualEffects::default() {
                         return Err(MobileFrameError);
                     }
@@ -1316,6 +1317,12 @@ impl MobileFrameOwned {
                             clip_paths.last().unwrap().as_ref() as *const _ as *const c_void;
                         raw.payload_count = 1;
                     }
+                    operations.push(raw);
+
+                    raw = empty_mobile_operation();
+                    raw.tag = OP_BACKDROP_BLUR;
+                    raw.node = node.get();
+                    raw.scalar = effects.backdrop_blur.unwrap_or(0.0);
                 }
                 Operation::SetClip { node, clip } => {
                     raw.tag = OP_CLIP;
@@ -1998,6 +2005,7 @@ mod tests {
                                 inset: true,
                             },
                         ],
+                        backdrop_blur: Some(7.0),
                         ..Default::default()
                     },
                 },
@@ -2028,12 +2036,16 @@ mod tests {
         assert_eq!(frame._operations[1].tag, OP_CLIP_PATH);
         assert_eq!(frame._operations[1].payload_count, 0);
         assert!(frame._operations[1].payload.is_null());
-        assert_eq!(frame._operations[2].tag, OP_BOX_SHADOWS);
-        assert_eq!(frame._operations[2].payload_count, 0);
-        assert!(frame._operations[2].payload.is_null());
-        assert_eq!(frame._operations[3].tag, OP_CLIP_PATH);
+        assert_eq!(frame._operations[2].tag, OP_BACKDROP_BLUR);
+        assert_eq!(frame._operations[2].scalar, 7.0);
+        assert_eq!(frame._operations[3].tag, OP_BOX_SHADOWS);
         assert_eq!(frame._operations[3].payload_count, 0);
         assert!(frame._operations[3].payload.is_null());
+        assert_eq!(frame._operations[4].tag, OP_CLIP_PATH);
+        assert_eq!(frame._operations[4].payload_count, 0);
+        assert!(frame._operations[4].payload.is_null());
+        assert_eq!(frame._operations[5].tag, OP_BACKDROP_BLUR);
+        assert_eq!(frame._operations[5].scalar, 0.0);
     }
 
     #[test]
@@ -2086,7 +2098,7 @@ mod tests {
         };
 
         let frame = MobileFrameOwned::new(&packet).unwrap();
-        assert_eq!(frame._operations.len(), 2);
+        assert_eq!(frame._operations.len(), 3);
         assert_eq!(frame._operations[0].tag, OP_BOX_SHADOWS);
         let operation = &frame._operations[1];
         assert_eq!(operation.tag, OP_CLIP_PATH);
@@ -2100,6 +2112,7 @@ mod tests {
         assert_eq!(inset.edges[0].fraction, 0.1);
         assert_eq!(inset.radii_horizontal[0].length, 4.0);
         assert_eq!(inset.radii_vertical[0].fraction, 0.2);
+        assert_eq!(frame._operations[2].tag, OP_BACKDROP_BLUR);
     }
 
     #[test]

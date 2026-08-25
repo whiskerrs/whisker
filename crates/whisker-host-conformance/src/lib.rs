@@ -532,6 +532,9 @@ pub struct SceneNodeFixture {
     /// Box shadows in CSS front-to-back order.
     #[serde(default)]
     pub box_shadows: Vec<BoxShadowFixture>,
+    /// Resolved `backdrop-filter: blur()` radius in logical pixels.
+    #[serde(default)]
+    pub backdrop_blur: Option<f32>,
     /// Optional basic-shape clip applied to the node and its descendants.
     #[serde(default)]
     pub clip_path: Option<ClipPathFixture>,
@@ -1352,6 +1355,9 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                         && shadow.spread_radius.is_finite()
                         && valid_color(&shadow.color)
                 })
+                && node
+                    .backdrop_blur
+                    .is_none_or(|radius| radius.is_finite() && radius >= 0.0)
                 && node
                     .clip_path
                     .as_ref()

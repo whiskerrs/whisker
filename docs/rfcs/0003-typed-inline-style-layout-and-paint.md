@@ -468,7 +468,7 @@ Rust resolves the semantic values for:
 - opacity and blend/compositing intent;
 - transforms and transform origin;
 - overflow and clip shapes;
-- filters supported by the capability profile;
+- the single `backdrop-filter: blur(<length>)` extension;
 - stacking order and isolated stacking contexts;
 - visibility and hit-test participation.
 
@@ -476,10 +476,11 @@ Protocol minor 1 groups those resolved meanings by Host capability rather
 than by CSS spelling. `SetBackgroundLayers` carries resource-backed images,
 linear/radial/conic gradients, positioning, sizing, repeat, origin, clip,
 attachment, and layer blending. `SetVisualEffects` carries outlines, ordered
-box shadows, normalized basic/path clips, mask layers, filter chains, blend
+box shadows, normalized basic/path clips, mask layers, one backdrop blur, blend
 and isolation intent, back-face visibility, and 3-D descendant behavior.
 `SetText` paint includes decoration lines/style/thickness and ordered text
-shadows; `SetImage` and `SetCursor` carry replaced content and cursor resources.
+shadows; general `filter` functions and filter chains are deliberately out of
+scope. `SetImage` and `SetCursor` carry replaced content and cursor resources.
 All resource references use `ResourceId`; platform image objects, decoded
 pixels, paths, and GPU handles never enter the common protocol.
 
@@ -927,7 +928,7 @@ The following must be resolved before this RFC becomes `Accepted`:
 - the exact fragment composition helpers and constant-style support;
 - the element applicability of every inherited property;
 - the baseline and multi-line text measurement representation;
-- the minimum filter, blend, shadow, and clip capability required of all
+- the minimum blend, shadow, backdrop-blur, and clip capability required of all
   interactive renderers;
 - which low-level Desktop paint, text, compositing, accessibility, and external-
   surface facilities are required to satisfy that minimum profile;

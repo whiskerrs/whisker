@@ -1,12 +1,14 @@
 package rs.whisker.runtime.scene
 
 import android.content.Context
+import android.os.Build
 import android.graphics.RectF
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import rs.whisker.runtime.WhiskerChildPolicy
 import rs.whisker.runtime.WhiskerContainerView
+import rs.whisker.runtime.WhiskerView
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerTextContent
 import rs.whisker.runtime.WhiskerValue
@@ -167,6 +169,10 @@ internal class HostScene(
             8, 12, 15, 16 -> if (operation.node !in existing) return false
             22 -> if (!validBoxShadows(operation, existing)) return false
             23 -> if (!validClipPath(operation, existing)) return false
+            24 -> if (
+                operation.node !in existing || !operation.scalar.isFinite() ||
+                operation.scalar < 0f || (operation.scalar > 0f && Build.VERSION.SDK_INT < 31)
+            ) return false
             9 -> if (
                 operation.node !in existing ||
                 !isSupported2dTransform(operation.numbers ?: return false)
@@ -199,7 +205,7 @@ internal class HostScene(
                         emitElementEvent(id, event.name, detail)
                     },
                 )
-                val node = HostNode(context, registration.name)
+                val node = HostNode(context, registration.name, root as? WhiskerView)
                 node.mountedElement = mounted
                 node.addView(
                     mounted.view,
@@ -243,6 +249,8 @@ internal class HostScene(
             21 -> applyBackgroundLayers(nodes[id] ?: return, operation)
             22 -> applyBoxShadows(nodes[id] ?: return, operation)
             23 -> applyClipPath(nodes[id] ?: return, operation)
+            24 -> (nodes[id] ?: return).backdropBlur =
+                operation.scalar * root.resources.displayMetrics.density
         }
     }
 

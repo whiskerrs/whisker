@@ -76,7 +76,7 @@ pub(crate) struct LogicalClip {
 }
 
 impl LogicalClip {
-    fn intersect(self, rect: LayoutRect, horizontal: bool, vertical: bool) -> Self {
+    pub(crate) fn intersect(self, rect: LayoutRect, horizontal: bool, vertical: bool) -> Self {
         Self {
             left: horizontal
                 .then(|| self.left.map_or(rect.x, |value| value.max(rect.x)))
@@ -271,6 +271,11 @@ fn preserves_screen_axes(transform: Transform) -> bool {
 
 #[derive(Clone, Debug)]
 pub(crate) enum PaintCommand<'a> {
+    BackdropBlur {
+        rect: LayoutRect,
+        radius: f32,
+        clip: LogicalClip,
+    },
     Box {
         rect: LayoutRect,
         content_rect: LayoutRect,
@@ -394,6 +399,18 @@ impl DesktopScene {
                 fill_rule,
             });
             node_clip_bounds = transform_rect_aabb(clip_rect, transform);
+        }
+        if let Some(radius) = presentation
+            .visual_effects
+            .backdrop_blur
+            .filter(|value| *value > 0.0)
+            && let Some(rect) = transform_rect_aabb(border, transform)
+        {
+            commands.push(PaintCommand::BackdropBlur {
+                rect,
+                radius,
+                clip: context.clip,
+            });
         }
         if presentation.paint.is_some()
             || !presentation.background_layers.is_empty()
@@ -991,6 +1008,7 @@ fn supports_visual_effects(effects: &VisualEffects) -> bool {
     let mut remainder = effects.clone();
     remainder.box_shadows.clear();
     remainder.clip_path = None;
+    remainder.backdrop_blur = None;
     remainder == VisualEffects::default()
         && effects.clip_path.as_ref().is_none_or(|(reference, shape)| {
             matches!(

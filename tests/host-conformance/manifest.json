@@ -283,6 +283,13 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "core.backdrop-filter-blur",
+      "feature": "backdrop-filter-blur",
+      "fixture": "core/backdrop-filter-blur.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-relations"]
+    },
+    {
       "id": "wpt.css-backgrounds.box-shadow-002",
       "feature": "box-shadow-spread",
       "fixture": "wpt/css/css-backgrounds/box-shadow-002.json",

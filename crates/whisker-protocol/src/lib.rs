@@ -62,9 +62,9 @@ pub use resource::{
 pub use validation::{ApplyResult, NodeProjection, SceneProjection, ValidationError};
 pub use visual::{
     BackfaceVisibility, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
-    BoxShadow, ClipShape, Cursor, CursorKeyword, CursorResource, FillRule, FilterOperation,
-    GradientStop, ImageContent, ImageRendering, ImageRepeat, Isolation, MaskComposite, MaskLayer,
-    MaskMode, ObjectFit, OutlineLineStyle, OutlinePaint, PaintBox, PaintCoordinate, PaintImage,
+    BoxShadow, ClipShape, Cursor, CursorKeyword, CursorResource, FillRule, GradientStop,
+    ImageContent, ImageRendering, ImageRepeat, Isolation, MaskComposite, MaskLayer, MaskMode,
+    ObjectFit, OutlineLineStyle, OutlinePaint, PaintBox, PaintCoordinate, PaintImage,
     PaintPosition, PathCommand, RadialGradientExtent, RadialGradientShape, TextDecoration,
     TextDecorationLines, TextDecorationStyle, TextDecorationThickness, TextShadow, TransformStyle,
     VisualEffects,

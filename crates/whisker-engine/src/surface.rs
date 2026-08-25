@@ -367,6 +367,7 @@ impl SurfaceEngine {
                 .node(node)
                 .ok_or(SceneError::UnknownNode { node })?;
             current.box_paint() != Some(&lowered.box_paint)
+                || current.visual_effects() != &lowered.visual_effects
                 || current.clip() != Some(lowered.clip)
                 || current.opacity() != Some(lowered.opacity)
                 || current.visibility() != Some(lowered.visibility)
@@ -376,6 +377,9 @@ impl SurfaceEngine {
         self.scene
             .set_box_paint(node, lowered.box_paint)
             .expect("lowered paint is valid and the scene is mutable");
+        self.scene
+            .set_visual_effects(node, lowered.visual_effects)
+            .expect("lowered visual effects are valid and the scene is mutable");
         self.scene
             .set_clip(node, lowered.clip)
             .expect("the retained scene node was validated above");

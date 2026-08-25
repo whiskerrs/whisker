@@ -315,7 +315,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.visual-effects.clip-path-path-nonzero" ||
                             command.getString("name") ==
-                            "paint.visual-effects.clip-path-path-evenodd",
+                            "paint.visual-effects.clip-path-path-evenodd" ||
+                            command.getString("name") ==
+                            "paint.visual-effects.backdrop-blur",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -717,6 +719,15 @@ private class Driver(
                     }
                 }
                 check(stage(tag = 23, node = id, numbers = numbers.toFloatArray()))
+            }
+            if (node.has("backdrop_blur")) {
+                check(
+                    stage(
+                        tag = 24,
+                        node = id,
+                        scalar = node.getDouble("backdrop_blur").toFloat(),
+                    ),
+                )
             }
         }
         check(view.commitFrameFromNative())

@@ -624,6 +624,184 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+const BACKDROP_SHADER: &str = r#"
+struct BlurUniform {
+    direction: vec2<f32>,
+    radius: f32,
+    _padding: f32,
+};
+
+@group(0) @binding(0) var source_texture: texture_2d<f32>;
+@group(0) @binding(1) var source_sampler: sampler;
+@group(0) @binding(2) var<uniform> blur: BlurUniform;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> VertexOutput {
+    let positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    var output: VertexOutput;
+    output.position = vec4<f32>(positions[index], 0.0, 1.0);
+    output.uv = positions[index] * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+    return output;
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    if blur.radius <= 0.0 {
+        return textureSample(source_texture, source_sampler, input.uv);
+    }
+    let dimensions = vec2<f32>(textureDimensions(source_texture));
+    let step = blur.direction * max(blur.radius / 8.0, 0.5) / dimensions;
+    var color = vec4<f32>(0.0);
+    var weight_sum = 0.0;
+    for (var offset = -8; offset <= 8; offset = offset + 1) {
+        let value = f32(offset) / 4.0;
+        let weight = exp(-0.5 * value * value);
+        color += textureSample(source_texture, source_sampler, input.uv + step * f32(offset)) * weight;
+        weight_sum += weight;
+    }
+    return color / weight_sum;
+}
+"#;
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct BackdropUniform {
+    direction: [f32; 2],
+    radius: f32,
+    _padding: f32,
+}
+
+struct BackdropGpuPipeline {
+    pipeline: RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+}
+
+impl BackdropGpuPipeline {
+    fn new(device: &Device, format: TextureFormat) -> Self {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("whisker Desktop backdrop layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("whisker Desktop backdrop shader"),
+            source: ShaderSource::Wgsl(BACKDROP_SHADER.into()),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("whisker Desktop backdrop pipeline layout"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("whisker Desktop backdrop pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: PipelineCompilationOptions::default(),
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            primitive: PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("whisker Desktop backdrop sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        Self {
+            pipeline,
+            layout,
+            sampler,
+        }
+    }
+
+    fn bind_group(
+        &self,
+        device: &Device,
+        source: &wgpu::TextureView,
+        uniform: BackdropUniform,
+    ) -> (Buffer, wgpu::BindGroup) {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("whisker Desktop backdrop uniform"),
+            contents: bytemuck::bytes_of(&uniform),
+            usage: BufferUsages::UNIFORM,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("whisker Desktop backdrop bind group"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(source),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: buffer.as_entire_binding(),
+                },
+            ],
+        });
+        (buffer, bind_group)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct GpuError(String);
 
@@ -819,6 +997,9 @@ pub(crate) type ClippedBoxPrimitive = (
     Option<LinearGradientDraw>,
     Option<ResourceId>,
 );
+
+#[cfg(all(test, feature = "host-conformance"))]
+pub(crate) type BackdropCheckpoint = (LayoutRect, f32, LogicalClip);
 
 struct BoxGpuPipeline {
     pipeline: RenderPipeline,
@@ -1263,6 +1444,11 @@ impl BoxGpuPipeline {
 }
 
 enum DrawCommand {
+    BackdropBlur {
+        rect: LayoutRect,
+        radius: f32,
+        clip: LogicalClip,
+    },
     Quads {
         vertices: Range<u32>,
         clip: LogicalClip,
@@ -1280,7 +1466,7 @@ impl DrawCommand {
     fn gradient(&self) -> Option<&LinearGradientDraw> {
         match self {
             Self::Quads { gradient, .. } => gradient.as_ref(),
-            Self::Text { .. } => None,
+            Self::Text { .. } | Self::BackdropBlur { .. } => None,
         }
     }
 }
@@ -1694,6 +1880,7 @@ pub(crate) struct GpuRenderer {
     queue: Queue,
     config: SurfaceConfiguration,
     box_gpu: BoxGpuPipeline,
+    backdrop_gpu: BackdropGpuPipeline,
     text_viewport: Viewport,
     text_atlas: TextAtlas,
     text_renderers: HashMap<NodeId, TextRenderer>,
@@ -1750,6 +1937,7 @@ impl GpuRenderer {
         surface.configure(&device, &config);
 
         let box_gpu = BoxGpuPipeline::new(&device, &queue, format);
+        let backdrop_gpu = BackdropGpuPipeline::new(&device, format);
 
         let text_cache = Cache::new(&device);
         let text_viewport = Viewport::new(&device, &text_cache);
@@ -1760,6 +1948,7 @@ impl GpuRenderer {
             queue,
             config,
             box_gpu,
+            backdrop_gpu,
             text_viewport,
             text_atlas,
             text_renderers: HashMap::new(),
@@ -1816,6 +2005,13 @@ impl GpuRenderer {
         let mut draws = Vec::new();
         for (index, command) in commands.iter().enumerate() {
             match command {
+                PaintCommand::BackdropBlur { rect, radius, clip } => {
+                    draws.push(DrawCommand::BackdropBlur {
+                        rect: *rect,
+                        radius: *radius,
+                        clip: *clip,
+                    });
+                }
                 PaintCommand::Box {
                     rect,
                     content_rect,
@@ -1962,7 +2158,7 @@ impl GpuRenderer {
             .iter()
             .filter_map(|draw| match draw {
                 DrawCommand::Text { node, .. } => Some(*node),
-                DrawCommand::Quads { .. } => None,
+                DrawCommand::Quads { .. } | DrawCommand::BackdropBlur { .. } => None,
             })
             .collect::<HashSet<_>>();
         self.text_renderers
@@ -2046,6 +2242,36 @@ impl GpuRenderer {
             Err(error) => return Err(GpuError(format!("acquire Desktop GPU frame: {error}"))),
         };
         let view = frame.texture.create_view(&TextureViewDescriptor::default());
+        let scene_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("whisker Desktop composited scene"),
+            size: wgpu::Extent3d {
+                width: self.config.width,
+                height: self.config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let scratch_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("whisker Desktop backdrop scratch"),
+            size: wgpu::Extent3d {
+                width: self.config.width,
+                height: self.config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let scene_view = scene_texture.create_view(&TextureViewDescriptor::default());
+        let scratch_view = scratch_texture.create_view(&TextureViewDescriptor::default());
         let mut encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor {
@@ -2055,7 +2281,7 @@ impl GpuRenderer {
             let _clear = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("whisker Desktop clear"),
                 color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &view,
+                    view: &scene_view,
                     resolve_target: None,
                     ops: Operations {
                         load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -2070,6 +2296,66 @@ impl GpuRenderer {
 
         for (draw_index, draw) in draws.into_iter().enumerate() {
             match draw {
+                DrawCommand::BackdropBlur { rect, radius, clip } => {
+                    let horizontal = BackdropUniform {
+                        direction: [1.0, 0.0],
+                        radius: radius * scale,
+                        _padding: 0.0,
+                    };
+                    let (_horizontal_buffer, horizontal_group) =
+                        self.backdrop_gpu
+                            .bind_group(&self.device, &scene_view, horizontal);
+                    {
+                        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                            label: Some("whisker Desktop backdrop horizontal blur"),
+                            color_attachments: &[Some(RenderPassColorAttachment {
+                                view: &scratch_view,
+                                resolve_target: None,
+                                ops: Operations {
+                                    load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                    store: StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                        pass.set_pipeline(&self.backdrop_gpu.pipeline);
+                        pass.set_bind_group(0, &horizontal_group, &[]);
+                        pass.draw(0..3, 0..1);
+                    }
+                    let vertical = BackdropUniform {
+                        direction: [0.0, 1.0],
+                        radius: radius * scale,
+                        _padding: 0.0,
+                    };
+                    let (_vertical_buffer, vertical_group) =
+                        self.backdrop_gpu
+                            .bind_group(&self.device, &scratch_view, vertical);
+                    let Some((x, y, width, height)) =
+                        self.scissor(clip.intersect(rect, true, true), scale)
+                    else {
+                        continue;
+                    };
+                    let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                        label: Some("whisker Desktop backdrop vertical blur"),
+                        color_attachments: &[Some(RenderPassColorAttachment {
+                            view: &scene_view,
+                            resolve_target: None,
+                            ops: Operations {
+                                load: LoadOp::Load,
+                                store: StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_scissor_rect(x, y, width, height);
+                    pass.set_pipeline(&self.backdrop_gpu.pipeline);
+                    pass.set_bind_group(0, &vertical_group, &[]);
+                    pass.draw(0..3, 0..1);
+                }
                 DrawCommand::Quads {
                     vertices,
                     clip,
@@ -2082,7 +2368,7 @@ impl GpuRenderer {
                     let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                         label: Some("whisker Desktop boxes"),
                         color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &view,
+                            view: &scene_view,
                             resolve_target: None,
                             ops: Operations {
                                 load: LoadOp::Load,
@@ -2117,7 +2403,7 @@ impl GpuRenderer {
                     let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                         label: Some("whisker Desktop text"),
                         color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &view,
+                            view: &scene_view,
                             resolve_target: None,
                             ops: Operations {
                                 load: LoadOp::Load,
@@ -2135,6 +2421,33 @@ impl GpuRenderer {
                         .map_err(|error| GpuError(format!("encode glyph draw: {error}")))?;
                 }
             }
+        }
+        let present_uniform = BackdropUniform {
+            direction: [0.0, 0.0],
+            radius: 0.0,
+            _padding: 0.0,
+        };
+        let (_present_buffer, present_group) =
+            self.backdrop_gpu
+                .bind_group(&self.device, &scene_view, present_uniform);
+        {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("whisker Desktop present composited scene"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.backdrop_gpu.pipeline);
+            pass.set_bind_group(0, &present_group, &[]);
+            pass.draw(0..3, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
@@ -2251,6 +2564,17 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
     logical_size: [u32; 2],
     resources: &HashMap<ResourceId, RasterResource>,
 ) -> Result<Vec<u8>, GpuError> {
+    render_clipped_box_primitives_with_backdrops_offscreen(primitives, &[], logical_size, resources)
+        .await
+}
+
+#[cfg(all(test, feature = "host-conformance"))]
+pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
+    primitives: &[ClippedBoxPrimitive],
+    backdrops: &[BackdropCheckpoint],
+    logical_size: [u32; 2],
+    resources: &HashMap<ResourceId, RasterResource>,
+) -> Result<Vec<u8>, GpuError> {
     let [width, height] = logical_size;
     if width == 0 || height == 0 {
         return Err(GpuError(
@@ -2269,6 +2593,7 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
         .map_err(|error| GpuError(format!("create offscreen Desktop GPU device: {error}")))?;
     let format = TextureFormat::Rgba8Unorm;
     let box_gpu = BoxGpuPipeline::new(&device, &queue, format);
+    let backdrop_gpu = BackdropGpuPipeline::new(&device, format);
     box_gpu.update_viewport(
         &queue,
         [width as f32, height as f32],
@@ -2310,10 +2635,27 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+        usage: TextureUsages::RENDER_ATTACHMENT
+            | TextureUsages::TEXTURE_BINDING
+            | TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let view = texture.create_view(&TextureViewDescriptor::default());
+    let scratch = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("whisker Desktop conformance backdrop scratch"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let scratch_view = scratch.create_view(&TextureViewDescriptor::default());
     let unpadded_bytes_per_row = width * 4;
     let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
         * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -2384,6 +2726,68 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.draw(range, draw_index as u32..draw_index as u32 + 1);
         }
+    }
+    for (rect, radius, clip) in backdrops {
+        let (_horizontal_buffer, horizontal_group) = backdrop_gpu.bind_group(
+            &device,
+            &view,
+            BackdropUniform {
+                direction: [1.0, 0.0],
+                radius: *radius,
+                _padding: 0.0,
+            },
+        );
+        {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("whisker Desktop conformance horizontal backdrop blur"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &scratch_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&backdrop_gpu.pipeline);
+            pass.set_bind_group(0, &horizontal_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        let (_vertical_buffer, vertical_group) = backdrop_gpu.bind_group(
+            &device,
+            &scratch_view,
+            BackdropUniform {
+                direction: [0.0, 1.0],
+                radius: *radius,
+                _padding: 0.0,
+            },
+        );
+        let Some((x, y, clip_width, clip_height)) =
+            offscreen_scissor(clip.intersect(*rect, true, true), width, height)
+        else {
+            continue;
+        };
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("whisker Desktop conformance vertical backdrop blur"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Load,
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_scissor_rect(x, y, clip_width, clip_height);
+        pass.set_pipeline(&backdrop_gpu.pipeline);
+        pass.set_bind_group(0, &vertical_group, &[]);
+        pass.draw(0..3, 0..1);
     }
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {

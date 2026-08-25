@@ -341,6 +341,18 @@ pub struct BackgroundValue {
     pub color: ColorValue,
 }
 
+/// Supported subset of the CSS `backdrop-filter` property.
+///
+/// Whisker intentionally supports only `none` and one `blur(<length>)`
+/// function. Color transforms and filter chains remain out of scope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BackdropFilterValue {
+    /// Do not filter the pixels behind the element.
+    None,
+    /// Apply a Gaussian blur with the specified non-negative radius.
+    Blur(LengthValue),
+}
+
 /// An owned value in a specified inline-style declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StyleValue {
@@ -372,6 +384,8 @@ pub enum StyleValue {
     BackgroundBox(BackgroundBoxValue),
     /// Scrolling relationship of one background layer.
     BackgroundAttachment(BackgroundAttachmentValue),
+    /// Background-pixel filter applied behind this node.
+    BackdropFilter(BackdropFilterValue),
     /// Font family.
     FontFamily(FontFamilyValue),
     /// Font face style.

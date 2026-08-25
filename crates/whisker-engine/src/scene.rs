@@ -8,7 +8,7 @@ use whisker_protocol::{
     BackgroundLayer, BoxClip, BoxPaint, CommandId, ElementTypeId, FrameHeader, FrameMode,
     FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, NodeId, Operation, OverflowClip,
     PointerId, PropertyId, ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError,
-    Transform, Visibility, WhiskerValue,
+    Transform, Visibility, VisualEffects, WhiskerValue,
 };
 
 /// A retained logical node owned by a [`Scene`].
@@ -20,6 +20,7 @@ pub struct SceneNode {
     layout: Option<LayoutGeometry>,
     box_paint: Option<BoxPaint>,
     background_layers: Vec<BackgroundLayer>,
+    visual_effects: VisualEffects,
     clip: Option<BoxClip>,
     transform: Option<Transform>,
     opacity: Option<f32>,
@@ -41,6 +42,7 @@ impl SceneNode {
             layout: None,
             box_paint: None,
             background_layers: Vec::new(),
+            visual_effects: VisualEffects::default(),
             clip: None,
             transform: None,
             opacity: None,
@@ -87,6 +89,11 @@ impl SceneNode {
     /// Returns retained background image layers in front-to-back order.
     pub fn background_layers(&self) -> &[BackgroundLayer] {
         &self.background_layers
+    }
+
+    /// Returns retained visual effects.
+    pub const fn visual_effects(&self) -> &VisualEffects {
+        &self.visual_effects
     }
 
     /// Returns retained descendant overflow clipping.
@@ -185,6 +192,8 @@ pub enum SceneError {
     InvalidBoxPaint,
     /// One or more retained background image layers were invalid.
     InvalidBackgroundLayers,
+    /// One or more visual-effect values were invalid.
+    InvalidVisualEffects,
     /// A pending command result identifier was reused.
     DuplicateResultId {
         /// Duplicate result identifier.
@@ -213,6 +222,7 @@ enum DirtySlot {
     Layout(NodeId),
     BoxPaint(NodeId),
     BackgroundLayers(NodeId),
+    VisualEffects(NodeId),
     Clip(NodeId),
     Transform(NodeId),
     Opacity(NodeId),
@@ -596,6 +606,30 @@ impl Scene {
         self.journal.push_coalesced(
             DirtySlot::BackgroundLayers(node),
             Operation::SetBackgroundLayers { node, layers },
+        );
+        Ok(())
+    }
+
+    /// Sets resolved visual effects when they differ from retained state.
+    pub fn set_visual_effects(
+        &mut self,
+        node: NodeId,
+        effects: VisualEffects,
+    ) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        if !effects.validate() {
+            return Err(SceneError::InvalidVisualEffects);
+        }
+        if self.require_node(node)?.visual_effects == effects {
+            return Ok(());
+        }
+        self.nodes
+            .get_mut(&node)
+            .expect("node checked above")
+            .visual_effects = effects.clone();
+        self.journal.push_coalesced(
+            DirtySlot::VisualEffects(node),
+            Operation::SetVisualEffects { node, effects },
         );
         Ok(())
     }
@@ -1030,6 +1064,12 @@ impl Scene {
                     layers: state.background_layers.clone(),
                 });
             }
+            if state.visual_effects != VisualEffects::default() {
+                operations.push(Operation::SetVisualEffects {
+                    node: *node,
+                    effects: state.visual_effects.clone(),
+                });
+            }
             if let Some(clip) = state.clip {
                 operations.push(Operation::SetClip { node: *node, clip });
             }
@@ -1259,6 +1299,13 @@ mod tests {
         scene
             .set_background_layers(root, vec![background.clone()])
             .expect("background layers");
+        let effects = VisualEffects {
+            backdrop_blur: Some(12.0),
+            ..VisualEffects::default()
+        };
+        scene
+            .set_visual_effects(root, effects.clone())
+            .expect("visual effects");
         let clip = BoxClip {
             horizontal: OverflowClip::Hidden,
             vertical: OverflowClip::Visible,
@@ -1300,6 +1347,7 @@ mod tests {
         assert_eq!(root_state.layout(), Some(rect.into()));
         assert_eq!(root_state.text(), Some(&text));
         assert_eq!(root_state.box_paint(), Some(&paint));
+        assert_eq!(root_state.visual_effects(), &effects);
         assert_eq!(root_state.clip(), Some(clip));
         assert_eq!(root_state.opacity(), Some(0.75));
         assert_eq!(root_state.visibility(), Some(Visibility::Visible));
@@ -1322,6 +1370,13 @@ mod tests {
                 operation,
                 Operation::SetBackgroundLayers { node, layers }
                     if *node == root && layers == std::slice::from_ref(&background)
+            )
+        }));
+        assert!(packet.operations.iter().any(|operation| {
+            matches!(
+                operation,
+                Operation::SetVisualEffects { node, effects: actual }
+                    if *node == root && actual == &effects
             )
         }));
         assert!(!scene.has_pending_work());
@@ -1364,6 +1419,16 @@ mod tests {
         scene
             .set_background_layers(root, vec![resource_background(2)])
             .expect("equal background");
+        let effects = VisualEffects {
+            backdrop_blur: Some(8.0),
+            ..VisualEffects::default()
+        };
+        scene
+            .set_visual_effects(root, effects.clone())
+            .expect("visual effects");
+        scene
+            .set_visual_effects(root, effects)
+            .expect("equal visual effects");
         let clip = BoxClip {
             horizontal: OverflowClip::Visible,
             vertical: OverflowClip::Hidden,
@@ -1542,6 +1607,10 @@ mod tests {
             Err(SceneError::FramePending)
         );
         assert_eq!(
+            scene.set_visual_effects(root, VisualEffects::default()),
+            Err(SceneError::FramePending)
+        );
+        assert_eq!(
             scene.set_transform(root, Transform::IDENTITY),
             Err(SceneError::FramePending)
         );
@@ -1713,6 +1782,7 @@ mod tests {
             scene.delete_node(missing),
             scene.set_layout(missing, LayoutRect::default()),
             scene.set_box_paint(missing, box_paint("missing")),
+            scene.set_visual_effects(missing, VisualEffects::default()),
             scene.set_clip(
                 missing,
                 BoxClip {
@@ -1756,6 +1826,14 @@ mod tests {
         assert_eq!(
             scene.set_box_paint(root, invalid_paint),
             Err(SceneError::InvalidBoxPaint)
+        );
+        let invalid_effects = VisualEffects {
+            backdrop_blur: Some(-1.0),
+            ..VisualEffects::default()
+        };
+        assert_eq!(
+            scene.set_visual_effects(root, invalid_effects),
+            Err(SceneError::InvalidVisualEffects)
         );
         let mut invalid_text = text_content("invalid");
         invalid_text.payload.style.font_families.clear();
