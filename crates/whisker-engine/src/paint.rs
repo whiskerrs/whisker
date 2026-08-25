@@ -6,8 +6,9 @@ use whisker_protocol::{
 };
 use whisker_style::{
     BorderStyleValue, ColorValue, ComputedLayoutStyle, ComputedLengthPercentage,
-    ComputedPaintStyle, ComputedTransformFunction, ComputedTransformStyle, MotionPathCommandValue,
-    OffsetPathValue, OffsetRotateValue, OverflowValue, VisibilityValue,
+    ComputedOffsetPathValue as OffsetPathValue, ComputedPaintStyle, ComputedTransformFunction,
+    ComputedTransformStyle, MotionPathCommandValue, OffsetRotateValue, OverflowValue,
+    VisibilityValue,
 };
 
 /// Complete common presentation values derived from one computed node style.
@@ -99,7 +100,12 @@ pub fn lower_transform(
         .unwrap_or_else(identity);
     let motion = match &style.offset_path {
         OffsetPathValue::None => None,
-        path => Some(motion_path_state(path, style.offset_distance.get())?),
+        path => Some(motion_path_state(
+            path,
+            style.offset_distance.get(),
+            border_width,
+            border_height,
+        )?),
     };
     if let Some((_, _, tangent)) = motion {
         let angle = match style.offset_rotate {
@@ -224,57 +230,99 @@ fn function_matrix(
         .then_some(matrix)
 }
 
-fn motion_path_state(path: &OffsetPathValue, progress: f32) -> Option<(f32, f32, f32)> {
-    let OffsetPathValue::Path(commands) = path else {
-        return None;
-    };
+fn motion_path_state(
+    path: &OffsetPathValue,
+    progress: f32,
+    border_width: f32,
+    border_height: f32,
+) -> Option<(f32, f32, f32)> {
     let mut segments = Vec::new();
-    let mut current = None;
-    let mut subpath_start = None;
     let mut total_length = 0.0_f32;
-    for command in commands {
-        let next = match *command {
-            MotionPathCommandValue::MoveTo(point) => {
-                let point = finite_motion_point(point)?;
-                current = Some(point);
-                subpath_start = Some(point);
-                continue;
+    match path {
+        OffsetPathValue::None => return None,
+        OffsetPathValue::Path(commands) => {
+            let mut current = None;
+            let mut subpath_start = None;
+            for command in commands {
+                let next = match *command {
+                    MotionPathCommandValue::MoveTo(point) => {
+                        let point = finite_motion_point(point)?;
+                        current = Some(point);
+                        subpath_start = Some(point);
+                        continue;
+                    }
+                    MotionPathCommandValue::LineTo(point) => {
+                        let next = finite_motion_point(point)?;
+                        push_motion_line(&mut segments, current?, next);
+                        next
+                    }
+                    MotionPathCommandValue::QuadraticTo { control, to } => {
+                        let from = current?;
+                        let control = finite_motion_point(control)?;
+                        let to = finite_motion_point(to)?;
+                        flatten_quadratic(&mut segments, from, control, to, 0);
+                        to
+                    }
+                    MotionPathCommandValue::CubicTo {
+                        control1,
+                        control2,
+                        to,
+                    } => {
+                        let from = current?;
+                        let control1 = finite_motion_point(control1)?;
+                        let control2 = finite_motion_point(control2)?;
+                        let to = finite_motion_point(to)?;
+                        flatten_cubic(&mut segments, from, control1, control2, to, 0);
+                        to
+                    }
+                    MotionPathCommandValue::Close => {
+                        let next = subpath_start?;
+                        push_motion_line(
+                            &mut segments,
+                            current.expect("a subpath start implies a current motion point"),
+                            next,
+                        );
+                        next
+                    }
+                };
+                current = Some(next);
             }
-            MotionPathCommandValue::LineTo(point) => {
-                let next = finite_motion_point(point)?;
-                push_motion_line(&mut segments, current?, next);
-                next
-            }
-            MotionPathCommandValue::QuadraticTo { control, to } => {
-                let from = current?;
-                let control = finite_motion_point(control)?;
-                let to = finite_motion_point(to)?;
-                flatten_quadratic(&mut segments, from, control, to, 0);
-                to
-            }
-            MotionPathCommandValue::CubicTo {
-                control1,
-                control2,
-                to,
-            } => {
-                let from = current?;
-                let control1 = finite_motion_point(control1)?;
-                let control2 = finite_motion_point(control2)?;
-                let to = finite_motion_point(to)?;
-                flatten_cubic(&mut segments, from, control1, control2, to, 0);
-                to
-            }
-            MotionPathCommandValue::Close => {
-                let next = subpath_start?;
-                push_motion_line(
-                    &mut segments,
-                    current.expect("a subpath start implies a current motion point"),
-                    next,
-                );
-                next
-            }
-        };
-        current = Some(next);
+        }
+        OffsetPathValue::Circle {
+            radius,
+            center_x,
+            center_y,
+        } => {
+            let diagonal = border_width.hypot(border_height) / std::f32::consts::SQRT_2;
+            let radius = resolve_motion_length(*radius, diagonal);
+            let center = (
+                resolve_motion_length(*center_x, border_width),
+                resolve_motion_length(*center_y, border_height),
+            );
+            append_ellipse(
+                &mut segments,
+                center,
+                (radius, radius),
+                0.0,
+                std::f32::consts::TAU,
+            );
+        }
+        OffsetPathValue::Ellipse {
+            radius_x,
+            radius_y,
+            center_x,
+            center_y,
+        } => {
+            let radii = (
+                resolve_motion_length(*radius_x, border_width),
+                resolve_motion_length(*radius_y, border_height),
+            );
+            let center = (
+                resolve_motion_length(*center_x, border_width),
+                resolve_motion_length(*center_y, border_height),
+            );
+            append_ellipse(&mut segments, center, radii, 0.0, std::f32::consts::TAU);
+        }
     }
     for segment in &segments {
         total_length += segment.length;
@@ -316,6 +364,12 @@ enum MotionCurve {
         control1: MotionPoint,
         control2: MotionPoint,
         end: MotionPoint,
+    },
+    Ellipse {
+        center: MotionPoint,
+        radii: MotionPoint,
+        start_angle: f32,
+        end_angle: f32,
     },
 }
 
@@ -385,6 +439,18 @@ impl MotionSegment {
                     ),
                 )
             }
+            MotionCurve::Ellipse {
+                center,
+                radii,
+                start_angle,
+                end_angle,
+            } => {
+                let angle = start_angle + (end_angle - start_angle) * local;
+                (
+                    ellipse_point(center, radii, angle),
+                    (-radii.0 * angle.sin(), radii.1 * angle.cos()),
+                )
+            }
         };
         let tangent = if tangent.0.hypot(tangent.1) > f32::EPSILON {
             tangent
@@ -403,6 +469,10 @@ fn finite_motion_point(value: whisker_style::MotionPathPointValue) -> Option<Mot
 
 fn push_motion_line(segments: &mut Vec<MotionSegment>, from: MotionPoint, to: MotionPoint) {
     push_motion_segment(segments, from, to, MotionCurve::Line);
+}
+
+fn resolve_motion_length(value: whisker_style::ComputedLengthPercentage, context: f32) -> f32 {
+    value.length() + value.fraction() * context
 }
 
 fn push_motion_segment(
@@ -484,6 +554,71 @@ fn flatten_cubic(
     let middle = midpoint(p012, p123);
     flatten_cubic(segments, start, p01, p012, middle, depth + 1);
     flatten_cubic(segments, middle, p123, p23, end, depth + 1);
+}
+
+fn append_ellipse(
+    segments: &mut Vec<MotionSegment>,
+    center: MotionPoint,
+    radii: MotionPoint,
+    start_angle: f32,
+    end_angle: f32,
+) {
+    if !center.0.is_finite()
+        || !center.1.is_finite()
+        || !radii.0.is_finite()
+        || !radii.1.is_finite()
+        || radii.0 <= 0.0
+        || radii.1 <= 0.0
+    {
+        return;
+    }
+    flatten_ellipse(segments, center, radii, start_angle, end_angle, 0);
+}
+
+fn flatten_ellipse(
+    segments: &mut Vec<MotionSegment>,
+    center: MotionPoint,
+    radii: MotionPoint,
+    start_angle: f32,
+    end_angle: f32,
+    depth: u8,
+) {
+    let start = ellipse_point(center, radii, start_angle);
+    let end = ellipse_point(center, radii, end_angle);
+    let middle_angle = (start_angle + end_angle) * 0.5;
+    let middle = ellipse_point(center, radii, middle_angle);
+    if depth == MOTION_CURVE_MAX_DEPTH
+        || point_line_distance(middle, start, end) <= MOTION_CURVE_FLATNESS
+    {
+        push_motion_segment(
+            segments,
+            start,
+            end,
+            MotionCurve::Ellipse {
+                center,
+                radii,
+                start_angle,
+                end_angle,
+            },
+        );
+        return;
+    }
+    flatten_ellipse(
+        segments,
+        center,
+        radii,
+        start_angle,
+        middle_angle,
+        depth + 1,
+    );
+    flatten_ellipse(segments, center, radii, middle_angle, end_angle, depth + 1);
+}
+
+fn ellipse_point(center: MotionPoint, radii: MotionPoint, angle: f32) -> MotionPoint {
+    (
+        center.0 + radii.0 * angle.cos(),
+        center.1 + radii.1 * angle.sin(),
+    )
 }
 
 fn point_line_distance(point: MotionPoint, start: MotionPoint, end: MotionPoint) -> f32 {
@@ -894,7 +1029,10 @@ mod tests {
             x: StyleNumber::new(x),
             y: StyleNumber::new(y),
         };
-        assert_eq!(motion_path_state(&OffsetPathValue::None, 0.5), None);
+        assert_eq!(
+            motion_path_state(&OffsetPathValue::None, 0.5, 1.0, 1.0),
+            None
+        );
         let style = ComputedTransformStyle {
             offset_path: OffsetPathValue::Path(vec![
                 MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
@@ -1019,7 +1157,7 @@ mod tests {
                 to: point(20.0, 0.0),
             },
         ]);
-        let (x, y, angle) = motion_path_state(&quadratic, 0.5).unwrap();
+        let (x, y, angle) = motion_path_state(&quadratic, 0.5, 1.0, 1.0).unwrap();
         assert!((x - 5.0).abs() < 0.001, "{x}");
         assert!((y - 5.0).abs() < 0.001, "{y}");
         assert!((angle - 315.0).abs() < 0.001, "{angle}");
@@ -1032,10 +1170,45 @@ mod tests {
                 to: point(20.0, 20.0),
             },
         ]);
-        let (x, y, angle) = motion_path_state(&cubic, 0.5).unwrap();
+        let (x, y, angle) = motion_path_state(&cubic, 0.5, 1.0, 1.0).unwrap();
         assert!((x - 5.0).abs() < 0.001, "{x}");
         assert!((y - 10.0).abs() < 0.001, "{y}");
         assert!((angle - 90.0).abs() < 0.001, "{angle}");
+
+        let circle = OffsetPathValue::Circle {
+            radius: ComputedLengthPercentage::new(0.0, 0.5),
+            center_x: ComputedLengthPercentage::new(0.0, 0.5),
+            center_y: ComputedLengthPercentage::new(0.0, 0.5),
+        };
+        let (x, y, angle) = motion_path_state(&circle, 0.25, 40.0, 20.0).unwrap();
+        assert!((x - 20.0).abs() < 0.001, "{x}");
+        assert!((y - 25.811_388).abs() < 0.001, "{y}");
+        assert!((angle - 180.0).abs() < 0.001, "{angle}");
+
+        let ellipse = OffsetPathValue::Ellipse {
+            radius_x: ComputedLengthPercentage::new(0.0, 0.25),
+            radius_y: ComputedLengthPercentage::new(0.0, 0.25),
+            center_x: ComputedLengthPercentage::new(0.0, 0.5),
+            center_y: ComputedLengthPercentage::new(0.0, 0.5),
+        };
+        let (x, y, angle) = motion_path_state(&ellipse, 0.25, 40.0, 20.0).unwrap();
+        assert!((x - 20.0).abs() < 0.001, "{x}");
+        assert!((y - 15.0).abs() < 0.001, "{y}");
+        assert!((angle - 180.0).abs() < 0.001, "{angle}");
+        assert_eq!(
+            motion_path_state(
+                &OffsetPathValue::Ellipse {
+                    radius_x: ComputedLengthPercentage::ZERO,
+                    radius_y: ComputedLengthPercentage::new(1.0, 0.0),
+                    center_x: ComputedLengthPercentage::ZERO,
+                    center_y: ComputedLengthPercentage::ZERO,
+                },
+                0.5,
+                40.0,
+                20.0,
+            ),
+            None
+        );
 
         assert_eq!(point_line_distance((2.0, 0.0), (1.0, 0.0), (1.0, 0.0)), 1.0);
         let cusp = MotionSegment {

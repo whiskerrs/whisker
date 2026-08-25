@@ -133,5 +133,20 @@ mod tests {
             "offset-path: none; offset-distance: 0.5; offset-rotate: 45deg;"
         );
         assert!(fixed.to_specified_style().is_ok());
+
+        let circle = Css::new().offset_path(OffsetPath::circle_at(
+            25.0.percent(),
+            10.0.px(),
+            75.0.percent(),
+        ));
+        assert_eq!(circle.to_string(), "offset-path: circle(25% at 10px 75%);");
+        assert!(circle.to_specified_style().is_ok());
+
+        let ellipse = Css::new().offset_path(OffsetPath::ellipse(10.0.px(), 25.0.percent()));
+        assert_eq!(
+            ellipse.to_string(),
+            "offset-path: ellipse(10px 25% at 50% 50%);"
+        );
+        assert!(ellipse.to_specified_style().is_ok());
     }
 }

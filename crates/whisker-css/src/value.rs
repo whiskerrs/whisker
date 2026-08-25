@@ -101,6 +101,26 @@ pub enum OffsetPath {
     None,
     /// Follow an absolute polyline path.
     Path(Vec<MotionPathCommand>),
+    /// Follow a circle resolved against the node border box.
+    Circle {
+        /// Radius.
+        radius: LengthPercentage,
+        /// Horizontal center position.
+        center_x: LengthPercentage,
+        /// Vertical center position.
+        center_y: LengthPercentage,
+    },
+    /// Follow an ellipse resolved against the node border box.
+    Ellipse {
+        /// Horizontal radius.
+        radius_x: LengthPercentage,
+        /// Vertical radius.
+        radius_y: LengthPercentage,
+        /// Horizontal center position.
+        center_x: LengthPercentage,
+        /// Vertical center position.
+        center_y: LengthPercentage,
+    },
 }
 
 impl OffsetPath {
@@ -108,63 +128,140 @@ impl OffsetPath {
     pub fn path(commands: impl Into<Vec<MotionPathCommand>>) -> Self {
         Self::Path(commands.into())
     }
+
+    /// Creates a centered `circle()` motion path.
+    pub fn circle(radius: impl Into<LengthPercentage>) -> Self {
+        Self::circle_at(radius, Percentage::new(50.0), Percentage::new(50.0))
+    }
+
+    /// Creates a positioned `circle()` motion path.
+    pub fn circle_at(
+        radius: impl Into<LengthPercentage>,
+        center_x: impl Into<LengthPercentage>,
+        center_y: impl Into<LengthPercentage>,
+    ) -> Self {
+        Self::Circle {
+            radius: radius.into(),
+            center_x: center_x.into(),
+            center_y: center_y.into(),
+        }
+    }
+
+    /// Creates a centered `ellipse()` motion path.
+    pub fn ellipse(
+        radius_x: impl Into<LengthPercentage>,
+        radius_y: impl Into<LengthPercentage>,
+    ) -> Self {
+        Self::ellipse_at(
+            radius_x,
+            radius_y,
+            Percentage::new(50.0),
+            Percentage::new(50.0),
+        )
+    }
+
+    /// Creates a positioned `ellipse()` motion path.
+    pub fn ellipse_at(
+        radius_x: impl Into<LengthPercentage>,
+        radius_y: impl Into<LengthPercentage>,
+        center_x: impl Into<LengthPercentage>,
+        center_y: impl Into<LengthPercentage>,
+    ) -> Self {
+        Self::Ellipse {
+            radius_x: radius_x.into(),
+            radius_y: radius_y.into(),
+            center_x: center_x.into(),
+            center_y: center_y.into(),
+        }
+    }
 }
 
 impl ToCss for OffsetPath {
     fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
-        let Self::Path(commands) = self else {
-            return dest.write_str("none");
-        };
-        dest.write_str("path(\"")?;
-        for (index, command) in commands.iter().enumerate() {
-            if index > 0 {
-                dest.write_char(' ')?;
+        match self {
+            Self::None => dest.write_str("none"),
+            Self::Path(commands) => {
+                dest.write_str("path(\"")?;
+                for (index, command) in commands.iter().enumerate() {
+                    if index > 0 {
+                        dest.write_char(' ')?;
+                    }
+                    match command {
+                        MotionPathCommand::MoveTo(point) => {
+                            dest.write_str("M ")?;
+                            write_number(dest, point.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, point.y)?;
+                        }
+                        MotionPathCommand::LineTo(point) => {
+                            dest.write_str("L ")?;
+                            write_number(dest, point.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, point.y)?;
+                        }
+                        MotionPathCommand::QuadraticTo { control, to } => {
+                            dest.write_str("Q ")?;
+                            write_number(dest, control.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, control.y)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.y)?;
+                        }
+                        MotionPathCommand::CubicTo {
+                            control1,
+                            control2,
+                            to,
+                        } => {
+                            dest.write_str("C ")?;
+                            write_number(dest, control1.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, control1.y)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, control2.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, control2.y)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.y)?;
+                        }
+                        MotionPathCommand::Close => dest.write_char('Z')?,
+                    }
+                }
+                dest.write_str("\")")
             }
-            match command {
-                MotionPathCommand::MoveTo(point) => {
-                    dest.write_str("M ")?;
-                    write_number(dest, point.x)?;
-                    dest.write_char(' ')?;
-                    write_number(dest, point.y)?;
-                }
-                MotionPathCommand::LineTo(point) => {
-                    dest.write_str("L ")?;
-                    write_number(dest, point.x)?;
-                    dest.write_char(' ')?;
-                    write_number(dest, point.y)?;
-                }
-                MotionPathCommand::QuadraticTo { control, to } => {
-                    dest.write_str("Q ")?;
-                    write_number(dest, control.x)?;
-                    dest.write_char(' ')?;
-                    write_number(dest, control.y)?;
-                    dest.write_char(' ')?;
-                    write_number(dest, to.x)?;
-                    dest.write_char(' ')?;
-                    write_number(dest, to.y)?;
-                }
-                MotionPathCommand::CubicTo {
-                    control1,
-                    control2,
-                    to,
-                } => {
-                    dest.write_str("C ")?;
-                    write_number(dest, control1.x)?;
-                    dest.write_char(' ')?;
-                    write_number(dest, control1.y)?;
-                    dest.write_char(' ')?;
-                    write_number(dest, control2.x)?;
-                    dest.write_char(' ')?;
-                    write_number(dest, control2.y)?;
-                    dest.write_char(' ')?;
-                    write_number(dest, to.x)?;
-                    dest.write_char(' ')?;
-                    write_number(dest, to.y)?;
-                }
-                MotionPathCommand::Close => dest.write_char('Z')?,
+            Self::Circle {
+                radius,
+                center_x,
+                center_y,
+            } => {
+                dest.write_str("circle(")?;
+                radius.to_css(dest)?;
+                dest.write_str(" at ")?;
+                center_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                center_y.to_css(dest)?;
+                dest.write_char(')')
+            }
+            Self::Ellipse {
+                radius_x,
+                radius_y,
+                center_x,
+                center_y,
+            } => {
+                dest.write_str("ellipse(")?;
+                radius_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                radius_y.to_css(dest)?;
+                dest.write_str(" at ")?;
+                center_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                center_y.to_css(dest)?;
+                dest.write_char(')')
             }
         }
-        dest.write_str("\")")
     }
 }
 

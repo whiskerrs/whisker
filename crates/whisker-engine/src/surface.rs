@@ -801,7 +801,10 @@ impl SurfaceEngine {
         border_height: f32,
     ) -> Result<Option<whisker_protocol::Transform>, SurfaceError> {
         if style.perspective.is_none()
-            && matches!(style.offset_path, whisker_style::OffsetPathValue::None)
+            && matches!(
+                style.offset_path,
+                whisker_style::ComputedOffsetPathValue::None
+            )
             && style.functions.is_empty()
             && self
                 .scene
@@ -1195,7 +1198,7 @@ mod tests {
             y: StyleNumber::new(y),
         };
         let motion = ComputedTransformStyle {
-            offset_path: whisker_style::OffsetPathValue::Path(vec![
+            offset_path: whisker_style::ComputedOffsetPathValue::Path(vec![
                 whisker_style::MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
                 whisker_style::MotionPathCommandValue::LineTo(point(10.0, 0.0)),
             ]),

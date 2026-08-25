@@ -833,12 +833,17 @@ flat-plane normalization. Browser-style parent perspective,
 `perspective-origin`, and shared `preserve-3d` descendant spaces are outside
 this subset rather than silently changing semantics on any Host. The initial
 Lynx motion-path slice supports absolute `path()` lines and Bezier curves (`M`,
-`L`, `Q`, `C`, `Z`), number/percentage `offset-distance`, and
+`L`, `Q`, `C`, `Z`) plus border-box-relative `circle()` and `ellipse()`,
+number/percentage `offset-distance`, and
 `offset-rotate: auto` or a fixed angle. Rust adaptively measures curves,
 resolves their point and analytic tangent, preserves Lynx's post-transform path
 translation, and emits the result through the existing `SetTransform`; no
-motion-path opcode or Host-side CSS parser is added. SVG arcs and basic-shape
-paths remain pending follow-up slices.
+motion-path opcode or Host-side CSS parser is added. Percentage circle radii
+use the normalized border-box diagonal; ellipse radii use their corresponding
+box axis. This deliberately makes `ellipse()` available on every Whisker Host
+and corrects Lynx Android's width-based vertical percentage rather than
+preserving its Host divergence. SVG arcs and `inset()` paths remain pending
+follow-up slices.
 
 The final opcode set may combine common operations for compactness. The
 semantic separation matters because it enables dirty classification,

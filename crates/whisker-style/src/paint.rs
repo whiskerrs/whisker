@@ -212,13 +212,43 @@ pub enum ComputedTransformFunction {
     Matrix([StyleNumber; 16]),
 }
 
+/// Border-box-resolvable motion path retained by computed style.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ComputedOffsetPathValue {
+    /// Disable motion-path positioning.
+    #[default]
+    None,
+    /// Follow an absolute SVG path.
+    Path(Vec<MotionPathCommandValue>),
+    /// Follow a circle relative to the node border box.
+    Circle {
+        /// Radius; percentages use the normalized box diagonal.
+        radius: ComputedLengthPercentage,
+        /// Horizontal center relative to box width.
+        center_x: ComputedLengthPercentage,
+        /// Vertical center relative to box height.
+        center_y: ComputedLengthPercentage,
+    },
+    /// Follow an ellipse relative to the node border box.
+    Ellipse {
+        /// Horizontal radius relative to box width.
+        radius_x: ComputedLengthPercentage,
+        /// Vertical radius relative to box height.
+        radius_y: ComputedLengthPercentage,
+        /// Horizontal center relative to box width.
+        center_x: ComputedLengthPercentage,
+        /// Vertical center relative to box height.
+        center_y: ComputedLengthPercentage,
+    },
+}
+
 /// Transform functions and origin retained until border-box layout is known.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ComputedTransformStyle {
     /// Lynx-compatible perspective distance applied to this node, or none.
     pub perspective: Option<StyleNumber>,
-    /// Polyline path followed by the current node.
-    pub offset_path: OffsetPathValue,
+    /// Motion path followed by the current node.
+    pub offset_path: ComputedOffsetPathValue,
     /// Normalized progress along `offset_path`.
     pub offset_distance: StyleNumber,
     /// Tangent-following or fixed motion-path rotation.
@@ -235,7 +265,7 @@ impl Default for ComputedTransformStyle {
     fn default() -> Self {
         Self {
             perspective: None,
-            offset_path: OffsetPathValue::None,
+            offset_path: ComputedOffsetPathValue::None,
             offset_distance: StyleNumber::new(0.0),
             offset_rotate: OffsetRotateValue::Auto,
             functions: Vec::new(),
@@ -420,10 +450,8 @@ pub(crate) fn resolve_paint_style(
                 let StyleValue::OffsetPath(value) = value else {
                     return Err(invalid(property));
                 };
-                if !valid_offset_path(value) {
-                    return Err(invalid(property));
-                }
-                paint.transform.offset_path = value.clone();
+                paint.transform.offset_path =
+                    resolve_offset_path(value, inherited, environment, property)?;
             }
             StyleProperty::OffsetDistance => {
                 let distance = match value {
@@ -694,10 +722,7 @@ pub(crate) fn resolve_paint_style(
     Ok(paint)
 }
 
-fn valid_offset_path(value: &OffsetPathValue) -> bool {
-    let OffsetPathValue::Path(commands) = value else {
-        return true;
-    };
+fn valid_offset_path(commands: &[MotionPathCommandValue]) -> bool {
     let mut current = None;
     let mut subpath_start = None;
     let mut total_length = 0.0_f32;
@@ -777,6 +802,46 @@ fn valid_offset_path(value: &OffsetPathValue) -> bool {
         }
     }
     total_length > 0.0
+}
+
+fn resolve_offset_path(
+    value: &OffsetPathValue,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedOffsetPathValue, StyleResolutionError> {
+    let resolve = |value: &LengthPercentageValue| {
+        resolve_affine(value, inherited.font_size(), environment, property)
+    };
+    Ok(match value {
+        OffsetPathValue::None => ComputedOffsetPathValue::None,
+        OffsetPathValue::Path(commands) => {
+            if !valid_offset_path(commands) {
+                return Err(invalid(property));
+            }
+            ComputedOffsetPathValue::Path(commands.clone())
+        }
+        OffsetPathValue::Circle {
+            radius,
+            center_x,
+            center_y,
+        } => ComputedOffsetPathValue::Circle {
+            radius: resolve(radius)?,
+            center_x: resolve(center_x)?,
+            center_y: resolve(center_y)?,
+        },
+        OffsetPathValue::Ellipse {
+            radius_x,
+            radius_y,
+            center_x,
+            center_y,
+        } => ComputedOffsetPathValue::Ellipse {
+            radius_x: resolve(radius_x)?,
+            radius_y: resolve(radius_y)?,
+            center_x: resolve(center_x)?,
+            center_y: resolve(center_y)?,
+        },
+    })
 }
 
 fn resolve_transform_functions(
@@ -1618,7 +1683,7 @@ mod tests {
             x: number(x),
             y: number(y),
         };
-        let path = OffsetPathValue::Path(vec![
+        let commands = vec![
             MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
             MotionPathCommandValue::LineTo(point(40.0, 0.0)),
             MotionPathCommandValue::QuadraticTo {
@@ -1630,7 +1695,8 @@ mod tests {
                 control2: point(80.0, 10.0),
                 to: point(90.0, 0.0),
             },
-        ]);
+        ];
+        let path = OffsetPathValue::Path(commands.clone());
         let resolved = crate::resolve_style(
             &SpecifiedStyle::new()
                 .push(
@@ -1650,7 +1716,10 @@ mod tests {
         )
         .unwrap();
         let transform = &resolved.computed().paint().transform;
-        assert_eq!(transform.offset_path, path);
+        assert_eq!(
+            transform.offset_path,
+            ComputedOffsetPathValue::Path(commands)
+        );
         assert_eq!(transform.offset_distance, number(0.75));
         assert_eq!(transform.offset_rotate, OffsetRotateValue::Auto);
 
@@ -1674,7 +1743,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             fixed.computed().paint().transform.offset_path,
-            OffsetPathValue::None
+            ComputedOffsetPathValue::None
         );
         assert_eq!(
             fixed.computed().paint().transform.offset_distance,
@@ -1683,6 +1752,52 @@ mod tests {
         assert_eq!(
             fixed.computed().paint().transform.offset_rotate,
             OffsetRotateValue::Angle(number(45.0))
+        );
+
+        let circle = crate::resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::OffsetPath,
+                StyleValue::OffsetPath(OffsetPathValue::Circle {
+                    radius: percentage(25.0),
+                    center_x: px_length(10.0),
+                    center_y: percentage(75.0),
+                }),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            circle.computed().paint().transform.offset_path,
+            ComputedOffsetPathValue::Circle {
+                radius: ComputedLengthPercentage::new(0.0, 0.25),
+                center_x: ComputedLengthPercentage::new(10.0, 0.0),
+                center_y: ComputedLengthPercentage::new(0.0, 0.75),
+            }
+        );
+
+        let ellipse = crate::resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::OffsetPath,
+                StyleValue::OffsetPath(OffsetPathValue::Ellipse {
+                    radius_x: px_length(10.0),
+                    radius_y: percentage(25.0),
+                    center_x: percentage(50.0),
+                    center_y: percentage(50.0),
+                }),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            ellipse.computed().paint().transform.offset_path,
+            ComputedOffsetPathValue::Ellipse {
+                radius_x: ComputedLengthPercentage::new(10.0, 0.0),
+                radius_y: ComputedLengthPercentage::new(0.0, 0.25),
+                center_x: ComputedLengthPercentage::new(0.0, 0.5),
+                center_y: ComputedLengthPercentage::new(0.0, 0.5),
+            }
         );
 
         let invalid_path = |path| {
@@ -1752,6 +1867,56 @@ mod tests {
                 StyleEnvironment::default(),
             )
         };
+        let invalid_length = px_length(f32::NAN);
+        let valid_length = percentage(50.0);
+        for path in [
+            OffsetPathValue::Circle {
+                radius: invalid_length.clone(),
+                center_x: valid_length.clone(),
+                center_y: valid_length.clone(),
+            },
+            OffsetPathValue::Circle {
+                radius: valid_length.clone(),
+                center_x: invalid_length.clone(),
+                center_y: valid_length.clone(),
+            },
+            OffsetPathValue::Circle {
+                radius: valid_length.clone(),
+                center_x: valid_length.clone(),
+                center_y: invalid_length.clone(),
+            },
+            OffsetPathValue::Ellipse {
+                radius_x: invalid_length.clone(),
+                radius_y: valid_length.clone(),
+                center_x: valid_length.clone(),
+                center_y: valid_length.clone(),
+            },
+            OffsetPathValue::Ellipse {
+                radius_x: valid_length.clone(),
+                radius_y: invalid_length.clone(),
+                center_x: valid_length.clone(),
+                center_y: valid_length.clone(),
+            },
+            OffsetPathValue::Ellipse {
+                radius_x: valid_length.clone(),
+                radius_y: valid_length.clone(),
+                center_x: invalid_length.clone(),
+                center_y: valid_length.clone(),
+            },
+            OffsetPathValue::Ellipse {
+                radius_x: valid_length.clone(),
+                radius_y: valid_length.clone(),
+                center_x: valid_length.clone(),
+                center_y: invalid_length,
+            },
+        ] {
+            assert_eq!(
+                invalid_declaration(StyleProperty::OffsetPath, StyleValue::OffsetPath(path),),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::OffsetPath
+                ))
+            );
+        }
         for value in [
             StyleValue::Text("invalid".into()),
             StyleValue::Number(number(f32::NAN)),
