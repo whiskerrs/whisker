@@ -346,6 +346,20 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-masking.clip-path-path-001",
+      "feature": "clip-path-path-nonzero",
+      "fixture": "wpt/css/css-masking/clip-path-path-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-masking.clip-path-path-002",
+      "feature": "clip-path-path-evenodd",
+      "fixture": "wpt/css/css-masking/clip-path-path-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css2.borders.border-right-003",
       "feature": "border-right",
       "fixture": "wpt/css/CSS2/borders/border-right-003.json",

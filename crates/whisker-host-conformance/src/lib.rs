@@ -442,6 +442,59 @@ pub enum ClipShapeFixture {
         /// Center x/y coordinates.
         center: [LengthPercentageFixture; 2],
     },
+    /// Arbitrary path with an explicit winding rule.
+    Path {
+        /// Rule used to determine the filled region.
+        #[serde(default)]
+        fill_rule: FillRuleFixture,
+        /// Normalized absolute path command stream.
+        commands: Vec<PathCommandFixture>,
+    },
+}
+
+/// Fill rule used by path fixtures.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FillRuleFixture {
+    /// Non-zero winding rule.
+    #[default]
+    NonZero,
+    /// Even-odd rule.
+    EvenOdd,
+}
+
+/// One absolute command in a path fixture.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PathCommandFixture {
+    /// Move the current point.
+    MoveTo {
+        /// Destination point.
+        point: [LengthPercentageFixture; 2],
+    },
+    /// Add a straight line.
+    LineTo {
+        /// Destination point.
+        point: [LengthPercentageFixture; 2],
+    },
+    /// Add a quadratic Bezier segment.
+    QuadraticTo {
+        /// Control point.
+        control: [LengthPercentageFixture; 2],
+        /// End point.
+        end: [LengthPercentageFixture; 2],
+    },
+    /// Add a cubic Bezier segment.
+    CubicTo {
+        /// First control point.
+        control_1: [LengthPercentageFixture; 2],
+        /// Second control point.
+        control_2: [LengthPercentageFixture; 2],
+        /// End point.
+        end: [LengthPercentageFixture; 2],
+    },
+    /// Close the current subpath.
+    Close,
 }
 
 /// CSS geometry boxes accepted as clip-path reference boxes.
@@ -680,6 +733,7 @@ pub struct LengthPercentageFixture {
     /// Absolute logical-pixel component.
     pub length: f32,
     /// Fractional component where `1` is 100 percent.
+    #[serde(default)]
     pub fraction: f32,
 }
 
@@ -1314,6 +1368,10 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                             radii.iter().all(LengthPercentageFixture::is_non_negative)
                                 && center.iter().all(LengthPercentageFixture::is_finite)
                         }
+                        ClipShapeFixture::Path { commands, .. } => {
+                            !commands.is_empty()
+                                && commands.iter().all(PathCommandFixture::is_valid)
+                        }
                     })
                 && node
                     .transform
@@ -1375,6 +1433,24 @@ impl LengthPercentageFixture {
 
     fn is_non_negative(&self) -> bool {
         self.is_finite() && self.length >= 0.0 && self.fraction >= 0.0
+    }
+}
+
+impl PathCommandFixture {
+    fn is_valid(&self) -> bool {
+        let point = |value: &[LengthPercentageFixture; 2]| {
+            value.iter().all(LengthPercentageFixture::is_finite)
+        };
+        match self {
+            Self::MoveTo { point: value } | Self::LineTo { point: value } => point(value),
+            Self::QuadraticTo { control, end } => point(control) && point(end),
+            Self::CubicTo {
+                control_1,
+                control_2,
+                end,
+            } => point(control_1) && point(control_2) && point(end),
+            Self::Close => true,
+        }
     }
 }
 
