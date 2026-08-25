@@ -210,15 +210,32 @@ private func boxPaint(_ command: [String: Any]) throws -> WhiskerMobileBoxPaint 
     let widths = try numberArray(border, "widths").map(length)
     let colors = try objectArray(border, "colors").map(color)
     let styles = try stringArray(border, "styles").map(borderStyle)
-    let radii = try numberArray(border, "radii").map(length)
+    let radii = try radiusPairs(border)
     guard widths.count == 4, colors.count == 4, styles.count == 4, radii.count == 4 else {
         throw Failure("border arrays need four values")
     }
     value.widths = (widths[0], widths[1], widths[2], widths[3])
     value.colors = (colors[0], colors[1], colors[2], colors[3])
     value.styles = (styles[0], styles[1], styles[2], styles[3])
-    value.radii = (radii[0], radii[1], radii[2], radii[3])
+    let horizontal = radii.map { length($0.0) }
+    let vertical = radii.map { length($0.1) }
+    value.radii_horizontal = (horizontal[0], horizontal[1], horizontal[2], horizontal[3])
+    value.radii_vertical = (vertical[0], vertical[1], vertical[2], vertical[3])
     return value
+}
+
+private func radiusPairs(_ border: [String: Any]) throws -> [(Double, Double)] {
+    guard let values = border["radii"] as? [Any] else { throw Failure("missing or invalid radii") }
+    return try values.map { value in
+        if let number = value as? NSNumber {
+            let radius = number.doubleValue
+            return (radius, radius)
+        }
+        if let pair = value as? [NSNumber], pair.count == 2 {
+            return (pair[0].doubleValue, pair[1].doubleValue)
+        }
+        throw Failure("radius must be a number or horizontal/vertical pair")
+    }
 }
 
 private func color(_ fixture: [String: Any]) throws -> WhiskerMobileColor {

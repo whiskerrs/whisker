@@ -136,7 +136,7 @@ internal class HostScene(
             5 -> if (stagedParents[operation.child] != operation.parent) return false
             6 -> if (operation.node !in existing || operation.numbers?.size ?: 0 < 8) return false
             7 -> if (
-                operation.node !in existing || operation.numbers?.size ?: 0 < 45 ||
+                operation.node !in existing || operation.numbers?.size ?: 0 < 53 ||
                 operation.names?.size ?: 0 < 5
             ) return false
             8, 10, 11, 12, 15, 16 -> if (operation.node !in existing) return false

@@ -14,7 +14,7 @@ pub use ffi::{
     WhiskerValueRaw, WhiskerValueType, WhiskerValueUnion,
 };
 
-pub const MOBILE_ABI_MAJOR: u16 = 1;
+pub const MOBILE_ABI_MAJOR: u16 = 2;
 pub const MOBILE_ABI_MINOR: u16 = 0;
 
 pub const APPLY_ACCEPTED: u8 = 0;
@@ -98,7 +98,8 @@ pub struct MobileBoxPaint {
     pub widths: [MobileLengthPercentage; 4],
     pub colors: [MobileColor; 4],
     pub styles: [u32; 4],
-    pub radii: [MobileLengthPercentage; 4],
+    pub radii_horizontal: [MobileLengthPercentage; 4],
+    pub radii_vertical: [MobileLengthPercentage; 4],
 }
 
 #[repr(C)]
@@ -426,7 +427,7 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 160);
             assert_eq!(std::mem::size_of::<MobileMeasureResponse>(), 64);
             assert_eq!(std::mem::size_of::<MobileText>(), 80);
-            assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 240);
+            assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);
             assert_eq!(std::mem::align_of::<MobileFrame>(), 8);
             assert_eq!(std::mem::align_of::<MobileMeasureRequest>(), 8);
         }

@@ -6,14 +6,16 @@ struct HostBoxPaint {
     let widths: [WhiskerMobileLengthPercentage]
     let colors: [UIColor]
     let styles: [UInt32]
-    let radii: [WhiskerMobileLengthPercentage]
+    let radiiHorizontal: [WhiskerMobileLengthPercentage]
+    let radiiVertical: [WhiskerMobileLengthPercentage]
 
     init(_ raw: WhiskerMobileBoxPaint) {
         background = parsePaintColor(raw.background)
         widths = tupleArray(raw.widths)
         colors = tupleArray(raw.colors).map(parsePaintColor)
         styles = tupleArray(raw.styles)
-        radii = tupleArray(raw.radii)
+        radiiHorizontal = tupleArray(raw.radii_horizontal)
+        radiiVertical = tupleArray(raw.radii_vertical)
     }
 }
 
@@ -35,10 +37,10 @@ final class HostBoxPainter {
         ]
         borderColors = paint.colors
         borderStyles = paint.styles
-        cornerRadii = paint.radii.map { value in
+        cornerRadii = paint.radiiHorizontal.indices.map { index in
             CGSize(
-                width: resolve(value, axis: bounds.width),
-                height: resolve(value, axis: bounds.height)
+                width: resolve(paint.radiiHorizontal[index], axis: bounds.width),
+                height: resolve(paint.radiiVertical[index], axis: bounds.height)
             )
         }
     }

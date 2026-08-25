@@ -230,7 +230,7 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
     for (size_t i = 0; i < frame->operation_count && ok; ++i) {
         const WhiskerMobileOperation* op = &frame->operations[i];
         jfloatArray numbers = NULL; jstring text = NULL; jobjectArray names = NULL; jobject value = NULL;
-        float storage[48]; size_t count = 0;
+        float storage[64]; size_t count = 0;
         switch (op->tag) {
             case WHISKER_OP_LAYOUT: {
                 const WhiskerMobileLayoutGeometry* p = op->payload;
@@ -243,7 +243,8 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 append_color(storage, &count, &p->background);
                 for (int j=0;j<4;++j) { storage[count++]=p->widths[j].length; storage[count++]=p->widths[j].fraction; }
                 for (int j=0;j<4;++j) append_color(storage, &count, &p->colors[j]);
-                for (int j=0;j<4;++j) { storage[count++]=p->radii[j].length; storage[count++]=p->radii[j].fraction; }
+                for (int j=0;j<4;++j) { storage[count++]=p->radii_horizontal[j].length; storage[count++]=p->radii_horizontal[j].fraction; }
+                for (int j=0;j<4;++j) { storage[count++]=p->radii_vertical[j].length; storage[count++]=p->radii_vertical[j].fraction; }
                 for (int j=0;j<4;++j) storage[count++]=(float)p->styles[j];
                 numbers = floats(env, storage, count); names = color_names(env, p); break;
             }

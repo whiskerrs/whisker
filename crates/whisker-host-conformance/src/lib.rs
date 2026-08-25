@@ -301,8 +301,40 @@ pub struct BorderFixture {
     pub colors: [ColorFixture; 4],
     /// Line styles.
     pub styles: [BorderStyleFixture; 4],
-    /// Circular radii in top-left, top-right, bottom-right, bottom-left order.
-    pub radii: [f32; 4],
+    /// Corner radii in top-left, top-right, bottom-right, bottom-left order.
+    pub radii: [CornerRadiusFixture; 4],
+}
+
+/// One circular or elliptical CSS border radius.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum CornerRadiusFixture {
+    /// A single value applies to both axes.
+    Circular(f32),
+    /// Independent horizontal and vertical values.
+    Elliptical([f32; 2]),
+}
+
+impl CornerRadiusFixture {
+    /// Horizontal radius in logical pixels.
+    pub fn horizontal(self) -> f32 {
+        match self {
+            Self::Circular(value) | Self::Elliptical([value, _]) => value,
+        }
+    }
+
+    /// Vertical radius in logical pixels.
+    pub fn vertical(self) -> f32 {
+        match self {
+            Self::Circular(value) | Self::Elliptical([_, value]) => value,
+        }
+    }
+
+    fn is_valid(self) -> bool {
+        [self.horizontal(), self.vertical()]
+            .into_iter()
+            .all(|value| value.is_finite() && value >= 0.0)
+    }
 }
 
 /// Complete CSS border line-style vocabulary.
@@ -659,8 +691,8 @@ fn valid_border(border: &BorderFixture) -> bool {
     border
         .widths
         .iter()
-        .chain(border.radii.iter())
         .all(|value| value.is_finite() && *value >= 0.0)
+        && border.radii.iter().all(|radius| radius.is_valid())
         && border.colors.iter().all(valid_color)
 }
 

@@ -24,7 +24,7 @@ internal fun applyBoxPaint(
     density: Float,
 ) {
     val values = paint.values
-    require(values.size >= 45)
+    require(values.size >= BOX_PAINT_PACKED_SIZE)
     val background = if (values[0] == 0f) {
         parseNamedColor(paint.names[0])
     } else {
@@ -45,11 +45,13 @@ internal fun applyBoxPaint(
         }
     }
     val radii = FloatArray(8) { index ->
-        val offset = 33 + (index / 2) * 2
-        val axis = if (index % 2 == 0) logicalWidth else logicalHeight
+        val corner = index / 2
+        val horizontal = index % 2 == 0
+        val offset = (if (horizontal) RADII_HORIZONTAL_OFFSET else RADII_VERTICAL_OFFSET) + corner * 2
+        val axis = if (horizontal) logicalWidth else logicalHeight
         resolveLength(values[offset], values[offset + 1], axis) * density
     }
-    val borderStyles = IntArray(4) { index -> values[41 + index].toInt() }
+    val borderStyles = IntArray(4) { index -> values[BORDER_STYLES_OFFSET + index].toInt() }
     val uniformSolidBorder = borderStyles.all { it == BORDER_STYLE_SOLID } &&
         borderWidths.all { it == borderWidths[0] } &&
         borderColors.all { it == borderColors[0] }
@@ -420,3 +422,7 @@ private const val BORDER_STYLE_RIDGE = 7
 private const val BORDER_STYLE_INSET = 8
 private const val BORDER_STYLE_OUTSET = 9
 private const val RELIEF_SHADE_FACTOR = 0.4f
+private const val RADII_HORIZONTAL_OFFSET = 33
+private const val RADII_VERTICAL_OFFSET = 41
+private const val BORDER_STYLES_OFFSET = 49
+private const val BOX_PAINT_PACKED_SIZE = 53
