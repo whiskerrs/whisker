@@ -954,10 +954,6 @@ fn supports_visual_effects(effects: &VisualEffects) -> bool {
     let mut remainder = effects.clone();
     remainder.box_shadows.clear();
     remainder == VisualEffects::default()
-        && effects
-            .box_shadows
-            .iter()
-            .all(|shadow| !shadow.inset || shadow.blur_radius == 0.0 && shadow.spread_radius == 0.0)
 }
 
 pub(crate) fn is_transparent(color: &PaintColor) -> bool {

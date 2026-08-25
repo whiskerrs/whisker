@@ -113,8 +113,8 @@ final class HostBoxPainter {
         return roundedPath(in: rect, radii: radii).cgPath
     }
 
-    func hardInsetBoxShadowPath(in bounds: CGRect, shadow: HostBoxShadow) -> CGPath? {
-        guard shadow.inset, shadow.blurRadius == 0, shadow.spreadRadius == 0 else { return nil }
+    func insetBoxShadowPath(in bounds: CGRect, shadow: HostBoxShadow) -> CGPath? {
+        guard shadow.inset else { return nil }
         let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
         let top = min(widths[0], bounds.height)
         let right = min(widths[1], bounds.width)
@@ -134,11 +134,47 @@ final class HostBoxPainter {
             bottom: bottom,
             left: left
         )
-        let hole = paddingBox.offsetBy(dx: shadow.offset.width, dy: shadow.offset.height)
+        let spread = shadow.spreadRadius
+        let hole = paddingBox
+            .insetBy(dx: spread, dy: spread)
+            .offsetBy(dx: shadow.offset.width, dy: shadow.offset.height)
+        let extent = max(bounds.width, bounds.height) + abs(shadow.offset.width) +
+            abs(shadow.offset.height) + abs(spread) + shadow.blurRadius * 2
+        let exterior = paddingBox.insetBy(dx: -extent, dy: -extent)
         let path = CGMutablePath()
-        path.addPath(roundedPath(in: paddingBox, radii: paddingRadii).cgPath)
-        path.addPath(roundedPath(in: hole, radii: paddingRadii).cgPath)
+        path.addRect(exterior)
+        if !hole.isEmpty {
+            let holeRadii = paddingRadii.map {
+                CGSize(
+                    width: max(0, $0.width - spread),
+                    height: max(0, $0.height - spread)
+                )
+            }
+            path.addPath(roundedPath(in: hole, radii: holeRadii).cgPath)
+        }
         return path
+    }
+
+    func paddingBoxPath(in bounds: CGRect) -> CGPath {
+        let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
+        let top = min(widths[0], bounds.height)
+        let right = min(widths[1], bounds.width)
+        let bottom = min(widths[2], bounds.height)
+        let left = min(widths[3], bounds.width)
+        let paddingBox = CGRect(
+            x: bounds.minX + left,
+            y: bounds.minY + top,
+            width: max(0, bounds.width - left - right),
+            height: max(0, bounds.height - top - bottom)
+        )
+        let radii = insetCornerRadii(
+            normalizedRadii(cornerRadii, in: bounds),
+            top: top,
+            right: right,
+            bottom: bottom,
+            left: left
+        )
+        return roundedPath(in: paddingBox, radii: radii).cgPath
     }
 
     func borderBoxPath(in bounds: CGRect) -> CGPath {

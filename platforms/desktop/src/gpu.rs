@@ -543,7 +543,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             input.inner_radii_x,
             input.inner_radii_y,
         );
-        inner_coverage = shape_coverage(inner_distance);
+        if input.mode > 3.5 {
+            let sigma = input.border_widths.x * 0.5;
+            inner_coverage = 0.5 * (1.0 - erf_approx(
+                inner_distance / (1.41421356237 * sigma),
+            ));
+        } else {
+            inner_coverage = shape_coverage(inner_distance);
+        }
     }
     if input.mode > 1.5 {
         let coverage = max(outer_coverage - inner_coverage, 0.0);

@@ -424,9 +424,8 @@ internal class HostScene(
             values.all(Float::isFinite) &&
             values.indices.step(BOX_SHADOW_PACKED_SIZE).all { offset ->
                 val blur = values[offset + 2]
-                val spread = values[offset + 3]
                 val inset = values[offset + 4]
-                blur >= 0f && (inset == 0f || inset == 1f && blur == 0f && spread == 0f) &&
+                blur >= 0f && (inset == 0f || inset == 1f) &&
                     (values[offset + 5] == 0f || values[offset + 5] == 1f)
             }
     }

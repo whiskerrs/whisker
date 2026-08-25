@@ -120,7 +120,7 @@ final class WhiskerNodeView: UIView {
             return
         }
         if shadow.inset {
-            guard let shadowPath = boxPainter.hardInsetBoxShadowPath(in: bounds, shadow: shadow) else {
+            guard let shadowPath = boxPainter.insetBoxShadowPath(in: bounds, shadow: shadow) else {
                 boxShadowLayer.path = nil
                 boxShadowLayer.mask = nil
                 boxShadowLayer.shadowPath = nil
@@ -131,10 +131,18 @@ final class WhiskerNodeView: UIView {
             boxShadowLayer.fillColor = shadow.color.cgColor
             boxShadowLayer.fillRule = .evenOdd
             boxShadowLayer.strokeColor = nil
-            boxShadowLayer.mask = nil
+            // Let Core Animation derive the shadow from the even-odd ring;
+            // `shadowPath` itself does not carry the layer's fill rule.
             boxShadowLayer.shadowPath = nil
-            boxShadowLayer.shadowOpacity = 0
-            boxShadowLayer.shadowRadius = 0
+            boxShadowLayer.shadowColor = shadow.color.withAlphaComponent(1).cgColor
+            boxShadowLayer.shadowOpacity = Float(shadow.color.cgColor.alpha)
+            boxShadowLayer.shadowOffset = .zero
+            boxShadowLayer.shadowRadius = shadow.blurRadius / 2
+            boxShadowMaskLayer.frame = bounds
+            boxShadowMaskLayer.path = boxPainter.paddingBoxPath(in: bounds)
+            boxShadowMaskLayer.fillColor = UIColor.white.cgColor
+            boxShadowMaskLayer.fillRule = .nonZero
+            boxShadowLayer.mask = boxShadowMaskLayer
             return
         }
         guard let shadowPath = boxPainter.hardBoxShadowPath(in: bounds, shadow: shadow) else {
