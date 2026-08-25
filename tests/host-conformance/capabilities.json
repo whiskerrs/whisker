@@ -134,8 +134,8 @@
       "compatibility_notes": ["ellipse is resolved in Rust on all Hosts; unlike Lynx iOS it is supported, and vertical percentages use border-box height rather than Lynx Android's width-based implementation", "inset follows the CSS Motion Path clockwise starting point after the top-left radius, avoiding Lynx Android/iOS path-library start-point divergence", "SVG elliptical arcs use the standard endpoint-to-center conversion, including absolute negative radii, radii correction, and zero-radius line fallback"],
       "unsupported_browser_subset": ["web-parent-perspective-semantics", "perspective-origin", "preserve-3d"],
       "protocol": ["SetTransform", "SetVisualEffects"],
-      "rust": "partial",
-      "hosts": {"desktop": "partial", "web": "partial", "android": "partial", "ios": "partial"}
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.compositing",
@@ -152,8 +152,8 @@
       "supported_subset": ["visible", "hidden"],
       "unsupported_browser_subset": ["clip", "scroll", "auto"],
       "protocol": ["SetClip"],
-      "rust": "partial",
-      "hosts": {"desktop": "partial", "web": "implemented", "android": "partial", "ios": "partial"}
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.text",
