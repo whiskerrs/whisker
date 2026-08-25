@@ -169,6 +169,17 @@ final class HostScene {
                       ) else { return false }
                 let shadows = UnsafeBufferPointer(start: pointer, count: operation.payload_count)
                 guard shadows.allSatisfy(validHardBoxShadow) else { return false }
+            case UInt32(WHISKER_OP_CLIP_PATH):
+                guard existing.contains(operation.node) else { return false }
+                if operation.payload_count == 0 {
+                    guard operation.payload == nil else { return false }
+                    continue
+                }
+                guard operation.payload_count == 1,
+                      let clip = operation.payload?.assumingMemoryBound(
+                          to: WhiskerMobileClipPath.self
+                      ).pointee,
+                      validClipPath(clip) else { return false }
             case UInt32(WHISKER_OP_OPACITY):
                 guard existing.contains(operation.node), operation.scalar.isFinite,
                       (0...1).contains(operation.scalar) else { return false }
@@ -266,6 +277,30 @@ final class HostScene {
                 )
             }
             node.setBoxShadows(shadows)
+        case UInt32(WHISKER_OP_CLIP_PATH):
+            guard let node = nodes[id] else { return false }
+            if operation.payload_count == 0 {
+                node.setClipPath(nil)
+                return true
+            }
+            guard let raw = operation.payload?.assumingMemoryBound(
+                to: WhiskerMobileClipPath.self
+            ).pointee,
+                  raw.shape_kind == UInt32(WHISKER_CLIP_SHAPE_INSET),
+                  let inset = raw.payload?.assumingMemoryBound(
+                      to: WhiskerMobileClipInset.self
+                  ).pointee else { return false }
+            let referenceBox: HostClipReferenceBox = switch raw.reference_box {
+            case UInt32(WHISKER_BACKGROUND_BOX_PADDING): .padding
+            case UInt32(WHISKER_BACKGROUND_BOX_CONTENT): .content
+            default: .border
+            }
+            node.setClipPath(HostInsetClipPath(
+                referenceBox: referenceBox,
+                edges: tupleArray(inset.edges),
+                radiiHorizontal: tupleArray(inset.radii_horizontal),
+                radiiVertical: tupleArray(inset.radii_vertical)
+            ))
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):
@@ -474,6 +509,19 @@ private func validHardBoxShadow(_ shadow: WhiskerMobileBoxShadow) -> Bool {
         (shadow.inset == 0 || shadow.inset == 1) &&
         shadow.color.kind <= 1 && shadow.color.alpha.isFinite &&
         (0...1).contains(shadow.color.alpha)
+}
+
+private func validClipPath(_ clip: WhiskerMobileClipPath) -> Bool {
+    guard clip.reference_box <= UInt32(WHISKER_BACKGROUND_BOX_CONTENT),
+          clip.shape_kind == UInt32(WHISKER_CLIP_SHAPE_INSET),
+          clip.payload_count == 1,
+          let inset = clip.payload?.assumingMemoryBound(
+              to: WhiskerMobileClipInset.self
+          ).pointee else { return false }
+    let radii = tupleArray(inset.radii_horizontal) + tupleArray(inset.radii_vertical)
+    return tupleArray(inset.edges).allSatisfy(\.isFinite) && radii.allSatisfy {
+        $0.isFinite && $0.length >= 0 && $0.fraction >= 0
+    }
 }
 
 private func validBackgroundLayer(

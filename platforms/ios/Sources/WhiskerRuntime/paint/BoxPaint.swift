@@ -156,17 +156,12 @@ final class HostBoxPainter {
     }
 
     func paddingBoxPath(in bounds: CGRect) -> CGPath {
+        let paddingBox = paddingBoxRect(in: bounds)
         let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
         let top = min(widths[0], bounds.height)
         let right = min(widths[1], bounds.width)
         let bottom = min(widths[2], bounds.height)
         let left = min(widths[3], bounds.width)
-        let paddingBox = CGRect(
-            x: bounds.minX + left,
-            y: bounds.minY + top,
-            width: max(0, bounds.width - left - right),
-            height: max(0, bounds.height - top - bottom)
-        )
         let radii = insetCornerRadii(
             normalizedRadii(cornerRadii, in: bounds),
             top: top,
@@ -175,6 +170,20 @@ final class HostBoxPainter {
             left: left
         )
         return roundedPath(in: paddingBox, radii: radii).cgPath
+    }
+
+    func paddingBoxRect(in bounds: CGRect) -> CGRect {
+        let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
+        let top = min(widths[0], bounds.height)
+        let right = min(widths[1], bounds.width)
+        let bottom = min(widths[2], bounds.height)
+        let left = min(widths[3], bounds.width)
+        return CGRect(
+            x: bounds.minX + left,
+            y: bounds.minY + top,
+            width: max(0, bounds.width - left - right),
+            height: max(0, bounds.height - top - bottom)
+        )
     }
 
     func borderBoxPath(in bounds: CGRect) -> CGPath {
@@ -449,7 +458,7 @@ final class HostBoxPainter {
     }
 }
 
-private func tupleArray<T>(_ value: (T, T, T, T)) -> [T] {
+func tupleArray<T>(_ value: (T, T, T, T)) -> [T] {
     [value.0, value.1, value.2, value.3]
 }
 
@@ -485,7 +494,7 @@ func insetCornerRadii(
     ]
 }
 
-private func roundedPath(in rect: CGRect, radii: [CGSize]) -> UIBezierPath {
+func roundedPath(in rect: CGRect, radii: [CGSize]) -> UIBezierPath {
     let normalized = normalizedRadii(radii, in: rect)
 
     let k: CGFloat = 0.552_284_749_830_793_6

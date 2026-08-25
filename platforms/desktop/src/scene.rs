@@ -6,14 +6,14 @@ use std::sync::Arc;
 use whisker_engine::FrameSink;
 use whisker_protocol::{
     ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BoxClip,
-    BoxPaint, ElementTypeId, FrameMode, FramePacket, ImageRepeat, LayoutGeometry, LayoutRect,
-    NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintImage, RadialGradientExtent,
-    ResourceId, SceneProjection, SurfaceId, TextContent, Transform, ValidationError, Visibility,
-    VisualEffects, WhiskerValue,
+    BoxPaint, ClipShape, ElementTypeId, FrameMode, FramePacket, ImageRepeat, LayoutGeometry,
+    LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintImage,
+    RadialGradientExtent, ResourceId, SceneProjection, SurfaceId, TextContent, Transform,
+    ValidationError, Visibility, VisualEffects, WhiskerValue,
 };
 
 use crate::element::{DesktopElementContent, DesktopElementError, DesktopElementRegistry};
-use crate::paint::box_paint::{ResolvedRadii, resolve_box_geometry};
+use crate::paint::box_paint::{ResolvedRadii, resolve_box_geometry, resolve_radii};
 
 #[derive(Clone, Debug)]
 struct CommonPresentation {
@@ -363,6 +363,29 @@ impl DesktopScene {
             context.transform,
             transform_around(presentation.transform, border.x, border.y),
         );
+        let mut node_shape_clips = context.shape_clips.clone();
+        let mut node_clip_bounds = None;
+        if let Some((reference_box, ClipShape::Inset { edges, radii })) =
+            presentation.visual_effects.clip_path.as_ref()
+        {
+            let reference = match reference_box {
+                PaintBox::Border => border,
+                PaintBox::Padding => presentation.paint.as_ref().map_or(border, |paint| {
+                    resolve_box_geometry(border, paint).inner_rect
+                }),
+                PaintBox::Content => content,
+                _ => unreachable!("unsupported clip-path reference box passed validation"),
+            };
+            let clip_rect = inset_clip_rect(reference, edges);
+            node_shape_clips = node_shape_clips.push(ShapeClip {
+                rect: clip_rect,
+                radii: resolve_radii(radii, clip_rect),
+                inverse_transform: inverse_transform(transform).unwrap_or(Transform::IDENTITY),
+                horizontal: true,
+                vertical: true,
+            });
+            node_clip_bounds = transform_rect_aabb(clip_rect, transform);
+        }
         if presentation.paint.is_some()
             || !presentation.background_layers.is_empty()
             || !presentation.visual_effects.box_shadows.is_empty()
@@ -374,7 +397,7 @@ impl DesktopScene {
                 background_layers: &presentation.background_layers,
                 visual_effects: &presentation.visual_effects,
                 clip: context.clip,
-                shape_clips: context.shape_clips.clone(),
+                shape_clips: node_shape_clips.clone(),
                 transform,
                 opacity,
             });
@@ -383,7 +406,10 @@ impl DesktopScene {
         let clip_horizontal = presentation.clip.horizontal == OverflowClip::Hidden;
         let clip_vertical = presentation.clip.vertical == OverflowClip::Hidden;
         let mut descendant_clip = context.clip;
-        let mut descendant_shape_clips = context.shape_clips.clone();
+        if let Some(bounds) = node_clip_bounds {
+            descendant_clip = descendant_clip.intersect(bounds, true, true);
+        }
+        let mut descendant_shape_clips = node_shape_clips;
         if clip_horizontal || clip_vertical {
             let geometry = presentation.paint.as_ref().map_or_else(
                 || crate::paint::box_paint::BoxGeometry {
@@ -953,7 +979,34 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
 fn supports_visual_effects(effects: &VisualEffects) -> bool {
     let mut remainder = effects.clone();
     remainder.box_shadows.clear();
+    remainder.clip_path = None;
     remainder == VisualEffects::default()
+        && effects.clip_path.as_ref().is_none_or(|(reference, shape)| {
+            matches!(
+                reference,
+                PaintBox::Border | PaintBox::Padding | PaintBox::Content
+            ) && matches!(shape, ClipShape::Inset { .. })
+        })
+}
+
+fn inset_clip_rect(
+    reference: LayoutRect,
+    edges: &whisker_protocol::PaintEdges<PaintCoordinate>,
+) -> LayoutRect {
+    let top = resolve_coordinate(edges.top, reference.height);
+    let right = resolve_coordinate(edges.right, reference.width);
+    let bottom = resolve_coordinate(edges.bottom, reference.height);
+    let left = resolve_coordinate(edges.left, reference.width);
+    LayoutRect {
+        x: reference.x + left,
+        y: reference.y + top,
+        width: (reference.width - left - right).max(0.0),
+        height: (reference.height - top - bottom).max(0.0),
+    }
+}
+
+fn resolve_coordinate(value: PaintCoordinate, available: f32) -> f32 {
+    value.length + value.fraction * available
 }
 
 pub(crate) fn is_transparent(color: &PaintColor) -> bool {

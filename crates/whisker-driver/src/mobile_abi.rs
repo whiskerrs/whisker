@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 10;
+pub const MOBILE_ABI_MINOR: u16 = 11;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -46,6 +46,7 @@ pub const OP_RELEASE_CAPTURE: u32 = 19;
 pub const OP_COMMAND: u32 = 20;
 pub const OP_BACKGROUND_LAYERS: u32 = 21;
 pub const OP_BOX_SHADOWS: u32 = 22;
+pub const OP_CLIP_PATH: u32 = 23;
 
 pub const BACKGROUND_LINEAR: u32 = 0;
 pub const BACKGROUND_RADIAL: u32 = 1;
@@ -71,6 +72,8 @@ pub const BACKGROUND_BOX_BORDER_AREA: u32 = 3;
 
 pub const BACKGROUND_ATTACHMENT_SCROLL: u32 = 0;
 pub const BACKGROUND_BLEND_NORMAL: u32 = 0;
+
+pub const CLIP_SHAPE_INSET: u32 = 0;
 
 pub const MEASURE_TEXT: u32 = 1;
 pub const MEASURE_REPLACED_CONTENT: u32 = 2;
@@ -162,6 +165,26 @@ pub struct MobileBoxShadow {
     pub color: MobileColor,
     pub inset: u8,
     pub _pad: [u8; 7],
+}
+
+/// One rounded inset basic shape. Arrays use CSS top/right/bottom/left and
+/// top-left/top-right/bottom-right/bottom-left ordering respectively.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileClipInset {
+    pub edges: [MobileLengthPercentage; 4],
+    pub radii_horizontal: [MobileLengthPercentage; 4],
+    pub radii_vertical: [MobileLengthPercentage; 4],
+}
+
+/// One typed clip path. `payload` points to the shape selected by `shape_kind`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileClipPath {
+    pub reference_box: u32,
+    pub shape_kind: u32,
+    pub payload: *const c_void,
+    pub payload_count: usize,
 }
 
 /// One explicit color stop shared by the additive gradient ABI subsets.
@@ -580,6 +603,8 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileText>(), 80);
             assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);
             assert_eq!(std::mem::size_of::<MobileBoxShadow>(), 56);
+            assert_eq!(std::mem::size_of::<MobileClipInset>(), 96);
+            assert_eq!(std::mem::size_of::<MobileClipPath>(), 24);
             assert_eq!(std::mem::size_of::<MobileGradientStop>(), 40);
             assert_eq!(std::mem::size_of::<MobileRadialGradient>(), 48);
             assert_eq!(std::mem::size_of::<MobileConicGradient>(), 32);

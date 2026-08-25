@@ -13,6 +13,8 @@ final class WhiskerNodeView: UIView {
     var mountedElement: WhiskerMountedElement?
     private let defaultChildrenHost = WhiskerChildrenHostView(frame: .zero)
     private let overflowMask = CAShapeLayer()
+    private let clipPathMask = CAShapeLayer()
+    private var clipPath: HostInsetClipPath?
     private var boxShadows: [HostBoxShadow] = []
     private var boxShadowLayers: [CAShapeLayer] = []
     private var boxShadowMaskLayers: [CAShapeLayer] = []
@@ -45,6 +47,7 @@ final class WhiskerNodeView: UIView {
         defaultChildrenHost.frame = bounds
         updateBoxShadowLayers()
         updateOverflowMask()
+        updateClipPathMask()
         setNeedsDisplay()
     }
 
@@ -60,6 +63,7 @@ final class WhiskerNodeView: UIView {
         layer.position = frame.origin
         defaultChildrenHost.frame = bounds
         updateOverflowMask()
+        updateClipPathMask()
     }
 
     func setPresentationTransform(_ values: UnsafeBufferPointer<Float>) {
@@ -103,6 +107,12 @@ final class WhiskerNodeView: UIView {
     func boxPaintDidChange() {
         updateBoxShadowLayers()
         updateOverflowMask()
+        updateClipPathMask()
+    }
+
+    func setClipPath(_ clipPath: HostInsetClipPath?) {
+        self.clipPath = clipPath
+        updateClipPathMask()
     }
 
     func setBoxShadows(_ shadows: [HostBoxShadow]) {
@@ -235,6 +245,22 @@ final class WhiskerNodeView: UIView {
         overflowMask.backgroundColor = UIColor.clear.cgColor
         overflowMask.fillColor = UIColor.white.cgColor
         host.layer.mask = overflowMask
+    }
+
+    private func updateClipPathMask() {
+        guard let clipPath else {
+            layer.mask = nil
+            return
+        }
+        clipPathMask.frame = bounds
+        clipPathMask.path = clipPath.path(
+            in: bounds,
+            contentBox: contentFrame,
+            painter: boxPainter
+        )
+        clipPathMask.fillColor = UIColor.white.cgColor
+        clipPathMask.fillRule = .nonZero
+        layer.mask = clipPathMask
     }
 
     private func hostCompositionBounds() -> CGRect {
