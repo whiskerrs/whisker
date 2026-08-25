@@ -823,9 +823,12 @@ length-percentage translations, and `transform-origin` until Taffy has
 produced the border-box size, then bakes them into that matrix. Hosts therefore
 do not parse CSS or independently resolve percentages and origin semantics.
 Changing a node's border-box size recomputes its matrix even when its specified
-transform is unchanged. The current common subset is the CSS/Lynx 2-D
-transform family; 3-D transforms, perspective, and motion paths require later
-capability slices rather than silently degrading on Android.
+transform is unchanged. The current common subset includes CSS/Lynx 2-D
+transforms and 3-D functions or `matrix3d` values that project a node's flat
+local plane. Each Host applies the projective result and flattens at that node;
+Android maps the `z = 0` slice exactly to a density-adjusted 3-by-3 homography.
+Parent `perspective`, shared `preserve-3d` descendant spaces, and motion paths
+remain later capability slices rather than silently degrading on any Host.
 
 The final opcode set may combine common operations for compactness. The
 semantic separation matters because it enables dirty classification,

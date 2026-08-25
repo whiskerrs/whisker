@@ -66,7 +66,7 @@ class HostConformanceTest {
     }
 
     @Test
-    fun rejectsAThreeDimensionalTransformInsteadOfFlatteningIt() {
+    fun projectsAThreeDimensionalTransformOntoTheNodePlane() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
             .runOnMainSync {
@@ -77,7 +77,7 @@ class HostConformanceTest {
                     0f, 0f, 2f, 0f,
                     0f, 0f, 0f, 1f,
                 )
-                assertTrue(Driver(context, "android.transform-3d-rejection").rejectTransform(matrix))
+                assertTrue(Driver(context, "android.transform-3d-projection").commitTransform(matrix))
             }
     }
 
@@ -317,7 +317,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.visual-effects.clip-path-path-evenodd" ||
                             command.getString("name") ==
-                            "paint.visual-effects.backdrop-blur",
+                            "paint.visual-effects.backdrop-blur" ||
+                            command.getString("name") ==
+                            "paint.transform.projective-plane",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -343,11 +345,11 @@ private class Driver(
         return checkNotNull(checkpoint)
     }
 
-    fun rejectTransform(transform: FloatArray): Boolean {
+    fun commitTransform(transform: FloatArray): Boolean {
         check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
         check(stage(tag = 9, numbers = transform))
-        return !view.commitFrameFromNative()
+        return view.commitFrameFromNative()
     }
 
     fun rejectOpacity(opacity: Float): Boolean {

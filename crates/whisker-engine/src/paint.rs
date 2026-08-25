@@ -103,10 +103,32 @@ pub fn lower_transform(
         multiply(translation(origin_x, origin_y, 0.0), matrix),
         translation(-origin_x, -origin_y, 0.0),
     );
-    around_origin
+    // Every Host currently flattens at the node boundary. Preserve the exact
+    // X/Y/W projection of points on the local z=0 plane, but canonicalize the
+    // unused depth row and column so GPU clip-space depth cannot discard CSS
+    // pixels and descendants cannot accidentally share a 3-D context.
+    let flat_plane = [
+        around_origin[0],
+        around_origin[1],
+        0.0,
+        around_origin[3],
+        around_origin[4],
+        around_origin[5],
+        0.0,
+        around_origin[7],
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        around_origin[12],
+        around_origin[13],
+        0.0,
+        around_origin[15],
+    ];
+    flat_plane
         .iter()
         .all(|value| value.is_finite())
-        .then_some(Transform(around_origin))
+        .then_some(Transform(flat_plane))
 }
 
 fn function_matrix(
@@ -484,6 +506,25 @@ mod tests {
             ..ComputedTransformStyle::default()
         };
         assert_eq!(lower_transform(&invalid_origin, 1.0, 1.0), None);
+    }
+
+    #[test]
+    fn canonicalizes_three_dimensional_output_to_the_node_plane() {
+        let style = ComputedTransformStyle {
+            functions: vec![ComputedTransformFunction::RotateY(StyleNumber::new(60.0))],
+            origin_x: ComputedLengthPercentage::ZERO,
+            origin_y: ComputedLengthPercentage::ZERO,
+        };
+        let transform = lower_transform(&style, 40.0, 20.0).expect("finite transform");
+        let expected = [
+            0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ];
+        for (actual, expected) in transform.0.into_iter().zip(expected) {
+            assert!(
+                (actual - expected).abs() < 0.000_001,
+                "{actual} != {expected}"
+            );
+        }
     }
 
     #[test]

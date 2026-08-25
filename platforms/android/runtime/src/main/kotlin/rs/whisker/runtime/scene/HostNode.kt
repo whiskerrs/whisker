@@ -111,13 +111,14 @@ internal class HostNode(
 
     /** Applies a protocol transform around the local border-box origin. */
     fun setLocalTransform(values: FloatArray, density: Float) {
-        require(isSupported2dTransform(values))
+        require(isProjectableFlatPlaneTransform(values))
+        require(density.isFinite() && density > 0f)
         (parent as? android.view.View)?.invalidate()
         localTransform.setValues(
             floatArrayOf(
                 values[0], values[4], values[12] * density,
                 values[1], values[5], values[13] * density,
-                values[3], values[7], values[15],
+                values[3] / density, values[7] / density, values[15],
             ),
         )
         hasLocalTransform = !localTransform.isIdentity
@@ -194,11 +195,14 @@ internal class HostNode(
     }
 }
 
-/** True only for finite 2D affine matrices embedded in a column-major 4x4 matrix. */
-internal fun isSupported2dTransform(values: FloatArray): Boolean =
-    values.size == 16 && values.all(Float::isFinite) &&
-        values[2] == 0f && values[3] == 0f &&
-        values[6] == 0f && values[7] == 0f &&
-        values[8] == 0f && values[9] == 0f &&
-        values[10] == 1f && values[11] == 0f &&
-        values[14] == 0f && values[15] == 1f
+/**
+ * True when a finite 4x4 transform can be flattened onto this View's z=0 plane.
+ *
+ * Android Canvas accepts a 3x3 homography. For points `(x, y, 0, 1)`, only
+ * rows x, y, and w of the 4x4 matrix contribute to projected screen
+ * coordinates, so every finite Whisker matrix has an exact flat-plane
+ * projection. Depth is intentionally flattened at each HostNode; preserving a
+ * shared 3D descendant space is a separate capability.
+ */
+internal fun isProjectableFlatPlaneTransform(values: FloatArray): Boolean =
+    values.size == 16 && values.all(Float::isFinite)
