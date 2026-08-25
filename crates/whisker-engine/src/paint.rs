@@ -1673,6 +1673,17 @@ mod tests {
             assert_eq!(motion_path_state(&invalid_arc, 0.5, 1.0, 1.0), None);
         }
 
+        let mut invalid_rotated_segments = Vec::new();
+        append_rotated_ellipse(
+            &mut invalid_rotated_segments,
+            (0.0, 0.0),
+            (10.0, 5.0),
+            f32::NAN,
+            0.0,
+            std::f32::consts::TAU,
+        );
+        assert!(invalid_rotated_segments.is_empty());
+
         let circle = OffsetPathValue::Circle {
             radius: ComputedLengthPercentage::new(0.0, 0.5),
             center_x: ComputedLengthPercentage::new(0.0, 0.5),
