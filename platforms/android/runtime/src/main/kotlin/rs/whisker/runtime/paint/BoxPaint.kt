@@ -15,6 +15,14 @@ import kotlin.math.min
 /** Packed Android projection of one protocol `SetBoxPaint` payload. */
 internal data class HostBoxPaint(val values: FloatArray, val names: Array<String>)
 
+/** Resolved physical geometry shared by box paint and overflow clipping. */
+internal data class ResolvedBoxGeometry(
+    val width: Float,
+    val height: Float,
+    val borderWidths: FloatArray,
+    val cornerRadii: FloatArray,
+)
+
 /** Applies renderer-independent box paint to the common Host node wrapper. */
 internal fun applyBoxPaint(
     node: View,
@@ -22,7 +30,7 @@ internal fun applyBoxPaint(
     logicalWidth: Float,
     logicalHeight: Float,
     density: Float,
-) {
+): ResolvedBoxGeometry {
     val values = paint.values
     require(values.size >= BOX_PAINT_PACKED_SIZE)
     val background = if (values[0] == 0f) {
@@ -51,6 +59,9 @@ internal fun applyBoxPaint(
         val axis = if (horizontal) logicalWidth else logicalHeight
         resolveLength(values[offset], values[offset + 1], axis) * density
     }
+    val physicalWidth = logicalWidth * density
+    val physicalHeight = logicalHeight * density
+    val normalizedRadii = normalizeRadii(radii, physicalWidth, physicalHeight)
     val borderStyles = IntArray(4) { index -> values[BORDER_STYLES_OFFSET + index].toInt() }
     val uniformSolidBorder = borderStyles.all { it == BORDER_STYLE_SOLID } &&
         borderWidths.all { it == borderWidths[0] } &&
@@ -62,11 +73,17 @@ internal fun applyBoxPaint(
             if (borderWidths[0] > 0f) {
                 setStroke(borderWidths[0].toInt().coerceAtLeast(1), borderColors[0])
             }
-            cornerRadii = radii
+            cornerRadii = normalizedRadii
         }
     } else {
-        WhiskerBoxDrawable(background, borderWidths, borderColors, borderStyles, radii)
+        WhiskerBoxDrawable(background, borderWidths, borderColors, borderStyles, normalizedRadii)
     }
+    return ResolvedBoxGeometry(
+        width = physicalWidth,
+        height = physicalHeight,
+        borderWidths = borderWidths,
+        cornerRadii = normalizedRadii,
+    )
 }
 
 private fun resolveLength(length: Float, fraction: Float, axis: Float): Float =
@@ -85,7 +102,7 @@ private class WhiskerBoxDrawable(
     override fun draw(canvas: Canvas) {
         val box = RectF(bounds)
         if (box.isEmpty) return
-        val radii = normalizedRadii(box.width(), box.height())
+        val radii = normalizeRadii(cornerRadii, box.width(), box.height())
         val outer = roundedPath(box, radii)
         paint.color = fillColor
         canvas.drawPath(outer, paint)
@@ -380,23 +397,6 @@ private class WhiskerBoxDrawable(
         )
     }
 
-    private fun normalizedRadii(width: Float, height: Float): FloatArray {
-        val result = cornerRadii.map { it.coerceAtLeast(0f) }.toFloatArray()
-        val denominators = floatArrayOf(
-            result[0] + result[2],
-            result[6] + result[4],
-            result[1] + result[7],
-            result[3] + result[5],
-        )
-        val limits = floatArrayOf(width, width, height, height)
-        var scale = 1f
-        repeat(4) { index ->
-            if (denominators[index] > 0f) scale = min(scale, limits[index] / denominators[index])
-        }
-        if (scale < 1f) repeat(result.size) { result[it] *= scale }
-        return result
-    }
-
     private fun roundedPath(rect: RectF, radii: FloatArray): Path = Path().apply {
         addRoundRect(rect, radii, Path.Direction.CW)
     }
@@ -411,6 +411,23 @@ private class WhiskerBoxDrawable(
     override fun setColorFilter(colorFilter: ColorFilter?) {
         paint.colorFilter = colorFilter
     }
+}
+
+internal fun normalizeRadii(radii: FloatArray, width: Float, height: Float): FloatArray {
+    val result = radii.map { it.coerceAtLeast(0f) }.toFloatArray()
+    val denominators = floatArrayOf(
+        result[0] + result[2],
+        result[6] + result[4],
+        result[1] + result[7],
+        result[3] + result[5],
+    )
+    val limits = floatArrayOf(width, width, height, height)
+    var scale = 1f
+    repeat(4) { index ->
+        if (denominators[index] > 0f) scale = min(scale, limits[index] / denominators[index])
+    }
+    if (scale < 1f) repeat(result.size) { result[it] *= scale }
+    return result
 }
 
 private const val BORDER_STYLE_SOLID = 2

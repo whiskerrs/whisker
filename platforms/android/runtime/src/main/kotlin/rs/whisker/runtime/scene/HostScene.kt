@@ -336,12 +336,13 @@ internal class HostScene(
 
     private fun applyPaint(node: HostNode, paint: HostBoxPaint) {
         node.paint = paint
-        applyBoxPaint(
+        val geometry = applyBoxPaint(
             node,
             paint,
             node.geometry.width,
             node.geometry.height,
             root.resources.displayMetrics.density,
         )
+        node.setOverflowClipGeometry(geometry)
     }
 }

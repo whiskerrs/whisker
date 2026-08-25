@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.border-radius-clipping-with-transform-001",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/border-radius-clipping-with-transform-001.html",
+    "reference_path": "css/css-backgrounds/border-radius-clipping-with-transform-001-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "Descendant content remains clipped to a rounded overflow curve when the clipping element is transformed.",
+    "adaptation": "The upstream rotation and 3D promotion are reduced to the resolved SetTransform translation needed to distinguish local clip geometry from untransformed surface scissoring. A red child fills the translated rounded parent."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 90.0, "height": 60.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [5.0, 10.0, 40.0, 40.0],
+            "background": { "kind": "named", "value": "transparent" },
+            "border": {
+              "widths": [0.0, 0.0, 0.0, 0.0],
+              "colors": [
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" }
+              ],
+              "styles": ["none", "none", "none", "none"],
+              "radii": [12.0, 12.0, 12.0, 12.0]
+            },
+            "clip": { "horizontal": "hidden", "vertical": "hidden" },
+            "transform": [
+              1.0, 0.0, 0.0, 0.0,
+              0.0, 1.0, 0.0, 0.0,
+              0.0, 0.0, 1.0, 0.0,
+              30.0, 0.0, 0.0, 1.0
+            ]
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [0.0, 0.0, 40.0, 40.0],
+            "background": { "kind": "named", "value": "red" }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [20.0, 30.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 18 },
+          { "point": [50.0, 30.0], "color": { "kind": "named", "value": "red" }, "tolerance": 18 },
+          { "point": [36.0, 11.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 18 },
+          { "point": [64.0, 30.0], "color": { "kind": "named", "value": "red" }, "tolerance": 18 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

@@ -20,17 +20,37 @@ use whisker_protocol::{NodeId, Transform};
 
 use crate::paint::box_paint::{BoxPrimitive, lower_box};
 use crate::paint::color::text_color;
-use crate::scene::{LogicalClip, PaintCommand};
+use crate::scene::{LogicalClip, PaintCommand, ShapeClipStack};
 use crate::text::NativeTextHost;
 
 const BOX_SHADER: &str = r#"
 struct Viewport {
     logical_size: vec2<f32>,
-    _padding: vec2<f32>,
+    physical_size: vec2<f32>,
 };
 
 @group(0) @binding(0)
 var<uniform> viewport: Viewport;
+
+struct ShapeClipRecord {
+    rect: vec4<f32>,
+    radii_x: vec4<f32>,
+    radii_y: vec4<f32>,
+    inverse_transform: mat4x4<f32>,
+    axes: vec4<u32>,
+};
+
+struct ShapeClipSpan {
+    offset: u32,
+    count: u32,
+    _padding: vec2<u32>,
+};
+
+@group(1) @binding(0)
+var<storage, read> shape_clip_records: array<ShapeClipRecord>;
+
+@group(1) @binding(1)
+var<storage, read> shape_clip_spans: array<ShapeClipSpan>;
 
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -68,10 +88,11 @@ struct VertexOutput {
     @location(12) border_bottom_color: vec4<f32>,
     @location(13) border_left_color: vec4<f32>,
     @location(14) @interpolate(flat) border_styles: vec4<f32>,
+    @location(15) @interpolate(flat) draw_index: u32,
 };
 
 @vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
+fn vs_main(input: VertexInput, @builtin(instance_index) draw_index: u32) -> VertexOutput {
     let transformed = input.transformed_position;
     var output: VertexOutput;
     output.position = vec4<f32>(
@@ -95,6 +116,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.border_bottom_color = input.border_bottom_color;
     output.border_left_color = input.border_left_color;
     output.border_styles = input.border_styles;
+    output.draw_index = draw_index;
     return output;
 }
 
@@ -320,6 +342,29 @@ fn styled_color(color: vec4<f32>, style: f32, side: f32, depth: f32) -> vec4<f32
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    let span = shape_clip_spans[input.draw_index];
+    var clip_coverage = 1.0;
+    let world_position = input.position.xy * viewport.logical_size / viewport.physical_size;
+    for (var index = 0u; index < span.count; index++) {
+        let clip = shape_clip_records[span.offset + index];
+        let local_h = clip.inverse_transform * vec4<f32>(world_position, 0.0, 1.0);
+        let local = local_h.xy / local_h.w;
+        var distance = -1e20;
+        if clip.axes.x != 0u && clip.axes.y != 0u {
+            distance = rounded_rect_distance(local, clip.rect, clip.radii_x, clip.radii_y);
+        } else {
+            if clip.axes.x != 0u {
+                distance = max(clip.rect.x - local.x, local.x - clip.rect.x - clip.rect.z);
+            }
+            if clip.axes.y != 0u {
+                distance = max(
+                    distance,
+                    max(clip.rect.y - local.y, local.y - clip.rect.y - clip.rect.w),
+                );
+            }
+        }
+        clip_coverage *= shape_coverage(distance);
+    }
     let outer_distance = rounded_rect_distance(
         input.logical_position,
         input.outer_rect,
@@ -328,7 +373,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     );
     let outer_coverage = shape_coverage(outer_distance);
     if input.mode < 0.0 {
-        return vec4<f32>(input.color.rgb, input.color.a * outer_coverage);
+        return vec4<f32>(input.color.rgb, input.color.a * outer_coverage * clip_coverage);
     }
 
     var inner_coverage = 0.0;
@@ -355,7 +400,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let style_coverage = patterned_coverage(style, path_position, width, depth)
         * double_coverage(style, depth);
     let coverage = max(outer_coverage - inner_coverage, 0.0) * style_coverage;
-    return vec4<f32>(color.rgb, color.a * coverage);
+    return vec4<f32>(color.rgb, color.a * coverage * clip_coverage);
 }
 "#;
 
@@ -485,20 +530,39 @@ impl BoxVertex {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ViewportUniform {
     logical_size: [f32; 2],
-    padding: [f32; 2],
+    physical_size: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ShapeClipRecordGpu {
+    rect: [f32; 4],
+    radii_x: [f32; 4],
+    radii_y: [f32; 4],
+    inverse_transform: [f32; 16],
+    axes: [u32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ShapeClipSpanGpu {
+    offset: u32,
+    count: u32,
+    padding: [u32; 2],
 }
 
 struct BoxGpuPipeline {
     pipeline: RenderPipeline,
     viewport_buffer: Buffer,
     viewport_bind_group: wgpu::BindGroup,
+    shape_clip_layout: wgpu::BindGroupLayout,
 }
 
 impl BoxGpuPipeline {
     fn new(device: &Device, format: TextureFormat) -> Self {
         let viewport_uniform = ViewportUniform {
             logical_size: [1.0, 1.0],
-            padding: [0.0; 2],
+            physical_size: [1.0, 1.0],
         };
         let viewport_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("whisker Desktop logical viewport"),
@@ -509,7 +573,7 @@ impl BoxGpuPipeline {
             label: Some("whisker Desktop viewport layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -526,13 +590,38 @@ impl BoxGpuPipeline {
                 resource: viewport_buffer.as_entire_binding(),
             }],
         });
+        let shape_clip_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("whisker Desktop shape clip layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("whisker Desktop box shader"),
             source: ShaderSource::Wgsl(BOX_SHADER.into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("whisker Desktop box pipeline layout"),
-            bind_group_layouts: &[&viewport_layout],
+            bind_group_layouts: &[&viewport_layout, &shape_clip_layout],
             push_constant_ranges: &[],
         });
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
@@ -564,18 +653,75 @@ impl BoxGpuPipeline {
             pipeline,
             viewport_buffer,
             viewport_bind_group,
+            shape_clip_layout,
         }
     }
 
-    fn update_viewport(&self, queue: &Queue, logical_size: [f32; 2]) {
+    fn update_viewport(&self, queue: &Queue, logical_size: [f32; 2], physical_size: [f32; 2]) {
         queue.write_buffer(
             &self.viewport_buffer,
             0,
             bytemuck::bytes_of(&ViewportUniform {
                 logical_size,
-                padding: [0.0; 2],
+                physical_size,
             }),
         );
+    }
+
+    fn shape_clip_bind_group(&self, device: &Device, draws: &[DrawCommand]) -> wgpu::BindGroup {
+        let mut records = Vec::new();
+        let spans = draws
+            .iter()
+            .map(|draw| {
+                let offset = records.len() as u32;
+                if let DrawCommand::Quads { shape_clips, .. } = draw {
+                    records.extend(shape_clips.iter().map(|clip| ShapeClipRecordGpu {
+                        rect: [clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height],
+                        radii_x: clip.radii.horizontal,
+                        radii_y: clip.radii.vertical,
+                        inverse_transform: clip.inverse_transform.0,
+                        axes: [u32::from(clip.horizontal), u32::from(clip.vertical), 0, 0],
+                    }));
+                }
+                ShapeClipSpanGpu {
+                    offset,
+                    count: records.len() as u32 - offset,
+                    padding: [0; 2],
+                }
+            })
+            .collect::<Vec<_>>();
+        if records.is_empty() {
+            records.push(ShapeClipRecordGpu::zeroed());
+        }
+        let spans = if spans.is_empty() {
+            vec![ShapeClipSpanGpu::zeroed()]
+        } else {
+            spans
+        };
+        let record_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("whisker Desktop shape clip records"),
+            contents: bytemuck::cast_slice(&records),
+            usage: BufferUsages::STORAGE,
+        });
+        let span_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("whisker Desktop shape clip spans"),
+            contents: bytemuck::cast_slice(&spans),
+            usage: BufferUsages::STORAGE,
+        });
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("whisker Desktop shape clips"),
+            layout: &self.shape_clip_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: record_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: span_buffer.as_entire_binding(),
+                },
+            ],
+        })
     }
 }
 
@@ -583,6 +729,7 @@ enum DrawCommand {
     Quads {
         vertices: Range<u32>,
         clip: LogicalClip,
+        shape_clips: ShapeClipStack,
     },
     Text {
         index: usize,
@@ -686,7 +833,11 @@ impl GpuRenderer {
         if self.config.width == 0 || self.config.height == 0 {
             return Ok(());
         }
-        self.box_gpu.update_viewport(&self.queue, logical_size);
+        self.box_gpu.update_viewport(
+            &self.queue,
+            logical_size,
+            [self.config.width as f32, self.config.height as f32],
+        );
         self.text_viewport.update(
             &self.queue,
             Resolution {
@@ -703,6 +854,7 @@ impl GpuRenderer {
                     rect,
                     paint,
                     clip,
+                    shape_clips,
                     transform,
                     opacity,
                 } => {
@@ -715,14 +867,19 @@ impl GpuRenderer {
                         draws.push(DrawCommand::Quads {
                             vertices: start..end,
                             clip: *clip,
+                            shape_clips: shape_clips.clone(),
                         });
                     }
                 }
                 PaintCommand::Text {
-                    node, transform, ..
+                    node,
+                    transform,
+                    shape_clips,
+                    ..
                 } => {
-                    // Glyph transforms are implemented with the SetText paint slice.
-                    let _ = transform;
+                    // Glyph transforms and shape clips are implemented with the
+                    // SetText paint slice; retain both states on the command now.
+                    let _ = (transform, shape_clips);
                     draws.push(DrawCommand::Text { index, node: *node })
                 }
             }
@@ -801,6 +958,7 @@ impl GpuRenderer {
                     usage: BufferUsages::VERTEX,
                 })
         });
+        let shape_clip_bind_group = self.box_gpu.shape_clip_bind_group(&self.device, &draws);
 
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
@@ -836,9 +994,9 @@ impl GpuRenderer {
             });
         }
 
-        for draw in draws {
+        for (draw_index, draw) in draws.into_iter().enumerate() {
             match draw {
-                DrawCommand::Quads { vertices, clip } => {
+                DrawCommand::Quads { vertices, clip, .. } => {
                     let Some((x, y, width, height)) = self.scissor(clip, scale) else {
                         continue;
                     };
@@ -859,6 +1017,7 @@ impl GpuRenderer {
                     pass.set_scissor_rect(x, y, width, height);
                     pass.set_pipeline(&self.box_gpu.pipeline);
                     pass.set_bind_group(0, &self.box_gpu.viewport_bind_group, &[]);
+                    pass.set_bind_group(1, &shape_clip_bind_group, &[]);
                     pass.set_vertex_buffer(
                         0,
                         vertex_buffer
@@ -866,7 +1025,7 @@ impl GpuRenderer {
                             .expect("quad draw has vertices")
                             .slice(..),
                     );
-                    pass.draw(vertices, 0..1);
+                    pass.draw(vertices, draw_index as u32..draw_index as u32 + 1);
                 }
                 DrawCommand::Text { node, .. } => {
                     if !prepared_text_nodes.contains(&node) {
@@ -989,14 +1148,21 @@ pub(crate) async fn render_box_primitives_offscreen(
     let clipped = primitives
         .iter()
         .copied()
-        .map(|primitive| (primitive, LogicalClip::default(), Transform::IDENTITY))
+        .map(|primitive| {
+            (
+                primitive,
+                LogicalClip::default(),
+                Transform::IDENTITY,
+                ShapeClipStack::default(),
+            )
+        })
         .collect::<Vec<_>>();
     render_clipped_box_primitives_offscreen(&clipped, logical_size).await
 }
 
 #[cfg(all(test, feature = "host-conformance"))]
 pub(crate) async fn render_clipped_box_primitives_offscreen(
-    primitives: &[(BoxPrimitive, LogicalClip, Transform)],
+    primitives: &[(BoxPrimitive, LogicalClip, Transform, ShapeClipStack)],
     logical_size: [u32; 2],
 ) -> Result<Vec<u8>, GpuError> {
     let [width, height] = logical_size;
@@ -1017,14 +1183,22 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
         .map_err(|error| GpuError(format!("create offscreen Desktop GPU device: {error}")))?;
     let format = TextureFormat::Rgba8Unorm;
     let box_gpu = BoxGpuPipeline::new(&device, format);
-    box_gpu.update_viewport(&queue, [width as f32, height as f32]);
+    box_gpu.update_viewport(
+        &queue,
+        [width as f32, height as f32],
+        [width as f32, height as f32],
+    );
 
     let mut vertices = Vec::new();
     let mut draws = Vec::new();
-    for (primitive, clip, transform) in primitives {
+    for (primitive, clip, transform, shape_clips) in primitives {
         let start = vertices.len() as u32;
         push_transformed_quad(&mut vertices, *primitive, *transform);
-        draws.push((start..vertices.len() as u32, *clip));
+        draws.push(DrawCommand::Quads {
+            vertices: start..vertices.len() as u32,
+            clip: *clip,
+            shape_clips: shape_clips.clone(),
+        });
     }
     let vertex_buffer = (!vertices.is_empty()).then(|| {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1061,6 +1235,7 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
     let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
         label: Some("whisker Desktop conformance encoder"),
     });
+    let shape_clip_bind_group = box_gpu.shape_clip_bind_group(&device, &draws);
     {
         encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("whisker Desktop conformance clear"),
@@ -1078,7 +1253,15 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
         });
     }
     if let Some(vertex_buffer) = &vertex_buffer {
-        for (range, clip) in draws {
+        for (draw_index, draw) in draws.into_iter().enumerate() {
+            let DrawCommand::Quads {
+                vertices: range,
+                clip,
+                ..
+            } = draw
+            else {
+                unreachable!();
+            };
             let Some((x, y, clip_width, clip_height)) = offscreen_scissor(clip, width, height)
             else {
                 continue;
@@ -1100,8 +1283,9 @@ pub(crate) async fn render_clipped_box_primitives_offscreen(
             pass.set_scissor_rect(x, y, clip_width, clip_height);
             pass.set_pipeline(&box_gpu.pipeline);
             pass.set_bind_group(0, &box_gpu.viewport_bind_group, &[]);
+            pass.set_bind_group(1, &shape_clip_bind_group, &[]);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            pass.draw(range, 0..1);
+            pass.draw(range, draw_index as u32..draw_index as u32 + 1);
         }
     }
     encoder.copy_texture_to_buffer(

@@ -3,9 +3,14 @@ package rs.whisker.runtime.scene
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Matrix
+import android.graphics.Path
+import android.graphics.Rect
+import android.graphics.RectF
 import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerMountedElement
 import rs.whisker.runtime.paint.HostBoxPaint
+import rs.whisker.runtime.paint.ResolvedBoxGeometry
+import rs.whisker.runtime.paint.normalizeRadii
 
 /** Mutable logical geometry attached to one Host scene node. */
 internal data class HostGeometry(
@@ -33,6 +38,40 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
 
     private val localTransform = Matrix()
     private var hasLocalTransform = false
+    private var overflowClipRect = RectF()
+    private var overflowClipPath: Path? = null
+
+    fun setOverflowClipGeometry(geometry: ResolvedBoxGeometry) {
+        val top = geometry.borderWidths[0].coerceIn(0f, geometry.height)
+        val right = geometry.borderWidths[1].coerceIn(0f, geometry.width)
+        val bottom = geometry.borderWidths[2].coerceIn(0f, geometry.height)
+        val left = geometry.borderWidths[3].coerceIn(0f, geometry.width)
+        overflowClipRect = RectF(left, top, geometry.width - right, geometry.height - bottom)
+        if (overflowClipRect.isEmpty) {
+            overflowClipPath = Path()
+            invalidate()
+            return
+        }
+        val outer = geometry.cornerRadii
+        val inner = normalizeRadii(
+            floatArrayOf(
+                (outer[0] - left).coerceAtLeast(0f),
+                (outer[1] - top).coerceAtLeast(0f),
+                (outer[2] - right).coerceAtLeast(0f),
+                (outer[3] - top).coerceAtLeast(0f),
+                (outer[4] - right).coerceAtLeast(0f),
+                (outer[5] - bottom).coerceAtLeast(0f),
+                (outer[6] - left).coerceAtLeast(0f),
+                (outer[7] - bottom).coerceAtLeast(0f),
+            ),
+            overflowClipRect.width(),
+            overflowClipRect.height(),
+        )
+        overflowClipPath = Path().apply {
+            addRoundRect(overflowClipRect, inner, Path.Direction.CW)
+        }
+        invalidate()
+    }
 
     /** Applies a protocol transform around the local border-box origin. */
     fun setLocalTransform(values: FloatArray, density: Float) {
@@ -59,6 +98,29 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
         canvas.concat(localTransform)
         super.draw(canvas)
         canvas.restoreToCount(save)
+    }
+
+    override fun clipDescendants(
+        canvas: Canvas,
+        horizontal: Boolean,
+        vertical: Boolean,
+        visible: Rect,
+    ) {
+        val path = overflowClipPath
+        if (path == null) {
+            super.clipDescendants(canvas, horizontal, vertical, visible)
+            return
+        }
+        if (horizontal && vertical) {
+            canvas.clipPath(path)
+            return
+        }
+        canvas.clipRect(
+            if (horizontal) overflowClipRect.left else visible.left.toFloat(),
+            if (vertical) overflowClipRect.top else visible.top.toFloat(),
+            if (horizontal) overflowClipRect.right else visible.right.toFloat(),
+            if (vertical) overflowClipRect.bottom else visible.bottom.toFloat(),
+        )
     }
 }
 

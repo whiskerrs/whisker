@@ -80,6 +80,20 @@
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.border-radius-overflow-hidden",
+      "feature": "border-radius-overflow-clip",
+      "fixture": "wpt/css/css-backgrounds/border-radius-overflow-hidden.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-clipping-with-transform-001",
+      "feature": "border-radius-overflow-transform",
+      "fixture": "wpt/css/css-backgrounds/border-radius-clipping-with-transform-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css2.borders.border-top-003",
       "feature": "border-top",
       "fixture": "wpt/css/CSS2/borders/border-top-003.json",

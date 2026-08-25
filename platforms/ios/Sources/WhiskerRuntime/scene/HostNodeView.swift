@@ -11,7 +11,8 @@ final class WhiskerNodeView: UIView {
     var paint: HostBoxPaint?
     let boxPainter = HostBoxPainter()
     var mountedElement: WhiskerMountedElement?
-    private let overflowMask = CALayer()
+    private let defaultChildrenHost = WhiskerChildrenHostView(frame: .zero)
+    private let overflowMask = CAShapeLayer()
     private var clipsOverflowHorizontally = false
     private var clipsOverflowVertically = false
 
@@ -20,6 +21,10 @@ final class WhiskerNodeView: UIView {
         super.init(frame: .zero)
         isOpaque = false
         layer.anchorPoint = .zero
+        defaultChildrenHost.isOpaque = false
+        defaultChildrenHost.backgroundColor = .clear
+        defaultChildrenHost.clipsToBounds = false
+        addSubview(defaultChildrenHost)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -34,6 +39,7 @@ final class WhiskerNodeView: UIView {
         if let mountedElement {
             mountedElement.view.frame = contentFrame
         }
+        defaultChildrenHost.frame = bounds
         updateOverflowMask()
         setNeedsDisplay()
     }
@@ -48,6 +54,8 @@ final class WhiskerNodeView: UIView {
         // independent by positioning the zero-anchor layer directly.
         bounds = CGRect(origin: .zero, size: frame.size)
         layer.position = frame.origin
+        defaultChildrenHost.frame = bounds
+        updateOverflowMask()
     }
 
     func setPresentationTransform(_ values: UnsafeBufferPointer<Float>) {
@@ -79,30 +87,66 @@ final class WhiskerNodeView: UIView {
         updateOverflowMask()
     }
 
+    func sceneChildrenHost() -> UIView {
+        mountedElement?.childrenHost() ?? defaultChildrenHost
+    }
+
+    func mountedContentDidInstall() {
+        bringSubviewToFront(defaultChildrenHost)
+        updateOverflowMask()
+    }
+
+    func boxPaintDidChange() {
+        updateOverflowMask()
+    }
+
     private func updateOverflowMask() {
         guard clipsOverflowHorizontally || clipsOverflowVertically else {
-            layer.mask = nil
+            sceneChildrenHost().layer.mask = nil
             return
         }
-        // A layer mask participates in composition after this view's own box
-        // has been painted, so the box remains intact while overflowing
-        // descendants are constrained only on the requested axes. Visible
-        // axes extend through the complete Host surface; the surface itself is
-        // the final composition boundary.
         let compositionBounds = hostCompositionBounds()
-        overflowMask.frame = CGRect(
-            x: clipsOverflowHorizontally ? bounds.minX : compositionBounds.minX,
-            y: clipsOverflowVertically ? bounds.minY : compositionBounds.minY,
-            width: clipsOverflowHorizontally ? bounds.width : compositionBounds.width,
-            height: clipsOverflowVertically ? bounds.height : compositionBounds.height
+        let nodePath = boxPainter.overflowClipPath(
+            in: bounds,
+            visibleBounds: compositionBounds,
+            horizontal: clipsOverflowHorizontally,
+            vertical: clipsOverflowVertically
         )
-        overflowMask.backgroundColor = UIColor.white.cgColor
-        layer.mask = overflowMask
+        let host = sceneChildrenHost()
+        let origin = host.convert(CGPoint.zero, from: self)
+        let xUnit = host.convert(CGPoint(x: 1, y: 0), from: self)
+        let yUnit = host.convert(CGPoint(x: 0, y: 1), from: self)
+        var conversion = CGAffineTransform(
+            a: xUnit.x - origin.x,
+            b: xUnit.y - origin.y,
+            c: yUnit.x - origin.x,
+            d: yUnit.y - origin.y,
+            tx: origin.x,
+            ty: origin.y
+        )
+        guard let convertedPath = nodePath.copy(using: &conversion) else { return }
+        let maskFrame = convertedPath.boundingBoxOfPath
+        var maskTranslation = CGAffineTransform(
+            translationX: -maskFrame.minX,
+            y: -maskFrame.minY
+        )
+        overflowMask.frame = maskFrame
+        overflowMask.path = convertedPath.copy(using: &maskTranslation)
+        overflowMask.backgroundColor = UIColor.clear.cgColor
+        overflowMask.fillColor = UIColor.white.cgColor
+        host.layer.mask = overflowMask
     }
 
     private func hostCompositionBounds() -> CGRect {
         var host: UIView = self
         while let parent = host.superview { host = parent }
         return convert(host.bounds, from: host)
+    }
+}
+
+private final class WhiskerChildrenHostView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let result = super.hitTest(point, with: event)
+        return result === self ? nil : result
     }
 }
