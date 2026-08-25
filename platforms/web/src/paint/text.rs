@@ -102,6 +102,15 @@ pub(crate) fn apply_metrics_style(
     set_style(element, "letter-spacing", &px(text.style.letter_spacing))?;
     set_style(
         element,
+        "text-indent",
+        &format!(
+            "calc({} + {}%)",
+            px(text.indent.logical_pixels),
+            text.indent.percentage,
+        ),
+    )?;
+    set_style(
+        element,
         "white-space",
         if text.wrap == MeasureTextWrap::NoWrap {
             "nowrap"

@@ -5,11 +5,47 @@ import android.graphics.Canvas
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.LeadingMarginSpan
 import android.widget.TextView
 import kotlin.math.max
 
 /** Native text element with Lynx-compatible single-line decorations. */
 public class WhiskerTextView(context: Context) : TextView(context) {
+    private var whiskerTextValue: String = ""
+    private var whiskerTextIndent: WhiskerTextIndent = WhiskerTextIndent()
+
+    public fun setWhiskerText(value: String, indent: WhiskerTextIndent) {
+        whiskerTextValue = value
+        whiskerTextIndent = indent
+        applyWhiskerText()
+    }
+
+    override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight)
+        if (width != oldWidth && whiskerTextIndent.percentage != 0f) applyWhiskerText()
+    }
+
+    private fun applyWhiskerText() {
+        if (whiskerTextValue.isEmpty()) {
+            text = whiskerTextValue
+            return
+        }
+        val density = resources.displayMetrics.density
+        val resolvedWidth = if (width > 0) width else layoutParams?.width ?: 0
+        val indentPixels = whiskerTextIndent.logicalPixels * density +
+            resolvedWidth * whiskerTextIndent.percentage / 100f
+        text = SpannableString(whiskerTextValue).apply {
+            setSpan(
+                LeadingMarginSpan.Standard(indentPixels.toInt(), 0),
+                0,
+                length,
+                Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
+            )
+        }
+    }
+
     public var whiskerDecoration: WhiskerTextDecoration? = null
         set(value) {
             field = value

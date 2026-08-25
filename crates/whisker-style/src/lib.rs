@@ -41,9 +41,10 @@ pub use property::{
     PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyDomain, StylePropertyId,
 };
 pub use resolution::{
-    ComputedLineHeight, ComputedStyle, ComputedTextDecoration, ComputedTextShadow,
-    InheritedPropertySet, InheritedStyle, InheritedStyleChange, PropertyImpactSet,
-    ResolvedNodeStyle, StyleEnvironment, StyleResolutionError, resolve_style, resolve_text_style,
+    ComputedLineHeight, ComputedStyle, ComputedTextDecoration, ComputedTextIndent,
+    ComputedTextShadow, InheritedPropertySet, InheritedStyle, InheritedStyleChange,
+    PropertyImpactSet, ResolvedNodeStyle, StyleEnvironment, StyleResolutionError, resolve_style,
+    resolve_text_style,
 };
 pub use value::{
     BackdropFilterValue, BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue,

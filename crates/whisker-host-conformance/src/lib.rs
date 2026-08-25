@@ -609,12 +609,25 @@ pub struct TextFixture {
     /// Inline-axis alignment within the text element's layout box.
     #[serde(default)]
     pub alignment: TextAlignmentFixture,
+    /// First-line indentation as a resolved length-plus-percentage pair.
+    #[serde(default)]
+    pub indent: TextIndentFixture,
     /// Optional single Lynx text decoration.
     #[serde(default)]
     pub decoration: Option<TextDecorationFixture>,
     /// Optional single Lynx-compatible shadow.
     #[serde(default)]
     pub shadow: Option<TextShadowFixture>,
+}
+
+/// Resolved `text-indent` components; percentage is relative to text width.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TextIndentFixture {
+    /// Fixed logical-pixel component.
+    pub logical_pixels: f32,
+    /// Percentage number before the `%` suffix.
+    pub percentage: f32,
 }
 
 /// Lynx-supported `text-align` values.

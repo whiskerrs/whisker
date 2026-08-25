@@ -869,11 +869,7 @@ impl BindingState {
             surface.set_background_layers(update.node, background.layers)?;
             resource_commands.extend(background.commands);
             if let Some(text) = &update.text {
-                surface.set_plain_text(
-                    update.node,
-                    text,
-                    update.resolved.computed().inherited_text(),
-                )?;
+                surface.set_plain_text(update.node, text, update.resolved.computed())?;
             }
         }
 
@@ -1131,7 +1127,7 @@ impl BindingState {
         surface.set_background_layers(node, background.layers)?;
         resource_commands.extend(background.commands);
         if let Some(text) = &entry.text {
-            surface.set_plain_text(node, text, resolved.computed().inherited_text())?;
+            surface.set_plain_text(node, text, resolved.computed())?;
         }
         let children = entry.children.clone();
         updates.push((element, resolved.clone()));

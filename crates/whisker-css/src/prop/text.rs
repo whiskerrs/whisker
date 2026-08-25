@@ -292,6 +292,10 @@ mod tests {
     fn text_indent_value() {
         let s = Css::new().text_indent(px(20));
         assert_eq!(s.to_string(), "text-indent: 20px;");
+        assert!(matches!(
+            s.to_specified_style().unwrap().resolved()[0].value(),
+            whisker_style::StyleValue::LengthPercentage(_)
+        ));
     }
 
     #[test]

@@ -87,6 +87,23 @@ pub enum ComputedLineHeight {
     LogicalPixels(StyleNumber),
 }
 
+/// Computed Lynx `text-indent` value.
+///
+/// Percentages remain unresolved until the text element has a definite width.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedTextIndent {
+    /// Fixed logical pixels after resolving environment-relative units.
+    LogicalPixels(StyleNumber),
+    /// Percentage number before the `%` suffix.
+    Percentage(StyleNumber),
+}
+
+impl Default for ComputedTextIndent {
+    fn default() -> Self {
+        Self::LogicalPixels(StyleNumber::new(0.0))
+    }
+}
+
 /// One resolved inherited text shadow.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ComputedTextShadow {
@@ -288,6 +305,7 @@ impl InheritedStyle {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ComputedStyle {
     inherited_text: InheritedStyle,
+    text_indent: ComputedTextIndent,
     layout: ComputedLayoutStyle,
     paint: ComputedPaintStyle,
 }
@@ -296,6 +314,11 @@ impl ComputedStyle {
     /// Returns computed text values for this node.
     pub const fn inherited_text(&self) -> &InheritedStyle {
         &self.inherited_text
+    }
+
+    /// Returns this node's non-inherited first-line indentation.
+    pub const fn text_indent(&self) -> ComputedTextIndent {
+        self.text_indent
     }
 
     /// Returns Taffy-independent computed layout input for this node.
@@ -626,6 +649,32 @@ pub fn resolve_style(
         Some(_) => return Err(wrong_type(StyleProperty::TextShadow)),
         None => base.text_shadow.clone(),
     };
+    let text_indent = match specified
+        .resolved()
+        .iter()
+        .rev()
+        .find(|declaration| declaration.property() == StyleProperty::TextIndent)
+        .map(|declaration| declaration.value())
+    {
+        Some(StyleValue::LengthPercentage(LengthPercentageValue::Length(value))) => {
+            ComputedTextIndent::LogicalPixels(StyleNumber::new(resolve_length(
+                *value,
+                font_size.get(),
+                environment,
+                StyleProperty::TextIndent,
+            )?))
+        }
+        Some(StyleValue::LengthPercentage(LengthPercentageValue::Percentage(value))) => {
+            ComputedTextIndent::Percentage(StyleNumber::new(finite(
+                *value,
+                StyleProperty::TextIndent,
+            )?))
+        }
+        Some(StyleValue::LengthPercentage(LengthPercentageValue::Calc(_))) | Some(_) => {
+            return Err(wrong_type(StyleProperty::TextIndent));
+        }
+        None => ComputedTextIndent::default(),
+    };
 
     let inherited_text = InheritedStyle {
         font_family,
@@ -651,6 +700,7 @@ pub fn resolve_style(
     Ok(ResolvedNodeStyle {
         computed: ComputedStyle {
             inherited_text,
+            text_indent,
             layout,
             paint,
         },
@@ -1303,6 +1353,7 @@ mod tests {
             StyleProperty::LetterSpacing,
             StyleProperty::Color,
             StyleProperty::TextAlign,
+            StyleProperty::TextIndent,
             StyleProperty::TextDecoration,
             StyleProperty::TextShadow,
         ] {
@@ -1353,6 +1404,75 @@ mod tests {
             child.inherited_for_children().text_align(),
             TextAlignValue::Center
         );
+    }
+
+    #[test]
+    fn text_indent_resolves_length_and_percentage_without_inheriting() {
+        let environment = StyleEnvironment::default();
+        let length = resolve_text_style(
+            &declaration(
+                StyleProperty::TextIndent,
+                StyleValue::LengthPercentage(LengthPercentageValue::Length(
+                    LengthValue::Dimension {
+                        value: number(2.0),
+                        unit: LengthUnit::Em,
+                    },
+                )),
+            ),
+            None,
+            environment,
+        )
+        .unwrap();
+        assert_eq!(
+            length.computed().text_indent(),
+            ComputedTextIndent::LogicalPixels(number(28.0))
+        );
+
+        let percentage = resolve_text_style(
+            &declaration(
+                StyleProperty::TextIndent,
+                StyleValue::LengthPercentage(LengthPercentageValue::Percentage(number(-15.0))),
+            ),
+            Some(length.inherited_for_children()),
+            environment,
+        )
+        .unwrap();
+        assert_eq!(
+            percentage.computed().text_indent(),
+            ComputedTextIndent::Percentage(number(-15.0))
+        );
+        let child = resolve_text_style(
+            &SpecifiedStyle::new(),
+            Some(length.inherited_for_children()),
+            environment,
+        )
+        .unwrap();
+        assert_eq!(
+            child.computed().text_indent(),
+            ComputedTextIndent::default()
+        );
+
+        for value in [
+            LengthPercentageValue::Length(LengthValue::Dimension {
+                value: number(f32::INFINITY),
+                unit: LengthUnit::Em,
+            }),
+            LengthPercentageValue::Percentage(number(f32::NAN)),
+            LengthPercentageValue::Calc(Box::new(CalcExpression::Number(number(1.0)))),
+        ] {
+            assert_eq!(
+                resolve_text_style(
+                    &declaration(
+                        StyleProperty::TextIndent,
+                        StyleValue::LengthPercentage(value),
+                    ),
+                    None,
+                    environment,
+                )
+                .unwrap_err(),
+                StyleResolutionError::InvalidPropertyValue(StyleProperty::TextIndent)
+            );
+        }
     }
 
     #[test]

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "core.text-indent-lynx",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 280, "height": 100, "scale": 1 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          { "id": 1, "parent": null, "rect": [10, 10, 260, 34], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "length indent", "font_size": 20, "color": { "kind": "named", "value": "black" }, "indent": { "logical_pixels": 24, "percentage": 0 } } },
+          { "id": 2, "parent": null, "rect": [10, 54, 200, 34], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "percentage indent", "font_size": 20, "color": { "kind": "named", "value": "black" }, "indent": { "logical_pixels": 0, "percentage": 15 } } }
+        ]
+      },
+      { "type": "checkpoint", "name": "paint.text.indent-lynx" }
+    ]
+  }
+}

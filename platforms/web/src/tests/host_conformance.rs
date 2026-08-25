@@ -468,6 +468,8 @@ impl Driver {
                             "paint.text.decoration-lynx"
                         } else if name == "paint.text.align-lynx" {
                             "paint.text.align-lynx"
+                        } else if name == "paint.text.indent-lynx" {
+                            "paint.text.indent-lynx"
                         } else if name == "paint.visual-effects.image-rendering-pixelated" {
                             "paint.visual-effects.image-rendering-pixelated"
                         } else if self.resource_lifecycle {
@@ -884,6 +886,16 @@ impl Driver {
                         whisker_host_conformance::TextAlignmentFixture::Center => "center",
                     },
                 );
+                if text.indent.logical_pixels != 0.0 || text.indent.percentage != 0.0 {
+                    assert_style(
+                        &text_style,
+                        "text-indent",
+                        &format!(
+                            "calc({}px + {}%)",
+                            text.indent.logical_pixels, text.indent.percentage
+                        ),
+                    );
+                }
                 assert_style(&text_style, "font-weight", &text.font_weight.to_string());
                 assert_style(&text_style, "color", &fixture_color_css(&text.color));
                 let expected_shadow = text.shadow.as_ref().map_or_else(
@@ -1464,6 +1476,9 @@ fn fixture(path: &str) -> &'static str {
         }
         "core/text-align-lynx.json" => {
             include_str!("../../../../tests/host-conformance/core/text-align-lynx.json")
+        }
+        "core/text-indent-lynx.json" => {
+            include_str!("../../../../tests/host-conformance/core/text-indent-lynx.json")
         }
         _ => panic!("manifest fixture is not embedded in the Web test: {path}"),
     }
@@ -2127,6 +2142,10 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
             locale: None,
             direction: MeasureTextDirection::Auto,
             alignment: fixture_alignment(text.alignment),
+            indent: whisker_protocol::MeasureTextIndent {
+                logical_pixels: text.indent.logical_pixels,
+                percentage: text.indent.percentage,
+            },
             wrap: MeasureTextWrap::Wrap,
             max_lines: None,
             overflow: MeasureTextOverflow::Clip,

@@ -99,6 +99,10 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
             locale: None,
             direction: MeasureTextDirection::Auto,
             alignment: fixture_alignment(text.alignment),
+            indent: whisker_protocol::MeasureTextIndent {
+                logical_pixels: text.indent.logical_pixels,
+                percentage: text.indent.percentage,
+            },
             wrap: MeasureTextWrap::Wrap,
             max_lines: None,
             overflow: MeasureTextOverflow::Clip,
@@ -564,6 +568,8 @@ impl Driver {
                         self.assert_text_decoration();
                     } else if name == "paint.text.align-lynx" {
                         self.assert_text_alignment();
+                    } else if name == "paint.text.indent-lynx" {
+                        self.assert_text_indent();
                     }
                     checkpoints.push(Checkpoint {
                         logical_size: [
@@ -1005,6 +1011,27 @@ impl Driver {
         );
     }
 
+    fn assert_text_indent(&self) {
+        let commands = self
+            .scene
+            .as_ref()
+            .expect("checkpoint follows attach")
+            .paint_commands();
+        let indents = commands
+            .iter()
+            .filter_map(|command| match command {
+                PaintCommand::Text { content, .. } => Some(content.payload.indent),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(indents.len(), 2);
+        assert_eq!(indents[0].logical_pixels, 24.0);
+        assert_eq!(indents[0].percentage, 0.0);
+        assert_eq!(indents[1].logical_pixels, 0.0);
+        assert_eq!(indents[1].percentage, 15.0);
+        assert_eq!(indents[1].resolve(200.0), 30.0);
+    }
+
     fn clipped_box_primitives(&self) -> Vec<ClippedBoxPrimitive> {
         let scene = self.scene.as_ref().expect("checkpoint follows attach");
         let mut primitives = Vec::new();
@@ -1201,6 +1228,7 @@ impl Driver {
                 locale: None,
                 direction: MeasureTextDirection::Auto,
                 alignment: whisker_protocol::MeasureTextAlignment::Start,
+                indent: Default::default(),
                 wrap: MeasureTextWrap::Wrap,
                 max_lines: None,
                 overflow: MeasureTextOverflow::Clip,

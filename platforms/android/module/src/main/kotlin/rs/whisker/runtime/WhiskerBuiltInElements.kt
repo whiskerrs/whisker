@@ -20,7 +20,7 @@ public object WhiskerBuiltInElements {
             name = TEXT,
             textUpdater = { view, content ->
                 require(view is WhiskerTextView) { "$TEXT factory must create WhiskerTextView" }
-                view.text = content.value
+                view.setWhiskerText(content.value, content.indent)
                 view.textSize = content.fontSize
                 view.setTextColor(content.color)
                 view.setTypeface(view.typeface, if (content.fontWeight >= 600) 1 else 0)

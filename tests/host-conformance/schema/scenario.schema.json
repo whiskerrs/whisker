@@ -177,8 +177,18 @@
         "font_weight": { "type": "integer", "minimum": 1, "maximum": 1000 },
         "color": { "$ref": "#/$defs/color" },
         "alignment": { "enum": ["start", "end", "left", "right", "center"] },
+        "indent": { "$ref": "#/$defs/textIndent" },
         "decoration": { "$ref": "#/$defs/textDecoration" },
         "shadow": { "$ref": "#/$defs/textShadow" }
+      }
+    },
+    "textIndent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logical_pixels", "percentage"],
+      "properties": {
+        "logical_pixels": { "type": "number" },
+        "percentage": { "type": "number" }
       }
     },
     "textDecoration": {

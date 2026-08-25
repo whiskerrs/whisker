@@ -715,6 +715,8 @@ impl MobileMeasureBatch {
                 payload_version: 0,
                 line_height: 0.0,
                 letter_spacing: 0.0,
+                indent_logical_pixels: 0.0,
+                indent_percentage: 0.0,
                 max_lines: 0,
                 payload: WhiskerBytesRef {
                     ptr: std::ptr::null(),
@@ -750,6 +752,8 @@ impl MobileMeasureBatch {
                         MeasureLineHeight::LogicalPixels(value) => value,
                     };
                     raw.letter_spacing = value.style.letter_spacing;
+                    raw.indent_logical_pixels = value.indent.logical_pixels;
+                    raw.indent_percentage = value.indent.percentage;
                     raw.max_lines = value.max_lines.unwrap_or(0);
                 }
                 MeasurementPayload::ReplacedContent(value) => {
@@ -1445,6 +1449,8 @@ impl MobileFrameOwned {
                             whisker_engine::whisker_protocol::MeasureTextAlignment::Right => 3,
                             whisker_engine::whisker_protocol::MeasureTextAlignment::Center => 4,
                         },
+                        indent_logical_pixels: content.payload.indent.logical_pixels,
+                        indent_percentage: content.payload.indent.percentage,
                         prepared_content: content.prepared_content.map_or(0, |value| value.get()),
                     }));
                     raw.payload = texts.last().unwrap().as_ref() as *const _ as *const c_void;
@@ -1805,6 +1811,7 @@ mod tests {
                 locale: None,
                 direction: Default::default(),
                 alignment: Default::default(),
+                indent: Default::default(),
                 wrap: MeasureTextWrap::Wrap,
                 max_lines: None,
                 overflow: Default::default(),

@@ -132,6 +132,28 @@ pub enum MeasureTextAlignment {
     Center,
 }
 
+/// First-line indentation resolved into a Host-independent affine length.
+///
+/// The percentage component is relative to the final text element width.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MeasureTextIndent {
+    /// Fixed logical-pixel component.
+    pub logical_pixels: f32,
+    /// Percentage number before the `%` suffix.
+    pub percentage: f32,
+}
+
+impl MeasureTextIndent {
+    /// Resolves the indentation for a definite text element width.
+    pub fn resolve(self, width: f32) -> f32 {
+        self.logical_pixels + width * self.percentage / 100.0
+    }
+
+    fn is_valid(self) -> bool {
+        self.logical_pixels.is_finite() && self.percentage.is_finite()
+    }
+}
+
 /// Whether text may create additional lines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MeasureTextWrap {
@@ -211,6 +233,8 @@ pub struct TextMeasurePayload {
     pub direction: MeasureTextDirection,
     /// Inline-axis placement within the final layout box.
     pub alignment: MeasureTextAlignment,
+    /// First-line indentation, resolved against the final text width by the Host.
+    pub indent: MeasureTextIndent,
     /// Line-wrapping policy.
     pub wrap: MeasureTextWrap,
     /// Maximum visible line count, or `None` for no explicit limit.
@@ -368,6 +392,9 @@ impl TextMeasurePayload {
         if self.locale.as_ref().is_some_and(|locale| locale.is_empty()) {
             return Err(MeasurementPayloadError::InvalidLocale);
         }
+        if !self.indent.is_valid() {
+            return Err(MeasurementPayloadError::InvalidTextIndent);
+        }
         if self.max_lines == Some(0) {
             return Err(MeasurementPayloadError::InvalidMaxLines);
         }
@@ -394,6 +421,8 @@ pub enum MeasurementPayloadError {
     InvalidFontVariations,
     /// Locale is present but empty.
     InvalidLocale,
+    /// A text-indent component is non-finite.
+    InvalidTextIndent,
     /// A present line limit is zero.
     InvalidMaxLines,
     /// Replaced-content intrinsic dimensions are invalid.
@@ -740,6 +769,7 @@ mod tests {
             locale: Some("en-US".into()),
             direction: MeasureTextDirection::Auto,
             alignment: MeasureTextAlignment::Start,
+            indent: MeasureTextIndent::default(),
             wrap: MeasureTextWrap::Wrap,
             max_lines: None,
             overflow: MeasureTextOverflow::Clip,
@@ -824,6 +854,14 @@ mod tests {
 
     #[test]
     fn semantic_variants_remain_distinct() {
+        assert_eq!(
+            MeasureTextIndent {
+                logical_pixels: 4.0,
+                percentage: 10.0,
+            }
+            .resolve(200.0),
+            24.0
+        );
         assert_ne!(MeasurementKind::Text, MeasurementKind::ReplacedContent);
         assert_ne!(
             MeasurementKind::NativeControl,
@@ -971,6 +1009,18 @@ mod tests {
         assert_eq!(
             MeasurementPayload::Text(invalid).validate(),
             Err(MeasurementPayloadError::InvalidLocale)
+        );
+        let mut invalid = text_payload();
+        invalid.indent.logical_pixels = f32::NAN;
+        assert_eq!(
+            MeasurementPayload::Text(invalid).validate(),
+            Err(MeasurementPayloadError::InvalidTextIndent)
+        );
+        let mut invalid = text_payload();
+        invalid.indent.percentage = f32::INFINITY;
+        assert_eq!(
+            MeasurementPayload::Text(invalid).validate(),
+            Err(MeasurementPayloadError::InvalidTextIndent)
         );
         let mut invalid = text_payload();
         invalid.max_lines = Some(0);

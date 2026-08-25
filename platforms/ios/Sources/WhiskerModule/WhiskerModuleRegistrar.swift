@@ -44,6 +44,7 @@ public struct WhiskerTextContent {
     public let fontWeight: Int
     public let color: UIColor
     public let alignment: WhiskerTextAlignment
+    public let indent: WhiskerTextIndent
     public let decoration: WhiskerTextDecoration?
     public let shadow: WhiskerTextShadow?
 
@@ -53,6 +54,7 @@ public struct WhiskerTextContent {
         fontWeight: Int,
         color: UIColor,
         alignment: WhiskerTextAlignment = .start,
+        indent: WhiskerTextIndent = WhiskerTextIndent(),
         decoration: WhiskerTextDecoration? = nil,
         shadow: WhiskerTextShadow? = nil
     ) {
@@ -61,12 +63,28 @@ public struct WhiskerTextContent {
         self.fontWeight = fontWeight
         self.color = color
         self.alignment = alignment
+        self.indent = indent
         self.decoration = decoration
         self.shadow = shadow
     }
 }
 
 public enum WhiskerTextAlignment: Equatable { case start, end, left, right, center }
+
+/** First-line indentation; percentage is relative to the final Text width. */
+public struct WhiskerTextIndent: Equatable {
+    public let logicalPixels: CGFloat
+    public let percentage: CGFloat
+
+    public init(logicalPixels: CGFloat = 0, percentage: CGFloat = 0) {
+        self.logicalPixels = logicalPixels
+        self.percentage = percentage
+    }
+
+    public func resolve(width: CGFloat) -> CGFloat {
+        logicalPixels + width * percentage / 100
+    }
+}
 
 public struct WhiskerTextDecoration {
     public let line: WhiskerTextDecorationLine

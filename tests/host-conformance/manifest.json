@@ -514,6 +514,13 @@
       "checkpoints": ["semantic-projection"]
     },
     {
+      "id": "core.text-indent-lynx",
+      "feature": "text-indent-lynx",
+      "fixture": "core/text-indent-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
       "id": "host.measure.text.basic",
       "feature": "text-measurement",
       "fixture": "core/text-measure-basic.json",

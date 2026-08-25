@@ -21,11 +21,18 @@ public data class WhiskerTextContent(
     public val fontWeight: Int,
     public val color: Int,
     public val alignment: WhiskerTextAlignment = WhiskerTextAlignment.START,
+    public val indent: WhiskerTextIndent = WhiskerTextIndent(),
     public val decoration: WhiskerTextDecoration? = null,
     public val shadow: WhiskerTextShadow? = null,
 )
 
 public enum class WhiskerTextAlignment { START, END, LEFT, RIGHT, CENTER }
+
+/** First-line indentation; percentage is relative to the final Text width. */
+public data class WhiskerTextIndent(
+    public val logicalPixels: Float = 0f,
+    public val percentage: Float = 0f,
+)
 
 /** One inherited Lynx text decoration. */
 public data class WhiskerTextDecoration(
