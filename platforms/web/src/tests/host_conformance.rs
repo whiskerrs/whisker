@@ -15,20 +15,20 @@ use whisker_engine::FrameSink;
 use whisker_host_conformance::{
     BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture,
     BackgroundPaintLayerFixture, BackgroundSizeFixture, BackgroundSizeKeywordFixture,
-    BorderFixture, BorderStyleFixture, ColorFixture, Command, ConicGradientFixture,
-    CornerRadiusFixture, ImageRepeatFixture, LengthPercentageFixture, LinearGradientFixture,
-    Manifest, OverflowClipFixture, PixelSampleFixture, RadialGradientFixture,
-    ResourceSourceFixture, ResourceStateFixture, SCHEMA_VERSION, Scenario, ScenarioSide,
-    SceneNodeFixture, VisibilityFixture,
+    BorderFixture, BorderStyleFixture, ClipPathFixture, ClipReferenceBoxFixture, ClipShapeFixture,
+    ColorFixture, Command, ConicGradientFixture, CornerRadiusFixture, ImageRepeatFixture,
+    LengthPercentageFixture, LinearGradientFixture, Manifest, OverflowClipFixture,
+    PixelSampleFixture, RadialGradientFixture, ResourceSourceFixture, ResourceStateFixture,
+    SCHEMA_VERSION, Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
-    BoxPaint, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat, LayoutGeometry,
-    LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
-    PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
-    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand,
-    ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
-    SurfaceId, Transform, Visibility,
+    BoxPaint, ClipShape, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat,
+    LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
+    PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
+    PaintLengthPercentage, PaintPosition, ProtocolVersion, RadialGradientExtent,
+    RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceId,
+    ResourceKind, ResourceRequest, ResourceSource, SurfaceId, Transform, Visibility,
 };
 use whisker_style::StyleEnvironment;
 
@@ -505,6 +505,13 @@ impl Driver {
                                     })
                                     .or_else(|| {
                                         nodes.iter().find_map(|node| {
+                                            node.clip_path
+                                                .as_ref()
+                                                .map(|_| "paint.visual-effects.clip-path-inset")
+                                        })
+                                    })
+                                    .or_else(|| {
+                                        nodes.iter().find_map(|node| {
                                             node.box_shadows.first().map(|shadow| {
                                                 if node.box_shadows.len() > 1 {
                                                     "paint.visual-effects.box-shadow-multiple"
@@ -808,7 +815,7 @@ impl Driver {
                 &fixture_color_css(&fixture_node.background),
             );
             assert_border_is_projected(&style, fixture_node.border.as_ref());
-            let expected_shadows = fixture_node
+            let mut expected_shadows = fixture_node
                 .box_shadows
                 .iter()
                 .map(|shadow| {
@@ -824,9 +831,24 @@ impl Driver {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
+            if expected_shadows.is_empty() && fixture_node.clip_path.is_some() {
+                expected_shadows = "none".into();
+            }
             assert_eq!(
                 style.get_property_value("box-shadow").unwrap(),
                 expected_shadows
+            );
+            let mut expected_clip_path = fixture_node
+                .clip_path
+                .as_ref()
+                .map(fixture_clip_path_css)
+                .unwrap_or_default();
+            if expected_clip_path.is_empty() && !fixture_node.box_shadows.is_empty() {
+                expected_clip_path = "none".into();
+            }
+            assert_eq!(
+                style.get_property_value("clip-path").unwrap(),
+                expected_clip_path
             );
             assert_style(
                 &style,
@@ -1209,6 +1231,9 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-backgrounds/box-shadow-multiple-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-multiple-001.json"
         ),
+        "wpt/css/css-masking/clip-path-inset-round-rendering.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-masking/clip-path-inset-round-rendering.json"
+        ),
         "wpt/css/CSS2/borders/border-right-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-right-003.json"
         ),
@@ -1389,7 +1414,7 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
                 transform: Transform(transform),
             });
         }
-        if !fixture_node.box_shadows.is_empty() {
+        if !fixture_node.box_shadows.is_empty() || fixture_node.clip_path.is_some() {
             operations.push(Operation::SetVisualEffects {
                 node,
                 effects: whisker_protocol::VisualEffects {
@@ -1405,6 +1430,7 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
                             inset: shadow.inset,
                         })
                         .collect(),
+                    clip_path: fixture_node.clip_path.as_ref().map(clip_path_protocol),
                     ..Default::default()
                 },
             });
@@ -1669,6 +1695,43 @@ fn paint_coordinate(value: LengthPercentageFixture) -> PaintCoordinate {
     }
 }
 
+fn clip_path_protocol(value: &ClipPathFixture) -> (PaintBox, ClipShape) {
+    let reference_box = match value.reference_box {
+        ClipReferenceBoxFixture::Border => PaintBox::Border,
+        ClipReferenceBoxFixture::Padding => PaintBox::Padding,
+        ClipReferenceBoxFixture::Content => PaintBox::Content,
+    };
+    let shape = match &value.shape {
+        ClipShapeFixture::Inset { edges, radii } => {
+            let radius = |value: CornerRadiusFixture| PaintCornerRadius {
+                horizontal: PaintLengthPercentage {
+                    length: value.horizontal(),
+                    fraction: 0.0,
+                },
+                vertical: PaintLengthPercentage {
+                    length: value.vertical(),
+                    fraction: 0.0,
+                },
+            };
+            ClipShape::Inset {
+                edges: PaintEdges {
+                    top: paint_coordinate(edges[0]),
+                    right: paint_coordinate(edges[1]),
+                    bottom: paint_coordinate(edges[2]),
+                    left: paint_coordinate(edges[3]),
+                },
+                radii: PaintCorners {
+                    top_left: radius(radii[0]),
+                    top_right: radius(radii[1]),
+                    bottom_right: radius(radii[2]),
+                    bottom_left: radius(radii[3]),
+                },
+            }
+        }
+    };
+    (reference_box, shape)
+}
+
 fn paint_length_percentage(value: LengthPercentageFixture) -> PaintLengthPercentage {
     PaintLengthPercentage {
         length: value.length,
@@ -1872,6 +1935,51 @@ fn assert_border_is_projected(
 
 fn fixture_px(value: f32) -> String {
     format!("{value}px")
+}
+
+fn fixture_clip_path_css(value: &ClipPathFixture) -> String {
+    let reference_box = match value.reference_box {
+        ClipReferenceBoxFixture::Border => "",
+        ClipReferenceBoxFixture::Padding => "padding-box",
+        ClipReferenceBoxFixture::Content => "content-box",
+    };
+    let ClipShapeFixture::Inset { edges, radii } = &value.shape;
+    let coordinate = |value: LengthPercentageFixture| {
+        if value.fraction == 0.0 {
+            format!("{}px", value.length)
+        } else if value.length == 0.0 {
+            format!("{}%", value.fraction * 100.0)
+        } else {
+            format!("calc({}px + {}%)", value.length, value.fraction * 100.0)
+        }
+    };
+    let edges = edges.map(coordinate);
+    let horizontal = radii.map(|radius| format!("{}px", radius.horizontal()));
+    let vertical = radii.map(|radius| format!("{}px", radius.vertical()));
+    let edges = css_four_value_shorthand(&edges);
+    let horizontal = css_four_value_shorthand(&horizontal);
+    let vertical = css_four_value_shorthand(&vertical);
+    let radii = if horizontal == vertical {
+        horizontal
+    } else {
+        format!("{horizontal} / {vertical}")
+    };
+    let suffix = (!reference_box.is_empty())
+        .then(|| format!(" {reference_box}"))
+        .unwrap_or_default();
+    format!("inset({edges} round {radii}){suffix}")
+}
+
+fn css_four_value_shorthand(values: &[String; 4]) -> String {
+    if values.iter().all(|value| value == &values[0]) {
+        values[0].clone()
+    } else if values[0] == values[2] && values[1] == values[3] {
+        format!("{} {}", values[0], values[1])
+    } else if values[1] == values[3] {
+        format!("{} {} {}", values[0], values[1], values[2])
+    } else {
+        values.join(" ")
+    }
 }
 
 fn fixture_color_css(value: &ColorFixture) -> String {

@@ -406,6 +406,43 @@ pub struct BoxShadowFixture {
     pub inset: bool,
 }
 
+/// One resolved `clip-path` and its geometry reference box.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ClipPathFixture {
+    /// Box used to resolve shape coordinates.
+    #[serde(default)]
+    pub reference_box: ClipReferenceBoxFixture,
+    /// Resolved basic shape.
+    pub shape: ClipShapeFixture,
+}
+
+/// Basic shape vocabulary currently exercised by shared Host fixtures.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ClipShapeFixture {
+    /// Inset rectangle with independent edges and corner radii.
+    Inset {
+        /// Top, right, bottom, and left length-percentage insets.
+        edges: [LengthPercentageFixture; 4],
+        /// Top-left, top-right, bottom-right, and bottom-left radii.
+        radii: [CornerRadiusFixture; 4],
+    },
+}
+
+/// CSS geometry boxes accepted as clip-path reference boxes.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipReferenceBoxFixture {
+    /// Border box, and the Lynx-compatible default.
+    #[default]
+    Border,
+    /// Padding box.
+    Padding,
+    /// Content box.
+    Content,
+}
+
 /// One node in a retained Host scene fixture.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -428,6 +465,9 @@ pub struct SceneNodeFixture {
     /// Box shadows in CSS front-to-back order.
     #[serde(default)]
     pub box_shadows: Vec<BoxShadowFixture>,
+    /// Optional basic-shape clip applied to the node and its descendants.
+    #[serde(default)]
+    pub clip_path: Option<ClipPathFixture>,
     /// Descendant overflow clipping semantics.
     #[serde(default)]
     pub clip: BoxClipFixture,
@@ -1244,6 +1284,15 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                         && shadow.spread_radius.is_finite()
                         && valid_color(&shadow.color)
                 })
+                && node
+                    .clip_path
+                    .as_ref()
+                    .is_none_or(|clip| match &clip.shape {
+                        ClipShapeFixture::Inset { edges, radii } => {
+                            edges.iter().all(LengthPercentageFixture::is_finite)
+                                && radii.iter().copied().all(CornerRadiusFixture::is_valid)
+                        }
+                    })
                 && node
                     .transform
                     .is_none_or(|transform| transform.into_iter().all(f32::is_finite))
