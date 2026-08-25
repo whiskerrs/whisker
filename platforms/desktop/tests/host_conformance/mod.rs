@@ -7,25 +7,25 @@ use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
     BorderFixture, BorderStyleFixture, ColorFixture, Command, Host, LoadedCase,
-    PixelRelationFixture, PixelRelationKind, PixelSampleFixture, PointerEventFixture, Scenario,
-    ScenarioSide, load_required,
+    OverflowClipFixture, PixelRelationFixture, PixelRelationKind, PixelSampleFixture,
+    PointerEventFixture, Scenario, ScenarioSide, SceneNodeFixture, load_required,
 };
 use whisker_protocol::{
-    AvailableSpace, BorderLineStyle, BoxPaint, ElementTypeId, FrameHeader, FrameMode, FramePacket,
-    InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect, MeasureConstraints,
-    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
-    MeasureTextOverflow, MeasureTextWrap, MeasurementKey, MeasurementPayload, MeasurementRequest,
-    MeasurementResponse, NodeId, Operation, PaintColor, PaintCornerRadius, PaintCorners,
-    PaintEdges, PaintLengthPercentage, PointerId, PointerInput, PointerKind, ProtocolVersion,
-    SurfaceId, TextMeasurePayload, TextMeasureStyle, WhiskerValue,
+    AvailableSpace, BorderLineStyle, BoxClip, BoxPaint, ElementTypeId, FrameHeader, FrameMode,
+    FramePacket, InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect,
+    MeasureConstraints, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+    MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasurementKey, MeasurementPayload,
+    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintColor,
+    PaintCornerRadius, PaintCorners, PaintEdges, PaintLengthPercentage, PointerId, PointerInput,
+    PointerKind, ProtocolVersion, SurfaceId, TextMeasurePayload, TextMeasureStyle, WhiskerValue,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
 use crate::element::{DesktopElementRegistry, built_in_element_factories};
-use crate::gpu::render_box_primitives_offscreen;
+use crate::gpu::{render_box_primitives_offscreen, render_clipped_box_primitives_offscreen};
 use crate::paint::box_paint::{BoxPrimitive, BoxPrimitiveKind, lower_box};
 use crate::paint::color::srgba;
-use crate::scene::{DesktopScene, PaintCommand};
+use crate::scene::{DesktopScene, LogicalClip, PaintCommand};
 use crate::text::NativeTextHost;
 
 const CAPABILITIES: &str = include_str!("../../../../tests/host-conformance/capabilities.json");
@@ -97,7 +97,7 @@ impl RecordingInputSink {
 
 struct Checkpoint {
     logical_size: [u32; 2],
-    primitives: Vec<BoxPrimitive>,
+    primitives: Vec<(BoxPrimitive, LogicalClip)>,
     samples: Vec<PixelSampleFixture>,
     relations: Vec<PixelRelationFixture>,
 }
@@ -162,6 +162,7 @@ impl Driver {
                     background,
                     border,
                 } => self.present_box(*revision, *rect, background, border.as_ref()),
+                Command::PresentScene { revision, nodes } => self.present_scene(*revision, nodes),
                 Command::Checkpoint {
                     name,
                     samples,
@@ -173,7 +174,7 @@ impl Driver {
                             self.logical_size[0].round() as u32,
                             self.logical_size[1].round() as u32,
                         ],
-                        primitives: self.box_primitives(),
+                        primitives: self.clipped_box_primitives(),
                         samples: samples.clone(),
                         relations: relations.clone(),
                     });
@@ -287,19 +288,81 @@ impl Driver {
         }
     }
 
-    fn box_primitives(&self) -> Vec<BoxPrimitive> {
+    fn present_scene(&mut self, revision: u64, nodes: &[SceneNodeFixture]) {
+        let surface = self.surface.expect("attach_surface precedes present_scene");
+        let element_type = standard_element_type(whisker::VIEW_ELEMENT_NAME);
+        let mut operations = Vec::new();
+        for fixture in nodes {
+            operations.push(Operation::CreateNode {
+                node: NodeId::new(fixture.id).expect("validated fixture node id"),
+                element_type,
+            });
+        }
+        let mut child_counts = std::collections::BTreeMap::<u64, u32>::new();
+        for fixture in nodes.iter().filter(|fixture| fixture.parent.is_some()) {
+            let parent = fixture.parent.unwrap();
+            let index = child_counts.entry(parent).or_default();
+            operations.push(Operation::InsertChild {
+                parent: NodeId::new(parent).unwrap(),
+                child: NodeId::new(fixture.id).unwrap(),
+                index: *index,
+            });
+            *index += 1;
+        }
+        for fixture in nodes {
+            let node = NodeId::new(fixture.id).unwrap();
+            operations.push(Operation::SetLayout {
+                node,
+                geometry: LayoutGeometry {
+                    border_box: layout_rect(fixture.rect),
+                    content_box: LayoutRect::default(),
+                },
+            });
+            operations.push(Operation::SetBoxPaint {
+                node,
+                paint: box_paint(&fixture.background, fixture.border.as_ref()),
+            });
+            operations.push(Operation::SetClip {
+                node,
+                clip: BoxClip {
+                    horizontal: overflow_clip_protocol(fixture.clip.horizontal),
+                    vertical: overflow_clip_protocol(fixture.clip.vertical),
+                },
+            });
+        }
+        self.scene
+            .as_mut()
+            .expect("attached Desktop scene")
+            .present(&FramePacket {
+                header: FrameHeader {
+                    version: ProtocolVersion::CURRENT,
+                    surface,
+                    scene_epoch: 1,
+                    frame_id: revision,
+                    base_revision: 0,
+                    target_revision: revision,
+                    viewport_epoch: 1,
+                    mode: FrameMode::Snapshot,
+                },
+                operations,
+            })
+            .expect("canonical Host scene fixture is valid");
+    }
+
+    fn clipped_box_primitives(&self) -> Vec<(BoxPrimitive, LogicalClip)> {
         let scene = self.scene.as_ref().expect("checkpoint follows attach");
         let mut primitives = Vec::new();
         for command in scene.paint_commands() {
             if let PaintCommand::Box {
                 rect,
                 paint,
+                clip,
                 opacity,
                 ..
             } = command
             {
                 lower_box(rect, paint, opacity, |primitive| {
-                    primitives.push(primitive);
+                    primitives.push((primitive, clip));
                 });
             }
         }
@@ -425,6 +488,13 @@ fn layout_rect([x, y, width, height]: [f32; 4]) -> LayoutRect {
     }
 }
 
+fn overflow_clip_protocol(value: OverflowClipFixture) -> OverflowClip {
+    match value {
+        OverflowClipFixture::Visible => OverflowClip::Visible,
+        OverflowClipFixture::Hidden => OverflowClip::Hidden,
+    }
+}
+
 fn box_paint(background: &ColorFixture, border: Option<&BorderFixture>) -> BoxPaint {
     let zero = PaintLengthPercentage::default();
     let Some(border) = border else {
@@ -517,12 +587,12 @@ fn run_reftest(scenario: &Scenario) {
     assert_eq!(reference.len(), 1, "one reference checkpoint");
     assert_eq!(test[0].logical_size, reference[0].logical_size);
 
-    let test_pixels = pollster::block_on(render_box_primitives_offscreen(
+    let test_pixels = pollster::block_on(render_clipped_box_primitives_offscreen(
         &test[0].primitives,
         test[0].logical_size,
     ))
     .expect("Desktop test pixel checkpoint");
-    let reference_pixels = pollster::block_on(render_box_primitives_offscreen(
+    let reference_pixels = pollster::block_on(render_clipped_box_primitives_offscreen(
         &reference[0].primitives,
         reference[0].logical_size,
     ))
@@ -548,7 +618,7 @@ fn run_pixel_assertions(scenario: &Scenario) {
         .iter()
         .filter(|checkpoint| !checkpoint.samples.is_empty() || !checkpoint.relations.is_empty())
     {
-        let pixels = pollster::block_on(render_box_primitives_offscreen(
+        let pixels = pollster::block_on(render_clipped_box_primitives_offscreen(
             &checkpoint.primitives,
             checkpoint.logical_size,
         ))

@@ -168,7 +168,10 @@ final class HostScene {
             else { return false }
             applyPaint(nodes[id], payload)
         case UInt32(WHISKER_OP_CLIP):
-            nodes[id]?.clipsToBounds = operation.flags & 3 != 0
+            nodes[id]?.setOverflowClip(
+                horizontal: operation.flags & 1 != 0,
+                vertical: operation.flags & 2 != 0
+            )
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):
@@ -202,9 +205,6 @@ final class HostScene {
         for (id, node) in nodes where parents[id] == nil && node.superview !== root {
             node.removeFromSuperview()
             root.addSubview(node)
-        }
-        for (id, node) in nodes where parents[id] == nil {
-            node.frame.origin = logicalBounds().origin
         }
     }
 
@@ -265,6 +265,9 @@ final class HostScene {
            parent.mountedElement?.childrenHost() != nil {
             frame.origin.x -= parent.contentFrame.origin.x
             frame.origin.y -= parent.contentFrame.origin.y
+        } else if parents[id] == nil {
+            frame.origin.x += logicalBounds().origin.x
+            frame.origin.y += logicalBounds().origin.y
         }
         node.frame = frame
         node.contentFrame = hostRect(geometry.content)

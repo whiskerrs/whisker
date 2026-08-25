@@ -27,7 +27,8 @@ final class HostConformanceTests: XCTestCase {
             let id = try string(scenario, "id")
             let testSide = try object(scenario, "test")
             guard try array(testSide, "commands").contains(where: {
-                try string($0, "type") == "present_box"
+                let type = try string($0, "type")
+                return type == "present_box" || type == "present_scene"
             }) else { continue }
             let test = try Driver(id: id).execute(testSide)
             if let reference = scenario["reference"] as? [String: Any] {
@@ -76,6 +77,8 @@ private final class Driver {
                 )
             case "present_box":
                 try present(command)
+            case "present_scene":
+                try presentScene(command)
             case "checkpoint":
                 guard try string(command, "name") == "paint.box" else {
                     throw Failure("unsupported UIKit checkpoint")
@@ -150,6 +153,72 @@ private final class Driver {
         }
     }
 
+    private func presentScene(_ command: [String: Any]) throws {
+        let revision = UInt64(try number(command, "revision"))
+        let fixtures = try objectArray(command, "nodes").map(sceneNode)
+        var layouts = fixtures.map(\.layout)
+        var paints = fixtures.map(\.paint)
+        try layouts.withUnsafeMutableBufferPointer { layoutBuffer in
+            try paints.withUnsafeMutableBufferPointer { paintBuffer in
+                var operations = fixtures.map {
+                    operation(tag: UInt32(WHISKER_OP_CREATE), node: $0.id, member: 1)
+                }
+                var childCounts: [UInt64: UInt32] = [:]
+                for fixture in fixtures {
+                    guard let parent = fixture.parent else { continue }
+                    let index = childCounts[parent, default: 0]
+                    operations.append(operation(
+                        tag: UInt32(WHISKER_OP_INSERT),
+                        parent: parent,
+                        child: fixture.id,
+                        index: index
+                    ))
+                    childCounts[parent] = index + 1
+                }
+                for (index, fixture) in fixtures.enumerated() {
+                    operations.append(operation(
+                        tag: UInt32(WHISKER_OP_LAYOUT),
+                        node: fixture.id,
+                        payload: UnsafeRawPointer(layoutBuffer.baseAddress!.advanced(by: index)),
+                        count: 1
+                    ))
+                    operations.append(operation(
+                        tag: UInt32(WHISKER_OP_PAINT),
+                        node: fixture.id,
+                        payload: UnsafeRawPointer(paintBuffer.baseAddress!.advanced(by: index)),
+                        count: 1
+                    ))
+                    operations.append(operation(
+                        tag: UInt32(WHISKER_OP_CLIP),
+                        node: fixture.id,
+                        flags: fixture.clipFlags
+                    ))
+                }
+                try operations.withUnsafeMutableBufferPointer { buffer in
+                    var frame = WhiskerMobileFrame()
+                    frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                    frame.abi_minor = UInt16(WHISKER_MOBILE_ABI_MINOR)
+                    frame.protocol_major = 1
+                    frame.protocol_minor = 0
+                    frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
+                    frame.surface = 1
+                    frame.scene_epoch = 1
+                    frame.viewport_epoch = 1
+                    frame.frame_id = revision
+                    frame.base_revision = 0
+                    frame.target_revision = revision
+                    frame.operations = UnsafePointer(buffer.baseAddress!)
+                    frame.operation_count = buffer.count
+                    var response = WhiskerMobileApplyResponse()
+                    guard view.applyConformanceFrame(frame, response: &response),
+                          response.status == UInt8(WHISKER_APPLY_ACCEPTED) else {
+                        throw Failure("UIKit Host rejected scene fixture frame")
+                    }
+                }
+            }
+        }
+    }
+
     private func capture() throws -> Pixels {
         guard logicalSize.width > 0, logicalSize.height > 0 else {
             throw Failure("fixture has no surface")
@@ -183,6 +252,14 @@ private struct Pixels {
     let bytes: [UInt8]
 }
 
+private struct SceneFixtureNode {
+    let id: UInt64
+    let parent: UInt64?
+    let layout: WhiskerMobileLayoutGeometry
+    let paint: WhiskerMobileBoxPaint
+    let clipFlags: UInt32
+}
+
 private struct Failure: Error, CustomStringConvertible {
     let description: String
     init(_ description: String) { self.description = description }
@@ -190,17 +267,57 @@ private struct Failure: Error, CustomStringConvertible {
 
 private func operation(
     tag: UInt32,
+    node: UInt64 = 1,
+    parent: UInt64 = 0,
+    child: UInt64 = 0,
+    index: UInt32 = 0,
     member: UInt32 = 0,
+    flags: UInt32 = 0,
     payload: UnsafeRawPointer? = nil,
     count: Int = 0
 ) -> WhiskerMobileOperation {
     var value = WhiskerMobileOperation()
     value.tag = tag
-    value.node = 1
+    value.flags = flags
+    value.node = node
+    value.parent = parent
+    value.child = child
+    value.index = index
     value.member = member
     value.payload = payload
     value.payload_count = count
     return value
+}
+
+private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
+    let id = UInt64(try number(fixture, "id"))
+    let parent = (fixture["parent"] as? NSNumber).map { UInt64($0.doubleValue) }
+    let rect = try numberArray(fixture, "rect")
+    guard rect.count == 4 else { throw Failure("scene node rect needs four values") }
+    var layout = WhiskerMobileLayoutGeometry()
+    layout.border = WhiskerMobileRect(
+        x: Float(rect[0]),
+        y: Float(rect[1]),
+        width: Float(rect[2]),
+        height: Float(rect[3])
+    )
+    layout.content = WhiskerMobileRect()
+    let clip = try object(fixture, "clip")
+    let horizontal = try string(clip, "horizontal")
+    let vertical = try string(clip, "vertical")
+    guard horizontal == "visible" || horizontal == "hidden",
+          vertical == "visible" || vertical == "hidden" else {
+        throw Failure("unknown overflow clip")
+    }
+    let flags = UInt32(horizontal == "hidden" ? 1 : 0) |
+        UInt32(vertical == "hidden" ? 2 : 0)
+    return SceneFixtureNode(
+        id: id,
+        parent: parent,
+        layout: layout,
+        paint: try boxPaint(fixture),
+        clipFlags: flags
+    )
 }
 
 private func boxPaint(_ command: [String: Any]) throws -> WhiskerMobileBoxPaint {
@@ -247,6 +364,7 @@ private func color(_ fixture: [String: Any]) throws -> WhiskerMobileColor {
         case "black": rgba = (0, 0, 0, 1)
         case "blue": rgba = (0, 0, 255, 1)
         case "green": rgba = (0, 128, 0, 1)
+        case "red": rgba = (255, 0, 0, 1)
         case "transparent": rgba = (0, 0, 0, 0)
         case "white": rgba = (255, 255, 255, 1)
         default: throw Failure("unsupported fixture named color")

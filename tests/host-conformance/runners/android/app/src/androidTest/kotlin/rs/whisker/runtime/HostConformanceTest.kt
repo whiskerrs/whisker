@@ -39,7 +39,8 @@ class HostConformanceTest {
                     check(scenario.getString("id") == entry.getString("id"))
                     val testSide = scenario.getJSONObject("test")
                     if (testSide.getJSONArray("commands").objects().none {
-                            it.getString("type") == "present_box"
+                            it.getString("type") == "present_box" ||
+                                it.getString("type") == "present_scene"
                         }) return@forEach
                     val id = scenario.getString("id")
                     val test = Driver(context, id).execute(testSide)
@@ -102,6 +103,7 @@ private class Driver(
                     logicalHeight = command.getDouble("height").toFloat()
                 }
                 "present_box" -> present(command)
+                "present_scene" -> presentScene(command)
                 "checkpoint" -> {
                     check(command.getString("name") == "paint.box")
                     checkpoint = capture()
@@ -139,18 +141,68 @@ private class Driver(
         check(view.commitFrameFromNative())
     }
 
+    private fun presentScene(command: JSONObject) {
+        val revision = command.getLong("revision")
+        val nodes = command.getJSONArray("nodes")
+        check(view.beginFrameFromNative(0, 1, 0, revision) == 0)
+        nodes.objects().forEach { node ->
+            check(stage(tag = 1, node = node.getLong("id"), member = 1))
+        }
+        val childIndices = HashMap<Long, Int>()
+        nodes.objects().forEach { node ->
+            if (!node.isNull("parent")) {
+                val parent = node.getLong("parent")
+                val index = childIndices.getOrDefault(parent, 0)
+                check(
+                    stage(
+                        tag = 3,
+                        node = 0,
+                        parent = parent,
+                        child = node.getLong("id"),
+                        index = index,
+                    ),
+                )
+                childIndices[parent] = index + 1
+            }
+        }
+        nodes.objects().forEach { node ->
+            val id = node.getLong("id")
+            val rect = node.getJSONArray("rect").floats()
+            check(
+                stage(
+                    tag = 6,
+                    node = id,
+                    numbers = rect + floatArrayOf(0f, 0f, rect[2], rect[3]),
+                ),
+            )
+            val (numbers, names) = paint(node)
+            check(stage(tag = 7, node = id, numbers = numbers, names = names))
+            val clip = node.getJSONObject("clip")
+            val flags =
+                (if (clip.getString("horizontal") == "hidden") 1 else 0) or
+                    (if (clip.getString("vertical") == "hidden") 2 else 0)
+            check(stage(tag = 8, node = id, flags = flags))
+        }
+        check(view.commitFrameFromNative())
+    }
+
     private fun stage(
         tag: Int,
+        flags: Int = 0,
+        node: Long = 1,
+        parent: Long = 0,
+        child: Long = 0,
+        index: Int = 0,
         member: Int = 0,
         numbers: FloatArray? = null,
         names: Array<String>? = null,
     ): Boolean = view.stageOperationFromNative(
         tag,
-        0,
-        1,
-        0,
-        0,
-        0,
+        flags,
+        node,
+        parent,
+        child,
+        index,
         member,
         0,
         0f,

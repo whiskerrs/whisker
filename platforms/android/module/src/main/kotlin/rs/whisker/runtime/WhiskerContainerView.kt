@@ -1,6 +1,7 @@
 package rs.whisker.runtime
 
 import android.content.Context
+import android.graphics.Canvas
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ScrollView
@@ -16,9 +17,40 @@ import kotlin.math.max
  * the retained scene.
  */
 public open class WhiskerContainerView(context: Context) : ViewGroup(context) {
+    private var clipDescendantsHorizontally: Boolean = false
+    private var clipDescendantsVertically: Boolean = false
+
     init {
         clipChildren = false
         clipToPadding = false
+    }
+
+    /** Applies protocol overflow clipping to descendants without clipping this View's background. */
+    public fun setDescendantClip(horizontal: Boolean, vertical: Boolean) {
+        if (
+            clipDescendantsHorizontally == horizontal &&
+            clipDescendantsVertically == vertical
+        ) return
+        clipDescendantsHorizontally = horizontal
+        clipDescendantsVertically = vertical
+        invalidate()
+    }
+
+    override fun dispatchDraw(canvas: Canvas) {
+        if (!clipDescendantsHorizontally && !clipDescendantsVertically) {
+            super.dispatchDraw(canvas)
+            return
+        }
+        val visible = canvas.clipBounds
+        val save = canvas.save()
+        canvas.clipRect(
+            if (clipDescendantsHorizontally) 0f else visible.left.toFloat(),
+            if (clipDescendantsVertically) 0f else visible.top.toFloat(),
+            if (clipDescendantsHorizontally) width.toFloat() else visible.right.toFloat(),
+            if (clipDescendantsVertically) height.toFloat() else visible.bottom.toFloat(),
+        )
+        super.dispatchDraw(canvas)
+        canvas.restoreToCount(save)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {

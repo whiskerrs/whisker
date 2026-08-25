@@ -51,6 +51,7 @@
       "oneOf": [
         { "$ref": "#/$defs/attachSurface" },
         { "$ref": "#/$defs/presentBox" },
+        { "$ref": "#/$defs/presentScene" },
         { "$ref": "#/$defs/checkpoint" },
         { "$ref": "#/$defs/measureText" },
         { "$ref": "#/$defs/checkpointMeasurement" },
@@ -79,6 +80,42 @@
         "rect": { "$ref": "#/$defs/quadNumber" },
         "background": { "$ref": "#/$defs/color" },
         "border": { "$ref": "#/$defs/border" }
+      }
+    },
+    "presentScene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "revision", "nodes"],
+      "properties": {
+        "type": { "const": "present_scene" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/sceneNode" }
+        }
+      }
+    },
+    "sceneNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "parent", "rect", "background", "clip"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "parent": { "type": ["integer", "null"], "minimum": 1 },
+        "rect": { "$ref": "#/$defs/quadNumber" },
+        "background": { "$ref": "#/$defs/color" },
+        "border": { "$ref": "#/$defs/border" },
+        "clip": { "$ref": "#/$defs/boxClip" }
+      }
+    },
+    "boxClip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["horizontal", "vertical"],
+      "properties": {
+        "horizontal": { "enum": ["visible", "hidden"] },
+        "vertical": { "enum": ["visible", "hidden"] }
       }
     },
     "checkpoint": {

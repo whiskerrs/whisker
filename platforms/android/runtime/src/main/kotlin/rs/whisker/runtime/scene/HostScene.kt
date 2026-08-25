@@ -181,7 +181,10 @@ internal class HostScene(
                 nodes[id] ?: return,
                 HostBoxPaint(requireNotNull(operation.numbers), requireNotNull(operation.names)),
             )
-            8 -> (nodes[id] ?: return).clipChildren = operation.flags and 3 != 0
+            8 -> (nodes[id] ?: return).setDescendantClip(
+                horizontal = operation.flags and 1 != 0,
+                vertical = operation.flags and 2 != 0,
+            )
             10 -> (nodes[id] ?: return).alpha = operation.scalar
             11 -> (nodes[id] ?: return).visibility =
                 if (operation.integer != 0) View.VISIBLE else View.INVISIBLE
