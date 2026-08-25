@@ -114,13 +114,21 @@ mod tests {
                     control2: MotionPathPoint::new(80.0, 10.0),
                     to: MotionPathPoint::new(90.0, 0.0),
                 },
+                MotionPathCommand::ArcTo {
+                    radius_x: 25.0,
+                    radius_y: 10.0,
+                    x_axis_rotation: 30.0,
+                    large_arc: true,
+                    sweep: false,
+                    to: MotionPathPoint::new(100.0, 20.0),
+                },
                 MotionPathCommand::Close,
             ]))
             .offset_distance(75.0.percent())
             .offset_rotate(OffsetRotate::Auto);
         assert_eq!(
             style.to_string(),
-            "offset-path: path(\"M 0 0 L 40 0 Q 50 10 60 0 C 70 -10 80 10 90 0 Z\"); offset-distance: 75%; offset-rotate: auto;"
+            "offset-path: path(\"M 0 0 L 40 0 Q 50 10 60 0 C 70 -10 80 10 90 0 A 25 10 30 1 0 100 20 Z\"); offset-distance: 75%; offset-rotate: auto;"
         );
         assert!(style.to_specified_style().is_ok());
 

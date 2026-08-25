@@ -414,7 +414,7 @@ pub struct MotionPathPointValue {
     pub y: StyleNumber,
 }
 
-/// One command in the initially supported polyline motion-path subset.
+/// One command in an absolute SVG motion path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MotionPathCommandValue {
     /// Start a new subpath.
@@ -434,6 +434,21 @@ pub enum MotionPathCommandValue {
         control1: MotionPathPointValue,
         /// Second curve control point.
         control2: MotionPathPointValue,
+        /// Segment endpoint.
+        to: MotionPathPointValue,
+    },
+    /// Add an absolute SVG elliptical arc segment.
+    ArcTo {
+        /// Horizontal ellipse radius.
+        radius_x: StyleNumber,
+        /// Vertical ellipse radius.
+        radius_y: StyleNumber,
+        /// Clockwise rotation of the ellipse x axis, in degrees.
+        x_axis_rotation: StyleNumber,
+        /// Select the arc spanning at least 180 degrees.
+        large_arc: bool,
+        /// Sweep through increasing angles.
+        sweep: bool,
         /// Segment endpoint.
         to: MotionPathPointValue,
     },
