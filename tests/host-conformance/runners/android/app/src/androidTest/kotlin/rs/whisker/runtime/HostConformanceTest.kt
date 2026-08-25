@@ -301,7 +301,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.visual-effects.box-shadow-spread" ||
                             command.getString("name") ==
-                            "paint.visual-effects.box-shadow-blur",
+                            "paint.visual-effects.box-shadow-blur" ||
+                            command.getString("name") ==
+                            "paint.visual-effects.box-shadow-inset",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->

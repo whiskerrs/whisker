@@ -297,6 +297,13 @@
       "checkpoints": ["semantic-projection", "pixel-samples", "pixel-relations"]
     },
     {
+      "id": "wpt.css-backgrounds.box-shadow-inset-without-border-radius",
+      "feature": "box-shadow-inset",
+      "fixture": "wpt/css/css-backgrounds/box-shadow-inset-without-border-radius.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css2.borders.border-right-003",
       "feature": "border-right",
       "fixture": "wpt/css/CSS2/borders/border-right-003.json",
