@@ -319,6 +319,8 @@ private class Driver(
                             command.getString("name") ==
                             "paint.visual-effects.backdrop-blur" ||
                             command.getString("name") ==
+                            "paint.visual-effects.image-rendering-pixelated" ||
+                            command.getString("name") ==
                             "paint.transform.projective-plane" ||
                             command.getString("name") ==
                             "paint.transform.motion-path-line" ||
@@ -740,6 +742,14 @@ private class Driver(
                         scalar = node.getDouble("backdrop_blur").toFloat(),
                     ),
                 )
+            }
+            if (node.has("image_rendering")) {
+                val value = when (node.getString("image_rendering")) {
+                    "pixelated" -> 1
+                    "crisp_edges" -> 2
+                    else -> 0
+                }
+                check(stage(tag = 25, node = id, integer = value))
             }
         }
         check(view.commitFrameFromNative())

@@ -219,9 +219,14 @@ final class HostBackgroundLayer {
 
 final class HostBackgroundPainter {
     private var layers = [HostBackgroundLayer]()
+    private var pixelatedImages = false
 
     func update(_ layers: [HostBackgroundLayer]) {
         self.layers = layers
+    }
+
+    func setPixelatedImages(_ pixelated: Bool) {
+        pixelatedImages = pixelated
     }
 
     func draw(
@@ -325,7 +330,7 @@ final class HostBackgroundPainter {
 
     private func drawRaster(_ image: CGImage, in bounds: CGRect, context: CGContext) {
         context.saveGState()
-        context.interpolationQuality = .none
+        context.interpolationQuality = pixelatedImages ? .none : .default
         UIImage(cgImage: image, scale: 1, orientation: .up).draw(in: bounds)
         context.restoreGState()
     }

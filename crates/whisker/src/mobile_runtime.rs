@@ -9,13 +9,13 @@ use whisker_driver::module::{
 use whisker_engine::whisker_protocol::{
     ApplyResult, AvailableSpace, BackgroundAttachment, BackgroundSize, BlendMode, BorderLineStyle,
     ChildPolicy, ClipShape, ElementMeasurement, ElementRegistration, ElementValueKind, FillRule,
-    FrameMode, FramePacket, ImageRepeat, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
-    MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
-    MeasurementRequestId, MeasurementResponse, NodeId, Operation, PaintBox, PaintColor, PaintImage,
-    PaintLengthPercentage, PaintPosition, PathCommand, PreparedContentId, RadialGradientExtent,
-    RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode,
-    ResourceId, ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason,
-    VisualEffects,
+    FrameMode, FramePacket, ImageRendering, ImageRepeat, MeasureFontFamily, MeasureFontStyle,
+    MeasureLineHeight, MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload,
+    MeasurementRequest, MeasurementRequestId, MeasurementResponse, NodeId, Operation, PaintBox,
+    PaintColor, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand, PreparedContentId,
+    RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent,
+    ResourceFailureCode, ResourceId, ResourceKind, ResourceSource, SurfaceId,
+    UnsupportedMeasurementReason, VisualEffects,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
@@ -1181,7 +1181,16 @@ impl MobileFrameOwned {
                     remainder.box_shadows.clear();
                     remainder.clip_path = None;
                     remainder.backdrop_blur = None;
+                    remainder.image_rendering = ImageRendering::Auto;
                     if remainder != VisualEffects::default() {
+                        return Err(MobileFrameError);
+                    }
+                    if !matches!(
+                        effects.image_rendering,
+                        ImageRendering::Auto
+                            | ImageRendering::Pixelated
+                            | ImageRendering::CrispEdges
+                    ) {
                         return Err(MobileFrameError);
                     }
                     raw.tag = OP_BOX_SHADOWS;
@@ -1323,6 +1332,17 @@ impl MobileFrameOwned {
                     raw.tag = OP_BACKDROP_BLUR;
                     raw.node = node.get();
                     raw.scalar = effects.backdrop_blur.unwrap_or(0.0);
+                    operations.push(raw);
+
+                    raw = empty_mobile_operation();
+                    raw.tag = OP_IMAGE_RENDERING;
+                    raw.node = node.get();
+                    raw.integer = match effects.image_rendering {
+                        ImageRendering::Auto => IMAGE_RENDERING_AUTO,
+                        ImageRendering::Pixelated => IMAGE_RENDERING_PIXELATED,
+                        ImageRendering::CrispEdges => IMAGE_RENDERING_CRISP_EDGES,
+                        _ => unreachable!("unsupported image-rendering rejected above"),
+                    };
                 }
                 Operation::SetClip { node, clip } => {
                     raw.tag = OP_CLIP;
@@ -2006,6 +2026,7 @@ mod tests {
                             },
                         ],
                         backdrop_blur: Some(7.0),
+                        image_rendering: ImageRendering::Pixelated,
                         ..Default::default()
                     },
                 },
@@ -2038,14 +2059,18 @@ mod tests {
         assert!(frame._operations[1].payload.is_null());
         assert_eq!(frame._operations[2].tag, OP_BACKDROP_BLUR);
         assert_eq!(frame._operations[2].scalar, 7.0);
-        assert_eq!(frame._operations[3].tag, OP_BOX_SHADOWS);
-        assert_eq!(frame._operations[3].payload_count, 0);
-        assert!(frame._operations[3].payload.is_null());
-        assert_eq!(frame._operations[4].tag, OP_CLIP_PATH);
+        assert_eq!(frame._operations[3].tag, OP_IMAGE_RENDERING);
+        assert_eq!(frame._operations[3].integer, IMAGE_RENDERING_PIXELATED);
+        assert_eq!(frame._operations[4].tag, OP_BOX_SHADOWS);
         assert_eq!(frame._operations[4].payload_count, 0);
         assert!(frame._operations[4].payload.is_null());
-        assert_eq!(frame._operations[5].tag, OP_BACKDROP_BLUR);
-        assert_eq!(frame._operations[5].scalar, 0.0);
+        assert_eq!(frame._operations[5].tag, OP_CLIP_PATH);
+        assert_eq!(frame._operations[5].payload_count, 0);
+        assert!(frame._operations[5].payload.is_null());
+        assert_eq!(frame._operations[6].tag, OP_BACKDROP_BLUR);
+        assert_eq!(frame._operations[6].scalar, 0.0);
+        assert_eq!(frame._operations[7].tag, OP_IMAGE_RENDERING);
+        assert_eq!(frame._operations[7].integer, IMAGE_RENDERING_AUTO);
     }
 
     #[test]
@@ -2098,7 +2123,7 @@ mod tests {
         };
 
         let frame = MobileFrameOwned::new(&packet).unwrap();
-        assert_eq!(frame._operations.len(), 3);
+        assert_eq!(frame._operations.len(), 4);
         assert_eq!(frame._operations[0].tag, OP_BOX_SHADOWS);
         let operation = &frame._operations[1];
         assert_eq!(operation.tag, OP_CLIP_PATH);
@@ -2113,6 +2138,7 @@ mod tests {
         assert_eq!(inset.radii_horizontal[0].length, 4.0);
         assert_eq!(inset.radii_vertical[0].fraction, 0.2);
         assert_eq!(frame._operations[2].tag, OP_BACKDROP_BLUR);
+        assert_eq!(frame._operations[3].tag, OP_IMAGE_RENDERING);
     }
 
     #[test]

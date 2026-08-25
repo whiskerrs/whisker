@@ -97,6 +97,10 @@ final class HostBoxPainter {
         backgroundPainter.update(layers)
     }
 
+    func setPixelatedImages(_ pixelated: Bool) {
+        backgroundPainter.setPixelatedImages(pixelated)
+    }
+
     func hardBoxShadowPath(in bounds: CGRect, shadow: HostBoxShadow) -> CGPath? {
         guard !shadow.inset else { return nil }
         let spread = shadow.spreadRadius

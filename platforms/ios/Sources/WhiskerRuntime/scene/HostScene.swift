@@ -183,6 +183,12 @@ final class HostScene {
             case UInt32(WHISKER_OP_BACKDROP_BLUR):
                 guard existing.contains(operation.node), operation.scalar.isFinite,
                       operation.scalar >= 0 else { return false }
+            case UInt32(WHISKER_OP_IMAGE_RENDERING):
+                guard existing.contains(operation.node),
+                      operation.integer == Int32(WHISKER_IMAGE_RENDERING_AUTO) ||
+                      operation.integer == Int32(WHISKER_IMAGE_RENDERING_PIXELATED) ||
+                      operation.integer == Int32(WHISKER_IMAGE_RENDERING_CRISP_EDGES)
+                else { return false }
             case UInt32(WHISKER_OP_OPACITY):
                 guard existing.contains(operation.node), operation.scalar.isFinite,
                       (0...1).contains(operation.scalar) else { return false }
@@ -338,6 +344,11 @@ final class HostScene {
         case UInt32(WHISKER_OP_BACKDROP_BLUR):
             guard let node = nodes[id] else { return false }
             node.setBackdropBlur(CGFloat(operation.scalar))
+        case UInt32(WHISKER_OP_IMAGE_RENDERING):
+            guard let node = nodes[id] else { return false }
+            node.setImageRendering(
+                pixelated: operation.integer == Int32(WHISKER_IMAGE_RENDERING_PIXELATED)
+            )
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):

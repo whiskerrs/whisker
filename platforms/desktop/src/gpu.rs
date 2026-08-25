@@ -996,6 +996,7 @@ pub(crate) type ClippedBoxPrimitive = (
     ShapeClipStack,
     Option<LinearGradientDraw>,
     Option<ResourceId>,
+    bool,
 );
 
 #[cfg(all(test, feature = "host-conformance"))]
@@ -1011,7 +1012,8 @@ struct BoxGpuPipeline {
 }
 
 struct GpuImageResource {
-    bind_group: wgpu::BindGroup,
+    linear_bind_group: wgpu::BindGroup,
+    nearest_bind_group: wgpu::BindGroup,
     _texture: wgpu::Texture,
     intrinsic_size: [f32; 2],
 }
@@ -1258,7 +1260,7 @@ impl BoxGpuPipeline {
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..wgpu::SamplerDescriptor::default()
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let linear_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(label),
             layout,
             entries: &[
@@ -1272,8 +1274,33 @@ impl BoxGpuPipeline {
                 },
             ],
         });
+        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("whisker Desktop pixelated image sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..wgpu::SamplerDescriptor::default()
+        });
+        let nearest_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("whisker Desktop pixelated image bind group"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&nearest_sampler),
+                },
+            ],
+        });
         GpuImageResource {
-            bind_group,
+            linear_bind_group,
+            nearest_bind_group,
             _texture: texture,
             intrinsic_size: [raster.width as f32, raster.height as f32],
         }
@@ -1455,6 +1482,7 @@ enum DrawCommand {
         shape_clips: ShapeClipStack,
         gradient: Option<LinearGradientDraw>,
         resource: Option<ResourceId>,
+        pixelated: bool,
     },
     Text {
         index: usize,
@@ -1860,9 +1888,9 @@ fn push_quad_draw(
     transform: Transform,
     clip: LogicalClip,
     shape_clips: &ShapeClipStack,
-    background: (Option<LinearGradientDraw>, Option<ResourceId>),
+    background: (Option<LinearGradientDraw>, Option<ResourceId>, bool),
 ) {
-    let (gradient, resource) = background;
+    let (gradient, resource, pixelated) = background;
     let start = vertices.len() as u32;
     push_transformed_quad(vertices, primitive, transform);
     draws.push(DrawCommand::Quads {
@@ -1871,6 +1899,7 @@ fn push_quad_draw(
         shape_clips: shape_clips.clone(),
         gradient,
         resource,
+        pixelated,
     });
 }
 
@@ -2041,7 +2070,7 @@ impl GpuRenderer {
                                 *transform,
                                 *clip,
                                 shape_clips,
-                                (None, None),
+                                (None, None, false),
                             );
                         }
                     }
@@ -2061,7 +2090,7 @@ impl GpuRenderer {
                             *transform,
                             *clip,
                             shape_clips,
-                            (None, None),
+                            (None, None, false),
                         );
                     }
                     let box_geometry = resolve_box_geometry(*rect, paint);
@@ -2103,7 +2132,13 @@ impl GpuRenderer {
                             *transform,
                             *clip,
                             shape_clips,
-                            (Some(gradient), resource),
+                            (
+                                Some(gradient),
+                                resource,
+                                resource.is_some()
+                                    && visual_effects.image_rendering
+                                        == whisker_protocol::ImageRendering::Pixelated,
+                            ),
                         );
                     }
                     for shadow in visual_effects
@@ -2122,7 +2157,7 @@ impl GpuRenderer {
                                 *transform,
                                 *clip,
                                 shape_clips,
-                                (None, None),
+                                (None, None, false),
                             );
                         }
                     }
@@ -2137,7 +2172,7 @@ impl GpuRenderer {
                             *transform,
                             *clip,
                             shape_clips,
-                            (None, None),
+                            (None, None, false),
                         );
                     }
                 }
@@ -2360,6 +2395,7 @@ impl GpuRenderer {
                     vertices,
                     clip,
                     resource,
+                    pixelated,
                     ..
                 } => {
                     let Some((x, y, width, height)) = self.scissor(clip, scale) else {
@@ -2386,7 +2422,15 @@ impl GpuRenderer {
                     let image = resource
                         .and_then(|resource| self.image_resources.get(&resource))
                         .unwrap_or(&self.box_gpu.fallback_image);
-                    pass.set_bind_group(2, &image.bind_group, &[]);
+                    pass.set_bind_group(
+                        2,
+                        if pixelated {
+                            &image.nearest_bind_group
+                        } else {
+                            &image.linear_bind_group
+                        },
+                        &[],
+                    );
                     pass.set_vertex_buffer(
                         0,
                         vertex_buffer
@@ -2552,6 +2596,7 @@ pub(crate) async fn render_box_primitives_offscreen(
                 ShapeClipStack::default(),
                 None,
                 None,
+                false,
             )
         })
         .collect::<Vec<_>>();
@@ -2602,7 +2647,7 @@ pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
 
     let mut vertices = Vec::new();
     let mut draws = Vec::new();
-    for (primitive, clip, transform, shape_clips, gradient, resource) in primitives {
+    for (primitive, clip, transform, shape_clips, gradient, resource, pixelated) in primitives {
         let start = vertices.len() as u32;
         push_transformed_quad(&mut vertices, *primitive, *transform);
         draws.push(DrawCommand::Quads {
@@ -2611,6 +2656,7 @@ pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
             shape_clips: shape_clips.clone(),
             gradient: gradient.clone(),
             resource: *resource,
+            pixelated: *pixelated,
         });
     }
     let image_resources = resources
@@ -2692,6 +2738,7 @@ pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
                 vertices: range,
                 clip,
                 resource,
+                pixelated,
                 ..
             } = draw
             else {
@@ -2722,7 +2769,15 @@ pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
             let image = resource
                 .and_then(|resource| image_resources.get(&resource))
                 .unwrap_or(&box_gpu.fallback_image);
-            pass.set_bind_group(2, &image.bind_group, &[]);
+            pass.set_bind_group(
+                2,
+                if pixelated {
+                    &image.nearest_bind_group
+                } else {
+                    &image.linear_bind_group
+                },
+                &[],
+            );
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.draw(range, draw_index as u32..draw_index as u32 + 1);
         }

@@ -510,6 +510,19 @@ pub enum ClipReferenceBoxFixture {
     Content,
 }
 
+/// Raster-image scaling algorithm requested by a scene fixture.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageRenderingFixture {
+    /// Use the Host's normal interpolation policy.
+    #[default]
+    Auto,
+    /// Use nearest-neighbor sampling while scaling raster images.
+    Pixelated,
+    /// Lynx-compatible alias currently rendered with the `auto` policy.
+    CrispEdges,
+}
+
 /// One node in a retained Host scene fixture.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -535,6 +548,9 @@ pub struct SceneNodeFixture {
     /// Resolved `backdrop-filter: blur()` radius in logical pixels.
     #[serde(default)]
     pub backdrop_blur: Option<f32>,
+    /// Raster-image scaling algorithm for this element's own image paint.
+    #[serde(default)]
+    pub image_rendering: ImageRenderingFixture,
     /// Optional basic-shape clip applied to the node and its descendants.
     #[serde(default)]
     pub clip_path: Option<ClipPathFixture>,

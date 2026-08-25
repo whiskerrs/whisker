@@ -50,6 +50,7 @@ internal class HostNode(
     var clipPath: HostClipPath? = null
     var mountedElement: WhiskerMountedElement? = null
     var zOrder: Int = 0
+    var pixelatedImages: Boolean = false
     var backdropBlur: Float = 0f
         set(value) {
             field = value

@@ -9,6 +9,7 @@
 mod animation;
 mod background;
 mod border;
+mod effects;
 mod flex;
 mod grid;
 mod layout;
@@ -26,6 +27,7 @@ pub use background::{
     BackgroundSizeAxis,
 };
 pub use border::BorderStyle;
+pub use effects::ImageRendering;
 pub use flex::{AlignContent, AlignItems, AlignSelf, FlexDirection, FlexWrap, JustifyContent};
 pub use grid::GridAutoFlow;
 pub use layout::{

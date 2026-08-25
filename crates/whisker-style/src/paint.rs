@@ -3,11 +3,11 @@
 use crate::{
     BackdropFilterValue, BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue,
     BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundSizeValue, ColorValue,
-    ComputedLengthPercentage, DirectionValue, Edges, GradientValue, InheritedStyle,
-    LengthPercentageValue, MotionPathCommandValue, OffsetPathValue, OffsetRotateValue,
-    RadialGradientValue, SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty,
-    StyleResolutionError, StyleValue, TransformFunctionValue, TransformOriginValue, TransformValue,
-    layout::resolve_affine,
+    ComputedLengthPercentage, DirectionValue, Edges, GradientValue, ImageRenderingValue,
+    InheritedStyle, LengthPercentageValue, MotionPathCommandValue, OffsetPathValue,
+    OffsetRotateValue, RadialGradientValue, SpecifiedStyle, StyleEnvironment, StyleNumber,
+    StyleProperty, StyleResolutionError, StyleValue, TransformFunctionValue, TransformOriginValue,
+    TransformValue, layout::resolve_affine,
 };
 
 /// Four physical corners in top-left, top-right, bottom-right, bottom-left order.
@@ -331,6 +331,8 @@ impl Default for ComputedBackgroundLayerStyle {
 pub struct ComputedPaintStyle {
     /// Blur radius applied to pixels behind this node, or `None` for no effect.
     pub backdrop_blur: Option<StyleNumber>,
+    /// Raster-image sampling behavior for images painted by this node.
+    pub image_rendering: ImageRenderingValue,
     /// Resolved background color. Transparent is represented explicitly.
     pub background_color: ColorValue,
     /// Ordered Host-independent background image sources, front to back.
@@ -367,6 +369,7 @@ impl ComputedPaintStyle {
         };
         Self {
             backdrop_blur: None,
+            image_rendering: ImageRenderingValue::Auto,
             background_color: transparent,
             background_images: Vec::new(),
             background_layers: vec![ComputedBackgroundLayerStyle::default()],
@@ -413,6 +416,12 @@ pub(crate) fn resolve_paint_style(
         let property = declaration.property();
         let value = declaration.value();
         match property {
+            StyleProperty::ImageRendering => {
+                let StyleValue::ImageRendering(value) = value else {
+                    return Err(invalid(property));
+                };
+                paint.image_rendering = *value;
+            }
             StyleProperty::BackdropFilter => {
                 let StyleValue::BackdropFilter(value) = value else {
                     return Err(invalid(property));
@@ -2793,6 +2802,10 @@ mod tests {
             )
             .push(StyleProperty::BorderBottomRightRadius, px(10.0))
             .push(StyleProperty::BorderBottomLeftRadius, px(11.0))
+            .push(
+                StyleProperty::ImageRendering,
+                StyleValue::ImageRendering(ImageRenderingValue::Pixelated),
+            )
             .push(StyleProperty::Opacity, StyleValue::Number(number(2.0)))
             .push(
                 StyleProperty::OverflowX,
@@ -2871,6 +2884,7 @@ mod tests {
         assert_eq!(paint.border_radii.top_right.vertical.length(), 4.0);
         assert_eq!(paint.border_radii.bottom_right.horizontal.length(), 10.0);
         assert_eq!(paint.border_radii.bottom_left.horizontal.length(), 11.0);
+        assert_eq!(paint.image_rendering, ImageRenderingValue::Pixelated);
         assert_eq!(paint.opacity.get(), 1.0);
         assert_eq!(paint.overflow_x, OverflowValue::Hidden);
         assert_eq!(paint.overflow_y, OverflowValue::Hidden);
@@ -3003,6 +3017,7 @@ mod tests {
             StyleProperty::BackgroundOrigin,
             StyleProperty::BackgroundClip,
             StyleProperty::BackgroundAttachment,
+            StyleProperty::ImageRendering,
             StyleProperty::BorderTopColor,
             StyleProperty::BorderRightColor,
             StyleProperty::BorderBottomColor,

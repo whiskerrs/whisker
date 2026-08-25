@@ -2,7 +2,8 @@ use std::convert::Infallible;
 
 use whisker::css::{
     Angle, BorderRadius, BorderStyle, Clear, Direction, Float, GridLine, GridTemplate, GridTrack,
-    MotionPathCommand, MotionPathPoint, OffsetPath, OffsetRotate, Overflow, Position, TransformFn,
+    ImageRendering, MotionPathCommand, MotionPathPoint, OffsetPath, OffsetRotate, Overflow,
+    Position, TransformFn,
 };
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -1356,6 +1357,54 @@ fn element_children_reject_raw_text_before_frame_generation() {
         Some(RuntimeBindingError::InvalidRawTextParent { .. })
     ));
     with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn image_rendering_reaches_the_frame_protocol_from_render_macro() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(17).unwrap(),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(40))
+                    .height(px(40))
+                    .image_rendering(ImageRendering::Pixelated))
+            }
+        });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        renderer.frames()[0]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(
+                    operation,
+                    Operation::SetVisualEffects { effects, .. }
+                        if effects.image_rendering
+                            == whisker_engine::whisker_protocol::ImageRendering::Pixelated
+                )
+            })
+    );
 }
 
 #[test]

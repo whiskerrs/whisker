@@ -10,8 +10,8 @@ use whisker_host_conformance::{
     BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture, BackgroundSizeFixture,
     BackgroundSizeKeywordFixture, BorderFixture, BorderStyleFixture, ClipPathFixture,
     ClipReferenceBoxFixture, ClipShapeFixture, ColorFixture, Command, ConicGradientFixture,
-    FillRuleFixture, Host, ImageRepeatFixture, LinearGradientFixture, LoadedCase,
-    OverflowClipFixture, PathCommandFixture, PixelRelationFixture, PixelRelationKind,
+    FillRuleFixture, Host, ImageRenderingFixture, ImageRepeatFixture, LinearGradientFixture,
+    LoadedCase, OverflowClipFixture, PathCommandFixture, PixelRelationFixture, PixelRelationKind,
     PixelSampleFixture, PointerEventFixture, RadialGradientFixture, ResourceSourceFixture,
     ResourceStateFixture, Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
     load_required,
@@ -19,11 +19,11 @@ use whisker_host_conformance::{
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
     BorderLineStyle, BoxClip, BoxPaint, ClipShape, ElementTypeId, FillRule, FrameHeader, FrameMode,
-    FramePacket, GradientStop, ImageRepeat, InputEvent, InputEventKind, InputPoint, LayoutGeometry,
-    LayoutRect, MeasureConstraints, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
-    MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasurementKey, MeasurementPayload,
-    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
-    PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
+    FramePacket, GradientStop, ImageRendering, ImageRepeat, InputEvent, InputEventKind, InputPoint,
+    LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily, MeasureFontStyle,
+    MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasurementKey,
+    MeasurementPayload, MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip,
+    PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
     PaintLengthPercentage, PaintPosition, PathCommand, PointerId, PointerInput, PointerKind,
     ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceId,
     ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextMeasurePayload, TextMeasureStyle,
@@ -702,6 +702,7 @@ impl Driver {
             if !fixture.box_shadows.is_empty()
                 || fixture.clip_path.is_some()
                 || fixture.backdrop_blur.is_some()
+                || fixture.image_rendering != ImageRenderingFixture::Auto
             {
                 operations.push(Operation::SetVisualEffects {
                     node,
@@ -720,6 +721,11 @@ impl Driver {
                             .collect(),
                         clip_path: fixture.clip_path.as_ref().map(clip_path_protocol),
                         backdrop_blur: fixture.backdrop_blur,
+                        image_rendering: match fixture.image_rendering {
+                            ImageRenderingFixture::Auto => ImageRendering::Auto,
+                            ImageRenderingFixture::Pixelated => ImageRendering::Pixelated,
+                            ImageRenderingFixture::CrispEdges => ImageRendering::CrispEdges,
+                        },
                         ..Default::default()
                     },
                 });
@@ -833,7 +839,15 @@ impl Driver {
                                 rect, paint, shadow, opacity,
                             )
                             .map(|primitive| {
-                                (primitive, clip, transform, shape_clips.clone(), None, None)
+                                (
+                                    primitive,
+                                    clip,
+                                    transform,
+                                    shape_clips.clone(),
+                                    None,
+                                    None,
+                                    false,
+                                )
                             })
                         }),
                 );
@@ -845,7 +859,15 @@ impl Driver {
                         .copied()
                         .filter(|primitive| primitive.kind == BoxPrimitiveKind::Fill)
                         .map(|primitive| {
-                            (primitive, clip, transform, shape_clips.clone(), None, None)
+                            (
+                                primitive,
+                                clip,
+                                transform,
+                                shape_clips.clone(),
+                                None,
+                                None,
+                                false,
+                            )
                         }),
                 );
                 let box_geometry = resolve_box_geometry(rect, paint);
@@ -887,6 +909,8 @@ impl Driver {
                         shape_clips.clone(),
                         Some(gradient),
                         resource,
+                        resource.is_some()
+                            && visual_effects.image_rendering == ImageRendering::Pixelated,
                     ));
                 }
                 primitives.extend(
@@ -900,7 +924,15 @@ impl Driver {
                                 rect, paint, shadow, opacity,
                             )
                             .map(|primitive| {
-                                (primitive, clip, transform, shape_clips.clone(), None, None)
+                                (
+                                    primitive,
+                                    clip,
+                                    transform,
+                                    shape_clips.clone(),
+                                    None,
+                                    None,
+                                    false,
+                                )
                             })
                         }),
                 );
@@ -909,7 +941,15 @@ impl Driver {
                         .into_iter()
                         .filter(|primitive| primitive.kind == BoxPrimitiveKind::Border)
                         .map(|primitive| {
-                            (primitive, clip, transform, shape_clips.clone(), None, None)
+                            (
+                                primitive,
+                                clip,
+                                transform,
+                                shape_clips.clone(),
+                                None,
+                                None,
+                                false,
+                            )
                         }),
                 );
             }

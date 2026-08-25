@@ -1,6 +1,6 @@
 use whisker_protocol::{
-    ClipShape, FillRule, PaintBox, PaintCoordinate, PaintLengthPercentage, PaintPosition,
-    PathCommand, VisualEffects,
+    ClipShape, FillRule, ImageRendering, PaintBox, PaintCoordinate, PaintLengthPercentage,
+    PaintPosition, PathCommand, VisualEffects,
 };
 
 use super::color::css_color;
@@ -11,7 +11,12 @@ pub(crate) fn supports(effects: &VisualEffects) -> bool {
     remainder.box_shadows.clear();
     remainder.clip_path = None;
     remainder.backdrop_blur = None;
+    remainder.image_rendering = ImageRendering::Auto;
     remainder == VisualEffects::default()
+        && matches!(
+            effects.image_rendering,
+            ImageRendering::Auto | ImageRendering::Pixelated | ImageRendering::CrispEdges
+        )
         && effects.clip_path.as_ref().is_none_or(|(reference, shape)| {
             matches!(
                 reference,
@@ -26,7 +31,8 @@ pub(crate) fn supports(effects: &VisualEffects) -> bool {
 pub(crate) fn apply(element: &web_sys::Element, effects: &VisualEffects) -> Result<(), WebError> {
     if !supports(effects) {
         return Err(WebError(
-            "DOM Host only implements box-shadow, clip-path, and backdrop blur".into(),
+            "DOM Host only implements box-shadow, clip-path, backdrop blur, and image-rendering"
+                .into(),
         ));
     }
     let value = if effects.box_shadows.is_empty() {
@@ -56,6 +62,15 @@ pub(crate) fn apply(element: &web_sys::Element, effects: &VisualEffects) -> Resu
         .unwrap_or_else(|| "none".into());
     set_style(element, "backdrop-filter", &backdrop_filter)?;
     set_style(element, "-webkit-backdrop-filter", &backdrop_filter)?;
+    set_style(
+        element,
+        "image-rendering",
+        match effects.image_rendering {
+            ImageRendering::Pixelated => "pixelated",
+            ImageRendering::Auto | ImageRendering::CrispEdges => "auto",
+            _ => unreachable!("unsupported image-rendering rejected above"),
+        },
+    )?;
     let clip_path = effects
         .clip_path
         .as_ref()

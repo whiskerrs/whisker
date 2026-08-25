@@ -1,14 +1,15 @@
 //! Lowering from computed style into the Host-independent paint protocol.
 
 use whisker_protocol::{
-    BorderLineStyle, BoxClip, BoxPaint, OverflowClip, PaintColor, PaintCornerRadius, PaintCorners,
-    PaintEdges, PaintLengthPercentage, Transform, Visibility, VisualEffects,
+    BorderLineStyle, BoxClip, BoxPaint, ImageRendering, OverflowClip, PaintColor,
+    PaintCornerRadius, PaintCorners, PaintEdges, PaintLengthPercentage, Transform, Visibility,
+    VisualEffects,
 };
 use whisker_style::{
     BorderStyleValue, ColorValue, ComputedLayoutStyle, ComputedLengthPercentage,
     ComputedOffsetPathValue as OffsetPathValue, ComputedPaintStyle, ComputedTransformFunction,
-    ComputedTransformStyle, MotionPathCommandValue, OffsetRotateValue, OverflowValue,
-    VisibilityValue,
+    ComputedTransformStyle, ImageRenderingValue, MotionPathCommandValue, OffsetRotateValue,
+    OverflowValue, VisibilityValue,
 };
 
 /// Complete common presentation values derived from one computed node style.
@@ -58,6 +59,11 @@ pub fn lower_paint(style: &ComputedPaintStyle, layout: &ComputedLayoutStyle) -> 
         },
         visual_effects: VisualEffects {
             backdrop_blur: style.backdrop_blur.map(|value| value.get()),
+            image_rendering: match style.image_rendering {
+                ImageRenderingValue::Auto => ImageRendering::Auto,
+                ImageRenderingValue::Pixelated => ImageRendering::Pixelated,
+                ImageRenderingValue::CrispEdges => ImageRendering::CrispEdges,
+            },
             ..VisualEffects::default()
         },
         clip: BoxClip {
@@ -1103,6 +1109,7 @@ mod tests {
 
     fn paint_style() -> ComputedPaintStyle {
         ComputedPaintStyle {
+            image_rendering: ImageRenderingValue::Pixelated,
             background_color: color("background"),
             background_images: Vec::new(),
             background_layers: vec![Default::default()],
@@ -1187,6 +1194,21 @@ mod tests {
         assert_eq!(lowered.visibility, Visibility::Hidden);
         assert_eq!(lowered.z_order, -3);
         assert_eq!(lowered.visual_effects.backdrop_blur, Some(8.0));
+        assert_eq!(
+            lowered.visual_effects.image_rendering,
+            ImageRendering::Pixelated
+        );
+        for (style_value, protocol_value) in [
+            (ImageRenderingValue::Auto, ImageRendering::Auto),
+            (ImageRenderingValue::CrispEdges, ImageRendering::CrispEdges),
+        ] {
+            let mut style = paint_style();
+            style.image_rendering = style_value;
+            assert_eq!(
+                lower_paint(&style, &layout).visual_effects.image_rendering,
+                protocol_value
+            );
+        }
     }
 
     #[test]

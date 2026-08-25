@@ -3,7 +3,7 @@
 
 use crate::css::Css;
 use crate::data_type::{Color, Length};
-use crate::keyword::{Cursor, Overflow, PointerEvents, Visibility};
+use crate::keyword::{Cursor, ImageRendering, Overflow, PointerEvents, Visibility};
 use crate::value::BackdropFilter;
 
 impl Css {
@@ -108,6 +108,12 @@ impl Css {
     /// `blur(<length>)` function.
     pub fn backdrop_filter(self, value: BackdropFilter) -> Self {
         self.push_typed(crate::StyleProperty::BackdropFilter, value)
+    }
+
+    /// Sets raster-image interpolation for this element's image paint.
+    /// <https://lynxjs.org/api/css/properties/image-rendering>
+    pub fn image_rendering(self, value: ImageRendering) -> Self {
+        self.push_typed(crate::StyleProperty::ImageRendering, value)
     }
 
     /// Sets `mask-image` to a raw CSS value (URL or gradient).
@@ -242,6 +248,23 @@ mod tests {
 
         let typed = Css::new().backdrop_filter(BackdropFilter::blur(4.px()));
         assert!(typed.to_specified_style().is_ok());
+    }
+
+    #[test]
+    fn image_rendering_is_typed() {
+        let style = Css::new().image_rendering(ImageRendering::Pixelated);
+        assert_eq!(style.to_string(), "image-rendering: pixelated;");
+        assert!(style.to_specified_style().is_ok());
+        assert_eq!(
+            Css::new().image_rendering(ImageRendering::Auto).to_string(),
+            "image-rendering: auto;"
+        );
+        assert_eq!(
+            Css::new()
+                .image_rendering(ImageRendering::CrispEdges)
+                .to_string(),
+            "image-rendering: crisp-edges;"
+        );
     }
 
     #[test]
