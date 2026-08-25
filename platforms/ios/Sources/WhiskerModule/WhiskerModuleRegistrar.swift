@@ -42,6 +42,9 @@ public struct WhiskerTextContent {
     public let value: String
     public let fontSize: CGFloat
     public let fontWeight: Int
+    public let fontFeatures: [WhiskerFontFeature]
+    public let fontVariations: [WhiskerFontVariation]
+    public let fontOpticalSizing: WhiskerFontOpticalSizing
     public let color: UIColor
     public let alignment: WhiskerTextAlignment
     public let indent: WhiskerTextIndent
@@ -56,6 +59,9 @@ public struct WhiskerTextContent {
         value: String,
         fontSize: CGFloat,
         fontWeight: Int,
+        fontFeatures: [WhiskerFontFeature] = [],
+        fontVariations: [WhiskerFontVariation] = [],
+        fontOpticalSizing: WhiskerFontOpticalSizing = .none,
         color: UIColor,
         alignment: WhiskerTextAlignment = .start,
         indent: WhiskerTextIndent = WhiskerTextIndent(),
@@ -69,6 +75,9 @@ public struct WhiskerTextContent {
         self.value = value
         self.fontSize = fontSize
         self.fontWeight = fontWeight
+        self.fontFeatures = fontFeatures
+        self.fontVariations = fontVariations
+        self.fontOpticalSizing = fontOpticalSizing
         self.color = color
         self.alignment = alignment
         self.indent = indent
@@ -80,6 +89,28 @@ public struct WhiskerTextContent {
         self.shadow = shadow
     }
 }
+
+public struct WhiskerFontFeature: Equatable {
+    public let tag: String
+    public let value: UInt32
+
+    public init(tag: String, value: UInt32) {
+        self.tag = tag
+        self.value = value
+    }
+}
+
+public struct WhiskerFontVariation: Equatable {
+    public let tag: String
+    public let value: CGFloat
+
+    public init(tag: String, value: CGFloat) {
+        self.tag = tag
+        self.value = value
+    }
+}
+
+public enum WhiskerFontOpticalSizing: Equatable { case auto, none }
 
 public enum WhiskerTextAlignment: Equatable { case start, end, left, right, center }
 public enum WhiskerTextWordBreak: Equatable { case normal, breakAll, keepAll }

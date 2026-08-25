@@ -96,6 +96,30 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
             style: TextMeasureStyle {
                 font_size: text.font_size,
                 font_weight: text.font_weight,
+                features: text
+                    .font_features
+                    .iter()
+                    .map(|feature| whisker_protocol::FontFeature {
+                        tag: fixture_font_tag(&feature.tag),
+                        value: feature.value,
+                    })
+                    .collect(),
+                variations: text
+                    .font_variations
+                    .iter()
+                    .map(|variation| whisker_protocol::FontVariation {
+                        tag: fixture_font_tag(&variation.tag),
+                        value: variation.value,
+                    })
+                    .collect(),
+                optical_sizing: match text.font_optical_sizing {
+                    whisker_host_conformance::FontOpticalSizingFixture::Auto => {
+                        whisker_protocol::FontOpticalSizing::Auto
+                    }
+                    whisker_host_conformance::FontOpticalSizingFixture::None => {
+                        whisker_protocol::FontOpticalSizing::None
+                    }
+                },
                 ..TextMeasureStyle::default()
             },
             locale: None,
@@ -171,6 +195,14 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
         },
         prepared_content: None,
     }
+}
+
+fn fixture_font_tag(value: &str) -> whisker_protocol::FontTag {
+    let bytes: [u8; 4] = value
+        .as_bytes()
+        .try_into()
+        .expect("fixture schema validates four-byte ASCII tags");
+    whisker_protocol::FontTag::new(bytes).expect("fixture schema validates printable tags")
 }
 
 fn apply_background_geometry(
@@ -585,6 +617,8 @@ impl Driver {
                         self.assert_text_indent();
                     } else if name == "paint.text.wrap-overflow-lynx" {
                         self.assert_text_wrap_overflow();
+                    } else if name == "paint.text.font-features-lynx" {
+                        self.assert_text_font_features();
                     }
                     checkpoints.push(Checkpoint {
                         logical_size: [
@@ -956,6 +990,36 @@ impl Driver {
                 blue: 0,
                 alpha: 0.75
             }
+        );
+    }
+
+    fn assert_text_font_features(&self) {
+        let commands = self
+            .scene
+            .as_ref()
+            .expect("checkpoint follows attach")
+            .paint_commands();
+        let texts = commands
+            .iter()
+            .filter_map(|command| match command {
+                PaintCommand::Text { content, .. } => Some(content),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(texts.len(), 3);
+        assert_eq!(texts[0].payload.style.features.len(), 2);
+        assert_eq!(texts[0].payload.style.features[0].tag.get(), *b"kern");
+        assert_eq!(texts[0].payload.style.features[0].value, 0);
+        assert_eq!(texts[0].payload.style.features[1].tag.get(), *b"liga");
+        assert_eq!(texts[0].payload.style.features[1].value, 1);
+        assert_eq!(texts[1].payload.style.variations.len(), 2);
+        assert_eq!(texts[1].payload.style.variations[0].tag.get(), *b"wdth");
+        assert_eq!(texts[1].payload.style.variations[0].value, 90.0);
+        assert_eq!(texts[1].payload.style.variations[1].tag.get(), *b"wght");
+        assert_eq!(texts[1].payload.style.variations[1].value, 650.0);
+        assert_eq!(
+            texts[2].payload.style.optical_sizing,
+            whisker_protocol::FontOpticalSizing::Auto
         );
     }
 

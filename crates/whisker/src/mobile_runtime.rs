@@ -604,16 +604,6 @@ impl MeasurementProvider for MobileMeasurementHost {
         requests: &[MeasurementRequest],
         responses: &mut Vec<MeasurementResponse>,
     ) -> Result<(), Self::Error> {
-        if requests.iter().any(|request| {
-            matches!(
-                &request.payload,
-                MeasurementPayload::Text(text) if text.style.uses_extended_typography()
-            )
-        }) {
-            return Err(MobileMeasureError(
-                "mobile Host does not implement extended text typography",
-            ));
-        }
         let mut batch = MobileMeasureBatch::new(requests);
         if !(self.callback)(
             self.data,
@@ -681,6 +671,8 @@ impl MeasurementProvider for MobileMeasurementHost {
 struct MobileMeasureBatch {
     _strings: Vec<CString>,
     _bytes: Vec<Vec<u8>>,
+    _font_features: Vec<Box<[MobileFontFeature]>>,
+    _font_variations: Vec<Box<[MobileFontVariation]>>,
     requests: Vec<MobileMeasureRequest>,
     responses: Vec<MobileMeasureResponse>,
 }
@@ -689,6 +681,8 @@ impl MobileMeasureBatch {
     fn new(source: &[MeasurementRequest]) -> Self {
         let mut strings = Vec::new();
         let mut bytes = Vec::new();
+        let mut font_features = Vec::new();
+        let mut font_variations = Vec::new();
         let mut requests = Vec::with_capacity(source.len());
         let mut responses = Vec::with_capacity(source.len());
         for request in source {
@@ -718,6 +712,12 @@ impl MobileMeasureBatch {
                 payload_version: 0,
                 line_height: 0.0,
                 letter_spacing: 0.0,
+                font_features: std::ptr::null(),
+                font_feature_count: 0,
+                font_variations: std::ptr::null(),
+                font_variation_count: 0,
+                font_optical_sizing: 1,
+                _font_pad: [0; 7],
                 indent_logical_pixels: 0.0,
                 indent_percentage: 0.0,
                 max_lines: 0,
@@ -762,6 +762,18 @@ impl MobileMeasureBatch {
                         MeasureLineHeight::LogicalPixels(value) => value,
                     };
                     raw.letter_spacing = value.style.letter_spacing;
+                    font_features.push(mobile_font_features(&value.style.features));
+                    let features = font_features.last().unwrap();
+                    raw.font_features = nonempty_ptr(features);
+                    raw.font_feature_count = features.len();
+                    font_variations.push(mobile_font_variations(&value.style.variations));
+                    let variations = font_variations.last().unwrap();
+                    raw.font_variations = nonempty_ptr(variations);
+                    raw.font_variation_count = variations.len();
+                    raw.font_optical_sizing = u8::from(matches!(
+                        value.style.optical_sizing,
+                        whisker_engine::whisker_protocol::FontOpticalSizing::None
+                    ));
                     raw.indent_logical_pixels = value.indent.logical_pixels;
                     raw.indent_percentage = value.indent.percentage;
                     raw.max_lines = value.max_lines.unwrap_or(0);
@@ -803,6 +815,8 @@ impl MobileMeasureBatch {
         Self {
             _strings: strings,
             _bytes: bytes,
+            _font_features: font_features,
+            _font_variations: font_variations,
             requests,
             responses,
         }
@@ -817,6 +831,40 @@ fn push_bytes(storage: &mut Vec<Vec<u8>>, value: &[u8]) -> WhiskerBytesRef {
     };
     storage.push(value);
     result
+}
+
+fn mobile_font_features(
+    values: &[whisker_engine::whisker_protocol::FontFeature],
+) -> Box<[MobileFontFeature]> {
+    values
+        .iter()
+        .map(|value| MobileFontFeature {
+            tag: value.tag.get(),
+            value: value.value,
+        })
+        .collect::<Vec<_>>()
+        .into_boxed_slice()
+}
+
+fn mobile_font_variations(
+    values: &[whisker_engine::whisker_protocol::FontVariation],
+) -> Box<[MobileFontVariation]> {
+    values
+        .iter()
+        .map(|value| MobileFontVariation {
+            tag: value.tag.get(),
+            value: value.value,
+        })
+        .collect::<Vec<_>>()
+        .into_boxed_slice()
+}
+
+fn nonempty_ptr<T>(values: &[T]) -> *const T {
+    if values.is_empty() {
+        std::ptr::null()
+    } else {
+        values.as_ptr()
+    }
 }
 fn available_kind(value: AvailableSpace) -> u8 {
     match value {
@@ -863,6 +911,11 @@ impl FrameSink for MobileFrameSink {
                 },
                 whisker_engine::whisker_protocol::CapabilityEntry {
                     capability: whisker_engine::whisker_protocol::RenderCapability::TextEffects,
+                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_engine::whisker_protocol::CapabilityEntry {
+                    capability:
+                        whisker_engine::whisker_protocol::RenderCapability::TextTypography,
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_engine::whisker_protocol::CapabilityEntry {
@@ -940,6 +993,8 @@ struct MobileFrameOwned {
     _background_layers: Vec<Box<[MobileBackgroundLayer]>>,
     _background_resource_ids: Vec<Box<u64>>,
     _texts: Vec<Box<MobileText>>,
+    _font_features: Vec<Box<[MobileFontFeature]>>,
+    _font_variations: Vec<Box<[MobileFontVariation]>>,
     _transforms: Vec<Box<[f32; 16]>>,
     _values: Vec<Box<WhiskerValueRaw>>,
     _strings: Vec<CString>,
@@ -981,6 +1036,8 @@ impl MobileFrameOwned {
         let mut background_layers = Vec::<Box<[MobileBackgroundLayer]>>::new();
         let mut background_resource_ids = Vec::<Box<u64>>::new();
         let mut texts = Vec::<Box<MobileText>>::new();
+        let mut font_features = Vec::<Box<[MobileFontFeature]>>::new();
+        let mut font_variations = Vec::<Box<[MobileFontVariation]>>::new();
         let mut transforms = Vec::<Box<[f32; 16]>>::new();
         let mut values = Vec::<Box<WhiskerValueRaw>>::new();
         let mut strings = Vec::new();
@@ -1407,7 +1464,6 @@ impl MobileFrameOwned {
                             whisker_engine::whisker_protocol::TextDecorationThickness::Auto
                         )
                         || content.paint.shadows.len() > 1
-                        || content.payload.style.uses_extended_typography()
                     {
                         return Err(MobileFrameError);
                     }
@@ -1420,6 +1476,10 @@ impl MobileFrameOwned {
                     };
                     let decoration_color =
                         mobile_color(&content.paint.decoration.color, &mut strings);
+                    font_features.push(mobile_font_features(&content.payload.style.features));
+                    let features = font_features.last().unwrap();
+                    font_variations.push(mobile_font_variations(&content.payload.style.variations));
+                    let variations = font_variations.last().unwrap();
                     texts.push(Box::new(MobileText {
                         text: push_string(&mut strings, &content.payload.text),
                         font_size: content.payload.style.font_size,
@@ -1445,6 +1505,15 @@ impl MobileFrameOwned {
                             MeasureLineHeight::LogicalPixels(value) => value,
                         },
                         letter_spacing: content.payload.style.letter_spacing,
+                        font_features: nonempty_ptr(features),
+                        font_feature_count: features.len(),
+                        font_variations: nonempty_ptr(variations),
+                        font_variation_count: variations.len(),
+                        font_optical_sizing: u8::from(matches!(
+                            content.payload.style.optical_sizing,
+                            whisker_engine::whisker_protocol::FontOpticalSizing::None
+                        )),
+                        _font_pad: [0; 7],
                         color: mobile_color(&content.paint.foreground, &mut strings),
                         shadow_offset_x: shadow.map_or(0.0, |value| value.offset_x),
                         shadow_offset_y: shadow.map_or(0.0, |value| value.offset_y),
@@ -1571,6 +1640,8 @@ impl MobileFrameOwned {
             _background_layers: background_layers,
             _background_resource_ids: background_resource_ids,
             _texts: texts,
+            _font_features: font_features,
+            _font_variations: font_variations,
             _transforms: transforms,
             _values: values,
             _strings: strings,
@@ -1791,8 +1862,9 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use whisker_engine::whisker_protocol::{
-        BackgroundLayer, FrameHeader, GradientStop, PaintCoordinate, PaintPosition,
-        ProtocolVersion, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow,
+        BackgroundLayer, FontFeature, FontOpticalSizing, FontTag, FontVariation, FrameHeader,
+        GradientStop, PaintCoordinate, PaintPosition, ProtocolVersion, TextContent,
+        TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow,
     };
 
     fn linear_background(name: &str) -> BackgroundLayer {
@@ -2044,6 +2116,15 @@ mod tests {
         content.payload.word_break = MeasureTextWordBreak::KeepAll;
         content.payload.max_lines = Some(2);
         content.payload.overflow = MeasureTextOverflow::Ellipsis;
+        content.payload.style.features = vec![FontFeature {
+            tag: FontTag::new(*b"kern").unwrap(),
+            value: 0,
+        }];
+        content.payload.style.variations = vec![FontVariation {
+            tag: FontTag::new(*b"wght").unwrap(),
+            value: 650.0,
+        }];
+        content.payload.style.optical_sizing = FontOpticalSizing::Auto;
         let packet = FramePacket {
             header: FrameHeader {
                 version: ProtocolVersion::CURRENT,
@@ -2078,6 +2159,15 @@ mod tests {
         assert_eq!(text.word_break, 2);
         assert_eq!(text.max_lines, 2);
         assert_eq!(text.overflow, 1);
+        assert_eq!(text.font_feature_count, 1);
+        let feature = unsafe { &*text.font_features };
+        assert_eq!(feature.tag, *b"kern");
+        assert_eq!(feature.value, 0);
+        assert_eq!(text.font_variation_count, 1);
+        let variation = unsafe { &*text.font_variations };
+        assert_eq!(variation.tag, *b"wght");
+        assert_eq!(variation.value, 650.0);
+        assert_eq!(text.font_optical_sizing, 0);
     }
 
     #[test]

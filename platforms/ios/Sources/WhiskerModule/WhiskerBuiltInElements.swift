@@ -1,3 +1,4 @@
+import CoreText
 import UIKit
 
 /** Native container whose child geometry is supplied entirely by Rust. */
@@ -41,6 +42,9 @@ public final class WhiskerScrollContainerView: UIScrollView {
 public final class WhiskerTextLabel: UILabel {
     private var whiskerIndent = WhiskerTextIndent()
     private var appliedIndent: CGFloat?
+    public internal(set) var whiskerFontFeatures: [WhiskerFontFeature] = []
+    public internal(set) var whiskerFontVariations: [WhiskerFontVariation] = []
+    public internal(set) var whiskerFontOpticalSizing: WhiskerFontOpticalSizing = .none
 
     public func setWhiskerIndent(_ indent: WhiskerTextIndent) {
         whiskerIndent = indent
@@ -116,10 +120,13 @@ public enum WhiskerBuiltInElements {
                 guard let label = view as? WhiskerTextLabel else {
                     preconditionFailure("\(textName) factory must create WhiskerTextLabel")
                 }
-                label.font = .systemFont(
+                label.font = configuredFont(base: .systemFont(
                     ofSize: content.fontSize,
                     weight: content.fontWeight >= 600 ? .bold : .regular
-                )
+                ), content: content)
+                label.whiskerFontFeatures = content.fontFeatures
+                label.whiskerFontVariations = content.fontVariations
+                label.whiskerFontOpticalSizing = content.fontOpticalSizing
                 label.textColor = content.color
                 label.textAlignment = switch content.alignment {
                 case .start: label.effectiveUserInterfaceLayoutDirection == .rightToLeft ? .right : .left
@@ -193,6 +200,39 @@ public enum WhiskerBuiltInElements {
             WhiskerScrollContainerView(frame: .zero)
         }
     }
+}
+
+private func configuredFont(base: UIFont, content: WhiskerTextContent) -> UIFont {
+    var font = base as CTFont
+    var attributes: [CFString: Any] = [:]
+    if !content.fontFeatures.isEmpty {
+        let settings: [[CFString: Any]] = content.fontFeatures.map { feature in
+            [
+                kCTFontOpenTypeFeatureTag: openTypeCode(feature.tag),
+                kCTFontOpenTypeFeatureValue: feature.value,
+            ]
+        }
+        attributes[kCTFontFeatureSettingsAttribute] = settings
+    }
+    var variations = Dictionary(uniqueKeysWithValues: content.fontVariations.map {
+        (NSNumber(value: openTypeCode($0.tag)), NSNumber(value: Double($0.value)))
+    })
+    if content.fontOpticalSizing == .auto,
+       !content.fontVariations.contains(where: { $0.tag == "opsz" }) {
+        variations[NSNumber(value: openTypeCode("opsz"))] = NSNumber(value: Double(content.fontSize))
+    }
+    if !variations.isEmpty {
+        attributes[kCTFontVariationAttribute] = variations
+    }
+    if !attributes.isEmpty {
+        let descriptor = CTFontDescriptorCreateWithAttributes(attributes as CFDictionary)
+        font = CTFontCreateCopyWithAttributes(font, content.fontSize, nil, descriptor)
+    }
+    return font as UIFont
+}
+
+private func openTypeCode(_ tag: String) -> UInt32 {
+    tag.utf8.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
 }
 
 private func protectCJKBreaks(_ value: String) -> String {

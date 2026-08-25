@@ -90,9 +90,9 @@ pub struct FontVariation {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum FontOpticalSizing {
     /// Enable automatic optical sizing when the selected font provides it.
-    #[default]
     Auto,
     /// Disable automatic optical sizing.
+    #[default]
     None,
 }
 
@@ -218,7 +218,7 @@ impl Default for TextMeasureStyle {
             letter_spacing: 0.0,
             features: Vec::new(),
             variations: Vec::new(),
-            optical_sizing: FontOpticalSizing::Auto,
+            optical_sizing: FontOpticalSizing::None,
         }
     }
 }
@@ -228,7 +228,7 @@ impl TextMeasureStyle {
     pub fn uses_extended_typography(&self) -> bool {
         !self.features.is_empty()
             || !self.variations.is_empty()
-            || self.optical_sizing != FontOpticalSizing::Auto
+            || self.optical_sizing != FontOpticalSizing::None
     }
 }
 
@@ -922,7 +922,7 @@ mod tests {
         });
         assert!(style.uses_extended_typography());
         style.variations.clear();
-        style.optical_sizing = FontOpticalSizing::None;
+        style.optical_sizing = FontOpticalSizing::Auto;
         assert!(style.uses_extended_typography());
     }
 

@@ -1,3 +1,4 @@
+import CoreText
 import UIKit
 import WhiskerModule
 
@@ -45,6 +46,7 @@ private func measureText(
        ) {
         baseFont = UIFont(descriptor: descriptor, size: CGFloat(request.font_size))
     }
+    baseFont = configuredMeasureFont(baseFont, request)
     let paragraph = NSMutableParagraphStyle()
     let widthBasis: CGFloat
     if request.known_mask & 1 != 0 {
@@ -94,6 +96,52 @@ private func measureText(
         response.height - Float(abs(baseFont.descender))
     )
     response.metrics_mask = 3
+}
+
+private func configuredMeasureFont(
+    _ base: UIFont,
+    _ request: WhiskerMobileMeasureRequest
+) -> UIFont {
+    var font = base as CTFont
+    var attributes: [CFString: Any] = [:]
+    if let pointer = request.font_features, request.font_feature_count > 0 {
+        let settings: [[CFString: Any]] = UnsafeBufferPointer(
+            start: pointer,
+            count: request.font_feature_count
+        ).map {
+            [kCTFontOpenTypeFeatureTag: openTypeCode($0.tag), kCTFontOpenTypeFeatureValue: $0.value]
+        }
+        attributes[kCTFontFeatureSettingsAttribute] = settings
+    }
+    var variations: [NSNumber: NSNumber] = [:]
+    if let pointer = request.font_variations, request.font_variation_count > 0 {
+        for variation in UnsafeBufferPointer(start: pointer, count: request.font_variation_count) {
+            variations[NSNumber(value: openTypeCode(variation.tag))] = NSNumber(value: variation.value)
+        }
+    }
+    let opticalTag = openTypeCode("opsz")
+    if request.font_optical_sizing == 0,
+       variations[NSNumber(value: opticalTag)] == nil {
+        variations[NSNumber(value: opticalTag)] = NSNumber(value: request.font_size)
+    }
+    if !variations.isEmpty {
+        attributes[kCTFontVariationAttribute] = variations
+    }
+    if !attributes.isEmpty {
+        let descriptor = CTFontDescriptorCreateWithAttributes(attributes as CFDictionary)
+        font = CTFontCreateCopyWithAttributes(font, CGFloat(request.font_size), nil, descriptor)
+    }
+    return font as UIFont
+}
+
+private func openTypeCode<T>(_ tag: T) -> UInt32 {
+    withUnsafeBytes(of: tag) { bytes in
+        bytes.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+    }
+}
+
+private func openTypeCode(_ tag: String) -> UInt32 {
+    tag.utf8.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
 }
 
 private func protectCJKBreaks(_ value: String) -> String {

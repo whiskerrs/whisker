@@ -604,6 +604,15 @@ pub struct TextFixture {
     /// CSS numeric font weight.
     #[serde(default = "default_font_weight")]
     pub font_weight: u16,
+    /// Ordered OpenType feature settings.
+    #[serde(default)]
+    pub font_features: Vec<FontFeatureFixture>,
+    /// Ordered variable-font axis settings.
+    #[serde(default)]
+    pub font_variations: Vec<FontVariationFixture>,
+    /// Lynx optical-sizing behavior.
+    #[serde(default)]
+    pub font_optical_sizing: FontOpticalSizingFixture,
     /// Foreground glyph color.
     pub color: ColorFixture,
     /// Inline-axis alignment within the text element's layout box.
@@ -630,6 +639,37 @@ pub struct TextFixture {
     /// Optional single Lynx-compatible shadow.
     #[serde(default)]
     pub shadow: Option<TextShadowFixture>,
+}
+
+/// One OpenType feature selector in a shared fixture.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FontFeatureFixture {
+    /// Exactly four printable ASCII characters.
+    pub tag: String,
+    /// Non-negative OpenType feature value.
+    pub value: u32,
+}
+
+/// One variable-font axis selector in a shared fixture.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FontVariationFixture {
+    /// Exactly four printable ASCII characters.
+    pub tag: String,
+    /// Finite axis value.
+    pub value: f32,
+}
+
+/// Lynx-supported `font-optical-sizing` values.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FontOpticalSizingFixture {
+    /// Derive `opsz` from the computed font size.
+    Auto,
+    /// Do not synthesize optical sizing. Lynx initial value.
+    #[default]
+    None,
 }
 
 /// Resolved `text-indent` components; percentage is relative to text width.

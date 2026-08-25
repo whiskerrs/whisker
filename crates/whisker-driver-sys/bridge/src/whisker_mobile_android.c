@@ -201,6 +201,37 @@ static jobjectArray color_names(JNIEnv* env, const WhiskerMobileBoxPaint* paint)
     (*env)->DeleteLocalRef(env, cls); return result;
 }
 
+static jstring font_setting(JNIEnv* env, const uint8_t tag[4], double value, bool integer) {
+    char buffer[64];
+    int length = integer
+        ? snprintf(buffer, sizeof(buffer), "%.4s=%u", (const char*)tag, (uint32_t)value)
+        : snprintf(buffer, sizeof(buffer), "%.4s=%.9g", (const char*)tag, value);
+    return length < 0 ? NULL : new_string(env, buffer, (size_t)length);
+}
+
+static jobjectArray font_settings(JNIEnv* env,
+                                  const WhiskerMobileFontFeature* features, size_t feature_count,
+                                  const WhiskerMobileFontVariation* variations, size_t variation_count) {
+    if ((features == NULL) != (feature_count == 0) ||
+        (variations == NULL) != (variation_count == 0) ||
+        feature_count + variation_count > 4096) return NULL;
+    jclass cls = (*env)->FindClass(env, "java/lang/String");
+    jobjectArray result = cls == NULL ? NULL : (*env)->NewObjectArray(
+        env, (jsize)(feature_count + variation_count), cls, NULL);
+    for (size_t i = 0; result != NULL && i < feature_count; ++i) {
+        jstring value = font_setting(env, features[i].tag, features[i].value, true);
+        (*env)->SetObjectArrayElement(env, result, (jsize)i, value);
+        if (value) (*env)->DeleteLocalRef(env, value);
+    }
+    for (size_t i = 0; result != NULL && i < variation_count; ++i) {
+        jstring value = font_setting(env, variations[i].tag, variations[i].value, false);
+        (*env)->SetObjectArrayElement(env, result, (jsize)(feature_count + i), value);
+        if (value) (*env)->DeleteLocalRef(env, value);
+    }
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    return result;
+}
+
 static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMobileApplyResponse* response) {
     if (frame == NULL || response == NULL || frame->abi_major != WHISKER_MOBILE_ABI_MAJOR) return false;
     bool attached; JNIEnv* env = whisker_env(&attached); jobject view = env != NULL ? local_view(env, data) : NULL;
@@ -486,6 +517,10 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
             case WHISKER_OP_TRANSFORM: numbers = floats(env, op->payload, op->payload_count); break;
             case WHISKER_OP_TEXT: {
                 const WhiskerMobileText* p = op->payload; if (!p) { ok = false; break; }
+                if (p->font_optical_sizing > 1 ||
+                    (p->font_features == NULL) != (p->font_feature_count == 0) ||
+                    (p->font_variations == NULL) != (p->font_variation_count == 0) ||
+                    p->font_feature_count + p->font_variation_count > 4096) { ok = false; break; }
                 text = new_string(env, p->text.ptr, p->text.len);
                 storage[0]=p->font_size; storage[1]=(float)p->font_weight; storage[2]=(float)p->font_style;
                 storage[3]=(float)p->color.red; storage[4]=(float)p->color.green; storage[5]=(float)p->color.blue;
@@ -502,11 +537,14 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 storage[25]=p->indent_logical_pixels; storage[26]=p->indent_percentage;
                 storage[27]=(float)p->wrap; storage[28]=(float)p->word_break;
                 storage[29]=(float)p->max_lines; storage[30]=(float)p->overflow;
-                numbers = floats(env, storage, 31);
-                jclass cls = (*env)->FindClass(env, "java/lang/String"); names = (*env)->NewObjectArray(env, 3, cls, NULL);
+                storage[31]=(float)p->font_optical_sizing; storage[32]=(float)p->font_feature_count;
+                numbers = floats(env, storage, 33);
+                jclass cls = (*env)->FindClass(env, "java/lang/String"); names = (*env)->NewObjectArray(env, (jsize)(3 + p->font_feature_count + p->font_variation_count), cls, NULL);
                 jstring color_name = new_string(env, p->color.name.ptr, p->color.name.len); (*env)->SetObjectArrayElement(env, names, 0, color_name);
                 jstring shadow_name = new_string(env, p->shadow_color.name.ptr, p->shadow_color.name.len); (*env)->SetObjectArrayElement(env, names, 1, shadow_name);
                 jstring decoration_name = new_string(env, p->decoration_color.name.ptr, p->decoration_color.name.len); (*env)->SetObjectArrayElement(env, names, 2, decoration_name);
+                for (size_t j=0;j<p->font_feature_count;++j) { jstring value=font_setting(env,p->font_features[j].tag,p->font_features[j].value,true); (*env)->SetObjectArrayElement(env,names,(jsize)(3+j),value); if(value)(*env)->DeleteLocalRef(env,value); }
+                for (size_t j=0;j<p->font_variation_count;++j) { jstring value=font_setting(env,p->font_variations[j].tag,p->font_variations[j].value,false); (*env)->SetObjectArrayElement(env,names,(jsize)(3+p->font_feature_count+j),value); if(value)(*env)->DeleteLocalRef(env,value); }
                 if (color_name) (*env)->DeleteLocalRef(env, color_name);
                 if (shadow_name) (*env)->DeleteLocalRef(env, shadow_name);
                 if (decoration_name) (*env)->DeleteLocalRef(env, decoration_name);
@@ -548,6 +586,8 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
         jstring text = new_string(env, r->text.ptr, r->text.len);
         jstring family = new_string(env, r->font_family.ptr, r->font_family.len);
         jbyteArray payload = (*env)->NewByteArray(env, (jsize)r->payload.len);
+        jobjectArray font_values = font_settings(env, r->font_features, r->font_feature_count,
+                                                  r->font_variations, r->font_variation_count);
         if (payload && r->payload.len) (*env)->SetByteArrayRegion(env, payload, 0, (jsize)r->payload.len, (const jbyte*)r->payload.ptr);
         jfloatArray result = (*env)->CallObjectMethod(env, view, g_measure,
             (jint)r->element_type,(jint)r->kind,r->known_width,r->known_height,(jint)r->known_mask,
@@ -555,7 +595,7 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
             text,family,r->font_size,(jint)r->font_weight,(jint)r->font_style,(jint)r->wrap,
             (jint)r->word_break,(jint)r->overflow,
             r->letter_spacing,r->line_height,r->indent_logical_pixels,r->indent_percentage,
-            (jint)r->max_lines,
+            (jint)r->max_lines,font_values,(jint)r->font_feature_count,(jint)r->font_optical_sizing,
             (jint)r->payload_version,payload,r->intrinsic_width,r->intrinsic_height,(jint)r->intrinsic_mask);
         if (clear_exception(env) || result == NULL || (*env)->GetArrayLength(env, result) < 7) ok = false;
         if (ok) {
@@ -566,6 +606,7 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
             responses[i].last_baseline=values[5]; responses[i].metrics_mask=(uint32_t)values[6];
         }
         if (result) (*env)->DeleteLocalRef(env, result); if (payload) (*env)->DeleteLocalRef(env, payload);
+        if (font_values) (*env)->DeleteLocalRef(env, font_values);
         if (family) (*env)->DeleteLocalRef(env, family); if (text) (*env)->DeleteLocalRef(env, text);
     }
     (*env)->DeleteLocalRef(env, view); if (attached) (*g_vm)->DetachCurrentThread(g_vm); return ok;
@@ -712,7 +753,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     METHOD(g_current_revision,"currentRevisionFromNative","()J")
     METHOD(g_stage_operation,"stageOperationFromNative","(IIJJJIIIFJ[FLjava/lang/String;[Ljava/lang/String;Lrs/whisker/runtime/WhiskerValue;)Z")
     METHOD(g_commit_frame,"commitFrameFromNative","()Z")
-    METHOD(g_measure,"measureFromNative","(IIFFIFFIILjava/lang/String;Ljava/lang/String;FIIIIIFFFFII[BFFI)[F")
+    METHOD(g_measure,"measureFromNative","(IIFFIFFIILjava/lang/String;Ljava/lang/String;FIIIIIFFFFI[Ljava/lang/String;III[BFFI)[F")
     METHOD(g_resource_command,"resourceCommandFromNative","(IIIJJLjava/lang/String;[B)Z")
     METHOD(g_invoke_module,"invokeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;ZJJ)Z")
     METHOD(g_observe_module,"observeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;Z)V")

@@ -2,6 +2,7 @@ package rs.whisker.runtime.measure
 
 import android.content.Context
 import android.graphics.Typeface
+import android.os.Build
 import android.text.Layout
 import android.text.SpannableString
 import android.text.Spanned
@@ -23,7 +24,8 @@ internal class HostMeasurementProvider(private val context: Context) {
         text: String, fontFamily: String, fontSize: Float, fontWeight: Int,
         fontStyle: Int, wrap: Int, wordBreak: Int, overflow: Int, letterSpacing: Float,
         lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float,
-        maxLines: Int, payloadVersion: Int, payload: ByteArray,
+        maxLines: Int, fontSettings: Array<String>, fontFeatureCount: Int,
+        fontOpticalSizing: Int, payloadVersion: Int, payload: ByteArray,
         intrinsicWidth: Float, intrinsicHeight: Float, intrinsicMask: Int,
     ): FloatArray {
         if (kind == MEASURE_TEXT) {
@@ -32,6 +34,7 @@ internal class HostMeasurementProvider(private val context: Context) {
                 availableWidth, availableWidthKind,
                 text, fontFamily, fontSize, fontWeight, fontStyle, wrap, wordBreak, overflow,
                 letterSpacing, lineHeight, indentLogicalPixels, indentPercentage, maxLines,
+                fontSettings, fontFeatureCount, fontOpticalSizing,
             )
         }
         if ((kind == MEASURE_REPLACED_CONTENT || kind == MEASURE_EMBEDDED_SURFACE) &&
@@ -66,6 +69,7 @@ internal class HostMeasurementProvider(private val context: Context) {
         text: String, fontFamily: String, fontSize: Float, fontWeight: Int,
         fontStyle: Int, wrap: Int, wordBreak: Int, overflow: Int, letterSpacing: Float,
         lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float, maxLines: Int,
+        fontSettings: Array<String>, fontFeatureCount: Int, fontOpticalSizing: Int,
     ): FloatArray {
         val density = context.resources.displayMetrics.density
         val paint = TextPaint().apply {
@@ -76,6 +80,21 @@ internal class HostMeasurementProvider(private val context: Context) {
                 Typeface.create(fontFamily, Typeface.NORMAL)
             typeface = Typeface.create(baseTypeface, typefaceStyle)
             this.letterSpacing = if (fontSize > 0f) letterSpacing / fontSize else 0f
+            fontFeatureSettings = fontSettings.take(fontFeatureCount).joinToString(", ") {
+                val (tag, value) = parseFontSetting(it)
+                "'$tag' ${value.toLong()}"
+            }.ifEmpty { null }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val variations = fontSettings.drop(fontFeatureCount)
+                    .map(::parseFontSetting)
+                    .toMutableList()
+                if (fontOpticalSizing == 0 && variations.none { it.first == "opsz" }) {
+                    variations += "opsz" to fontSize.toDouble()
+                }
+                fontVariationSettings = variations.joinToString(", ") {
+                    "'${it.first}' ${it.second}"
+                }.ifEmpty { null }
+            }
         }
         val widthBasis = when {
             knownMask and WIDTH != 0 -> knownWidth
@@ -133,6 +152,12 @@ internal class HostMeasurementProvider(private val context: Context) {
 
     private fun ready(width: Float, height: Float): FloatArray =
         floatArrayOf(READY, 0f, width, height, 0f, 0f, 0f)
+}
+
+private fun parseFontSetting(value: String): Pair<String, Double> {
+    val separator = value.indexOf('=')
+    require(separator == 4)
+    return value.substring(0, separator) to value.substring(separator + 1).toDouble()
 }
 
 private fun protectCjkBreaks(value: String): String = buildString {

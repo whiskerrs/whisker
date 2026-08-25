@@ -9,6 +9,7 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.Layout
 import android.text.TextUtils
+import android.os.Build
 import android.text.style.LeadingMarginSpan
 import android.widget.TextView
 import kotlin.math.max
@@ -18,11 +19,34 @@ public class WhiskerTextView(context: Context) : TextView(context) {
     private var whiskerTextValue: String = ""
     private var whiskerTextIndent: WhiskerTextIndent = WhiskerTextIndent()
     private var whiskerWordBreak: WhiskerTextWordBreak = WhiskerTextWordBreak.NORMAL
+    public var whiskerFontFeatures: List<WhiskerFontFeature> = emptyList()
+        private set
+    public var whiskerFontVariations: List<WhiskerFontVariation> = emptyList()
+        private set
+    public var whiskerFontOpticalSizing: WhiskerFontOpticalSizing = WhiskerFontOpticalSizing.NONE
+        private set
 
     public fun setWhiskerText(content: WhiskerTextContent) {
         whiskerTextValue = content.value
         whiskerTextIndent = content.indent
         whiskerWordBreak = content.wordBreak
+        whiskerFontFeatures = content.fontFeatures
+        whiskerFontVariations = content.fontVariations
+        whiskerFontOpticalSizing = content.fontOpticalSizing
+        fontFeatureSettings = content.fontFeatures.joinToString(", ") {
+            "'${it.tag}' ${it.value}"
+        }.ifEmpty { null }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val variations = content.fontVariations.toMutableList()
+            if (content.fontOpticalSizing == WhiskerFontOpticalSizing.AUTO &&
+                variations.none { it.tag == "opsz" }
+            ) {
+                variations += WhiskerFontVariation("opsz", content.fontSize)
+            }
+            fontVariationSettings = variations.joinToString(", ") {
+                "'${it.tag}' ${it.value}"
+            }.ifEmpty { null }
+        }
         setHorizontallyScrolling(!content.wrap)
         maxLines = when {
             !content.wrap -> 1

@@ -1,13 +1,14 @@
 //! Deterministic resolution for Whisker's fixed inherited text context.
 
 use core::fmt;
+use std::collections::BTreeMap;
 
 use crate::{
     CalcExpression, ColorValue, ComputedLayoutStyle, ComputedPaintStyle, FontFamilyValue,
-    FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue,
-    LineHeightValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
-    TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
-    TextShadowValue, WhiteSpaceValue, WordBreakValue,
+    FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue, FontWeightValue,
+    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, SpecifiedStyle, StyleNumber,
+    StyleProperty, StyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
+    TextDecorationValue, TextOverflowValue, TextShadowValue, WhiteSpaceValue, WordBreakValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -160,6 +161,9 @@ impl ComputedTextDecoration {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InheritedStyle {
     font_family: FontFamilyValue,
+    font_features: Vec<FontFeatureValue>,
+    font_variations: Vec<FontVariationValue>,
+    font_optical_sizing: FontOpticalSizingValue,
     font_size: StyleNumber,
     font_weight: FontWeightValue,
     font_style: FontStyleValue,
@@ -175,6 +179,9 @@ impl InheritedStyle {
     fn initial(environment: StyleEnvironment) -> Self {
         Self {
             font_family: FontFamilyValue::System,
+            font_features: Vec::new(),
+            font_variations: Vec::new(),
+            font_optical_sizing: FontOpticalSizingValue::None,
             font_size: StyleNumber::new(environment.root_font_size()),
             font_weight: FontWeightValue::NORMAL,
             font_style: FontStyleValue::Normal,
@@ -204,6 +211,21 @@ impl InheritedStyle {
     /// Returns the selected font family.
     pub const fn font_family(&self) -> &FontFamilyValue {
         &self.font_family
+    }
+
+    /// Returns sorted, unique OpenType feature settings.
+    pub fn font_features(&self) -> &[FontFeatureValue] {
+        &self.font_features
+    }
+
+    /// Returns sorted, unique variable-font axis settings.
+    pub fn font_variations(&self) -> &[FontVariationValue] {
+        &self.font_variations
+    }
+
+    /// Returns inherited Lynx optical sizing behavior.
+    pub const fn font_optical_sizing(&self) -> FontOpticalSizingValue {
+        self.font_optical_sizing
     }
 
     /// Returns the computed logical-pixel font size.
@@ -257,6 +279,18 @@ impl InheritedStyle {
         let mut impacts = PropertyImpactSet::EMPTY;
         if self.font_family != previous.font_family {
             properties |= InheritedPropertySet::FONT_FAMILY;
+            impacts |= PropertyImpactSet::TEXT_METRICS;
+        }
+        if self.font_features != previous.font_features {
+            properties |= InheritedPropertySet::FONT_FEATURE_SETTINGS;
+            impacts |= PropertyImpactSet::TEXT_METRICS;
+        }
+        if self.font_variations != previous.font_variations {
+            properties |= InheritedPropertySet::FONT_VARIATION_SETTINGS;
+            impacts |= PropertyImpactSet::TEXT_METRICS;
+        }
+        if self.font_optical_sizing != previous.font_optical_sizing {
+            properties |= InheritedPropertySet::FONT_OPTICAL_SIZING;
             impacts |= PropertyImpactSet::TEXT_METRICS;
         }
         if self.font_size != previous.font_size {
@@ -427,6 +461,12 @@ impl InheritedPropertySet {
     pub const TEXT_DECORATION: Self = Self(1 << 8);
     /// `text-align`.
     pub const TEXT_ALIGN: Self = Self(1 << 9);
+    /// `font-feature-settings`.
+    pub const FONT_FEATURE_SETTINGS: Self = Self(1 << 10);
+    /// `font-variation-settings`.
+    pub const FONT_VARIATION_SETTINGS: Self = Self(1 << 11);
+    /// `font-optical-sizing`.
+    pub const FONT_OPTICAL_SIZING: Self = Self(1 << 12);
 
     /// Returns whether this set contains every bit from `other`.
     pub const fn contains(self, other: Self) -> bool {
@@ -542,6 +582,21 @@ pub fn resolve_style(
         Some(StyleValue::FontFamily(value)) => value.clone(),
         Some(_) => return Err(wrong_type(StyleProperty::FontFamily)),
         None => base.font_family.clone(),
+    };
+    let font_features = match declarations.font_features {
+        Some(StyleValue::FontFeatures(values)) => canonical_features(values),
+        Some(_) => return Err(wrong_type(StyleProperty::FontFeatureSettings)),
+        None => base.font_features.clone(),
+    };
+    let font_variations = match declarations.font_variations {
+        Some(StyleValue::FontVariations(values)) => canonical_variations(values)?,
+        Some(_) => return Err(wrong_type(StyleProperty::FontVariationSettings)),
+        None => base.font_variations.clone(),
+    };
+    let font_optical_sizing = match declarations.font_optical_sizing {
+        Some(StyleValue::FontOpticalSizing(value)) => *value,
+        Some(_) => return Err(wrong_type(StyleProperty::FontOpticalSizing)),
+        None => base.font_optical_sizing,
     };
     let font_weight = match declarations.font_weight {
         Some(StyleValue::FontWeight(value)) if FontWeightValue::new(value.get()).is_some() => {
@@ -720,6 +775,9 @@ pub fn resolve_style(
 
     let inherited_text = InheritedStyle {
         font_family,
+        font_features,
+        font_variations,
+        font_optical_sizing,
         font_size,
         font_weight,
         font_style,
@@ -767,6 +825,9 @@ pub fn resolve_text_style(
 #[derive(Default)]
 struct InheritedDeclarations<'a> {
     font_family: Option<&'a StyleValue>,
+    font_features: Option<&'a StyleValue>,
+    font_variations: Option<&'a StyleValue>,
+    font_optical_sizing: Option<&'a StyleValue>,
     font_size: Option<&'a StyleValue>,
     font_weight: Option<&'a StyleValue>,
     font_style: Option<&'a StyleValue>,
@@ -784,6 +845,9 @@ impl<'a> InheritedDeclarations<'a> {
         for declaration in specified.resolved() {
             let slot = match declaration.property() {
                 StyleProperty::FontFamily => &mut values.font_family,
+                StyleProperty::FontFeatureSettings => &mut values.font_features,
+                StyleProperty::FontVariationSettings => &mut values.font_variations,
+                StyleProperty::FontOpticalSizing => &mut values.font_optical_sizing,
                 StyleProperty::FontSize => &mut values.font_size,
                 StyleProperty::FontWeight => &mut values.font_weight,
                 StyleProperty::FontStyle => &mut values.font_style,
@@ -799,6 +863,36 @@ impl<'a> InheritedDeclarations<'a> {
         }
         values
     }
+}
+
+fn canonical_features(values: &[FontFeatureValue]) -> Vec<FontFeatureValue> {
+    values
+        .iter()
+        .fold(BTreeMap::new(), |mut result, value| {
+            result.insert(value.tag, value.value);
+            result
+        })
+        .into_iter()
+        .map(|(tag, value)| FontFeatureValue { tag, value })
+        .collect()
+}
+
+fn canonical_variations(
+    values: &[FontVariationValue],
+) -> Result<Vec<FontVariationValue>, StyleResolutionError> {
+    let mut result = BTreeMap::new();
+    for value in values {
+        if !value.value.get().is_finite() {
+            return Err(StyleResolutionError::InvalidPropertyValue(
+                StyleProperty::FontVariationSettings,
+            ));
+        }
+        result.insert(value.tag, value.value);
+    }
+    Ok(result
+        .into_iter()
+        .map(|(tag, value)| FontVariationValue { tag, value })
+        .collect())
 }
 
 fn expect_length_percentage(
@@ -1089,6 +1183,93 @@ mod tests {
                 blue: 0,
                 alpha: number(1.0),
             }
+        );
+    }
+
+    #[test]
+    fn extended_font_settings_are_canonical_inherited_and_validated() {
+        let tag = |value| crate::OpenTypeTagValue::new(value).unwrap();
+        let specified = SpecifiedStyle::new()
+            .push(
+                StyleProperty::FontFeatureSettings,
+                StyleValue::FontFeatures(vec![
+                    FontFeatureValue {
+                        tag: tag(*b"liga"),
+                        value: 1,
+                    },
+                    FontFeatureValue {
+                        tag: tag(*b"kern"),
+                        value: 1,
+                    },
+                    FontFeatureValue {
+                        tag: tag(*b"kern"),
+                        value: 0,
+                    },
+                ]),
+            )
+            .push(
+                StyleProperty::FontVariationSettings,
+                StyleValue::FontVariations(vec![
+                    FontVariationValue {
+                        tag: tag(*b"wght"),
+                        value: number(400.0),
+                    },
+                    FontVariationValue {
+                        tag: tag(*b"wdth"),
+                        value: number(90.0),
+                    },
+                    FontVariationValue {
+                        tag: tag(*b"wght"),
+                        value: number(650.0),
+                    },
+                ]),
+            )
+            .push(
+                StyleProperty::FontOpticalSizing,
+                StyleValue::FontOpticalSizing(FontOpticalSizingValue::Auto),
+            );
+        let parent = resolve_text_style(&specified, None, StyleEnvironment::default()).unwrap();
+        let inherited = parent.inherited_for_children();
+        assert_eq!(
+            inherited.font_features(),
+            [
+                FontFeatureValue {
+                    tag: tag(*b"kern"),
+                    value: 0,
+                },
+                FontFeatureValue {
+                    tag: tag(*b"liga"),
+                    value: 1,
+                },
+            ]
+        );
+        assert_eq!(inherited.font_variations()[0].tag, tag(*b"wdth"));
+        assert_eq!(inherited.font_variations()[0].value.get(), 90.0);
+        assert_eq!(inherited.font_variations()[1].tag, tag(*b"wght"));
+        assert_eq!(inherited.font_variations()[1].value.get(), 650.0);
+        assert_eq!(
+            inherited.font_optical_sizing(),
+            FontOpticalSizingValue::Auto
+        );
+
+        let child = resolve_text_style(
+            &SpecifiedStyle::new(),
+            Some(inherited),
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(child.inherited_for_children(), inherited);
+
+        let invalid = declaration(
+            StyleProperty::FontVariationSettings,
+            StyleValue::FontVariations(vec![FontVariationValue {
+                tag: tag(*b"wght"),
+                value: number(f32::NAN),
+            }]),
+        );
+        assert_eq!(
+            resolve_text_style(&invalid, None, StyleEnvironment::default()).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::FontVariationSettings)
         );
     }
 
@@ -1391,6 +1572,9 @@ mod tests {
     fn wrong_semantic_variants_are_reported_per_property() {
         for property in [
             StyleProperty::FontFamily,
+            StyleProperty::FontFeatureSettings,
+            StyleProperty::FontVariationSettings,
+            StyleProperty::FontOpticalSizing,
             StyleProperty::FontSize,
             StyleProperty::FontWeight,
             StyleProperty::FontStyle,
@@ -1959,6 +2143,15 @@ mod tests {
             font_size: number(20.0),
             font_weight: FontWeightValue::BOLD,
             font_style: FontStyleValue::Oblique,
+            font_features: vec![FontFeatureValue {
+                tag: crate::OpenTypeTagValue::new(*b"kern").unwrap(),
+                value: 0,
+            }],
+            font_variations: vec![FontVariationValue {
+                tag: crate::OpenTypeTagValue::new(*b"wght").unwrap(),
+                value: number(650.0),
+            }],
+            font_optical_sizing: FontOpticalSizingValue::Auto,
             line_height: ComputedLineHeight::LogicalPixels(number(24.0)),
             letter_spacing: number(1.0),
             color: ColorValue::Named("red".into()),
@@ -1981,6 +2174,9 @@ mod tests {
             InheritedPropertySet::FONT_SIZE,
             InheritedPropertySet::FONT_WEIGHT,
             InheritedPropertySet::FONT_STYLE,
+            InheritedPropertySet::FONT_FEATURE_SETTINGS,
+            InheritedPropertySet::FONT_VARIATION_SETTINGS,
+            InheritedPropertySet::FONT_OPTICAL_SIZING,
             InheritedPropertySet::LINE_HEIGHT,
             InheritedPropertySet::LETTER_SPACING,
             InheritedPropertySet::COLOR,

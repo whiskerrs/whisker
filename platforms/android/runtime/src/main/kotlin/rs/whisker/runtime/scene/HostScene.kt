@@ -11,6 +11,9 @@ import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerView
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerTextContent
+import rs.whisker.runtime.WhiskerFontFeature
+import rs.whisker.runtime.WhiskerFontOpticalSizing
+import rs.whisker.runtime.WhiskerFontVariation
 import rs.whisker.runtime.WhiskerTextDecoration
 import rs.whisker.runtime.WhiskerTextDecorationLine
 import rs.whisker.runtime.WhiskerTextDecorationStyle
@@ -374,11 +377,22 @@ internal class HostScene(
     }
 
     private fun applyText(node: HostNode, text: String, values: FloatArray, names: Array<String>) {
-        require(values.size >= 31)
+        require(values.size >= 33)
         require(values[27] == 0f || values[27] == 1f)
         require(values[28] in 0f..2f && values[28] == values[28].toInt().toFloat())
         require(values[29] >= 0f && values[29] == values[29].toInt().toFloat())
         require(values[30] == 0f || values[30] == 1f)
+        require(values[31] == 0f || values[31] == 1f)
+        val featureCount = values[32].toInt()
+        require(featureCount >= 0 && values[32] == featureCount.toFloat())
+        require(names.size >= 3 + featureCount)
+        val settings = names.drop(3).map(::parseFontSetting)
+        val features = settings.take(featureCount).map {
+            WhiskerFontFeature(it.first, it.second.toLong())
+        }
+        val variations = settings.drop(featureCount).map {
+            WhiskerFontVariation(it.first, it.second.toFloat())
+        }
         val mounted = requireNotNull(node.mountedElement)
         require(
             mounted.setText(
@@ -386,6 +400,13 @@ internal class HostScene(
                     value = text,
                     fontSize = values[0],
                     fontWeight = values[1].toInt(),
+                    fontFeatures = features,
+                    fontVariations = variations,
+                    fontOpticalSizing = if (values[31] == 0f) {
+                        WhiskerFontOpticalSizing.AUTO
+                    } else {
+                        WhiskerFontOpticalSizing.NONE
+                    },
                     color = if (values[7] == 0f) {
                         parseNamedColor(names[0])
                     } else {
@@ -428,6 +449,12 @@ internal class HostScene(
         ) {
             "text operation sent to element ${mounted.registration.name} without a text implementation"
         }
+    }
+
+    private fun parseFontSetting(value: String): Pair<String, Double> {
+        val separator = value.indexOf('=')
+        require(separator == 4)
+        return value.substring(0, separator) to value.substring(separator + 1).toDouble()
     }
 
     private fun applyPaint(node: HostNode, paint: HostBoxPaint) {

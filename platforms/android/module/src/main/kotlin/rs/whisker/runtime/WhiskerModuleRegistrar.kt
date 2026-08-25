@@ -19,6 +19,9 @@ public data class WhiskerTextContent(
     public val value: String,
     public val fontSize: Float,
     public val fontWeight: Int,
+    public val fontFeatures: List<WhiskerFontFeature> = emptyList(),
+    public val fontVariations: List<WhiskerFontVariation> = emptyList(),
+    public val fontOpticalSizing: WhiskerFontOpticalSizing = WhiskerFontOpticalSizing.NONE,
     public val color: Int,
     public val alignment: WhiskerTextAlignment = WhiskerTextAlignment.START,
     public val indent: WhiskerTextIndent = WhiskerTextIndent(),
@@ -29,6 +32,10 @@ public data class WhiskerTextContent(
     public val decoration: WhiskerTextDecoration? = null,
     public val shadow: WhiskerTextShadow? = null,
 )
+
+public data class WhiskerFontFeature(public val tag: String, public val value: Long)
+public data class WhiskerFontVariation(public val tag: String, public val value: Float)
+public enum class WhiskerFontOpticalSizing { AUTO, NONE }
 
 public enum class WhiskerTextAlignment { START, END, LEFT, RIGHT, CENTER }
 
