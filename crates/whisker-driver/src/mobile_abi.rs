@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 11;
+pub const MOBILE_ABI_MINOR: u16 = 12;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -74,6 +74,8 @@ pub const BACKGROUND_ATTACHMENT_SCROLL: u32 = 0;
 pub const BACKGROUND_BLEND_NORMAL: u32 = 0;
 
 pub const CLIP_SHAPE_INSET: u32 = 0;
+pub const CLIP_SHAPE_CIRCLE: u32 = 1;
+pub const CLIP_SHAPE_ELLIPSE: u32 = 2;
 
 pub const MEASURE_TEXT: u32 = 1;
 pub const MEASURE_REPLACED_CONTENT: u32 = 2;
@@ -175,6 +177,23 @@ pub struct MobileClipInset {
     pub edges: [MobileLengthPercentage; 4],
     pub radii_horizontal: [MobileLengthPercentage; 4],
     pub radii_vertical: [MobileLengthPercentage; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileClipCircle {
+    pub radius: MobileLengthPercentage,
+    pub center_x: MobileLengthPercentage,
+    pub center_y: MobileLengthPercentage,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileClipEllipse {
+    pub radius_x: MobileLengthPercentage,
+    pub radius_y: MobileLengthPercentage,
+    pub center_x: MobileLengthPercentage,
+    pub center_y: MobileLengthPercentage,
 }
 
 /// One typed clip path. `payload` points to the shape selected by `shape_kind`.
@@ -604,6 +623,8 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);
             assert_eq!(std::mem::size_of::<MobileBoxShadow>(), 56);
             assert_eq!(std::mem::size_of::<MobileClipInset>(), 96);
+            assert_eq!(std::mem::size_of::<MobileClipCircle>(), 24);
+            assert_eq!(std::mem::size_of::<MobileClipEllipse>(), 32);
             assert_eq!(std::mem::size_of::<MobileClipPath>(), 24);
             assert_eq!(std::mem::size_of::<MobileGradientStop>(), 40);
             assert_eq!(std::mem::size_of::<MobileRadialGradient>(), 48);

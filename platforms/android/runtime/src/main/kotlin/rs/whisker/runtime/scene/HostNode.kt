@@ -11,7 +11,7 @@ import rs.whisker.runtime.WhiskerMountedElement
 import rs.whisker.runtime.paint.HostBoxPaint
 import rs.whisker.runtime.paint.HostBackgroundLayers
 import rs.whisker.runtime.paint.HostBoxShadow
-import rs.whisker.runtime.paint.HostInsetClipPath
+import rs.whisker.runtime.paint.HostClipPath
 import rs.whisker.runtime.paint.ResolvedBoxGeometry
 import rs.whisker.runtime.paint.normalizeRadii
 import rs.whisker.runtime.paint.drawInsetBoxShadows
@@ -40,7 +40,7 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
     var paint: HostBoxPaint? = null
     var backgroundLayers: HostBackgroundLayers? = null
     var boxShadows: List<HostBoxShadow> = emptyList()
-    var clipPath: HostInsetClipPath? = null
+    var clipPath: HostClipPath? = null
     var mountedElement: WhiskerMountedElement? = null
     var zOrder: Int = 0
 

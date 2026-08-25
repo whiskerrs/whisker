@@ -14,7 +14,7 @@ final class WhiskerNodeView: UIView {
     private let defaultChildrenHost = WhiskerChildrenHostView(frame: .zero)
     private let overflowMask = CAShapeLayer()
     private let clipPathMask = CAShapeLayer()
-    private var clipPath: HostInsetClipPath?
+    private var clipPath: HostClipPath?
     private var boxShadows: [HostBoxShadow] = []
     private var boxShadowLayers: [CAShapeLayer] = []
     private var boxShadowMaskLayers: [CAShapeLayer] = []
@@ -110,7 +110,7 @@ final class WhiskerNodeView: UIView {
         updateClipPathMask()
     }
 
-    func setClipPath(_ clipPath: HostInsetClipPath?) {
+    func setClipPath(_ clipPath: HostClipPath?) {
         self.clipPath = clipPath
         updateClipPathMask()
     }

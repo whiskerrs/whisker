@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "whisker_bridge.h"
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 11 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 12 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -39,7 +39,7 @@ enum {
 };
 enum { WHISKER_BACKGROUND_ATTACHMENT_SCROLL = 0 };
 enum { WHISKER_BACKGROUND_BLEND_NORMAL = 0 };
-enum { WHISKER_CLIP_SHAPE_INSET = 0 };
+enum { WHISKER_CLIP_SHAPE_INSET = 0, WHISKER_CLIP_SHAPE_CIRCLE = 1, WHISKER_CLIP_SHAPE_ELLIPSE = 2 };
 enum {
   WHISKER_MEASURE_TEXT = 1, WHISKER_MEASURE_REPLACED_CONTENT,
   WHISKER_MEASURE_NATIVE_CONTROL, WHISKER_MEASURE_EMBEDDED_SURFACE,
@@ -88,6 +88,8 @@ typedef struct {
   WhiskerMobileLengthPercentage radii_horizontal[4];
   WhiskerMobileLengthPercentage radii_vertical[4];
 } WhiskerMobileClipInset;
+typedef struct { WhiskerMobileLengthPercentage radius, center_x, center_y; } WhiskerMobileClipCircle;
+typedef struct { WhiskerMobileLengthPercentage radius_x, radius_y, center_x, center_y; } WhiskerMobileClipEllipse;
 typedef struct {
   uint32_t reference_box, shape_kind; const void *payload; size_t payload_count;
 } WhiskerMobileClipPath;
@@ -140,6 +142,8 @@ _Static_assert(sizeof(WhiskerMobileBackgroundImage) == 24, "WhiskerMobileBackgro
 _Static_assert(sizeof(WhiskerMobileBackgroundLayer) == 88, "WhiskerMobileBackgroundLayer ABI drift");
 _Static_assert(sizeof(WhiskerMobileBoxShadow) == 56, "WhiskerMobileBoxShadow ABI drift");
 _Static_assert(sizeof(WhiskerMobileClipInset) == 96, "WhiskerMobileClipInset ABI drift");
+_Static_assert(sizeof(WhiskerMobileClipCircle) == 24, "WhiskerMobileClipCircle ABI drift");
+_Static_assert(sizeof(WhiskerMobileClipEllipse) == 32, "WhiskerMobileClipEllipse ABI drift");
 _Static_assert(sizeof(WhiskerMobileClipPath) == 24, "WhiskerMobileClipPath ABI drift");
 typedef struct {
   uint32_t id; uint8_t value_kind, optional_kind, _pad[2]; WhiskerStringRef name;

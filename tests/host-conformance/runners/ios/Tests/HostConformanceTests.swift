@@ -444,7 +444,9 @@ private final class Driver {
                     name == "paint.visual-effects.box-shadow-blur" ||
                     name == "paint.visual-effects.box-shadow-inset" ||
                     name == "paint.visual-effects.box-shadow-multiple" ||
-                    name == "paint.visual-effects.clip-path-inset" else {
+                    name == "paint.visual-effects.clip-path-inset" ||
+                    name == "paint.visual-effects.clip-path-circle" ||
+                    name == "paint.visual-effects.clip-path-ellipse" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -686,15 +688,23 @@ private final class Driver {
         let clipPaths = UnsafeMutablePointer<WhiskerMobileClipPath>.allocate(
             capacity: clipStorageCount
         )
+        let clipCircles = UnsafeMutablePointer<WhiskerMobileClipCircle>.allocate(capacity: clipStorageCount)
+        let clipEllipses = UnsafeMutablePointer<WhiskerMobileClipEllipse>.allocate(capacity: clipStorageCount)
         for (index, fixture) in fixtures.enumerated() {
             clipInsets.advanced(by: index).initialize(
                 to: fixture.clipPath?.inset ?? WhiskerMobileClipInset()
             )
+            clipCircles.advanced(by: index).initialize(to: fixture.clipPath?.circle ?? WhiskerMobileClipCircle())
+            clipEllipses.advanced(by: index).initialize(to: fixture.clipPath?.ellipse ?? WhiskerMobileClipEllipse())
             var path = WhiskerMobileClipPath()
             if let clip = fixture.clipPath {
                 path.reference_box = clip.referenceBox
-                path.shape_kind = UInt32(WHISKER_CLIP_SHAPE_INSET)
-                path.payload = UnsafeRawPointer(clipInsets.advanced(by: index))
+                path.shape_kind = clip.shapeKind
+                path.payload = switch clip.shapeKind {
+                case UInt32(WHISKER_CLIP_SHAPE_CIRCLE): UnsafeRawPointer(clipCircles.advanced(by: index))
+                case UInt32(WHISKER_CLIP_SHAPE_ELLIPSE): UnsafeRawPointer(clipEllipses.advanced(by: index))
+                default: UnsafeRawPointer(clipInsets.advanced(by: index))
+                }
                 path.payload_count = 1
             }
             clipPaths.advanced(by: index).initialize(to: path)
@@ -704,6 +714,10 @@ private final class Driver {
             clipInsets.deallocate()
             clipPaths.deinitialize(count: fixtures.count)
             clipPaths.deallocate()
+            clipCircles.deinitialize(count: fixtures.count)
+            clipCircles.deallocate()
+            clipEllipses.deinitialize(count: fixtures.count)
+            clipEllipses.deallocate()
         }
         try layouts.withUnsafeMutableBufferPointer { layoutBuffer in
             try paints.withUnsafeMutableBufferPointer { paintBuffer in
@@ -1102,7 +1116,10 @@ private struct SceneFixtureNode {
 
 private struct SceneClipPath {
     let referenceBox: UInt32
+    let shapeKind: UInt32
     let inset: WhiskerMobileClipInset
+    let circle: WhiskerMobileClipCircle
+    let ellipse: WhiskerMobileClipEllipse
 }
 
 private struct ScenePaintLayer {
@@ -1334,9 +1351,27 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
 
 private func sceneClipPath(_ fixture: [String: Any]) throws -> SceneClipPath {
     let shape = try object(fixture, "shape")
-    guard try string(shape, "kind") == "inset" else {
-        throw Failure("unsupported clip-path shape")
+    let kind = try string(shape, "kind")
+    let referenceBox = try backgroundBox(fixture["reference_box"] as? String ?? "border")
+    if kind == "circle" {
+        let center = try (shape["center"] as? [Any] ?? []).map(lengthPercentage)
+        guard center.count == 2 else { throw Failure("circle needs a center") }
+        var circle = WhiskerMobileClipCircle()
+        circle.radius = try lengthPercentage(shape["radius"] as Any)
+        circle.center_x = center[0]
+        circle.center_y = center[1]
+        return SceneClipPath(referenceBox: referenceBox, shapeKind: UInt32(WHISKER_CLIP_SHAPE_CIRCLE), inset: WhiskerMobileClipInset(), circle: circle, ellipse: WhiskerMobileClipEllipse())
     }
+    if kind == "ellipse" {
+        let radii = try (shape["radii"] as? [Any] ?? []).map(lengthPercentage)
+        let center = try (shape["center"] as? [Any] ?? []).map(lengthPercentage)
+        guard radii.count == 2, center.count == 2 else { throw Failure("ellipse needs radii and center") }
+        var ellipse = WhiskerMobileClipEllipse()
+        ellipse.radius_x = radii[0]; ellipse.radius_y = radii[1]
+        ellipse.center_x = center[0]; ellipse.center_y = center[1]
+        return SceneClipPath(referenceBox: referenceBox, shapeKind: UInt32(WHISKER_CLIP_SHAPE_ELLIPSE), inset: WhiskerMobileClipInset(), circle: WhiskerMobileClipCircle(), ellipse: ellipse)
+    }
+    guard kind == "inset" else { throw Failure("unsupported clip-path shape") }
     guard let rawEdges = shape["edges"] as? [Any],
           let rawRadii = shape["radii"] as? [Any] else {
         throw Failure("inset clip-path needs edge and radius arrays")
@@ -1370,8 +1405,11 @@ private func sceneClipPath(_ fixture: [String: Any]) throws -> SceneClipPath {
         WhiskerMobileLengthPercentage(length: radii[3].1, fraction: 0)
     )
     return SceneClipPath(
-        referenceBox: try backgroundBox(fixture["reference_box"] as? String ?? "border"),
-        inset: inset
+        referenceBox: referenceBox,
+        shapeKind: UInt32(WHISKER_CLIP_SHAPE_INSET),
+        inset: inset,
+        circle: WhiskerMobileClipCircle(),
+        ellipse: WhiskerMobileClipEllipse()
     )
 }
 

@@ -285,24 +285,26 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 }
                 if (op->payload_count != 1) { ok = false; break; }
                 const WhiskerMobileClipPath* clip = op->payload;
-                if (clip->shape_kind != WHISKER_CLIP_SHAPE_INSET ||
-                    clip->payload == NULL || clip->payload_count != 1) {
+                if (clip->payload == NULL || clip->payload_count != 1) {
                     ok = false; break;
                 }
-                const WhiskerMobileClipInset* inset = clip->payload;
                 storage[count++] = (float)clip->reference_box;
                 storage[count++] = (float)clip->shape_kind;
-                for (int j=0;j<4;++j) {
-                    storage[count++]=inset->edges[j].length;
-                    storage[count++]=inset->edges[j].fraction;
-                }
-                for (int j=0;j<4;++j) {
-                    storage[count++]=inset->radii_horizontal[j].length;
-                    storage[count++]=inset->radii_horizontal[j].fraction;
-                }
-                for (int j=0;j<4;++j) {
-                    storage[count++]=inset->radii_vertical[j].length;
-                    storage[count++]=inset->radii_vertical[j].fraction;
+                if (clip->shape_kind == WHISKER_CLIP_SHAPE_INSET) {
+                    const WhiskerMobileClipInset* inset = clip->payload;
+                    for (int j=0;j<4;++j) { storage[count++]=inset->edges[j].length; storage[count++]=inset->edges[j].fraction; }
+                    for (int j=0;j<4;++j) { storage[count++]=inset->radii_horizontal[j].length; storage[count++]=inset->radii_horizontal[j].fraction; }
+                    for (int j=0;j<4;++j) { storage[count++]=inset->radii_vertical[j].length; storage[count++]=inset->radii_vertical[j].fraction; }
+                } else if (clip->shape_kind == WHISKER_CLIP_SHAPE_CIRCLE) {
+                    const WhiskerMobileClipCircle* circle = clip->payload;
+                    const WhiskerMobileLengthPercentage values[] = {circle->radius, circle->center_x, circle->center_y};
+                    for (int j=0;j<3;++j) { storage[count++]=values[j].length; storage[count++]=values[j].fraction; }
+                } else if (clip->shape_kind == WHISKER_CLIP_SHAPE_ELLIPSE) {
+                    const WhiskerMobileClipEllipse* ellipse = clip->payload;
+                    const WhiskerMobileLengthPercentage values[] = {ellipse->radius_x, ellipse->radius_y, ellipse->center_x, ellipse->center_y};
+                    for (int j=0;j<4;++j) { storage[count++]=values[j].length; storage[count++]=values[j].fraction; }
+                } else {
+                    ok = false; break;
                 }
                 numbers = floats(env, storage, count);
                 break;

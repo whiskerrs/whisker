@@ -910,6 +910,8 @@ struct MobileFrameOwned {
     _paints: Vec<Box<MobileBoxPaint>>,
     _box_shadows: Vec<Box<[MobileBoxShadow]>>,
     _clip_insets: Vec<Box<MobileClipInset>>,
+    _clip_circles: Vec<Box<MobileClipCircle>>,
+    _clip_ellipses: Vec<Box<MobileClipEllipse>>,
     _clip_paths: Vec<Box<MobileClipPath>>,
     _gradient_stops: Vec<Box<[MobileGradientStop]>>,
     _radial_gradients: Vec<Box<MobileRadialGradient>>,
@@ -947,6 +949,8 @@ impl MobileFrameOwned {
         let mut paints = Vec::<Box<MobileBoxPaint>>::new();
         let mut box_shadows = Vec::<Box<[MobileBoxShadow]>>::new();
         let mut clip_insets = Vec::<Box<MobileClipInset>>::new();
+        let mut clip_circles = Vec::<Box<MobileClipCircle>>::new();
+        let mut clip_ellipses = Vec::<Box<MobileClipEllipse>>::new();
         let mut clip_paths = Vec::<Box<MobileClipPath>>::new();
         let mut gradient_stops = Vec::<Box<[MobileGradientStop]>>::new();
         let mut radial_gradients = Vec::<Box<MobileRadialGradient>>::new();
@@ -1211,34 +1215,69 @@ impl MobileFrameOwned {
                             PaintBox::Content => BACKGROUND_BOX_CONTENT,
                             _ => return Err(MobileFrameError),
                         };
-                        let ClipShape::Inset { edges, radii } = shape else {
-                            return Err(MobileFrameError);
+                        let (shape_kind, payload) = match shape {
+                            ClipShape::Inset { edges, radii } => {
+                                clip_insets.push(Box::new(MobileClipInset {
+                                    edges: [
+                                        mobile_coordinate(edges.top),
+                                        mobile_coordinate(edges.right),
+                                        mobile_coordinate(edges.bottom),
+                                        mobile_coordinate(edges.left),
+                                    ],
+                                    radii_horizontal: [
+                                        mobile_length(radii.top_left.horizontal),
+                                        mobile_length(radii.top_right.horizontal),
+                                        mobile_length(radii.bottom_right.horizontal),
+                                        mobile_length(radii.bottom_left.horizontal),
+                                    ],
+                                    radii_vertical: [
+                                        mobile_length(radii.top_left.vertical),
+                                        mobile_length(radii.top_right.vertical),
+                                        mobile_length(radii.bottom_right.vertical),
+                                        mobile_length(radii.bottom_left.vertical),
+                                    ],
+                                }));
+                                (
+                                    CLIP_SHAPE_INSET,
+                                    clip_insets.last().unwrap().as_ref() as *const _
+                                        as *const c_void,
+                                )
+                            }
+                            ClipShape::Circle { radius, center } => {
+                                clip_circles.push(Box::new(MobileClipCircle {
+                                    radius: mobile_length(*radius),
+                                    center_x: mobile_coordinate(center.x),
+                                    center_y: mobile_coordinate(center.y),
+                                }));
+                                (
+                                    CLIP_SHAPE_CIRCLE,
+                                    clip_circles.last().unwrap().as_ref() as *const _
+                                        as *const c_void,
+                                )
+                            }
+                            ClipShape::Ellipse {
+                                radius_x,
+                                radius_y,
+                                center,
+                            } => {
+                                clip_ellipses.push(Box::new(MobileClipEllipse {
+                                    radius_x: mobile_length(*radius_x),
+                                    radius_y: mobile_length(*radius_y),
+                                    center_x: mobile_coordinate(center.x),
+                                    center_y: mobile_coordinate(center.y),
+                                }));
+                                (
+                                    CLIP_SHAPE_ELLIPSE,
+                                    clip_ellipses.last().unwrap().as_ref() as *const _
+                                        as *const c_void,
+                                )
+                            }
+                            _ => return Err(MobileFrameError),
                         };
-                        clip_insets.push(Box::new(MobileClipInset {
-                            edges: [
-                                mobile_coordinate(edges.top),
-                                mobile_coordinate(edges.right),
-                                mobile_coordinate(edges.bottom),
-                                mobile_coordinate(edges.left),
-                            ],
-                            radii_horizontal: [
-                                mobile_length(radii.top_left.horizontal),
-                                mobile_length(radii.top_right.horizontal),
-                                mobile_length(radii.bottom_right.horizontal),
-                                mobile_length(radii.bottom_left.horizontal),
-                            ],
-                            radii_vertical: [
-                                mobile_length(radii.top_left.vertical),
-                                mobile_length(radii.top_right.vertical),
-                                mobile_length(radii.bottom_right.vertical),
-                                mobile_length(radii.bottom_left.vertical),
-                            ],
-                        }));
                         clip_paths.push(Box::new(MobileClipPath {
                             reference_box,
-                            shape_kind: CLIP_SHAPE_INSET,
-                            payload: clip_insets.last().unwrap().as_ref() as *const _
-                                as *const c_void,
+                            shape_kind,
+                            payload,
                             payload_count: 1,
                         }));
                         raw.payload =
@@ -1397,6 +1436,8 @@ impl MobileFrameOwned {
             _paints: paints,
             _box_shadows: box_shadows,
             _clip_insets: clip_insets,
+            _clip_circles: clip_circles,
+            _clip_ellipses: clip_ellipses,
             _clip_paths: clip_paths,
             _gradient_stops: gradient_stops,
             _radial_gradients: radial_gradients,

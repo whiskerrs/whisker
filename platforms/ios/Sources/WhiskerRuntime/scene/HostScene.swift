@@ -285,22 +285,41 @@ final class HostScene {
             }
             guard let raw = operation.payload?.assumingMemoryBound(
                 to: WhiskerMobileClipPath.self
-            ).pointee,
-                  raw.shape_kind == UInt32(WHISKER_CLIP_SHAPE_INSET),
-                  let inset = raw.payload?.assumingMemoryBound(
-                      to: WhiskerMobileClipInset.self
-                  ).pointee else { return false }
+            ).pointee else { return false }
             let referenceBox: HostClipReferenceBox = switch raw.reference_box {
             case UInt32(WHISKER_BACKGROUND_BOX_PADDING): .padding
             case UInt32(WHISKER_BACKGROUND_BOX_CONTENT): .content
             default: .border
             }
-            node.setClipPath(HostInsetClipPath(
-                referenceBox: referenceBox,
-                edges: tupleArray(inset.edges),
-                radiiHorizontal: tupleArray(inset.radii_horizontal),
-                radiiVertical: tupleArray(inset.radii_vertical)
-            ))
+            switch raw.shape_kind {
+            case UInt32(WHISKER_CLIP_SHAPE_INSET):
+                guard let inset = raw.payload?.assumingMemoryBound(
+                    to: WhiskerMobileClipInset.self
+                ).pointee else { return false }
+                node.setClipPath(.inset(HostInsetClipPath(
+                    referenceBox: referenceBox, edges: tupleArray(inset.edges),
+                    radiiHorizontal: tupleArray(inset.radii_horizontal),
+                    radiiVertical: tupleArray(inset.radii_vertical)
+                )))
+            case UInt32(WHISKER_CLIP_SHAPE_CIRCLE):
+                guard let circle = raw.payload?.assumingMemoryBound(
+                    to: WhiskerMobileClipCircle.self
+                ).pointee else { return false }
+                node.setClipPath(.circle(HostCircleClipPath(
+                    referenceBox: referenceBox, radius: circle.radius,
+                    centerX: circle.center_x, centerY: circle.center_y
+                )))
+            case UInt32(WHISKER_CLIP_SHAPE_ELLIPSE):
+                guard let ellipse = raw.payload?.assumingMemoryBound(
+                    to: WhiskerMobileClipEllipse.self
+                ).pointee else { return false }
+                node.setClipPath(.ellipse(HostEllipseClipPath(
+                    referenceBox: referenceBox, radiusX: ellipse.radius_x,
+                    radiusY: ellipse.radius_y, centerX: ellipse.center_x,
+                    centerY: ellipse.center_y
+                )))
+            default: return false
+            }
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):
@@ -513,14 +532,24 @@ private func validHardBoxShadow(_ shadow: WhiskerMobileBoxShadow) -> Bool {
 
 private func validClipPath(_ clip: WhiskerMobileClipPath) -> Bool {
     guard clip.reference_box <= UInt32(WHISKER_BACKGROUND_BOX_CONTENT),
-          clip.shape_kind == UInt32(WHISKER_CLIP_SHAPE_INSET),
           clip.payload_count == 1,
-          let inset = clip.payload?.assumingMemoryBound(
-              to: WhiskerMobileClipInset.self
-          ).pointee else { return false }
-    let radii = tupleArray(inset.radii_horizontal) + tupleArray(inset.radii_vertical)
-    return tupleArray(inset.edges).allSatisfy(\.isFinite) && radii.allSatisfy {
-        $0.isFinite && $0.length >= 0 && $0.fraction >= 0
+          let payload = clip.payload else { return false }
+    switch clip.shape_kind {
+    case UInt32(WHISKER_CLIP_SHAPE_INSET):
+        let inset = payload.assumingMemoryBound(to: WhiskerMobileClipInset.self).pointee
+        let radii = tupleArray(inset.radii_horizontal) + tupleArray(inset.radii_vertical)
+        return tupleArray(inset.edges).allSatisfy(\.isFinite) && radii.allSatisfy {
+            $0.isFinite && $0.length >= 0 && $0.fraction >= 0
+        }
+    case UInt32(WHISKER_CLIP_SHAPE_CIRCLE):
+        let circle = payload.assumingMemoryBound(to: WhiskerMobileClipCircle.self).pointee
+        return circle.radius.isNonNegativeFinite && circle.center_x.isFinite && circle.center_y.isFinite
+    case UInt32(WHISKER_CLIP_SHAPE_ELLIPSE):
+        let ellipse = payload.assumingMemoryBound(to: WhiskerMobileClipEllipse.self).pointee
+        return ellipse.radius_x.isNonNegativeFinite && ellipse.radius_y.isNonNegativeFinite &&
+            ellipse.center_x.isFinite && ellipse.center_y.isFinite
+    default:
+        return false
     }
 }
 

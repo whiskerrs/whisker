@@ -21,6 +21,8 @@ import rs.whisker.runtime.paint.HostBackgroundSize
 import rs.whisker.runtime.paint.HostConicGradient
 import rs.whisker.runtime.paint.HostGradientStop
 import rs.whisker.runtime.paint.HostClipReferenceBox
+import rs.whisker.runtime.paint.HostCircleClipPath
+import rs.whisker.runtime.paint.HostEllipseClipPath
 import rs.whisker.runtime.paint.HostInsetClipPath
 import rs.whisker.runtime.paint.HostLinearGradient
 import rs.whisker.runtime.paint.HostPaintCoordinate
@@ -29,7 +31,7 @@ import rs.whisker.runtime.paint.HostRasterResourceStore
 import rs.whisker.runtime.paint.applyBoxPaint
 import rs.whisker.runtime.paint.parseNamedColor
 import rs.whisker.runtime.paint.rgba
-import rs.whisker.runtime.paint.resolveInsetClipPath
+import rs.whisker.runtime.paint.resolveClipPath
 import kotlin.math.min
 
 internal data class HostSceneOperation(
@@ -429,19 +431,33 @@ internal class HostScene(
                 val cursor = offset + index * 2
                 HostPaintCoordinate(values[cursor] * density, values[cursor + 1])
             }
-            HostInsetClipPath(
-                referenceBox = when (values[0].toInt()) {
-                    BACKGROUND_BOX_PADDING -> HostClipReferenceBox.Padding
-                    BACKGROUND_BOX_CONTENT -> HostClipReferenceBox.Content
-                    else -> HostClipReferenceBox.Border
-                },
-                edges = coordinates(2),
-                radiiHorizontal = coordinates(10),
-                radiiVertical = coordinates(18),
-            )
+            val referenceBox = when (values[0].toInt()) {
+                BACKGROUND_BOX_PADDING -> HostClipReferenceBox.Padding
+                BACKGROUND_BOX_CONTENT -> HostClipReferenceBox.Content
+                else -> HostClipReferenceBox.Border
+            }
+            when (values[1].toInt()) {
+                CLIP_SHAPE_CIRCLE -> HostCircleClipPath(
+                    referenceBox, coordinate(values, 2, density),
+                    coordinate(values, 4, density), coordinate(values, 6, density),
+                )
+                CLIP_SHAPE_ELLIPSE -> HostEllipseClipPath(
+                    referenceBox, coordinate(values, 2, density), coordinate(values, 4, density),
+                    coordinate(values, 6, density), coordinate(values, 8, density),
+                )
+                else -> HostInsetClipPath(
+                    referenceBox = referenceBox,
+                    edges = coordinates(2),
+                    radiiHorizontal = coordinates(10),
+                    radiiVertical = coordinates(18),
+                )
+            }
         }
         refreshClipPath(node)
     }
+
+    private fun coordinate(values: FloatArray, offset: Int, density: Float) =
+        HostPaintCoordinate(values[offset] * density, values[offset + 1])
 
     private fun refreshClipPath(node: HostNode) {
         val clip = node.clipPath
@@ -451,7 +467,7 @@ internal class HostScene(
         }
         val density = root.resources.displayMetrics.density
         node.setPaintClipPath(
-            resolveInsetClipPath(
+            resolveClipPath(
                 clip,
                 node.geometry.width * density,
                 node.geometry.height * density,
@@ -472,12 +488,23 @@ internal class HostScene(
     ): Boolean {
         if (operation.node !in existing) return false
         val values = operation.numbers ?: return true
-        return values.size == CLIP_PATH_PACKED_SIZE &&
+        val shape = values.getOrNull(1)?.toInt() ?: return false
+        val expectedSize = when (shape) {
+            CLIP_SHAPE_INSET -> CLIP_PATH_INSET_PACKED_SIZE
+            CLIP_SHAPE_CIRCLE -> CLIP_PATH_CIRCLE_PACKED_SIZE
+            CLIP_SHAPE_ELLIPSE -> CLIP_PATH_ELLIPSE_PACKED_SIZE
+            else -> return false
+        }
+        return values.size == expectedSize &&
             values.all(Float::isFinite) &&
             values[0].toInt() in BACKGROUND_BOX_BORDER..BACKGROUND_BOX_CONTENT &&
             values[0] == values[0].toInt().toFloat() &&
-            values[1] == CLIP_SHAPE_INSET.toFloat() &&
-            (10 until CLIP_PATH_PACKED_SIZE).all { values[it] >= 0f }
+            values[1] == shape.toFloat() &&
+            when (shape) {
+                CLIP_SHAPE_INSET -> (10 until expectedSize).all { values[it] >= 0f }
+                CLIP_SHAPE_CIRCLE -> values[2] >= 0f && values[3] >= 0f
+                else -> values[2] >= 0f && values[3] >= 0f && values[4] >= 0f && values[5] >= 0f
+            }
     }
 
     private fun validBoxShadows(
@@ -779,8 +806,12 @@ internal class HostScene(
     private companion object {
         const val BACKGROUND_GEOMETRY_PACKED_SIZE = 15
         const val BOX_SHADOW_PACKED_SIZE = 10
-        const val CLIP_PATH_PACKED_SIZE = 26
+        const val CLIP_PATH_INSET_PACKED_SIZE = 26
+        const val CLIP_PATH_CIRCLE_PACKED_SIZE = 8
+        const val CLIP_PATH_ELLIPSE_PACKED_SIZE = 10
         const val CLIP_SHAPE_INSET = 0
+        const val CLIP_SHAPE_CIRCLE = 1
+        const val CLIP_SHAPE_ELLIPSE = 2
         const val BACKGROUND_GRADIENT_STOP_PACKED_SIZE = 7
         const val BACKGROUND_PACKED_LAYER_HEADER_SIZE = 3
         const val BACKGROUND_PACKED_LAYERS = 256
