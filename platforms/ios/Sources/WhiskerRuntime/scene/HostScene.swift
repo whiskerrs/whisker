@@ -470,7 +470,7 @@ private func validGradientStops(
 
 private func validHardBoxShadow(_ shadow: WhiskerMobileBoxShadow) -> Bool {
     shadow.offset_x.isFinite && shadow.offset_y.isFinite &&
-        shadow.blur_radius == 0 && shadow.spread_radius.isFinite &&
+        shadow.blur_radius.isFinite && shadow.blur_radius >= 0 && shadow.spread_radius.isFinite &&
         shadow.inset == 0 && shadow.color.kind <= 1 && shadow.color.alpha.isFinite &&
         (0...1).contains(shadow.color.alpha)
 }

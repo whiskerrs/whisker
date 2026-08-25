@@ -953,11 +953,7 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
 fn supports_visual_effects(effects: &VisualEffects) -> bool {
     let mut remainder = effects.clone();
     remainder.box_shadows.clear();
-    remainder == VisualEffects::default()
-        && effects
-            .box_shadows
-            .iter()
-            .all(|shadow| !shadow.inset && shadow.blur_radius == 0.0)
+    remainder == VisualEffects::default() && effects.box_shadows.iter().all(|shadow| !shadow.inset)
 }
 
 pub(crate) fn is_transparent(color: &PaintColor) -> bool {
