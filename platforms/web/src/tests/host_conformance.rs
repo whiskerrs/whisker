@@ -2061,6 +2061,35 @@ fn fixture_clip_path_css(value: &ClipPathFixture) -> String {
             coordinate(center[0]),
             coordinate(center[1])
         ),
+        ClipShapeFixture::Path {
+            fill_rule,
+            commands,
+        } => {
+            let point = |value: &[LengthPercentageFixture; 2]| {
+                format!("{} {}", value[0].length, value[1].length)
+            };
+            let commands = commands
+                .iter()
+                .map(|command| match command {
+                    PathCommandFixture::MoveTo { point: value } => format!("M {}", point(value)),
+                    PathCommandFixture::LineTo { point: value } => format!("L {}", point(value)),
+                    PathCommandFixture::QuadraticTo { control, end } => {
+                        format!("Q {} {}", point(control), point(end))
+                    }
+                    PathCommandFixture::CubicTo {
+                        control_1,
+                        control_2,
+                        end,
+                    } => format!("C {} {} {}", point(control_1), point(control_2), point(end)),
+                    PathCommandFixture::Close => "Z".into(),
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            match fill_rule {
+                FillRuleFixture::NonZero => format!("path(\"{commands}\")"),
+                FillRuleFixture::EvenOdd => format!("path(evenodd, \"{commands}\")"),
+            }
+        }
     };
     let suffix = (!reference_box.is_empty())
         .then(|| format!(" {reference_box}"))

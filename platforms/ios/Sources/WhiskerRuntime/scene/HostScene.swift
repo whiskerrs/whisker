@@ -318,6 +318,18 @@ final class HostScene {
                     radiusY: ellipse.radius_y, centerX: ellipse.center_x,
                     centerY: ellipse.center_y
                 )))
+            case UInt32(WHISKER_CLIP_SHAPE_PATH):
+                guard let path = raw.payload?.assumingMemoryBound(
+                    to: WhiskerMobileClipPathCommands.self
+                ).pointee, let commands = path.commands else { return false }
+                let copied = UnsafeBufferPointer(start: commands, count: path.command_count).map {
+                    HostPathCommand(kind: $0.kind, points: tupleArray($0.points))
+                }
+                node.setClipPath(.path(HostPathClipPath(
+                    referenceBox: referenceBox,
+                    evenOdd: path.fill_rule == UInt32(WHISKER_FILL_RULE_EVEN_ODD),
+                    commands: copied
+                )))
             default: return false
             }
         case UInt32(WHISKER_OP_OPACITY):
@@ -548,6 +560,14 @@ private func validClipPath(_ clip: WhiskerMobileClipPath) -> Bool {
         let ellipse = payload.assumingMemoryBound(to: WhiskerMobileClipEllipse.self).pointee
         return ellipse.radius_x.isNonNegativeFinite && ellipse.radius_y.isNonNegativeFinite &&
             ellipse.center_x.isFinite && ellipse.center_y.isFinite
+    case UInt32(WHISKER_CLIP_SHAPE_PATH):
+        let path = payload.assumingMemoryBound(to: WhiskerMobileClipPathCommands.self).pointee
+        guard path.fill_rule <= UInt32(WHISKER_FILL_RULE_EVEN_ODD),
+              path.command_count > 0, path.command_count <= 4096,
+              let commands = path.commands else { return false }
+        return UnsafeBufferPointer(start: commands, count: path.command_count).allSatisfy {
+            $0.kind <= UInt32(WHISKER_PATH_CLOSE) && tupleArray($0.points).allSatisfy(\.isFinite)
+        }
     default:
         return false
     }

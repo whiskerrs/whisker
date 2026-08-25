@@ -259,7 +259,7 @@ final class WhiskerNodeView: UIView {
             painter: boxPainter
         )
         clipPathMask.fillColor = UIColor.white.cgColor
-        clipPathMask.fillRule = .nonZero
+        clipPathMask.fillRule = clipPath.fillRule
         layer.mask = clipPathMask
     }
 

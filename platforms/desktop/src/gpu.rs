@@ -43,6 +43,11 @@ struct ShapeClipRecord {
     radii_y: vec4<f32>,
     inverse_transform: mat4x4<f32>,
     axes: vec4<u32>,
+    path: vec4<u32>,
+};
+
+struct ShapeClipSegment {
+    from_to: vec4<f32>,
 };
 
 struct ShapeClipSpan {
@@ -78,6 +83,9 @@ var<storage, read> linear_gradient_draws: array<LinearGradientDraw>;
 
 @group(1) @binding(3)
 var<storage, read> linear_gradient_stops: array<LinearGradientStop>;
+
+@group(1) @binding(4)
+var<storage, read> shape_clip_segments: array<ShapeClipSegment>;
 
 @group(2) @binding(0)
 var background_image_texture: texture_2d<f32>;
@@ -230,6 +238,33 @@ fn erf_approx(value: f32) -> f32 {
 fn shape_coverage(distance: f32) -> f32 {
     let smoothing = max(fwidth(distance), 0.0001);
     return clamp(0.5 - distance / smoothing, 0.0, 1.0);
+}
+
+fn path_contains(position: vec2<f32>, offset: u32, count: u32, even_odd: bool) -> bool {
+    var winding = 0i;
+    var parity = false;
+    for (var index = 0u; index < count; index++) {
+        let segment = shape_clip_segments[offset + index].from_to;
+        let start_point = segment.xy;
+        let end_point = segment.zw;
+        let crosses = (start_point.y <= position.y && end_point.y > position.y)
+            || (start_point.y > position.y && end_point.y <= position.y);
+        if crosses {
+            let intersection = start_point.x
+                + (position.y - start_point.y) * (end_point.x - start_point.x)
+                    / (end_point.y - start_point.y);
+            if intersection > position.x {
+                if even_odd {
+                    parity = !parity;
+                } else if end_point.y > start_point.y {
+                    winding += 1;
+                } else {
+                    winding -= 1;
+                }
+            }
+        }
+    }
+    return select(winding != 0, parity, even_odd);
 }
 
 fn border_side(position: vec2<f32>, rect: vec4<f32>, widths: vec4<f32>) -> vec2<f32> {
@@ -493,6 +528,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let clip = shape_clip_records[span.offset + index];
         let local_h = clip.inverse_transform * vec4<f32>(world_position, 0.0, 1.0);
         let local = local_h.xy / local_h.w;
+        if clip.path.z != 0u {
+            clip_coverage *= select(
+                0.0,
+                1.0,
+                path_contains(local, clip.path.x, clip.path.y, clip.path.w != 0u),
+            );
+            continue;
+        }
         var distance = -1e20;
         if clip.axes.x != 0u && clip.axes.y != 0u {
             distance = rounded_rect_distance(local, clip.rect, clip.radii_x, clip.radii_y);
@@ -718,6 +761,13 @@ struct ShapeClipRecordGpu {
     radii_y: [f32; 4],
     inverse_transform: [f32; 16],
     axes: [u32; 4],
+    path: [u32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ShapeClipSegmentGpu {
+    from_to: [f32; 4],
 }
 
 #[repr(C)]
@@ -880,6 +930,16 @@ impl BoxGpuPipeline {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -1066,18 +1126,40 @@ impl BoxGpuPipeline {
 
     fn shape_clip_bind_group(&self, device: &Device, draws: &[DrawCommand]) -> wgpu::BindGroup {
         let mut records = Vec::new();
+        let mut path_segments = Vec::new();
         let spans = draws
             .iter()
             .map(|draw| {
                 let offset = records.len() as u32;
                 if let DrawCommand::Quads { shape_clips, .. } = draw {
-                    records.extend(shape_clips.iter().map(|clip| ShapeClipRecordGpu {
-                        rect: [clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height],
-                        radii_x: clip.radii.horizontal,
-                        radii_y: clip.radii.vertical,
-                        inverse_transform: clip.inverse_transform.0,
-                        axes: [u32::from(clip.horizontal), u32::from(clip.vertical), 0, 0],
-                    }));
+                    for clip in shape_clips.iter() {
+                        let path_offset = path_segments.len() as u32;
+                        if let Some(segments) = &clip.path {
+                            path_segments.extend(segments.iter().map(|segment| {
+                                ShapeClipSegmentGpu {
+                                    from_to: [
+                                        segment.from[0],
+                                        segment.from[1],
+                                        segment.to[0],
+                                        segment.to[1],
+                                    ],
+                                }
+                            }));
+                        }
+                        records.push(ShapeClipRecordGpu {
+                            rect: [clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height],
+                            radii_x: clip.radii.horizontal,
+                            radii_y: clip.radii.vertical,
+                            inverse_transform: clip.inverse_transform.0,
+                            axes: [u32::from(clip.horizontal), u32::from(clip.vertical), 0, 0],
+                            path: [
+                                path_offset,
+                                path_segments.len() as u32 - path_offset,
+                                u32::from(clip.path.is_some()),
+                                u32::from(clip.fill_rule == whisker_protocol::FillRule::EvenOdd),
+                            ],
+                        });
+                    }
                 }
                 ShapeClipSpanGpu {
                     offset,
@@ -1088,6 +1170,9 @@ impl BoxGpuPipeline {
             .collect::<Vec<_>>();
         if records.is_empty() {
             records.push(ShapeClipRecordGpu::zeroed());
+        }
+        if path_segments.is_empty() {
+            path_segments.push(ShapeClipSegmentGpu::zeroed());
         }
         let spans = if spans.is_empty() {
             vec![ShapeClipSpanGpu::zeroed()]
@@ -1143,6 +1228,11 @@ impl BoxGpuPipeline {
             contents: bytemuck::cast_slice(&gradient_stops),
             usage: BufferUsages::STORAGE,
         });
+        let path_segment_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("whisker Desktop shape clip path segments"),
+            contents: bytemuck::cast_slice(&path_segments),
+            usage: BufferUsages::STORAGE,
+        });
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("whisker Desktop shape clips"),
             layout: &self.shape_clip_layout,
@@ -1162,6 +1252,10 @@ impl BoxGpuPipeline {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: gradient_stop_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: path_segment_buffer.as_entire_binding(),
                 },
             ],
         })

@@ -446,7 +446,9 @@ private final class Driver {
                     name == "paint.visual-effects.box-shadow-multiple" ||
                     name == "paint.visual-effects.clip-path-inset" ||
                     name == "paint.visual-effects.clip-path-circle" ||
-                    name == "paint.visual-effects.clip-path-ellipse" else {
+                    name == "paint.visual-effects.clip-path-ellipse" ||
+                    name == "paint.visual-effects.clip-path-path-nonzero" ||
+                    name == "paint.visual-effects.clip-path-path-evenodd" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -690,12 +692,32 @@ private final class Driver {
         )
         let clipCircles = UnsafeMutablePointer<WhiskerMobileClipCircle>.allocate(capacity: clipStorageCount)
         let clipEllipses = UnsafeMutablePointer<WhiskerMobileClipEllipse>.allocate(capacity: clipStorageCount)
+        let clipPathPayloads = UnsafeMutablePointer<WhiskerMobileClipPathCommands>.allocate(
+            capacity: clipStorageCount
+        )
+        var clipCommandBuffers = [UnsafeMutablePointer<WhiskerMobilePathCommand>?](
+            repeating: nil, count: fixtures.count
+        )
         for (index, fixture) in fixtures.enumerated() {
             clipInsets.advanced(by: index).initialize(
                 to: fixture.clipPath?.inset ?? WhiskerMobileClipInset()
             )
             clipCircles.advanced(by: index).initialize(to: fixture.clipPath?.circle ?? WhiskerMobileClipCircle())
             clipEllipses.advanced(by: index).initialize(to: fixture.clipPath?.ellipse ?? WhiskerMobileClipEllipse())
+            var pathPayload = WhiskerMobileClipPathCommands()
+            if let clip = fixture.clipPath, !clip.pathCommands.isEmpty {
+                let commands = UnsafeMutablePointer<WhiskerMobilePathCommand>.allocate(
+                    capacity: clip.pathCommands.count
+                )
+                for (commandIndex, command) in clip.pathCommands.enumerated() {
+                    commands.advanced(by: commandIndex).initialize(to: command)
+                }
+                clipCommandBuffers[index] = commands
+                pathPayload.fill_rule = clip.pathFillRule
+                pathPayload.commands = UnsafePointer(commands)
+                pathPayload.command_count = clip.pathCommands.count
+            }
+            clipPathPayloads.advanced(by: index).initialize(to: pathPayload)
             var path = WhiskerMobileClipPath()
             if let clip = fixture.clipPath {
                 path.reference_box = clip.referenceBox
@@ -703,6 +725,7 @@ private final class Driver {
                 path.payload = switch clip.shapeKind {
                 case UInt32(WHISKER_CLIP_SHAPE_CIRCLE): UnsafeRawPointer(clipCircles.advanced(by: index))
                 case UInt32(WHISKER_CLIP_SHAPE_ELLIPSE): UnsafeRawPointer(clipEllipses.advanced(by: index))
+                case UInt32(WHISKER_CLIP_SHAPE_PATH): UnsafeRawPointer(clipPathPayloads.advanced(by: index))
                 default: UnsafeRawPointer(clipInsets.advanced(by: index))
                 }
                 path.payload_count = 1
@@ -718,6 +741,12 @@ private final class Driver {
             clipCircles.deallocate()
             clipEllipses.deinitialize(count: fixtures.count)
             clipEllipses.deallocate()
+            clipPathPayloads.deinitialize(count: fixtures.count)
+            clipPathPayloads.deallocate()
+            for (index, commands) in clipCommandBuffers.enumerated() {
+                commands?.deinitialize(count: fixtures[index].clipPath?.pathCommands.count ?? 0)
+                commands?.deallocate()
+            }
         }
         try layouts.withUnsafeMutableBufferPointer { layoutBuffer in
             try paints.withUnsafeMutableBufferPointer { paintBuffer in
@@ -1120,6 +1149,8 @@ private struct SceneClipPath {
     let inset: WhiskerMobileClipInset
     let circle: WhiskerMobileClipCircle
     let ellipse: WhiskerMobileClipEllipse
+    let pathFillRule: UInt32
+    let pathCommands: [WhiskerMobilePathCommand]
 }
 
 private struct ScenePaintLayer {
@@ -1360,7 +1391,7 @@ private func sceneClipPath(_ fixture: [String: Any]) throws -> SceneClipPath {
         circle.radius = try lengthPercentage(shape["radius"] as Any)
         circle.center_x = center[0]
         circle.center_y = center[1]
-        return SceneClipPath(referenceBox: referenceBox, shapeKind: UInt32(WHISKER_CLIP_SHAPE_CIRCLE), inset: WhiskerMobileClipInset(), circle: circle, ellipse: WhiskerMobileClipEllipse())
+        return SceneClipPath(referenceBox: referenceBox, shapeKind: UInt32(WHISKER_CLIP_SHAPE_CIRCLE), inset: WhiskerMobileClipInset(), circle: circle, ellipse: WhiskerMobileClipEllipse(), pathFillRule: 0, pathCommands: [])
     }
     if kind == "ellipse" {
         let radii = try (shape["radii"] as? [Any] ?? []).map(lengthPercentage)
@@ -1369,7 +1400,51 @@ private func sceneClipPath(_ fixture: [String: Any]) throws -> SceneClipPath {
         var ellipse = WhiskerMobileClipEllipse()
         ellipse.radius_x = radii[0]; ellipse.radius_y = radii[1]
         ellipse.center_x = center[0]; ellipse.center_y = center[1]
-        return SceneClipPath(referenceBox: referenceBox, shapeKind: UInt32(WHISKER_CLIP_SHAPE_ELLIPSE), inset: WhiskerMobileClipInset(), circle: WhiskerMobileClipCircle(), ellipse: ellipse)
+        return SceneClipPath(referenceBox: referenceBox, shapeKind: UInt32(WHISKER_CLIP_SHAPE_ELLIPSE), inset: WhiskerMobileClipInset(), circle: WhiskerMobileClipCircle(), ellipse: ellipse, pathFillRule: 0, pathCommands: [])
+    }
+    if kind == "path" {
+        guard let rawCommands = shape["commands"] as? [[String: Any]], !rawCommands.isEmpty else {
+            throw Failure("path clip needs commands")
+        }
+        let commands = try rawCommands.map { raw -> WhiskerMobilePathCommand in
+            let name = try string(raw, "command")
+            let fields: [String]
+            let commandKind: UInt32
+            switch name {
+            case "move_to": commandKind = UInt32(WHISKER_PATH_MOVE_TO); fields = ["point"]
+            case "line_to": commandKind = UInt32(WHISKER_PATH_LINE_TO); fields = ["point"]
+            case "quadratic_to": commandKind = UInt32(WHISKER_PATH_QUADRATIC_TO); fields = ["control", "end"]
+            case "cubic_to": commandKind = UInt32(WHISKER_PATH_CUBIC_TO); fields = ["control_1", "control_2", "end"]
+            case "close": commandKind = UInt32(WHISKER_PATH_CLOSE); fields = []
+            default: throw Failure("unsupported path command")
+            }
+            var points = [WhiskerMobileLengthPercentage](
+                repeating: WhiskerMobileLengthPercentage(), count: 6
+            )
+            var cursor = 0
+            for field in fields {
+                guard let pair = raw[field] as? [Any], pair.count == 2 else {
+                    throw Failure("path point needs two coordinates")
+                }
+                points[cursor] = try lengthPercentage(pair[0])
+                points[cursor + 1] = try lengthPercentage(pair[1])
+                cursor += 2
+            }
+            var command = WhiskerMobilePathCommand()
+            command.kind = commandKind
+            command.points = (points[0], points[1], points[2], points[3], points[4], points[5])
+            return command
+        }
+        return SceneClipPath(
+            referenceBox: referenceBox,
+            shapeKind: UInt32(WHISKER_CLIP_SHAPE_PATH),
+            inset: WhiskerMobileClipInset(),
+            circle: WhiskerMobileClipCircle(),
+            ellipse: WhiskerMobileClipEllipse(),
+            pathFillRule: (shape["fill_rule"] as? String) == "even_odd"
+                ? UInt32(WHISKER_FILL_RULE_EVEN_ODD) : UInt32(WHISKER_FILL_RULE_NON_ZERO),
+            pathCommands: commands
+        )
     }
     guard kind == "inset" else { throw Failure("unsupported clip-path shape") }
     guard let rawEdges = shape["edges"] as? [Any],
@@ -1409,7 +1484,9 @@ private func sceneClipPath(_ fixture: [String: Any]) throws -> SceneClipPath {
         shapeKind: UInt32(WHISKER_CLIP_SHAPE_INSET),
         inset: inset,
         circle: WhiskerMobileClipCircle(),
-        ellipse: WhiskerMobileClipEllipse()
+        ellipse: WhiskerMobileClipEllipse(),
+        pathFillRule: 0,
+        pathCommands: []
     )
 }
 
@@ -1528,7 +1605,7 @@ private func lengthPercentage(_ value: Any) throws -> WhiskerMobileLengthPercent
     }
     return WhiskerMobileLengthPercentage(
         length: Float(try number(object, "length")),
-        fraction: Float(try number(object, "fraction"))
+        fraction: (object["fraction"] as? NSNumber)?.floatValue ?? 0
     )
 }
 

@@ -288,25 +288,48 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 if (clip->payload == NULL || clip->payload_count != 1) {
                     ok = false; break;
                 }
-                storage[count++] = (float)clip->reference_box;
-                storage[count++] = (float)clip->shape_kind;
+                float *clip_values = storage;
+                size_t clip_capacity = 64;
+                const WhiskerMobileClipPathCommands *path = NULL;
+                if (clip->shape_kind == WHISKER_CLIP_SHAPE_PATH) {
+                    path = clip->payload;
+                    if (path->commands == NULL || path->command_count == 0 || path->command_count > 4096 ||
+                        path->command_count > (SIZE_MAX - 4) / 13) { ok = false; break; }
+                    clip_capacity = 4 + path->command_count * 13;
+                    clip_values = malloc(clip_capacity * sizeof(float));
+                    if (clip_values == NULL) { ok = false; break; }
+                }
+                clip_values[count++] = (float)clip->reference_box;
+                clip_values[count++] = (float)clip->shape_kind;
                 if (clip->shape_kind == WHISKER_CLIP_SHAPE_INSET) {
                     const WhiskerMobileClipInset* inset = clip->payload;
-                    for (int j=0;j<4;++j) { storage[count++]=inset->edges[j].length; storage[count++]=inset->edges[j].fraction; }
-                    for (int j=0;j<4;++j) { storage[count++]=inset->radii_horizontal[j].length; storage[count++]=inset->radii_horizontal[j].fraction; }
-                    for (int j=0;j<4;++j) { storage[count++]=inset->radii_vertical[j].length; storage[count++]=inset->radii_vertical[j].fraction; }
+                    for (int j=0;j<4;++j) { clip_values[count++]=inset->edges[j].length; clip_values[count++]=inset->edges[j].fraction; }
+                    for (int j=0;j<4;++j) { clip_values[count++]=inset->radii_horizontal[j].length; clip_values[count++]=inset->radii_horizontal[j].fraction; }
+                    for (int j=0;j<4;++j) { clip_values[count++]=inset->radii_vertical[j].length; clip_values[count++]=inset->radii_vertical[j].fraction; }
                 } else if (clip->shape_kind == WHISKER_CLIP_SHAPE_CIRCLE) {
                     const WhiskerMobileClipCircle* circle = clip->payload;
                     const WhiskerMobileLengthPercentage values[] = {circle->radius, circle->center_x, circle->center_y};
-                    for (int j=0;j<3;++j) { storage[count++]=values[j].length; storage[count++]=values[j].fraction; }
+                    for (int j=0;j<3;++j) { clip_values[count++]=values[j].length; clip_values[count++]=values[j].fraction; }
                 } else if (clip->shape_kind == WHISKER_CLIP_SHAPE_ELLIPSE) {
                     const WhiskerMobileClipEllipse* ellipse = clip->payload;
                     const WhiskerMobileLengthPercentage values[] = {ellipse->radius_x, ellipse->radius_y, ellipse->center_x, ellipse->center_y};
-                    for (int j=0;j<4;++j) { storage[count++]=values[j].length; storage[count++]=values[j].fraction; }
+                    for (int j=0;j<4;++j) { clip_values[count++]=values[j].length; clip_values[count++]=values[j].fraction; }
+                } else if (clip->shape_kind == WHISKER_CLIP_SHAPE_PATH) {
+                    clip_values[count++] = (float)path->fill_rule;
+                    clip_values[count++] = (float)path->command_count;
+                    for (size_t command_index = 0; command_index < path->command_count; ++command_index) {
+                        const WhiskerMobilePathCommand *command = &path->commands[command_index];
+                        clip_values[count++] = (float)command->kind;
+                        for (int j=0;j<6;++j) {
+                            clip_values[count++]=command->points[j].length;
+                            clip_values[count++]=command->points[j].fraction;
+                        }
+                    }
                 } else {
                     ok = false; break;
                 }
-                numbers = floats(env, storage, count);
+                numbers = floats(env, clip_values, count);
+                if (clip_values != storage) free(clip_values);
                 break;
             }
             case WHISKER_OP_BACKGROUND_LAYERS: {
