@@ -1198,6 +1198,12 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-backgrounds/box-shadow-inset-without-border-radius.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-inset-without-border-radius.json"
         ),
+        "wpt/css/css-backgrounds/box-shadow-inset-spread.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-inset-spread.json"
+        ),
+        "wpt/css/css-backgrounds/box-shadow-inset-blur-definition.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-inset-blur-definition.json"
+        ),
         "wpt/css/CSS2/borders/border-right-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-right-003.json"
         ),
