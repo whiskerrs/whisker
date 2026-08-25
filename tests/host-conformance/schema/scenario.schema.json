@@ -91,6 +91,10 @@
         "samples": {
           "type": "array",
           "items": { "$ref": "#/$defs/pixelSample" }
+        },
+        "relations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/pixelRelation" }
         }
       }
     },
@@ -108,6 +112,23 @@
         "color": { "$ref": "#/$defs/color" },
         "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 }
       }
+    },
+    "pixelRelation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["first", "second", "relation"],
+      "properties": {
+        "first": { "$ref": "#/$defs/point" },
+        "second": { "$ref": "#/$defs/point" },
+        "relation": { "enum": ["lighter", "darker"] },
+        "minimum_difference": { "type": "integer", "minimum": 0, "maximum": 255 }
+      }
+    },
+    "point": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "type": "number", "minimum": 0 }
     },
     "measureText": {
       "type": "object",

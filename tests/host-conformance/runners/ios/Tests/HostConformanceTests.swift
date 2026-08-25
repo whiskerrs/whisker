@@ -85,6 +85,9 @@ private final class Driver {
                 if let samples = command["samples"] as? [[String: Any]] {
                     try assertPixelSamples(id: id, pixels: pixels, samples: samples)
                 }
+                if let relations = command["relations"] as? [[String: Any]] {
+                    try assertPixelRelations(id: id, pixels: pixels, relations: relations)
+                }
             default:
                 throw Failure("unsupported UIKit paint command")
             }
@@ -226,6 +229,7 @@ private func color(_ fixture: [String: Any]) throws -> WhiskerMobileColor {
         case "aqua": rgba = (0, 255, 255, 1)
         case "black": rgba = (0, 0, 0, 1)
         case "blue": rgba = (0, 0, 255, 1)
+        case "green": rgba = (0, 128, 0, 1)
         case "transparent": rgba = (0, 0, 0, 0)
         case "white": rgba = (255, 255, 255, 1)
         default: throw Failure("unsupported fixture named color")
@@ -331,4 +335,47 @@ private func assertPixelSamples(
         let difference = largestDifference(actual, expected)
         XCTAssertLessThanOrEqual(difference, tolerance, "\(id) sample (\(x), \(y))")
     }
+}
+
+private func assertPixelRelations(
+    id: String,
+    pixels: Pixels,
+    relations: [[String: Any]]
+) throws {
+    for relation in relations {
+        let firstPoint = try numberArray(relation, "first")
+        let secondPoint = try numberArray(relation, "second")
+        guard firstPoint.count == 2, secondPoint.count == 2 else {
+            throw Failure("pixel relation needs two coordinates per point")
+        }
+        let first = try pixel(at: firstPoint, in: pixels)
+        let second = try pixel(at: secondPoint, in: pixels)
+        let firstLuminance = luminance(first)
+        let secondLuminance = luminance(second)
+        let minimum = UInt32(try number(relation, "minimum_difference"))
+        let matches: Bool
+        switch try string(relation, "relation") {
+        case "lighter": matches = firstLuminance >= secondLuminance + minimum
+        case "darker": matches = firstLuminance + minimum <= secondLuminance
+        default: throw Failure("unknown pixel relation")
+        }
+        XCTAssertTrue(
+            matches,
+            "\(id) relation: \(first) (\(firstLuminance)) vs \(second) (\(secondLuminance))"
+        )
+    }
+}
+
+private func pixel(at point: [Double], in pixels: Pixels) throws -> [UInt8] {
+    let x = Int(point[0].rounded(.down))
+    let y = Int(point[1].rounded(.down))
+    guard x >= 0, x < pixels.width, y >= 0, y < pixels.height else {
+        throw Failure("pixel relation is outside the surface")
+    }
+    let offset = (y * pixels.width + x) * 4
+    return Array(pixels.bytes[offset..<(offset + 4)])
+}
+
+private func luminance(_ color: [UInt8]) -> UInt32 {
+    (UInt32(color[0]) * 299 + UInt32(color[1]) * 587 + UInt32(color[2]) * 114) / 1000
 }

@@ -222,6 +222,18 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/CSS2/borders/border-top-style-006.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-style-006.json"
         ),
+        "wpt/css/CSS2/borders/border-top-style-007.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-style-007.json"
+        ),
+        "wpt/css/CSS2/borders/border-top-style-008.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-style-008.json"
+        ),
+        "wpt/css/CSS2/borders/border-top-style-009.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-style-009.json"
+        ),
+        "wpt/css/CSS2/borders/border-top-style-010.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-style-010.json"
+        ),
         "core/text-measure-basic.json" => {
             include_str!("../../../../tests/host-conformance/core/text-measure-basic.json")
         }

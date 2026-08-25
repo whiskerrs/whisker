@@ -1,6 +1,7 @@
 package rs.whisker.runtime.paint
 
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.Path
@@ -169,6 +170,17 @@ private class WhiskerBoxDrawable(
                         borderStyles[side],
                     )
                 }
+                BORDER_STYLE_GROOVE, BORDER_STYLE_RIDGE,
+                BORDER_STYLE_INSET, BORDER_STYLE_OUTSET -> {
+                    canvas.clipPath(sidePaths[side])
+                    drawReliefEdge(
+                        canvas,
+                        edgeRect(box, side, widths[side]),
+                        side,
+                        borderStyles[side],
+                        borderColors[side],
+                    )
+                }
             }
             canvas.restoreToCount(save)
         }
@@ -196,12 +208,22 @@ private class WhiskerBoxDrawable(
                 BORDER_STYLE_SOLID -> canvas.drawRect(edges[side], paint)
                 BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED, BORDER_STYLE_DOUBLE ->
                     drawPatternedEdge(canvas, edges[side], side, widths[side], borderStyles[side])
+                BORDER_STYLE_GROOVE, BORDER_STYLE_RIDGE,
+                BORDER_STYLE_INSET, BORDER_STYLE_OUTSET ->
+                    drawReliefEdge(
+                        canvas,
+                        edges[side],
+                        side,
+                        borderStyles[side],
+                        borderColors[side],
+                    )
             }
         }
     }
 
     private fun paintsSide(side: Int): Boolean = when (borderStyles[side]) {
-        BORDER_STYLE_SOLID, BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED, BORDER_STYLE_DOUBLE -> true
+        BORDER_STYLE_SOLID, BORDER_STYLE_DASHED, BORDER_STYLE_DOTTED, BORDER_STYLE_DOUBLE,
+        BORDER_STYLE_GROOVE, BORDER_STYLE_RIDGE, BORDER_STYLE_INSET, BORDER_STYLE_OUTSET -> true
         else -> false
     }
 
@@ -289,6 +311,73 @@ private class WhiskerBoxDrawable(
         canvas.drawRect(inner, paint)
     }
 
+    private fun drawReliefEdge(
+        canvas: Canvas,
+        edge: RectF,
+        side: Int,
+        style: Int,
+        color: Int,
+    ) {
+        if (edge.isEmpty) return
+        val topOrLeft = side == 0 || side == 3
+        when (style) {
+            BORDER_STYLE_INSET -> {
+                paint.color = shadedColor(color, lighter = !topOrLeft)
+                canvas.drawRect(edge, paint)
+            }
+            BORDER_STYLE_OUTSET -> {
+                paint.color = shadedColor(color, lighter = topOrLeft)
+                canvas.drawRect(edge, paint)
+            }
+            BORDER_STYLE_GROOVE, BORDER_STYLE_RIDGE -> {
+                val (outer, inner) = splitEdge(edge, side)
+                val outerIsLighter = if (style == BORDER_STYLE_GROOVE) !topOrLeft else topOrLeft
+                paint.color = shadedColor(color, lighter = outerIsLighter)
+                canvas.drawRect(outer, paint)
+                paint.color = shadedColor(color, lighter = !outerIsLighter)
+                canvas.drawRect(inner, paint)
+            }
+        }
+    }
+
+    /** Splits a border across its depth, preserving CSS outer-to-inner order. */
+    private fun splitEdge(edge: RectF, side: Int): Pair<RectF, RectF> = when (side) {
+        0 -> {
+            val middle = edge.centerY()
+            RectF(edge.left, edge.top, edge.right, middle) to
+                RectF(edge.left, middle, edge.right, edge.bottom)
+        }
+        1 -> {
+            val middle = edge.centerX()
+            RectF(middle, edge.top, edge.right, edge.bottom) to
+                RectF(edge.left, edge.top, middle, edge.bottom)
+        }
+        2 -> {
+            val middle = edge.centerY()
+            RectF(edge.left, middle, edge.right, edge.bottom) to
+                RectF(edge.left, edge.top, edge.right, middle)
+        }
+        else -> {
+            val middle = edge.centerX()
+            RectF(edge.left, edge.top, middle, edge.bottom) to
+                RectF(middle, edge.top, edge.right, edge.bottom)
+        }
+    }
+
+    private fun shadedColor(color: Int, lighter: Boolean): Int {
+        fun shade(channel: Int): Int = if (lighter) {
+            channel + ((255 - channel) * RELIEF_SHADE_FACTOR).toInt()
+        } else {
+            (channel * (1f - RELIEF_SHADE_FACTOR)).toInt()
+        }
+        return Color.argb(
+            Color.alpha(color),
+            shade(Color.red(color)),
+            shade(Color.green(color)),
+            shade(Color.blue(color)),
+        )
+    }
+
     private fun normalizedRadii(width: Float, height: Float): FloatArray {
         val result = cornerRadii.map { it.coerceAtLeast(0f) }.toFloatArray()
         val denominators = floatArrayOf(
@@ -326,3 +415,8 @@ private const val BORDER_STYLE_SOLID = 2
 private const val BORDER_STYLE_DASHED = 3
 private const val BORDER_STYLE_DOTTED = 4
 private const val BORDER_STYLE_DOUBLE = 5
+private const val BORDER_STYLE_GROOVE = 6
+private const val BORDER_STYLE_RIDGE = 7
+private const val BORDER_STYLE_INSET = 8
+private const val BORDER_STYLE_OUTSET = 9
+private const val RELIEF_SHADE_FACTOR = 0.4f

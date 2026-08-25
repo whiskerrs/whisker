@@ -113,6 +113,14 @@ private class Driver(
                             context.resources.displayMetrics.density,
                         )
                     }
+                    command.optJSONArray("relations")?.let { relations ->
+                        assertPixelRelations(
+                            id,
+                            checkNotNull(checkpoint),
+                            relations,
+                            context.resources.displayMetrics.density,
+                        )
+                    }
                 }
                 else -> error("unsupported Android paint command: ${command.getString("type")}")
             }
@@ -243,6 +251,38 @@ private fun assertPixelSamples(id: String, bitmap: Bitmap, samples: JSONArray, d
         assertTrue("$id sample ($x, $y) differs by $difference", difference <= tolerance)
     }
 }
+
+private fun assertPixelRelations(id: String, bitmap: Bitmap, relations: JSONArray, density: Float) {
+    relations.objects().forEach { relation ->
+        val first = pixelAt(bitmap, relation.getJSONArray("first"), density)
+        val second = pixelAt(bitmap, relation.getJSONArray("second"), density)
+        val firstLuminance = luminance(first)
+        val secondLuminance = luminance(second)
+        val minimum = relation.optInt("minimum_difference", 0)
+        val matches = when (val kind = relation.getString("relation")) {
+            "lighter" -> firstLuminance >= secondLuminance + minimum
+            "darker" -> firstLuminance + minimum <= secondLuminance
+            else -> error("unknown pixel relation: $kind")
+        }
+        assertTrue(
+            "$id ${relation.getString("relation")}: " +
+                "$first ($firstLuminance) vs $second ($secondLuminance)",
+            matches,
+        )
+    }
+}
+
+private fun pixelAt(bitmap: Bitmap, point: JSONArray, density: Float): Int {
+    val x = (point.getDouble(0) * density).toInt()
+    val y = (point.getDouble(1) * density).toInt()
+    check(x in 0 until bitmap.width && y in 0 until bitmap.height)
+    return bitmap.getPixel(x, y)
+}
+
+private fun luminance(color: Int): Int =
+    (android.graphics.Color.red(color) * 299 +
+        android.graphics.Color.green(color) * 587 +
+        android.graphics.Color.blue(color) * 114) / 1000
 
 private fun fixtureColor(value: JSONObject): Int =
     if (value.getString("kind") == "named") {

@@ -42,6 +42,11 @@ Android, and iOS assert those samples against production raster output. Web
 asserts the equivalent CSS projection and leaves dash/dot distribution to the
 browser, while sharing the same scenario and semantic values.
 
+The same checkpoint may use relative luminance `relations` when CSS requires
+a lighter or darker rendering but deliberately leaves the exact derived color
+to the user agent. Native rasterizers compare the requested pixels while Web
+continues to verify the corresponding semantic CSS value.
+
 From the repository root, run one Host with:
 
 ```sh

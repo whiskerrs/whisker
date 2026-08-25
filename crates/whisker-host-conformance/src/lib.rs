@@ -154,6 +154,10 @@ pub enum Command {
         /// reference document.
         #[serde(default)]
         samples: Vec<PixelSampleFixture>,
+        /// Optional relative luminance assertions for CSS rendering whose
+        /// exact colors are intentionally Host-defined.
+        #[serde(default)]
+        relations: Vec<PixelRelationFixture>,
     },
     /// Sends a text measurement request to the production Host measurer.
     MeasureText {
@@ -260,6 +264,31 @@ pub struct PixelSampleFixture {
     /// Maximum per-channel difference accepted by native rasterizers.
     #[serde(default)]
     pub tolerance: u8,
+}
+
+/// One relative luminance assertion between two logical pixels.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PixelRelationFixture {
+    /// First logical x/y coordinate.
+    pub first: [f32; 2],
+    /// Second logical x/y coordinate.
+    pub second: [f32; 2],
+    /// Required ordering of the first sample relative to the second.
+    pub relation: PixelRelationKind,
+    /// Minimum luminance distance on an 8-bit scale.
+    #[serde(default)]
+    pub minimum_difference: u8,
+}
+
+/// Relative luminance ordering used by platform-defined CSS shading.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PixelRelationKind {
+    /// The first pixel must be lighter than the second.
+    Lighter,
+    /// The first pixel must be darker than the second.
+    Darker,
 }
 
 /// Physical border semantics in top, right, bottom, left order.
@@ -424,6 +453,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), FixtureError> {
                     | "semantic-projection"
                     | "pixel"
                     | "pixel-samples"
+                    | "pixel-relations"
                     | "measurement"
                     | "input"
             ) {
@@ -485,6 +515,22 @@ fn validate_scenario(
             scenario.id
         )));
     }
+    if entry
+        .checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint == "pixel-relations")
+        && !scenario.test.commands.iter().any(|command| {
+            matches!(
+                command,
+                Command::Checkpoint { relations, .. } if !relations.is_empty()
+            )
+        })
+    {
+        return Err(FixtureError(format!(
+            "scenario {} declares pixel-relations without relation assertions",
+            scenario.id
+        )));
+    }
     if let Some(reference) = &scenario.reference {
         validate_side(&scenario.id, "reference", reference)?;
     }
@@ -538,15 +584,25 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
                 && rect[3] >= 0.0
                 && valid_color(background)
                 && border.as_ref().is_none_or(valid_border) => {}
-            Command::Checkpoint { name, samples }
-                if !name.trim().is_empty()
-                    && samples.iter().all(|sample| {
-                        sample
-                            .point
-                            .iter()
-                            .all(|value| value.is_finite() && *value >= 0.0)
-                            && valid_color(&sample.color)
-                    }) => {}
+            Command::Checkpoint {
+                name,
+                samples,
+                relations,
+            } if !name.trim().is_empty()
+                && samples.iter().all(|sample| {
+                    sample
+                        .point
+                        .iter()
+                        .all(|value| value.is_finite() && *value >= 0.0)
+                        && valid_color(&sample.color)
+                })
+                && relations.iter().all(|relation| {
+                    relation
+                        .first
+                        .iter()
+                        .chain(relation.second.iter())
+                        .all(|value| value.is_finite() && *value >= 0.0)
+                }) => {}
             Command::MeasureText {
                 key,
                 font_size,
