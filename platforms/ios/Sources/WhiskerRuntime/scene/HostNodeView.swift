@@ -13,9 +13,9 @@ final class WhiskerNodeView: UIView {
     var mountedElement: WhiskerMountedElement?
     private let defaultChildrenHost = WhiskerChildrenHostView(frame: .zero)
     private let overflowMask = CAShapeLayer()
-    private var boxShadow: HostBoxShadow?
-    private let boxShadowLayer = CAShapeLayer()
-    private let boxShadowMaskLayer = CAShapeLayer()
+    private var boxShadows: [HostBoxShadow] = []
+    private var boxShadowLayers: [CAShapeLayer] = []
+    private var boxShadowMaskLayers: [CAShapeLayer] = []
     private var clipsOverflowHorizontally = false
     private var clipsOverflowVertically = false
 
@@ -28,7 +28,6 @@ final class WhiskerNodeView: UIView {
         defaultChildrenHost.backgroundColor = .clear
         defaultChildrenHost.clipsToBounds = false
         addSubview(defaultChildrenHost)
-        layer.insertSublayer(boxShadowLayer, at: 0)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -107,48 +106,67 @@ final class WhiskerNodeView: UIView {
     }
 
     func setBoxShadows(_ shadows: [HostBoxShadow]) {
-        precondition(shadows.count <= 1)
-        boxShadow = shadows.first
+        while boxShadowLayers.count > shadows.count {
+            boxShadowLayers.removeLast().removeFromSuperlayer()
+            boxShadowMaskLayers.removeLast()
+        }
+        while boxShadowLayers.count < shadows.count {
+            let shadowLayer = CAShapeLayer()
+            // New entries are farther back in CSS list order. Inserting each
+            // at zero keeps the first shadow visually above all later ones.
+            layer.insertSublayer(shadowLayer, at: 0)
+            boxShadowLayers.append(shadowLayer)
+            boxShadowMaskLayers.append(CAShapeLayer())
+        }
+        boxShadows = shadows
         updateBoxShadowLayers()
     }
 
     private func updateBoxShadowLayers() {
-        guard let shadow = boxShadow else {
-            boxShadowLayer.path = nil
-            boxShadowLayer.mask = nil
-            boxShadowLayer.shadowPath = nil
-            return
+        for index in boxShadows.indices {
+            updateBoxShadowLayer(
+                boxShadowLayers[index],
+                maskLayer: boxShadowMaskLayers[index],
+                shadow: boxShadows[index]
+            )
         }
+    }
+
+    private func updateBoxShadowLayer(
+        _ shadowLayer: CAShapeLayer,
+        maskLayer: CAShapeLayer,
+        shadow: HostBoxShadow
+    ) {
         if shadow.inset {
             guard let shadowPath = boxPainter.insetBoxShadowPath(in: bounds, shadow: shadow) else {
-                boxShadowLayer.path = nil
-                boxShadowLayer.mask = nil
-                boxShadowLayer.shadowPath = nil
+                shadowLayer.path = nil
+                shadowLayer.mask = nil
+                shadowLayer.shadowPath = nil
                 return
             }
-            boxShadowLayer.frame = bounds
-            boxShadowLayer.path = shadowPath
-            boxShadowLayer.fillColor = shadow.color.cgColor
-            boxShadowLayer.fillRule = .evenOdd
-            boxShadowLayer.strokeColor = nil
+            shadowLayer.frame = bounds
+            shadowLayer.path = shadowPath
+            shadowLayer.fillColor = shadow.color.cgColor
+            shadowLayer.fillRule = .evenOdd
+            shadowLayer.strokeColor = nil
             // Let Core Animation derive the shadow from the even-odd ring;
             // `shadowPath` itself does not carry the layer's fill rule.
-            boxShadowLayer.shadowPath = nil
-            boxShadowLayer.shadowColor = shadow.color.withAlphaComponent(1).cgColor
-            boxShadowLayer.shadowOpacity = Float(shadow.color.cgColor.alpha)
-            boxShadowLayer.shadowOffset = .zero
-            boxShadowLayer.shadowRadius = shadow.blurRadius / 2
-            boxShadowMaskLayer.frame = bounds
-            boxShadowMaskLayer.path = boxPainter.paddingBoxPath(in: bounds)
-            boxShadowMaskLayer.fillColor = UIColor.white.cgColor
-            boxShadowMaskLayer.fillRule = .nonZero
-            boxShadowLayer.mask = boxShadowMaskLayer
+            shadowLayer.shadowPath = nil
+            shadowLayer.shadowColor = shadow.color.withAlphaComponent(1).cgColor
+            shadowLayer.shadowOpacity = Float(shadow.color.cgColor.alpha)
+            shadowLayer.shadowOffset = .zero
+            shadowLayer.shadowRadius = shadow.blurRadius / 2
+            maskLayer.frame = bounds
+            maskLayer.path = boxPainter.paddingBoxPath(in: bounds)
+            maskLayer.fillColor = UIColor.white.cgColor
+            maskLayer.fillRule = .nonZero
+            shadowLayer.mask = maskLayer
             return
         }
         guard let shadowPath = boxPainter.hardBoxShadowPath(in: bounds, shadow: shadow) else {
-            boxShadowLayer.path = nil
-            boxShadowLayer.mask = nil
-            boxShadowLayer.shadowPath = nil
+            shadowLayer.path = nil
+            shadowLayer.mask = nil
+            shadowLayer.shadowPath = nil
             return
         }
         let blurExtent = shadow.blurRadius * 1.5
@@ -159,27 +177,27 @@ final class WhiskerNodeView: UIView {
             translationX: -layerFrame.minX,
             y: -layerFrame.minY
         )
-        boxShadowLayer.frame = layerFrame
-        boxShadowLayer.path = shadowPath.copy(using: &translation)
-        boxShadowLayer.fillColor = shadow.color.cgColor
-        boxShadowLayer.fillRule = .nonZero
-        boxShadowLayer.strokeColor = nil
-        boxShadowLayer.shadowPath = shadowPath.copy(using: &translation)
-        boxShadowLayer.shadowColor = shadow.color.withAlphaComponent(1).cgColor
-        boxShadowLayer.shadowOpacity = Float(shadow.color.cgColor.alpha)
-        boxShadowLayer.shadowOffset = .zero
-        boxShadowLayer.shadowRadius = shadow.blurRadius / 2
+        shadowLayer.frame = layerFrame
+        shadowLayer.path = shadowPath.copy(using: &translation)
+        shadowLayer.fillColor = shadow.color.cgColor
+        shadowLayer.fillRule = .nonZero
+        shadowLayer.strokeColor = nil
+        shadowLayer.shadowPath = shadowPath.copy(using: &translation)
+        shadowLayer.shadowColor = shadow.color.withAlphaComponent(1).cgColor
+        shadowLayer.shadowOpacity = Float(shadow.color.cgColor.alpha)
+        shadowLayer.shadowOffset = .zero
+        shadowLayer.shadowRadius = shadow.blurRadius / 2
 
         let maskPath = CGMutablePath()
         maskPath.addRect(CGRect(origin: .zero, size: layerFrame.size))
         if let borderPath = boxPainter.borderBoxPath(in: bounds).copy(using: &translation) {
             maskPath.addPath(borderPath)
         }
-        boxShadowMaskLayer.frame = CGRect(origin: .zero, size: layerFrame.size)
-        boxShadowMaskLayer.path = maskPath
-        boxShadowMaskLayer.fillColor = UIColor.white.cgColor
-        boxShadowMaskLayer.fillRule = .evenOdd
-        boxShadowLayer.mask = boxShadowMaskLayer
+        maskLayer.frame = CGRect(origin: .zero, size: layerFrame.size)
+        maskLayer.path = maskPath
+        maskLayer.fillColor = UIColor.white.cgColor
+        maskLayer.fillRule = .evenOdd
+        shadowLayer.mask = maskLayer
     }
 
     private func updateOverflowMask() {
