@@ -332,6 +332,20 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-masking.clip-path-circle-002",
+      "feature": "clip-path-circle",
+      "fixture": "wpt/css/css-masking/clip-path-circle-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-masking.clip-path-ellipse-002",
+      "feature": "clip-path-ellipse",
+      "fixture": "wpt/css/css-masking/clip-path-ellipse-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css2.borders.border-right-003",
       "feature": "border-right",
       "fixture": "wpt/css/CSS2/borders/border-right-003.json",
