@@ -1446,6 +1446,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(inherited(&child).text_decoration(), decoration);
+
+        let invalid_color = declaration(
+            StyleProperty::TextDecoration,
+            StyleValue::TextDecoration(TextDecorationValue {
+                line: TextDecorationLineValue::Underline,
+                style: TextDecorationStyleValue::Solid,
+                color: Some(ColorValue::Rgba {
+                    red: 0,
+                    green: 0,
+                    blue: 0,
+                    alpha: number(f32::NAN),
+                }),
+            }),
+        );
+        assert_eq!(
+            resolve_text_style(&invalid_color, None, environment).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::Color)
+        );
     }
 
     #[test]
