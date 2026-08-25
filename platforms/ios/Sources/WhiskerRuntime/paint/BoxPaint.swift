@@ -113,6 +113,34 @@ final class HostBoxPainter {
         return roundedPath(in: rect, radii: radii).cgPath
     }
 
+    func hardInsetBoxShadowPath(in bounds: CGRect, shadow: HostBoxShadow) -> CGPath? {
+        guard shadow.inset, shadow.blurRadius == 0, shadow.spreadRadius == 0 else { return nil }
+        let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
+        let top = min(widths[0], bounds.height)
+        let right = min(widths[1], bounds.width)
+        let bottom = min(widths[2], bounds.height)
+        let left = min(widths[3], bounds.width)
+        let paddingBox = CGRect(
+            x: bounds.minX + left,
+            y: bounds.minY + top,
+            width: max(0, bounds.width - left - right),
+            height: max(0, bounds.height - top - bottom)
+        )
+        guard !paddingBox.isEmpty else { return nil }
+        let paddingRadii = insetCornerRadii(
+            normalizedRadii(cornerRadii, in: bounds),
+            top: top,
+            right: right,
+            bottom: bottom,
+            left: left
+        )
+        let hole = paddingBox.offsetBy(dx: shadow.offset.width, dy: shadow.offset.height)
+        let path = CGMutablePath()
+        path.addPath(roundedPath(in: paddingBox, radii: paddingRadii).cgPath)
+        path.addPath(roundedPath(in: hole, radii: paddingRadii).cgPath)
+        return path
+    }
+
     func borderBoxPath(in bounds: CGRect) -> CGPath {
         roundedPath(in: bounds, radii: cornerRadii).cgPath
     }
