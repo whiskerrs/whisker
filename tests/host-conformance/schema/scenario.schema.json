@@ -112,7 +112,10 @@
           "minItems": 16,
           "maxItems": 16,
           "items": { "type": "number" }
-        }
+        },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "visibility": { "enum": ["visible", "hidden"] },
+        "z_order": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 }
       }
     },
     "boxClip": {

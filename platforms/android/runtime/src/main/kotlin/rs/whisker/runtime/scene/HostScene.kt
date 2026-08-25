@@ -74,6 +74,9 @@ internal class HostScene(
             if (stagedSnapshot) clear()
             stagedOperations.forEach(::applyOperation)
             attachRoots()
+            if (stagedOperations.any { it.tag in 1..5 || it.tag == 12 }) {
+                refreshZOrderProjection()
+            }
             sceneEpoch = stagedSceneEpoch
             revision = stagedTargetRevision
             true
@@ -139,11 +142,16 @@ internal class HostScene(
                 operation.node !in existing || operation.numbers?.size ?: 0 < 53 ||
                 operation.names?.size ?: 0 < 5
             ) return false
-            8, 10, 11, 12, 15, 16 -> if (operation.node !in existing) return false
+            8, 12, 15, 16 -> if (operation.node !in existing) return false
             9 -> if (
                 operation.node !in existing ||
                 !isSupported2dTransform(operation.numbers ?: return false)
             ) return false
+            10 -> if (
+                operation.node !in existing || !operation.scalar.isFinite() ||
+                operation.scalar !in 0f..1f
+            ) return false
+            11 -> if (operation.node !in existing || operation.integer !in 0..1) return false
             13 -> if (
                 operation.node !in existing || operation.text == null ||
                 operation.numbers?.size ?: 0 < 8 || operation.names?.isEmpty() != false
@@ -196,7 +204,7 @@ internal class HostScene(
             10 -> (nodes[id] ?: return).alpha = operation.scalar
             11 -> (nodes[id] ?: return).visibility =
                 if (operation.integer != 0) View.VISIBLE else View.INVISIBLE
-            12 -> (nodes[id] ?: return).translationZ = operation.integer.toFloat()
+            12 -> (nodes[id] ?: return).zOrder = operation.integer
             13 -> applyText(
                 nodes[id] ?: return,
                 requireNotNull(operation.text),
@@ -216,6 +224,15 @@ internal class HostScene(
                 (node.parent as? ViewGroup)?.removeView(node)
                 root.addView(node)
             }
+        }
+    }
+
+    /** Preserves exact signed i32 ordering while projecting onto Android's Float Z axis. */
+    private fun refreshZOrderProjection() {
+        nodes.entries.groupBy { parents[it.key] }.values.forEach { siblings ->
+            val ranks = siblings.map { it.value.zOrder }.distinct().sorted()
+                .withIndex().associate { (rank, value) -> value to rank.toFloat() }
+            siblings.forEach { (_, node) -> node.translationZ = requireNotNull(ranks[node.zOrder]) }
         }
     }
 

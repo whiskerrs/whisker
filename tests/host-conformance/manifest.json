@@ -59,6 +59,27 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-color.opacity-basic-0.6",
+      "feature": "opacity",
+      "fixture": "wpt/css/css-color/t32-opacity-basic-0.6-a.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.visibility-004",
+      "feature": "visibility",
+      "fixture": "wpt/css/CSS2/visufx/visibility-004.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.z-index-003",
+      "feature": "z-index",
+      "fixture": "wpt/css/CSS2/zindex/z-index-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css2.borders.border-top-003",
       "feature": "border-top",
       "fixture": "wpt/css/CSS2/borders/border-top-003.json",

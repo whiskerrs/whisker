@@ -29,6 +29,7 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
     val geometry = HostGeometry()
     var paint: HostBoxPaint? = null
     var mountedElement: WhiskerMountedElement? = null
+    var zOrder: Int = 0
 
     private val localTransform = Matrix()
     private var hasLocalTransform = false

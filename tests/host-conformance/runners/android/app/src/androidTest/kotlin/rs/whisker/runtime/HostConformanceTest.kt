@@ -72,6 +72,20 @@ class HostConformanceTest {
             }
     }
 
+    @Test
+    fun rejectsInvalidOpacityValues() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                listOf(Float.NaN, Float.NEGATIVE_INFINITY, -0.1f, 1.1f).forEach { opacity ->
+                    assertTrue(
+                        Driver(context, "android.opacity-rejection").rejectOpacity(opacity),
+                    )
+                }
+            }
+    }
+
     private fun asset(path: String): String =
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
@@ -153,6 +167,13 @@ private class Driver(
         return !view.commitFrameFromNative()
     }
 
+    fun rejectOpacity(opacity: Float): Boolean {
+        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(stage(tag = 1, member = 1))
+        check(stage(tag = 10, scalar = opacity))
+        return !view.commitFrameFromNative()
+    }
+
     private fun present(command: JSONObject) {
         val revision = command.getLong("revision")
         check(view.beginFrameFromNative(0, 1, 0, revision) == 0)
@@ -200,13 +221,24 @@ private class Driver(
             )
             val (numbers, names) = paint(node)
             check(stage(tag = 7, node = id, numbers = numbers, names = names))
-            val clip = node.getJSONObject("clip")
+            val clip = node.optJSONObject("clip") ?: JSONObject(
+                "{\"horizontal\":\"visible\",\"vertical\":\"visible\"}",
+            )
             val flags =
                 (if (clip.getString("horizontal") == "hidden") 1 else 0) or
                     (if (clip.getString("vertical") == "hidden") 2 else 0)
             check(stage(tag = 8, node = id, flags = flags))
             node.optJSONArray("transform")?.let { transform ->
                 check(stage(tag = 9, node = id, numbers = transform.floats()))
+            }
+            if (node.has("opacity")) {
+                check(stage(tag = 10, node = id, scalar = node.getDouble("opacity").toFloat()))
+            }
+            node.optString("visibility").takeIf(String::isNotEmpty)?.let { visibility ->
+                check(stage(tag = 11, node = id, integer = if (visibility == "visible") 1 else 0))
+            }
+            if (node.has("z_order")) {
+                check(stage(tag = 12, node = id, integer = node.getInt("z_order")))
             }
         }
         check(view.commitFrameFromNative())
@@ -220,6 +252,8 @@ private class Driver(
         child: Long = 0,
         index: Int = 0,
         member: Int = 0,
+        integer: Int = 0,
+        scalar: Float = 0f,
         numbers: FloatArray? = null,
         names: Array<String>? = null,
     ): Boolean = view.stageOperationFromNative(
@@ -230,8 +264,8 @@ private class Driver(
         child,
         index,
         member,
-        0,
-        0f,
+        integer,
+        scalar,
         0,
         numbers,
         null,

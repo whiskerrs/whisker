@@ -11,14 +11,13 @@ pub(crate) fn text_color(color: &PaintColor, opacity: f32) -> TextColor {
     )
 }
 
-pub(super) fn linear_color(color: &PaintColor, opacity: f32) -> [f32; 4] {
-    let [red, green, blue, alpha] = srgba(color, opacity);
-    [
-        srgb_to_linear(red),
-        srgb_to_linear(green),
-        srgb_to_linear(blue),
-        alpha,
-    ]
+/// CSS presentation color for an unorm render target.
+///
+/// CSS source-over compositing is defined in the sRGB color space. Keeping the
+/// swapchain unorm avoids the implicit linear-light blend performed by an sRGB
+/// GPU attachment.
+pub(super) fn gpu_color(color: &PaintColor, opacity: f32) -> [f32; 4] {
+    srgba(color, opacity)
 }
 
 pub(crate) fn srgba(color: &PaintColor, opacity: f32) -> [f32; 4] {
@@ -74,14 +73,6 @@ fn hsl_to_srgba(hue: f32, saturation: f32, lightness: f32, alpha: f32) -> [f32; 
     ]
 }
 
-pub(crate) fn srgb_to_linear(value: f32) -> f32 {
-    if value <= 0.04045 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,7 +96,6 @@ mod tests {
             srgba(&PaintColor::Named("not-a-css-color".into()), 1.0),
             [0.0; 4]
         );
-        assert!((srgb_to_linear(0.02) - 0.02 / 12.92).abs() < f32::EPSILON);
-        assert!(srgb_to_linear(1.0) > 0.99);
+        assert_eq!(gpu_color(&hsl, 0.5), [0.0, 1.0, 0.0, 0.4]);
     }
 }
