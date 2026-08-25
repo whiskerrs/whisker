@@ -9,7 +9,7 @@ impl Css {
     /// Sets `transform-origin`.
     /// <https://lynxjs.org/api/css/properties/transform-origin>
     pub fn transform_origin(self, v: Position) -> Self {
-        self.push(crate::StyleProperty::TransformOrigin, v)
+        self.push_typed(crate::StyleProperty::TransformOrigin, v)
     }
 
     /// Sets `transform-box`.

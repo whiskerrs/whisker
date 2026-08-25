@@ -101,6 +101,11 @@ impl SceneNode {
         self.clip
     }
 
+    /// Returns the retained resolved transform matrix.
+    pub const fn transform(&self) -> Option<Transform> {
+        self.transform
+    }
+
     /// Returns retained group opacity.
     pub const fn opacity(&self) -> Option<f32> {
         self.opacity
@@ -1349,6 +1354,7 @@ mod tests {
         assert_eq!(root_state.box_paint(), Some(&paint));
         assert_eq!(root_state.visual_effects(), &effects);
         assert_eq!(root_state.clip(), Some(clip));
+        assert_eq!(root_state.transform(), Some(Transform::IDENTITY));
         assert_eq!(root_state.opacity(), Some(0.75));
         assert_eq!(root_state.visibility(), Some(Visibility::Visible));
         assert_eq!(root_state.z_order(), Some(-1));
