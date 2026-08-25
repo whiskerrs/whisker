@@ -56,6 +56,9 @@ private func measureText(
     }
     paragraph.firstLineHeadIndent = CGFloat(request.indent_logical_pixels)
         + widthBasis * CGFloat(request.indent_percentage) / 100
+    paragraph.lineBreakMode = request.overflow != 0
+        ? .byTruncatingTail
+        : (request.word_break == 1 ? .byCharWrapping : .byWordWrapping)
     if request.line_height > 0 {
         paragraph.minimumLineHeight = CGFloat(request.line_height)
         paragraph.maximumLineHeight = CGFloat(request.line_height)
@@ -67,7 +70,9 @@ private func measureText(
     ]
     let width = request.available_width_kind == 0 && request.wrap != 0
         ? CGFloat(request.available_width) : CGFloat.greatestFiniteMagnitude
-    var measured = (hostString(request.text) as NSString).boundingRect(
+    let source = hostString(request.text)
+    let measuredText = request.word_break == 2 ? protectCJKBreaks(source) : source
+    var measured = (measuredText as NSString).boundingRect(
         with: CGSize(width: width, height: .greatestFiniteMagnitude),
         options: [.usesLineFragmentOrigin, .usesFontLeading],
         attributes: attributes,
@@ -89,6 +94,22 @@ private func measureText(
         response.height - Float(abs(baseFont.descender))
     )
     response.metrics_mask = 3
+}
+
+private func protectCJKBreaks(_ value: String) -> String {
+    var result = ""
+    var previousWasCJK = false
+    for character in value {
+        let currentIsCJK = character.unicodeScalars.contains { scalar in
+            (0x2E80...0x9FFF).contains(scalar.value)
+                || (0xF900...0xFAFF).contains(scalar.value)
+                || (0xAC00...0xD7AF).contains(scalar.value)
+        }
+        if previousWasCJK && currentIsCJK { result.append("\u{2060}") }
+        result.append(character)
+        previousWasCJK = currentIsCJK
+    }
+    return result
 }
 
 private func measureCustomElement(

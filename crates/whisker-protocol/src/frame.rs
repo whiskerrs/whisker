@@ -302,7 +302,7 @@ pub enum TextContentError {
 pub const PROTOCOL_MAJOR: u16 = 1;
 
 /// Protocol minor version implemented by this semantic model.
-pub const PROTOCOL_MINOR: u16 = 1;
+pub const PROTOCOL_MINOR: u16 = 2;
 
 /// A negotiated frame protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -799,6 +799,7 @@ mod tests {
                 alignment: crate::MeasureTextAlignment::Start,
                 indent: Default::default(),
                 wrap: crate::MeasureTextWrap::Wrap,
+                word_break: Default::default(),
                 max_lines: None,
                 overflow: crate::MeasureTextOverflow::Clip,
             },
@@ -981,6 +982,7 @@ mod tests {
                         alignment: crate::MeasureTextAlignment::Start,
                         indent: Default::default(),
                         wrap: crate::MeasureTextWrap::Wrap,
+                        word_break: Default::default(),
                         max_lines: None,
                         overflow: crate::MeasureTextOverflow::Clip,
                     },

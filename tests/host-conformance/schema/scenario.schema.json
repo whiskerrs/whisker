@@ -178,6 +178,10 @@
         "color": { "$ref": "#/$defs/color" },
         "alignment": { "enum": ["start", "end", "left", "right", "center"] },
         "indent": { "$ref": "#/$defs/textIndent" },
+        "white_space": { "enum": ["normal", "no_wrap"] },
+        "word_break": { "enum": ["normal", "break_all", "keep_all"] },
+        "max_lines": { "type": "integer", "minimum": 0 },
+        "overflow": { "enum": ["clip", "ellipsis"] },
         "decoration": { "$ref": "#/$defs/textDecoration" },
         "shadow": { "$ref": "#/$defs/textShadow" }
       }

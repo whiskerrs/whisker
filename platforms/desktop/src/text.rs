@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::Infallible;
 
@@ -8,9 +9,9 @@ use glyphon::{
 use whisker_engine::MeasurementProvider;
 use whisker_protocol::{
     AvailableSpace, ElementMeasurement, LayoutRect, MeasureFontFamily, MeasureFontStyle,
-    MeasureLineHeight, MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload,
-    MeasurementRequest, MeasurementResponse, PreparedContentId, SurfaceId, TextMeasurePayload,
-    UnsupportedMeasurementReason,
+    MeasureLineHeight, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasuredSize,
+    MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse,
+    PreparedContentId, SurfaceId, TextMeasurePayload, UnsupportedMeasurementReason,
 };
 
 use crate::element::DesktopElementRegistry;
@@ -46,41 +47,27 @@ impl NativeTextHost {
         }
     }
 
-    fn prepare_text(
+    fn shape_text(
         &mut self,
         payload: &TextMeasurePayload,
-        request: &MeasurementRequest,
-    ) -> (PreparedText, MeasurementMetrics) {
-        let line_height = match payload.style.line_height {
-            MeasureLineHeight::Normal => payload.style.font_size * 1.2,
-            MeasureLineHeight::LogicalPixels(value) => value,
-        };
+        text: &str,
+        width: Option<f32>,
+        height: Option<f32>,
+        line_height: f32,
+    ) -> Buffer {
         let mut buffer = Buffer::new(
             &mut self.font_system,
             Metrics::new(payload.style.font_size, line_height),
         );
         buffer.set_wrap(
             &mut self.font_system,
-            match payload.wrap {
-                MeasureTextWrap::Wrap => Wrap::WordOrGlyph,
-                MeasureTextWrap::NoWrap => Wrap::None,
+            match (payload.wrap, payload.word_break) {
+                (MeasureTextWrap::NoWrap, _) => Wrap::None,
+                (MeasureTextWrap::Wrap, MeasureTextWordBreak::Normal) => Wrap::Word,
+                (MeasureTextWrap::Wrap, MeasureTextWordBreak::BreakAll) => Wrap::Glyph,
+                (MeasureTextWrap::Wrap, MeasureTextWordBreak::KeepAll) => Wrap::Word,
             },
         );
-
-        let available_width = match request.constraints.available_space[0] {
-            AvailableSpace::Definite(value) => Some(value.max(0.0)),
-            AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
-        };
-        let width = request.constraints.known_dimensions[0].or(available_width);
-        let line_limit_height = payload.max_lines.map(|lines| lines as f32 * line_height);
-        let available_height = match request.constraints.available_space[1] {
-            AvailableSpace::Definite(value) => Some(value.max(0.0)),
-            AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
-        };
-        let height = request.constraints.known_dimensions[1]
-            .or(available_height)
-            .map(|value| line_limit_height.map_or(value, |limit| value.min(limit)))
-            .or(line_limit_height);
         buffer.set_size(&mut self.font_system, width, height);
 
         let family = payload
@@ -103,12 +90,7 @@ impl NativeTextHost {
             .letter_spacing(payload.style.letter_spacing);
         let indent = payload.indent.resolve(width.unwrap_or(0.0));
         if indent == 0.0 {
-            buffer.set_text(
-                &mut self.font_system,
-                &payload.text,
-                &attrs,
-                Shaping::Advanced,
-            );
+            buffer.set_text(&mut self.font_system, text, &attrs, Shaping::Advanced);
         } else {
             // cosmic-text has no paragraph-indent switch. An internal
             // zero-width shaping span gives the first visual line the exact
@@ -118,10 +100,7 @@ impl NativeTextHost {
                 .letter_spacing(indent / payload.style.font_size.max(f32::EPSILON));
             buffer.set_rich_text(
                 &mut self.font_system,
-                [
-                    ("\u{200B}", indent_attrs),
-                    (payload.text.as_str(), attrs.clone()),
-                ],
+                [("\u{200B}", indent_attrs), (text, attrs.clone())],
                 &attrs,
                 Shaping::Advanced,
                 None,
@@ -132,6 +111,68 @@ impl NativeTextHost {
             line.set_align(alignment);
         }
         buffer.shape_until_scroll(&mut self.font_system, false);
+        buffer
+    }
+
+    fn prepare_text(
+        &mut self,
+        payload: &TextMeasurePayload,
+        request: &MeasurementRequest,
+    ) -> (PreparedText, MeasurementMetrics) {
+        let line_height = match payload.style.line_height {
+            MeasureLineHeight::Normal => payload.style.font_size * 1.2,
+            MeasureLineHeight::LogicalPixels(value) => value,
+        };
+        let available_width = match request.constraints.available_space[0] {
+            AvailableSpace::Definite(value) => Some(value.max(0.0)),
+            AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
+        };
+        let width = request.constraints.known_dimensions[0].or(available_width);
+        let line_limit_height = payload.max_lines.map(|lines| lines as f32 * line_height);
+        let available_height = match request.constraints.available_space[1] {
+            AvailableSpace::Definite(value) => Some(value.max(0.0)),
+            AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
+        };
+        let height = request.constraints.known_dimensions[1]
+            .or(available_height)
+            .map(|value| line_limit_height.map_or(value, |limit| value.min(limit)))
+            .or(line_limit_height);
+        let display_text = if payload.word_break == MeasureTextWordBreak::KeepAll {
+            Cow::Owned(protect_cjk_breaks(&payload.text))
+        } else {
+            Cow::Borrowed(payload.text.as_str())
+        };
+        let mut buffer = self.shape_text(payload, &display_text, width, height, line_height);
+        if payload.overflow == MeasureTextOverflow::Ellipsis
+            && let Some(width) = width
+            && !buffer_fits(&buffer, width, payload.max_lines)
+        {
+            let characters = payload.text.chars().collect::<Vec<_>>();
+            let mut lower = 0;
+            let mut upper = characters.len();
+            let mut best = String::from("…");
+            while lower <= upper {
+                let middle = lower + (upper - lower) / 2;
+                let mut candidate = characters[..middle].iter().collect::<String>();
+                candidate.push('…');
+                let candidate = if payload.word_break == MeasureTextWordBreak::KeepAll {
+                    protect_cjk_breaks(&candidate)
+                } else {
+                    candidate
+                };
+                let candidate_buffer =
+                    self.shape_text(payload, &candidate, Some(width), height, line_height);
+                if buffer_fits(&candidate_buffer, width, payload.max_lines) {
+                    best = candidate;
+                    lower = middle + 1;
+                } else if middle == 0 {
+                    break;
+                } else {
+                    upper = middle - 1;
+                }
+            }
+            buffer = self.shape_text(payload, &best, Some(width), height, line_height);
+        }
 
         let mut measured_width = 0.0_f32;
         let mut measured_height = 0.0_f32;
@@ -170,6 +211,33 @@ impl NativeTextHost {
             },
         )
     }
+}
+
+fn buffer_fits(buffer: &Buffer, width: f32, max_lines: Option<u32>) -> bool {
+    let lines = buffer
+        .lines
+        .iter()
+        .flat_map(|line| line.layout_opt().into_iter().flatten())
+        .collect::<Vec<_>>();
+    max_lines.is_none_or(|limit| lines.len() <= limit as usize)
+        && lines.iter().all(|line| line.w <= width + 0.01)
+}
+
+fn protect_cjk_breaks(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut previous_was_cjk = false;
+    for character in value.chars() {
+        let current_is_cjk = matches!(
+            character as u32,
+            0x2E80..=0x9FFF | 0xF900..=0xFAFF | 0xAC00..=0xD7AF
+        );
+        if previous_was_cjk && current_is_cjk {
+            result.push('\u{2060}');
+        }
+        result.push(character);
+        previous_was_cjk = current_is_cjk;
+    }
+    result
 }
 
 impl MeasurementProvider for NativeTextHost {
@@ -289,6 +357,7 @@ mod tests {
             alignment: whisker_protocol::MeasureTextAlignment::Start,
             indent: Default::default(),
             wrap: MeasureTextWrap::Wrap,
+            word_break: Default::default(),
             max_lines: Some(2),
             overflow: whisker_protocol::MeasureTextOverflow::Clip,
         };
@@ -330,6 +399,7 @@ mod tests {
             alignment: whisker_protocol::MeasureTextAlignment::Start,
             indent: Default::default(),
             wrap: MeasureTextWrap::NoWrap,
+            word_break: Default::default(),
             max_lines: None,
             overflow: whisker_protocol::MeasureTextOverflow::Clip,
         };
@@ -355,6 +425,57 @@ mod tests {
     }
 
     #[test]
+    fn native_text_shapes_breaking_and_ellipsis_policies() {
+        assert_eq!(protect_cjk_breaks("日本 A"), "日\u{2060}本 A");
+
+        let payload = TextMeasurePayload {
+            text: "a deliberately overflowing line that cannot fit".into(),
+            style: whisker_protocol::TextMeasureStyle {
+                font_size: 16.0,
+                ..whisker_protocol::TextMeasureStyle::default()
+            },
+            locale: None,
+            direction: whisker_protocol::MeasureTextDirection::Auto,
+            alignment: whisker_protocol::MeasureTextAlignment::Start,
+            indent: Default::default(),
+            wrap: MeasureTextWrap::NoWrap,
+            word_break: MeasureTextWordBreak::Normal,
+            max_lines: Some(1),
+            overflow: MeasureTextOverflow::Ellipsis,
+        };
+        let mut host = NativeTextHost::new(registry());
+        let (prepared, metrics) = host.prepare_text(
+            &payload,
+            &request(9, MeasurementPayload::Text(payload.clone())),
+        );
+
+        assert!(
+            prepared.buffer.lines[0].text().ends_with('…'),
+            "text={:?}, layouts={:?}",
+            prepared.buffer.lines[0].text(),
+            prepared.buffer.lines[0].layout_opt()
+        );
+        assert!(metrics.size.width <= 200.01);
+        assert!(buffer_fits(&prepared.buffer, 200.0, Some(1)));
+
+        let mut break_all = payload;
+        break_all.text = "unbreakable".repeat(8);
+        break_all.wrap = MeasureTextWrap::Wrap;
+        break_all.word_break = MeasureTextWordBreak::BreakAll;
+        break_all.overflow = MeasureTextOverflow::Clip;
+        break_all.max_lines = None;
+        let (prepared, _) = host.prepare_text(
+            &break_all,
+            &request(10, MeasurementPayload::Text(break_all.clone())),
+        );
+        let line_count = prepared.buffer.lines[0]
+            .layout_opt()
+            .expect("text was shaped")
+            .len();
+        assert!(line_count > 1);
+    }
+
+    #[test]
     fn empty_text_and_non_text_measurements_are_well_formed() {
         let empty = TextMeasurePayload {
             text: String::new(),
@@ -372,6 +493,7 @@ mod tests {
             alignment: whisker_protocol::MeasureTextAlignment::Start,
             indent: Default::default(),
             wrap: MeasureTextWrap::NoWrap,
+            word_break: Default::default(),
             max_lines: None,
             overflow: whisker_protocol::MeasureTextOverflow::Ellipsis,
         };

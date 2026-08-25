@@ -16,7 +16,9 @@ import rs.whisker.runtime.WhiskerTextDecorationLine
 import rs.whisker.runtime.WhiskerTextDecorationStyle
 import rs.whisker.runtime.WhiskerTextAlignment
 import rs.whisker.runtime.WhiskerTextIndent
+import rs.whisker.runtime.WhiskerTextOverflow
 import rs.whisker.runtime.WhiskerTextShadow
+import rs.whisker.runtime.WhiskerTextWordBreak
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.paint.HostBackgroundGeometry
 import rs.whisker.runtime.paint.HostBackgroundBox
@@ -372,7 +374,11 @@ internal class HostScene(
     }
 
     private fun applyText(node: HostNode, text: String, values: FloatArray, names: Array<String>) {
-        require(values.size >= 27)
+        require(values.size >= 31)
+        require(values[27] == 0f || values[27] == 1f)
+        require(values[28] in 0f..2f && values[28] == values[28].toInt().toFloat())
+        require(values[29] >= 0f && values[29] == values[29].toInt().toFloat())
+        require(values[30] == 0f || values[30] == 1f)
         val mounted = requireNotNull(node.mountedElement)
         require(
             mounted.setText(
@@ -390,6 +396,10 @@ internal class HostScene(
                         logicalPixels = values[25],
                         percentage = values[26],
                     ),
+                    wrap = values[27] != 0f,
+                    wordBreak = WhiskerTextWordBreak.entries[values[28].toInt()],
+                    maxLines = values[29].toInt(),
+                    overflow = WhiskerTextOverflow.entries[values[30].toInt()],
                     decoration = if (values[17] == 0f) null else WhiskerTextDecoration(
                         line = if (values[17].toInt() and 1 != 0) {
                             WhiskerTextDecorationLine.UNDERLINE

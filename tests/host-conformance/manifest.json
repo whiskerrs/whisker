@@ -521,6 +521,13 @@
       "checkpoints": ["semantic-projection"]
     },
     {
+      "id": "core.text-wrap-overflow-lynx",
+      "feature": "text-wrap-overflow-lynx",
+      "fixture": "core/text-wrap-overflow-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
       "id": "host.measure.text.basic",
       "feature": "text-measurement",
       "fixture": "core/text-measure-basic.json",

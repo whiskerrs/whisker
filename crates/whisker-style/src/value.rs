@@ -102,6 +102,38 @@ pub enum TextAlignValue {
     Center,
 }
 
+/// Lynx-supported `white-space` behavior.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum WhiteSpaceValue {
+    /// Collapse whitespace and allow line wrapping.
+    #[default]
+    Normal,
+    /// Collapse whitespace and keep the text on one logical line.
+    NoWrap,
+}
+
+/// Lynx-supported line-breaking behavior within words.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum WordBreakValue {
+    /// Use the Host's Unicode line-breaking rules.
+    #[default]
+    Normal,
+    /// Permit a line break between any pair of characters.
+    BreakAll,
+    /// Suppress ordinary break opportunities inside CJK text.
+    KeepAll,
+}
+
+/// Lynx-supported treatment of text that exceeds its line limit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextOverflowValue {
+    /// Clip glyphs at the text content boundary.
+    #[default]
+    Clip,
+    /// Replace the end of the last visible line with an ellipsis.
+    Ellipsis,
+}
+
 /// The face style used to render text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FontStyleValue {
@@ -643,6 +675,12 @@ pub enum StyleValue {
     Color(ColorValue),
     /// Inline text alignment.
     TextAlign(TextAlignValue),
+    /// Whitespace collapse and wrapping policy.
+    WhiteSpace(WhiteSpaceValue),
+    /// Word-breaking policy.
+    WordBreak(WordBreakValue),
+    /// Text overflow treatment.
+    TextOverflow(TextOverflowValue),
     /// Single inherited text shadow.
     TextShadow(TextShadowValue),
     /// Single inherited Lynx text decoration.

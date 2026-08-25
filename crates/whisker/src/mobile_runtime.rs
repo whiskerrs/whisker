@@ -10,12 +10,13 @@ use whisker_engine::whisker_protocol::{
     ApplyResult, AvailableSpace, BackgroundAttachment, BackgroundSize, BlendMode, BorderLineStyle,
     ChildPolicy, ClipShape, ElementMeasurement, ElementRegistration, ElementValueKind, FillRule,
     FrameMode, FramePacket, ImageRendering, ImageRepeat, MeasureFontFamily, MeasureFontStyle,
-    MeasureLineHeight, MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload,
-    MeasurementRequest, MeasurementRequestId, MeasurementResponse, NodeId, Operation, PaintBox,
-    PaintColor, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand, PreparedContentId,
-    RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent,
-    ResourceFailureCode, ResourceId, ResourceKind, ResourceSource, SurfaceId,
-    UnsupportedMeasurementReason, VisualEffects,
+    MeasureLineHeight, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasuredSize,
+    MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementRequestId,
+    MeasurementResponse, NodeId, Operation, PaintBox, PaintColor, PaintImage,
+    PaintLengthPercentage, PaintPosition, PathCommand, PreparedContentId, RadialGradientExtent,
+    RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode,
+    ResourceId, ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason,
+    VisualEffects,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
@@ -707,6 +708,8 @@ impl MobileMeasureBatch {
                 available_height_kind: available_kind(request.constraints.available_space[1]),
                 font_style: 0,
                 wrap: 0,
+                word_break: 0,
+                overflow: 0,
                 text: empty_string(),
                 locale: empty_string(),
                 font_family: empty_string(),
@@ -747,6 +750,13 @@ impl MobileMeasureBatch {
                         MeasureFontStyle::Oblique => 2,
                     };
                     raw.wrap = u8::from(matches!(value.wrap, MeasureTextWrap::Wrap));
+                    raw.word_break = match value.word_break {
+                        MeasureTextWordBreak::Normal => 0,
+                        MeasureTextWordBreak::BreakAll => 1,
+                        MeasureTextWordBreak::KeepAll => 2,
+                    };
+                    raw.overflow =
+                        u8::from(matches!(value.overflow, MeasureTextOverflow::Ellipsis));
                     raw.line_height = match value.style.line_height {
                         MeasureLineHeight::Normal => 0.0,
                         MeasureLineHeight::LogicalPixels(value) => value,
@@ -1420,6 +1430,15 @@ impl MobileFrameOwned {
                             MeasureFontStyle::Oblique => 2,
                         },
                         wrap: u8::from(matches!(content.payload.wrap, MeasureTextWrap::Wrap)),
+                        word_break: match content.payload.word_break {
+                            MeasureTextWordBreak::Normal => 0,
+                            MeasureTextWordBreak::BreakAll => 1,
+                            MeasureTextWordBreak::KeepAll => 2,
+                        },
+                        overflow: u8::from(matches!(
+                            content.payload.overflow,
+                            MeasureTextOverflow::Ellipsis
+                        )),
                         max_lines: content.payload.max_lines.unwrap_or(0),
                         line_height: match content.payload.style.line_height {
                             MeasureLineHeight::Normal => 0.0,
@@ -1813,6 +1832,7 @@ mod tests {
                 alignment: Default::default(),
                 indent: Default::default(),
                 wrap: MeasureTextWrap::Wrap,
+                word_break: Default::default(),
                 max_lines: None,
                 overflow: Default::default(),
             },
@@ -2019,6 +2039,11 @@ mod tests {
                 alpha: 0.4,
             },
         };
+        let mut content = text_with_shadow(vec![shadow]);
+        content.payload.wrap = MeasureTextWrap::NoWrap;
+        content.payload.word_break = MeasureTextWordBreak::KeepAll;
+        content.payload.max_lines = Some(2);
+        content.payload.overflow = MeasureTextOverflow::Ellipsis;
         let packet = FramePacket {
             header: FrameHeader {
                 version: ProtocolVersion::CURRENT,
@@ -2032,7 +2057,7 @@ mod tests {
             },
             operations: vec![Operation::SetText {
                 node: NodeId::new(1).unwrap(),
-                content: text_with_shadow(vec![shadow]),
+                content,
             }],
         };
 
@@ -2049,6 +2074,10 @@ mod tests {
         assert_eq!(text.shadow_color.green, 20);
         assert_eq!(text.shadow_color.blue, 30);
         assert_eq!(text.shadow_color.alpha, 0.4);
+        assert_eq!(text.wrap, 0);
+        assert_eq!(text.word_break, 2);
+        assert_eq!(text.max_lines, 2);
+        assert_eq!(text.overflow, 1);
     }
 
     #[test]

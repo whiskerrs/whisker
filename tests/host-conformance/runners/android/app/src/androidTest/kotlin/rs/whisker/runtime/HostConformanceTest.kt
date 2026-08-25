@@ -309,6 +309,15 @@ private class Driver(
                         }
                         check(margins == listOf((24f * density).toInt(), (30f * density).toInt()))
                     }
+                    if (command.getString("name") == "paint.text.wrap-overflow-lynx") {
+                        val texts = findTextViews(view)
+                        check(texts.size == 5)
+                        check(texts[1].maxLines == 1)
+                        check(texts[2].breakStrategy == android.text.Layout.BREAK_STRATEGY_SIMPLE)
+                        check(texts[3].text.contains('\u2060'))
+                        check(texts[4].maxLines == 1)
+                        check(texts[4].ellipsize == android.text.TextUtils.TruncateAt.END)
+                    }
                     check(
                         command.getString("name") == "paint.box" ||
                             command.getString("name") == "paint.background-layers.linear-gradient" ||
@@ -390,7 +399,8 @@ private class Driver(
                             command.getString("name") == "paint.text.shadow-single" ||
                             command.getString("name") == "paint.text.decoration-lynx" ||
                             command.getString("name") == "paint.text.align-lynx" ||
-                            command.getString("name") == "paint.text.indent-lynx",
+                            command.getString("name") == "paint.text.indent-lynx" ||
+                            command.getString("name") == "paint.text.wrap-overflow-lynx",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -588,7 +598,7 @@ private class Driver(
             val (numbers, names) = paint(node)
             check(stage(tag = 7, node = id, numbers = numbers, names = names))
             node.optJSONObject("text")?.let { text ->
-                val textNumbers = ArrayList<Float>(27)
+                val textNumbers = ArrayList<Float>(31)
                 val textNames = ArrayList<String>(3)
                 textNumbers += text.getDouble("font_size").toFloat()
                 textNumbers += text.optInt("font_weight", 400).toFloat()
@@ -635,6 +645,14 @@ private class Driver(
                 val indent = text.optJSONObject("indent")
                 textNumbers += indent?.optDouble("logical_pixels", 0.0)?.toFloat() ?: 0f
                 textNumbers += indent?.optDouble("percentage", 0.0)?.toFloat() ?: 0f
+                textNumbers += if (text.optString("white_space", "normal") == "normal") 1f else 0f
+                textNumbers += when (text.optString("word_break", "normal")) {
+                    "break_all" -> 1f
+                    "keep_all" -> 2f
+                    else -> 0f
+                }
+                textNumbers += text.optInt("max_lines", 0).toFloat()
+                textNumbers += if (text.optString("overflow", "clip") == "ellipsis") 1f else 0f
                 check(stage(
                     tag = 13,
                     node = id,

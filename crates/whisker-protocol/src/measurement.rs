@@ -163,6 +163,18 @@ pub enum MeasureTextWrap {
     NoWrap,
 }
 
+/// Where the Host may introduce a line break within text content.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MeasureTextWordBreak {
+    /// Use the Host's Unicode line-breaking rules.
+    #[default]
+    Normal,
+    /// Permit a break between any two characters.
+    BreakAll,
+    /// Suppress ordinary break opportunities inside CJK text.
+    KeepAll,
+}
+
 /// Content treatment when text exceeds its line or size limit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MeasureTextOverflow {
@@ -237,6 +249,8 @@ pub struct TextMeasurePayload {
     pub indent: MeasureTextIndent,
     /// Line-wrapping policy.
     pub wrap: MeasureTextWrap,
+    /// Word-breaking policy used when wrapping is enabled.
+    pub word_break: MeasureTextWordBreak,
     /// Maximum visible line count, or `None` for no explicit limit.
     pub max_lines: Option<u32>,
     /// Overflow policy applied at the line limit.
@@ -771,6 +785,7 @@ mod tests {
             alignment: MeasureTextAlignment::Start,
             indent: MeasureTextIndent::default(),
             wrap: MeasureTextWrap::Wrap,
+            word_break: MeasureTextWordBreak::Normal,
             max_lines: None,
             overflow: MeasureTextOverflow::Clip,
         }
@@ -1120,6 +1135,7 @@ mod tests {
         alternate_text.style.line_height = MeasureLineHeight::LogicalPixels(18.0);
         alternate_text.direction = MeasureTextDirection::RightToLeft;
         alternate_text.wrap = MeasureTextWrap::NoWrap;
+        alternate_text.word_break = MeasureTextWordBreak::KeepAll;
         alternate_text.overflow = MeasureTextOverflow::Ellipsis;
         assert_eq!(MeasurementPayload::Text(alternate_text).validate(), Ok(()));
         assert_ne!(MeasureFontStyle::Oblique, MeasureFontStyle::Italic);
@@ -1127,6 +1143,7 @@ mod tests {
             MeasureTextDirection::LeftToRight,
             MeasureTextDirection::Auto
         );
+        assert_ne!(MeasureTextWordBreak::BreakAll, MeasureTextWordBreak::Normal);
     }
 
     #[test]

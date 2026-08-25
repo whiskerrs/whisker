@@ -881,7 +881,10 @@ mod tests {
         .unwrap();
         assert_eq!(profile.protocol(), ProtocolVersion::CURRENT);
         assert!(profile.supports_protocol(ProtocolVersion { major: 1, minor: 0 }));
-        assert!(!profile.supports_protocol(ProtocolVersion { major: 1, minor: 2 }));
+        assert!(!profile.supports_protocol(ProtocolVersion {
+            major: 1,
+            minor: crate::PROTOCOL_MINOR + 1,
+        }));
         assert!(!profile.supports_protocol(ProtocolVersion { major: 2, minor: 0 }));
         assert_eq!(
             profile.support(RenderCapability::BackgroundLayers),
@@ -949,6 +952,7 @@ mod tests {
                         alignment: crate::MeasureTextAlignment::Start,
                         indent: Default::default(),
                         wrap: MeasureTextWrap::Wrap,
+                        word_break: Default::default(),
                         max_lines: None,
                         overflow: MeasureTextOverflow::Clip,
                     },

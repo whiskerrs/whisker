@@ -45,6 +45,10 @@ public struct WhiskerTextContent {
     public let color: UIColor
     public let alignment: WhiskerTextAlignment
     public let indent: WhiskerTextIndent
+    public let wrap: Bool
+    public let wordBreak: WhiskerTextWordBreak
+    public let maxLines: Int
+    public let overflow: WhiskerTextOverflow
     public let decoration: WhiskerTextDecoration?
     public let shadow: WhiskerTextShadow?
 
@@ -55,6 +59,10 @@ public struct WhiskerTextContent {
         color: UIColor,
         alignment: WhiskerTextAlignment = .start,
         indent: WhiskerTextIndent = WhiskerTextIndent(),
+        wrap: Bool = true,
+        wordBreak: WhiskerTextWordBreak = .normal,
+        maxLines: Int = 0,
+        overflow: WhiskerTextOverflow = .clip,
         decoration: WhiskerTextDecoration? = nil,
         shadow: WhiskerTextShadow? = nil
     ) {
@@ -64,12 +72,18 @@ public struct WhiskerTextContent {
         self.color = color
         self.alignment = alignment
         self.indent = indent
+        self.wrap = wrap
+        self.wordBreak = wordBreak
+        self.maxLines = maxLines
+        self.overflow = overflow
         self.decoration = decoration
         self.shadow = shadow
     }
 }
 
 public enum WhiskerTextAlignment: Equatable { case start, end, left, right, center }
+public enum WhiskerTextWordBreak: Equatable { case normal, breakAll, keepAll }
+public enum WhiskerTextOverflow: Equatable { case clip, ellipsis }
 
 /** First-line indentation; percentage is relative to the final Text width. */
 public struct WhiskerTextIndent: Equatable {

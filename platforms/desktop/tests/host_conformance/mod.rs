@@ -21,13 +21,14 @@ use whisker_protocol::{
     BorderLineStyle, BoxClip, BoxPaint, ClipShape, ElementTypeId, FillRule, FrameHeader, FrameMode,
     FramePacket, GradientStop, ImageRendering, ImageRepeat, InputEvent, InputEventKind, InputPoint,
     LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily, MeasureFontStyle,
-    MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasurementKey,
-    MeasurementPayload, MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip,
-    PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
-    PaintLengthPercentage, PaintPosition, PathCommand, PointerId, PointerInput, PointerKind,
-    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceId,
-    ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent, TextMeasurePayload,
-    TextMeasureStyle, TextPaint, TextShadow, Transform, Visibility, WhiskerValue,
+    MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak,
+    MeasureTextWrap, MeasurementKey, MeasurementPayload, MeasurementRequest, MeasurementResponse,
+    NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius,
+    PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand,
+    PointerId, PointerInput, PointerKind, ProtocolVersion, RadialGradientExtent,
+    RadialGradientShape, ResourceCommand, ResourceId, ResourceKind, ResourceRequest,
+    ResourceSource, SurfaceId, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint,
+    TextShadow, Transform, Visibility, WhiskerValue,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
@@ -88,6 +89,7 @@ fn fixture_alignment(
 }
 
 fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextContent {
+    use whisker_host_conformance::{TextOverflowFixture, WhiteSpaceFixture, WordBreakFixture};
     TextContent {
         payload: TextMeasurePayload {
             text: text.value.clone(),
@@ -103,9 +105,20 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
                 logical_pixels: text.indent.logical_pixels,
                 percentage: text.indent.percentage,
             },
-            wrap: MeasureTextWrap::Wrap,
-            max_lines: None,
-            overflow: MeasureTextOverflow::Clip,
+            wrap: match text.white_space {
+                WhiteSpaceFixture::Normal => MeasureTextWrap::Wrap,
+                WhiteSpaceFixture::NoWrap => MeasureTextWrap::NoWrap,
+            },
+            word_break: match text.word_break {
+                WordBreakFixture::Normal => MeasureTextWordBreak::Normal,
+                WordBreakFixture::BreakAll => MeasureTextWordBreak::BreakAll,
+                WordBreakFixture::KeepAll => MeasureTextWordBreak::KeepAll,
+            },
+            max_lines: (text.max_lines > 0).then_some(text.max_lines),
+            overflow: match text.overflow {
+                TextOverflowFixture::Clip => MeasureTextOverflow::Clip,
+                TextOverflowFixture::Ellipsis => MeasureTextOverflow::Ellipsis,
+            },
         },
         paint: TextPaint {
             foreground: color_protocol(&text.color),
@@ -570,6 +583,8 @@ impl Driver {
                         self.assert_text_alignment();
                     } else if name == "paint.text.indent-lynx" {
                         self.assert_text_indent();
+                    } else if name == "paint.text.wrap-overflow-lynx" {
+                        self.assert_text_wrap_overflow();
                     }
                     checkpoints.push(Checkpoint {
                         logical_size: [
@@ -1032,6 +1047,29 @@ impl Driver {
         assert_eq!(indents[1].resolve(200.0), 30.0);
     }
 
+    fn assert_text_wrap_overflow(&self) {
+        let commands = self
+            .scene
+            .as_ref()
+            .expect("checkpoint follows attach")
+            .paint_commands();
+        let payloads = commands
+            .iter()
+            .filter_map(|command| match command {
+                PaintCommand::Text { content, .. } => Some(&content.payload),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(payloads.len(), 5);
+        assert_eq!(payloads[0].wrap, MeasureTextWrap::Wrap);
+        assert_eq!(payloads[0].word_break, MeasureTextWordBreak::Normal);
+        assert_eq!(payloads[1].wrap, MeasureTextWrap::NoWrap);
+        assert_eq!(payloads[2].word_break, MeasureTextWordBreak::BreakAll);
+        assert_eq!(payloads[3].word_break, MeasureTextWordBreak::KeepAll);
+        assert_eq!(payloads[4].max_lines, Some(1));
+        assert_eq!(payloads[4].overflow, MeasureTextOverflow::Ellipsis);
+    }
+
     fn clipped_box_primitives(&self) -> Vec<ClippedBoxPrimitive> {
         let scene = self.scene.as_ref().expect("checkpoint follows attach");
         let mut primitives = Vec::new();
@@ -1230,6 +1268,7 @@ impl Driver {
                 alignment: whisker_protocol::MeasureTextAlignment::Start,
                 indent: Default::default(),
                 wrap: MeasureTextWrap::Wrap,
+                word_break: Default::default(),
                 max_lines: None,
                 overflow: MeasureTextOverflow::Clip,
             }),

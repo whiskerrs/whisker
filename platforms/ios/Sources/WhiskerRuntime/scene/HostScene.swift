@@ -137,6 +137,9 @@ final class HostScene {
                       text.decoration_flags <= 2,
                       text.decoration_style <= 4,
                       text.alignment <= 4,
+                      text.wrap <= 1,
+                      text.word_break <= 2,
+                      text.overflow <= 1,
                       text.indent_logical_pixels.isFinite,
                       text.indent_percentage.isFinite else { return false }
             case UInt32(WHISKER_OP_TRANSFORM):
@@ -528,6 +531,17 @@ final class HostScene {
                 logicalPixels: CGFloat(content.indent_logical_pixels),
                 percentage: CGFloat(content.indent_percentage)
             ),
+            wrap: content.wrap != 0,
+            wordBreak: {
+                switch content.word_break {
+                case 0: return .normal
+                case 1: return .breakAll
+                case 2: return .keepAll
+                default: preconditionFailure("invalid word-break")
+                }
+            }(),
+            maxLines: Int(content.max_lines),
+            overflow: content.overflow == 0 ? .clip : .ellipsis,
             decoration: content.decoration_flags == 0 ? nil : WhiskerTextDecoration(
                 line: content.decoration_flags & 1 != 0 ? .underline : .lineThrough,
                 style: {

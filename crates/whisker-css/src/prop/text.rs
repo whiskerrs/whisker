@@ -164,7 +164,15 @@ impl Css {
     /// Sets `text-overflow`.
     /// <https://lynxjs.org/api/css/properties/text-overflow>
     pub fn text_overflow(self, v: TextOverflow) -> Self {
-        self.push(crate::StyleProperty::TextOverflow, v)
+        let value = match v {
+            TextOverflow::Clip => whisker_style::TextOverflowValue::Clip,
+            TextOverflow::Ellipsis => whisker_style::TextOverflowValue::Ellipsis,
+        };
+        self.push_semantic(
+            crate::StyleProperty::TextOverflow,
+            whisker_style::StyleValue::TextOverflow(value),
+            v.to_css_string(),
+        )
     }
 
     /// Sets `text-transform`.
@@ -188,13 +196,33 @@ impl Css {
     /// Sets `white-space`.
     /// <https://lynxjs.org/api/css/properties/white-space>
     pub fn white_space(self, v: WhiteSpace) -> Self {
-        self.push(crate::StyleProperty::WhiteSpace, v)
+        let value = match v {
+            WhiteSpace::Normal => whisker_style::WhiteSpaceValue::Normal,
+            WhiteSpace::Nowrap => whisker_style::WhiteSpaceValue::NoWrap,
+            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine => {
+                return self.push(crate::StyleProperty::WhiteSpace, v);
+            }
+        };
+        self.push_semantic(
+            crate::StyleProperty::WhiteSpace,
+            whisker_style::StyleValue::WhiteSpace(value),
+            v.to_css_string(),
+        )
     }
 
     /// Sets `word-break`.
     /// <https://lynxjs.org/api/css/properties/word-break>
     pub fn word_break(self, v: WordBreak) -> Self {
-        self.push(crate::StyleProperty::WordBreak, v)
+        let value = match v {
+            WordBreak::Normal => whisker_style::WordBreakValue::Normal,
+            WordBreak::BreakAll => whisker_style::WordBreakValue::BreakAll,
+            WordBreak::KeepAll => whisker_style::WordBreakValue::KeepAll,
+        };
+        self.push_semantic(
+            crate::StyleProperty::WordBreak,
+            whisker_style::StyleValue::WordBreak(value),
+            v.to_css_string(),
+        )
     }
 
     /// Sets `overflow-wrap`.
@@ -286,6 +314,11 @@ mod tests {
             s.to_string(),
             "text-overflow: ellipsis; text-transform: uppercase;"
         );
+        let semantic = Css::new().text_overflow(TextOverflow::Ellipsis);
+        assert!(matches!(
+            semantic.to_specified_style().unwrap().resolved()[0].value(),
+            whisker_style::StyleValue::TextOverflow(whisker_style::TextOverflowValue::Ellipsis)
+        ));
     }
 
     #[test]
@@ -314,5 +347,27 @@ mod tests {
             s.to_string(),
             "white-space: nowrap; word-break: break-all; overflow-wrap: break-word;"
         );
+        let specified = Css::new()
+            .white_space(WhiteSpace::Nowrap)
+            .word_break(WordBreak::BreakAll)
+            .to_specified_style()
+            .unwrap();
+        assert!(matches!(
+            specified.resolved()[0].value(),
+            whisker_style::StyleValue::WhiteSpace(whisker_style::WhiteSpaceValue::NoWrap)
+        ));
+        assert!(matches!(
+            specified.resolved()[1].value(),
+            whisker_style::StyleValue::WordBreak(whisker_style::WordBreakValue::BreakAll)
+        ));
+
+        for unsupported in [WhiteSpace::Pre, WhiteSpace::PreWrap, WhiteSpace::PreLine] {
+            assert!(
+                Css::new()
+                    .white_space(unsupported)
+                    .to_specified_style()
+                    .is_err()
+            );
+        }
     }
 }

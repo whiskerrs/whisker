@@ -7,13 +7,14 @@ use std::{
 
 use whisker_protocol::{
     MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextAlignment,
-    MeasureTextDirection, MeasureTextIndent, MeasureTextOverflow, MeasureTextWrap,
-    MeasurementPayload, MeasurementSpec, PaintColor, PendingMeasurePolicy, TextContent,
-    TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow,
+    MeasureTextDirection, MeasureTextIndent, MeasureTextOverflow, MeasureTextWordBreak,
+    MeasureTextWrap, MeasurementPayload, MeasurementSpec, PaintColor, PendingMeasurePolicy,
+    TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow,
 };
 use whisker_style::{
     ColorValue, ComputedLineHeight, ComputedStyle, ComputedTextIndent, FontFamilyValue,
     FontStyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
+    TextOverflowValue, WhiteSpaceValue, WordBreakValue,
 };
 
 /// Plain UTF-8 text and the shaping behavior not supplied by inherited style.
@@ -25,12 +26,8 @@ pub struct PlainTextInput {
     pub locale: Option<String>,
     /// Base shaping direction.
     pub direction: MeasureTextDirection,
-    /// Line-wrapping behavior.
-    pub wrap: MeasureTextWrap,
     /// Maximum visible line count.
     pub max_lines: Option<u32>,
-    /// Overflow behavior at the line limit.
-    pub overflow: MeasureTextOverflow,
     /// Layout behavior if the Host cannot answer synchronously.
     pub pending_policy: PendingMeasurePolicy,
 }
@@ -42,9 +39,7 @@ impl PlainTextInput {
             text: text.into(),
             locale: None,
             direction: MeasureTextDirection::Auto,
-            wrap: MeasureTextWrap::Wrap,
             max_lines: None,
-            overflow: MeasureTextOverflow::Clip,
             pending_policy: PendingMeasurePolicy::Block,
         }
     }
@@ -118,9 +113,20 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &ComputedStyle) -> Lowere
                 percentage: value.get(),
             },
         },
-        wrap: input.wrap,
+        wrap: match style.white_space() {
+            WhiteSpaceValue::Normal => MeasureTextWrap::Wrap,
+            WhiteSpaceValue::NoWrap => MeasureTextWrap::NoWrap,
+        },
+        word_break: match style.word_break() {
+            WordBreakValue::Normal => MeasureTextWordBreak::Normal,
+            WordBreakValue::BreakAll => MeasureTextWordBreak::BreakAll,
+            WordBreakValue::KeepAll => MeasureTextWordBreak::KeepAll,
+        },
         max_lines: input.max_lines,
-        overflow: input.overflow,
+        overflow: match style.text_overflow() {
+            TextOverflowValue::Clip => MeasureTextOverflow::Clip,
+            TextOverflowValue::Ellipsis => MeasureTextOverflow::Ellipsis,
+        },
     };
     let measurement = MeasurementSpec {
         content_hash: content_hash(&input.text),
@@ -229,9 +235,10 @@ fn metric_style_hash(input: &PlainTextInput, style: &ComputedStyle) -> u64 {
     style.text_indent().hash(&mut hasher);
     input.locale.hash(&mut hasher);
     input.direction.hash(&mut hasher);
-    input.wrap.hash(&mut hasher);
+    style.white_space().hash(&mut hasher);
+    style.word_break().hash(&mut hasher);
     input.max_lines.hash(&mut hasher);
-    input.overflow.hash(&mut hasher);
+    style.text_overflow().hash(&mut hasher);
     hasher.finish()
 }
 
@@ -321,14 +328,20 @@ mod tests {
                     unit: LengthUnit::Px,
                 }),
             ),
+            StyleDeclaration::new(
+                StyleProperty::WhiteSpace,
+                StyleValue::WhiteSpace(WhiteSpaceValue::NoWrap),
+            ),
+            StyleDeclaration::new(
+                StyleProperty::TextOverflow,
+                StyleValue::TextOverflow(TextOverflowValue::Ellipsis),
+            ),
         ]);
         let input = PlainTextInput {
             text: "مرحبا".into(),
             locale: Some("ar".into()),
             direction: MeasureTextDirection::RightToLeft,
-            wrap: MeasureTextWrap::NoWrap,
             max_lines: Some(1),
-            overflow: MeasureTextOverflow::Ellipsis,
             pending_policy: PendingMeasurePolicy::RetainPrevious,
         };
         let lowered = lower_plain_text(&input, style.computed());
@@ -349,6 +362,7 @@ mod tests {
         assert_eq!(payload.locale.as_deref(), Some("ar"));
         assert_eq!(payload.direction, MeasureTextDirection::RightToLeft);
         assert_eq!(payload.wrap, MeasureTextWrap::NoWrap);
+        assert_eq!(payload.word_break, MeasureTextWordBreak::Normal);
         assert_eq!(payload.max_lines, Some(1));
         assert_eq!(payload.overflow, MeasureTextOverflow::Ellipsis);
     }
@@ -371,6 +385,32 @@ mod tests {
             if value != TextAlignValue::Start {
                 let initial = lower_plain_text(
                     &PlainTextInput::new("alignment"),
+                    resolved(Vec::new()).computed(),
+                );
+                assert_ne!(
+                    lowered.measurement().style_hash,
+                    initial.measurement().style_hash
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_lynx_word_break_reaches_the_host_payload_and_metric_key() {
+        for (value, expected) in [
+            (WordBreakValue::Normal, MeasureTextWordBreak::Normal),
+            (WordBreakValue::BreakAll, MeasureTextWordBreak::BreakAll),
+            (WordBreakValue::KeepAll, MeasureTextWordBreak::KeepAll),
+        ] {
+            let style = resolved(vec![StyleDeclaration::new(
+                StyleProperty::WordBreak,
+                StyleValue::WordBreak(value),
+            )]);
+            let lowered = lower_plain_text(&PlainTextInput::new("breaking"), style.computed());
+            assert_eq!(lowered.content().payload.word_break, expected);
+            if value != WordBreakValue::Normal {
+                let initial = lower_plain_text(
+                    &PlainTextInput::new("breaking"),
                     resolved(Vec::new()).computed(),
                 );
                 assert_ne!(
