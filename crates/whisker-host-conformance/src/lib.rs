@@ -234,6 +234,15 @@ pub enum Command {
         /// Additional logical pixels between glyph advances.
         #[serde(default)]
         letter_spacing: f32,
+        /// Ordered OpenType feature settings.
+        #[serde(default)]
+        font_features: Vec<FontFeatureFixture>,
+        /// Ordered variable-font axis settings.
+        #[serde(default)]
+        font_variations: Vec<FontVariationFixture>,
+        /// Lynx optical-sizing behavior.
+        #[serde(default)]
+        font_optical_sizing: FontOpticalSizingFixture,
         /// Definite available width.
         available_width: f32,
     },
@@ -1493,6 +1502,8 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
                 font_weight,
                 line_height,
                 letter_spacing,
+                font_features,
+                font_variations,
                 available_width,
                 ..
             } if *key > 0
@@ -1502,6 +1513,12 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
                 && (1..=1000).contains(font_weight)
                 && finite_positive(*line_height)
                 && letter_spacing.is_finite()
+                && font_features
+                    .iter()
+                    .all(|feature| valid_font_tag(&feature.tag))
+                && font_variations.iter().all(|variation| {
+                    valid_font_tag(&variation.tag) && variation.value.is_finite()
+                })
                 && available_width.is_finite()
                 && *available_width >= 0.0 => {}
             Command::CheckpointMeasurement {
@@ -1656,6 +1673,13 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                             .line_height
                             .is_none_or(|height| height.is_finite() && height > 0.0)
                         && text.letter_spacing.is_finite()
+                        && text
+                            .font_features
+                            .iter()
+                            .all(|feature| valid_font_tag(&feature.tag))
+                        && text.font_variations.iter().all(|variation| {
+                            valid_font_tag(&variation.tag) && variation.value.is_finite()
+                        })
                         && valid_color(&text.color)
                         && text
                             .decoration
@@ -1751,6 +1775,10 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
             }
             true
         })
+}
+
+fn valid_font_tag(tag: &str) -> bool {
+    tag.len() == 4 && tag.bytes().all(|byte| (b' '..=b'~').contains(&byte))
 }
 
 impl LengthPercentageFixture {

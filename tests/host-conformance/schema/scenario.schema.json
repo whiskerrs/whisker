@@ -397,6 +397,9 @@
         "font_style": { "enum": ["normal", "italic", "oblique"], "default": "normal" },
         "line_height": { "type": "number", "exclusiveMinimum": 0 },
         "letter_spacing": { "type": "number", "default": 0 },
+        "font_features": { "type": "array", "items": { "$ref": "#/$defs/fontFeature" } },
+        "font_variations": { "type": "array", "items": { "$ref": "#/$defs/fontVariation" } },
+        "font_optical_sizing": { "enum": ["auto", "none"], "default": "none" },
         "available_width": { "type": "number", "minimum": 0 }
       }
     },

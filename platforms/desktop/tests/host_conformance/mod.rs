@@ -684,6 +684,9 @@ impl Driver {
                     font_style,
                     line_height,
                     letter_spacing,
+                    font_features,
+                    font_variations,
+                    font_optical_sizing,
                     available_width,
                 } => self.measure_text(
                     *key,
@@ -694,6 +697,9 @@ impl Driver {
                     *font_style,
                     *line_height,
                     *letter_spacing,
+                    font_features,
+                    font_variations,
+                    *font_optical_sizing,
                     *available_width,
                 ),
                 Command::CheckpointMeasurement {
@@ -1413,6 +1419,9 @@ impl Driver {
         font_style: whisker_host_conformance::FontStyleFixture,
         line_height: f32,
         letter_spacing: f32,
+        font_features: &[whisker_host_conformance::FontFeatureFixture],
+        font_variations: &[whisker_host_conformance::FontVariationFixture],
+        font_optical_sizing: whisker_host_conformance::FontOpticalSizingFixture,
         available_width: f32,
     ) {
         let surface = self.surface.expect("attach_surface precedes measure_text");
@@ -1456,6 +1465,28 @@ impl Driver {
                     },
                     line_height: MeasureLineHeight::LogicalPixels(line_height),
                     letter_spacing,
+                    features: font_features
+                        .iter()
+                        .map(|feature| whisker_protocol::FontFeature {
+                            tag: fixture_font_tag(&feature.tag),
+                            value: feature.value,
+                        })
+                        .collect(),
+                    variations: font_variations
+                        .iter()
+                        .map(|variation| whisker_protocol::FontVariation {
+                            tag: fixture_font_tag(&variation.tag),
+                            value: variation.value,
+                        })
+                        .collect(),
+                    optical_sizing: match font_optical_sizing {
+                        whisker_host_conformance::FontOpticalSizingFixture::Auto => {
+                            whisker_protocol::FontOpticalSizing::Auto
+                        }
+                        whisker_host_conformance::FontOpticalSizingFixture::None => {
+                            whisker_protocol::FontOpticalSizing::None
+                        }
+                    },
                     ..TextMeasureStyle::default()
                 },
                 locale: None,
@@ -1471,6 +1502,49 @@ impl Driver {
         self.text
             .measure_batch(surface, &[request], &mut self.measurement_responses)
             .expect("Desktop text measurement is infallible");
+        if !font_features.is_empty() || !font_variations.is_empty() {
+            let response = self
+                .measurement_responses
+                .last()
+                .expect("Desktop text measurement returned one response");
+            let MeasurementResponse::Ready { metrics, .. } = response else {
+                panic!("Desktop text measurement is synchronously ready");
+            };
+            let prepared = self
+                .text
+                .prepared
+                .get(
+                    &metrics
+                        .prepared_content
+                        .expect("Desktop retains shaped text"),
+                )
+                .expect("prepared text is retained by its response ID");
+            let attrs = prepared
+                .buffer
+                .lines
+                .first()
+                .expect("text produces one source line")
+                .attrs_list()
+                .defaults();
+            let expected_features = font_features
+                .iter()
+                .map(|feature| (feature.tag.as_bytes(), feature.value))
+                .collect::<Vec<_>>();
+            let actual_features = attrs
+                .font_features
+                .features
+                .iter()
+                .map(|feature| (feature.tag.as_bytes().as_slice(), feature.value))
+                .collect::<Vec<_>>();
+            assert_eq!(actual_features, expected_features);
+            if let Some(weight) = font_variations
+                .iter()
+                .rev()
+                .find(|variation| variation.tag == "wght")
+            {
+                assert_eq!(attrs.weight.0, weight.value.clamp(1.0, 1000.0) as u16);
+            }
+        }
     }
 
     fn check_measurement(

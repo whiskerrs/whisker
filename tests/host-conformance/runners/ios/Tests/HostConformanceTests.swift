@@ -658,6 +658,24 @@ private final class Driver {
         case "oblique": fontStyle = 2
         default: throw Failure("unknown measurement font style")
         }
+        let fontFeatures = try (command["font_features"] as? [[String: Any]] ?? []).map {
+            SceneFontFeature(
+                tag: try string($0, "tag"),
+                value: UInt32(try number($0, "value"))
+            )
+        }
+        let fontVariations = try (command["font_variations"] as? [[String: Any]] ?? []).map {
+            SceneFontVariation(
+                tag: try string($0, "tag"),
+                value: Float(try number($0, "value"))
+            )
+        }
+        let fontOpticalSizing: UInt8
+        switch command["font_optical_sizing"] as? String ?? "none" {
+        case "auto": fontOpticalSizing = 0
+        case "none": fontOpticalSizing = 1
+        default: throw Failure("unknown measurement optical sizing")
+        }
 
         let textBytes = Array(value.utf8CString)
         let textStorage = UnsafeMutablePointer<CChar>.allocate(capacity: textBytes.count)
@@ -684,6 +702,34 @@ private final class Driver {
             ))
         }
 
+        let featureStorage: UnsafeMutablePointer<WhiskerMobileFontFeature>? =
+            fontFeatures.isEmpty ? nil : .allocate(capacity: fontFeatures.count)
+        defer {
+            featureStorage?.deinitialize(count: fontFeatures.count)
+            featureStorage?.deallocate()
+        }
+        for (index, setting) in fontFeatures.enumerated() {
+            var native = WhiskerMobileFontFeature()
+            let tag = try fontTag(setting.tag)
+            native.tag = (tag[0], tag[1], tag[2], tag[3])
+            native.value = setting.value
+            featureStorage?.advanced(by: index).initialize(to: native)
+        }
+
+        let variationStorage: UnsafeMutablePointer<WhiskerMobileFontVariation>? =
+            fontVariations.isEmpty ? nil : .allocate(capacity: fontVariations.count)
+        defer {
+            variationStorage?.deinitialize(count: fontVariations.count)
+            variationStorage?.deallocate()
+        }
+        for (index, setting) in fontVariations.enumerated() {
+            var native = WhiskerMobileFontVariation()
+            let tag = try fontTag(setting.tag)
+            native.tag = (tag[0], tag[1], tag[2], tag[3])
+            native.value = setting.value
+            variationStorage?.advanced(by: index).initialize(to: native)
+        }
+
         var request = WhiskerMobileMeasureRequest()
         request.key = key
         request.node = 1
@@ -705,7 +751,26 @@ private final class Driver {
         request.font_weight = UInt16((command["font_weight"] as? NSNumber)?.uintValue ?? 400)
         request.line_height = Float(try number(command, "line_height"))
         request.letter_spacing = (command["letter_spacing"] as? NSNumber)?.floatValue ?? 0
-        request.font_optical_sizing = 1
+        request.font_features = featureStorage.map { UnsafePointer($0) }
+        request.font_feature_count = fontFeatures.count
+        request.font_variations = variationStorage.map { UnsafePointer($0) }
+        request.font_variation_count = fontVariations.count
+        request.font_optical_sizing = fontOpticalSizing
+
+        if !fontFeatures.isEmpty || !fontVariations.isEmpty {
+            XCTAssertEqual(request.font_feature_count, 2)
+            let projectedFeatures = UnsafeBufferPointer(
+                start: request.font_features,
+                count: request.font_feature_count
+            )
+            XCTAssertEqual(projectedFeatures.map { decodedFontTag($0.tag) }, ["kern", "liga"])
+            XCTAssertEqual(projectedFeatures.map(\.value), [0, 0])
+            XCTAssertEqual(request.font_variation_count, 1)
+            let variation = try XCTUnwrap(request.font_variations?.pointee)
+            XCTAssertEqual(decodedFontTag(variation.tag), "wght")
+            XCTAssertEqual(variation.value, 720)
+            XCTAssertEqual(request.font_optical_sizing, 1)
+        }
 
         if id == "host.measure.text.basic" {
             XCTAssertEqual(families, ["Whisker Fixture Missing", "system"])
@@ -1997,6 +2062,10 @@ private func fontTag(_ value: String) throws -> [UInt8] {
         throw Failure("OpenType tag must contain four printable ASCII bytes")
     }
     return bytes
+}
+
+private func decodedFontTag<T>(_ value: T) -> String {
+    withUnsafeBytes(of: value) { String(decoding: $0, as: UTF8.self) }
 }
 
 private func sceneClipPath(_ fixture: [String: Any]) throws -> SceneClipPath {
