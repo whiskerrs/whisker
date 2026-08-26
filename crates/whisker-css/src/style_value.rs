@@ -3,17 +3,18 @@
 use whisker_style::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, AnimationValue, BackdropFilterValue,
     BorderRadiusValue, BorderStyleValue, BoxSizingValue, CalcExpression, ClearValue, ColorValue,
-    CursorValue, DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue,
-    FloatValue, FontStyleValue, FontWeightValue, GridAutoFlowValue, GridMaxTrackSizingValue,
-    GridMinTrackSizingValue, GridPlacementValue, GridRepetitionCountValue, GridTemplateAreaValue,
-    GridTemplateAreasValue, GridTemplateComponentValue, GridTemplateRepetitionValue,
-    GridTemplateValue, GridTrackSizingValue, ImageRenderingValue, InsetPathValue,
-    JustifyContentValue, LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue,
-    LineHeightValue, MotionDirection, MotionEasing, MotionFillMode, MotionIterationCount,
-    MotionPathCommandValue, MotionPathPointValue, MotionPlayState, MotionStepPosition, MotionTime,
-    OffsetPathValue, OffsetRotateValue, PointerEventsValue, PositionValue, SizeValue, StyleNumber,
-    StyleValue, TransformFunctionValue, TransformOriginValue, TransformValue,
-    TransitionPropertyValue, TransitionValue,
+    CursorValue, CustomPropertyReference, DirectionValue, DisplayValue, FlexBasisValue,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyleValue, FontWeightValue,
+    GridAutoFlowValue, GridMaxTrackSizingValue, GridMinTrackSizingValue, GridPlacementValue,
+    GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue,
+    GridTemplateComponentValue, GridTemplateRepetitionValue, GridTemplateValue,
+    GridTrackSizingValue, ImageRenderingValue, InsetPathValue, JustifyContentValue,
+    LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
+    MotionDirection, MotionEasing, MotionFillMode, MotionIterationCount, MotionPathCommandValue,
+    MotionPathPointValue, MotionPlayState, MotionStepPosition, MotionTime, OffsetPathValue,
+    OffsetRotateValue, PointerEventsValue, PositionValue, SizeValue, StyleNumber, StyleValue,
+    TransformFunctionValue, TransformOriginValue, TransformValue, TransitionPropertyValue,
+    TransitionValue,
 };
 
 use crate::data_type_ext::{PositionKeyword, StepPosition};
@@ -977,6 +978,19 @@ fn to_calc_expression(value: &CalcExpr) -> CalcExpression {
     match value {
         CalcExpr::Value(value) => CalcExpression::Value(Box::new(to_length_percentage(value))),
         CalcExpr::Number(value) => CalcExpression::Number(StyleNumber::new(*value)),
+        CalcExpr::Variable { name, fallback } => {
+            CalcExpression::Variable(fallback.as_deref().map_or_else(
+                || CustomPropertyReference::new(name.clone()),
+                |fallback| {
+                    CustomPropertyReference::with_fallback(
+                        name.clone(),
+                        StyleValue::LengthPercentage(LengthPercentageValue::Calc(Box::new(
+                            to_calc_expression(fallback),
+                        ))),
+                    )
+                },
+            ))
+        }
         CalcExpr::Add(left, right) => CalcExpression::Add(
             Box::new(to_calc_expression(left)),
             Box::new(to_calc_expression(right)),

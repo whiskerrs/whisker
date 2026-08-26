@@ -1315,6 +1315,7 @@ fn evaluate_affine_calc(
         CalcExpression::Value(value) => resolve_affine(value, font_size, environment, property)
             .map(|value| CalcQuantity::Affine(Affine::new(value.length(), value.fraction()))),
         CalcExpression::Number(value) => finite(*value, property).map(CalcQuantity::Scalar),
+        CalcExpression::Variable(_) => Err(invalid_calc()),
         CalcExpression::Add(left, right) => match (
             evaluate_affine_calc(left, font_size, environment, property)?,
             evaluate_affine_calc(right, font_size, environment, property)?,
@@ -2329,6 +2330,15 @@ mod tests {
         let environment = StyleEnvironment::default();
         let scalar = |value| CalcExpression::Number(number(value));
         let affine = || CalcExpression::Value(Box::new(px(2.0)));
+        evaluate_affine_calc(
+            &CalcExpression::Variable(crate::CustomPropertyReference::new(
+                crate::CustomPropertyName::new("--unresolved").unwrap(),
+            )),
+            20.0,
+            environment,
+            StyleProperty::Width,
+        )
+        .unwrap_err();
         for expression in [
             CalcExpression::Add(Box::new(scalar(1.0)), Box::new(scalar(2.0))),
             CalcExpression::Sub(Box::new(scalar(3.0)), Box::new(scalar(1.0))),
