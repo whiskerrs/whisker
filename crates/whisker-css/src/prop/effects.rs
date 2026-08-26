@@ -4,6 +4,7 @@
 use crate::css::Css;
 use crate::data_type::{Color, Length};
 use crate::keyword::{Cursor, Overflow, PointerEvents, Visibility};
+use crate::value::BackdropFilter;
 
 impl Css {
     /// Sets `opacity`. Lynx clamps to `0.0..=1.0`. Default: `1`.
@@ -103,12 +104,10 @@ impl Css {
         self.push_raw(crate::StyleProperty::BoxShadow, s)
     }
 
-    /// Sets `filter` to a raw CSS filter list. Use raw because the
-    /// `<filter-function>` grammar (blur, drop-shadow, etc.) is rich
-    /// and rarely worth typing.
-    /// <https://lynxjs.org/api/css/properties/filter>
-    pub fn filter(self, value: impl Into<String>) -> Self {
-        self.push_raw(crate::StyleProperty::Filter, value)
+    /// Sets the supported `backdrop-filter` subset: `none` or one
+    /// `blur(<length>)` function.
+    pub fn backdrop_filter(self, value: BackdropFilter) -> Self {
+        self.push_typed(crate::StyleProperty::BackdropFilter, value)
     }
 
     /// Sets `mask-image` to a raw CSS value (URL or gradient).
@@ -160,6 +159,7 @@ mod tests {
     use crate::data_type::Color;
     use crate::ext::*;
     use crate::keyword::*;
+    use crate::value::BackdropFilter;
 
     #[test]
     fn opacity_full_range() {
@@ -226,15 +226,22 @@ mod tests {
     }
 
     #[test]
-    fn filter_clip_path_mask_raw() {
+    fn backdrop_blur_is_typed_while_clip_and_mask_remain_raw() {
         let s = Css::new()
-            .filter("blur(4px)")
+            .backdrop_filter(BackdropFilter::blur(4.px()))
             .clip_path("circle(50%)")
             .mask_image("url(\"a.png\")");
         assert_eq!(
             s.to_string(),
-            "filter: blur(4px); clip-path: circle(50%); mask-image: url(\"a.png\");"
+            "backdrop-filter: blur(4px); clip-path: circle(50%); mask-image: url(\"a.png\");"
         );
+        assert!(
+            s.to_specified_style().is_err(),
+            "clip/mask remain unmigrated"
+        );
+
+        let typed = Css::new().backdrop_filter(BackdropFilter::blur(4.px()));
+        assert!(typed.to_specified_style().is_ok());
     }
 
     #[test]

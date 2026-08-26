@@ -1,11 +1,11 @@
 //! Computed paint values that remain independent of every Host renderer.
 
 use crate::{
-    BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue, BackgroundPositionValue,
-    BackgroundRepeatModeValue, BackgroundSizeValue, ColorValue, ComputedLengthPercentage,
-    DirectionValue, Edges, GradientValue, InheritedStyle, RadialGradientValue, SpecifiedStyle,
-    StyleEnvironment, StyleNumber, StyleProperty, StyleResolutionError, StyleValue,
-    layout::resolve_affine,
+    BackdropFilterValue, BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue,
+    BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundSizeValue, ColorValue,
+    ComputedLengthPercentage, DirectionValue, Edges, GradientValue, InheritedStyle,
+    LengthPercentageValue, RadialGradientValue, SpecifiedStyle, StyleEnvironment, StyleNumber,
+    StyleProperty, StyleResolutionError, StyleValue, layout::resolve_affine,
 };
 
 /// Four physical corners in top-left, top-right, bottom-right, bottom-left order.
@@ -214,6 +214,8 @@ impl Default for ComputedBackgroundLayerStyle {
 /// Computed background, border, clip, and compositing values for one node.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ComputedPaintStyle {
+    /// Blur radius applied to pixels behind this node, or `None` for no effect.
+    pub backdrop_blur: Option<StyleNumber>,
     /// Resolved background color. Transparent is represented explicitly.
     pub background_color: ColorValue,
     /// Ordered Host-independent background image sources, front to back.
@@ -247,6 +249,7 @@ impl ComputedPaintStyle {
             alpha: StyleNumber::new(0.0),
         };
         Self {
+            backdrop_blur: None,
             background_color: transparent,
             background_images: Vec::new(),
             background_layers: vec![ComputedBackgroundLayerStyle::default()],
@@ -292,6 +295,27 @@ pub(crate) fn resolve_paint_style(
         let property = declaration.property();
         let value = declaration.value();
         match property {
+            StyleProperty::BackdropFilter => {
+                let StyleValue::BackdropFilter(value) = value else {
+                    return Err(invalid(property));
+                };
+                paint.backdrop_blur = match value {
+                    BackdropFilterValue::None => None,
+                    BackdropFilterValue::Blur(radius) => {
+                        let radius = resolve_affine(
+                            &LengthPercentageValue::Length(*radius),
+                            inherited.font_size(),
+                            environment,
+                            property,
+                        )?
+                        .length();
+                        if radius < 0.0 {
+                            return Err(invalid(property));
+                        }
+                        Some(StyleNumber::new(radius))
+                    }
+                };
+            }
             StyleProperty::Background => {
                 let StyleValue::Background(value) = value else {
                     return Err(invalid(property));
@@ -792,8 +816,8 @@ fn invalid(property: StyleProperty) -> StyleResolutionError {
 mod tests {
     use super::*;
     use crate::{
-        BackgroundLayerValue, BackgroundRepeatValue, BackgroundValue, BorderRadiusValue,
-        GradientStopValue, LengthPercentageValue, LengthUnit, LengthValue,
+        BackdropFilterValue, BackgroundLayerValue, BackgroundRepeatValue, BackgroundValue,
+        BorderRadiusValue, GradientStopValue, LengthPercentageValue, LengthUnit, LengthValue,
     };
 
     fn number(value: f32) -> StyleNumber {
@@ -813,6 +837,69 @@ mod tests {
 
     fn percentage(value: f32) -> LengthPercentageValue {
         LengthPercentageValue::Percentage(number(value))
+    }
+
+    #[test]
+    fn backdrop_blur_resolves_relative_lengths_and_rejects_negative_radii() {
+        let blur = |value| {
+            StyleValue::BackdropFilter(BackdropFilterValue::Blur(LengthValue::Dimension {
+                value: number(value),
+                unit: LengthUnit::Rem,
+            }))
+        };
+        let resolved = crate::resolve_style(
+            &SpecifiedStyle::new().push(StyleProperty::BackdropFilter, blur(2.0)),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.computed().paint().backdrop_blur,
+            Some(number(28.0))
+        );
+        assert_eq!(
+            crate::resolve_style(
+                &SpecifiedStyle::new().push(StyleProperty::BackdropFilter, blur(-1.0)),
+                None,
+                StyleEnvironment::default(),
+            ),
+            Err(StyleResolutionError::InvalidPropertyValue(
+                StyleProperty::BackdropFilter
+            ))
+        );
+        assert_eq!(
+            crate::resolve_style(
+                &SpecifiedStyle::new().push(
+                    StyleProperty::BackdropFilter,
+                    StyleValue::BackdropFilter(BackdropFilterValue::None),
+                ),
+                None,
+                StyleEnvironment::default(),
+            )
+            .unwrap()
+            .computed()
+            .paint()
+            .backdrop_blur,
+            None
+        );
+        for value in [
+            StyleValue::Number(number(1.0)),
+            StyleValue::BackdropFilter(BackdropFilterValue::Blur(LengthValue::Dimension {
+                value: number(f32::NAN),
+                unit: LengthUnit::Px,
+            })),
+        ] {
+            assert_eq!(
+                crate::resolve_style(
+                    &SpecifiedStyle::new().push(StyleProperty::BackdropFilter, value),
+                    None,
+                    StyleEnvironment::default(),
+                ),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::BackdropFilter
+                ))
+            );
+        }
     }
 
     #[test]

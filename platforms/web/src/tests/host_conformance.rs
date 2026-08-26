@@ -505,6 +505,12 @@ impl Driver {
                                         }
                                     })
                                     .or_else(|| {
+                                        nodes
+                                            .iter()
+                                            .any(|node| node.backdrop_blur.is_some())
+                                            .then_some("paint.visual-effects.backdrop-blur")
+                                    })
+                                    .or_else(|| {
                                         nodes.iter().find_map(|node| {
                                             node.clip_path
                                                 .as_ref()
@@ -848,7 +854,9 @@ impl Driver {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            if expected_shadows.is_empty() && fixture_node.clip_path.is_some() {
+            if expected_shadows.is_empty()
+                && (fixture_node.clip_path.is_some() || fixture_node.backdrop_blur.is_some())
+            {
                 expected_shadows = "none".into();
             }
             assert_eq!(
@@ -860,13 +868,18 @@ impl Driver {
                 .as_ref()
                 .map(fixture_clip_path_css)
                 .unwrap_or_default();
-            if expected_clip_path.is_empty() && !fixture_node.box_shadows.is_empty() {
+            if expected_clip_path.is_empty()
+                && (!fixture_node.box_shadows.is_empty() || fixture_node.backdrop_blur.is_some())
+            {
                 expected_clip_path = "none".into();
             }
             assert_eq!(
                 style.get_property_value("clip-path").unwrap(),
                 expected_clip_path
             );
+            if let Some(radius) = fixture_node.backdrop_blur {
+                assert_style(&style, "backdrop-filter", &format!("blur({radius}px)"));
+            }
             assert_style(
                 &style,
                 "overflow-x",
@@ -1299,6 +1312,9 @@ fn fixture(path: &str) -> &'static str {
         "core/pointer-input-basic.json" => {
             include_str!("../../../../tests/host-conformance/core/pointer-input-basic.json")
         }
+        "core/backdrop-filter-blur.json" => {
+            include_str!("../../../../tests/host-conformance/core/backdrop-filter-blur.json")
+        }
         _ => panic!("manifest fixture is not embedded in the Web test: {path}"),
     }
 }
@@ -1443,7 +1459,10 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
                 transform: Transform(transform),
             });
         }
-        if !fixture_node.box_shadows.is_empty() || fixture_node.clip_path.is_some() {
+        if !fixture_node.box_shadows.is_empty()
+            || fixture_node.clip_path.is_some()
+            || fixture_node.backdrop_blur.is_some()
+        {
             operations.push(Operation::SetVisualEffects {
                 node,
                 effects: whisker_protocol::VisualEffects {
@@ -1460,6 +1479,7 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
                         })
                         .collect(),
                     clip_path: fixture_node.clip_path.as_ref().map(clip_path_protocol),
+                    backdrop_blur: fixture_node.backdrop_blur,
                     ..Default::default()
                 },
             });

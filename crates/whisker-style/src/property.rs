@@ -208,9 +208,9 @@ macro_rules! define_style_properties {
                     | Self::BorderTop
                     | Self::BorderWidth => StylePropertyDomain::BoxPaint,
 
-                    Self::BoxShadow
+                    Self::BackdropFilter
+                    | Self::BoxShadow
                     | Self::ClipPath
-                    | Self::Filter
                     | Self::ImageRendering
                     | Self::Mask
                     | Self::MaskComposite
@@ -390,7 +390,6 @@ define_style_properties! {
     Cursor = 56 => "cursor",
     Direction = 57 => "direction",
     Display = 58 => "display",
-    Filter = 59 => "filter",
     FlexBasis = 60 => "flex-basis",
     FlexDirection = 61 => "flex-direction",
     FlexGrow = 62 => "flex-grow",
@@ -515,6 +514,7 @@ define_style_properties! {
     GridTemplateAreas = 210 => "grid-template-areas",
     Float = 211 => "float",
     Clear = 212 => "clear",
+    BackdropFilter = 213 => "backdrop-filter",
 }
 
 #[cfg(test)]

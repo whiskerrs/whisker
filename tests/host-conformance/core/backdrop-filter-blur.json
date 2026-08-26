@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "id": "core.backdrop-filter-blur",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 200.0, "height": 200.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 200.0, 200.0],
+            "background": { "kind": "named", "value": "white" }
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [0.0, 0.0, 100.0, 200.0],
+            "background": { "kind": "named", "value": "black" }
+          },
+          {
+            "id": 3,
+            "parent": 1,
+            "rect": [100.0, 0.0, 100.0, 200.0],
+            "background": { "kind": "named", "value": "white" }
+          },
+          {
+            "id": 4,
+            "parent": 1,
+            "rect": [40.0, 40.0, 120.0, 120.0],
+            "background": {
+              "kind": "srgba",
+              "red": 0,
+              "green": 0,
+              "blue": 0,
+              "alpha": 0.0
+            },
+            "backdrop_blur": 16.0
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.visual-effects.backdrop-blur",
+        "relations": [
+          { "first": [99.0, 100.0], "second": [50.0, 100.0], "relation": "lighter", "minimum_difference": 10 },
+          { "first": [150.0, 100.0], "second": [101.0, 100.0], "relation": "lighter", "minimum_difference": 10 }
+        ]
+      }
+    ]
+  }
+}

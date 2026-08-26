@@ -195,6 +195,7 @@
           "type": "array",
           "items": { "$ref": "#/$defs/boxShadow" }
         },
+        "backdrop_blur": { "type": "number", "minimum": 0 },
         "clip": { "$ref": "#/$defs/boxClip" },
         "background_layer": { "$ref": "#/$defs/backgroundGeometry" },
         "background_layers": {

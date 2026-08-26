@@ -33,8 +33,10 @@ use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
 use crate::element::{DesktopElementRegistry, built_in_element_factories};
 use crate::gpu::{
-    ClippedBoxPrimitive, RasterResource, background_gradient_draw, background_resource_draw,
-    render_box_primitives_offscreen, render_clipped_box_primitives_offscreen,
+    BackdropCheckpoint, ClippedBoxPrimitive, RasterResource, background_gradient_draw,
+    background_resource_draw, render_box_primitives_offscreen,
+    render_clipped_box_primitives_offscreen,
+    render_clipped_box_primitives_with_backdrops_offscreen,
 };
 use crate::paint::box_paint::{
     BoxPrimitiveKind, background_gradient_primitive, lower_box, resolve_box_geometry,
@@ -334,6 +336,7 @@ impl RecordingInputSink {
 struct Checkpoint {
     logical_size: [u32; 2],
     primitives: Vec<ClippedBoxPrimitive>,
+    backdrops: Vec<BackdropCheckpoint>,
     raster_resources: std::collections::HashMap<ResourceId, RasterResource>,
     samples: Vec<PixelSampleFixture>,
     relations: Vec<PixelRelationFixture>,
@@ -479,6 +482,7 @@ impl Driver {
                             self.logical_size[1].round() as u32,
                         ],
                         primitives: self.clipped_box_primitives(),
+                        backdrops: self.backdrop_checkpoints(),
                         raster_resources: self.raster_resources.clone(),
                         samples: samples.clone(),
                         relations: relations.clone(),
@@ -695,7 +699,10 @@ impl Driver {
                 node,
                 paint: box_paint(&fixture.background, fixture.border.as_ref()),
             });
-            if !fixture.box_shadows.is_empty() || fixture.clip_path.is_some() {
+            if !fixture.box_shadows.is_empty()
+                || fixture.clip_path.is_some()
+                || fixture.backdrop_blur.is_some()
+            {
                 operations.push(Operation::SetVisualEffects {
                     node,
                     effects: whisker_protocol::VisualEffects {
@@ -712,6 +719,7 @@ impl Driver {
                             })
                             .collect(),
                         clip_path: fixture.clip_path.as_ref().map(clip_path_protocol),
+                        backdrop_blur: fixture.backdrop_blur,
                         ..Default::default()
                     },
                 });
@@ -907,6 +915,19 @@ impl Driver {
             }
         }
         primitives
+    }
+
+    fn backdrop_checkpoints(&self) -> Vec<BackdropCheckpoint> {
+        self.scene
+            .as_ref()
+            .expect("checkpoint follows attach")
+            .paint_commands()
+            .into_iter()
+            .filter_map(|command| match command {
+                PaintCommand::BackdropBlur { rect, radius, clip } => Some((rect, radius, clip)),
+                _ => None,
+            })
+            .collect()
     }
 
     fn measure_text(
@@ -1279,8 +1300,9 @@ fn run_pixel_assertions(scenario: &Scenario) {
         .iter()
         .filter(|checkpoint| !checkpoint.samples.is_empty() || !checkpoint.relations.is_empty())
     {
-        let pixels = pollster::block_on(render_clipped_box_primitives_offscreen(
+        let pixels = pollster::block_on(render_clipped_box_primitives_with_backdrops_offscreen(
             &checkpoint.primitives,
+            &checkpoint.backdrops,
             checkpoint.logical_size,
             &checkpoint.raster_resources,
         ))

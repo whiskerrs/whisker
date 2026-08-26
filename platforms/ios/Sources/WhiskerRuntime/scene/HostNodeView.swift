@@ -12,6 +12,7 @@ final class WhiskerNodeView: UIView {
     let boxPainter = HostBoxPainter()
     var mountedElement: WhiskerMountedElement?
     private let defaultChildrenHost = WhiskerChildrenHostView(frame: .zero)
+    private lazy var paintView = HostNodePaintView(painter: boxPainter)
     private let overflowMask = CAShapeLayer()
     private let clipPathMask = CAShapeLayer()
     private var clipPath: HostClipPath?
@@ -20,6 +21,7 @@ final class WhiskerNodeView: UIView {
     private var boxShadowMaskLayers: [CAShapeLayer] = []
     private var clipsOverflowHorizontally = false
     private var clipsOverflowVertically = false
+    private var backdropBlurView: HostBackdropBlurView?
 
     init(element: String) {
         self.element = element
@@ -29,6 +31,9 @@ final class WhiskerNodeView: UIView {
         defaultChildrenHost.isOpaque = false
         defaultChildrenHost.backgroundColor = .clear
         defaultChildrenHost.clipsToBounds = false
+        paintView.layer.zPosition = 0
+        defaultChildrenHost.layer.zPosition = 2
+        addSubview(paintView)
         addSubview(defaultChildrenHost)
     }
 
@@ -45,14 +50,13 @@ final class WhiskerNodeView: UIView {
             mountedElement.view.frame = contentFrame
         }
         defaultChildrenHost.frame = bounds
+        paintView.frame = bounds
+        paintView.contentBox = contentFrame
+        updateBackdropBlurGeometry()
         updateBoxShadowLayers()
         updateOverflowMask()
         updateClipPathMask()
-        setNeedsDisplay()
-    }
-
-    override func draw(_ rect: CGRect) {
-        boxPainter.draw(in: bounds, contentBox: contentFrame)
+        paintView.setNeedsDisplay()
     }
 
     func setLayoutFrame(_ frame: CGRect) {
@@ -62,6 +66,9 @@ final class WhiskerNodeView: UIView {
         bounds = CGRect(origin: .zero, size: frame.size)
         layer.position = frame.origin
         defaultChildrenHost.frame = bounds
+        paintView.frame = bounds
+        paintView.contentBox = contentFrame
+        updateBackdropBlurGeometry()
         updateOverflowMask()
         updateClipPathMask()
     }
@@ -100,11 +107,15 @@ final class WhiskerNodeView: UIView {
     }
 
     func mountedContentDidInstall() {
+        mountedElement?.view.layer.zPosition = 2
         bringSubviewToFront(defaultChildrenHost)
         updateOverflowMask()
     }
 
     func boxPaintDidChange() {
+        paintView.contentBox = contentFrame
+        paintView.setNeedsDisplay()
+        updateBackdropBlurGeometry()
         updateBoxShadowLayers()
         updateOverflowMask()
         updateClipPathMask()
@@ -122,14 +133,47 @@ final class WhiskerNodeView: UIView {
         }
         while boxShadowLayers.count < shadows.count {
             let shadowLayer = CAShapeLayer()
-            // New entries are farther back in CSS list order. Inserting each
-            // at zero keeps the first shadow visually above all later ones.
-            layer.insertSublayer(shadowLayer, at: 0)
             boxShadowLayers.append(shadowLayer)
             boxShadowMaskLayers.append(CAShapeLayer())
         }
         boxShadows = shadows
+        boxShadowLayers.forEach { $0.removeFromSuperlayer() }
+        // CSS lists the frontmost shadow first. Re-add back-to-front so that
+        // the first entry remains visually above later entries.
+        for index in shadows.indices.reversed() {
+            let shadowLayer = boxShadowLayers[index]
+            if shadows[index].inset {
+                paintView.layer.addSublayer(shadowLayer)
+            } else {
+                shadowLayer.zPosition = -1
+                layer.addSublayer(shadowLayer)
+            }
+        }
         updateBoxShadowLayers()
+    }
+
+    func setBackdropBlur(_ radius: CGFloat) {
+        if radius <= 0 {
+            backdropBlurView?.setBlurRadius(0)
+            return
+        }
+        let blurView: HostBackdropBlurView
+        if let existing = backdropBlurView {
+            blurView = existing
+        } else {
+            blurView = HostBackdropBlurView()
+            blurView.layer.zPosition = -0.5
+            insertSubview(blurView, at: 0)
+            backdropBlurView = blurView
+        }
+        blurView.setBlurRadius(radius)
+        updateBackdropBlurGeometry()
+    }
+
+    private func updateBackdropBlurGeometry() {
+        guard let backdropBlurView else { return }
+        backdropBlurView.frame = bounds
+        backdropBlurView.setShape(boxPainter.borderBoxPath(in: bounds), in: bounds)
     }
 
     private func updateBoxShadowLayers() {
@@ -274,5 +318,24 @@ private final class WhiskerChildrenHostView: UIView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let result = super.hitTest(point, with: event)
         return result === self ? nil : result
+    }
+}
+
+private final class HostNodePaintView: UIView {
+    private unowned let painter: HostBoxPainter
+    var contentBox = CGRect.zero
+
+    init(painter: HostBoxPainter) {
+        self.painter = painter
+        super.init(frame: .zero)
+        isOpaque = false
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func draw(_ rect: CGRect) {
+        painter.draw(in: bounds, contentBox: contentBox)
     }
 }

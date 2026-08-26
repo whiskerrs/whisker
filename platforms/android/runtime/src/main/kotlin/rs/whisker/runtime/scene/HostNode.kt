@@ -6,11 +6,14 @@ import android.graphics.Matrix
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
+import android.os.Build
+import rs.whisker.runtime.WhiskerView
 import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerMountedElement
 import rs.whisker.runtime.paint.HostBoxPaint
 import rs.whisker.runtime.paint.HostBackgroundLayers
 import rs.whisker.runtime.paint.HostBoxShadow
+import rs.whisker.runtime.paint.HostBackdropBlurRenderer
 import rs.whisker.runtime.paint.HostClipPath
 import rs.whisker.runtime.paint.ResolvedBoxGeometry
 import rs.whisker.runtime.paint.normalizeRadii
@@ -35,7 +38,11 @@ internal data class HostGeometry(
  * The scene owner controls hierarchy and geometry. Element modules only own
  * the mounted content View placed inside this wrapper.
  */
-internal class HostNode(context: Context, val element: String) : WhiskerContainerView(context) {
+internal class HostNode(
+    context: Context,
+    val element: String,
+    private val root: WhiskerView?,
+) : WhiskerContainerView(context) {
     val geometry = HostGeometry()
     var paint: HostBoxPaint? = null
     var backgroundLayers: HostBackgroundLayers? = null
@@ -43,6 +50,11 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
     var clipPath: HostClipPath? = null
     var mountedElement: WhiskerMountedElement? = null
     var zOrder: Int = 0
+    var backdropBlur: Float = 0f
+        set(value) {
+            field = value
+            invalidate()
+        }
 
     private val localTransform = Matrix()
     private var hasLocalTransform = false
@@ -50,6 +62,7 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
     private var overflowClipPath: Path? = null
     private var paintClipPath: Path? = null
     private var resolvedBoxGeometry: ResolvedBoxGeometry? = null
+    private var backdropRenderer: HostBackdropBlurRenderer? = null
 
     init {
         setWillNotDraw(false)
@@ -113,6 +126,7 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
     }
 
     override fun draw(canvas: Canvas) {
+        if (root?.shouldSkipBackdropCapture(this) == true) return
         if (!hasLocalTransform) {
             drawClipped(canvas)
             return
@@ -127,8 +141,28 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
         val save = canvas.save()
         paintClipPath?.let(canvas::clipPath)
         drawOuterBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
+        drawBackdropBlur(canvas)
         super.draw(canvas)
         canvas.restoreToCount(save)
+    }
+
+    private fun drawBackdropBlur(canvas: Canvas) {
+        val captureRoot = root ?: return
+        if (backdropBlur <= 0f || captureRoot.isRecordingBackdrop || Build.VERSION.SDK_INT < 31) {
+            return
+        }
+        val geometry = resolvedBoxGeometry ?: return
+        val clip = Path().apply {
+            addRoundRect(
+                RectF(0f, 0f, geometry.width, geometry.height),
+                geometry.cornerRadii,
+                Path.Direction.CW,
+            )
+        }
+        val renderer = backdropRenderer ?: HostBackdropBlurRenderer().also {
+            backdropRenderer = it
+        }
+        renderer.draw(canvas, captureRoot, this, backdropBlur, clip)
     }
 
     override fun onDraw(canvas: Canvas) {

@@ -8,7 +8,15 @@
     "non_layout": {
       "basis": "lynx-4.0",
       "rule": "Follow the standard, non-vendor Lynx property grammar and semantics."
-    }
+    },
+    "extensions": [
+      {
+        "property": "backdrop-filter",
+        "basis": "css-filter-effects-level-2",
+        "supported_subset": ["none", "single-blur-length"],
+        "reason": "Native app chrome commonly requires backdrop blur; general filter chains remain out of scope."
+      }
+    ]
   },
   "target": {
     "feature_count": 158,
@@ -97,12 +105,22 @@
     {
       "id": "paint.visual-effects",
       "basis": "lynx-4.0",
-      "properties": ["box-shadow", "clip-path", "filter", "image-rendering", "mask", "mask-composite", "mask-image"],
+      "properties": ["box-shadow", "clip-path", "image-rendering", "mask", "mask-composite", "mask-image"],
       "supported_subset": ["box-shadow-outer-offset-spread-and-blur", "box-shadow-inset-offset-spread-and-blur", "multiple-box-shadows", "clip-path-inset", "clip-path-circle-and-ellipse", "clip-path-path"],
-      "pending_subset": ["filter", "image-rendering", "mask", "mask-composite", "mask-image"],
+      "pending_subset": ["image-rendering", "mask", "mask-composite", "mask-image"],
       "protocol": ["SetVisualEffects"],
       "rust": "partial",
       "hosts": {"desktop": "partial", "web": "partial", "android": "partial", "ios": "partial"}
+    },
+    {
+      "id": "paint.backdrop-filter",
+      "basis": "css-filter-effects-level-2",
+      "properties": ["backdrop-filter"],
+      "supported_subset": ["none", "single-blur-length", "android-api-31-plus"],
+      "unsupported_browser_subset": ["filter-function-chains", "brightness", "contrast", "drop-shadow", "grayscale", "hue-rotate", "invert", "opacity", "saturate", "sepia", "url-filter"],
+      "protocol": ["SetVisualEffects"],
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.transform",

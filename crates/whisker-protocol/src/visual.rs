@@ -626,53 +626,6 @@ impl MaskLayer {
     }
 }
 
-/// One resolved filter function.
-#[derive(Clone, Debug, PartialEq)]
-pub enum FilterOperation {
-    /// Gaussian blur radius in logical pixels.
-    Blur(f32),
-    /// Brightness multiplier.
-    Brightness(f32),
-    /// Contrast multiplier.
-    Contrast(f32),
-    /// Drop shadow.
-    DropShadow(BoxShadow),
-    /// Grayscale amount in `0.0..=1.0`.
-    Grayscale(f32),
-    /// Hue rotation in degrees.
-    HueRotate(f32),
-    /// Inversion amount in `0.0..=1.0`.
-    Invert(f32),
-    /// Opacity multiplier in `0.0..=1.0`.
-    Opacity(f32),
-    /// Saturation multiplier.
-    Saturate(f32),
-    /// Sepia amount in `0.0..=1.0`.
-    Sepia(f32),
-    /// Host-resolved SVG or equivalent filter resource.
-    Resource(ResourceId),
-}
-
-impl FilterOperation {
-    fn is_valid(&self) -> bool {
-        match self {
-            Self::Blur(value)
-            | Self::Brightness(value)
-            | Self::Contrast(value)
-            | Self::Saturate(value) => value.is_finite() && *value >= 0.0,
-            Self::DropShadow(shadow) => {
-                !shadow.inset && shadow.spread_radius == 0.0 && shadow.is_valid()
-            }
-            Self::Grayscale(value)
-            | Self::Invert(value)
-            | Self::Opacity(value)
-            | Self::Sepia(value) => value.is_finite() && (0.0..=1.0).contains(value),
-            Self::HueRotate(value) => value.is_finite(),
-            Self::Resource(_) => true,
-        }
-    }
-}
-
 /// Whether a node establishes an isolated blending group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Isolation {
@@ -719,6 +672,8 @@ pub enum ImageRendering {
 /// Complete less-common visual effects for one node.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VisualEffects {
+    /// Blur radius applied to pixels already painted behind the node.
+    pub backdrop_blur: Option<f32>,
     /// Optional outline; absence means no outline.
     pub outline: Option<OutlinePaint>,
     /// Box shadows, ordered front to back.
@@ -727,8 +682,6 @@ pub struct VisualEffects {
     pub clip_path: Option<(PaintBox, ClipShape)>,
     /// Mask layers, ordered front to back.
     pub masks: Vec<MaskLayer>,
-    /// Filter chain in application order.
-    pub filters: Vec<FilterOperation>,
     /// Blend mode for the completed node group.
     pub blend_mode: BlendMode,
     /// Stacking-context isolation.
@@ -744,11 +697,11 @@ pub struct VisualEffects {
 impl Default for VisualEffects {
     fn default() -> Self {
         Self {
+            backdrop_blur: None,
             outline: None,
             box_shadows: Vec::new(),
             clip_path: None,
             masks: Vec::new(),
-            filters: Vec::new(),
             blend_mode: BlendMode::Normal,
             isolation: Isolation::Auto,
             backface_visibility: BackfaceVisibility::Visible,
@@ -761,14 +714,15 @@ impl Default for VisualEffects {
 impl VisualEffects {
     /// Validates all colors, geometry, and scalar ranges.
     pub fn validate(&self) -> bool {
-        self.outline.as_ref().is_none_or(OutlinePaint::is_valid)
+        self.backdrop_blur
+            .is_none_or(|radius| radius.is_finite() && radius >= 0.0)
+            && self.outline.as_ref().is_none_or(OutlinePaint::is_valid)
             && self.box_shadows.iter().all(BoxShadow::is_valid)
             && self
                 .clip_path
                 .as_ref()
                 .is_none_or(|(_, shape)| shape.is_valid())
             && self.masks.iter().all(MaskLayer::is_valid)
-            && self.filters.iter().all(FilterOperation::is_valid)
     }
 }
 
@@ -959,9 +913,9 @@ mod tests {
             color: color(),
             inset: false,
         });
-        effects.filters.push(FilterOperation::Opacity(0.5));
+        effects.backdrop_blur = Some(4.0);
         assert!(effects.validate());
-        effects.filters.push(FilterOperation::Blur(-1.0));
+        effects.backdrop_blur = Some(-1.0);
         assert!(!effects.validate());
     }
 
@@ -1238,6 +1192,7 @@ mod tests {
             inset: false,
         };
         let mut effects = VisualEffects {
+            backdrop_blur: Some(12.0),
             outline: Some(OutlinePaint {
                 color: color(),
                 style: OutlineLineStyle::Auto,
@@ -1281,19 +1236,6 @@ mod tests {
                 mode: MaskMode::Alpha,
                 composite: MaskComposite::Intersect,
             }],
-            filters: vec![
-                FilterOperation::Blur(2.0),
-                FilterOperation::Brightness(1.2),
-                FilterOperation::Contrast(0.8),
-                FilterOperation::DropShadow(shadow),
-                FilterOperation::Grayscale(0.2),
-                FilterOperation::HueRotate(360.0),
-                FilterOperation::Invert(0.1),
-                FilterOperation::Opacity(0.9),
-                FilterOperation::Saturate(1.5),
-                FilterOperation::Sepia(0.3),
-                FilterOperation::Resource(ResourceId::new(2).unwrap()),
-            ],
             blend_mode: BlendMode::Overlay,
             isolation: Isolation::Isolate,
             backface_visibility: BackfaceVisibility::Hidden,

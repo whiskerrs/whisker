@@ -799,7 +799,7 @@ Geometry and compositing
 Paint and content
   SetBoxPaint(node, background, borders, radii)
   SetBackgroundLayers(node, layers)
-  SetVisualEffects(node, outline, shadows, clip_path, masks, filters, compositing)
+  SetVisualEffects(node, outline, shadows, clip_path, masks, backdrop_blur, compositing)
   SetText(node, text_run)
   SetImage(node, resource, fit, position)
   SetProperty(node, property_id, typed_value)

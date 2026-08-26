@@ -2,6 +2,7 @@ package rs.whisker.runtime
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
@@ -17,6 +18,7 @@ import rs.whisker.runtime.resource.HostRasterSource
 import rs.whisker.runtime.resource.HostResourceService
 import rs.whisker.runtime.resource.HostResourceSnapshot
 import rs.whisker.runtime.scene.HostElementBootstrap
+import rs.whisker.runtime.scene.HostNode
 import rs.whisker.runtime.scene.HostScene
 import rs.whisker.runtime.scene.HostSceneOperation
 
@@ -45,11 +47,36 @@ class WhiskerView(context: Context) :
     private val resourceChannel = HostResourceChannel(resourceService)
     private var resourceEventObserver: ((HostResourceSnapshot) -> Unit)? = null
     private val modules = HostModuleDispatcher(::nativeResolveModule)
+    private var backdropCaptureTarget: HostNode? = null
+    private var backdropCaptureReached = false
 
     init {
         WhiskerApplication.initialize(context)
         setBackgroundColor(Color.TRANSPARENT)
         clipChildren = false
+    }
+
+    internal val isRecordingBackdrop: Boolean
+        get() = backdropCaptureTarget != null
+
+    /** Records only content painted before [target] in Host draw order. */
+    internal fun recordBackdrop(canvas: Canvas, target: HostNode) {
+        check(backdropCaptureTarget == null)
+        backdropCaptureTarget = target
+        backdropCaptureReached = false
+        try {
+            super.draw(canvas)
+        } finally {
+            backdropCaptureTarget = null
+            backdropCaptureReached = false
+        }
+    }
+
+    /** Returns true once capture reaches the target, excluding it and later siblings. */
+    internal fun shouldSkipBackdropCapture(node: HostNode): Boolean {
+        val target = backdropCaptureTarget ?: return false
+        if (node === target) backdropCaptureReached = true
+        return backdropCaptureReached
     }
 
     override fun onAttachedToWindow() {

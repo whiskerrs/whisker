@@ -2,7 +2,7 @@
 
 use whisker_protocol::{
     BorderLineStyle, BoxClip, BoxPaint, OverflowClip, PaintColor, PaintCornerRadius, PaintCorners,
-    PaintEdges, PaintLengthPercentage, Visibility,
+    PaintEdges, PaintLengthPercentage, Visibility, VisualEffects,
 };
 use whisker_style::{
     BorderStyleValue, ColorValue, ComputedLayoutStyle, ComputedLengthPercentage,
@@ -14,6 +14,8 @@ use whisker_style::{
 pub struct LoweredPaint {
     /// Background and border paint.
     pub box_paint: BoxPaint,
+    /// Visual effects applied by the Host compositor.
+    pub visual_effects: VisualEffects,
     /// Descendant overflow clip.
     pub clip: BoxClip,
     /// Group opacity.
@@ -49,6 +51,10 @@ pub fn lower_paint(style: &ComputedPaintStyle, layout: &ComputedLayoutStyle) -> 
                 bottom_right: corner_radius(&style.border_radii.bottom_right),
                 bottom_left: corner_radius(&style.border_radii.bottom_left),
             },
+        },
+        visual_effects: VisualEffects {
+            backdrop_blur: style.backdrop_blur.map(|value| value.get()),
+            ..VisualEffects::default()
         },
         clip: BoxClip {
             horizontal: lower_overflow(style.overflow_x),
@@ -187,6 +193,7 @@ mod tests {
             overflow_x: OverflowValue::Visible,
             overflow_y: OverflowValue::Hidden,
             z_index: -3,
+            backdrop_blur: Some(StyleNumber::new(8.0)),
         }
     }
 
@@ -242,6 +249,7 @@ mod tests {
         assert_eq!(lowered.opacity, 0.5);
         assert_eq!(lowered.visibility, Visibility::Hidden);
         assert_eq!(lowered.z_order, -3);
+        assert_eq!(lowered.visual_effects.backdrop_blur, Some(8.0));
     }
 
     #[test]
