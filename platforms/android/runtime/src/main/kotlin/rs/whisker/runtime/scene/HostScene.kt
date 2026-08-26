@@ -173,6 +173,7 @@ internal class HostScene(
                 operation.node !in existing || !operation.scalar.isFinite() ||
                 operation.scalar < 0f || (operation.scalar > 0f && Build.VERSION.SDK_INT < 31)
             ) return false
+            25 -> if (operation.node !in existing || operation.integer !in 0..2) return false
             9 -> if (
                 operation.node !in existing ||
                 !isProjectableFlatPlaneTransform(operation.numbers ?: return false)
@@ -251,6 +252,11 @@ internal class HostScene(
             23 -> applyClipPath(nodes[id] ?: return, operation)
             24 -> (nodes[id] ?: return).backdropBlur =
                 operation.scalar * root.resources.displayMetrics.density
+            25 -> {
+                val node = nodes[id] ?: return
+                node.pixelatedImages = operation.integer == 1
+                node.paint?.let { applyPaint(node, it) }
+            }
         }
     }
 
@@ -380,6 +386,7 @@ internal class HostScene(
             node.geometry.height,
             root.resources.displayMetrics.density,
             node.backgroundLayers,
+            node.pixelatedImages,
             RectF(
                 node.geometry.contentX,
                 node.geometry.contentY,

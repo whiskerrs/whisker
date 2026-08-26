@@ -450,6 +450,7 @@ private final class Driver {
                     name == "paint.visual-effects.clip-path-path-nonzero" ||
                     name == "paint.visual-effects.clip-path-path-evenodd" ||
                     name == "paint.visual-effects.backdrop-blur" ||
+                    name == "paint.visual-effects.image-rendering-pixelated" ||
                     name == "paint.transform.projective-plane" ||
                     name == "paint.transform.motion-path-line" ||
                     name == "paint.transform.motion-path-curves" ||
@@ -1004,6 +1005,11 @@ private final class Driver {
                                         scalar: backdropBlur
                                     ))
                                 }
+                                operations.append(operation(
+                                    tag: UInt32(WHISKER_OP_IMAGE_RENDERING),
+                                    node: fixture.id,
+                                    integer: fixture.imageRendering
+                                ))
                             }
                             try operations.withUnsafeMutableBufferPointer { buffer in
                                 var frame = WhiskerMobileFrame()
@@ -1166,6 +1172,7 @@ private struct SceneFixtureNode {
     let backgroundLayers: [ScenePaintLayer]
     let boxShadows: [WhiskerMobileBoxShadow]
     let backdropBlur: Float?
+    let imageRendering: Int32
     let clipPath: SceneClipPath?
     let linearGradient: SceneLinearGradient?
     let radialGradient: SceneRadialGradient?
@@ -1371,6 +1378,11 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         try sceneBoxShadow($0)
     }
     let backdropBlur = (fixture["backdrop_blur"] as? NSNumber)?.floatValue
+    let imageRendering: Int32 = switch fixture["image_rendering"] as? String {
+    case "pixelated": Int32(WHISKER_IMAGE_RENDERING_PIXELATED)
+    case "crisp_edges": Int32(WHISKER_IMAGE_RENDERING_CRISP_EDGES)
+    default: Int32(WHISKER_IMAGE_RENDERING_AUTO)
+    }
     let clipPath = try (fixture["clip_path"] as? [String: Any]).map(sceneClipPath)
     let linearGradient: SceneLinearGradient?
     if let gradient = fixture["linear_gradient"] as? [String: Any] {
@@ -1404,6 +1416,7 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         backgroundLayers: backgroundLayers,
         boxShadows: boxShadows,
         backdropBlur: backdropBlur,
+        imageRendering: imageRendering,
         clipPath: clipPath,
         linearGradient: linearGradient,
         radialGradient: radialGradient,

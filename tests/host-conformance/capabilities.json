@@ -106,8 +106,8 @@
       "id": "paint.visual-effects",
       "basis": "lynx-4.0",
       "properties": ["box-shadow", "clip-path", "image-rendering", "mask", "mask-composite", "mask-image"],
-      "supported_subset": ["box-shadow-outer-offset-spread-and-blur", "box-shadow-inset-offset-spread-and-blur", "multiple-box-shadows", "clip-path-inset", "clip-path-circle-and-ellipse", "clip-path-path"],
-      "pending_subset": ["image-rendering", "mask", "mask-composite", "mask-image"],
+      "supported_subset": ["box-shadow-outer-offset-spread-and-blur", "box-shadow-inset-offset-spread-and-blur", "multiple-box-shadows", "clip-path-inset", "clip-path-circle-and-ellipse", "clip-path-path", "image-rendering-auto-pixelated-crisp-edges"],
+      "pending_subset": ["mask", "mask-composite", "mask-image"],
       "protocol": ["SetVisualEffects"],
       "rust": "partial",
       "hosts": {"desktop": "partial", "web": "partial", "android": "partial", "ios": "partial"}

@@ -353,6 +353,18 @@ pub enum BackdropFilterValue {
     Blur(LengthValue),
 }
 
+/// Raster-image scaling algorithm supported by Lynx-compatible styling.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ImageRenderingValue {
+    /// Use the Host's normal interpolation policy.
+    #[default]
+    Auto,
+    /// Preserve hard source-pixel edges with nearest-neighbor sampling.
+    Pixelated,
+    /// Lynx-compatible keyword currently equivalent to `auto`.
+    CrispEdges,
+}
+
 /// One typed transform function before environment and box-size resolution.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TransformFunctionValue {
@@ -540,6 +552,8 @@ pub enum StyleValue {
     BackgroundAttachment(BackgroundAttachmentValue),
     /// Background-pixel filter applied behind this node.
     BackdropFilter(BackdropFilterValue),
+    /// Raster-image sampling behavior for this element's own image paint.
+    ImageRendering(ImageRenderingValue),
     /// Ordered transform function list.
     Transform(TransformValue),
     /// Transform origin resolved against the node border box.

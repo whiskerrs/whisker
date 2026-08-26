@@ -1009,7 +1009,14 @@ fn supports_visual_effects(effects: &VisualEffects) -> bool {
     remainder.box_shadows.clear();
     remainder.clip_path = None;
     remainder.backdrop_blur = None;
+    remainder.image_rendering = whisker_protocol::ImageRendering::Auto;
     remainder == VisualEffects::default()
+        && matches!(
+            effects.image_rendering,
+            whisker_protocol::ImageRendering::Auto
+                | whisker_protocol::ImageRendering::Pixelated
+                | whisker_protocol::ImageRendering::CrispEdges
+        )
         && effects.clip_path.as_ref().is_none_or(|(reference, shape)| {
             matches!(
                 reference,

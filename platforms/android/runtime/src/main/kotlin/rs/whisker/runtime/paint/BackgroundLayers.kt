@@ -67,9 +67,10 @@ internal fun drawBackgroundLayers(
     boxes: HostBackgroundPaintBoxes,
     layers: HostBackgroundLayers?,
     paint: Paint,
+    pixelatedImages: Boolean,
 ) {
     layers?.layers?.asReversed()?.forEach { layer ->
-        drawBackgroundLayer(canvas, boxes, layer, paint)
+        drawBackgroundLayer(canvas, boxes, layer, paint, pixelatedImages)
     }
 }
 
@@ -78,6 +79,7 @@ private fun drawBackgroundLayer(
     boxes: HostBackgroundPaintBoxes,
     layer: HostBackgroundLayer,
     paint: Paint,
+    pixelatedImages: Boolean,
 ) {
     val geometry = layer.geometry
     val positioningBox = boxes.select(geometry.origin).rect
@@ -94,7 +96,7 @@ private fun drawBackgroundLayer(
         ) { imageBox ->
             val tileSaveCount = canvas.save().also { canvas.clipRect(imageBox) }
             try {
-                drawBackgroundImage(canvas, painting.clip, imageBox, layer, paint)
+                drawBackgroundImage(canvas, painting.clip, imageBox, layer, paint, pixelatedImages)
             } finally {
                 canvas.restoreToCount(tileSaveCount)
             }
@@ -110,10 +112,12 @@ private fun drawBackgroundImage(
     imageBox: RectF,
     layer: HostBackgroundLayer,
     paint: Paint,
+    pixelatedImages: Boolean,
 ) {
     layer.rasterBitmap?.let { bitmap ->
         paint.color = Color.WHITE
         paint.shader = null
+        paint.isFilterBitmap = !pixelatedImages
         canvas.drawBitmap(bitmap, null, imageBox, paint)
         return
     }

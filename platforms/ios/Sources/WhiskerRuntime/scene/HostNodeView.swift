@@ -170,6 +170,11 @@ final class WhiskerNodeView: UIView {
         updateBackdropBlurGeometry()
     }
 
+    func setImageRendering(pixelated: Bool) {
+        boxPainter.setPixelatedImages(pixelated)
+        paintView.setNeedsDisplay()
+    }
+
     private func updateBackdropBlurGeometry() {
         guard let backdropBlurView else { return }
         backdropBlurView.frame = bounds

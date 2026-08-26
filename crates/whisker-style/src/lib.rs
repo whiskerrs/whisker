@@ -50,8 +50,8 @@ pub use value::{
     BackgroundLayerValue, BackgroundPositionValue, BackgroundRepeatModeValue,
     BackgroundRepeatValue, BackgroundSizeValue, BackgroundValue, BorderRadiusValue, CalcExpression,
     ColorValue, FontFamilyValue, FontStyleValue, FontWeightValue, GradientStopValue, GradientValue,
-    InsetPathValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
-    MotionPathCommandValue, MotionPathPointValue, OffsetPathValue, OffsetRotateValue,
-    RadialGradientValue, StyleNumber, StyleValue, TransformFunctionValue, TransformOriginValue,
-    TransformValue,
+    ImageRenderingValue, InsetPathValue, LengthPercentageValue, LengthUnit, LengthValue,
+    LineHeightValue, MotionPathCommandValue, MotionPathPointValue, OffsetPathValue,
+    OffsetRotateValue, RadialGradientValue, StyleNumber, StyleValue, TransformFunctionValue,
+    TransformOriginValue, TransformValue,
 };

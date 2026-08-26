@@ -7,10 +7,11 @@ use whisker_style::{
     FontWeightValue, GridAutoFlowValue, GridMaxTrackSizingValue, GridMinTrackSizingValue,
     GridPlacementValue, GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue,
     GridTemplateComponentValue, GridTemplateRepetitionValue, GridTemplateValue,
-    GridTrackSizingValue, InsetPathValue, JustifyContentValue, LengthPercentageAutoValue,
-    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, MotionPathCommandValue,
-    MotionPathPointValue, OffsetPathValue, OffsetRotateValue, PositionValue, SizeValue,
-    StyleNumber, StyleValue, TransformFunctionValue, TransformOriginValue, TransformValue,
+    GridTrackSizingValue, ImageRenderingValue, InsetPathValue, JustifyContentValue,
+    LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
+    MotionPathCommandValue, MotionPathPointValue, OffsetPathValue, OffsetRotateValue,
+    PositionValue, SizeValue, StyleNumber, StyleValue, TransformFunctionValue,
+    TransformOriginValue, TransformValue,
 };
 
 use crate::data_type_ext::PositionKeyword;
@@ -18,10 +19,10 @@ use crate::{
     AlignContent, AlignItems, AlignSelf, Angle, BackdropFilter, BoxSizing, CalcExpr, Clear, Color,
     CssString, Direction, Display, FlexBasis, FlexDirection, FlexWrap, Float, FontStyle,
     FontWeight, GridAutoFlow, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
-    GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, Integer, JustifyContent, Length,
-    LengthPercentage, LineHeight, MarginValue, MotionPathCommand, Number, OffsetDistance,
-    OffsetPath, OffsetRotate, Overflow, Percentage, Position, PositionKind, Size, Transform,
-    TransformFn, Visibility,
+    GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, ImageRendering, Integer,
+    JustifyContent, Length, LengthPercentage, LineHeight, MarginValue, MotionPathCommand, Number,
+    OffsetDistance, OffsetPath, OffsetRotate, Overflow, Percentage, Position, PositionKind, Size,
+    Transform, TransformFn, Visibility,
 };
 use whisker_style::{OverflowValue, VisibilityValue};
 
@@ -40,6 +41,16 @@ impl ToStyleValue for BackdropFilter {
         StyleValue::BackdropFilter(match self {
             Self::None => BackdropFilterValue::None,
             Self::Blur(radius) => BackdropFilterValue::Blur(to_length(*radius)),
+        })
+    }
+}
+
+impl ToStyleValue for ImageRendering {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::ImageRendering(match self {
+            Self::Auto => ImageRenderingValue::Auto,
+            Self::Pixelated => ImageRenderingValue::Pixelated,
+            Self::CrispEdges => ImageRenderingValue::CrispEdges,
         })
     }
 }

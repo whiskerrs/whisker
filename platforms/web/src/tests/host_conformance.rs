@@ -459,6 +459,8 @@ impl Driver {
                     if self.expected_scene.is_some() {
                         let expected_checkpoint = if name.starts_with("paint.transform.") {
                             name.as_str()
+                        } else if name == "paint.visual-effects.image-rendering-pixelated" {
+                            "paint.visual-effects.image-rendering-pixelated"
                         } else if self.resource_lifecycle {
                             "paint.background-layers.resource-lifecycle"
                         } else {
@@ -511,6 +513,17 @@ impl Driver {
                                             .iter()
                                             .any(|node| node.backdrop_blur.is_some())
                                             .then_some("paint.visual-effects.backdrop-blur")
+                                    })
+                                    .or_else(|| {
+                                        nodes
+                                            .iter()
+                                            .any(|node| {
+                                                node.image_rendering
+                                                    == whisker_host_conformance::ImageRenderingFixture::Pixelated
+                                            })
+                                            .then_some(
+                                                "paint.visual-effects.image-rendering-pixelated",
+                                            )
                                     })
                                     .or_else(|| {
                                         nodes.iter().find_map(|node| {
@@ -857,7 +870,10 @@ impl Driver {
                 .collect::<Vec<_>>()
                 .join(", ");
             if expected_shadows.is_empty()
-                && (fixture_node.clip_path.is_some() || fixture_node.backdrop_blur.is_some())
+                && (fixture_node.clip_path.is_some()
+                    || fixture_node.backdrop_blur.is_some()
+                    || fixture_node.image_rendering
+                        != whisker_host_conformance::ImageRenderingFixture::Auto)
             {
                 expected_shadows = "none".into();
             }
@@ -871,7 +887,10 @@ impl Driver {
                 .map(fixture_clip_path_css)
                 .unwrap_or_default();
             if expected_clip_path.is_empty()
-                && (!fixture_node.box_shadows.is_empty() || fixture_node.backdrop_blur.is_some())
+                && (!fixture_node.box_shadows.is_empty()
+                    || fixture_node.backdrop_blur.is_some()
+                    || fixture_node.image_rendering
+                        != whisker_host_conformance::ImageRenderingFixture::Auto)
             {
                 expected_clip_path = "none".into();
             }
@@ -881,6 +900,18 @@ impl Driver {
             );
             if let Some(radius) = fixture_node.backdrop_blur {
                 assert_style(&style, "backdrop-filter", &format!("blur({radius}px)"));
+            }
+            if fixture_node.image_rendering != whisker_host_conformance::ImageRenderingFixture::Auto
+            {
+                assert_style(
+                    &style,
+                    "image-rendering",
+                    match fixture_node.image_rendering {
+                        whisker_host_conformance::ImageRenderingFixture::Pixelated => "pixelated",
+                        whisker_host_conformance::ImageRenderingFixture::Auto
+                        | whisker_host_conformance::ImageRenderingFixture::CrispEdges => "auto",
+                    },
+                );
             }
             assert_style(
                 &style,
@@ -1121,6 +1152,9 @@ fn fixture(path: &str) -> &'static str {
     match path {
         "core/resource-raster-lifecycle.json" => {
             include_str!("../../../../tests/host-conformance/core/resource-raster-lifecycle.json")
+        }
+        "core/image-rendering-pixelated.json" => {
+            include_str!("../../../../tests/host-conformance/core/image-rendering-pixelated.json")
         }
         "core/background-layer-geometry-symmetry.json" => include_str!(
             "../../../../tests/host-conformance/core/background-layer-geometry-symmetry.json"
@@ -1485,6 +1519,7 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
         if !fixture_node.box_shadows.is_empty()
             || fixture_node.clip_path.is_some()
             || fixture_node.backdrop_blur.is_some()
+            || fixture_node.image_rendering != whisker_host_conformance::ImageRenderingFixture::Auto
         {
             operations.push(Operation::SetVisualEffects {
                 node,
@@ -1503,6 +1538,17 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
                         .collect(),
                     clip_path: fixture_node.clip_path.as_ref().map(clip_path_protocol),
                     backdrop_blur: fixture_node.backdrop_blur,
+                    image_rendering: match fixture_node.image_rendering {
+                        whisker_host_conformance::ImageRenderingFixture::Auto => {
+                            whisker_protocol::ImageRendering::Auto
+                        }
+                        whisker_host_conformance::ImageRenderingFixture::Pixelated => {
+                            whisker_protocol::ImageRendering::Pixelated
+                        }
+                        whisker_host_conformance::ImageRenderingFixture::CrispEdges => {
+                            whisker_protocol::ImageRendering::CrispEdges
+                        }
+                    },
                     ..Default::default()
                 },
             });
