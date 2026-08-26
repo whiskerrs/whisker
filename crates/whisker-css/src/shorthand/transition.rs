@@ -7,6 +7,7 @@ use crate::css::Css;
 use crate::data_type::Time;
 use crate::data_type_ext::EasingFunction;
 use crate::keyword::TransitionPropertyKind;
+use crate::style_value::to_transition_value;
 use crate::to_css::ToCss;
 
 /// One transition layer.
@@ -75,20 +76,31 @@ impl Css {
     /// Sets the `transition` shorthand for a single transition.
     /// <https://lynxjs.org/api/css/properties/transition>
     pub fn transition(self, t: Transition) -> Self {
-        self.push(crate::StyleProperty::Transition, t)
+        let lynx = t.to_css_string();
+        self.push_semantic(
+            crate::StyleProperty::Transition,
+            whisker_style::StyleValue::Transitions(vec![to_transition_value(&t)]),
+            lynx,
+        )
     }
 
     /// Sets the `transition` shorthand for multiple comma-separated
     /// transitions.
     pub fn transitions(self, ts: impl IntoIterator<Item = Transition>) -> Self {
+        let ts = ts.into_iter().collect::<Vec<_>>();
         let mut s = String::new();
-        for (i, t) in ts.into_iter().enumerate() {
+        for (i, t) in ts.iter().enumerate() {
             if i > 0 {
                 s.push_str(", ");
             }
             let _ = t.to_css(&mut s);
         }
-        self.push_raw(crate::StyleProperty::Transition, s)
+        let semantic = ts.iter().map(to_transition_value).collect();
+        self.push_semantic(
+            crate::StyleProperty::Transition,
+            whisker_style::StyleValue::Transitions(semantic),
+            s,
+        )
     }
 }
 
@@ -132,6 +144,23 @@ mod tests {
         assert_eq!(
             s.to_string(),
             "transition: opacity 300ms, transform 500ms 100ms;"
+        );
+        let resolved = whisker_style::resolve_style(
+            &s.to_specified_style().unwrap(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(resolved.computed().motion().transitions.len(), 2);
+        assert_eq!(
+            resolved.computed().motion().transitions[1].property,
+            whisker_style::ComputedTransitionProperty::Property(
+                whisker_style::StyleProperty::Transform
+            )
+        );
+        assert_eq!(
+            resolved.computed().motion().transitions[1].duration.get(),
+            500.0
         );
     }
 }
