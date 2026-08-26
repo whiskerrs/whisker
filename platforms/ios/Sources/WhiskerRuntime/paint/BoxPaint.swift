@@ -560,9 +560,16 @@ func roundedPath(in rect: CGRect, radii: [CGSize]) -> UIBezierPath {
     return path
 }
 
-private func normalizedRadii(_ radii: [CGSize], in rect: CGRect) -> [CGSize] {
+func normalizedRadii(_ radii: [CGSize], in rect: CGRect) -> [CGSize] {
     var normalized = Array((radii + [.zero, .zero, .zero, .zero]).prefix(4)).map {
-        CGSize(width: max($0.width, 0), height: max($0.height, 0))
+        let width = max($0.width, 0)
+        let height = max($0.height, 0)
+        // CSS Backgrounds requires the entire corner radius to become zero when
+        // either axis is zero. Keeping a degenerate ellipse here makes
+        // CoreGraphics draw a diagonal curve instead of a square corner.
+        return width == 0 || height == 0
+            ? .zero
+            : CGSize(width: width, height: height)
     }
     let horizontalTop = normalized[0].width + normalized[1].width
     let horizontalBottom = normalized[3].width + normalized[2].width
