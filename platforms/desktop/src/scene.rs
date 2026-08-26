@@ -9,7 +9,7 @@ use whisker_protocol::{
     BoxPaint, ElementTypeId, FrameMode, FramePacket, ImageRepeat, LayoutGeometry, LayoutRect,
     NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintImage, RadialGradientExtent,
     ResourceId, SceneProjection, SurfaceId, TextContent, Transform, ValidationError, Visibility,
-    WhiskerValue,
+    VisualEffects, WhiskerValue,
 };
 
 use crate::element::{DesktopElementContent, DesktopElementError, DesktopElementRegistry};
@@ -22,6 +22,7 @@ struct CommonPresentation {
     layout: LayoutGeometry,
     paint: Option<BoxPaint>,
     background_layers: Vec<BackgroundLayer>,
+    visual_effects: VisualEffects,
     clip: BoxClip,
     transform: Transform,
     opacity: f32,
@@ -37,6 +38,7 @@ impl Default for CommonPresentation {
             layout: LayoutGeometry::default(),
             paint: None,
             background_layers: Vec::new(),
+            visual_effects: VisualEffects::default(),
             clip: BoxClip {
                 horizontal: OverflowClip::Visible,
                 vertical: OverflowClip::Visible,
@@ -265,6 +267,7 @@ pub(crate) enum PaintCommand<'a> {
         content_rect: LayoutRect,
         paint: Option<&'a BoxPaint>,
         background_layers: &'a [BackgroundLayer],
+        visual_effects: &'a VisualEffects,
         clip: LogicalClip,
         shape_clips: ShapeClipStack,
         transform: Transform,
@@ -360,12 +363,16 @@ impl DesktopScene {
             context.transform,
             transform_around(presentation.transform, border.x, border.y),
         );
-        if presentation.paint.is_some() || !presentation.background_layers.is_empty() {
+        if presentation.paint.is_some()
+            || !presentation.background_layers.is_empty()
+            || !presentation.visual_effects.box_shadows.is_empty()
+        {
             commands.push(PaintCommand::Box {
                 rect: border,
                 content_rect: content,
                 paint: presentation.paint.as_ref(),
                 background_layers: &presentation.background_layers,
+                visual_effects: &presentation.visual_effects,
                 clip: context.clip,
                 shape_clips: context.shape_clips.clone(),
                 transform,
@@ -540,8 +547,10 @@ impl DesktopScene {
                         return Err(DesktopPresentError::Unsupported("background-layers"));
                     }
                 }
-                Operation::SetVisualEffects { .. } => {
-                    return Err(DesktopPresentError::Unsupported("visual-effects"));
+                Operation::SetVisualEffects { effects, .. } => {
+                    if !supports_visual_effects(effects) {
+                        return Err(DesktopPresentError::Unsupported("visual-effects"));
+                    }
                 }
                 Operation::SetImage { .. } => {
                     return Err(DesktopPresentError::Unsupported("image-content"));
@@ -660,6 +669,13 @@ impl DesktopScene {
                         .presentation
                         .background_layers = layers.clone();
                 }
+                Operation::SetVisualEffects { node, effects } => {
+                    self.nodes
+                        .get_mut(node)
+                        .expect("validated node")
+                        .presentation
+                        .visual_effects = effects.clone();
+                }
                 Operation::SetClip { node, clip } => {
                     self.nodes
                         .get_mut(node)
@@ -758,9 +774,7 @@ impl DesktopScene {
                 Operation::SetHitTest { .. }
                 | Operation::SetPointerCapture { .. }
                 | Operation::ReleasePointerCapture { .. } => {}
-                Operation::SetVisualEffects { .. }
-                | Operation::SetImage { .. }
-                | Operation::SetCursor { .. } => {
+                Operation::SetImage { .. } | Operation::SetCursor { .. } => {
                     unreachable!("unsupported operations are rejected before commit")
                 }
             }
@@ -794,6 +808,10 @@ impl FrameSink for DesktopScene {
             [
                 whisker_protocol::CapabilityEntry {
                     capability: whisker_protocol::RenderCapability::EllipticalBorderRadius,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::VisualEffects,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_protocol::CapabilityEntry {
@@ -930,6 +948,16 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
         && supported_geometry
         && layer.attachment == BackgroundAttachment::Scroll
         && layer.blend_mode == BlendMode::Normal
+}
+
+fn supports_visual_effects(effects: &VisualEffects) -> bool {
+    let mut remainder = effects.clone();
+    remainder.box_shadows.clear();
+    remainder == VisualEffects::default()
+        && effects
+            .box_shadows
+            .iter()
+            .all(|shadow| !shadow.inset && shadow.blur_radius == 0.0)
 }
 
 pub(crate) fn is_transparent(color: &PaintColor) -> bool {
@@ -1409,7 +1437,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_only_visual_operation_is_rejected_before_desktop_commit() {
+    fn unsupported_visual_payload_is_rejected_before_desktop_commit() {
         let root = id(1);
         let mut scene = scene(SurfaceId::new(1).unwrap());
         scene
@@ -1431,7 +1459,10 @@ mod tests {
                 2,
                 vec![Operation::SetVisualEffects {
                     node: root,
-                    effects: whisker_protocol::VisualEffects::default(),
+                    effects: whisker_protocol::VisualEffects {
+                        blend_mode: whisker_protocol::BlendMode::Multiply,
+                        ..Default::default()
+                    },
                 }],
             )),
             Err(DesktopPresentError::Unsupported("visual-effects"))

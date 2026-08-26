@@ -21,7 +21,8 @@ use whisker_protocol::{
 };
 
 use crate::paint::box_paint::{
-    BoxPrimitive, BoxPrimitiveKind, background_gradient_primitive, lower_box, resolve_box_geometry,
+    BoxPrimitive, BoxPrimitiveKind, background_gradient_primitive, hard_box_shadow_primitive,
+    lower_box, resolve_box_geometry,
 };
 use crate::paint::color::{gpu_color, text_color};
 use crate::scene::{LogicalClip, PaintCommand, ShapeClipStack};
@@ -1693,6 +1694,7 @@ impl GpuRenderer {
                     content_rect,
                     paint,
                     background_layers,
+                    visual_effects,
                     clip,
                     shape_clips,
                     transform,
@@ -1700,6 +1702,21 @@ impl GpuRenderer {
                 } => {
                     let default_paint = whisker_protocol::BoxPaint::default();
                     let paint = paint.unwrap_or(&default_paint);
+                    for shadow in visual_effects.box_shadows.iter().rev() {
+                        if let Some(primitive) =
+                            hard_box_shadow_primitive(*rect, paint, shadow, *opacity)
+                        {
+                            push_quad_draw(
+                                &mut vertices,
+                                &mut draws,
+                                primitive,
+                                *transform,
+                                *clip,
+                                shape_clips,
+                                (None, None),
+                            );
+                        }
+                    }
                     let mut box_primitives = Vec::new();
                     lower_box(*rect, paint, *opacity, |primitive| {
                         box_primitives.push(primitive)

@@ -13,6 +13,8 @@ final class WhiskerNodeView: UIView {
     var mountedElement: WhiskerMountedElement?
     private let defaultChildrenHost = WhiskerChildrenHostView(frame: .zero)
     private let overflowMask = CAShapeLayer()
+    private var boxShadow: HostBoxShadow?
+    private let boxShadowLayer = CAShapeLayer()
     private var clipsOverflowHorizontally = false
     private var clipsOverflowVertically = false
 
@@ -25,6 +27,7 @@ final class WhiskerNodeView: UIView {
         defaultChildrenHost.backgroundColor = .clear
         defaultChildrenHost.clipsToBounds = false
         addSubview(defaultChildrenHost)
+        layer.insertSublayer(boxShadowLayer, at: 0)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -40,6 +43,7 @@ final class WhiskerNodeView: UIView {
             mountedElement.view.frame = contentFrame
         }
         defaultChildrenHost.frame = bounds
+        updateBoxShadowLayers()
         updateOverflowMask()
         setNeedsDisplay()
     }
@@ -97,7 +101,25 @@ final class WhiskerNodeView: UIView {
     }
 
     func boxPaintDidChange() {
+        updateBoxShadowLayers()
         updateOverflowMask()
+    }
+
+    func setBoxShadows(_ shadows: [HostBoxShadow]) {
+        precondition(shadows.count <= 1)
+        boxShadow = shadows.first
+        updateBoxShadowLayers()
+    }
+
+    private func updateBoxShadowLayers() {
+        guard let shadow = boxShadow else {
+            boxShadowLayer.path = nil
+            return
+        }
+        boxShadowLayer.frame = bounds
+        boxShadowLayer.path = boxPainter.hardBoxShadowPath(in: bounds, shadow: shadow)
+        boxShadowLayer.fillColor = shadow.color.cgColor
+        boxShadowLayer.strokeColor = nil
     }
 
     private func updateOverflowMask() {

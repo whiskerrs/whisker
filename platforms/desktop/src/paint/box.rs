@@ -1,6 +1,6 @@
 use whisker_protocol::{
-    BorderLineStyle, BoxPaint, LayoutRect, PaintBox, PaintColor, PaintCornerRadius, PaintCorners,
-    PaintLengthPercentage,
+    BorderLineStyle, BoxPaint, BoxShadow, LayoutRect, PaintBox, PaintColor, PaintCornerRadius,
+    PaintCorners, PaintLengthPercentage,
 };
 
 use super::color::gpu_color;
@@ -175,6 +175,72 @@ pub(crate) fn lower_box(
             ],
             BoxPrimitiveKind::Border,
         ));
+    }
+}
+
+/// Lowers a hard-edged outer shadow to the shared rounded-rect primitive.
+pub(crate) fn hard_box_shadow_primitive(
+    rect: LayoutRect,
+    paint: &BoxPaint,
+    shadow: &BoxShadow,
+    opacity: f32,
+) -> Option<BoxPrimitive> {
+    if shadow.inset || shadow.blur_radius != 0.0 {
+        return None;
+    }
+    let base = resolve_box_geometry(rect, paint);
+    let spread = shadow.spread_radius;
+    let outer_rect = LayoutRect {
+        x: rect.x + shadow.offset_x - spread,
+        y: rect.y + shadow.offset_y - spread,
+        width: rect.width + spread * 2.0,
+        height: rect.height + spread * 2.0,
+    };
+    if outer_rect.width <= 0.0 || outer_rect.height <= 0.0 {
+        return None;
+    }
+    let mut outer_radii = ResolvedRadii {
+        horizontal: base
+            .outer_radii
+            .horizontal
+            .map(|value| (value + spread).max(0.0)),
+        vertical: base
+            .outer_radii
+            .vertical
+            .map(|value| (value + spread).max(0.0)),
+    };
+    normalize_resolved_radii(&mut outer_radii, outer_rect);
+    Some(
+        BoxGeometry {
+            outer_rect,
+            outer_radii,
+            inner_rect: outer_rect,
+            inner_radii: outer_radii,
+            border_widths: [0.0; 4],
+        }
+        .primitive(
+            gpu_color(&shadow.color, opacity),
+            [[0.0; 4]; 4],
+            [0.0; 4],
+            BoxPrimitiveKind::Fill,
+        ),
+    )
+}
+
+fn normalize_resolved_radii(radii: &mut ResolvedRadii, rect: LayoutRect) {
+    let scale = [
+        ratio(rect.width, radii.horizontal[0] + radii.horizontal[1]),
+        ratio(rect.width, radii.horizontal[3] + radii.horizontal[2]),
+        ratio(rect.height, radii.vertical[0] + radii.vertical[3]),
+        ratio(rect.height, radii.vertical[1] + radii.vertical[2]),
+    ]
+    .into_iter()
+    .fold(1.0_f32, f32::min);
+    for radius in &mut radii.horizontal {
+        *radius *= scale;
+    }
+    for radius in &mut radii.vertical {
+        *radius *= scale;
     }
 }
 
@@ -408,6 +474,39 @@ mod tests {
         let mut transparent = paint(PaintColor::Named("transparent".into()));
         transparent.border_styles.top = BorderLineStyle::None;
         assert!(lower(LayoutRect::default(), &transparent, 1.0).is_empty());
+    }
+
+    #[test]
+    fn hard_outer_shadow_applies_offset_spread_and_corner_growth() {
+        let mut box_paint = paint(PaintColor::Named("transparent".into()));
+        box_paint.border_radii.top_left = elliptical(8.0, 4.0);
+        let primitive = hard_box_shadow_primitive(
+            LayoutRect {
+                x: 10.0,
+                y: 20.0,
+                width: 100.0,
+                height: 50.0,
+            },
+            &box_paint,
+            &BoxShadow {
+                offset_x: 12.0,
+                offset_y: -3.0,
+                blur_radius: 0.0,
+                spread_radius: 2.0,
+                color: PaintColor::Named("black".into()),
+                inset: false,
+            },
+            1.0,
+        )
+        .unwrap();
+
+        assert_eq!(primitive.outer_rect.x, 20.0);
+        assert_eq!(primitive.outer_rect.y, 15.0);
+        assert_eq!(primitive.outer_rect.width, 104.0);
+        assert_eq!(primitive.outer_rect.height, 54.0);
+        assert_eq!(primitive.outer_radii_x[0], 10.0);
+        assert_eq!(primitive.outer_radii_y[0], 6.0);
+        assert_eq!(primitive.kind, BoxPrimitiveKind::Fill);
     }
 
     #[test]

@@ -14,6 +14,7 @@ import rs.whisker.runtime.paint.HostBackgroundGeometry
 import rs.whisker.runtime.paint.HostBackgroundBox
 import rs.whisker.runtime.paint.HostBackgroundLayer
 import rs.whisker.runtime.paint.HostBoxPaint
+import rs.whisker.runtime.paint.HostBoxShadow
 import rs.whisker.runtime.paint.HostBackgroundLayers
 import rs.whisker.runtime.paint.HostBackgroundRepeat
 import rs.whisker.runtime.paint.HostBackgroundSize
@@ -157,6 +158,7 @@ internal class HostScene(
                 operation.names?.size ?: 0 < 5
             ) return false
             8, 12, 15, 16 -> if (operation.node !in existing) return false
+            22 -> if (!validBoxShadows(operation, existing)) return false
             9 -> if (
                 operation.node !in existing ||
                 !isSupported2dTransform(operation.numbers ?: return false)
@@ -231,6 +233,7 @@ internal class HostScene(
             15 -> (nodes[id] ?: return).mountedElement?.clearProperty(operation.member)
             16 -> (nodes[id] ?: return).mountedElement?.setEventMask(operation.wide)
             21 -> applyBackgroundLayers(nodes[id] ?: return, operation)
+            22 -> applyBoxShadows(nodes[id] ?: return, operation)
         }
     }
 
@@ -381,6 +384,48 @@ internal class HostScene(
             )
         }
         node.paint?.let { applyPaint(node, it) }
+    }
+
+    private fun applyBoxShadows(node: HostNode, operation: HostSceneOperation) {
+        val values = requireNotNull(operation.numbers)
+        val names = requireNotNull(operation.names)
+        node.boxShadows = values.indices.step(BOX_SHADOW_PACKED_SIZE).map { offset ->
+            HostBoxShadow(
+                offsetX = values[offset] * root.resources.displayMetrics.density,
+                offsetY = values[offset + 1] * root.resources.displayMetrics.density,
+                blurRadius = values[offset + 2] * root.resources.displayMetrics.density,
+                spreadRadius = values[offset + 3] * root.resources.displayMetrics.density,
+                inset = values[offset + 4] != 0f,
+                color = if (values[offset + 5] == 0f) {
+                    parseNamedColor(names[offset / BOX_SHADOW_PACKED_SIZE])
+                } else {
+                    rgba(
+                        values[offset + 6],
+                        values[offset + 7],
+                        values[offset + 8],
+                        values[offset + 9],
+                    )
+                },
+            )
+        }
+        node.invalidate()
+        (node.parent as? View)?.invalidate()
+    }
+
+    private fun validBoxShadows(
+        operation: HostSceneOperation,
+        existing: Set<Long>,
+    ): Boolean {
+        val values = operation.numbers ?: return false
+        val names = operation.names ?: return false
+        return operation.node in existing &&
+            values.size % BOX_SHADOW_PACKED_SIZE == 0 &&
+            names.size == values.size / BOX_SHADOW_PACKED_SIZE &&
+            values.all(Float::isFinite) &&
+            values.indices.step(BOX_SHADOW_PACKED_SIZE).all { offset ->
+                values[offset + 2] == 0f && values[offset + 4] == 0f &&
+                    (values[offset + 5] == 0f || values[offset + 5] == 1f)
+            }
     }
 
     private fun decodeBackgroundLayer(operation: HostSceneOperation): HostBackgroundLayer {
@@ -663,6 +708,7 @@ internal class HostScene(
 
     private companion object {
         const val BACKGROUND_GEOMETRY_PACKED_SIZE = 15
+        const val BOX_SHADOW_PACKED_SIZE = 10
         const val BACKGROUND_GRADIENT_STOP_PACKED_SIZE = 7
         const val BACKGROUND_PACKED_LAYER_HEADER_SIZE = 3
         const val BACKGROUND_PACKED_LAYERS = 256

@@ -483,10 +483,6 @@ private class WhiskerBoxDrawable(
         )
     }
 
-    private fun roundedPath(rect: RectF, radii: FloatArray): Path = Path().apply {
-        addRoundRect(rect, radii, Path.Direction.CW)
-    }
-
     @Deprecated("Deprecated in Java")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
@@ -497,6 +493,10 @@ private class WhiskerBoxDrawable(
     override fun setColorFilter(colorFilter: ColorFilter?) {
         paint.colorFilter = colorFilter
     }
+}
+
+internal fun roundedPath(rect: RectF, radii: FloatArray): Path = Path().apply {
+    addRoundRect(rect, radii, Path.Direction.CW)
 }
 
 internal fun normalizeRadii(radii: FloatArray, width: Float, height: Float): FloatArray {

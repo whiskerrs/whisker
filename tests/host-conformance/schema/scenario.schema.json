@@ -191,6 +191,10 @@
         "content_box": { "$ref": "#/$defs/quadNumber" },
         "background": { "$ref": "#/$defs/color" },
         "border": { "$ref": "#/$defs/border" },
+        "box_shadows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/boxShadow" }
+        },
         "clip": { "$ref": "#/$defs/boxClip" },
         "background_layer": { "$ref": "#/$defs/backgroundGeometry" },
         "background_layers": {
@@ -218,6 +222,18 @@
       "properties": {
         "horizontal": { "enum": ["visible", "hidden"] },
         "vertical": { "enum": ["visible", "hidden"] }
+      }
+    },
+    "boxShadow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offset", "blur_radius", "spread_radius", "color"],
+      "properties": {
+        "offset": { "$ref": "#/$defs/point" },
+        "blur_radius": { "type": "number", "minimum": 0 },
+        "spread_radius": { "type": "number" },
+        "color": { "$ref": "#/$defs/color" },
+        "inset": { "type": "boolean" }
       }
     },
     "checkpoint": {

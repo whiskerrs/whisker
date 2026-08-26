@@ -89,7 +89,11 @@ impl DomFrameSink {
                 {
                     Some("background-layers payload")
                 }
-                Operation::SetVisualEffects { .. } => Some("visual-effects"),
+                Operation::SetVisualEffects { effects, .. }
+                    if !paint::visual_effects::supports(effects) =>
+                {
+                    Some("visual-effects payload")
+                }
                 Operation::SetImage { .. } => Some("image-content"),
                 Operation::SetCursor { .. } => Some("cursor"),
                 Operation::SetText { content, .. } if content.paint.uses_extended_features() => {
@@ -272,6 +276,9 @@ impl DomFrameSink {
                     self.resources.url(resource)
                 })?;
             }
+            Operation::SetVisualEffects { node, effects } => {
+                paint::visual_effects::apply(&self.node(*node)?, effects)?;
+            }
             Operation::SetClip { node, clip } => {
                 let element = self.node(*node)?;
                 let element_type = *self
@@ -418,9 +425,7 @@ impl DomFrameSink {
                     .map_err(|error| js_error("invoke native DOM command", error))?;
             }
             Operation::SetPointerCapture { .. } | Operation::ReleasePointerCapture { .. } => {}
-            Operation::SetVisualEffects { .. }
-            | Operation::SetImage { .. }
-            | Operation::SetCursor { .. } => {
+            Operation::SetImage { .. } | Operation::SetCursor { .. } => {
                 unreachable!("unsupported operations are rejected before DOM mutation")
             }
         }
@@ -584,6 +589,10 @@ impl FrameSink for DomFrameSink {
             [
                 whisker_protocol::CapabilityEntry {
                     capability: whisker_protocol::RenderCapability::EllipticalBorderRadius,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::VisualEffects,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_protocol::CapabilityEntry {

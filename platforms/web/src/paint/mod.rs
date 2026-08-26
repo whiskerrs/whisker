@@ -8,3 +8,4 @@ pub(crate) mod color;
 pub(crate) mod compositing;
 pub(crate) mod text;
 pub(crate) mod transform;
+pub(crate) mod visual_effects;

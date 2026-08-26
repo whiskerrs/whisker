@@ -19,6 +19,14 @@ struct HostBoxPaint {
     }
 }
 
+struct HostBoxShadow {
+    let offset: CGSize
+    let blurRadius: CGFloat
+    let spreadRadius: CGFloat
+    let color: UIColor
+    let inset: Bool
+}
+
 final class HostBoxPainter {
     private let backgroundPainter = HostBackgroundPainter()
     private var fillColor = UIColor.clear
@@ -87,6 +95,22 @@ final class HostBoxPainter {
 
     func updateBackgroundLayers(_ layers: [HostBackgroundLayer]) {
         backgroundPainter.update(layers)
+    }
+
+    func hardBoxShadowPath(in bounds: CGRect, shadow: HostBoxShadow) -> CGPath? {
+        guard !shadow.inset, shadow.blurRadius == 0 else { return nil }
+        let spread = shadow.spreadRadius
+        let rect = bounds
+            .insetBy(dx: -spread, dy: -spread)
+            .offsetBy(dx: shadow.offset.width, dy: shadow.offset.height)
+        guard !rect.isEmpty else { return nil }
+        let radii = cornerRadii.map {
+            CGSize(
+                width: max(0, $0.width + spread),
+                height: max(0, $0.height + spread)
+            )
+        }
+        return roundedPath(in: rect, radii: radii).cgPath
     }
 
     func overflowClipPath(

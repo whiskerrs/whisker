@@ -506,6 +506,14 @@ impl Driver {
                                     .or_else(|| {
                                         nodes
                                             .iter()
+                                            .any(|node| !node.box_shadows.is_empty())
+                                            .then_some(
+                                                "paint.visual-effects.box-shadow-offset",
+                                            )
+                                    })
+                                    .or_else(|| {
+                                        nodes
+                                            .iter()
                                             .any(|node| {
                                                 node.background_layers.iter().any(|layer| {
                                                     matches!(
@@ -619,7 +627,13 @@ impl Driver {
                             .unwrap_or("paint.box")
                         };
                         assert_eq!(name, expected_checkpoint);
-                        self.assert_scene_is_projected(samples);
+                        self.assert_scene_is_projected(
+                            if name == "paint.visual-effects.box-shadow-offset" {
+                                &[]
+                            } else {
+                                samples
+                            },
+                        );
                     } else {
                         assert_eq!(name, "paint.box");
                         self.assert_box_is_projected();
@@ -785,6 +799,26 @@ impl Driver {
                 &fixture_color_css(&fixture_node.background),
             );
             assert_border_is_projected(&style, fixture_node.border.as_ref());
+            let expected_shadows = fixture_node
+                .box_shadows
+                .iter()
+                .map(|shadow| {
+                    format!(
+                        "{} {}px {}px {}px {}px{}",
+                        fixture_color_css(&shadow.color),
+                        shadow.offset[0],
+                        shadow.offset[1],
+                        shadow.blur_radius,
+                        shadow.spread_radius,
+                        if shadow.inset { " inset" } else { "" },
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            assert_eq!(
+                style.get_property_value("box-shadow").unwrap(),
+                expected_shadows
+            );
             assert_style(
                 &style,
                 "overflow-x",
@@ -1145,6 +1179,9 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/CSS2/borders/border-top-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-003.json"
         ),
+        "wpt/css/css-backgrounds/box-shadow-001.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-001.json"
+        ),
         "wpt/css/CSS2/borders/border-right-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-right-003.json"
         ),
@@ -1323,6 +1360,26 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
             operations.push(Operation::SetTransform {
                 node,
                 transform: Transform(transform),
+            });
+        }
+        if !fixture_node.box_shadows.is_empty() {
+            operations.push(Operation::SetVisualEffects {
+                node,
+                effects: whisker_protocol::VisualEffects {
+                    box_shadows: fixture_node
+                        .box_shadows
+                        .iter()
+                        .map(|shadow| whisker_protocol::BoxShadow {
+                            offset_x: shadow.offset[0],
+                            offset_y: shadow.offset[1],
+                            blur_radius: shadow.blur_radius,
+                            spread_radius: shadow.spread_radius,
+                            color: color(&shadow.color),
+                            inset: shadow.inset,
+                        })
+                        .collect(),
+                    ..Default::default()
+                },
             });
         }
         if let Some(opacity) = fixture_node.opacity {

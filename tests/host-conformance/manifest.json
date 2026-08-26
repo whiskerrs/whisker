@@ -276,6 +276,13 @@
       "checkpoints": ["semantic-projection", "pixel"]
     },
     {
+      "id": "wpt.css-backgrounds.box-shadow-001",
+      "feature": "box-shadow-offset",
+      "fixture": "wpt/css/css-backgrounds/box-shadow-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css2.borders.border-right-003",
       "feature": "border-right",
       "fixture": "wpt/css/CSS2/borders/border-right-003.json",

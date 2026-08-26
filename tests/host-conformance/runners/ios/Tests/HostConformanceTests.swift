@@ -438,7 +438,8 @@ private final class Driver {
                     name == "paint.background-layers.intrinsic-auto" ||
                     name == "paint.background-layers.size-cover" ||
                     name == "paint.background-layers.size-contain" ||
-                    name == "paint.background-layers.round-auto-aspect-ratio" else {
+                    name == "paint.background-layers.round-auto-aspect-ratio" ||
+                    name == "paint.visual-effects.box-shadow-offset" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -633,6 +634,13 @@ private final class Driver {
             stagedLayers.append(contentsOf: layers)
             layerRanges.append(start..<stagedLayers.count)
         }
+        var shadowRanges = [Range<Int>]()
+        var stagedShadows = [WhiskerMobileBoxShadow]()
+        for fixture in fixtures {
+            let start = stagedShadows.count
+            stagedShadows.append(contentsOf: fixture.boxShadows)
+            shadowRanges.append(start..<stagedShadows.count)
+        }
         var gradientStops = [WhiskerMobileGradientStop]()
         var gradientOffsets = [Int?]()
         for layer in stagedLayers {
@@ -789,6 +797,7 @@ private final class Driver {
                             }
                             try backgroundPayloads.withUnsafeMutableBufferPointer {
                                 backgroundBuffer in
+                            try stagedShadows.withUnsafeMutableBufferPointer { shadowBuffer in
                             var operations = fixtures.map {
                                 operation(tag: UInt32(WHISKER_OP_CREATE), node: $0.id, member: 1)
                             }
@@ -870,6 +879,19 @@ private final class Driver {
                                         count: layerRange.count
                                     ))
                                 }
+                                let shadowRange = shadowRanges[index]
+                                if !shadowRange.isEmpty {
+                                    operations.append(operation(
+                                        tag: UInt32(WHISKER_OP_BOX_SHADOWS),
+                                        node: fixture.id,
+                                        payload: UnsafeRawPointer(
+                                            shadowBuffer.baseAddress!.advanced(
+                                                by: shadowRange.lowerBound
+                                            )
+                                        ),
+                                        count: shadowRange.count
+                                    ))
+                                }
                             }
                             try operations.withUnsafeMutableBufferPointer { buffer in
                                 var frame = WhiskerMobileFrame()
@@ -891,6 +913,7 @@ private final class Driver {
                                       response.status == UInt8(WHISKER_APPLY_ACCEPTED) else {
                                     throw Failure("UIKit Host rejected scene fixture frame")
                                 }
+                            }
                             }
                             }
                             }
@@ -1029,6 +1052,7 @@ private struct SceneFixtureNode {
     let zOrder: Int32?
     let backgroundLayer: SceneBackgroundLayer
     let backgroundLayers: [ScenePaintLayer]
+    let boxShadows: [WhiskerMobileBoxShadow]
     let linearGradient: SceneLinearGradient?
     let radialGradient: SceneRadialGradient?
     let conicGradient: SceneConicGradient?
@@ -1219,6 +1243,9 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         }
         throw Failure("background layer needs one supported image")
     }
+    let boxShadows = try (fixture["box_shadows"] as? [[String: Any]] ?? []).map {
+        try sceneBoxShadow($0)
+    }
     let linearGradient: SceneLinearGradient?
     if let gradient = fixture["linear_gradient"] as? [String: Any] {
         linearGradient = try sceneLinearGradient(gradient)
@@ -1249,10 +1276,24 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         zOrder: zOrder,
         backgroundLayer: backgroundLayer,
         backgroundLayers: backgroundLayers,
+        boxShadows: boxShadows,
         linearGradient: linearGradient,
         radialGradient: radialGradient,
         conicGradient: conicGradient
     )
+}
+
+private func sceneBoxShadow(_ fixture: [String: Any]) throws -> WhiskerMobileBoxShadow {
+    let offset = try numberArray(fixture, "offset")
+    guard offset.count == 2 else { throw Failure("box shadow offset needs two values") }
+    var shadow = WhiskerMobileBoxShadow()
+    shadow.offset_x = Float(offset[0])
+    shadow.offset_y = Float(offset[1])
+    shadow.blur_radius = Float(try number(fixture, "blur_radius"))
+    shadow.spread_radius = Float(try number(fixture, "spread_radius"))
+    shadow.color = try color(try object(fixture, "color"))
+    shadow.inset = (fixture["inset"] as? Bool) == true ? 1 : 0
+    return shadow
 }
 
 private func sceneGradientStops(_ gradient: [String: Any]) throws -> [WhiskerMobileGradientStop] {
