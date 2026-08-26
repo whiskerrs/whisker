@@ -10,25 +10,26 @@ use whisker_host_conformance::{
     BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture, BackgroundSizeFixture,
     BackgroundSizeKeywordFixture, BorderFixture, BorderStyleFixture, ClipPathFixture,
     ClipReferenceBoxFixture, ClipShapeFixture, ColorFixture, Command, ConicGradientFixture,
-    FillRuleFixture, Host, ImageRenderingFixture, ImageRepeatFixture, LinearGradientFixture,
-    LoadedCase, OverflowClipFixture, PathCommandFixture, PixelRelationFixture, PixelRelationKind,
-    PixelSampleFixture, PointerEventFixture, RadialGradientFixture, ResourceSourceFixture,
-    ResourceStateFixture, Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
-    load_required,
+    CursorFixture, FillRuleFixture, Host, ImageRenderingFixture, ImageRepeatFixture,
+    LinearGradientFixture, LoadedCase, OverflowClipFixture, PathCommandFixture,
+    PixelRelationFixture, PixelRelationKind, PixelSampleFixture, PointerEventFixture,
+    PointerEventsFixture, RadialGradientFixture, ResourceSourceFixture, ResourceStateFixture,
+    Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture, load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
-    BorderLineStyle, BoxClip, BoxPaint, ClipShape, ElementTypeId, FillRule, FrameHeader, FrameMode,
-    FramePacket, GradientStop, ImageRendering, ImageRepeat, InputEvent, InputEventKind, InputPoint,
-    LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily, MeasureFontStyle,
-    MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak,
-    MeasureTextWrap, MeasurementKey, MeasurementPayload, MeasurementRequest, MeasurementResponse,
-    NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius,
-    PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand,
-    PointerId, PointerInput, PointerKind, ProtocolVersion, RadialGradientExtent,
-    RadialGradientShape, ResourceCommand, ResourceId, ResourceKind, ResourceRequest,
-    ResourceSource, SurfaceId, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint,
-    TextShadow, Transform, Visibility, WhiskerValue,
+    BorderLineStyle, BoxClip, BoxPaint, ClipShape, Cursor, CursorKeyword, ElementTypeId, FillRule,
+    FrameHeader, FrameMode, FramePacket, GradientStop, HitTestBehavior, ImageRendering,
+    ImageRepeat, InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect,
+    MeasureConstraints, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+    MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap,
+    MeasurementKey, MeasurementPayload, MeasurementRequest, MeasurementResponse, NodeId, Operation,
+    OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius, PaintCorners,
+    PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand, PointerId,
+    PointerInput, PointerKind, ProtocolVersion, RadialGradientExtent, RadialGradientShape,
+    ResourceCommand, ResourceId, ResourceKind, ResourceRequest, ResourceSource, SurfaceId,
+    TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform,
+    Visibility, WhiskerValue,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
@@ -71,6 +72,19 @@ fn color_protocol(value: &ColorFixture) -> PaintColor {
             green: *green,
             blue: *blue,
             alpha: *alpha,
+        },
+    }
+}
+
+fn cursor_protocol(value: CursorFixture) -> Cursor {
+    Cursor {
+        resources: Vec::new(),
+        fallback: match value {
+            CursorFixture::Auto => CursorKeyword::Auto,
+            CursorFixture::Pointer => CursorKeyword::Pointer,
+            CursorFixture::Text => CursorKeyword::Text,
+            CursorFixture::Grab => CursorKeyword::Grab,
+            CursorFixture::None => CursorKeyword::None,
         },
     }
 }
@@ -606,7 +620,10 @@ impl Driver {
                     samples,
                     relations,
                 } => {
-                    assert!(name.starts_with("paint."), "unsupported Desktop checkpoint");
+                    assert!(
+                        name.starts_with("paint.") || name == "interaction.pointer.lynx",
+                        "unsupported Desktop checkpoint"
+                    );
                     if name == "paint.text.shadow-single" {
                         self.assert_text_shadow();
                     } else if name == "paint.text.decoration-lynx" {
@@ -942,6 +959,17 @@ impl Driver {
             if let Some(z_order) = fixture.z_order {
                 operations.push(Operation::SetZOrder { node, z_order });
             }
+            operations.push(Operation::SetCursor {
+                node,
+                cursor: cursor_protocol(fixture.cursor),
+            });
+            operations.push(Operation::SetHitTest {
+                node,
+                behavior: match fixture.pointer_events {
+                    PointerEventsFixture::Auto => HitTestBehavior::Auto,
+                    PointerEventsFixture::None => HitTestBehavior::None,
+                },
+            });
         }
         self.scene
             .as_mut()

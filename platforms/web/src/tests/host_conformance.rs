@@ -474,6 +474,8 @@ impl Driver {
                             "paint.text.wrap-overflow-lynx"
                         } else if name == "paint.text.font-features-lynx" {
                             "paint.text.font-features-lynx"
+                        } else if name == "interaction.pointer.lynx" {
+                            "interaction.pointer.lynx"
                         } else if name == "paint.visual-effects.image-rendering-pixelated" {
                             "paint.visual-effects.image-rendering-pixelated"
                         } else if self.resource_lifecycle {
@@ -868,6 +870,25 @@ impl Driver {
                 &fixture_color_css(&fixture_node.background),
             );
             assert_border_is_projected(&style, fixture_node.border.as_ref());
+            assert_style(
+                &style,
+                "cursor",
+                match fixture_node.cursor {
+                    whisker_host_conformance::CursorFixture::Auto => "auto",
+                    whisker_host_conformance::CursorFixture::Pointer => "pointer",
+                    whisker_host_conformance::CursorFixture::Text => "text",
+                    whisker_host_conformance::CursorFixture::Grab => "grab",
+                    whisker_host_conformance::CursorFixture::None => "none",
+                },
+            );
+            assert_style(
+                &style,
+                "pointer-events",
+                match fixture_node.pointer_events {
+                    whisker_host_conformance::PointerEventsFixture::Auto => "auto",
+                    whisker_host_conformance::PointerEventsFixture::None => "none",
+                },
+            );
             if let Some(text) = &fixture_node.text {
                 let text_node = node
                     .query_selector("[data-whisker-text]")
@@ -1198,15 +1219,24 @@ impl Driver {
                                     || node.conic_gradient.is_some()
                             })
                         })
-                        .expect("sRGBA sample requires an opacity or gradient source node")
-                        .id
-                        .to_string();
-                    assert_eq!(
-                        opaque_hit.map(String::as_str),
-                        Some(expected_node.as_str()),
-                        "sRGBA sample at {:?} did not hit its expected source node",
-                        sample.point
-                    );
+                        .expect("sRGBA sample requires an opacity or gradient source node");
+                    let expected_node_id = expected_node.id.to_string();
+                    if expected_node.pointer_events
+                        == whisker_host_conformance::PointerEventsFixture::None
+                    {
+                        assert!(
+                            !hit_nodes.iter().any(|id| id == &expected_node_id),
+                            "pointer-events:none node {} remained in the DOM hit-test stack",
+                            expected_node.id
+                        );
+                    } else {
+                        assert_eq!(
+                            opaque_hit.map(String::as_str),
+                            Some(expected_node_id.as_str()),
+                            "sRGBA sample at {:?} did not hit its expected source node",
+                            sample.point
+                        );
+                    }
                 }
                 expected_color => {
                     let expected_node = expected
@@ -1512,6 +1542,9 @@ fn fixture(path: &str) -> &'static str {
         "core/pointer-input-basic.json" => {
             include_str!("../../../../tests/host-conformance/core/pointer-input-basic.json")
         }
+        "core/pointer-style-lynx.json" => {
+            include_str!("../../../../tests/host-conformance/core/pointer-style-lynx.json")
+        }
         "core/backdrop-filter-blur.json" => {
             include_str!("../../../../tests/host-conformance/core/backdrop-filter-blur.json")
         }
@@ -1736,6 +1769,40 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
         if let Some(z_order) = fixture_node.z_order {
             operations.push(Operation::SetZOrder { node, z_order });
         }
+        operations.push(Operation::SetCursor {
+            node,
+            cursor: whisker_protocol::Cursor {
+                resources: Vec::new(),
+                fallback: match fixture_node.cursor {
+                    whisker_host_conformance::CursorFixture::Auto => {
+                        whisker_protocol::CursorKeyword::Auto
+                    }
+                    whisker_host_conformance::CursorFixture::Pointer => {
+                        whisker_protocol::CursorKeyword::Pointer
+                    }
+                    whisker_host_conformance::CursorFixture::Text => {
+                        whisker_protocol::CursorKeyword::Text
+                    }
+                    whisker_host_conformance::CursorFixture::Grab => {
+                        whisker_protocol::CursorKeyword::Grab
+                    }
+                    whisker_host_conformance::CursorFixture::None => {
+                        whisker_protocol::CursorKeyword::None
+                    }
+                },
+            },
+        });
+        operations.push(Operation::SetHitTest {
+            node,
+            behavior: match fixture_node.pointer_events {
+                whisker_host_conformance::PointerEventsFixture::Auto => {
+                    whisker_protocol::HitTestBehavior::Auto
+                }
+                whisker_host_conformance::PointerEventsFixture::None => {
+                    whisker_protocol::HitTestBehavior::None
+                }
+            },
+        });
         if !fixture_node.background_layers.is_empty() {
             operations.push(Operation::SetBackgroundLayers {
                 node,

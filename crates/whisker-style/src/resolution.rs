@@ -4,11 +4,12 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use crate::{
-    CalcExpression, ColorValue, ComputedLayoutStyle, ComputedPaintStyle, FontFamilyValue,
-    FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue, FontWeightValue,
-    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, SpecifiedStyle, StyleNumber,
-    StyleProperty, StyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
-    TextDecorationValue, TextOverflowValue, TextShadowValue, WhiteSpaceValue, WordBreakValue,
+    CalcExpression, ColorValue, ComputedLayoutStyle, ComputedPaintStyle, CursorValue,
+    FontFamilyValue, FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue,
+    FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
+    PointerEventsValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
+    TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
+    TextShadowValue, WhiteSpaceValue, WordBreakValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -160,6 +161,8 @@ impl ComputedTextDecoration {
 /// The computed text values inherited by descendant nodes.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InheritedStyle {
+    cursor: CursorValue,
+    pointer_events: PointerEventsValue,
     font_family: FontFamilyValue,
     font_features: Vec<FontFeatureValue>,
     font_variations: Vec<FontVariationValue>,
@@ -178,6 +181,8 @@ pub struct InheritedStyle {
 impl InheritedStyle {
     fn initial(environment: StyleEnvironment) -> Self {
         Self {
+            cursor: CursorValue::Auto,
+            pointer_events: PointerEventsValue::Auto,
             font_family: FontFamilyValue::System,
             font_features: Vec::new(),
             font_variations: Vec::new(),
@@ -206,6 +211,16 @@ impl InheritedStyle {
             },
             text_shadow: None,
         }
+    }
+
+    /// Returns the inherited pointing-device cursor.
+    pub const fn cursor(&self) -> CursorValue {
+        self.cursor
+    }
+
+    /// Returns the inherited pointer hit-test participation.
+    pub const fn pointer_events(&self) -> PointerEventsValue {
+        self.pointer_events
     }
 
     /// Returns the selected font family.
@@ -277,6 +292,14 @@ impl InheritedStyle {
     pub fn changes_from(&self, previous: &Self) -> InheritedStyleChange {
         let mut properties = InheritedPropertySet::EMPTY;
         let mut impacts = PropertyImpactSet::EMPTY;
+        if self.cursor != previous.cursor {
+            properties |= InheritedPropertySet::CURSOR;
+            impacts |= PropertyImpactSet::INPUT;
+        }
+        if self.pointer_events != previous.pointer_events {
+            properties |= InheritedPropertySet::POINTER_EVENTS;
+            impacts |= PropertyImpactSet::INPUT;
+        }
         if self.font_family != previous.font_family {
             properties |= InheritedPropertySet::FONT_FAMILY;
             impacts |= PropertyImpactSet::TEXT_METRICS;
@@ -349,6 +372,16 @@ pub struct ComputedStyle {
 }
 
 impl ComputedStyle {
+    /// Returns the resolved pointing-device cursor.
+    pub const fn cursor(&self) -> CursorValue {
+        self.inherited_text.cursor()
+    }
+
+    /// Returns whether this node participates in pointer hit testing.
+    pub const fn pointer_events(&self) -> PointerEventsValue {
+        self.inherited_text.pointer_events()
+    }
+
     /// Returns computed text values for this node.
     pub const fn inherited_text(&self) -> &InheritedStyle {
         &self.inherited_text
@@ -467,6 +500,10 @@ impl InheritedPropertySet {
     pub const FONT_VARIATION_SETTINGS: Self = Self(1 << 11);
     /// `font-optical-sizing`.
     pub const FONT_OPTICAL_SIZING: Self = Self(1 << 12);
+    /// `cursor`.
+    pub const CURSOR: Self = Self(1 << 13);
+    /// `pointer-events`.
+    pub const POINTER_EVENTS: Self = Self(1 << 14);
 
     /// Returns whether this set contains every bit from `other`.
     pub const fn contains(self, other: Self) -> bool {
@@ -498,6 +535,8 @@ impl PropertyImpactSet {
     pub const LAYOUT: Self = Self(1 << 1);
     /// Paint output changed.
     pub const PAINT: Self = Self(1 << 2);
+    /// Hit testing or pointer presentation changed.
+    pub const INPUT: Self = Self(1 << 3);
     /// All work caused by a text metric change.
     pub const TEXT_METRICS: Self = Self(Self::INTRINSIC_MEASURE.0 | Self::LAYOUT.0 | Self::PAINT.0);
 
@@ -552,6 +591,17 @@ pub fn resolve_style(
     let initial = InheritedStyle::initial(environment);
     let base = parent.unwrap_or(&initial);
     let declarations = InheritedDeclarations::from_specified(specified);
+
+    let cursor = match declarations.cursor {
+        Some(StyleValue::Cursor(value)) => *value,
+        Some(_) => return Err(wrong_type(StyleProperty::Cursor)),
+        None => base.cursor,
+    };
+    let pointer_events = match declarations.pointer_events {
+        Some(StyleValue::PointerEvents(value)) => *value,
+        Some(_) => return Err(wrong_type(StyleProperty::PointerEvents)),
+        None => base.pointer_events,
+    };
 
     let font_size = match declarations.font_size {
         Some(value) => {
@@ -774,6 +824,8 @@ pub fn resolve_style(
     };
 
     let inherited_text = InheritedStyle {
+        cursor,
+        pointer_events,
         font_family,
         font_features,
         font_variations,
@@ -824,6 +876,8 @@ pub fn resolve_text_style(
 
 #[derive(Default)]
 struct InheritedDeclarations<'a> {
+    cursor: Option<&'a StyleValue>,
+    pointer_events: Option<&'a StyleValue>,
     font_family: Option<&'a StyleValue>,
     font_features: Option<&'a StyleValue>,
     font_variations: Option<&'a StyleValue>,
@@ -844,6 +898,8 @@ impl<'a> InheritedDeclarations<'a> {
         let mut values = Self::default();
         for declaration in specified.resolved() {
             let slot = match declaration.property() {
+                StyleProperty::Cursor => &mut values.cursor,
+                StyleProperty::PointerEvents => &mut values.pointer_events,
                 StyleProperty::FontFamily => &mut values.font_family,
                 StyleProperty::FontFeatureSettings => &mut values.font_features,
                 StyleProperty::FontVariationSettings => &mut values.font_variations,
@@ -1184,6 +1240,47 @@ mod tests {
                 alpha: number(1.0),
             }
         );
+    }
+
+    #[test]
+    fn cursor_and_pointer_events_resolve_and_inherit_as_typed_input_values() {
+        let environment = StyleEnvironment::default();
+        let parent = resolve_style(
+            &SpecifiedStyle::new()
+                .push(StyleProperty::Cursor, StyleValue::Cursor(CursorValue::Grab))
+                .push(
+                    StyleProperty::PointerEvents,
+                    StyleValue::PointerEvents(PointerEventsValue::None),
+                ),
+            None,
+            environment,
+        )
+        .unwrap();
+        assert_eq!(parent.computed().cursor(), CursorValue::Grab);
+        assert_eq!(parent.computed().pointer_events(), PointerEventsValue::None);
+
+        let child = resolve_style(
+            &SpecifiedStyle::new(),
+            Some(parent.inherited_for_children()),
+            environment,
+        )
+        .unwrap();
+        assert_eq!(child.computed().cursor(), CursorValue::Grab);
+        assert_eq!(child.computed().pointer_events(), PointerEventsValue::None);
+
+        let reset = resolve_style(
+            &SpecifiedStyle::new()
+                .push(StyleProperty::Cursor, StyleValue::Cursor(CursorValue::Auto))
+                .push(
+                    StyleProperty::PointerEvents,
+                    StyleValue::PointerEvents(PointerEventsValue::Auto),
+                ),
+            Some(parent.inherited_for_children()),
+            environment,
+        )
+        .unwrap();
+        assert_eq!(reset.computed().cursor(), CursorValue::Auto);
+        assert_eq!(reset.computed().pointer_events(), PointerEventsValue::Auto);
     }
 
     #[test]
@@ -2139,6 +2236,8 @@ mod tests {
         assert!(unchanged.impacts().is_empty());
 
         let changed = InheritedStyle {
+            cursor: CursorValue::Grab,
+            pointer_events: PointerEventsValue::None,
             font_family: FontFamilyValue::Named("Inter".into()),
             font_size: number(20.0),
             font_weight: FontWeightValue::BOLD,
@@ -2177,6 +2276,8 @@ mod tests {
             InheritedPropertySet::FONT_FEATURE_SETTINGS,
             InheritedPropertySet::FONT_VARIATION_SETTINGS,
             InheritedPropertySet::FONT_OPTICAL_SIZING,
+            InheritedPropertySet::CURSOR,
+            InheritedPropertySet::POINTER_EVENTS,
             InheritedPropertySet::LINE_HEIGHT,
             InheritedPropertySet::LETTER_SPACING,
             InheritedPropertySet::COLOR,
@@ -2190,6 +2291,7 @@ mod tests {
             PropertyImpactSet::INTRINSIC_MEASURE,
             PropertyImpactSet::LAYOUT,
             PropertyImpactSet::PAINT,
+            PropertyImpactSet::INPUT,
         ] {
             assert!(change.impacts().contains(impact));
         }

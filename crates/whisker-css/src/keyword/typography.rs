@@ -90,6 +90,66 @@ pub enum Cursor {
     Text,
     /// `none` — hide the cursor.
     None,
+    /// `context-menu`.
+    ContextMenu,
+    /// `help`.
+    Help,
+    /// `progress`.
+    Progress,
+    /// `wait`.
+    Wait,
+    /// `cell`.
+    Cell,
+    /// `crosshair`.
+    Crosshair,
+    /// `vertical-text`.
+    VerticalText,
+    /// `alias`.
+    Alias,
+    /// `copy`.
+    Copy,
+    /// `move`.
+    Move,
+    /// `no-drop`.
+    NoDrop,
+    /// `not-allowed`.
+    NotAllowed,
+    /// `grab`.
+    Grab,
+    /// `grabbing`.
+    Grabbing,
+    /// `col-resize`.
+    ColResize,
+    /// `row-resize`.
+    RowResize,
+    /// `n-resize`.
+    NResize,
+    /// `e-resize`.
+    EResize,
+    /// `s-resize`.
+    SResize,
+    /// `w-resize`.
+    WResize,
+    /// `ne-resize`.
+    NeResize,
+    /// `nw-resize`.
+    NwResize,
+    /// `se-resize`.
+    SeResize,
+    /// `sw-resize`.
+    SwResize,
+    /// `ew-resize`.
+    EwResize,
+    /// `ns-resize`.
+    NsResize,
+    /// `nesw-resize`.
+    NeswResize,
+    /// `nwse-resize`.
+    NwseResize,
+    /// `zoom-in`.
+    ZoomIn,
+    /// `zoom-out`.
+    ZoomOut,
 }
 
 impl ToCss for Cursor {
@@ -100,6 +160,36 @@ impl ToCss for Cursor {
             Cursor::Pointer => "pointer",
             Cursor::Text => "text",
             Cursor::None => "none",
+            Cursor::ContextMenu => "context-menu",
+            Cursor::Help => "help",
+            Cursor::Progress => "progress",
+            Cursor::Wait => "wait",
+            Cursor::Cell => "cell",
+            Cursor::Crosshair => "crosshair",
+            Cursor::VerticalText => "vertical-text",
+            Cursor::Alias => "alias",
+            Cursor::Copy => "copy",
+            Cursor::Move => "move",
+            Cursor::NoDrop => "no-drop",
+            Cursor::NotAllowed => "not-allowed",
+            Cursor::Grab => "grab",
+            Cursor::Grabbing => "grabbing",
+            Cursor::ColResize => "col-resize",
+            Cursor::RowResize => "row-resize",
+            Cursor::NResize => "n-resize",
+            Cursor::EResize => "e-resize",
+            Cursor::SResize => "s-resize",
+            Cursor::WResize => "w-resize",
+            Cursor::NeResize => "ne-resize",
+            Cursor::NwResize => "nw-resize",
+            Cursor::SeResize => "se-resize",
+            Cursor::SwResize => "sw-resize",
+            Cursor::EwResize => "ew-resize",
+            Cursor::NsResize => "ns-resize",
+            Cursor::NeswResize => "nesw-resize",
+            Cursor::NwseResize => "nwse-resize",
+            Cursor::ZoomIn => "zoom-in",
+            Cursor::ZoomOut => "zoom-out",
         })
     }
 }

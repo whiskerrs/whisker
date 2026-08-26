@@ -7,6 +7,8 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
+import android.view.MotionEvent
+import android.view.PointerIcon
 import rs.whisker.runtime.WhiskerView
 import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerMountedElement
@@ -56,6 +58,10 @@ internal class HostNode(
             field = value
             invalidate()
         }
+    internal var hitTestBehavior: Int = 0
+        private set
+    internal var cursorKeyword: Int = 0
+        private set
 
     private val localTransform = Matrix()
     private var hasLocalTransform = false
@@ -67,6 +73,52 @@ internal class HostNode(
 
     init {
         setWillNotDraw(false)
+    }
+
+    fun setHitTestBehavior(value: Int) {
+        require(value in 0..3)
+        hitTestBehavior = value
+    }
+
+    fun setCursorKeyword(value: Int) {
+        require(value in 0..34)
+        cursorKeyword = value
+        if (Build.VERSION.SDK_INT >= 24) {
+            pointerIcon = if (value == 0) null else PointerIcon.getSystemIcon(
+                context,
+                when (value) {
+                    1 -> PointerIcon.TYPE_ARROW
+                    2 -> PointerIcon.TYPE_NULL
+                    3 -> PointerIcon.TYPE_CONTEXT_MENU
+                    4 -> PointerIcon.TYPE_HELP
+                    5 -> PointerIcon.TYPE_HAND
+                    6, 7 -> PointerIcon.TYPE_WAIT
+                    8 -> PointerIcon.TYPE_CELL
+                    9 -> PointerIcon.TYPE_CROSSHAIR
+                    10 -> PointerIcon.TYPE_TEXT
+                    11 -> PointerIcon.TYPE_VERTICAL_TEXT
+                    12 -> PointerIcon.TYPE_ALIAS
+                    13 -> PointerIcon.TYPE_COPY
+                    14 -> PointerIcon.TYPE_ALL_SCROLL
+                    15, 16 -> PointerIcon.TYPE_NO_DROP
+                    17 -> PointerIcon.TYPE_GRAB
+                    18 -> PointerIcon.TYPE_GRABBING
+                    19, 22, 24, 29 -> PointerIcon.TYPE_HORIZONTAL_DOUBLE_ARROW
+                    20, 21, 23, 30 -> PointerIcon.TYPE_VERTICAL_DOUBLE_ARROW
+                    25, 28, 31 -> PointerIcon.TYPE_TOP_RIGHT_DIAGONAL_DOUBLE_ARROW
+                    26, 27, 32 -> PointerIcon.TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW
+                    33 -> PointerIcon.TYPE_ZOOM_IN
+                    34 -> PointerIcon.TYPE_ZOOM_OUT
+                    else -> PointerIcon.TYPE_ARROW
+                },
+            )
+        }
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean = when (hitTestBehavior) {
+        1 -> false
+        2 -> onTouchEvent(event)
+        else -> super.dispatchTouchEvent(event)
     }
 
     fun setOverflowClipGeometry(geometry: ResolvedBoxGeometry) {

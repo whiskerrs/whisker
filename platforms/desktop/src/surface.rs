@@ -58,6 +58,13 @@ impl DesktopSurface {
     pub(crate) fn take_events(&mut self) -> Vec<DesktopProviderEvent> {
         self.scene.take_events()
     }
+
+    pub(crate) fn cursor_at(
+        &self,
+        logical_position: [f32; 2],
+    ) -> Option<whisker_protocol::CursorKeyword> {
+        self.scene.cursor_at(logical_position)
+    }
 }
 
 impl FrameSink for DesktopSurface {

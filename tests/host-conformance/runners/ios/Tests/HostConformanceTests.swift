@@ -468,7 +468,8 @@ private final class Driver {
                     name == "paint.text.align-lynx" ||
                     name == "paint.text.indent-lynx" ||
                     name == "paint.text.wrap-overflow-lynx" ||
-                    name == "paint.text.font-features-lynx" else {
+                    name == "paint.text.font-features-lynx" ||
+                    name == "interaction.pointer.lynx" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 if name == "paint.visual-effects.backdrop-blur" {
@@ -1189,6 +1190,16 @@ private final class Driver {
                                     node: fixture.id,
                                     integer: fixture.imageRendering
                                 ))
+                                operations.append(operation(
+                                    tag: UInt32(WHISKER_OP_CURSOR),
+                                    node: fixture.id,
+                                    integer: fixture.cursor
+                                ))
+                                operations.append(operation(
+                                    tag: UInt32(WHISKER_OP_HIT_TEST),
+                                    node: fixture.id,
+                                    integer: fixture.pointerEvents
+                                ))
                             }
                             try operations.withUnsafeMutableBufferPointer { buffer in
                                 var frame = WhiskerMobileFrame()
@@ -1353,6 +1364,8 @@ private struct SceneFixtureNode {
     let boxShadows: [WhiskerMobileBoxShadow]
     let backdropBlur: Float?
     let imageRendering: Int32
+    let cursor: Int32
+    let pointerEvents: Int32
     let clipPath: SceneClipPath?
     let linearGradient: SceneLinearGradient?
     let radialGradient: SceneRadialGradient?
@@ -1670,6 +1683,14 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     case "crisp_edges": Int32(WHISKER_IMAGE_RENDERING_CRISP_EDGES)
     default: Int32(WHISKER_IMAGE_RENDERING_AUTO)
     }
+    let cursor: Int32 = switch fixture["cursor"] as? String {
+    case "pointer": 5
+    case "text": 10
+    case "grab": 17
+    case "none": 2
+    default: 0
+    }
+    let pointerEvents: Int32 = fixture["pointer_events"] as? String == "none" ? 1 : 0
     let clipPath = try (fixture["clip_path"] as? [String: Any]).map(sceneClipPath)
     let linearGradient: SceneLinearGradient?
     if let gradient = fixture["linear_gradient"] as? [String: Any] {
@@ -1705,6 +1726,8 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         boxShadows: boxShadows,
         backdropBlur: backdropBlur,
         imageRendering: imageRendering,
+        cursor: cursor,
+        pointerEvents: pointerEvents,
         clipPath: clipPath,
         linearGradient: linearGradient,
         radialGradient: radialGradient,

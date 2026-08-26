@@ -6,8 +6,8 @@ use std::sync::Arc;
 use whisker_engine::FrameSink;
 use whisker_protocol::{
     ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BoxClip,
-    BoxPaint, ClipShape, ElementTypeId, FillRule, FrameMode, FramePacket, ImageRepeat,
-    LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
+    BoxPaint, ClipShape, Cursor, ElementTypeId, FillRule, FrameMode, FramePacket, HitTestBehavior,
+    ImageRepeat, LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
     PaintCoordinate, PaintImage, PaintPosition, PathCommand, RadialGradientExtent, ResourceId,
     SceneProjection, SurfaceId, TextContent, Transform, ValidationError, Visibility, VisualEffects,
     WhiskerValue,
@@ -29,6 +29,8 @@ struct CommonPresentation {
     opacity: f32,
     visibility: Visibility,
     z_order: i32,
+    hit_test: HitTestBehavior,
+    cursor: Cursor,
 }
 
 impl Default for CommonPresentation {
@@ -48,6 +50,8 @@ impl Default for CommonPresentation {
             opacity: 1.0,
             visibility: Visibility::Visible,
             z_order: 0,
+            hit_test: HitTestBehavior::Auto,
+            cursor: Cursor::default(),
         }
     }
 }
@@ -328,6 +332,70 @@ impl DesktopScene {
 
     pub(crate) fn take_events(&mut self) -> Vec<DesktopProviderEvent> {
         std::mem::take(&mut self.pending_events)
+    }
+
+    pub(crate) fn cursor_at(&self, point: [f32; 2]) -> Option<whisker_protocol::CursorKeyword> {
+        let mut roots = self
+            .nodes
+            .iter()
+            .filter_map(|(node, state)| {
+                state
+                    .presentation
+                    .parent
+                    .is_none()
+                    .then_some((*node, state.presentation.z_order))
+            })
+            .collect::<Vec<_>>();
+        roots.sort_by_key(|(node, z_order)| (*z_order, node.get()));
+        roots
+            .into_iter()
+            .rev()
+            .find_map(|(node, _)| self.cursor_at_node(node, point, [0.0, 0.0]))
+    }
+
+    fn cursor_at_node(
+        &self,
+        node: NodeId,
+        point: [f32; 2],
+        parent_origin: [f32; 2],
+    ) -> Option<whisker_protocol::CursorKeyword> {
+        let state = self.nodes.get(&node)?;
+        let presentation = &state.presentation;
+        if presentation.visibility == Visibility::Hidden
+            || presentation.hit_test == HitTestBehavior::None
+        {
+            return None;
+        }
+        let rect = presentation.layout.border_box;
+        let origin = [parent_origin[0] + rect.x, parent_origin[1] + rect.y];
+        let contains_x = point[0] >= origin[0] && point[0] <= origin[0] + rect.width;
+        let contains_y = point[1] >= origin[1] && point[1] <= origin[1] + rect.height;
+        let clipped = (presentation.clip.horizontal == OverflowClip::Hidden && !contains_x)
+            || (presentation.clip.vertical == OverflowClip::Hidden && !contains_y);
+        if presentation.hit_test != HitTestBehavior::BoxOnly && !clipped {
+            let mut children = presentation
+                .children
+                .iter()
+                .enumerate()
+                .map(|(index, child)| {
+                    (
+                        *child,
+                        self.nodes
+                            .get(child)
+                            .map_or(0, |child| child.presentation.z_order),
+                        index,
+                    )
+                })
+                .collect::<Vec<_>>();
+            children.sort_by_key(|(_, z_order, index)| (*z_order, *index));
+            for (child, _, _) in children.into_iter().rev() {
+                if let Some(cursor) = self.cursor_at_node(child, point, origin) {
+                    return Some(cursor);
+                }
+            }
+        }
+        (contains_x && contains_y && presentation.hit_test != HitTestBehavior::DescendantsOnly)
+            .then_some(presentation.cursor.fallback)
     }
 
     pub(crate) fn paint_commands(&self) -> Vec<PaintCommand<'_>> {
@@ -613,8 +681,8 @@ impl DesktopScene {
                 Operation::SetImage { .. } => {
                     return Err(DesktopPresentError::Unsupported("image-content"));
                 }
-                Operation::SetCursor { .. } => {
-                    return Err(DesktopPresentError::Unsupported("cursor"));
+                Operation::SetCursor { cursor, .. } if !cursor.resources.is_empty() => {
+                    return Err(DesktopPresentError::Unsupported("resource-backed cursor"));
                 }
                 Operation::DeleteNode { .. }
                 | Operation::RemoveChild { .. }
@@ -628,6 +696,7 @@ impl DesktopScene {
                 | Operation::SetZOrder { .. }
                 | Operation::SetEventMask { .. }
                 | Operation::SetHitTest { .. }
+                | Operation::SetCursor { .. }
                 | Operation::SetPointerCapture { .. }
                 | Operation::ReleasePointerCapture { .. } => {}
             }
@@ -829,10 +898,22 @@ impl DesktopScene {
                         }
                     }
                 }
-                Operation::SetHitTest { .. }
-                | Operation::SetPointerCapture { .. }
-                | Operation::ReleasePointerCapture { .. } => {}
-                Operation::SetImage { .. } | Operation::SetCursor { .. } => {
+                Operation::SetHitTest { node, behavior } => {
+                    self.nodes
+                        .get_mut(node)
+                        .expect("validated node")
+                        .presentation
+                        .hit_test = *behavior;
+                }
+                Operation::SetCursor { node, cursor } => {
+                    self.nodes
+                        .get_mut(node)
+                        .expect("validated node")
+                        .presentation
+                        .cursor = cursor.clone();
+                }
+                Operation::SetPointerCapture { .. } | Operation::ReleasePointerCapture { .. } => {}
+                Operation::SetImage { .. } => {
                     unreachable!("unsupported operations are rejected before commit")
                 }
             }
@@ -878,6 +959,10 @@ impl FrameSink for DesktopScene {
                 },
                 whisker_protocol::CapabilityEntry {
                     capability: whisker_protocol::RenderCapability::TextTypography,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::Cursor,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_protocol::CapabilityEntry {
@@ -1689,6 +1774,93 @@ mod tests {
                     && clip.right == Some(25.0)
                     && *opacity == 0.25
         ));
+    }
+
+    #[test]
+    fn cursor_hit_testing_respects_pointer_events_and_child_z_order() {
+        let root = id(1);
+        let ignored_child = id(2);
+        let active_child = id(3);
+        let element_type = element_type(whisker::VIEW_ELEMENT_NAME);
+        let mut scene = scene(SurfaceId::new(1).unwrap());
+        scene
+            .present(&packet(
+                FrameMode::Snapshot,
+                0,
+                1,
+                vec![
+                    Operation::CreateNode {
+                        node: root,
+                        element_type,
+                    },
+                    Operation::CreateNode {
+                        node: ignored_child,
+                        element_type,
+                    },
+                    Operation::CreateNode {
+                        node: active_child,
+                        element_type,
+                    },
+                    Operation::InsertChild {
+                        parent: root,
+                        child: ignored_child,
+                        index: 0,
+                    },
+                    Operation::InsertChild {
+                        parent: root,
+                        child: active_child,
+                        index: 1,
+                    },
+                    Operation::SetLayout {
+                        node: root,
+                        geometry: geometry(0.0, 0.0, 180.0, 90.0),
+                    },
+                    Operation::SetLayout {
+                        node: ignored_child,
+                        geometry: geometry(10.0, 10.0, 70.0, 70.0),
+                    },
+                    Operation::SetLayout {
+                        node: active_child,
+                        geometry: geometry(100.0, 10.0, 70.0, 70.0),
+                    },
+                    Operation::SetCursor {
+                        node: root,
+                        cursor: Cursor {
+                            resources: Vec::new(),
+                            fallback: whisker_protocol::CursorKeyword::Pointer,
+                        },
+                    },
+                    Operation::SetCursor {
+                        node: ignored_child,
+                        cursor: Cursor {
+                            resources: Vec::new(),
+                            fallback: whisker_protocol::CursorKeyword::Text,
+                        },
+                    },
+                    Operation::SetHitTest {
+                        node: ignored_child,
+                        behavior: HitTestBehavior::None,
+                    },
+                    Operation::SetCursor {
+                        node: active_child,
+                        cursor: Cursor {
+                            resources: Vec::new(),
+                            fallback: whisker_protocol::CursorKeyword::Grab,
+                        },
+                    },
+                ],
+            ))
+            .unwrap();
+
+        assert_eq!(
+            scene.cursor_at([20.0, 20.0]),
+            Some(whisker_protocol::CursorKeyword::Pointer)
+        );
+        assert_eq!(
+            scene.cursor_at([120.0, 20.0]),
+            Some(whisker_protocol::CursorKeyword::Grab)
+        );
+        assert_eq!(scene.cursor_at([200.0, 20.0]), None);
     }
 
     #[test]

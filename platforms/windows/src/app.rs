@@ -9,13 +9,51 @@ use whisker_desktop::{
     BuiltInElementModule, DesktopElementFactory, DesktopFrameContext, DesktopModuleDefinition,
     DesktopRuntime, WhiskerModule,
 };
-use whisker_protocol::SurfaceId;
+use whisker_protocol::{CursorKeyword, SurfaceId};
 use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
-use winit::window::{Window, WindowAttributes, WindowId};
+use winit::window::{CursorIcon, Window, WindowAttributes, WindowId};
+
+fn cursor_icon(value: CursorKeyword) -> CursorIcon {
+    match value {
+        CursorKeyword::Auto | CursorKeyword::Default | CursorKeyword::None => CursorIcon::Default,
+        CursorKeyword::ContextMenu => CursorIcon::ContextMenu,
+        CursorKeyword::Help => CursorIcon::Help,
+        CursorKeyword::Pointer => CursorIcon::Pointer,
+        CursorKeyword::Progress => CursorIcon::Progress,
+        CursorKeyword::Wait => CursorIcon::Wait,
+        CursorKeyword::Cell => CursorIcon::Cell,
+        CursorKeyword::Crosshair => CursorIcon::Crosshair,
+        CursorKeyword::Text => CursorIcon::Text,
+        CursorKeyword::VerticalText => CursorIcon::VerticalText,
+        CursorKeyword::Alias => CursorIcon::Alias,
+        CursorKeyword::Copy => CursorIcon::Copy,
+        CursorKeyword::Move => CursorIcon::Move,
+        CursorKeyword::NoDrop => CursorIcon::NoDrop,
+        CursorKeyword::NotAllowed => CursorIcon::NotAllowed,
+        CursorKeyword::Grab => CursorIcon::Grab,
+        CursorKeyword::Grabbing => CursorIcon::Grabbing,
+        CursorKeyword::ColResize => CursorIcon::ColResize,
+        CursorKeyword::RowResize => CursorIcon::RowResize,
+        CursorKeyword::NResize => CursorIcon::NResize,
+        CursorKeyword::EResize => CursorIcon::EResize,
+        CursorKeyword::SResize => CursorIcon::SResize,
+        CursorKeyword::WResize => CursorIcon::WResize,
+        CursorKeyword::NeResize => CursorIcon::NeResize,
+        CursorKeyword::NwResize => CursorIcon::NwResize,
+        CursorKeyword::SeResize => CursorIcon::SeResize,
+        CursorKeyword::SwResize => CursorIcon::SwResize,
+        CursorKeyword::EwResize => CursorIcon::EwResize,
+        CursorKeyword::NsResize => CursorIcon::NsResize,
+        CursorKeyword::NeswResize => CursorIcon::NeswResize,
+        CursorKeyword::NwseResize => CursorIcon::NwseResize,
+        CursorKeyword::ZoomIn => CursorIcon::ZoomIn,
+        CursorKeyword::ZoomOut => CursorIcon::ZoomOut,
+    }
+}
 
 /// Configuration for one standalone Windows window.
 #[derive(Clone, Debug)]
@@ -275,6 +313,24 @@ impl ApplicationHandler<HostEvent> for WindowsApplication {
                 }
             }
             WindowEvent::RedrawRequested => self.drive_frame(),
+            WindowEvent::CursorMoved { position, .. } => {
+                if let (Some(window), Some(host)) = (&self.window, &self.host) {
+                    let logical = position.to_logical::<f32>(window.scale_factor());
+                    let cursor = host
+                        .cursor_at([logical.x, logical.y])
+                        .unwrap_or(CursorKeyword::Default);
+                    window.set_cursor_visible(cursor != CursorKeyword::None);
+                    if cursor != CursorKeyword::None {
+                        window.set_cursor(cursor_icon(cursor));
+                    }
+                }
+            }
+            WindowEvent::CursorLeft { .. } => {
+                if let Some(window) = &self.window {
+                    window.set_cursor_visible(true);
+                    window.set_cursor(CursorIcon::Default);
+                }
+            }
             _ => {}
         }
     }

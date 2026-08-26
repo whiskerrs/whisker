@@ -919,6 +919,10 @@ impl FrameSink for MobileFrameSink {
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_engine::whisker_protocol::CapabilityEntry {
+                    capability: whisker_engine::whisker_protocol::RenderCapability::Cursor,
+                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_engine::whisker_protocol::CapabilityEntry {
                     capability: whisker_engine::whisker_protocol::RenderCapability::LinearGradients,
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
@@ -1015,6 +1019,47 @@ fn empty_mobile_operation() -> MobileOperation {
         wide: 0,
         payload: std::ptr::null(),
         payload_count: 0,
+    }
+}
+
+const fn mobile_cursor_keyword(keyword: whisker_engine::whisker_protocol::CursorKeyword) -> i32 {
+    use whisker_engine::whisker_protocol::CursorKeyword;
+    match keyword {
+        CursorKeyword::Auto => 0,
+        CursorKeyword::Default => 1,
+        CursorKeyword::None => 2,
+        CursorKeyword::ContextMenu => 3,
+        CursorKeyword::Help => 4,
+        CursorKeyword::Pointer => 5,
+        CursorKeyword::Progress => 6,
+        CursorKeyword::Wait => 7,
+        CursorKeyword::Cell => 8,
+        CursorKeyword::Crosshair => 9,
+        CursorKeyword::Text => 10,
+        CursorKeyword::VerticalText => 11,
+        CursorKeyword::Alias => 12,
+        CursorKeyword::Copy => 13,
+        CursorKeyword::Move => 14,
+        CursorKeyword::NoDrop => 15,
+        CursorKeyword::NotAllowed => 16,
+        CursorKeyword::Grab => 17,
+        CursorKeyword::Grabbing => 18,
+        CursorKeyword::ColResize => 19,
+        CursorKeyword::RowResize => 20,
+        CursorKeyword::NResize => 21,
+        CursorKeyword::EResize => 22,
+        CursorKeyword::SResize => 23,
+        CursorKeyword::WResize => 24,
+        CursorKeyword::NeResize => 25,
+        CursorKeyword::NwResize => 26,
+        CursorKeyword::SeResize => 27,
+        CursorKeyword::SwResize => 28,
+        CursorKeyword::EwResize => 29,
+        CursorKeyword::NsResize => 30,
+        CursorKeyword::NeswResize => 31,
+        CursorKeyword::NwseResize => 32,
+        CursorKeyword::ZoomIn => 33,
+        CursorKeyword::ZoomOut => 34,
     }
 }
 
@@ -1574,6 +1619,14 @@ impl MobileFrameOwned {
                         whisker_engine::whisker_protocol::HitTestBehavior::DescendantsOnly => 3,
                     };
                 }
+                Operation::SetCursor { node, cursor } => {
+                    if !cursor.resources.is_empty() {
+                        return Err(MobileFrameError);
+                    }
+                    raw.tag = OP_CURSOR;
+                    raw.node = node.get();
+                    raw.integer = mobile_cursor_keyword(cursor.fallback);
+                }
                 Operation::SetPointerCapture { node, pointer } => {
                     raw.tag = OP_CAPTURE;
                     raw.node = node.get();
@@ -1597,7 +1650,7 @@ impl MobileFrameOwned {
                     values.push(Box::new(arena.encode(arguments)));
                     raw.payload = values.last().unwrap().as_ref() as *const _ as *const c_void;
                 }
-                Operation::SetImage { .. } | Operation::SetCursor { .. } => {
+                Operation::SetImage { .. } => {
                     return Err(MobileFrameError);
                 }
             }
@@ -2096,6 +2149,50 @@ mod tests {
         let raw = mobile_paint(&paint, &mut Vec::new());
         assert_eq!(raw.radii_horizontal[0].length, 40.0);
         assert_eq!(raw.radii_vertical[0].length, 10.0);
+    }
+
+    #[test]
+    fn mobile_frame_encodes_keyword_cursor_and_rejects_resource_cursor() {
+        let header = FrameHeader {
+            version: ProtocolVersion::CURRENT,
+            surface: SurfaceId::new(1).unwrap(),
+            scene_epoch: 1,
+            frame_id: 1,
+            base_revision: 0,
+            target_revision: 1,
+            viewport_epoch: 1,
+            mode: FrameMode::Snapshot,
+        };
+        let node = NodeId::new(1).unwrap();
+        let packet = FramePacket {
+            header,
+            operations: vec![Operation::SetCursor {
+                node,
+                cursor: whisker_engine::whisker_protocol::Cursor {
+                    resources: Vec::new(),
+                    fallback: whisker_engine::whisker_protocol::CursorKeyword::ZoomOut,
+                },
+            }],
+        };
+        let frame = MobileFrameOwned::new(&packet).unwrap();
+        assert_eq!(frame._operations[0].tag, OP_CURSOR);
+        assert_eq!(frame._operations[0].node, node.get());
+        assert_eq!(frame._operations[0].integer, 34);
+
+        let packet = FramePacket {
+            header,
+            operations: vec![Operation::SetCursor {
+                node,
+                cursor: whisker_engine::whisker_protocol::Cursor {
+                    resources: vec![whisker_engine::whisker_protocol::CursorResource {
+                        resource: ResourceId::new(1).unwrap(),
+                        hotspot: Some((1, 2)),
+                    }],
+                    fallback: whisker_engine::whisker_protocol::CursorKeyword::Pointer,
+                },
+            }],
+        };
+        assert!(MobileFrameOwned::new(&packet).is_err());
     }
 
     #[test]

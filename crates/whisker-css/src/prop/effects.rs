@@ -46,13 +46,13 @@ impl Css {
     /// Sets `cursor`.
     /// <https://lynxjs.org/api/css/properties/cursor>
     pub fn cursor(self, v: Cursor) -> Self {
-        self.push(crate::StyleProperty::Cursor, v)
+        self.push_typed(crate::StyleProperty::Cursor, v)
     }
 
     /// Sets `pointer-events`.
     /// <https://lynxjs.org/api/css/properties/pointer-events>
     pub fn pointer_events(self, v: PointerEvents) -> Self {
-        self.push(crate::StyleProperty::PointerEvents, v)
+        self.push_typed(crate::StyleProperty::PointerEvents, v)
     }
 
     /// Sets `box-shadow` to a single shadow. Pass `None` for inset

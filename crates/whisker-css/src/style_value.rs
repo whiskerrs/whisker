@@ -2,27 +2,27 @@
 
 use whisker_style::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, BackdropFilterValue, BorderRadiusValue,
-    BorderStyleValue, BoxSizingValue, CalcExpression, ClearValue, ColorValue, DirectionValue,
-    DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyleValue,
-    FontWeightValue, GridAutoFlowValue, GridMaxTrackSizingValue, GridMinTrackSizingValue,
-    GridPlacementValue, GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue,
-    GridTemplateComponentValue, GridTemplateRepetitionValue, GridTemplateValue,
-    GridTrackSizingValue, ImageRenderingValue, InsetPathValue, JustifyContentValue,
-    LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
-    MotionPathCommandValue, MotionPathPointValue, OffsetPathValue, OffsetRotateValue,
-    PositionValue, SizeValue, StyleNumber, StyleValue, TransformFunctionValue,
-    TransformOriginValue, TransformValue,
+    BorderStyleValue, BoxSizingValue, CalcExpression, ClearValue, ColorValue, CursorValue,
+    DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
+    FontStyleValue, FontWeightValue, GridAutoFlowValue, GridMaxTrackSizingValue,
+    GridMinTrackSizingValue, GridPlacementValue, GridRepetitionCountValue, GridTemplateAreaValue,
+    GridTemplateAreasValue, GridTemplateComponentValue, GridTemplateRepetitionValue,
+    GridTemplateValue, GridTrackSizingValue, ImageRenderingValue, InsetPathValue,
+    JustifyContentValue, LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue,
+    LineHeightValue, MotionPathCommandValue, MotionPathPointValue, OffsetPathValue,
+    OffsetRotateValue, PointerEventsValue, PositionValue, SizeValue, StyleNumber, StyleValue,
+    TransformFunctionValue, TransformOriginValue, TransformValue,
 };
 
 use crate::data_type_ext::PositionKeyword;
 use crate::{
     AlignContent, AlignItems, AlignSelf, Angle, BackdropFilter, BoxSizing, CalcExpr, Clear, Color,
-    CssString, Direction, Display, FlexBasis, FlexDirection, FlexWrap, Float, FontStyle,
+    CssString, Cursor, Direction, Display, FlexBasis, FlexDirection, FlexWrap, Float, FontStyle,
     FontWeight, GridAutoFlow, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
     GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, ImageRendering, Integer,
     JustifyContent, Length, LengthPercentage, LineHeight, MarginValue, MotionPathCommand, Number,
-    OffsetDistance, OffsetPath, OffsetRotate, Overflow, Percentage, Position, PositionKind, Size,
-    Transform, TransformFn, Visibility,
+    OffsetDistance, OffsetPath, OffsetRotate, Overflow, Percentage, PointerEvents, Position,
+    PositionKind, Size, Transform, TransformFn, Visibility,
 };
 use whisker_style::{OverflowValue, VisibilityValue};
 
@@ -51,6 +51,57 @@ impl ToStyleValue for ImageRendering {
             Self::Auto => ImageRenderingValue::Auto,
             Self::Pixelated => ImageRenderingValue::Pixelated,
             Self::CrispEdges => ImageRenderingValue::CrispEdges,
+        })
+    }
+}
+
+impl ToStyleValue for Cursor {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::Cursor(match self {
+            Self::Auto => CursorValue::Auto,
+            Self::Default => CursorValue::Default,
+            Self::Pointer => CursorValue::Pointer,
+            Self::Text => CursorValue::Text,
+            Self::None => CursorValue::None,
+            Self::ContextMenu => CursorValue::ContextMenu,
+            Self::Help => CursorValue::Help,
+            Self::Progress => CursorValue::Progress,
+            Self::Wait => CursorValue::Wait,
+            Self::Cell => CursorValue::Cell,
+            Self::Crosshair => CursorValue::Crosshair,
+            Self::VerticalText => CursorValue::VerticalText,
+            Self::Alias => CursorValue::Alias,
+            Self::Copy => CursorValue::Copy,
+            Self::Move => CursorValue::Move,
+            Self::NoDrop => CursorValue::NoDrop,
+            Self::NotAllowed => CursorValue::NotAllowed,
+            Self::Grab => CursorValue::Grab,
+            Self::Grabbing => CursorValue::Grabbing,
+            Self::ColResize => CursorValue::ColResize,
+            Self::RowResize => CursorValue::RowResize,
+            Self::NResize => CursorValue::NResize,
+            Self::EResize => CursorValue::EResize,
+            Self::SResize => CursorValue::SResize,
+            Self::WResize => CursorValue::WResize,
+            Self::NeResize => CursorValue::NeResize,
+            Self::NwResize => CursorValue::NwResize,
+            Self::SeResize => CursorValue::SeResize,
+            Self::SwResize => CursorValue::SwResize,
+            Self::EwResize => CursorValue::EwResize,
+            Self::NsResize => CursorValue::NsResize,
+            Self::NeswResize => CursorValue::NeswResize,
+            Self::NwseResize => CursorValue::NwseResize,
+            Self::ZoomIn => CursorValue::ZoomIn,
+            Self::ZoomOut => CursorValue::ZoomOut,
+        })
+    }
+}
+
+impl ToStyleValue for PointerEvents {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::PointerEvents(match self {
+            Self::Auto => PointerEventsValue::Auto,
+            Self::None => PointerEventsValue::None,
         })
     }
 }
