@@ -465,7 +465,8 @@ private final class Driver {
                     name == "paint.transform.motion-path-arcs" ||
                     name == "paint.text.shadow-single" ||
                     name == "paint.text.decoration-lynx" ||
-                    name == "paint.text.align-lynx" else {
+                    name == "paint.text.align-lynx" ||
+                    name == "paint.text.indent-lynx" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 if name == "paint.visual-effects.backdrop-blur" {
@@ -504,6 +505,19 @@ private final class Driver {
                 if name == "paint.text.align-lynx" {
                     let labels = findTextLabels(view)
                     XCTAssertEqual(labels.map(\.textAlignment), [.left, .right, .center, .left, .right])
+                }
+                if name == "paint.text.indent-lynx" {
+                    let labels = findTextLabels(view)
+                    XCTAssertEqual(labels.count, 2)
+                    let indents = labels.map { label -> CGFloat in
+                        let paragraph = label.attributedText?.attribute(
+                            .paragraphStyle,
+                            at: 0,
+                            effectiveRange: nil
+                        ) as? NSParagraphStyle
+                        return paragraph?.firstLineHeadIndent ?? 0
+                    }
+                    XCTAssertEqual(indents, [24, 30])
                 }
                 let pixels = try capture()
                 checkpoint = pixels
@@ -712,6 +726,8 @@ private final class Driver {
                 payload.decoration_style = text.decorationStyle
                 payload.decoration_color = text.decorationColor
                 payload.alignment = text.alignment
+                payload.indent_logical_pixels = text.indentLogicalPixels
+                payload.indent_percentage = text.indentPercentage
             }
             textPayloads.advanced(by: index).initialize(to: payload)
         }
@@ -1268,6 +1284,8 @@ private struct SceneText {
     let fontWeight: UInt16
     let color: WhiskerMobileColor
     let alignment: UInt32
+    let indentLogicalPixels: Float
+    let indentPercentage: Float
     let decorationFlags: UInt32
     let decorationStyle: UInt32
     let decorationColor: WhiskerMobileColor
@@ -1463,12 +1481,15 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         case "center": alignment = 4
         default: throw Failure("unknown text alignment")
         }
+        let indent = raw["indent"] as? [String: Any]
         text = SceneText(
             value: try string(raw, "value"),
             fontSize: Float(try number(raw, "font_size")),
             fontWeight: UInt16((raw["font_weight"] as? NSNumber)?.intValue ?? 400),
             color: try color(object(raw, "color")),
             alignment: alignment,
+            indentLogicalPixels: Float(try indent.map { try number($0, "logical_pixels") } ?? 0),
+            indentPercentage: Float(try indent.map { try number($0, "percentage") } ?? 0),
             decorationFlags: try decoration.map {
                 switch try string($0, "line") {
                 case "underline": 1

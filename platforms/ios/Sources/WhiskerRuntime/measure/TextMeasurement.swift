@@ -46,6 +46,16 @@ private func measureText(
         baseFont = UIFont(descriptor: descriptor, size: CGFloat(request.font_size))
     }
     let paragraph = NSMutableParagraphStyle()
+    let widthBasis: CGFloat
+    if request.known_mask & 1 != 0 {
+        widthBasis = CGFloat(request.known_width)
+    } else if request.available_width_kind == 0 {
+        widthBasis = CGFloat(request.available_width)
+    } else {
+        widthBasis = 0
+    }
+    paragraph.firstLineHeadIndent = CGFloat(request.indent_logical_pixels)
+        + widthBasis * CGFloat(request.indent_percentage) / 100
     if request.line_height > 0 {
         paragraph.minimumLineHeight = CGFloat(request.line_height)
         paragraph.maximumLineHeight = CGFloat(request.line_height)

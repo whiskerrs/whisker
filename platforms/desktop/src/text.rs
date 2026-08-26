@@ -101,12 +101,32 @@ impl NativeTextHost {
             .style(style)
             .weight(Weight(payload.style.font_weight))
             .letter_spacing(payload.style.letter_spacing);
-        buffer.set_text(
-            &mut self.font_system,
-            &payload.text,
-            &attrs,
-            Shaping::Advanced,
-        );
+        let indent = payload.indent.resolve(width.unwrap_or(0.0));
+        if indent == 0.0 {
+            buffer.set_text(
+                &mut self.font_system,
+                &payload.text,
+                &attrs,
+                Shaping::Advanced,
+            );
+        } else {
+            // cosmic-text has no paragraph-indent switch. An internal
+            // zero-width shaping span gives the first visual line the exact
+            // additional advance while preserving the author-visible text.
+            let indent_attrs = attrs
+                .clone()
+                .letter_spacing(indent / payload.style.font_size.max(f32::EPSILON));
+            buffer.set_rich_text(
+                &mut self.font_system,
+                [
+                    ("\u{200B}", indent_attrs),
+                    (payload.text.as_str(), attrs.clone()),
+                ],
+                &attrs,
+                Shaping::Advanced,
+                None,
+            );
+        }
         let alignment = cosmic_alignment(payload.alignment);
         for line in &mut buffer.lines {
             line.set_align(alignment);
@@ -267,6 +287,7 @@ mod tests {
             locale: None,
             direction: whisker_protocol::MeasureTextDirection::Auto,
             alignment: whisker_protocol::MeasureTextAlignment::Start,
+            indent: Default::default(),
             wrap: MeasureTextWrap::Wrap,
             max_lines: Some(2),
             overflow: whisker_protocol::MeasureTextOverflow::Clip,
@@ -297,6 +318,43 @@ mod tests {
     }
 
     #[test]
+    fn native_text_measurement_includes_first_line_indent() {
+        let payload = TextMeasurePayload {
+            text: "Whisker".into(),
+            style: whisker_protocol::TextMeasureStyle {
+                font_size: 16.0,
+                ..whisker_protocol::TextMeasureStyle::default()
+            },
+            locale: None,
+            direction: whisker_protocol::MeasureTextDirection::Auto,
+            alignment: whisker_protocol::MeasureTextAlignment::Start,
+            indent: Default::default(),
+            wrap: MeasureTextWrap::NoWrap,
+            max_lines: None,
+            overflow: whisker_protocol::MeasureTextOverflow::Clip,
+        };
+        let mut indented = payload.clone();
+        indented.indent.logical_pixels = 24.0;
+
+        let mut host = NativeTextHost::new(registry());
+        let (_, plain_metrics) = host.prepare_text(
+            &payload,
+            &request(7, MeasurementPayload::Text(payload.clone())),
+        );
+        let (_, indented_metrics) = host.prepare_text(
+            &indented,
+            &request(8, MeasurementPayload::Text(indented.clone())),
+        );
+
+        assert!(
+            (indented_metrics.size.width - plain_metrics.size.width - 24.0).abs() < 0.1,
+            "plain={}, indented={}",
+            plain_metrics.size.width,
+            indented_metrics.size.width
+        );
+    }
+
+    #[test]
     fn empty_text_and_non_text_measurements_are_well_formed() {
         let empty = TextMeasurePayload {
             text: String::new(),
@@ -312,6 +370,7 @@ mod tests {
             locale: Some("en-US".into()),
             direction: whisker_protocol::MeasureTextDirection::LeftToRight,
             alignment: whisker_protocol::MeasureTextAlignment::Start,
+            indent: Default::default(),
             wrap: MeasureTextWrap::NoWrap,
             max_lines: None,
             overflow: whisker_protocol::MeasureTextOverflow::Ellipsis,

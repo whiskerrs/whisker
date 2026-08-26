@@ -3,8 +3,11 @@ package rs.whisker.runtime.measure
 import android.content.Context
 import android.graphics.Typeface
 import android.text.Layout
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.style.LeadingMarginSpan
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerMeasureRequest
 
@@ -18,7 +21,8 @@ internal class HostMeasurementProvider(private val context: Context) {
         availableWidthKind: Int, availableHeightKind: Int,
         text: String, fontFamily: String, fontSize: Float, fontWeight: Int,
         fontStyle: Int, wrap: Int, letterSpacing: Float,
-        lineHeight: Float, maxLines: Int, payloadVersion: Int, payload: ByteArray,
+        lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float,
+        maxLines: Int, payloadVersion: Int, payload: ByteArray,
         intrinsicWidth: Float, intrinsicHeight: Float, intrinsicMask: Int,
     ): FloatArray {
         if (kind == MEASURE_TEXT) {
@@ -26,7 +30,7 @@ internal class HostMeasurementProvider(private val context: Context) {
                 knownWidth, knownHeight, knownMask,
                 availableWidth, availableWidthKind,
                 text, fontFamily, fontSize, fontWeight, fontStyle, wrap,
-                letterSpacing, lineHeight, maxLines,
+                letterSpacing, lineHeight, indentLogicalPixels, indentPercentage, maxLines,
             )
         }
         if ((kind == MEASURE_REPLACED_CONTENT || kind == MEASURE_EMBEDDED_SURFACE) &&
@@ -60,7 +64,7 @@ internal class HostMeasurementProvider(private val context: Context) {
         availableWidth: Float, availableWidthKind: Int,
         text: String, fontFamily: String, fontSize: Float, fontWeight: Int,
         fontStyle: Int, wrap: Int, letterSpacing: Float,
-        lineHeight: Float, maxLines: Int,
+        lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float, maxLines: Int,
     ): FloatArray {
         val density = context.resources.displayMetrics.density
         val paint = TextPaint().apply {
@@ -72,12 +76,31 @@ internal class HostMeasurementProvider(private val context: Context) {
             typeface = Typeface.create(baseTypeface, typefaceStyle)
             this.letterSpacing = if (fontSize > 0f) letterSpacing / fontSize else 0f
         }
+        val widthBasis = when {
+            knownMask and WIDTH != 0 -> knownWidth
+            availableWidthKind == DEFINITE -> availableWidth
+            else -> 0f
+        }
+        val indentPixels = indentLogicalPixels * density +
+            widthBasis * density * indentPercentage / 100f
+        val layoutText: CharSequence = if (text.isEmpty() || indentPixels == 0f) text else {
+            SpannableString(text).apply {
+                setSpan(
+                    LeadingMarginSpan.Standard(indentPixels.toInt(), 0),
+                    0,
+                    length,
+                    Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
+                )
+            }
+        }
         val maxWidthPx = if (availableWidthKind == DEFINITE && wrap != 0) {
             (availableWidth * density).toInt().coerceAtLeast(1)
         } else {
-            paint.measureText(text).toInt().coerceAtLeast(1)
+            (paint.measureText(text) + indentPixels).toInt().coerceAtLeast(1)
         }
-        val builder = StaticLayout.Builder.obtain(text, 0, text.length, paint, maxWidthPx)
+        val builder = StaticLayout.Builder.obtain(
+            layoutText, 0, layoutText.length, paint, maxWidthPx,
+        )
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setIncludePad(false)
             .setMaxLines(if (maxLines == 0) Int.MAX_VALUE else maxLines)

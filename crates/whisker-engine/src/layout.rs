@@ -262,6 +262,7 @@ mod tests {
                 locale: Some("en-US".into()),
                 direction: MeasureTextDirection::LeftToRight,
                 alignment: whisker_protocol::MeasureTextAlignment::Start,
+                indent: Default::default(),
                 wrap: MeasureTextWrap::Wrap,
                 max_lines: Some(2),
                 overflow: MeasureTextOverflow::Ellipsis,
@@ -327,7 +328,7 @@ mod tests {
         let first_input = PlainTextInput::new("hello");
         let missing = NodeId::new(99).expect("missing node");
         assert_eq!(
-            surface.set_plain_text(missing, &first_input, resolved.computed().inherited_text(),),
+            surface.set_plain_text(missing, &first_input, resolved.computed(),),
             Err(SurfaceError::Scene(SceneError::UnknownNode {
                 node: missing
             }))
@@ -335,7 +336,7 @@ mod tests {
         let mut invalid = first_input.clone();
         invalid.locale = Some(String::new());
         assert_eq!(
-            surface.set_plain_text(root, &invalid, resolved.computed().inherited_text()),
+            surface.set_plain_text(root, &invalid, resolved.computed()),
             Err(SurfaceError::Measurement(
                 crate::MeasurementError::InvalidPayload {
                     node: root,
@@ -345,12 +346,12 @@ mod tests {
         );
         assert!(
             surface
-                .set_plain_text(root, &first_input, resolved.computed().inherited_text())
+                .set_plain_text(root, &first_input, resolved.computed())
                 .expect("lower first text")
         );
         assert!(
             !surface
-                .set_plain_text(root, &first_input, resolved.computed().inherited_text())
+                .set_plain_text(root, &first_input, resolved.computed())
                 .expect("equal unmeasured text is idle")
         );
 
@@ -378,7 +379,7 @@ mod tests {
             .expect("snapshot has text work")
             .clone();
         assert_eq!(
-            surface.set_plain_text(root, &first_input, resolved.computed().inherited_text()),
+            surface.set_plain_text(root, &first_input, resolved.computed()),
             Err(SurfaceError::Scene(SceneError::FramePending))
         );
         assert!(matches!(
@@ -416,7 +417,7 @@ mod tests {
         let second_input = PlainTextInput::new("hello world");
         assert!(
             surface
-                .set_plain_text(root, &second_input, resolved.computed().inherited_text())
+                .set_plain_text(root, &second_input, resolved.computed())
                 .expect("lower changed text")
         );
         surface
@@ -454,7 +455,7 @@ mod tests {
 
         assert!(
             !surface
-                .set_plain_text(root, &second_input, resolved.computed().inherited_text())
+                .set_plain_text(root, &second_input, resolved.computed())
                 .expect("equal text is idle")
         );
         surface

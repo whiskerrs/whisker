@@ -9,7 +9,7 @@ use whisker_protocol::{
     NodeId, PointerId, PropertyId, ResultId, SurfaceId, TextContent, WhiskerValue,
 };
 use whisker_style::{
-    ComputedLayoutStyle, ComputedStyle, ComputedTransformStyle, InheritedStyle, PropertyImpactSet,
+    ComputedLayoutStyle, ComputedStyle, ComputedTransformStyle, PropertyImpactSet,
 };
 
 use crate::{
@@ -492,14 +492,14 @@ impl SurfaceEngine {
 
     /// Lowers and registers one plain UTF-8 Text v1 presentation.
     ///
-    /// Metric-affecting values come from the already resolved inherited text
+    /// Metric-affecting values come from the already resolved computed text
     /// context. The same payload is retained for final frame production and
     /// registered with Taffy for Host intrinsic measurement.
     pub fn set_plain_text(
         &mut self,
         node: NodeId,
         input: &PlainTextInput,
-        style: &InheritedStyle,
+        style: &ComputedStyle,
     ) -> Result<bool, SurfaceError> {
         self.ensure_mutable()?;
         let previous = self
@@ -962,6 +962,7 @@ mod tests {
                 locale: Some("en-US".into()),
                 direction: MeasureTextDirection::LeftToRight,
                 alignment: whisker_protocol::MeasureTextAlignment::Start,
+                indent: Default::default(),
                 wrap: MeasureTextWrap::Wrap,
                 max_lines: None,
                 overflow: MeasureTextOverflow::Clip,

@@ -136,7 +136,9 @@ final class HostScene {
                         .assumingMemoryBound(to: WhiskerMobileText.self).pointee,
                       text.decoration_flags <= 2,
                       text.decoration_style <= 4,
-                      text.alignment <= 4 else { return false }
+                      text.alignment <= 4,
+                      text.indent_logical_pixels.isFinite,
+                      text.indent_percentage.isFinite else { return false }
             case UInt32(WHISKER_OP_TRANSFORM):
                 guard existing.contains(operation.node), operation.payload != nil,
                       operation.payload_count == 16 else { return false }
@@ -522,6 +524,10 @@ final class HostScene {
                 default: preconditionFailure("invalid text alignment")
                 }
             }(),
+            indent: WhiskerTextIndent(
+                logicalPixels: CGFloat(content.indent_logical_pixels),
+                percentage: CGFloat(content.indent_percentage)
+            ),
             decoration: content.decoration_flags == 0 ? nil : WhiskerTextDecoration(
                 line: content.decoration_flags & 1 != 0 ? .underline : .lineThrough,
                 style: {

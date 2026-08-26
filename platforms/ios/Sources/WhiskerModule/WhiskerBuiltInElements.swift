@@ -39,6 +39,32 @@ public final class WhiskerScrollContainerView: UIScrollView {
 
 /** Native text element with the Lynx single-line decoration contract. */
 public final class WhiskerTextLabel: UILabel {
+    private var whiskerIndent = WhiskerTextIndent()
+    private var appliedIndent: CGFloat?
+
+    public func setWhiskerIndent(_ indent: WhiskerTextIndent) {
+        whiskerIndent = indent
+        appliedIndent = nil
+        applyWhiskerIndent()
+    }
+
+    public override func layoutSubviews() {
+        super.layoutSubviews()
+        applyWhiskerIndent()
+    }
+
+    private func applyWhiskerIndent() {
+        let resolved = whiskerIndent.resolve(width: bounds.width)
+        guard appliedIndent != resolved, let attributedText else { return }
+        appliedIndent = resolved
+        let mutable = NSMutableAttributedString(attributedString: attributedText)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = textAlignment
+        paragraph.firstLineHeadIndent = resolved
+        mutable.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: mutable.length))
+        self.attributedText = mutable
+    }
+
     public var whiskerDecoration: WhiskerTextDecoration? {
         didSet { setNeedsDisplay() }
     }
@@ -134,6 +160,7 @@ public enum WhiskerBuiltInElements {
                     string: content.value,
                     attributes: attributes
                 )
+                label.setWhiskerIndent(content.indent)
             }
         ) {
             let label = WhiskerTextLabel(frame: .zero)

@@ -5,6 +5,8 @@ import android.view.ViewGroup
 import android.widget.TextView
 import android.graphics.Canvas
 import android.util.Base64
+import android.text.Spanned
+import android.text.style.LeadingMarginSpan
 import android.view.View
 import android.view.Gravity
 import androidx.test.core.app.ApplicationProvider
@@ -296,6 +298,17 @@ private class Driver(
                             Gravity.END,
                         ))
                     }
+                    if (command.getString("name") == "paint.text.indent-lynx") {
+                        val texts = findTextViews(view)
+                        check(texts.size == 2)
+                        val density = context.resources.displayMetrics.density
+                        val margins = texts.map { text ->
+                            val spanned = text.text as Spanned
+                            spanned.getSpans(0, spanned.length, LeadingMarginSpan::class.java)
+                                .single().getLeadingMargin(true)
+                        }
+                        check(margins == listOf((24f * density).toInt(), (30f * density).toInt()))
+                    }
                     check(
                         command.getString("name") == "paint.box" ||
                             command.getString("name") == "paint.background-layers.linear-gradient" ||
@@ -376,7 +389,8 @@ private class Driver(
                             "paint.transform.motion-path-arcs" ||
                             command.getString("name") == "paint.text.shadow-single" ||
                             command.getString("name") == "paint.text.decoration-lynx" ||
-                            command.getString("name") == "paint.text.align-lynx",
+                            command.getString("name") == "paint.text.align-lynx" ||
+                            command.getString("name") == "paint.text.indent-lynx",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -574,7 +588,7 @@ private class Driver(
             val (numbers, names) = paint(node)
             check(stage(tag = 7, node = id, numbers = numbers, names = names))
             node.optJSONObject("text")?.let { text ->
-                val textNumbers = ArrayList<Float>(25)
+                val textNumbers = ArrayList<Float>(27)
                 val textNames = ArrayList<String>(3)
                 textNumbers += text.getDouble("font_size").toFloat()
                 textNumbers += text.optInt("font_weight", 400).toFloat()
@@ -618,6 +632,9 @@ private class Driver(
                     "center" -> 4f
                     else -> 0f
                 }
+                val indent = text.optJSONObject("indent")
+                textNumbers += indent?.optDouble("logical_pixels", 0.0)?.toFloat() ?: 0f
+                textNumbers += indent?.optDouble("percentage", 0.0)?.toFloat() ?: 0f
                 check(stage(
                     tag = 13,
                     node = id,

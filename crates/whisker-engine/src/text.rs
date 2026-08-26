@@ -7,13 +7,13 @@ use std::{
 
 use whisker_protocol::{
     MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextAlignment,
-    MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasurementPayload,
-    MeasurementSpec, PaintColor, PendingMeasurePolicy, TextContent, TextMeasurePayload,
-    TextMeasureStyle, TextPaint, TextShadow,
+    MeasureTextDirection, MeasureTextIndent, MeasureTextOverflow, MeasureTextWrap,
+    MeasurementPayload, MeasurementSpec, PaintColor, PendingMeasurePolicy, TextContent,
+    TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow,
 };
 use whisker_style::{
-    ColorValue, ComputedLineHeight, FontFamilyValue, FontStyleValue, InheritedStyle,
-    TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
+    ColorValue, ComputedLineHeight, ComputedStyle, ComputedTextIndent, FontFamilyValue,
+    FontStyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
 };
 
 /// Plain UTF-8 text and the shaping behavior not supplied by inherited style.
@@ -74,38 +74,49 @@ impl LoweredPlainText {
 }
 
 /// Lowers computed inherited text style into the shared Host measurement model.
-pub fn lower_plain_text(input: &PlainTextInput, style: &InheritedStyle) -> LoweredPlainText {
+pub fn lower_plain_text(input: &PlainTextInput, style: &ComputedStyle) -> LoweredPlainText {
+    let inherited = style.inherited_text();
     let payload = TextMeasurePayload {
         text: input.text.clone(),
         style: TextMeasureStyle {
-            font_families: vec![match style.font_family() {
+            font_families: vec![match inherited.font_family() {
                 FontFamilyValue::System => MeasureFontFamily::System,
                 FontFamilyValue::Named(name) => MeasureFontFamily::Named(name.clone()),
             }],
-            font_size: style.font_size(),
-            font_weight: style.font_weight().get(),
-            font_style: match style.font_style() {
+            font_size: inherited.font_size(),
+            font_weight: inherited.font_weight().get(),
+            font_style: match inherited.font_style() {
                 FontStyleValue::Normal => MeasureFontStyle::Normal,
                 FontStyleValue::Italic => MeasureFontStyle::Italic,
                 FontStyleValue::Oblique => MeasureFontStyle::Oblique,
             },
-            line_height: match style.line_height() {
+            line_height: match inherited.line_height() {
                 ComputedLineHeight::Normal => MeasureLineHeight::Normal,
                 ComputedLineHeight::LogicalPixels(value) => {
                     MeasureLineHeight::LogicalPixels(value.get())
                 }
             },
-            letter_spacing: style.letter_spacing(),
+            letter_spacing: inherited.letter_spacing(),
             ..TextMeasureStyle::default()
         },
         locale: input.locale.clone(),
         direction: input.direction,
-        alignment: match style.text_align() {
+        alignment: match inherited.text_align() {
             TextAlignValue::Start => MeasureTextAlignment::Start,
             TextAlignValue::End => MeasureTextAlignment::End,
             TextAlignValue::Left => MeasureTextAlignment::Left,
             TextAlignValue::Right => MeasureTextAlignment::Right,
             TextAlignValue::Center => MeasureTextAlignment::Center,
+        },
+        indent: match style.text_indent() {
+            ComputedTextIndent::LogicalPixels(value) => MeasureTextIndent {
+                logical_pixels: value.get(),
+                percentage: 0.0,
+            },
+            ComputedTextIndent::Percentage(value) => MeasureTextIndent {
+                logical_pixels: 0.0,
+                percentage: value.get(),
+            },
         },
         wrap: input.wrap,
         max_lines: input.max_lines,
@@ -121,21 +132,21 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &InheritedStyle) -> Lower
         content: TextContent {
             payload,
             paint: TextPaint {
-                foreground: lower_color(style.color()),
+                foreground: lower_color(inherited.color()),
                 decoration: whisker_protocol::TextDecoration {
                     lines: whisker_protocol::TextDecorationLines {
                         underline: matches!(
-                            style.text_decoration().line(),
+                            inherited.text_decoration().line(),
                             TextDecorationLineValue::Underline
                         ),
                         overline: false,
                         line_through: matches!(
-                            style.text_decoration().line(),
+                            inherited.text_decoration().line(),
                             TextDecorationLineValue::LineThrough
                         ),
                     },
-                    color: lower_color(style.text_decoration().color()),
-                    style: match style.text_decoration().style() {
+                    color: lower_color(inherited.text_decoration().color()),
+                    style: match inherited.text_decoration().style() {
                         TextDecorationStyleValue::Solid => {
                             whisker_protocol::TextDecorationStyle::Solid
                         }
@@ -154,7 +165,7 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &InheritedStyle) -> Lower
                     },
                     thickness: whisker_protocol::TextDecorationThickness::Auto,
                 },
-                shadows: style
+                shadows: inherited
                     .text_shadow()
                     .into_iter()
                     .map(|shadow| TextShadow {
@@ -205,15 +216,17 @@ fn content_hash(text: &str) -> u64 {
     hasher.finish()
 }
 
-fn metric_style_hash(input: &PlainTextInput, style: &InheritedStyle) -> u64 {
+fn metric_style_hash(input: &PlainTextInput, style: &ComputedStyle) -> u64 {
     let mut hasher = DefaultHasher::new();
-    style.font_family().hash(&mut hasher);
-    style.font_size().to_bits().hash(&mut hasher);
-    style.font_weight().hash(&mut hasher);
-    style.font_style().hash(&mut hasher);
-    style.line_height().hash(&mut hasher);
-    style.letter_spacing().to_bits().hash(&mut hasher);
-    style.text_align().hash(&mut hasher);
+    let inherited = style.inherited_text();
+    inherited.font_family().hash(&mut hasher);
+    inherited.font_size().to_bits().hash(&mut hasher);
+    inherited.font_weight().hash(&mut hasher);
+    inherited.font_style().hash(&mut hasher);
+    inherited.line_height().hash(&mut hasher);
+    inherited.letter_spacing().to_bits().hash(&mut hasher);
+    inherited.text_align().hash(&mut hasher);
+    style.text_indent().hash(&mut hasher);
     input.locale.hash(&mut hasher);
     input.direction.hash(&mut hasher);
     input.wrap.hash(&mut hasher);
@@ -246,7 +259,7 @@ mod tests {
     fn defaults_lower_to_plain_text_measurement_and_presentation() {
         let style = resolved(Vec::new());
         let input = PlainTextInput::new("hello");
-        let lowered = lower_plain_text(&input, style.computed().inherited_text());
+        let lowered = lower_plain_text(&input, style.computed());
 
         assert_eq!(lowered.content().payload.text, "hello");
         assert_eq!(
@@ -264,12 +277,9 @@ mod tests {
             MeasurementPayload::Text(lowered.content().payload.clone())
         );
 
-        let same = lower_plain_text(&input, style.computed().inherited_text());
+        let same = lower_plain_text(&input, style.computed());
         assert_eq!(lowered, same);
-        let changed = lower_plain_text(
-            &PlainTextInput::new("different"),
-            style.computed().inherited_text(),
-        );
+        let changed = lower_plain_text(&PlainTextInput::new("different"), style.computed());
         assert_ne!(
             lowered.measurement().content_hash,
             changed.measurement().content_hash
@@ -321,7 +331,7 @@ mod tests {
             overflow: MeasureTextOverflow::Ellipsis,
             pending_policy: PendingMeasurePolicy::RetainPrevious,
         };
-        let lowered = lower_plain_text(&input, style.computed().inherited_text());
+        let lowered = lower_plain_text(&input, style.computed());
         let payload = &lowered.content().payload;
 
         assert_eq!(
@@ -356,15 +366,12 @@ mod tests {
                 StyleProperty::TextAlign,
                 StyleValue::TextAlign(value),
             )]);
-            let lowered = lower_plain_text(
-                &PlainTextInput::new("alignment"),
-                style.computed().inherited_text(),
-            );
+            let lowered = lower_plain_text(&PlainTextInput::new("alignment"), style.computed());
             assert_eq!(lowered.content().payload.alignment, expected);
             if value != TextAlignValue::Start {
                 let initial = lower_plain_text(
                     &PlainTextInput::new("alignment"),
-                    resolved(Vec::new()).computed().inherited_text(),
+                    resolved(Vec::new()).computed(),
                 );
                 assert_ne!(
                     lowered.measurement().style_hash,
@@ -375,6 +382,35 @@ mod tests {
     }
 
     #[test]
+    fn lynx_text_indent_reaches_the_host_payload_and_metric_key() {
+        let input = PlainTextInput::new("indent");
+        let initial = resolved(Vec::new());
+        let initial = lower_plain_text(&input, initial.computed());
+        let length = resolved(vec![StyleDeclaration::new(
+            StyleProperty::TextIndent,
+            StyleValue::LengthPercentage(LengthPercentageValue::Length(LengthValue::Dimension {
+                value: StyleNumber::new(12.0),
+                unit: LengthUnit::Px,
+            })),
+        )]);
+        let length = lower_plain_text(&input, length.computed());
+        assert_eq!(length.content().payload.indent.logical_pixels, 12.0);
+        assert_eq!(length.content().payload.indent.percentage, 0.0);
+        assert_ne!(
+            length.measurement().style_hash,
+            initial.measurement().style_hash
+        );
+
+        let percentage = resolved(vec![StyleDeclaration::new(
+            StyleProperty::TextIndent,
+            StyleValue::LengthPercentage(LengthPercentageValue::Percentage(StyleNumber::new(15.0))),
+        )]);
+        let percentage = lower_plain_text(&input, percentage.computed());
+        assert_eq!(percentage.content().payload.indent.logical_pixels, 0.0);
+        assert_eq!(percentage.content().payload.indent.percentage, 15.0);
+    }
+
+    #[test]
     fn oblique_and_left_to_right_variants_are_lowered() {
         let style = resolved(vec![StyleDeclaration::new(
             StyleProperty::FontStyle,
@@ -382,7 +418,7 @@ mod tests {
         )]);
         let mut input = PlainTextInput::new("variants");
         input.direction = MeasureTextDirection::LeftToRight;
-        let lowered = lower_plain_text(&input, style.computed().inherited_text());
+        let lowered = lower_plain_text(&input, style.computed());
 
         assert_eq!(
             lowered.content().payload.style.font_style,
@@ -401,7 +437,7 @@ mod tests {
             StyleProperty::Color,
             StyleValue::Color(ColorValue::Named("rebeccapurple".into())),
         )]);
-        let named = lower_plain_text(&input, named.computed().inherited_text());
+        let named = lower_plain_text(&input, named.computed());
         assert_eq!(
             named.content().paint.foreground,
             PaintColor::Named("rebeccapurple".into())
@@ -416,7 +452,7 @@ mod tests {
                 alpha: StyleNumber::new(0.5),
             }),
         )]);
-        let hsla = lower_plain_text(&input, hsla.computed().inherited_text());
+        let hsla = lower_plain_text(&input, hsla.computed());
         assert_eq!(
             hsla.content().paint.foreground,
             PaintColor::Hsla {
@@ -451,8 +487,8 @@ mod tests {
                 color: ColorValue::Named("red".into()),
             }),
         )]);
-        let plain = lower_plain_text(&input, plain.computed().inherited_text());
-        let shadowed = lower_plain_text(&input, shadowed.computed().inherited_text());
+        let plain = lower_plain_text(&input, plain.computed());
+        let shadowed = lower_plain_text(&input, shadowed.computed());
         assert_eq!(plain.measurement(), shadowed.measurement());
         assert_eq!(
             shadowed.content().paint.shadows,
@@ -468,7 +504,7 @@ mod tests {
     #[test]
     fn lynx_text_decoration_lowers_to_paint_without_changing_measurement() {
         let input = PlainTextInput::new("decoration");
-        let plain = lower_plain_text(&input, resolved(Vec::new()).computed().inherited_text());
+        let plain = lower_plain_text(&input, resolved(Vec::new()).computed());
         let decorated = resolved(vec![StyleDeclaration::new(
             StyleProperty::TextDecoration,
             StyleValue::TextDecoration(TextDecorationValue {
@@ -477,7 +513,7 @@ mod tests {
                 color: Some(ColorValue::Named("red".into())),
             }),
         )]);
-        let decorated = lower_plain_text(&input, decorated.computed().inherited_text());
+        let decorated = lower_plain_text(&input, decorated.computed());
         assert_eq!(plain.measurement(), decorated.measurement());
         assert!(decorated.content().paint.decoration.lines.line_through);
         assert!(!decorated.content().paint.decoration.lines.underline);
@@ -512,7 +548,7 @@ mod tests {
                 }),
             )]);
             assert_eq!(
-                lower_plain_text(&input, resolved.computed().inherited_text())
+                lower_plain_text(&input, resolved.computed())
                     .content()
                     .paint
                     .decoration
