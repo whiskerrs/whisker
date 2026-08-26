@@ -21,8 +21,8 @@ use whisker_engine::whisker_protocol::{
     ResourceMessageError, SurfaceId,
 };
 use whisker_engine::whisker_style::{
-    InheritedStyle, ResolvedNodeStyle, SpecifiedStyle, StyleEnvironment, StyleResolutionError,
-    resolve_style,
+    ComputedTransitionProperty, InheritedStyle, MotionEasing, ResolvedNodeStyle, SpecifiedStyle,
+    StyleEnvironment, StyleProperty, StyleResolutionError, resolve_style,
 };
 use whisker_engine::{
     DeferredMeasurementApply, FrameSink, LayoutError, LayoutOptions, LayoutProgress,
@@ -106,6 +106,8 @@ pub enum RuntimeBindingError {
     InvalidBackgroundResourceSource,
     /// Typed style resolution failed.
     Style(StyleResolutionError),
+    /// The Host supplied a non-finite motion timestamp.
+    InvalidMotionTimestamp,
     /// The retained scene or layout engine rejected the mutation.
     Surface(SurfaceError),
 }
@@ -421,6 +423,52 @@ impl SurfaceRuntime {
         self.state.borrow().environment
     }
 
+    /// Samples active Rust-owned transitions at one Host frame timestamp.
+    ///
+    /// Returns `true` while at least one transition still needs another frame.
+    pub fn step_motion(&self, timestamp_ms: f64) -> Result<bool, RuntimeBindingError> {
+        if !timestamp_ms.is_finite() {
+            return Err(RuntimeBindingError::InvalidMotionTimestamp);
+        }
+        let mut state = self.state.borrow_mut();
+        state.ensure_valid()?;
+        let mut samples = Vec::new();
+        for entry in state.elements.values_mut() {
+            let (Some(node), Some(transition)) =
+                (entry.node, entry.opacity_transition.as_deref_mut())
+            else {
+                continue;
+            };
+            let start_ms = *transition.start_ms.get_or_insert(timestamp_ms);
+            let elapsed_ms = timestamp_ms - start_ms - f64::from(transition.delay_ms);
+            let linear = (elapsed_ms / f64::from(transition.duration_ms)).clamp(0.0, 1.0) as f32;
+            let progress = transition.easing.sample(linear);
+            transition.current =
+                (transition.from + (transition.to - transition.from) * progress).clamp(0.0, 1.0);
+            let complete = elapsed_ms >= f64::from(transition.duration_ms);
+            samples.push((node, transition.current, complete));
+        }
+        for (node, opacity, complete) in samples {
+            state.surface.set_opacity(node, opacity)?;
+            if complete && let Some(element) = state.node_elements.get(&node).copied() {
+                state.element_mut(element)?.opacity_transition = None;
+            }
+        }
+        Ok(state
+            .elements
+            .values()
+            .any(|entry| entry.opacity_transition.is_some()))
+    }
+
+    /// Returns whether this surface has an active Rust-owned transition.
+    pub fn has_active_motion(&self) -> bool {
+        self.state
+            .borrow()
+            .elements
+            .values()
+            .any(|entry| entry.opacity_transition.is_some())
+    }
+
     /// Re-resolves every retained style against current Host viewport metrics.
     ///
     /// The update is prepared against a cloned surface and committed only after
@@ -664,6 +712,19 @@ struct BoundElement {
     text: Option<PlainTextInput>,
     raw_text: String,
     listeners: HashMap<String, Vec<RuntimeListener>>,
+    style_initialized: bool,
+    opacity_transition: Option<Box<ActiveOpacityTransition>>,
+}
+
+#[derive(Clone, Copy)]
+struct ActiveOpacityTransition {
+    from: f32,
+    to: f32,
+    current: f32,
+    duration_ms: f32,
+    delay_ms: f32,
+    easing: MotionEasing,
+    start_ms: Option<f64>,
 }
 
 #[derive(Clone)]
@@ -872,6 +933,7 @@ impl BindingState {
                 surface.set_plain_text(update.node, text, update.resolved.computed())?;
             }
         }
+        Self::reapply_active_opacity(&self.elements, &mut surface)?;
 
         self.surface = surface;
         self.background_resources = background_resources;
@@ -978,6 +1040,8 @@ impl BindingState {
                 text,
                 raw_text: String::new(),
                 listeners: HashMap::new(),
+                style_initialized: false,
+                opacity_transition: None,
             },
         );
         if let Some(node) = node {
@@ -1091,6 +1155,7 @@ impl BindingState {
             &mut updates,
             &mut resource_commands,
         )?;
+        Self::reapply_active_opacity(&self.elements, &mut surface)?;
 
         self.surface = surface;
         self.background_resources = background_resources;
@@ -1098,6 +1163,81 @@ impl BindingState {
             self.element_mut(element)?.resolved = Some(resolved);
         }
         self.enqueue_automatic_commands(resource_commands);
+        Ok(())
+    }
+
+    fn reapply_active_opacity(
+        elements: &HashMap<Element, BoundElement>,
+        surface: &mut SurfaceEngine,
+    ) -> Result<(), RuntimeBindingError> {
+        for entry in elements.values() {
+            if let (Some(node), Some(transition)) =
+                (entry.node, entry.opacity_transition.as_deref())
+            {
+                surface.set_opacity(node, transition.current)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn configure_opacity_transition(
+        &mut self,
+        element: Element,
+        previous_target: f32,
+        previous_current: f32,
+        was_initialized: bool,
+    ) -> Result<(), RuntimeBindingError> {
+        let (node, target, transition) = {
+            let entry = self.element(element)?;
+            let node = entry
+                .node
+                .ok_or(RuntimeBindingError::UnknownElement { element })?;
+            let resolved = entry
+                .resolved
+                .as_ref()
+                .ok_or(RuntimeBindingError::UnknownElement { element })?;
+            let target = resolved.computed().paint().opacity.get();
+            let transition = resolved
+                .computed()
+                .motion()
+                .transitions
+                .iter()
+                .rev()
+                .find(|transition| {
+                    matches!(
+                        transition.property,
+                        ComputedTransitionProperty::All
+                            | ComputedTransitionProperty::Property(StyleProperty::Opacity)
+                    )
+                })
+                .copied();
+            (node, target, transition)
+        };
+
+        let entry = self.element_mut(element)?;
+        entry.style_initialized = true;
+        if !was_initialized {
+            entry.opacity_transition = None;
+            return Ok(());
+        }
+        if previous_target.to_bits() == target.to_bits() {
+            return Ok(());
+        }
+        let Some(transition) = transition.filter(|value| value.duration.get() > 0.0) else {
+            entry.opacity_transition = None;
+            return Ok(());
+        };
+        entry.opacity_transition = Some(Box::new(ActiveOpacityTransition {
+            from: previous_current,
+            to: target,
+            current: previous_current,
+            duration_ms: transition.duration.get(),
+            delay_ms: transition.delay.get(),
+            easing: transition.easing,
+            start_ms: None,
+        }));
+        self.surface.set_opacity(node, previous_current)?;
+        crate::runtime::runtime_wake::wake_runtime();
         Ok(())
     }
 
@@ -1601,12 +1741,34 @@ impl DynRenderer for SurfaceRuntime {
     fn set_specified_style(&self, handle: Element, style: &SpecifiedStyle) -> bool {
         let mut state = self.state.borrow_mut();
         let result = (|| {
-            let previous = state.element(handle)?.specified.clone();
+            let entry = state.element(handle)?;
+            if &entry.specified == style {
+                if !entry.style_initialized {
+                    state.element_mut(handle)?.style_initialized = true;
+                }
+                return Ok(());
+            }
+            let previous = entry.specified.clone();
+            let previous_target = entry
+                .resolved
+                .as_ref()
+                .map_or(1.0, |style| style.computed().paint().opacity.get());
+            let previous_current = entry
+                .opacity_transition
+                .as_deref()
+                .map_or(previous_target, |transition| transition.current);
+            let was_initialized = entry.style_initialized;
             state.element_mut(handle)?.specified = style.clone();
             if let Err(error) = state.apply_subtree(handle) {
                 state.element_mut(handle)?.specified = previous;
                 return Err(error);
             }
+            state.configure_opacity_transition(
+                handle,
+                previous_target,
+                previous_current,
+                was_initialized,
+            )?;
             Ok(())
         })();
         let accepted = result.is_ok();

@@ -1,9 +1,9 @@
 use std::convert::Infallible;
 
 use whisker::css::{
-    Angle, BorderRadius, BorderStyle, Clear, Direction, Float, GridLine, GridTemplate, GridTrack,
-    ImageRendering, MotionPathCommand, MotionPathPoint, OffsetPath, OffsetRotate, Overflow,
-    Position, TransformFn,
+    Angle, BorderRadius, BorderStyle, Clear, Direction, EasingFunction, Float, GridLine,
+    GridTemplate, GridTrack, ImageRendering, MotionPathCommand, MotionPathPoint, OffsetPath,
+    OffsetRotate, Overflow, Position, TransformFn, Transition, TransitionPropertyKind,
 };
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -356,6 +356,101 @@ fn render_text_reaches_measured_frame_and_paint_only_delta() {
     ));
     with_installed_renderer(surface.renderer(), || owner.dispose());
     assert_eq!(surface.binding_error(), None);
+}
+
+#[test]
+fn opacity_transition_is_sampled_in_rust_and_emitted_as_ordinary_frame_deltas() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(18).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let transition = || {
+        Transition::new(TransitionPropertyKind::name("opacity"))
+            .duration(100.ms())
+            .timing(EasingFunction::Linear)
+    };
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(40))
+                    .height(px(20))
+                    .opacity(0.2)
+                    .transition(transition()))
+            }
+        });
+        set_root(root);
+        root
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("initial frame");
+    assert!(
+        !surface.has_active_motion(),
+        "initial style must not animate"
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            Css::new()
+                .width(px(40))
+                .height(px(20))
+                .opacity(1.0)
+                .transition(transition()),
+        );
+    });
+    assert!(surface.has_active_motion());
+    assert!(surface.step_motion(1_000.0).expect("start transition"));
+    assert!(surface.step_motion(1_050.0).expect("sample midpoint"));
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("midpoint frame");
+    assert!(renderer.frames()[1]
+        .packet
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, Operation::SetOpacity { opacity, .. } if (*opacity - 0.6).abs() < 0.0001)));
+
+    assert!(!surface.step_motion(1_100.0).expect("finish transition"));
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("final frame");
+    assert!(renderer.frames()[2].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetOpacity { opacity, .. } if *opacity == 1.0)
+    ));
+    assert!(!surface.has_active_motion());
+    assert_eq!(
+        surface.step_motion(f64::NAN),
+        Err(RuntimeBindingError::InvalidMotionTimestamp)
+    );
+    with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
 fn painted_box(background: Color) -> Css {

@@ -62,6 +62,59 @@ pub enum MotionEasing {
     },
 }
 
+impl MotionEasing {
+    /// Samples this timing function at normalized input progress.
+    pub fn sample(self, progress: f32) -> f32 {
+        let progress = progress.clamp(0.0, 1.0);
+        match self {
+            Self::Linear => progress,
+            Self::Ease => cubic_bezier(progress, 0.25, 0.1, 0.25, 1.0),
+            Self::EaseIn => cubic_bezier(progress, 0.42, 0.0, 1.0, 1.0),
+            Self::EaseOut => cubic_bezier(progress, 0.0, 0.0, 0.58, 1.0),
+            Self::EaseInOut => cubic_bezier(progress, 0.42, 0.0, 0.58, 1.0),
+            Self::CubicBezier([x1, y1, x2, y2]) => {
+                cubic_bezier(progress, x1.get(), y1.get(), x2.get(), y2.get())
+            }
+            Self::Steps { count, position } => {
+                let count = count as f32;
+                match position {
+                    MotionStepPosition::JumpStart => (progress * count).ceil() / count,
+                    MotionStepPosition::JumpEnd => (progress * count).floor() / count,
+                    MotionStepPosition::JumpNone => {
+                        ((progress * count).floor() / (count - 1.0)).clamp(0.0, 1.0)
+                    }
+                    MotionStepPosition::JumpBoth => {
+                        ((progress * count).floor() + 1.0) / (count + 1.0)
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn cubic_bezier(progress: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+    if progress == 0.0 || progress == 1.0 {
+        return progress;
+    }
+    let coordinate = |time: f32, first: f32, second: f32| {
+        let inverse = 1.0 - time;
+        3.0 * inverse * inverse * time * first
+            + 3.0 * inverse * time * time * second
+            + time * time * time
+    };
+    let mut lower = 0.0;
+    let mut upper = 1.0;
+    for _ in 0..16 {
+        let time = (lower + upper) * 0.5;
+        if coordinate(time, x1, x2) < progress {
+            lower = time;
+        } else {
+            upper = time;
+        }
+    }
+    coordinate((lower + upper) * 0.5, y1, y2)
+}
+
 /// The property selection in one specified transition layer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TransitionPropertyValue {
@@ -790,6 +843,62 @@ mod tests {
                 Err(invalid(property))
             );
         }
+    }
+
+    #[test]
+    fn easing_samples_normalized_progress() {
+        assert_eq!(MotionEasing::Linear.sample(0.5), 0.5);
+        assert_eq!(MotionEasing::Ease.sample(0.0), 0.0);
+        assert_eq!(MotionEasing::Ease.sample(1.0), 1.0);
+        assert!((0.0..=1.0).contains(&MotionEasing::Ease.sample(0.5)));
+        assert!((0.0..=1.0).contains(&MotionEasing::EaseIn.sample(0.5)));
+        assert!((0.0..=1.0).contains(&MotionEasing::EaseOut.sample(0.5)));
+        assert!((0.0..=1.0).contains(&MotionEasing::EaseInOut.sample(0.5)));
+        assert!(
+            (0.0..=1.0).contains(
+                &MotionEasing::CubicBezier([
+                    StyleNumber::new(0.1),
+                    StyleNumber::new(0.2),
+                    StyleNumber::new(0.8),
+                    StyleNumber::new(0.9),
+                ])
+                .sample(0.5)
+            )
+        );
+        assert_eq!(MotionEasing::Linear.sample(-1.0), 0.0);
+        assert_eq!(MotionEasing::Linear.sample(2.0), 1.0);
+        assert_eq!(
+            MotionEasing::Steps {
+                count: 4,
+                position: MotionStepPosition::JumpStart,
+            }
+            .sample(0.49),
+            0.5
+        );
+        assert_eq!(
+            MotionEasing::Steps {
+                count: 4,
+                position: MotionStepPosition::JumpEnd,
+            }
+            .sample(0.49),
+            0.25
+        );
+        assert_eq!(
+            MotionEasing::Steps {
+                count: 2,
+                position: MotionStepPosition::JumpNone,
+            }
+            .sample(0.49),
+            0.0
+        );
+        assert_eq!(
+            MotionEasing::Steps {
+                count: 2,
+                position: MotionStepPosition::JumpBoth,
+            }
+            .sample(0.49),
+            1.0 / 3.0
+        );
     }
 
     #[test]
