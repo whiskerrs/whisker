@@ -306,6 +306,10 @@ pub enum StyleValue {
     LineHeight(LineHeightValue),
     /// Layout algorithm.
     Display(crate::DisplayValue),
+    /// Block-layout float side.
+    Float(crate::FloatValue),
+    /// Block-layout clearance rule.
+    Clear(crate::ClearValue),
     /// Positioning model.
     Position(crate::PositionValue),
     /// Box sizing model.

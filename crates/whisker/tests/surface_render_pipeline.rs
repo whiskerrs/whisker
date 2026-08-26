@@ -1,6 +1,6 @@
 use std::convert::Infallible;
 
-use whisker::css::{BorderStyle, GridLine, GridTemplate, GridTrack, Overflow};
+use whisker::css::{BorderStyle, Clear, Float, GridLine, GridTemplate, GridTrack, Overflow};
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
 use whisker::runtime::view::{
@@ -536,6 +536,75 @@ fn render_grid_layout_reaches_frame_packet_geometry() {
     let second = geometry(child_nodes[1]).expect("second Grid item geometry");
     assert_eq!((first.x, first.width), (0.0, 50.0));
     assert_eq!((second.x, second.width), (50.0, 150.0));
+
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn render_block_float_and_clear_reach_frame_packet_geometry() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(19).expect("test surface"),
+        StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+    );
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new().display_block().width(px(200))) {
+                    view(style: Css::new().width(px(50)).height(px(40)).float(Float::Left))
+                    view(style: Css::new().width(px(60)).height(px(30)).float(Float::Right))
+                    view(style: Css::new().width(px(100)).height(px(10)).clear(Clear::Both))
+                }
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(200.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("render! float frame");
+    assert!(host.calls.is_empty());
+
+    let root_node = surface.root().expect("float root");
+    let packet = &renderer.frames()[0].packet;
+    let child_nodes: Vec<_> = packet
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            Operation::InsertChild { parent, child, .. } if *parent == root_node => Some(*child),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(child_nodes.len(), 3);
+    let geometry = |node| {
+        packet
+            .operations
+            .iter()
+            .find_map(|operation| match operation {
+                Operation::SetLayout {
+                    node: candidate,
+                    geometry,
+                } if *candidate == node => Some(geometry.border_box),
+                _ => None,
+            })
+    };
+    let left = geometry(child_nodes[0]).expect("left float geometry");
+    let right = geometry(child_nodes[1]).expect("right float geometry");
+    let cleared = geometry(child_nodes[2]).expect("cleared geometry");
+    assert_eq!((left.x, left.y), (0.0, 0.0));
+    assert_eq!((right.x, right.y), (140.0, 0.0));
+    assert_eq!((cleared.x, cleared.y), (0.0, 40.0));
 
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }

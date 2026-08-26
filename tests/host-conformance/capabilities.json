@@ -13,9 +13,9 @@
   "target": {
     "feature_count": 158,
     "property_count": 157,
-    "registered_property_count": 175,
-    "target_registered_property_count": 155,
-    "pending_registry_properties": ["clear", "float"],
+    "registered_property_count": 177,
+    "target_registered_property_count": 157,
+    "pending_registry_properties": [],
     "excluded_registered_property_count": 20,
     "non_property_features": ["custom-properties"],
     "lynx_inventory": {
@@ -73,7 +73,7 @@
       "properties": ["clear", "float"],
       "supported_subset": ["block-formatting-context-floats"],
       "protocol": ["SetLayout"],
-      "rust": "planned",
+      "rust": "implemented",
       "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
     },
     {

@@ -9,22 +9,23 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use taffy::{
-    AlignContent, AlignItems, AvailableSpace as TaffyAvailableSpace, BoxSizing, Dimension,
-    Direction, Display, FlexDirection, FlexWrap, GridAutoFlow, GridPlacement, GridTemplateArea,
-    GridTemplateAreas, GridTemplateComponent, GridTemplateRepetition, LengthPercentage,
-    LengthPercentageAuto, Line, MaxTrackSizingFunction, MinTrackSizingFunction, Position, Rect,
-    RepetitionCount, Size, Style, TaffyTree, TrackSizingFunction,
+    AlignContent, AlignItems, AvailableSpace as TaffyAvailableSpace, BoxSizing,
+    Clear as TaffyClear, Dimension, Direction, Display, FlexDirection, FlexWrap,
+    Float as TaffyFloat, GridAutoFlow, GridPlacement, GridTemplateArea, GridTemplateAreas,
+    GridTemplateComponent, GridTemplateRepetition, LengthPercentage, LengthPercentageAuto, Line,
+    MaxTrackSizingFunction, MinTrackSizingFunction, Position, Rect, RepetitionCount, Size, Style,
+    TaffyTree, TrackSizingFunction,
 };
 pub use whisker_protocol::AvailableSpace;
 use whisker_protocol::{LayoutGeometry, LayoutRect, MeasureConstraints, NodeId};
 use whisker_style::{
-    AlignContentValue, AlignItemsValue, AlignSelfValue, BoxSizingValue, ComputedFlexBasis,
-    ComputedGridMaxTrackSizing, ComputedGridMinTrackSizing, ComputedGridTemplate,
-    ComputedGridTemplateComponent, ComputedGridTrackSizing, ComputedLayoutStyle,
-    ComputedLengthPercentage, ComputedLengthPercentageAuto, ComputedSizeValue, DirectionValue,
-    DisplayValue, FlexDirectionValue, FlexWrapValue, GridAutoFlowValue, GridPlacementLineValue,
-    GridPlacementValue, GridRepetitionCountValue, GridTemplateAreasValue, JustifyContentValue,
-    PositionValue, PropertyImpactSet,
+    AlignContentValue, AlignItemsValue, AlignSelfValue, BoxSizingValue, ClearValue,
+    ComputedFlexBasis, ComputedGridMaxTrackSizing, ComputedGridMinTrackSizing,
+    ComputedGridTemplate, ComputedGridTemplateComponent, ComputedGridTrackSizing,
+    ComputedLayoutStyle, ComputedLengthPercentage, ComputedLengthPercentageAuto, ComputedSizeValue,
+    DirectionValue, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, GridAutoFlowValue,
+    GridPlacementLineValue, GridPlacementValue, GridRepetitionCountValue, GridTemplateAreasValue,
+    JustifyContentValue, PositionValue, PropertyImpactSet,
 };
 
 /// A width and height in logical pixels.
@@ -612,6 +613,19 @@ fn convert_style(input: &ComputedLayoutStyle) -> Result<Style, LayoutError> {
             DisplayValue::Flex | DisplayValue::Linear => Display::Flex,
             DisplayValue::Grid => Display::Grid,
             DisplayValue::Relative => Display::Block,
+            DisplayValue::Block => Display::Block,
+            DisplayValue::FlowRoot => Display::FlowRoot,
+        },
+        float: match input.float {
+            FloatValue::None => TaffyFloat::None,
+            FloatValue::Left => TaffyFloat::Left,
+            FloatValue::Right => TaffyFloat::Right,
+        },
+        clear: match input.clear {
+            ClearValue::None => TaffyClear::None,
+            ClearValue::Left => TaffyClear::Left,
+            ClearValue::Right => TaffyClear::Right,
+            ClearValue::Both => TaffyClear::Both,
         },
         position: match input.position {
             PositionValue::Relative => Position::Relative,
@@ -955,9 +969,10 @@ fn justify(value: JustifyContentValue) -> AlignContent {
 mod tests {
     use super::*;
     use whisker_style::{
-        Axes, ComputedGridTemplate, ComputedGridTemplateComponent, ComputedGridTemplateRepetition,
-        ComputedGridTrackSizing, Edges, GridPlacementLineValue, GridRepetitionCountValue,
-        GridTemplateAreaValue, GridTemplateAreasValue, StyleNumber,
+        Axes, ClearValue, ComputedGridTemplate, ComputedGridTemplateComponent,
+        ComputedGridTemplateRepetition, ComputedGridTrackSizing, Edges, FloatValue,
+        GridPlacementLineValue, GridRepetitionCountValue, GridTemplateAreaValue,
+        GridTemplateAreasValue, StyleNumber,
     };
 
     const MIXED: ComputedLengthPercentage = ComputedLengthPercentage::new(1.0, 0.5);
@@ -1306,6 +1321,62 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn block_float_and_clear_follow_the_taffy_formatting_context() {
+        let root = id(1);
+        let left = id(2);
+        let right = id(3);
+        let cleared = id(4);
+        let mut tree = LayoutTree::new();
+        tree.create_node(
+            root,
+            ComputedLayoutStyle {
+                display: DisplayValue::Block,
+                size: Axes {
+                    width: ComputedSizeValue::Value(ComputedLengthPercentage::new(200.0, 0.0)),
+                    height: ComputedSizeValue::Auto,
+                },
+                ..ComputedLayoutStyle::default()
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            left,
+            ComputedLayoutStyle {
+                float: FloatValue::Left,
+                ..sized(50.0, 40.0)
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            right,
+            ComputedLayoutStyle {
+                float: FloatValue::Right,
+                ..sized(60.0, 30.0)
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            cleared,
+            ComputedLayoutStyle {
+                clear: ClearValue::Both,
+                ..sized(100.0, 10.0)
+            },
+        )
+        .unwrap();
+        tree.set_children(root, &[left, right, cleared]).unwrap();
+
+        let snapshot = tree
+            .compute(root, LayoutSize::new(200.0, 100.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(snapshot.get(left).unwrap().border_box.x, 0.0);
+        assert_eq!(snapshot.get(left).unwrap().border_box.y, 0.0);
+        assert_eq!(snapshot.get(right).unwrap().border_box.x, 140.0);
+        assert_eq!(snapshot.get(right).unwrap().border_box.y, 0.0);
+        assert_eq!(snapshot.get(cleared).unwrap().border_box.x, 0.0);
+        assert_eq!(snapshot.get(cleared).unwrap().border_box.y, 40.0);
     }
 
     fn assert_unsupported(style: ComputedLayoutStyle, feature: UnsupportedLayoutFeature) {
@@ -1826,8 +1897,23 @@ mod tests {
             DisplayValue::Grid,
             DisplayValue::Linear,
             DisplayValue::Relative,
+            DisplayValue::Block,
+            DisplayValue::FlowRoot,
         ] {
             style.display = display;
+            convert_style(&style).unwrap();
+        }
+        for value in [FloatValue::None, FloatValue::Left, FloatValue::Right] {
+            style.float = value;
+            convert_style(&style).unwrap();
+        }
+        for value in [
+            ClearValue::None,
+            ClearValue::Left,
+            ClearValue::Right,
+            ClearValue::Both,
+        ] {
+            style.clear = value;
             convert_style(&style).unwrap();
         }
         for direction in [

@@ -277,6 +277,8 @@ macro_rules! define_style_properties {
                     | Self::BoxSizing
                     | Self::ColumnGap
                     | Self::Display
+                    | Self::Float
+                    | Self::Clear
                     | Self::Flex
                     | Self::FlexBasis
                     | Self::FlexDirection
@@ -511,6 +513,8 @@ define_style_properties! {
     TextDecoration = 208 => "text-decoration",
     TextShadow = 209 => "text-shadow",
     GridTemplateAreas = 210 => "grid-template-areas",
+    Float = 211 => "float",
+    Clear = 212 => "clear",
 }
 
 #[cfg(test)]
@@ -544,7 +548,7 @@ mod tests {
 
     #[test]
     fn registry_contains_only_the_standard_property_target() {
-        assert_eq!(StyleProperty::ALL.len(), 175);
+        assert_eq!(StyleProperty::ALL.len(), 177);
         assert_eq!(StyleProperty::Color.metadata().origin, PropertyOrigin::Css);
         assert!(
             StyleProperty::ALL

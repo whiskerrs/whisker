@@ -13,6 +13,7 @@ mod box_model;
 mod display;
 mod effects;
 mod flex;
+mod float;
 mod grid;
 mod overflow;
 mod position;

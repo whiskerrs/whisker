@@ -23,6 +23,10 @@ pub enum Display {
     Flex,
     /// `grid` — CSS grid layout.
     Grid,
+    /// `block` — CSS block layout.
+    Block,
+    /// `flow-root` — block layout with an independent formatting context.
+    FlowRoot,
     /// `linear` — Lynx's linear layout (default for `<view>`).
     Linear,
     /// `relative` — Lynx's relative-positioning container.
@@ -35,8 +39,57 @@ impl ToCss for Display {
             Display::None => "none",
             Display::Flex => "flex",
             Display::Grid => "grid",
+            Display::Block => "block",
+            Display::FlowRoot => "flow-root",
             Display::Linear => "linear",
             Display::Relative => "relative",
+        })
+    }
+}
+
+/// The CSS `float` property.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Float {
+    /// Do not float the box.
+    #[default]
+    None,
+    /// Float to the physical left side.
+    Left,
+    /// Float to the physical right side.
+    Right,
+}
+
+impl ToCss for Float {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        dest.write_str(match self {
+            Self::None => "none",
+            Self::Left => "left",
+            Self::Right => "right",
+        })
+    }
+}
+
+/// The CSS `clear` property.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Clear {
+    /// Do not add clearance.
+    #[default]
+    None,
+    /// Clear preceding left floats.
+    Left,
+    /// Clear preceding right floats.
+    Right,
+    /// Clear preceding floats on both sides.
+    Both,
+}
+
+impl ToCss for Clear {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        dest.write_str(match self {
+            Self::None => "none",
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Both => "both",
         })
     }
 }
@@ -153,6 +206,8 @@ mod tests {
             (Display::None, "none"),
             (Display::Flex, "flex"),
             (Display::Grid, "grid"),
+            (Display::Block, "block"),
+            (Display::FlowRoot, "flow-root"),
             (Display::Linear, "linear"),
             (Display::Relative, "relative"),
         ];

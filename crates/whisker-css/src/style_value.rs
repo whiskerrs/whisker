@@ -2,21 +2,22 @@
 
 use whisker_style::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, BorderRadiusValue, BorderStyleValue,
-    BoxSizingValue, CalcExpression, ColorValue, DirectionValue, DisplayValue, FlexBasisValue,
-    FlexDirectionValue, FlexWrapValue, FontStyleValue, FontWeightValue, GridAutoFlowValue,
-    GridMaxTrackSizingValue, GridMinTrackSizingValue, GridPlacementValue, GridRepetitionCountValue,
-    GridTemplateAreaValue, GridTemplateAreasValue, GridTemplateComponentValue,
-    GridTemplateRepetitionValue, GridTemplateValue, GridTrackSizingValue, JustifyContentValue,
-    LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
-    PositionValue, SizeValue, StyleNumber, StyleValue,
+    BoxSizingValue, CalcExpression, ClearValue, ColorValue, DirectionValue, DisplayValue,
+    FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyleValue, FontWeightValue,
+    GridAutoFlowValue, GridMaxTrackSizingValue, GridMinTrackSizingValue, GridPlacementValue,
+    GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue,
+    GridTemplateComponentValue, GridTemplateRepetitionValue, GridTemplateValue,
+    GridTrackSizingValue, JustifyContentValue, LengthPercentageAutoValue, LengthPercentageValue,
+    LengthUnit, LengthValue, LineHeightValue, PositionValue, SizeValue, StyleNumber, StyleValue,
 };
 
 use crate::{
-    AlignContent, AlignItems, AlignSelf, Angle, BoxSizing, CalcExpr, Color, CssString, Direction,
-    Display, FlexBasis, FlexDirection, FlexWrap, FontStyle, FontWeight, GridAutoFlow, GridLine,
-    GridRepeatCount, GridTemplate, GridTemplateAreas, GridTemplateComponent, GridTrack,
-    GridTrackMax, GridTrackMin, Integer, JustifyContent, Length, LengthPercentage, LineHeight,
-    MarginValue, Number, Overflow, Percentage, PositionKind, Size, Visibility,
+    AlignContent, AlignItems, AlignSelf, Angle, BoxSizing, CalcExpr, Clear, Color, CssString,
+    Direction, Display, FlexBasis, FlexDirection, FlexWrap, Float, FontStyle, FontWeight,
+    GridAutoFlow, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
+    GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, Integer, JustifyContent, Length,
+    LengthPercentage, LineHeight, MarginValue, Number, Overflow, Percentage, PositionKind, Size,
+    Visibility,
 };
 use whisker_style::{OverflowValue, VisibilityValue};
 
@@ -172,8 +173,31 @@ impl ToStyleValue for Display {
             Self::None => DisplayValue::None,
             Self::Flex => DisplayValue::Flex,
             Self::Grid => DisplayValue::Grid,
+            Self::Block => DisplayValue::Block,
+            Self::FlowRoot => DisplayValue::FlowRoot,
             Self::Linear => DisplayValue::Linear,
             Self::Relative => DisplayValue::Relative,
+        })
+    }
+}
+
+impl ToStyleValue for Float {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::Float(match self {
+            Self::None => FloatValue::None,
+            Self::Left => FloatValue::Left,
+            Self::Right => FloatValue::Right,
+        })
+    }
+}
+
+impl ToStyleValue for Clear {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::Clear(match self {
+            Self::None => ClearValue::None,
+            Self::Left => ClearValue::Left,
+            Self::Right => ClearValue::Right,
+            Self::Both => ClearValue::Both,
         })
     }
 }
