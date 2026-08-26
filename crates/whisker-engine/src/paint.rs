@@ -2,11 +2,12 @@
 
 use whisker_protocol::{
     BorderLineStyle, BoxClip, BoxPaint, OverflowClip, PaintColor, PaintCornerRadius, PaintCorners,
-    PaintEdges, PaintLengthPercentage, Visibility, VisualEffects,
+    PaintEdges, PaintLengthPercentage, Transform, Visibility, VisualEffects,
 };
 use whisker_style::{
     BorderStyleValue, ColorValue, ComputedLayoutStyle, ComputedLengthPercentage,
-    ComputedPaintStyle, OverflowValue, VisibilityValue,
+    ComputedPaintStyle, ComputedTransformFunction, ComputedTransformStyle, OverflowValue,
+    VisibilityValue,
 };
 
 /// Complete common presentation values derived from one computed node style.
@@ -18,6 +19,8 @@ pub struct LoweredPaint {
     pub visual_effects: VisualEffects,
     /// Descendant overflow clip.
     pub clip: BoxClip,
+    /// Transform retained until the border-box size is known.
+    pub transform: ComputedTransformStyle,
     /// Group opacity.
     pub opacity: f32,
     /// Paint visibility.
@@ -60,6 +63,7 @@ pub fn lower_paint(style: &ComputedPaintStyle, layout: &ComputedLayoutStyle) -> 
             horizontal: lower_overflow(style.overflow_x),
             vertical: lower_overflow(style.overflow_y),
         },
+        transform: style.transform.clone(),
         opacity: style.opacity.get(),
         visibility: match style.visibility {
             VisibilityValue::Visible => Visibility::Visible,
@@ -67,6 +71,149 @@ pub fn lower_paint(style: &ComputedPaintStyle, layout: &ComputedLayoutStyle) -> 
         },
         z_order: style.z_index,
     }
+}
+
+/// Resolves a computed transform against one node's border-box size.
+///
+/// Hosts receive only the resulting matrix; percentages and transform-origin
+/// never cross the renderer boundary.
+pub fn lower_transform(
+    style: &ComputedTransformStyle,
+    border_width: f32,
+    border_height: f32,
+) -> Option<Transform> {
+    if !border_width.is_finite()
+        || !border_height.is_finite()
+        || border_width < 0.0
+        || border_height < 0.0
+    {
+        return None;
+    }
+
+    let mut matrix = identity();
+    for function in &style.functions {
+        matrix = multiply(
+            matrix,
+            function_matrix(function, border_width, border_height)?,
+        );
+    }
+    let origin_x = resolve_box_length(style.origin_x, border_width);
+    let origin_y = resolve_box_length(style.origin_y, border_height);
+    let around_origin = multiply(
+        multiply(translation(origin_x, origin_y, 0.0), matrix),
+        translation(-origin_x, -origin_y, 0.0),
+    );
+    around_origin
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(Transform(around_origin))
+}
+
+fn function_matrix(
+    function: &ComputedTransformFunction,
+    border_width: f32,
+    border_height: f32,
+) -> Option<[f32; 16]> {
+    let matrix = match function {
+        ComputedTransformFunction::Translate { x, y, z } => translation(
+            resolve_box_length(*x, border_width),
+            resolve_box_length(*y, border_height),
+            z.get(),
+        ),
+        ComputedTransformFunction::RotateX(degrees) => {
+            let radians = degrees.get().to_radians();
+            let (sin, cos) = radians.sin_cos();
+            [
+                1.0, 0.0, 0.0, 0.0, 0.0, cos, sin, 0.0, 0.0, -sin, cos, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ]
+        }
+        ComputedTransformFunction::RotateY(degrees) => {
+            let radians = degrees.get().to_radians();
+            let (sin, cos) = radians.sin_cos();
+            [
+                cos, 0.0, -sin, 0.0, 0.0, 1.0, 0.0, 0.0, sin, 0.0, cos, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ]
+        }
+        ComputedTransformFunction::RotateZ(degrees) => {
+            let radians = degrees.get().to_radians();
+            let (sin, cos) = radians.sin_cos();
+            [
+                cos, sin, 0.0, 0.0, -sin, cos, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ]
+        }
+        ComputedTransformFunction::Scale { x, y, z } => [
+            x.get(),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            y.get(),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            z.get(),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        ],
+        ComputedTransformFunction::Skew {
+            x_degrees,
+            y_degrees,
+        } => [
+            1.0,
+            y_degrees.get().to_radians().tan(),
+            0.0,
+            0.0,
+            x_degrees.get().to_radians().tan(),
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        ],
+        ComputedTransformFunction::Matrix(values) => values.map(|value| value.get()),
+    };
+    matrix
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(matrix)
+}
+
+fn identity() -> [f32; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
+fn translation(x: f32, y: f32, z: f32) -> [f32; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, x, y, z, 1.0,
+    ]
+}
+
+fn multiply(left: [f32; 16], right: [f32; 16]) -> [f32; 16] {
+    let mut output = [0.0; 16];
+    for column in 0..4 {
+        for row in 0..4 {
+            output[column * 4 + row] = (0..4)
+                .map(|index| left[index * 4 + row] * right[column * 4 + index])
+                .sum();
+        }
+    }
+    output
+}
+
+fn resolve_box_length(value: ComputedLengthPercentage, extent: f32) -> f32 {
+    value.length() + value.fraction() * extent
 }
 
 fn edges<T, U>(input: &whisker_style::Edges<T>, map: impl Fn(&T) -> U) -> PaintEdges<U> {
@@ -188,6 +335,7 @@ mod tests {
                 bottom_right: radius(3.0, 0.3, 13.0, 0.13),
                 bottom_left: radius(4.0, 0.4, 14.0, 0.14),
             },
+            transform: ComputedTransformStyle::default(),
             opacity: StyleNumber::new(0.5),
             visibility: VisibilityValue::Hidden,
             overflow_x: OverflowValue::Visible,
@@ -250,6 +398,92 @@ mod tests {
         assert_eq!(lowered.visibility, Visibility::Hidden);
         assert_eq!(lowered.z_order, -3);
         assert_eq!(lowered.visual_effects.backdrop_blur, Some(8.0));
+    }
+
+    #[test]
+    fn resolves_transform_percentages_and_origin_against_border_box() {
+        let style = ComputedTransformStyle {
+            functions: vec![ComputedTransformFunction::Scale {
+                x: StyleNumber::new(2.0),
+                y: StyleNumber::new(2.0),
+                z: StyleNumber::new(1.0),
+            }],
+            origin_x: ComputedLengthPercentage::new(0.0, 0.25),
+            origin_y: ComputedLengthPercentage::new(0.0, 0.5),
+        };
+        assert_eq!(
+            lower_transform(&style, 40.0, 20.0),
+            Some(Transform([
+                2.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -10.0, -10.0, 0.0, 1.0,
+            ]))
+        );
+
+        let translated = ComputedTransformStyle {
+            functions: vec![ComputedTransformFunction::Translate {
+                x: ComputedLengthPercentage::new(3.0, 0.5),
+                y: ComputedLengthPercentage::new(4.0, 0.25),
+                z: StyleNumber::new(0.0),
+            }],
+            origin_x: ComputedLengthPercentage::ZERO,
+            origin_y: ComputedLengthPercentage::ZERO,
+        };
+        let matrix = lower_transform(&translated, 40.0, 20.0).unwrap();
+        assert_eq!(matrix.0[12], 23.0);
+        assert_eq!(matrix.0[13], 9.0);
+        assert_eq!(lower_transform(&translated, f32::NAN, 20.0), None);
+    }
+
+    #[test]
+    fn lowers_every_flat_transform_function_and_rejects_invalid_output() {
+        let number = StyleNumber::new;
+        for function in [
+            ComputedTransformFunction::RotateX(number(0.0)),
+            ComputedTransformFunction::RotateY(number(0.0)),
+            ComputedTransformFunction::RotateZ(number(90.0)),
+            ComputedTransformFunction::Skew {
+                x_degrees: number(10.0),
+                y_degrees: number(20.0),
+            },
+            ComputedTransformFunction::Matrix([
+                number(1.0),
+                number(0.0),
+                number(0.0),
+                number(0.0),
+                number(0.0),
+                number(1.0),
+                number(0.0),
+                number(0.0),
+                number(0.0),
+                number(0.0),
+                number(1.0),
+                number(0.0),
+                number(2.0),
+                number(3.0),
+                number(0.0),
+                number(1.0),
+            ]),
+        ] {
+            let style = ComputedTransformStyle {
+                functions: vec![function],
+                origin_x: ComputedLengthPercentage::ZERO,
+                origin_y: ComputedLengthPercentage::ZERO,
+            };
+            assert!(lower_transform(&style, 40.0, 20.0).is_some());
+        }
+
+        let mut non_finite = [number(0.0); 16];
+        non_finite[0] = number(f32::NAN);
+        let invalid_function = ComputedTransformStyle {
+            functions: vec![ComputedTransformFunction::Matrix(non_finite)],
+            ..ComputedTransformStyle::default()
+        };
+        assert_eq!(lower_transform(&invalid_function, 1.0, 1.0), None);
+
+        let invalid_origin = ComputedTransformStyle {
+            origin_x: ComputedLengthPercentage::new(f32::INFINITY, 0.0),
+            ..ComputedTransformStyle::default()
+        };
+        assert_eq!(lower_transform(&invalid_origin, 1.0, 1.0), None);
     }
 
     #[test]

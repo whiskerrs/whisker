@@ -126,9 +126,11 @@
       "id": "paint.transform",
       "basis": "lynx-4.0",
       "properties": ["offset-distance", "offset-path", "offset-rotate", "perspective", "transform", "transform-origin"],
+      "supported_subset": ["transform-2d-functions", "matrix", "2d-compatible-matrix3d", "length-percentage-translate", "border-box-transform-origin"],
+      "unsupported_browser_subset": ["3d-transform-functions", "perspective", "motion-path"],
       "protocol": ["SetTransform", "SetVisualEffects"],
       "rust": "partial",
-      "hosts": {"desktop": "planned", "web": "implemented", "android": "planned", "ios": "planned"}
+      "hosts": {"desktop": "partial", "web": "partial", "android": "partial", "ios": "partial"}
     },
     {
       "id": "paint.compositing",

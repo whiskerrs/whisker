@@ -472,6 +472,16 @@ Rust resolves the semantic values for:
 - stacking order and isolated stacking contexts;
 - visibility and hit-test participation.
 
+For the common transform subset, specified function lists and
+`transform-origin` remain typed computed values until layout is available.
+The surface resolves percentage translations against border-box width or
+height, resolves the origin against that same box, composes the functions in
+CSS matrix order, and emits one `SetTransform` matrix. A Host applies that
+matrix at its local border-box origin and does not repeat CSS resolution. This
+slice currently accepts 2-D transforms, including 2-D-compatible `matrix3d`;
+3-D transforms, perspective, and offset-path motion remain separate planned
+capabilities.
+
 Protocol minor 1 groups those resolved meanings by Host capability rather
 than by CSS spelling. `SetBackgroundLayers` carries resource-backed images,
 linear/radial/conic gradients, positioning, sizing, repeat, origin, clip,

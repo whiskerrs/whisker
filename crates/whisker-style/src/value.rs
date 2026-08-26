@@ -353,6 +353,58 @@ pub enum BackdropFilterValue {
     Blur(LengthValue),
 }
 
+/// One typed transform function before environment and box-size resolution.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TransformFunctionValue {
+    /// Two-axis translation.
+    Translate(LengthPercentageValue, LengthPercentageValue),
+    /// Horizontal translation.
+    TranslateX(LengthPercentageValue),
+    /// Vertical translation.
+    TranslateY(LengthPercentageValue),
+    /// Depth translation.
+    TranslateZ(LengthValue),
+    /// Three-axis translation.
+    Translate3d(LengthPercentageValue, LengthPercentageValue, LengthValue),
+    /// Rotation around the z axis, in degrees.
+    Rotate(StyleNumber),
+    /// Rotation around the x axis, in degrees.
+    RotateX(StyleNumber),
+    /// Rotation around the y axis, in degrees.
+    RotateY(StyleNumber),
+    /// Rotation around the z axis, in degrees.
+    RotateZ(StyleNumber),
+    /// Two-axis scale.
+    Scale(StyleNumber, StyleNumber),
+    /// Horizontal scale.
+    ScaleX(StyleNumber),
+    /// Vertical scale.
+    ScaleY(StyleNumber),
+    /// Two-axis skew, in degrees.
+    Skew(StyleNumber, StyleNumber),
+    /// Horizontal skew, in degrees.
+    SkewX(StyleNumber),
+    /// Vertical skew, in degrees.
+    SkewY(StyleNumber),
+    /// CSS six-value affine matrix.
+    Matrix([StyleNumber; 6]),
+    /// Column-major four-by-four matrix.
+    Matrix3d([StyleNumber; 16]),
+}
+
+/// Ordered typed value of the `transform` property.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TransformValue(pub Vec<TransformFunctionValue>);
+
+/// Two-dimensional `transform-origin` before border-box resolution.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TransformOriginValue {
+    /// Horizontal origin coordinate.
+    pub horizontal: LengthPercentageValue,
+    /// Vertical origin coordinate.
+    pub vertical: LengthPercentageValue,
+}
+
 /// An owned value in a specified inline-style declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StyleValue {
@@ -386,6 +438,10 @@ pub enum StyleValue {
     BackgroundAttachment(BackgroundAttachmentValue),
     /// Background-pixel filter applied behind this node.
     BackdropFilter(BackdropFilterValue),
+    /// Ordered transform function list.
+    Transform(TransformValue),
+    /// Transform origin resolved against the node border box.
+    TransformOrigin(TransformOriginValue),
     /// Font family.
     FontFamily(FontFamilyValue),
     /// Font face style.

@@ -5,7 +5,8 @@ use crate::{
     BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundSizeValue, ColorValue,
     ComputedLengthPercentage, DirectionValue, Edges, GradientValue, InheritedStyle,
     LengthPercentageValue, RadialGradientValue, SpecifiedStyle, StyleEnvironment, StyleNumber,
-    StyleProperty, StyleResolutionError, StyleValue, layout::resolve_affine,
+    StyleProperty, StyleResolutionError, StyleValue, TransformFunctionValue, TransformOriginValue,
+    TransformValue, layout::resolve_affine,
 };
 
 /// Four physical corners in top-left, top-right, bottom-right, bottom-left order.
@@ -171,6 +172,66 @@ pub enum ComputedBackgroundImage {
     Gradient(ComputedGradient),
 }
 
+/// One transform function after environment-dependent units are resolved.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedTransformFunction {
+    /// Three-axis translation. Horizontal and vertical percentages remain
+    /// relative to the node's border box.
+    Translate {
+        /// Horizontal translation.
+        x: ComputedLengthPercentage,
+        /// Vertical translation.
+        y: ComputedLengthPercentage,
+        /// Depth translation in logical pixels.
+        z: StyleNumber,
+    },
+    /// Rotation around the x axis in degrees.
+    RotateX(StyleNumber),
+    /// Rotation around the y axis in degrees.
+    RotateY(StyleNumber),
+    /// Rotation around the z axis in degrees.
+    RotateZ(StyleNumber),
+    /// Three-axis scale.
+    Scale {
+        /// Horizontal scale.
+        x: StyleNumber,
+        /// Vertical scale.
+        y: StyleNumber,
+        /// Depth scale.
+        z: StyleNumber,
+    },
+    /// Two-axis skew in degrees.
+    Skew {
+        /// Horizontal skew.
+        x_degrees: StyleNumber,
+        /// Vertical skew.
+        y_degrees: StyleNumber,
+    },
+    /// A fully specified column-major matrix.
+    Matrix([StyleNumber; 16]),
+}
+
+/// Transform functions and origin retained until border-box layout is known.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedTransformStyle {
+    /// Ordered transform functions.
+    pub functions: Vec<ComputedTransformFunction>,
+    /// Horizontal origin relative to border-box width.
+    pub origin_x: ComputedLengthPercentage,
+    /// Vertical origin relative to border-box height.
+    pub origin_y: ComputedLengthPercentage,
+}
+
+impl Default for ComputedTransformStyle {
+    fn default() -> Self {
+        Self {
+            functions: Vec::new(),
+            origin_x: ComputedLengthPercentage::new(0.0, 0.5),
+            origin_y: ComputedLengthPercentage::new(0.0, 0.5),
+        }
+    }
+}
+
 /// Computed geometry and scrolling values paired with one background image.
 ///
 /// The authoring API currently exposes one scalar set of longhands. Keeping
@@ -228,6 +289,8 @@ pub struct ComputedPaintStyle {
     pub border_styles: Edges<BorderStyleValue>,
     /// Corner radii retaining their border-box percentage component.
     pub border_radii: Corners<ComputedCornerRadius>,
+    /// Transform retained until the border-box size is known.
+    pub transform: ComputedTransformStyle,
     /// Group opacity, clamped to `0.0..=1.0`.
     pub opacity: StyleNumber,
     /// Paint visibility.
@@ -266,6 +329,7 @@ impl ComputedPaintStyle {
                 left: BorderStyleValue::None,
             },
             border_radii: Corners::all(ComputedCornerRadius::ZERO),
+            transform: ComputedTransformStyle::default(),
             opacity: StyleNumber::new(1.0),
             visibility: VisibilityValue::Visible,
             overflow_x: OverflowValue::Visible,
@@ -315,6 +379,22 @@ pub(crate) fn resolve_paint_style(
                         Some(StyleNumber::new(radius))
                     }
                 };
+            }
+            StyleProperty::Transform => {
+                let StyleValue::Transform(value) = value else {
+                    return Err(invalid(property));
+                };
+                paint.transform.functions =
+                    resolve_transform_functions(value, inherited, environment, property)?;
+            }
+            StyleProperty::TransformOrigin => {
+                let StyleValue::TransformOrigin(value) = value else {
+                    return Err(invalid(property));
+                };
+                let (horizontal, vertical) =
+                    resolve_transform_origin(value, inherited, environment, property)?;
+                paint.transform.origin_x = horizontal;
+                paint.transform.origin_y = vertical;
             }
             StyleProperty::Background => {
                 let StyleValue::Background(value) = value else {
@@ -552,6 +632,189 @@ pub(crate) fn resolve_paint_style(
         }
     }
     Ok(paint)
+}
+
+fn resolve_transform_functions(
+    value: &TransformValue,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<Vec<ComputedTransformFunction>, StyleResolutionError> {
+    let length_percentage = |value: &LengthPercentageValue| {
+        resolve_affine(value, inherited.font_size(), environment, property)
+    };
+    let length = |value: &crate::LengthValue| {
+        resolve_affine(
+            &LengthPercentageValue::Length(*value),
+            inherited.font_size(),
+            environment,
+            property,
+        )
+        .map(|value| StyleNumber::new(value.length()))
+    };
+    let finite = |value: StyleNumber| {
+        if value.get().is_finite() {
+            Ok(value)
+        } else {
+            Err(invalid(property))
+        }
+    };
+
+    value
+        .0
+        .iter()
+        .map(|function| {
+            Ok(match function {
+                TransformFunctionValue::Translate(x, y) => ComputedTransformFunction::Translate {
+                    x: length_percentage(x)?,
+                    y: length_percentage(y)?,
+                    z: StyleNumber::new(0.0),
+                },
+                TransformFunctionValue::TranslateX(x) => ComputedTransformFunction::Translate {
+                    x: length_percentage(x)?,
+                    y: ComputedLengthPercentage::ZERO,
+                    z: StyleNumber::new(0.0),
+                },
+                TransformFunctionValue::TranslateY(y) => ComputedTransformFunction::Translate {
+                    x: ComputedLengthPercentage::ZERO,
+                    y: length_percentage(y)?,
+                    z: StyleNumber::new(0.0),
+                },
+                TransformFunctionValue::TranslateZ(z) => {
+                    let z = length(z)?;
+                    if z.get() != 0.0 {
+                        return Err(invalid(property));
+                    }
+                    ComputedTransformFunction::Translate {
+                        x: ComputedLengthPercentage::ZERO,
+                        y: ComputedLengthPercentage::ZERO,
+                        z,
+                    }
+                }
+                TransformFunctionValue::Translate3d(x, y, z) => {
+                    let z = length(z)?;
+                    if z.get() != 0.0 {
+                        return Err(invalid(property));
+                    }
+                    ComputedTransformFunction::Translate {
+                        x: length_percentage(x)?,
+                        y: length_percentage(y)?,
+                        z,
+                    }
+                }
+                TransformFunctionValue::Rotate(angle) | TransformFunctionValue::RotateZ(angle) => {
+                    ComputedTransformFunction::RotateZ(finite(*angle)?)
+                }
+                TransformFunctionValue::RotateX(angle) => {
+                    let angle = finite(*angle)?;
+                    if angle.get() != 0.0 {
+                        return Err(invalid(property));
+                    }
+                    ComputedTransformFunction::RotateX(angle)
+                }
+                TransformFunctionValue::RotateY(angle) => {
+                    let angle = finite(*angle)?;
+                    if angle.get() != 0.0 {
+                        return Err(invalid(property));
+                    }
+                    ComputedTransformFunction::RotateY(angle)
+                }
+                TransformFunctionValue::Scale(x, y) => ComputedTransformFunction::Scale {
+                    x: finite(*x)?,
+                    y: finite(*y)?,
+                    z: StyleNumber::new(1.0),
+                },
+                TransformFunctionValue::ScaleX(x) => ComputedTransformFunction::Scale {
+                    x: finite(*x)?,
+                    y: StyleNumber::new(1.0),
+                    z: StyleNumber::new(1.0),
+                },
+                TransformFunctionValue::ScaleY(y) => ComputedTransformFunction::Scale {
+                    x: StyleNumber::new(1.0),
+                    y: finite(*y)?,
+                    z: StyleNumber::new(1.0),
+                },
+                TransformFunctionValue::Skew(x, y) => ComputedTransformFunction::Skew {
+                    x_degrees: finite(*x)?,
+                    y_degrees: finite(*y)?,
+                },
+                TransformFunctionValue::SkewX(x) => ComputedTransformFunction::Skew {
+                    x_degrees: finite(*x)?,
+                    y_degrees: StyleNumber::new(0.0),
+                },
+                TransformFunctionValue::SkewY(y) => ComputedTransformFunction::Skew {
+                    x_degrees: StyleNumber::new(0.0),
+                    y_degrees: finite(*y)?,
+                },
+                TransformFunctionValue::Matrix(values) => {
+                    if !values.iter().all(|value| value.get().is_finite()) {
+                        return Err(invalid(property));
+                    }
+                    let [a, b, c, d, tx, ty] = *values;
+                    ComputedTransformFunction::Matrix([
+                        a,
+                        b,
+                        StyleNumber::new(0.0),
+                        StyleNumber::new(0.0),
+                        c,
+                        d,
+                        StyleNumber::new(0.0),
+                        StyleNumber::new(0.0),
+                        StyleNumber::new(0.0),
+                        StyleNumber::new(0.0),
+                        StyleNumber::new(1.0),
+                        StyleNumber::new(0.0),
+                        tx,
+                        ty,
+                        StyleNumber::new(0.0),
+                        StyleNumber::new(1.0),
+                    ])
+                }
+                TransformFunctionValue::Matrix3d(values) => {
+                    if !values.iter().all(|value| value.get().is_finite()) {
+                        return Err(invalid(property));
+                    }
+                    let raw = values.map(|value| value.get());
+                    if raw[2] != 0.0
+                        || raw[3] != 0.0
+                        || raw[6] != 0.0
+                        || raw[7] != 0.0
+                        || raw[8] != 0.0
+                        || raw[9] != 0.0
+                        || raw[10] != 1.0
+                        || raw[11] != 0.0
+                        || raw[14] != 0.0
+                        || raw[15] != 1.0
+                    {
+                        return Err(invalid(property));
+                    }
+                    ComputedTransformFunction::Matrix(*values)
+                }
+            })
+        })
+        .collect()
+}
+
+fn resolve_transform_origin(
+    value: &TransformOriginValue,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<(ComputedLengthPercentage, ComputedLengthPercentage), StyleResolutionError> {
+    Ok((
+        resolve_affine(
+            &value.horizontal,
+            inherited.font_size(),
+            environment,
+            property,
+        )?,
+        resolve_affine(
+            &value.vertical,
+            inherited.font_size(),
+            environment,
+            property,
+        )?,
+    ))
 }
 
 fn resolve_background_image(
@@ -898,6 +1161,279 @@ mod tests {
                 Err(StyleResolutionError::InvalidPropertyValue(
                     StyleProperty::BackdropFilter
                 ))
+            );
+        }
+    }
+
+    #[test]
+    fn transform_retains_box_percentages_and_rejects_non_2d_functions() {
+        let transform = StyleValue::Transform(TransformValue(vec![
+            TransformFunctionValue::Translate(
+                LengthPercentageValue::Percentage(number(50.0)),
+                px_length(4.0),
+            ),
+            TransformFunctionValue::Scale(number(2.0), number(3.0)),
+        ]));
+        let origin = StyleValue::TransformOrigin(TransformOriginValue {
+            horizontal: LengthPercentageValue::Percentage(number(25.0)),
+            vertical: LengthPercentageValue::Percentage(number(75.0)),
+        });
+        let resolved = crate::resolve_style(
+            &SpecifiedStyle::new()
+                .push(StyleProperty::Transform, transform)
+                .push(StyleProperty::TransformOrigin, origin),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        let transform = &resolved.computed().paint().transform;
+        assert_eq!(transform.origin_x, ComputedLengthPercentage::new(0.0, 0.25));
+        assert_eq!(transform.origin_y, ComputedLengthPercentage::new(0.0, 0.75));
+        assert_eq!(
+            transform.functions,
+            [
+                ComputedTransformFunction::Translate {
+                    x: ComputedLengthPercentage::new(0.0, 0.5),
+                    y: ComputedLengthPercentage::new(4.0, 0.0),
+                    z: number(0.0),
+                },
+                ComputedTransformFunction::Scale {
+                    x: number(2.0),
+                    y: number(3.0),
+                    z: number(1.0),
+                },
+            ]
+        );
+
+        assert_eq!(
+            crate::resolve_style(
+                &SpecifiedStyle::new().push(
+                    StyleProperty::Transform,
+                    StyleValue::Transform(TransformValue(vec![TransformFunctionValue::RotateX(
+                        number(30.0)
+                    ),])),
+                ),
+                None,
+                StyleEnvironment::default(),
+            ),
+            Err(StyleResolutionError::InvalidPropertyValue(
+                StyleProperty::Transform
+            ))
+        );
+    }
+
+    #[test]
+    fn transform_resolves_every_flat_function_and_rejects_invalid_inputs() {
+        let length = |value| LengthValue::Dimension {
+            value: number(value),
+            unit: LengthUnit::Px,
+        };
+        let mut matrix_3d = [number(0.0); 16];
+        for index in [0, 5, 10, 15] {
+            matrix_3d[index] = number(1.0);
+        }
+        let functions = vec![
+            TransformFunctionValue::TranslateX(percentage(10.0)),
+            TransformFunctionValue::TranslateY(px_length(2.0)),
+            TransformFunctionValue::TranslateZ(LengthValue::Zero),
+            TransformFunctionValue::Translate3d(
+                px_length(3.0),
+                percentage(20.0),
+                LengthValue::Zero,
+            ),
+            TransformFunctionValue::Rotate(number(10.0)),
+            TransformFunctionValue::RotateX(number(0.0)),
+            TransformFunctionValue::RotateY(number(0.0)),
+            TransformFunctionValue::RotateZ(number(20.0)),
+            TransformFunctionValue::ScaleX(number(2.0)),
+            TransformFunctionValue::ScaleY(number(3.0)),
+            TransformFunctionValue::Skew(number(4.0), number(5.0)),
+            TransformFunctionValue::SkewX(number(6.0)),
+            TransformFunctionValue::SkewY(number(7.0)),
+            TransformFunctionValue::Matrix([
+                number(1.0),
+                number(2.0),
+                number(3.0),
+                number(4.0),
+                number(5.0),
+                number(6.0),
+            ]),
+            TransformFunctionValue::Matrix3d(matrix_3d),
+        ];
+        let resolved = crate::resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::Transform,
+                StyleValue::Transform(TransformValue(functions)),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.computed().paint().transform.functions,
+            [
+                ComputedTransformFunction::Translate {
+                    x: ComputedLengthPercentage::new(0.0, 0.1),
+                    y: ComputedLengthPercentage::ZERO,
+                    z: number(0.0),
+                },
+                ComputedTransformFunction::Translate {
+                    x: ComputedLengthPercentage::ZERO,
+                    y: ComputedLengthPercentage::new(2.0, 0.0),
+                    z: number(0.0),
+                },
+                ComputedTransformFunction::Translate {
+                    x: ComputedLengthPercentage::ZERO,
+                    y: ComputedLengthPercentage::ZERO,
+                    z: number(0.0),
+                },
+                ComputedTransformFunction::Translate {
+                    x: ComputedLengthPercentage::new(3.0, 0.0),
+                    y: ComputedLengthPercentage::new(0.0, 0.2),
+                    z: number(0.0),
+                },
+                ComputedTransformFunction::RotateZ(number(10.0)),
+                ComputedTransformFunction::RotateX(number(0.0)),
+                ComputedTransformFunction::RotateY(number(0.0)),
+                ComputedTransformFunction::RotateZ(number(20.0)),
+                ComputedTransformFunction::Scale {
+                    x: number(2.0),
+                    y: number(1.0),
+                    z: number(1.0),
+                },
+                ComputedTransformFunction::Scale {
+                    x: number(1.0),
+                    y: number(3.0),
+                    z: number(1.0),
+                },
+                ComputedTransformFunction::Skew {
+                    x_degrees: number(4.0),
+                    y_degrees: number(5.0),
+                },
+                ComputedTransformFunction::Skew {
+                    x_degrees: number(6.0),
+                    y_degrees: number(0.0),
+                },
+                ComputedTransformFunction::Skew {
+                    x_degrees: number(0.0),
+                    y_degrees: number(7.0),
+                },
+                ComputedTransformFunction::Matrix([
+                    number(1.0),
+                    number(2.0),
+                    number(0.0),
+                    number(0.0),
+                    number(3.0),
+                    number(4.0),
+                    number(0.0),
+                    number(0.0),
+                    number(0.0),
+                    number(0.0),
+                    number(1.0),
+                    number(0.0),
+                    number(5.0),
+                    number(6.0),
+                    number(0.0),
+                    number(1.0),
+                ]),
+                ComputedTransformFunction::Matrix(matrix_3d),
+            ]
+        );
+
+        let invalid_transform = |function| {
+            crate::resolve_style(
+                &SpecifiedStyle::new().push(
+                    StyleProperty::Transform,
+                    StyleValue::Transform(TransformValue(vec![function])),
+                ),
+                None,
+                StyleEnvironment::default(),
+            )
+        };
+        let mut non_finite_matrix = [number(0.0); 6];
+        non_finite_matrix[0] = number(f32::NAN);
+        let mut non_finite_matrix_3d = matrix_3d;
+        non_finite_matrix_3d[0] = number(f32::INFINITY);
+        let mut spatial_matrix_3d = matrix_3d;
+        spatial_matrix_3d[14] = number(1.0);
+        for function in [
+            TransformFunctionValue::Translate(
+                LengthPercentageValue::Length(length(f32::NAN)),
+                px_length(0.0),
+            ),
+            TransformFunctionValue::Translate(
+                px_length(0.0),
+                LengthPercentageValue::Length(length(f32::NAN)),
+            ),
+            TransformFunctionValue::TranslateX(LengthPercentageValue::Length(length(f32::NAN))),
+            TransformFunctionValue::TranslateY(LengthPercentageValue::Length(length(f32::NAN))),
+            TransformFunctionValue::TranslateZ(length(f32::NAN)),
+            TransformFunctionValue::TranslateZ(length(1.0)),
+            TransformFunctionValue::Translate3d(px_length(0.0), px_length(0.0), length(f32::NAN)),
+            TransformFunctionValue::Translate3d(
+                LengthPercentageValue::Length(length(f32::NAN)),
+                px_length(0.0),
+                LengthValue::Zero,
+            ),
+            TransformFunctionValue::Translate3d(
+                px_length(0.0),
+                LengthPercentageValue::Length(length(f32::NAN)),
+                LengthValue::Zero,
+            ),
+            TransformFunctionValue::Translate3d(px_length(0.0), px_length(0.0), length(1.0)),
+            TransformFunctionValue::Rotate(number(f32::NAN)),
+            TransformFunctionValue::RotateX(number(f32::NAN)),
+            TransformFunctionValue::RotateX(number(1.0)),
+            TransformFunctionValue::RotateY(number(f32::NAN)),
+            TransformFunctionValue::RotateY(number(1.0)),
+            TransformFunctionValue::Scale(number(f32::NAN), number(1.0)),
+            TransformFunctionValue::Scale(number(1.0), number(f32::NAN)),
+            TransformFunctionValue::ScaleX(number(f32::INFINITY)),
+            TransformFunctionValue::ScaleY(number(f32::INFINITY)),
+            TransformFunctionValue::Skew(number(f32::NAN), number(0.0)),
+            TransformFunctionValue::Skew(number(0.0), number(f32::NAN)),
+            TransformFunctionValue::SkewX(number(f32::NAN)),
+            TransformFunctionValue::SkewY(number(f32::NAN)),
+            TransformFunctionValue::Matrix(non_finite_matrix),
+            TransformFunctionValue::Matrix3d(non_finite_matrix_3d),
+            TransformFunctionValue::Matrix3d(spatial_matrix_3d),
+        ] {
+            assert_eq!(
+                invalid_transform(function),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::Transform
+                ))
+            );
+        }
+
+        for (property, value) in [
+            (StyleProperty::Transform, StyleValue::Number(number(1.0))),
+            (
+                StyleProperty::TransformOrigin,
+                StyleValue::Number(number(1.0)),
+            ),
+            (
+                StyleProperty::TransformOrigin,
+                StyleValue::TransformOrigin(TransformOriginValue {
+                    horizontal: LengthPercentageValue::Length(length(f32::NAN)),
+                    vertical: px_length(0.0),
+                }),
+            ),
+            (
+                StyleProperty::TransformOrigin,
+                StyleValue::TransformOrigin(TransformOriginValue {
+                    horizontal: px_length(0.0),
+                    vertical: LengthPercentageValue::Length(length(f32::NAN)),
+                }),
+            ),
+        ] {
+            assert_eq!(
+                crate::resolve_style(
+                    &SpecifiedStyle::new().push(property, value),
+                    None,
+                    StyleEnvironment::default(),
+                ),
+                Err(StyleResolutionError::InvalidPropertyValue(property))
             );
         }
     }

@@ -1,7 +1,8 @@
 use std::convert::Infallible;
 
 use whisker::css::{
-    BorderStyle, Clear, Direction, Float, GridLine, GridTemplate, GridTrack, Overflow,
+    BorderStyle, Clear, Direction, Float, GridLine, GridTemplate, GridTrack, Overflow, Position,
+    TransformFn,
 };
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -464,6 +465,111 @@ fn render_box_paint_and_clip_reach_the_frame_sink() {
                     alpha: 1.0,
                 }
     ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn render_transform_and_origin_reach_the_frame_sink_after_layout() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(24).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let style = Css::new()
+        .width(px(40))
+        .height(px(20))
+        .transform(TransformFn::Scale(2.0, 2.0))
+        .transform_origin(Position::Coords(percent(25).into(), percent(50).into()));
+    let root_element = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| render! { view(style: style) });
+        set_root(root);
+        root
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("transformed frame");
+
+    let root = surface.root().expect("surface root");
+    let packet = &renderer.frames()[0].packet;
+    assert!(packet.operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetTransform { node, transform }
+            if *node == root
+                && transform.0 == [
+                    2.0, 0.0, 0.0, 0.0,
+                    0.0, 2.0, 0.0, 0.0,
+                    0.0, 0.0, 1.0, 0.0,
+                    -10.0, -10.0, 0.0, 1.0,
+                ]
+    )));
+
+    let resized = Css::new()
+        .width(px(80))
+        .height(px(20))
+        .transform(TransformFn::Scale(2.0, 2.0))
+        .transform_origin(Position::Coords(percent(25).into(), percent(50).into()));
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(root_element, resized)
+    });
+    surface
+        .drive_layout(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            &mut host,
+            LayoutOptions::default(),
+        )
+        .expect("resized transformed layout");
+    surface
+        .present(1, &mut renderer)
+        .expect("present resized transform")
+        .expect("resized transform delta exists");
+    assert!(
+        renderer.frames()[1]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| matches!(
+                operation,
+                Operation::SetTransform { node, transform }
+                    if *node == root && transform.0[12] == -20.0 && transform.0[13] == -10.0
+            ))
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(root_element, Css::new().width(px(80)).height(px(20)))
+    });
+    surface
+        .drive_layout(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            &mut host,
+            LayoutOptions::default(),
+        )
+        .expect("clear transform");
+    surface
+        .present(1, &mut renderer)
+        .expect("present cleared transform")
+        .expect("cleared transform delta exists");
+    assert!(renderer.frames()[2]
+        .packet
+        .operations
+        .iter()
+        .any(|operation| matches!(
+            operation,
+            Operation::SetTransform { node, transform }
+                if *node == root && *transform == whisker_engine::whisker_protocol::Transform::IDENTITY
+        )));
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 

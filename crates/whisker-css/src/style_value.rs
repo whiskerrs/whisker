@@ -9,15 +9,17 @@ use whisker_style::{
     GridTemplateComponentValue, GridTemplateRepetitionValue, GridTemplateValue,
     GridTrackSizingValue, JustifyContentValue, LengthPercentageAutoValue, LengthPercentageValue,
     LengthUnit, LengthValue, LineHeightValue, PositionValue, SizeValue, StyleNumber, StyleValue,
+    TransformFunctionValue, TransformOriginValue, TransformValue,
 };
 
+use crate::data_type_ext::PositionKeyword;
 use crate::{
     AlignContent, AlignItems, AlignSelf, Angle, BackdropFilter, BoxSizing, CalcExpr, Clear, Color,
     CssString, Direction, Display, FlexBasis, FlexDirection, FlexWrap, Float, FontStyle,
     FontWeight, GridAutoFlow, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
     GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, Integer, JustifyContent, Length,
-    LengthPercentage, LineHeight, MarginValue, Number, Overflow, Percentage, PositionKind, Size,
-    Visibility,
+    LengthPercentage, LineHeight, MarginValue, Number, Overflow, Percentage, Position,
+    PositionKind, Size, Transform, TransformFn, Visibility,
 };
 use whisker_style::{OverflowValue, VisibilityValue};
 
@@ -36,6 +38,24 @@ impl ToStyleValue for BackdropFilter {
         StyleValue::BackdropFilter(match self {
             Self::None => BackdropFilterValue::None,
             Self::Blur(radius) => BackdropFilterValue::Blur(to_length(*radius)),
+        })
+    }
+}
+
+impl ToStyleValue for Transform {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::Transform(TransformValue(
+            self.0.iter().map(to_transform_function).collect(),
+        ))
+    }
+}
+
+impl ToStyleValue for Position {
+    fn to_style_value(&self) -> StyleValue {
+        let (horizontal, vertical) = transform_origin(self);
+        StyleValue::TransformOrigin(TransformOriginValue {
+            horizontal,
+            vertical,
         })
     }
 }
@@ -486,6 +506,112 @@ fn angle_degrees(value: Angle) -> f32 {
         Angle::Deg(value) => value,
         Angle::Rad(value) => value.to_degrees(),
         Angle::Turn(value) => value * 360.0,
+    }
+}
+
+fn to_transform_function(value: &TransformFn) -> TransformFunctionValue {
+    match value {
+        TransformFn::Translate(x, y) => {
+            TransformFunctionValue::Translate(to_length_percentage(x), to_length_percentage(y))
+        }
+        TransformFn::TranslateX(x) => TransformFunctionValue::TranslateX(to_length_percentage(x)),
+        TransformFn::TranslateY(y) => TransformFunctionValue::TranslateY(to_length_percentage(y)),
+        TransformFn::TranslateZ(z) => TransformFunctionValue::TranslateZ(to_length(*z)),
+        TransformFn::Translate3d(x, y, z) => TransformFunctionValue::Translate3d(
+            to_length_percentage(x),
+            to_length_percentage(y),
+            to_length(*z),
+        ),
+        TransformFn::Rotate(angle) => {
+            TransformFunctionValue::Rotate(StyleNumber::new(angle_degrees(*angle)))
+        }
+        TransformFn::RotateX(angle) => {
+            TransformFunctionValue::RotateX(StyleNumber::new(angle_degrees(*angle)))
+        }
+        TransformFn::RotateY(angle) => {
+            TransformFunctionValue::RotateY(StyleNumber::new(angle_degrees(*angle)))
+        }
+        TransformFn::RotateZ(angle) => {
+            TransformFunctionValue::RotateZ(StyleNumber::new(angle_degrees(*angle)))
+        }
+        TransformFn::Scale(x, y) => {
+            TransformFunctionValue::Scale(StyleNumber::new(*x), StyleNumber::new(*y))
+        }
+        TransformFn::ScaleX(x) => TransformFunctionValue::ScaleX(StyleNumber::new(*x)),
+        TransformFn::ScaleY(y) => TransformFunctionValue::ScaleY(StyleNumber::new(*y)),
+        TransformFn::Skew(x, y) => TransformFunctionValue::Skew(
+            StyleNumber::new(angle_degrees(*x)),
+            StyleNumber::new(angle_degrees(*y)),
+        ),
+        TransformFn::SkewX(angle) => {
+            TransformFunctionValue::SkewX(StyleNumber::new(angle_degrees(*angle)))
+        }
+        TransformFn::SkewY(angle) => {
+            TransformFunctionValue::SkewY(StyleNumber::new(angle_degrees(*angle)))
+        }
+        TransformFn::Matrix(matrix) => TransformFunctionValue::Matrix(matrix.map(StyleNumber::new)),
+        TransformFn::Matrix3d(matrix) => {
+            TransformFunctionValue::Matrix3d(matrix.map(StyleNumber::new))
+        }
+    }
+}
+
+fn transform_origin(value: &Position) -> (LengthPercentageValue, LengthPercentageValue) {
+    let center = || LengthPercentageValue::Percentage(StyleNumber::new(50.0));
+    let keyword = |value, horizontal: bool| {
+        let percentage = match (value, horizontal) {
+            (PositionKeyword::Left, true) | (PositionKeyword::Top, false) => 0.0,
+            (PositionKeyword::Right, true) | (PositionKeyword::Bottom, false) => 100.0,
+            (PositionKeyword::Center, _) => 50.0,
+            _ => 50.0,
+        };
+        LengthPercentageValue::Percentage(StyleNumber::new(percentage))
+    };
+    match value {
+        Position::Keyword(PositionKeyword::Left | PositionKeyword::Right) => {
+            (keyword(position_keyword(value), true), center())
+        }
+        Position::Keyword(PositionKeyword::Top | PositionKeyword::Bottom) => {
+            (center(), keyword(position_keyword(value), false))
+        }
+        Position::Keyword(PositionKeyword::Center) => (center(), center()),
+        Position::Keywords(first, second) => match first {
+            PositionKeyword::Top | PositionKeyword::Bottom => {
+                (keyword(*second, true), keyword(*first, false))
+            }
+            PositionKeyword::Left | PositionKeyword::Right => {
+                (keyword(*first, true), keyword(*second, false))
+            }
+            PositionKeyword::Center => match second {
+                PositionKeyword::Top | PositionKeyword::Bottom => {
+                    (center(), keyword(*second, false))
+                }
+                PositionKeyword::Left | PositionKeyword::Right => {
+                    (keyword(*second, true), center())
+                }
+                PositionKeyword::Center => (center(), center()),
+            },
+        },
+        Position::Coords(horizontal, vertical) => (
+            to_length_percentage(horizontal),
+            to_length_percentage(vertical),
+        ),
+        Position::Mixed(axis, offset) => match axis {
+            PositionKeyword::Top | PositionKeyword::Bottom => {
+                (to_length_percentage(offset), keyword(*axis, false))
+            }
+            PositionKeyword::Left | PositionKeyword::Right => {
+                (keyword(*axis, true), to_length_percentage(offset))
+            }
+            PositionKeyword::Center => (center(), to_length_percentage(offset)),
+        },
+    }
+}
+
+fn position_keyword(value: &Position) -> PositionKeyword {
+    match value {
+        Position::Keyword(value) => *value,
+        _ => unreachable!("called only for Position::Keyword"),
     }
 }
 

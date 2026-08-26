@@ -1,6 +1,6 @@
 //! Surface-level orchestration of retained scene and layout state.
 
-use std::{error::Error, fmt};
+use std::{collections::HashMap, error::Error, fmt};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
@@ -8,11 +8,13 @@ use whisker_protocol::{
     LayoutGeometry, MeasurementMetrics, MeasurementReady, MeasurementResponse, MeasurementSpec,
     NodeId, PointerId, PropertyId, ResultId, SurfaceId, TextContent, WhiskerValue,
 };
-use whisker_style::{ComputedLayoutStyle, ComputedStyle, InheritedStyle, PropertyImpactSet};
+use whisker_style::{
+    ComputedLayoutStyle, ComputedStyle, ComputedTransformStyle, InheritedStyle, PropertyImpactSet,
+};
 
 use crate::{
     DeferredMeasurementApply, FrameSink, LayoutProgress, MeasurementApply, MeasurementError,
-    PlainTextInput, Scene, SceneError, SceneNode, lower_paint, lower_plain_text,
+    PlainTextInput, Scene, SceneError, SceneNode, lower_paint, lower_plain_text, lower_transform,
     measurement::MeasurementCoordinator,
 };
 
@@ -59,6 +61,11 @@ pub enum SurfaceError {
         /// Node whose rectangle was invalid.
         node: NodeId,
     },
+    /// A computed transform produced a non-finite matrix after box resolution.
+    InvalidTransformOutput {
+        /// Node whose transform could not be represented.
+        node: NodeId,
+    },
     /// Intrinsic measurement state or a Host response was invalid.
     Measurement(MeasurementError),
 }
@@ -75,7 +82,9 @@ impl Error for SurfaceError {
             Self::Scene(error) => Some(error),
             Self::Layout(error) => Some(error),
             Self::Measurement(error) => Some(error),
-            Self::SceneLayoutMismatch { .. } | Self::InvalidLayoutOutput { .. } => None,
+            Self::SceneLayoutMismatch { .. }
+            | Self::InvalidLayoutOutput { .. }
+            | Self::InvalidTransformOutput { .. } => None,
         }
     }
 }
@@ -141,6 +150,7 @@ pub struct SurfaceEngine {
     last_inputs: Option<LayoutInputs>,
     layout_dirty: bool,
     layout_provisional: bool,
+    transforms: HashMap<NodeId, ComputedTransformStyle>,
     measurements: MeasurementCoordinator,
 }
 
@@ -154,6 +164,7 @@ impl SurfaceEngine {
             last_inputs: None,
             layout_dirty: false,
             layout_provisional: false,
+            transforms: HashMap::new(),
             measurements: MeasurementCoordinator::default(),
         }
     }
@@ -287,6 +298,7 @@ impl SurfaceEngine {
             .remove_subtree(node)
             .expect("scene and layout trees remain structurally synchronized");
         for removed in removed {
+            self.transforms.remove(&removed);
             self.measurements.remove_node(removed);
         }
         self.layout_dirty = true;
@@ -361,6 +373,21 @@ impl SurfaceEngine {
     ) -> Result<PropertyImpactSet, SurfaceError> {
         self.ensure_mutable()?;
         let lowered = lower_paint(style.paint(), style.layout());
+        let transform_changed = self.transforms.get(&node) != Some(&lowered.transform);
+        let projected_transform = self
+            .last_layout
+            .as_ref()
+            .and_then(|layout| layout.get(node))
+            .copied()
+            .map(|geometry| {
+                self.resolve_node_transform(
+                    node,
+                    &lowered.transform,
+                    geometry.border_box.width,
+                    geometry.border_box.height,
+                )
+            })
+            .transpose()?;
         let paint_changed = {
             let current = self
                 .scene
@@ -372,6 +399,7 @@ impl SurfaceEngine {
                 || current.opacity() != Some(lowered.opacity)
                 || current.visibility() != Some(lowered.visibility)
                 || current.z_order() != Some(lowered.z_order)
+                || transform_changed
         };
         let mut impacts = self.update_layout_style(node, style.layout().clone())?;
         self.scene
@@ -392,6 +420,12 @@ impl SurfaceEngine {
         self.scene
             .set_z_order(node, lowered.z_order)
             .expect("the retained scene node was validated above");
+        self.transforms.insert(node, lowered.transform);
+        if let Some(transform) = projected_transform.flatten() {
+            self.scene
+                .set_transform(node, transform)
+                .expect("the transform was validated before retained style mutation");
+        }
         if paint_changed {
             impacts |= PropertyImpactSet::PAINT;
         }
@@ -726,15 +760,58 @@ impl SurfaceEngine {
                     != Some(rect)
             })
             .collect::<Vec<_>>();
-        for (node, rect) in &changed {
+        let transforms = changed
+            .iter()
+            .map(|(node, rect)| {
+                self.transforms
+                    .get(node)
+                    .map(|style| {
+                        self.resolve_node_transform(
+                            *node,
+                            style,
+                            rect.border_box.width,
+                            rect.border_box.height,
+                        )
+                    })
+                    .transpose()
+                    .map(Option::flatten)
+            })
+            .collect::<Result<Vec<_>, SurfaceError>>()?;
+        for ((node, rect), transform) in changed.iter().zip(transforms) {
             self.scene
                 .set_layout(*node, *rect)
                 .expect("validated layout projection must enter a mutable synchronized scene");
+            if let Some(transform) = transform {
+                self.scene
+                    .set_transform(*node, transform)
+                    .expect("the transform was validated before layout projection");
+            }
         }
         self.last_layout = Some(snapshot);
         self.last_inputs = Some(inputs);
         self.layout_dirty = false;
         Ok(LayoutUpdate::computed(changed.len()))
+    }
+
+    fn resolve_node_transform(
+        &self,
+        node: NodeId,
+        style: &ComputedTransformStyle,
+        border_width: f32,
+        border_height: f32,
+    ) -> Result<Option<whisker_protocol::Transform>, SurfaceError> {
+        if style.functions.is_empty()
+            && self
+                .scene
+                .node(node)
+                .and_then(SceneNode::transform)
+                .is_none()
+        {
+            return Ok(None);
+        }
+        let transform = lower_transform(style, border_width, border_height)
+            .ok_or(SurfaceError::InvalidTransformOutput { node })?;
+        Ok(Some(transform))
     }
 
     fn sync_text_presentations(&mut self, nodes: &[NodeId]) {
@@ -803,8 +880,10 @@ mod tests {
         SurfaceId, TextMeasurePayload, TextMeasureStyle, UnsupportedMeasurementReason,
     };
     use whisker_style::{
-        Axes, ComputedLengthPercentage, ComputedSizeValue, PositionValue, SpecifiedStyle,
-        StyleEnvironment, resolve_style,
+        Axes, ComputedLengthPercentage, ComputedSizeValue, ComputedTransformFunction,
+        ComputedTransformStyle, LengthPercentageValue, PositionValue, SpecifiedStyle,
+        StyleEnvironment, StyleNumber, StyleProperty, StyleValue, TransformFunctionValue,
+        TransformValue, resolve_style,
     };
 
     use super::*;
@@ -1007,6 +1086,107 @@ mod tests {
         let delta = present_and_accept(&mut surface, &mut renderer, 2);
         assert_eq!(delta.header.mode, FrameMode::Delta);
         assert_eq!(layout_operation_count(&delta), 2);
+    }
+
+    #[test]
+    fn transform_style_projects_before_and_after_layout_and_rejects_invalid_matrices() {
+        let resolved = |function| {
+            resolve_style(
+                &SpecifiedStyle::new().push(
+                    StyleProperty::Transform,
+                    StyleValue::Transform(TransformValue(vec![function])),
+                ),
+                None,
+                StyleEnvironment::default(),
+            )
+            .unwrap()
+        };
+        let translated = resolved(TransformFunctionValue::TranslateX(
+            LengthPercentageValue::Percentage(StyleNumber::new(50.0)),
+        ));
+        let mut surface = SurfaceEngine::new(surface_id());
+        let root = surface
+            .create_node(element_type(), translated.computed().layout().clone())
+            .unwrap();
+        surface
+            .update_computed_style(root, translated.computed())
+            .unwrap();
+        assert_eq!(surface.node(root).unwrap().transform(), None);
+        surface
+            .compute_layout(root, LayoutSize::new(40.0, 20.0), &mut zero_measure)
+            .unwrap();
+        let projected = surface.node(root).unwrap().transform().unwrap();
+        assert_eq!(projected.0[12], 20.0);
+
+        let rotated = resolved(TransformFunctionValue::Rotate(StyleNumber::new(90.0)));
+        assert!(
+            surface
+                .update_computed_style(root, rotated.computed())
+                .unwrap()
+                .contains(PropertyImpactSet::PAINT)
+        );
+        assert_ne!(surface.node(root).unwrap().transform(), Some(projected));
+
+        let huge = resolved(TransformFunctionValue::Matrix([
+            StyleNumber::new(f32::MAX),
+            StyleNumber::new(0.0),
+            StyleNumber::new(0.0),
+            StyleNumber::new(1.0),
+            StyleNumber::new(0.0),
+            StyleNumber::new(0.0),
+        ]));
+        assert_eq!(
+            surface.update_computed_style(root, huge.computed()),
+            Err(SurfaceError::InvalidTransformOutput { node: root })
+        );
+
+        let mut values = [StyleNumber::new(0.0); 16];
+        values[0] = StyleNumber::new(f32::NAN);
+        let invalid = ComputedTransformStyle {
+            functions: vec![ComputedTransformFunction::Matrix(values)],
+            ..ComputedTransformStyle::default()
+        };
+        assert_eq!(
+            surface.resolve_node_transform(root, &invalid, 40.0, 20.0),
+            Err(SurfaceError::InvalidTransformOutput { node: root })
+        );
+
+        let mut invalid_projection = SurfaceEngine::new(surface_id());
+        let invalid_root = invalid_projection
+            .create_node(element_type(), sized(40.0, 20.0))
+            .unwrap();
+        invalid_projection
+            .transforms
+            .insert(invalid_root, invalid.clone());
+        assert_eq!(
+            invalid_projection.compute_layout(
+                invalid_root,
+                LayoutSize::new(40.0, 20.0),
+                &mut zero_measure,
+            ),
+            Err(SurfaceError::InvalidTransformOutput { node: invalid_root })
+        );
+
+        let mut empty_surface = SurfaceEngine::new(surface_id());
+        let empty = empty_surface
+            .create_node(element_type(), ComputedLayoutStyle::default())
+            .unwrap();
+        assert_eq!(
+            empty_surface
+                .resolve_node_transform(empty, &ComputedTransformStyle::default(), 1.0, 1.0)
+                .unwrap(),
+            None
+        );
+        empty_surface
+            .scene
+            .set_transform(empty, whisker_protocol::Transform::IDENTITY)
+            .unwrap();
+        assert_eq!(
+            empty_surface
+                .resolve_node_transform(empty, &ComputedTransformStyle::default(), 1.0, 1.0)
+                .unwrap(),
+            Some(whisker_protocol::Transform::IDENTITY)
+        );
     }
 
     #[test]
