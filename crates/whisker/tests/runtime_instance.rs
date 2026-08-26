@@ -9,8 +9,8 @@ use std::time::Duration;
 use whisker::css::{
     BackgroundAttachment as CssBackgroundAttachment, BackgroundClip as CssBackgroundClip,
     BackgroundOrigin as CssBackgroundOrigin, BackgroundRepeat as CssBackgroundRepeat,
-    BackgroundSize as CssBackgroundSize, CalcExpr, CssString, ImageRef, LengthPercentage,
-    Percentage,
+    BackgroundSize as CssBackgroundSize, BackgroundSizeAxis as CssBackgroundSizeAxis, CalcExpr,
+    CssString, ImageRef, LengthPercentage, Percentage,
 };
 use whisker::prelude::*;
 use whisker::{
@@ -531,6 +531,54 @@ fn background_url_lowers_remaining_repeat_modes_with_explicit_size() {
         );
         assert_eq!(layer.repeat_x, repeat_x, "{name}");
         assert_eq!(layer.repeat_y, repeat_y, "{name}");
+    }
+}
+
+#[test]
+fn background_url_lowers_intrinsic_cover_contain_and_one_axis_auto_sizes() {
+    let cases = [
+        ("auto", CssBackgroundSize::Auto, BackgroundSize::Auto),
+        ("cover", CssBackgroundSize::Cover, BackgroundSize::Cover),
+        (
+            "contain",
+            CssBackgroundSize::Contain,
+            BackgroundSize::Contain,
+        ),
+        (
+            "width with auto height",
+            CssBackgroundSize::Explicit(px(60).into(), CssBackgroundSizeAxis::Auto),
+            BackgroundSize::Explicit {
+                width: Some(PaintLengthPercentage {
+                    length: 60.0,
+                    fraction: 0.0,
+                }),
+                height: None,
+            },
+        ),
+        (
+            "auto width with height",
+            CssBackgroundSize::Explicit(CssBackgroundSizeAxis::Auto, px(30).into()),
+            BackgroundSize::Explicit {
+                width: None,
+                height: Some(PaintLengthPercentage {
+                    length: 30.0,
+                    fraction: 0.0,
+                }),
+            },
+        ),
+    ];
+
+    for (index, (name, css_size, expected)) in cases.into_iter().enumerate() {
+        let layer = render_ready_background(
+            50 + index as u64,
+            Css::new()
+                .width(px(100))
+                .height(px(80))
+                .background_image(ImageRef::Url(CssString::new(BACKGROUND_URL)))
+                .background_size(css_size)
+                .background_repeat(CssBackgroundRepeat::NoRepeat),
+        );
+        assert_eq!(layer.size, expected, "{name}");
     }
 }
 

@@ -442,8 +442,8 @@ fn background_size(value: ComputedBackgroundSize) -> BackgroundSize {
         ComputedBackgroundSize::Cover => BackgroundSize::Cover,
         ComputedBackgroundSize::Contain => BackgroundSize::Contain,
         ComputedBackgroundSize::Explicit { width, height } => BackgroundSize::Explicit {
-            width: Some(paint_length_percentage(width)),
-            height: Some(paint_length_percentage(height)),
+            width: width.map(paint_length_percentage),
+            height: height.map(paint_length_percentage),
         },
     }
 }

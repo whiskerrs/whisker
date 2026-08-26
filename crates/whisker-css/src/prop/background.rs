@@ -6,6 +6,7 @@ use crate::data_type::{Color, LengthPercentage};
 use crate::data_type_ext::Position;
 use crate::keyword::{
     BackgroundAttachment, BackgroundClip, BackgroundOrigin, BackgroundRepeat, BackgroundSize,
+    BackgroundSizeAxis,
 };
 use crate::style_value::ToStyleValue;
 use crate::value::ImageRef;
@@ -101,13 +102,12 @@ impl Css {
             BackgroundSize::Auto => whisker_style::BackgroundSizeValue::Auto,
             BackgroundSize::Explicit(width, height) => {
                 whisker_style::BackgroundSizeValue::Explicit {
-                    width: length_percentage_value(&width),
-                    height: length_percentage_value(&height),
+                    width: background_size_axis(width),
+                    height: background_size_axis(height),
                 }
             }
-            BackgroundSize::Cover | BackgroundSize::Contain => {
-                return self.push_raw(crate::StyleProperty::BackgroundSize, lynx_value);
-            }
+            BackgroundSize::Cover => whisker_style::BackgroundSizeValue::Cover,
+            BackgroundSize::Contain => whisker_style::BackgroundSizeValue::Contain,
         };
         self.push_semantic(
             crate::StyleProperty::BackgroundSize,
@@ -172,6 +172,13 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/color>
     pub fn color(self, v: Color) -> Self {
         self.push_typed(crate::StyleProperty::Color, v)
+    }
+}
+
+fn background_size_axis(value: BackgroundSizeAxis) -> Option<whisker_style::LengthPercentageValue> {
+    match value {
+        BackgroundSizeAxis::Auto => None,
+        BackgroundSizeAxis::Value(value) => Some(length_percentage_value(&value)),
     }
 }
 
@@ -381,13 +388,23 @@ mod tests {
             )
         ));
 
-        assert_eq!(
+        assert!(matches!(
             Css::new()
                 .background_size(BackgroundSize::Cover)
                 .to_specified_style()
-                .unwrap_err()
-                .property(),
-            "background-size"
+                .unwrap()
+                .resolved()[0]
+                .value(),
+            whisker_style::StyleValue::BackgroundSize(whisker_style::BackgroundSizeValue::Cover)
+        ));
+        assert_eq!(
+            Css::new()
+                .background_size(BackgroundSize::Explicit(
+                    BackgroundSizeAxis::Auto,
+                    px(30).into(),
+                ))
+                .to_string(),
+            "background-size: auto 30px;"
         );
     }
 

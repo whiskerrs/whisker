@@ -45,6 +45,13 @@ enum HostBackgroundBox {
     case content
 }
 
+enum HostBackgroundSize: Equatable {
+    case auto
+    case explicit
+    case cover
+    case contain
+}
+
 struct HostBackgroundGeometry {
     let positionX: WhiskerMobileLengthPercentage
     let positionY: WhiskerMobileLengthPercentage
@@ -54,6 +61,32 @@ struct HostBackgroundGeometry {
     let repeatY: HostBackgroundRepeat
     let origin: HostBackgroundBox
     let clip: HostBackgroundBox
+    let sizeKind: HostBackgroundSize
+    let intrinsicSize: CGSize?
+
+    init(
+        positionX: WhiskerMobileLengthPercentage,
+        positionY: WhiskerMobileLengthPercentage,
+        sizeWidth: WhiskerMobileLengthPercentage?,
+        sizeHeight: WhiskerMobileLengthPercentage?,
+        repeatX: HostBackgroundRepeat,
+        repeatY: HostBackgroundRepeat,
+        origin: HostBackgroundBox,
+        clip: HostBackgroundBox,
+        sizeKind: HostBackgroundSize? = nil,
+        intrinsicSize: CGSize? = nil
+    ) {
+        self.positionX = positionX
+        self.positionY = positionY
+        self.sizeWidth = sizeWidth
+        self.sizeHeight = sizeHeight
+        self.repeatX = repeatX
+        self.repeatY = repeatY
+        self.origin = origin
+        self.clip = clip
+        self.sizeKind = sizeKind ?? (sizeWidth == nil && sizeHeight == nil ? .auto : .explicit)
+        self.intrinsicSize = intrinsicSize
+    }
 
     static let initial = HostBackgroundGeometry(
         positionX: WhiskerMobileLengthPercentage(),
@@ -67,14 +100,14 @@ struct HostBackgroundGeometry {
     )
 
     func imageBounds(in positioningBox: CGRect) -> CGRect {
-        guard let sizeWidth, let sizeHeight else { return positioningBox }
+        let originalSize = resolvedImageSize(in: positioningBox)
         let width = backgroundRoundTileSize(
-            originalTileSize: resolve(sizeWidth, extent: positioningBox.width),
+            originalTileSize: originalSize.width,
             positioningSize: positioningBox.width,
             repeatMode: repeatX
         )
         let height = backgroundRoundTileSize(
-            originalTileSize: resolve(sizeHeight, extent: positioningBox.height),
+            originalTileSize: originalSize.height,
             positioningSize: positioningBox.height,
             repeatMode: repeatY
         )
@@ -86,6 +119,50 @@ struct HostBackgroundGeometry {
             width: width,
             height: height
         )
+    }
+
+    private func resolvedImageSize(in positioningBox: CGRect) -> CGSize {
+        let natural = intrinsicSize.flatMap { size -> CGSize? in
+            guard size.width > 0, size.height > 0,
+                  size.width.isFinite, size.height.isFinite else { return nil }
+            return size
+        }
+        switch sizeKind {
+        case .auto:
+            return natural ?? positioningBox.size
+        case .explicit:
+            switch (sizeWidth, sizeHeight) {
+            case let (width?, height?):
+                return CGSize(
+                    width: resolve(width, extent: positioningBox.width),
+                    height: resolve(height, extent: positioningBox.height)
+                )
+            case let (width?, nil):
+                let resolvedWidth = resolve(width, extent: positioningBox.width)
+                return CGSize(
+                    width: resolvedWidth,
+                    height: natural.map { resolvedWidth * $0.height / $0.width }
+                        ?? positioningBox.height
+                )
+            case let (nil, height?):
+                let resolvedHeight = resolve(height, extent: positioningBox.height)
+                return CGSize(
+                    width: natural.map { resolvedHeight * $0.width / $0.height }
+                        ?? positioningBox.width,
+                    height: resolvedHeight
+                )
+            case (nil, nil):
+                return natural ?? positioningBox.size
+            }
+        case .cover, .contain:
+            guard let natural else { return positioningBox.size }
+            let widthScale = positioningBox.width / natural.width
+            let heightScale = positioningBox.height / natural.height
+            let scale = sizeKind == .cover
+                ? max(widthScale, heightScale)
+                : min(widthScale, heightScale)
+            return CGSize(width: natural.width * scale, height: natural.height * scale)
+        }
     }
 
     func tileRects(in positioningBox: CGRect, covering paintBounds: CGRect) -> [CGRect] {
@@ -195,16 +272,22 @@ final class HostBackgroundPainter {
             1
         )
         let leadingEdgeInset = backgroundLeadingEdgeInset(deviceScale: deviceScale)
+        let needsLeadingEdgeInset = switch layer.image {
+        case .raster: false
+        case .linear, .radial, .conic: true
+        }
         for tile in geometry.tileRects(
             in: positioningBox,
             covering: clipPath.boundingBoxOfPath
         ) {
             var tileClip = tile
-            if geometry.repeatX == .noRepeat && tileClip.minX > positioningBox.minX {
+            if needsLeadingEdgeInset && geometry.repeatX == .noRepeat &&
+                tileClip.minX > positioningBox.minX {
                 tileClip.origin.x += leadingEdgeInset
                 tileClip.size.width = max(0, tileClip.width - leadingEdgeInset)
             }
-            if geometry.repeatY == .noRepeat && tileClip.minY > positioningBox.minY {
+            if needsLeadingEdgeInset && geometry.repeatY == .noRepeat &&
+                tileClip.minY > positioningBox.minY {
                 tileClip.origin.y += leadingEdgeInset
                 tileClip.size.height = max(0, tileClip.height - leadingEdgeInset)
             }

@@ -230,10 +230,10 @@ pub enum BackgroundSizeValue {
     Contain,
     /// Resolve an explicit width and height.
     Explicit {
-        /// Specified image width.
-        width: LengthPercentageValue,
-        /// Specified image height.
-        height: LengthPercentageValue,
+        /// Specified image width, or intrinsic width for `auto`.
+        width: Option<LengthPercentageValue>,
+        /// Specified image height, or intrinsic height for `auto`.
+        height: Option<LengthPercentageValue>,
     },
 }
 

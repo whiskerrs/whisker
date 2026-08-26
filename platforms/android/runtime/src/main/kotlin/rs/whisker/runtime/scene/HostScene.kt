@@ -16,6 +16,7 @@ import rs.whisker.runtime.paint.HostBackgroundLayer
 import rs.whisker.runtime.paint.HostBoxPaint
 import rs.whisker.runtime.paint.HostBackgroundLayers
 import rs.whisker.runtime.paint.HostBackgroundRepeat
+import rs.whisker.runtime.paint.HostBackgroundSize
 import rs.whisker.runtime.paint.HostConicGradient
 import rs.whisker.runtime.paint.HostGradientStop
 import rs.whisker.runtime.paint.HostLinearGradient
@@ -405,16 +406,23 @@ internal class HostScene(
         val geometry = HostBackgroundGeometry(
             positionX = coordinate(0),
             positionY = coordinate(2),
-            sizeWidth = if (numbers[8] == BACKGROUND_SIZE_EXPLICIT.toFloat()) {
+            sizeWidth = if (
+                numbers[8] == BACKGROUND_SIZE_EXPLICIT.toFloat() ||
+                numbers[8] == BACKGROUND_SIZE_WIDTH.toFloat()
+            ) {
                 coordinate(4)
             } else {
                 null
             },
-            sizeHeight = if (numbers[8] == BACKGROUND_SIZE_EXPLICIT.toFloat()) {
+            sizeHeight = if (
+                numbers[8] == BACKGROUND_SIZE_EXPLICIT.toFloat() ||
+                numbers[8] == BACKGROUND_SIZE_HEIGHT.toFloat()
+            ) {
                 coordinate(6)
             } else {
                 null
             },
+            size = backgroundSize(numbers[8]),
             repeatX = backgroundRepeat(numbers[9]),
             repeatY = backgroundRepeat(numbers[10]),
             origin = backgroundBox(numbers[11]),
@@ -422,9 +430,12 @@ internal class HostScene(
         )
         return if (operation.flags == BACKGROUND_RESOURCE) {
             val resourceId = requireNotNull(decodeResourceId(numbers, imageOffset))
+            val bitmap = requireNotNull(rasterResources.resolve(resourceId))
             HostBackgroundLayer(
                 linearGradient = null,
-                rasterBitmap = requireNotNull(rasterResources.resolve(resourceId)),
+                rasterBitmap = bitmap,
+                intrinsicWidth = bitmap.width * density,
+                intrinsicHeight = bitmap.height * density,
                 geometry = geometry,
             )
         } else if (operation.flags == BACKGROUND_RADIAL) {
@@ -548,6 +559,16 @@ internal class HostScene(
             else -> HostBackgroundRepeat.Round
         }
 
+    private fun backgroundSize(value: Float): HostBackgroundSize =
+        when (value) {
+            BACKGROUND_SIZE_EXPLICIT.toFloat() -> HostBackgroundSize.Explicit
+            BACKGROUND_SIZE_COVER.toFloat() -> HostBackgroundSize.Cover
+            BACKGROUND_SIZE_CONTAIN.toFloat() -> HostBackgroundSize.Contain
+            BACKGROUND_SIZE_WIDTH.toFloat() -> HostBackgroundSize.Width
+            BACKGROUND_SIZE_HEIGHT.toFloat() -> HostBackgroundSize.Height
+            else -> HostBackgroundSize.Auto
+        }
+
     private fun backgroundBox(value: Float): HostBackgroundBox =
         when (value) {
             BACKGROUND_BOX_BORDER.toFloat() -> HostBackgroundBox.Border
@@ -608,28 +629,22 @@ internal class HostScene(
         val sizeKind = numbers[8]
         val repeatX = numbers[9]
         val repeatY = numbers[10]
-        val supportedGeometry =
-            (
-                sizeKind == BACKGROUND_SIZE_AUTO.toFloat() &&
-                    repeatX == BACKGROUND_REPEAT.toFloat() &&
-                    repeatY == BACKGROUND_REPEAT.toFloat()
-            ) ||
-                (
-                    sizeKind == BACKGROUND_SIZE_EXPLICIT.toFloat() &&
-                        validBackgroundRepeat(repeatX) &&
-                        validBackgroundRepeat(repeatY)
-                )
-        return supportedGeometry &&
-            (sizeKind == BACKGROUND_SIZE_EXPLICIT.toFloat() || (0..3).all { numbers[it] == 0f }) &&
-            if (sizeKind == BACKGROUND_SIZE_EXPLICIT.toFloat()) {
-                validBackgroundBox(numbers[11]) && validBackgroundBox(numbers[12])
-            } else {
-                numbers[11] == BACKGROUND_BOX_PADDING.toFloat() &&
-                    numbers[12] == BACKGROUND_BOX_BORDER.toFloat()
-            } &&
+        return validBackgroundSize(sizeKind) &&
+            validBackgroundRepeat(repeatX) &&
+            validBackgroundRepeat(repeatY) &&
+            validBackgroundBox(numbers[11]) &&
+            validBackgroundBox(numbers[12]) &&
             numbers[13] == BACKGROUND_ATTACHMENT_SCROLL.toFloat() &&
             numbers[14] == BACKGROUND_BLEND_NORMAL.toFloat()
     }
+
+    private fun validBackgroundSize(value: Float): Boolean =
+        value == BACKGROUND_SIZE_AUTO.toFloat() ||
+            value == BACKGROUND_SIZE_EXPLICIT.toFloat() ||
+            value == BACKGROUND_SIZE_COVER.toFloat() ||
+            value == BACKGROUND_SIZE_CONTAIN.toFloat() ||
+            value == BACKGROUND_SIZE_WIDTH.toFloat() ||
+            value == BACKGROUND_SIZE_HEIGHT.toFloat()
 
     private fun validBackgroundRepeat(value: Float): Boolean =
         value == BACKGROUND_REPEAT.toFloat() ||
@@ -657,6 +672,10 @@ internal class HostScene(
         const val BACKGROUND_RESOURCE = 3
         const val BACKGROUND_SIZE_AUTO = 0
         const val BACKGROUND_SIZE_EXPLICIT = 1
+        const val BACKGROUND_SIZE_COVER = 2
+        const val BACKGROUND_SIZE_CONTAIN = 3
+        const val BACKGROUND_SIZE_WIDTH = 4
+        const val BACKGROUND_SIZE_HEIGHT = 5
         const val BACKGROUND_REPEAT = 0
         const val BACKGROUND_NO_REPEAT = 1
         const val BACKGROUND_SPACE = 2

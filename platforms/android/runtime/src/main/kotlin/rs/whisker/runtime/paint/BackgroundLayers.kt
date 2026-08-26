@@ -54,6 +54,8 @@ internal data class HostBackgroundLayer(
     val radialGradient: HostRadialGradient? = null,
     val conicGradient: HostConicGradient? = null,
     val rasterBitmap: Bitmap? = null,
+    val intrinsicWidth: Float? = null,
+    val intrinsicHeight: Float? = null,
     val geometry: HostBackgroundGeometry = HostBackgroundGeometry(),
 )
 
@@ -84,7 +86,12 @@ private fun drawBackgroundLayer(
         canvas.clipPath(painting.clip)
     }
     try {
-        geometry.forEachImageBox(positioningBox, painting.rect) { imageBox ->
+        geometry.forEachImageBox(
+            positioningBox,
+            painting.rect,
+            layer.intrinsicWidth,
+            layer.intrinsicHeight,
+        ) { imageBox ->
             val tileSaveCount = canvas.save().also { canvas.clipRect(imageBox) }
             try {
                 drawBackgroundImage(canvas, painting.clip, imageBox, layer, paint)

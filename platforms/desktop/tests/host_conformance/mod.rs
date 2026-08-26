@@ -7,12 +7,12 @@ use whisker::{SurfaceRuntime, standard_element_registrations};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
-    BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture, BorderFixture,
-    BorderStyleFixture, ColorFixture, Command, ConicGradientFixture, Host, ImageRepeatFixture,
-    LinearGradientFixture, LoadedCase, OverflowClipFixture, PixelRelationFixture,
-    PixelRelationKind, PixelSampleFixture, PointerEventFixture, RadialGradientFixture,
-    ResourceSourceFixture, ResourceStateFixture, Scenario, ScenarioSide, SceneNodeFixture,
-    VisibilityFixture, load_required,
+    BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture, BackgroundSizeFixture,
+    BackgroundSizeKeywordFixture, BorderFixture, BorderStyleFixture, ColorFixture, Command,
+    ConicGradientFixture, Host, ImageRepeatFixture, LinearGradientFixture, LoadedCase,
+    OverflowClipFixture, PixelRelationFixture, PixelRelationKind, PixelSampleFixture,
+    PointerEventFixture, RadialGradientFixture, ResourceSourceFixture, ResourceStateFixture,
+    Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture, load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
@@ -97,12 +97,23 @@ fn apply_background_geometry(
         x: coordinate(value.position[0]),
         y: coordinate(value.position[1]),
     };
-    layer.size = value
-        .size
-        .map_or(BackgroundSize::Auto, |size| BackgroundSize::Explicit {
+    layer.size = match value.size {
+        BackgroundSizeFixture::ExplicitPair(size) => BackgroundSize::Explicit {
             width: Some(length(size[0])),
             height: Some(length(size[1])),
-        });
+        },
+        BackgroundSizeFixture::ExplicitAxes { width, height } => BackgroundSize::Explicit {
+            width: width.map(length),
+            height: height.map(length),
+        },
+        BackgroundSizeFixture::Keyword(BackgroundSizeKeywordFixture::Auto) => BackgroundSize::Auto,
+        BackgroundSizeFixture::Keyword(BackgroundSizeKeywordFixture::Cover) => {
+            BackgroundSize::Cover
+        }
+        BackgroundSizeFixture::Keyword(BackgroundSizeKeywordFixture::Contain) => {
+            BackgroundSize::Contain
+        }
+    };
     layer.repeat_x = repeat(value.repeat_x);
     layer.repeat_y = repeat(value.repeat_y);
     layer.origin = paint_box(value.origin);
@@ -798,10 +809,16 @@ impl Driver {
                         _ => continue,
                     };
                     let (gradient, resource) = match &layer.image {
-                        PaintImage::Resource(_) => {
-                            let Some((draw, resource)) =
-                                background_resource_draw(positioning_rect, layer, opacity)
-                            else {
+                        PaintImage::Resource(resource) => {
+                            let Some(raster) = self.raster_resources.get(resource) else {
+                                continue;
+                            };
+                            let Some((draw, resource)) = background_resource_draw(
+                                positioning_rect,
+                                layer,
+                                [raster.width as f32, raster.height as f32],
+                                opacity,
+                            ) else {
                                 continue;
                             };
                             (draw, Some(resource))

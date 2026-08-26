@@ -486,23 +486,28 @@ private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> B
           layer.blend_mode == UInt32(WHISKER_BACKGROUND_BLEND_NORMAL) else {
         return false
     }
-    if layer.size_kind == UInt32(WHISKER_BACKGROUND_SIZE_AUTO) {
-        return layer.position_x.isZero && layer.position_y.isZero &&
-            layer.size_width.isZero && layer.size_height.isZero &&
-            layer.repeat_x == UInt32(WHISKER_BACKGROUND_REPEAT) &&
-            layer.repeat_y == UInt32(WHISKER_BACKGROUND_REPEAT) &&
-            layer.origin == UInt32(WHISKER_BACKGROUND_BOX_PADDING) &&
-            layer.clip == UInt32(WHISKER_BACKGROUND_BOX_BORDER)
-    }
     let supportedRepeats = [
         UInt32(WHISKER_BACKGROUND_REPEAT),
         UInt32(WHISKER_BACKGROUND_NO_REPEAT),
         UInt32(WHISKER_BACKGROUND_SPACE),
         UInt32(WHISKER_BACKGROUND_ROUND)
     ]
-    return layer.size_kind == UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT) &&
-        layer.size_width.isNonNegativeFinite && layer.size_height.isNonNegativeFinite &&
-        supportedRepeats.contains(layer.repeat_x) && supportedRepeats.contains(layer.repeat_y) &&
+    let validSize = switch layer.size_kind {
+    case UInt32(WHISKER_BACKGROUND_SIZE_AUTO),
+         UInt32(WHISKER_BACKGROUND_SIZE_COVER),
+         UInt32(WHISKER_BACKGROUND_SIZE_CONTAIN):
+        layer.size_width.isZero && layer.size_height.isZero
+    case UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT):
+        layer.size_width.isNonNegativeFinite && layer.size_height.isNonNegativeFinite
+    case UInt32(WHISKER_BACKGROUND_SIZE_WIDTH):
+        layer.size_width.isNonNegativeFinite && layer.size_height.isZero
+    case UInt32(WHISKER_BACKGROUND_SIZE_HEIGHT):
+        layer.size_width.isZero && layer.size_height.isNonNegativeFinite
+    default:
+        false
+    }
+    return validSize && supportedRepeats.contains(layer.repeat_x) &&
+        supportedRepeats.contains(layer.repeat_y) &&
         [UInt32(WHISKER_BACKGROUND_BOX_BORDER), UInt32(WHISKER_BACKGROUND_BOX_PADDING),
          UInt32(WHISKER_BACKGROUND_BOX_CONTENT)]
             .contains(layer.origin) &&
@@ -512,19 +517,52 @@ private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> B
 }
 
 private func hostBackgroundGeometry(
-    _ layer: WhiskerMobileBackgroundLayer
+    _ layer: WhiskerMobileBackgroundLayer,
+    intrinsicSize: CGSize?
 ) -> HostBackgroundGeometry? {
     guard validBackgroundGeometry(layer) else { return nil }
-    let explicit = layer.size_kind == UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT)
+    let sizeKind: HostBackgroundSize
+    let sizeWidth: WhiskerMobileLengthPercentage?
+    let sizeHeight: WhiskerMobileLengthPercentage?
+    switch layer.size_kind {
+    case UInt32(WHISKER_BACKGROUND_SIZE_AUTO):
+        sizeKind = .auto
+        sizeWidth = nil
+        sizeHeight = nil
+    case UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT):
+        sizeKind = .explicit
+        sizeWidth = layer.size_width
+        sizeHeight = layer.size_height
+    case UInt32(WHISKER_BACKGROUND_SIZE_COVER):
+        sizeKind = .cover
+        sizeWidth = nil
+        sizeHeight = nil
+    case UInt32(WHISKER_BACKGROUND_SIZE_CONTAIN):
+        sizeKind = .contain
+        sizeWidth = nil
+        sizeHeight = nil
+    case UInt32(WHISKER_BACKGROUND_SIZE_WIDTH):
+        sizeKind = .explicit
+        sizeWidth = layer.size_width
+        sizeHeight = nil
+    case UInt32(WHISKER_BACKGROUND_SIZE_HEIGHT):
+        sizeKind = .explicit
+        sizeWidth = nil
+        sizeHeight = layer.size_height
+    default:
+        return nil
+    }
     return HostBackgroundGeometry(
         positionX: layer.position_x,
         positionY: layer.position_y,
-        sizeWidth: explicit ? layer.size_width : nil,
-        sizeHeight: explicit ? layer.size_height : nil,
+        sizeWidth: sizeWidth,
+        sizeHeight: sizeHeight,
         repeatX: hostBackgroundRepeat(layer.repeat_x),
         repeatY: hostBackgroundRepeat(layer.repeat_y),
         origin: hostBackgroundBox(layer.origin),
-        clip: hostBackgroundBox(layer.clip)
+        clip: hostBackgroundBox(layer.clip),
+        sizeKind: sizeKind,
+        intrinsicSize: intrinsicSize
     )
 }
 
@@ -532,14 +570,15 @@ private func hostBackgroundLayer(
     _ layer: WhiskerMobileBackgroundLayer,
     resources: HostResourceStore
 ) -> HostBackgroundLayer? {
-    guard let geometry = hostBackgroundGeometry(layer) else { return nil }
     let image: HostBackgroundImage
+    let intrinsicSize: CGSize?
     switch layer.image.kind {
     case UInt32(WHISKER_BACKGROUND_RESOURCE):
         guard layer.image.payload_count == 1,
               let resource = layer.image.payload?.assumingMemoryBound(to: UInt64.self).pointee,
-              let raster = resources.rasterImage(id: resource) else { return nil }
-        image = .raster(raster)
+              let raster = resources.rasterResource(id: resource) else { return nil }
+        image = .raster(raster.image)
+        intrinsicSize = raster.intrinsicSize
     case UInt32(WHISKER_BACKGROUND_LINEAR):
         guard let payload = layer.image.payload else { return nil }
         image = .linear(HostLinearGradient(
@@ -549,6 +588,7 @@ private func hostBackgroundLayer(
                 count: layer.image.payload_count
             ).map(HostLinearGradientStop.init)
         ))
+        intrinsicSize = nil
     case UInt32(WHISKER_BACKGROUND_RADIAL):
         guard let radial = layer.image.payload?.assumingMemoryBound(
             to: WhiskerMobileRadialGradient.self
@@ -563,6 +603,7 @@ private func hostBackgroundLayer(
                 count: radial.stop_count
             ).map(HostLinearGradientStop.init)
         ))
+        intrinsicSize = nil
     case UInt32(WHISKER_BACKGROUND_CONIC):
         guard let conic = layer.image.payload?.assumingMemoryBound(
             to: WhiskerMobileConicGradient.self
@@ -576,7 +617,11 @@ private func hostBackgroundLayer(
                 count: conic.stop_count
             ).map(HostLinearGradientStop.init)
         ))
+        intrinsicSize = nil
     default:
+        return nil
+    }
+    guard let geometry = hostBackgroundGeometry(layer, intrinsicSize: intrinsicSize) else {
         return nil
     }
     return HostBackgroundLayer(image: image, geometry: geometry)

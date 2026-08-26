@@ -113,10 +113,10 @@ pub enum ComputedBackgroundSize {
     Contain,
     /// Resolve an explicit width and height against the positioning area.
     Explicit {
-        /// Computed image width.
-        width: ComputedLengthPercentage,
-        /// Computed image height.
-        height: ComputedLengthPercentage,
+        /// Computed image width, or intrinsic width for `auto`.
+        width: Option<ComputedLengthPercentage>,
+        /// Computed image height, or intrinsic height for `auto`.
+        height: Option<ComputedLengthPercentage>,
     },
 }
 
@@ -454,16 +454,28 @@ fn resolve_background_size(
         BackgroundSizeValue::Cover => ComputedBackgroundSize::Cover,
         BackgroundSizeValue::Contain => ComputedBackgroundSize::Contain,
         BackgroundSizeValue::Explicit { width, height } => {
-            let width = resolve_affine(width, inherited.font_size(), environment, property)?;
-            let height = resolve_affine(height, inherited.font_size(), environment, property)?;
-            if width.length() < 0.0
-                || width.fraction() < 0.0
-                || height.length() < 0.0
-                || height.fraction() < 0.0
+            let resolve_axis = |value: &Option<_>| {
+                value
+                    .as_ref()
+                    .map(|value| {
+                        resolve_affine(value, inherited.font_size(), environment, property)
+                    })
+                    .transpose()
+            };
+            let width = resolve_axis(width)?;
+            let height = resolve_axis(height)?;
+            if width
+                .into_iter()
+                .chain(height)
+                .any(|value| value.length() < 0.0 || value.fraction() < 0.0)
             {
                 return Err(invalid(property));
             }
-            ComputedBackgroundSize::Explicit { width, height }
+            if width.is_none() && height.is_none() {
+                ComputedBackgroundSize::Auto
+            } else {
+                ComputedBackgroundSize::Explicit { width, height }
+            }
         }
     };
     Ok(size)
@@ -543,8 +555,8 @@ mod tests {
             .push(
                 StyleProperty::BackgroundSize,
                 StyleValue::BackgroundSize(BackgroundSizeValue::Explicit {
-                    width: percentage(50.0),
-                    height: px_length(20.0),
+                    width: Some(percentage(50.0)),
+                    height: Some(px_length(20.0)),
                 }),
             )
             .push(
@@ -645,8 +657,8 @@ mod tests {
         assert_eq!(
             paint.background_layer.size,
             ComputedBackgroundSize::Explicit {
-                width: ComputedLengthPercentage::new(0.0, 0.5),
-                height: ComputedLengthPercentage::new(20.0, 0.0),
+                width: Some(ComputedLengthPercentage::new(0.0, 0.5)),
+                height: Some(ComputedLengthPercentage::new(20.0, 0.0)),
             }
         );
         assert_eq!(
@@ -693,7 +705,17 @@ mod tests {
     }
 
     #[test]
-    fn background_geometry_resolves_keywords_and_reports_axis_errors() {
+    fn background_geometry_resolves_keywords_auto_axes_and_axis_errors() {
+        let resolve_size = |size| {
+            crate::resolve_style(
+                &SpecifiedStyle::new().push(
+                    StyleProperty::BackgroundSize,
+                    StyleValue::BackgroundSize(size),
+                ),
+                None,
+                StyleEnvironment::default(),
+            )
+        };
         for (specified, computed) in [
             (BackgroundSizeValue::Auto, ComputedBackgroundSize::Auto),
             (BackgroundSizeValue::Cover, ComputedBackgroundSize::Cover),
@@ -701,17 +723,43 @@ mod tests {
                 BackgroundSizeValue::Contain,
                 ComputedBackgroundSize::Contain,
             ),
+            (
+                BackgroundSizeValue::Explicit {
+                    width: None,
+                    height: None,
+                },
+                ComputedBackgroundSize::Auto,
+            ),
+            (
+                BackgroundSizeValue::Explicit {
+                    width: Some(px_length(12.0)),
+                    height: None,
+                },
+                ComputedBackgroundSize::Explicit {
+                    width: Some(ComputedLengthPercentage::new(12.0, 0.0)),
+                    height: None,
+                },
+            ),
+            (
+                BackgroundSizeValue::Explicit {
+                    width: None,
+                    height: Some(percentage(25.0)),
+                },
+                ComputedBackgroundSize::Explicit {
+                    width: None,
+                    height: Some(ComputedLengthPercentage::new(0.0, 0.25)),
+                },
+            ),
         ] {
-            let resolved = crate::resolve_style(
-                &SpecifiedStyle::new().push(
-                    StyleProperty::BackgroundSize,
-                    StyleValue::BackgroundSize(specified),
-                ),
-                None,
-                StyleEnvironment::default(),
-            )
-            .unwrap();
-            assert_eq!(resolved.computed().paint().background_layer.size, computed);
+            assert_eq!(
+                resolve_size(specified)
+                    .unwrap()
+                    .computed()
+                    .paint()
+                    .background_layer
+                    .size,
+                computed
+            );
         }
 
         for position in [
@@ -739,22 +787,22 @@ mod tests {
             );
         }
 
-        for (width, height) in [
-            (px_length(f32::NAN), px_length(1.0)),
-            (px_length(1.0), px_length(f32::NAN)),
-            (percentage(-1.0), px_length(1.0)),
-            (px_length(1.0), px_length(-1.0)),
-            (px_length(1.0), percentage(-1.0)),
+        for size in [
+            BackgroundSizeValue::Explicit {
+                width: Some(px_length(f32::NAN)),
+                height: None,
+            },
+            BackgroundSizeValue::Explicit {
+                width: None,
+                height: Some(px_length(f32::NAN)),
+            },
+            BackgroundSizeValue::Explicit {
+                width: None,
+                height: Some(px_length(-1.0)),
+            },
         ] {
             assert_eq!(
-                crate::resolve_style(
-                    &SpecifiedStyle::new().push(
-                        StyleProperty::BackgroundSize,
-                        StyleValue::BackgroundSize(BackgroundSizeValue::Explicit { width, height }),
-                    ),
-                    None,
-                    StyleEnvironment::default(),
-                ),
+                resolve_size(size),
                 Err(StyleResolutionError::InvalidPropertyValue(
                     StyleProperty::BackgroundSize
                 ))
@@ -820,8 +868,8 @@ mod tests {
             (
                 StyleProperty::BackgroundSize,
                 StyleValue::BackgroundSize(BackgroundSizeValue::Explicit {
-                    width: px_length(-1.0),
-                    height: px_length(1.0),
+                    width: Some(px_length(-1.0)),
+                    height: Some(px_length(1.0)),
                 }),
             ),
             (StyleProperty::Opacity, StyleValue::Number(number(f32::NAN))),

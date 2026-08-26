@@ -37,34 +37,19 @@ fn supports_layer(layer: &BackgroundLayer) -> bool {
             .all(|stop| stop.position.is_some_and(|position| position.length == 0.0)),
         _ => false,
     };
-    let initial_geometry = layer.position == Default::default()
-        && layer.size == BackgroundSize::Auto
-        && layer.repeat_x == ImageRepeat::Repeat
-        && layer.repeat_y == ImageRepeat::Repeat;
-    let explicit_geometry = matches!(
-        layer.size,
-        BackgroundSize::Explicit {
-            width: Some(_),
-            height: Some(_),
-        }
-    ) && matches!(
+    let supported_geometry = matches!(
         layer.repeat_x,
         ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space | ImageRepeat::Round
     ) && matches!(
         layer.repeat_y,
         ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space | ImageRepeat::Round
+    ) && matches!(
+        layer.origin,
+        PaintBox::Border | PaintBox::Padding | PaintBox::Content
+    ) && matches!(
+        layer.clip,
+        PaintBox::Border | PaintBox::Padding | PaintBox::Content
     );
-    let supported_geometry =
-        (initial_geometry && layer.origin == PaintBox::Padding && layer.clip == PaintBox::Border)
-            || (explicit_geometry
-                && matches!(
-                    layer.origin,
-                    PaintBox::Border | PaintBox::Padding | PaintBox::Content
-                )
-                && matches!(
-                    layer.clip,
-                    PaintBox::Border | PaintBox::Padding | PaintBox::Content
-                ));
     supported_image
         && supported_geometry
         && layer.attachment == BackgroundAttachment::Scroll
@@ -78,7 +63,7 @@ pub(crate) fn apply(
 ) -> Result<(), WebError> {
     if !supports(layers) {
         return Err(WebError(
-            "DOM Host only implements supported gradients with explicit stops, supported boxes, two-axis auto or explicit size, and supported repeat modes"
+            "DOM Host only implements supported gradients with explicit stops, supported boxes, background sizes, and repeat modes"
                 .into(),
         ));
     }
@@ -270,11 +255,13 @@ fn background_position(layer: &BackgroundLayer) -> String {
 fn background_size(layer: &BackgroundLayer) -> String {
     match layer.size {
         BackgroundSize::Auto => "auto".into(),
-        BackgroundSize::Explicit {
-            width: Some(width),
-            height: Some(height),
-        } => format!("{} {}", length_percentage(width), length_percentage(height)),
-        _ => unreachable!("unsupported background size passed preflight"),
+        BackgroundSize::Cover => "cover".into(),
+        BackgroundSize::Contain => "contain".into(),
+        BackgroundSize::Explicit { width, height } => format!(
+            "{} {}",
+            width.map_or_else(|| "auto".into(), length_percentage),
+            height.map_or_else(|| "auto".into(), length_percentage)
+        ),
     }
 }
 

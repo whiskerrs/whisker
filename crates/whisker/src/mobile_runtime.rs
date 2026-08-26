@@ -1007,40 +1007,34 @@ impl MobileFrameOwned {
                             {
                                 return Err(MobileFrameError);
                             }
-                            let (size_kind, size_width, size_height, repeat_x, repeat_y) =
-                                match (layer.size, layer.repeat_x, layer.repeat_y) {
-                                    (
-                                        BackgroundSize::Auto,
-                                        ImageRepeat::Repeat,
-                                        ImageRepeat::Repeat,
-                                    ) if layer.position == Default::default()
-                                        && layer.origin == PaintBox::Padding
-                                        && layer.clip == PaintBox::Border =>
-                                    {
-                                        (
-                                            BACKGROUND_SIZE_AUTO,
-                                            MobileLengthPercentage::default(),
-                                            MobileLengthPercentage::default(),
-                                            BACKGROUND_REPEAT_REPEAT,
-                                            BACKGROUND_REPEAT_REPEAT,
-                                        )
-                                    }
-                                    (
-                                        BackgroundSize::Explicit {
-                                            width: Some(width),
-                                            height: Some(height),
-                                        },
-                                        repeat_x,
-                                        repeat_y,
-                                    ) => (
-                                        BACKGROUND_SIZE_EXPLICIT,
-                                        mobile_length(width),
-                                        mobile_length(height),
-                                        mobile_background_repeat(repeat_x),
-                                        mobile_background_repeat(repeat_y),
-                                    ),
-                                    _ => return Err(MobileFrameError),
-                                };
+                            let empty = MobileLengthPercentage::default();
+                            let (size_kind, size_width, size_height) = match layer.size {
+                                BackgroundSize::Auto => (BACKGROUND_SIZE_AUTO, empty, empty),
+                                BackgroundSize::Cover => (BACKGROUND_SIZE_COVER, empty, empty),
+                                BackgroundSize::Contain => (BACKGROUND_SIZE_CONTAIN, empty, empty),
+                                BackgroundSize::Explicit {
+                                    width: Some(width),
+                                    height: Some(height),
+                                } => (
+                                    BACKGROUND_SIZE_EXPLICIT,
+                                    mobile_length(width),
+                                    mobile_length(height),
+                                ),
+                                BackgroundSize::Explicit {
+                                    width: Some(width),
+                                    height: None,
+                                } => (BACKGROUND_SIZE_WIDTH, mobile_length(width), empty),
+                                BackgroundSize::Explicit {
+                                    width: None,
+                                    height: Some(height),
+                                } => (BACKGROUND_SIZE_HEIGHT, empty, mobile_length(height)),
+                                BackgroundSize::Explicit {
+                                    width: None,
+                                    height: None,
+                                } => (BACKGROUND_SIZE_AUTO, empty, empty),
+                            };
+                            let repeat_x = mobile_background_repeat(layer.repeat_x);
+                            let repeat_y = mobile_background_repeat(layer.repeat_y);
                             let origin = match layer.origin {
                                 PaintBox::Border => BACKGROUND_BOX_BORDER,
                                 PaintBox::Padding => BACKGROUND_BOX_PADDING,
@@ -1749,5 +1743,66 @@ mod tests {
             unsafe { *layers[2].image.payload.cast::<u64>() },
             resource.get()
         );
+    }
+
+    #[test]
+    fn mobile_frame_preserves_every_intrinsic_background_size_kind() {
+        let mut auto = linear_background("red");
+        auto.position.x.length = 3.0;
+        auto.repeat_x = ImageRepeat::NoRepeat;
+        let mut cover = linear_background("green");
+        cover.size = BackgroundSize::Cover;
+        let mut contain = linear_background("blue");
+        contain.size = BackgroundSize::Contain;
+        let mut width = linear_background("yellow");
+        width.size = BackgroundSize::Explicit {
+            width: Some(PaintLengthPercentage {
+                length: 60.0,
+                fraction: 0.0,
+            }),
+            height: None,
+        };
+        let mut height = linear_background("black");
+        height.size = BackgroundSize::Explicit {
+            width: None,
+            height: Some(PaintLengthPercentage {
+                length: 30.0,
+                fraction: 0.0,
+            }),
+        };
+        let packet = FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![Operation::SetBackgroundLayers {
+                node: NodeId::new(1).unwrap(),
+                layers: vec![auto, cover, contain, width, height],
+            }],
+        };
+
+        let frame = MobileFrameOwned::new(&packet).unwrap();
+        let operation = &frame._operations[0];
+        let layers = unsafe {
+            std::slice::from_raw_parts(
+                operation.payload.cast::<MobileBackgroundLayer>(),
+                operation.payload_count,
+            )
+        };
+        assert_eq!(layers[0].size_kind, BACKGROUND_SIZE_AUTO);
+        assert_eq!(layers[0].position_x.length, 3.0);
+        assert_eq!(layers[0].repeat_x, BACKGROUND_REPEAT_NO_REPEAT);
+        assert_eq!(layers[1].size_kind, BACKGROUND_SIZE_COVER);
+        assert_eq!(layers[2].size_kind, BACKGROUND_SIZE_CONTAIN);
+        assert_eq!(layers[3].size_kind, BACKGROUND_SIZE_WIDTH);
+        assert_eq!(layers[3].size_width.length, 60.0);
+        assert_eq!(layers[4].size_kind, BACKGROUND_SIZE_HEIGHT);
+        assert_eq!(layers[4].size_height.length, 30.0);
     }
 }

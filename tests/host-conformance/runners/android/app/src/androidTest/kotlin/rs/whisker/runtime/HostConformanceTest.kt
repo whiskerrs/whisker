@@ -285,7 +285,13 @@ private class Driver(
                             command.getString("name") ==
                             "paint.background-layers.resource-image" ||
                             command.getString("name") ==
-                            "paint.background-layers.resource-lifecycle",
+                            "paint.background-layers.resource-lifecycle" ||
+                            command.getString("name") ==
+                            "paint.background-layers.intrinsic-auto" ||
+                            command.getString("name") ==
+                            "paint.background-layers.size-contain" ||
+                            command.getString("name") ==
+                            "paint.background-layers.size-cover",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -748,13 +754,13 @@ private class Driver(
 
     private fun backgroundGeometry(geometry: JSONObject?): ArrayList<Float> {
         val position = geometry?.optJSONArray("position")
-        val size = geometry?.optJSONArray("size")
         val numbers = ArrayList<Float>()
         appendLengthPercentage(position?.optJSONObject(0), numbers)
         appendLengthPercentage(position?.optJSONObject(1), numbers)
-        appendLengthPercentage(size?.optJSONObject(0), numbers)
-        appendLengthPercentage(size?.optJSONObject(1), numbers)
-        numbers += if (size == null) 0f else 1f
+        val (sizeKind, sizeWidth, sizeHeight) = backgroundSize(geometry?.opt("size"))
+        appendLengthPercentage(sizeWidth, numbers)
+        appendLengthPercentage(sizeHeight, numbers)
+        numbers += sizeKind.toFloat()
         numbers += backgroundRepeat(geometry?.optString("repeat_x", "repeat") ?: "repeat").toFloat()
         numbers += backgroundRepeat(geometry?.optString("repeat_y", "repeat") ?: "repeat").toFloat()
         numbers += backgroundBox(geometry?.optString("origin", "padding") ?: "padding").toFloat()
@@ -763,6 +769,33 @@ private class Driver(
         numbers += 0f // normal blend mode
         check(numbers.size == 15)
         return numbers
+    }
+
+    private fun backgroundSize(value: Any?): Triple<Int, JSONObject?, JSONObject?> = when (value) {
+        null, JSONObject.NULL -> Triple(0, null, null)
+        is String -> when (value) {
+            "auto" -> Triple(0, null, null)
+            "cover" -> Triple(2, null, null)
+            "contain" -> Triple(3, null, null)
+            else -> error("unsupported background size: $value")
+        }
+        is JSONArray -> {
+            check(value.length() == 2)
+            Triple(1, value.getJSONObject(0), value.getJSONObject(1))
+        }
+        is JSONObject -> {
+            val width = value.opt("width").takeUnless { it == null || it == JSONObject.NULL }
+                as? JSONObject
+            val height = value.opt("height").takeUnless { it == null || it == JSONObject.NULL }
+                as? JSONObject
+            when {
+                width != null && height != null -> Triple(1, width, height)
+                width != null -> Triple(4, width, null)
+                height != null -> Triple(5, null, height)
+                else -> Triple(0, null, null)
+            }
+        }
+        else -> error("unsupported background size: $value")
     }
 
     private fun appendLengthPercentage(value: JSONObject?, numbers: MutableList<Float>) {

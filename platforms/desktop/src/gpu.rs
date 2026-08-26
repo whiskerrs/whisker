@@ -743,6 +743,7 @@ struct BoxGpuPipeline {
 struct GpuImageResource {
     bind_group: wgpu::BindGroup,
     _texture: wgpu::Texture,
+    intrinsic_size: [f32; 2],
 }
 
 #[derive(Clone, Debug)]
@@ -994,6 +995,7 @@ impl BoxGpuPipeline {
         GpuImageResource {
             bind_group,
             _texture: texture,
+            intrinsic_size: [raster.width as f32, raster.height as f32],
         }
     }
 
@@ -1359,61 +1361,79 @@ fn background_axis_geometry(
 fn background_tile_geometry(
     positioning_rect: LayoutRect,
     layer: &whisker_protocol::BackgroundLayer,
+    intrinsic_size: Option<[f32; 2]>,
 ) -> Option<BackgroundTileGeometry> {
-    use whisker_protocol::{BackgroundSize, ImageRepeat};
+    use whisker_protocol::BackgroundSize;
 
-    match layer.size {
-        BackgroundSize::Auto
-            if layer.repeat_x == ImageRepeat::Repeat && layer.repeat_y == ImageRepeat::Repeat =>
-        {
-            Some(BackgroundTileGeometry {
-                rect: positioning_rect,
-                stride: [positioning_rect.width, positioning_rect.height],
-                domain: positioning_rect,
-                flags: 0,
-            })
+    let resolve = |value: whisker_protocol::PaintLengthPercentage, extent: f32| {
+        value.length + value.fraction * extent
+    };
+    let [width, height] = match layer.size {
+        BackgroundSize::Auto => {
+            intrinsic_size.unwrap_or([positioning_rect.width, positioning_rect.height])
         }
-        BackgroundSize::Explicit {
-            width: Some(width),
-            height: Some(height),
-        } => {
-            let width = width.length + width.fraction * positioning_rect.width;
-            let height = height.length + height.fraction * positioning_rect.height;
-            if width <= 0.0 || height <= 0.0 {
+        BackgroundSize::Cover | BackgroundSize::Contain => {
+            let intrinsic = intrinsic_size?;
+            if intrinsic[0] <= 0.0 || intrinsic[1] <= 0.0 {
                 return None;
             }
-            let x = background_axis_geometry(
-                positioning_rect.x,
-                positioning_rect.width,
-                width,
-                layer.position.x,
-                layer.repeat_x,
-                1,
-                4,
-            );
-            let y = background_axis_geometry(
-                positioning_rect.y,
-                positioning_rect.height,
-                height,
-                layer.position.y,
-                layer.repeat_y,
-                2,
-                8,
-            );
-            Some(BackgroundTileGeometry {
-                rect: LayoutRect {
-                    x: x.origin,
-                    y: y.origin,
-                    width: x.tile_size,
-                    height: y.tile_size,
-                },
-                stride: [x.stride, y.stride],
-                domain: positioning_rect,
-                flags: x.flags | y.flags,
-            })
+            let width_scale = positioning_rect.width / intrinsic[0];
+            let height_scale = positioning_rect.height / intrinsic[1];
+            let scale = if layer.size == BackgroundSize::Cover {
+                width_scale.max(height_scale)
+            } else {
+                width_scale.min(height_scale)
+            };
+            [intrinsic[0] * scale, intrinsic[1] * scale]
         }
-        _ => None,
+        BackgroundSize::Explicit { width, height } => {
+            let explicit_width = width.map(|value| resolve(value, positioning_rect.width));
+            let explicit_height = height.map(|value| resolve(value, positioning_rect.height));
+            match (explicit_width, explicit_height, intrinsic_size) {
+                (Some(width), Some(height), _) => [width, height],
+                (Some(width), None, Some(intrinsic)) if intrinsic[0] > 0.0 => {
+                    [width, width * intrinsic[1] / intrinsic[0]]
+                }
+                (None, Some(height), Some(intrinsic)) if intrinsic[1] > 0.0 => {
+                    [height * intrinsic[0] / intrinsic[1], height]
+                }
+                (None, None, Some(intrinsic)) => intrinsic,
+                _ => return None,
+            }
+        }
+    };
+    if width <= 0.0 || height <= 0.0 {
+        return None;
     }
+    let x = background_axis_geometry(
+        positioning_rect.x,
+        positioning_rect.width,
+        width,
+        layer.position.x,
+        layer.repeat_x,
+        1,
+        4,
+    );
+    let y = background_axis_geometry(
+        positioning_rect.y,
+        positioning_rect.height,
+        height,
+        layer.position.y,
+        layer.repeat_y,
+        2,
+        8,
+    );
+    Some(BackgroundTileGeometry {
+        rect: LayoutRect {
+            x: x.origin,
+            y: y.origin,
+            width: x.tile_size,
+            height: y.tile_size,
+        },
+        stride: [x.stride, y.stride],
+        domain: positioning_rect,
+        flags: x.flags | y.flags,
+    })
 }
 
 pub(crate) fn background_gradient_draw(
@@ -1421,7 +1441,7 @@ pub(crate) fn background_gradient_draw(
     layer: &whisker_protocol::BackgroundLayer,
     opacity: f32,
 ) -> Option<LinearGradientDraw> {
-    let tile = background_tile_geometry(positioning_rect, layer)?;
+    let tile = background_tile_geometry(positioning_rect, layer, None)?;
     let mut gradient = match &layer.image {
         PaintImage::LinearGradient {
             angle_degrees,
@@ -1456,12 +1476,13 @@ pub(crate) fn background_gradient_draw(
 pub(crate) fn background_resource_draw(
     positioning_rect: LayoutRect,
     layer: &whisker_protocol::BackgroundLayer,
+    intrinsic_size: [f32; 2],
     opacity: f32,
 ) -> Option<(LinearGradientDraw, ResourceId)> {
     let PaintImage::Resource(resource) = &layer.image else {
         return None;
     };
-    let tile = background_tile_geometry(positioning_rect, layer)?;
+    let tile = background_tile_geometry(positioning_rect, layer, Some(intrinsic_size))?;
     Some((
         LinearGradientDraw {
             start_end: [opacity, 0.0, 0.0, 0.0],
@@ -1670,10 +1691,16 @@ impl GpuRenderer {
                             _ => continue,
                         };
                         let (gradient, resource) = match &layer.image {
-                            PaintImage::Resource(_) => {
-                                let Some((draw, resource)) =
-                                    background_resource_draw(positioning_rect, layer, *opacity)
-                                else {
+                            PaintImage::Resource(resource) => {
+                                let Some(image) = self.image_resources.get(resource) else {
+                                    continue;
+                                };
+                                let Some((draw, resource)) = background_resource_draw(
+                                    positioning_rect,
+                                    layer,
+                                    image.intrinsic_size,
+                                    *opacity,
+                                ) else {
                                     continue;
                                 };
                                 (draw, Some(resource))
@@ -2220,8 +2247,10 @@ mod tests {
     use super::*;
     use glyphon::Color as TextColor;
     use whisker_protocol::{
-        BorderLineStyle, BoxPaint, LayoutRect, PaintColor, PaintCornerRadius, PaintCorners,
-        PaintEdges, PaintLengthPercentage,
+        BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle,
+        BoxPaint, ImageRepeat, LayoutRect, PaintBox, PaintColor, PaintCoordinate,
+        PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage,
+        PaintPosition, ResourceId,
     };
 
     use crate::paint::box_paint::{ResolvedRadii, resolve_box_geometry, resolve_radii};
@@ -2274,6 +2303,107 @@ mod tests {
                 bottom_left: PaintCornerRadius::default(),
             },
         }
+    }
+
+    fn resource_layer(size: BackgroundSize) -> BackgroundLayer {
+        BackgroundLayer {
+            image: PaintImage::Resource(ResourceId::new(1).unwrap()),
+            position: PaintPosition {
+                x: PaintCoordinate {
+                    length: 0.0,
+                    fraction: 0.5,
+                },
+                y: PaintCoordinate {
+                    length: 0.0,
+                    fraction: 0.5,
+                },
+            },
+            size,
+            repeat_x: ImageRepeat::NoRepeat,
+            repeat_y: ImageRepeat::NoRepeat,
+            origin: PaintBox::Padding,
+            clip: PaintBox::Border,
+            attachment: BackgroundAttachment::Scroll,
+            blend_mode: BlendMode::Normal,
+        }
+    }
+
+    #[test]
+    fn intrinsic_background_sizes_preserve_resource_aspect_ratio() {
+        let area = LayoutRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 80.0,
+        };
+        let intrinsic = [4.0, 2.0];
+
+        let auto =
+            background_tile_geometry(area, &resource_layer(BackgroundSize::Auto), Some(intrinsic))
+                .unwrap();
+        assert_eq!(
+            auto.rect,
+            LayoutRect {
+                x: 48.0,
+                y: 39.0,
+                width: 4.0,
+                height: 2.0
+            }
+        );
+
+        let contain = background_tile_geometry(
+            area,
+            &resource_layer(BackgroundSize::Contain),
+            Some(intrinsic),
+        )
+        .unwrap();
+        assert_eq!(
+            contain.rect,
+            LayoutRect {
+                x: 0.0,
+                y: 15.0,
+                width: 100.0,
+                height: 50.0
+            }
+        );
+
+        let cover = background_tile_geometry(
+            area,
+            &resource_layer(BackgroundSize::Cover),
+            Some(intrinsic),
+        )
+        .unwrap();
+        assert_eq!(
+            cover.rect,
+            LayoutRect {
+                x: -30.0,
+                y: 0.0,
+                width: 160.0,
+                height: 80.0
+            }
+        );
+
+        let width = background_tile_geometry(
+            area,
+            &resource_layer(BackgroundSize::Explicit {
+                width: Some(PaintLengthPercentage {
+                    length: 60.0,
+                    fraction: 0.0,
+                }),
+                height: None,
+            }),
+            Some(intrinsic),
+        )
+        .unwrap();
+        assert_eq!(
+            width.rect,
+            LayoutRect {
+                x: 20.0,
+                y: 25.0,
+                width: 60.0,
+                height: 30.0
+            }
+        );
     }
 
     #[test]
