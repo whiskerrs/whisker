@@ -285,6 +285,13 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                         stops = conic->stops;
                         stop_count = conic->stop_count;
                         image_prefix_count = 4;
+                    } else if (layer->image.kind == WHISKER_BACKGROUND_RESOURCE) {
+                        if (layer->image.payload == NULL || layer->image.payload_count != 1) {
+                            ok = false; break;
+                        }
+                        stops = NULL;
+                        stop_count = 0;
+                        image_prefix_count = 4;
                     } else if (layer->image.kind != WHISKER_BACKGROUND_LINEAR) {
                         ok = false; break;
                     }
@@ -318,6 +325,7 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                     const WhiskerMobileGradientStop* stops = layer->image.payload;
                     const WhiskerMobileRadialGradient* radial = NULL;
                     const WhiskerMobileConicGradient* conic = NULL;
+                    const uint64_t* resource = NULL;
                     size_t stop_count = layer->image.payload_count;
                     size_t image_prefix_count = 0;
                     if (layer->image.kind == WHISKER_BACKGROUND_RADIAL) {
@@ -329,6 +337,11 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                         conic = layer->image.payload;
                         stops = conic->stops;
                         stop_count = conic->stop_count;
+                        image_prefix_count = 4;
+                    } else if (layer->image.kind == WHISKER_BACKGROUND_RESOURCE) {
+                        resource = layer->image.payload;
+                        stops = NULL;
+                        stop_count = 0;
                         image_prefix_count = 4;
                     }
                     size_t value_count = geometry_count + image_prefix_count + stop_count * 7;
@@ -366,6 +379,10 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                         for (size_t j = 0; j < 2; ++j) {
                             values[cursor++] = coordinates[j]->length;
                             values[cursor++] = coordinates[j]->fraction;
+                        }
+                    } else if (resource != NULL) {
+                        for (size_t j = 0; j < 4; ++j) {
+                            values[cursor++] = (float)((*resource >> (j * 16)) & UINT64_C(0xffff));
                         }
                     }
                     for (size_t j = 0; j < stop_count; ++j) {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -8,7 +8,8 @@ use whisker_protocol::{
     ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BoxClip,
     BoxPaint, ElementTypeId, FrameMode, FramePacket, ImageRepeat, LayoutGeometry, LayoutRect,
     NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintImage, RadialGradientExtent,
-    SceneProjection, SurfaceId, TextContent, Transform, ValidationError, Visibility, WhiskerValue,
+    ResourceId, SceneProjection, SurfaceId, TextContent, Transform, ValidationError, Visibility,
+    WhiskerValue,
 };
 
 use crate::element::{DesktopElementContent, DesktopElementError, DesktopElementRegistry};
@@ -286,6 +287,7 @@ pub(crate) struct DesktopScene {
     elements: DesktopElementRegistry,
     nodes: HashMap<NodeId, RenderNode>,
     pending_events: Vec<DesktopProviderEvent>,
+    raster_resources: HashSet<ResourceId>,
 }
 
 impl DesktopScene {
@@ -295,7 +297,12 @@ impl DesktopScene {
             elements,
             nodes: HashMap::new(),
             pending_events: Vec::new(),
+            raster_resources: HashSet::new(),
         }
+    }
+
+    pub(crate) fn register_raster_resource(&mut self, resource: ResourceId) {
+        self.raster_resources.insert(resource);
     }
 
     pub(crate) fn take_events(&mut self) -> Vec<DesktopProviderEvent> {
@@ -517,7 +524,15 @@ impl DesktopScene {
                     }
                 }
                 Operation::SetBackgroundLayers { layers, .. } => {
-                    if !layers.iter().all(supports_basic_background_layer) {
+                    if !layers.iter().all(|layer| {
+                        supports_basic_background_layer(layer)
+                            && match &layer.image {
+                                PaintImage::Resource(resource) => {
+                                    self.raster_resources.contains(resource)
+                                }
+                                _ => true,
+                            }
+                    }) {
                         return Err(DesktopPresentError::Unsupported("background-layers"));
                     }
                 }
@@ -797,6 +812,10 @@ impl FrameSink for DesktopScene {
                     capability: whisker_protocol::RenderCapability::BackgroundLayerStacking,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::BackgroundImageResources,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("Desktop capability profile is unique")
@@ -887,7 +906,7 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
         } if stops.iter().all(|stop| {
             stop.position.is_some_and(|position| position.length == 0.0)
         })
-    );
+    ) || matches!(&layer.image, PaintImage::Resource(_));
     let initial_geometry = layer.position == Default::default()
         && layer.size == BackgroundSize::Auto
         && layer.repeat_x == ImageRepeat::Repeat
@@ -1199,6 +1218,55 @@ mod tests {
             ))
         );
         assert!(scene.nodes.is_empty());
+    }
+
+    #[test]
+    fn unregistered_background_resource_rejects_the_whole_frame() {
+        let node = id(1);
+        let mut scene = scene(SurfaceId::new(1).unwrap());
+        let resource = ResourceId::new(u64::MAX).unwrap();
+        let layer = BackgroundLayer {
+            image: PaintImage::Resource(resource),
+            position: Default::default(),
+            size: BackgroundSize::Auto,
+            repeat_x: ImageRepeat::Repeat,
+            repeat_y: ImageRepeat::Repeat,
+            origin: PaintBox::Padding,
+            clip: PaintBox::Border,
+            attachment: BackgroundAttachment::Scroll,
+            blend_mode: BlendMode::Normal,
+        };
+        let frame = packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode {
+                    node,
+                    element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+                },
+                Operation::SetBackgroundLayers {
+                    node,
+                    layers: vec![layer.clone()],
+                },
+            ],
+        );
+
+        assert_eq!(
+            scene.present(&frame),
+            Err(DesktopPresentError::Unsupported("background-layers"))
+        );
+        assert!(scene.nodes.is_empty());
+
+        scene.register_raster_resource(resource);
+        assert_eq!(
+            scene.present(&frame),
+            Ok(ApplyResult::Accepted { revision: 1 })
+        );
+        assert_eq!(
+            scene.nodes[&node].presentation.background_layers,
+            vec![layer]
+        );
     }
 
     #[test]

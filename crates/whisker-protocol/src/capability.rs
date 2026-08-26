@@ -36,11 +36,13 @@ pub enum RenderCapability {
     /// Ordered stacking of multiple otherwise independently supported
     /// background layers.
     BackgroundLayerStacking,
+    /// Resource-backed images used by otherwise supported background layers.
+    BackgroundImageResources,
 }
 
 impl RenderCapability {
     /// Every optional capability in stable declaration order.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::EllipticalBorderRadius,
         Self::BackgroundLayers,
         Self::VisualEffects,
@@ -54,6 +56,7 @@ impl RenderCapability {
         Self::ConicGradients,
         Self::BackgroundGeometry,
         Self::BackgroundLayerStacking,
+        Self::BackgroundImageResources,
     ];
 
     /// Stable diagnostic spelling shared by Host errors and checklists.
@@ -72,6 +75,7 @@ impl RenderCapability {
             Self::ConicGradients => "conic-gradients",
             Self::BackgroundGeometry => "background-geometry",
             Self::BackgroundLayerStacking => "background-layer-stacking",
+            Self::BackgroundImageResources => "background-image-resources",
         }
     }
 
@@ -220,7 +224,7 @@ impl FramePacket {
     }
 }
 
-fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 5] {
+fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6] {
     if let Operation::SetBackgroundLayers { layers, .. } = operation {
         return background_capabilities(layers);
     }
@@ -251,25 +255,28 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 5
         }
         _ => None,
     };
-    [first, second, None, None, None]
+    [first, second, None, None, None, None]
 }
 
-fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderCapability>; 5] {
+fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderCapability>; 6] {
     if layers.is_empty() {
-        return [None; 5];
+        return [None; 6];
     }
     let mut linear = false;
     let mut radial = false;
     let mut conic = false;
+    let mut resource = false;
     let mut geometry = false;
     for layer in layers {
-        match gradient_image_capability(layer) {
+        match background_image_capability(layer) {
             Some(RenderCapability::LinearGradients) => linear = true,
             Some(RenderCapability::RadialGradients) => radial = true,
             Some(RenderCapability::ConicGradients) => conic = true,
+            Some(RenderCapability::BackgroundImageResources) => resource = true,
             _ => {
                 return [
                     Some(RenderCapability::BackgroundLayers),
+                    None,
                     None,
                     None,
                     None,
@@ -285,6 +292,7 @@ fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderC
                     None,
                     None,
                     None,
+                    None,
                 ];
             }
             geometry = true;
@@ -294,12 +302,16 @@ fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderC
         linear.then_some(RenderCapability::LinearGradients),
         radial.then_some(RenderCapability::RadialGradients),
         conic.then_some(RenderCapability::ConicGradients),
+        resource.then_some(RenderCapability::BackgroundImageResources),
         geometry.then_some(RenderCapability::BackgroundGeometry),
         (layers.len() > 1).then_some(RenderCapability::BackgroundLayerStacking),
     ]
 }
 
-fn gradient_image_capability(layer: &crate::BackgroundLayer) -> Option<RenderCapability> {
+fn background_image_capability(layer: &crate::BackgroundLayer) -> Option<RenderCapability> {
+    if matches!(layer.image, crate::PaintImage::Resource(_)) {
+        return Some(RenderCapability::BackgroundImageResources);
+    }
     if matches!(
         &layer.image,
         crate::PaintImage::LinearGradient {
@@ -804,6 +816,7 @@ mod tests {
                 "conic-gradients",
                 "background-geometry",
                 "background-layer-stacking",
+                "background-image-resources",
             ]
         );
 
@@ -936,7 +949,7 @@ mod tests {
                 RenderCapability::TextTypography,
                 RenderCapability::ImageContent,
                 RenderCapability::Cursor,
-                RenderCapability::BackgroundLayers,
+                RenderCapability::BackgroundImageResources,
             ]
         );
         assert_eq!(

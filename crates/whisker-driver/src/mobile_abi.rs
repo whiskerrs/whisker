@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 7;
+pub const MOBILE_ABI_MINOR: u16 = 8;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -49,6 +49,7 @@ pub const OP_BACKGROUND_LAYERS: u32 = 21;
 pub const BACKGROUND_LINEAR: u32 = 0;
 pub const BACKGROUND_RADIAL: u32 = 1;
 pub const BACKGROUND_CONIC: u32 = 2;
+pub const BACKGROUND_RESOURCE: u32 = 3;
 
 pub const BACKGROUND_SIZE_AUTO: u32 = 0;
 pub const BACKGROUND_SIZE_EXPLICIT: u32 = 1;

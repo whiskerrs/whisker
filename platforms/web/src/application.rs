@@ -5,7 +5,7 @@ use wasm_bindgen::closure::Closure;
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::{Element, ElementRegistry, RuntimeInstance, SurfaceRuntime, WhiskerModule};
 use whisker_engine::LayoutOptions;
-use whisker_protocol::{InputEvent, InputEventKind, SurfaceId};
+use whisker_protocol::{InputEvent, InputEventKind, ResourceId, SurfaceId};
 use whisker_style::StyleEnvironment;
 
 use crate::measure::text::DomMeasurementProvider;
@@ -51,6 +51,23 @@ pub fn run(config: WebAppConfig, application: fn() -> Element) -> Result<(), Web
         .add_event_listener_with_callback("resize", resize.as_ref().unchecked_ref())
         .map_err(|error| js_error("register resize listener", error))?;
     resize.forget();
+    request_frame();
+    Ok(())
+}
+
+/// Registers or replaces a browser URL for a ready Host resource.
+///
+/// URL, asset, and byte acquisition remain outside frame transactions. Once
+/// acquisition has completed, the provider calls this entry point before a
+/// frame references the corresponding [`ResourceId`].
+pub fn register_resource_url(resource: ResourceId, url: impl Into<String>) -> Result<(), WebError> {
+    APPLICATION.with(|slot| {
+        let slot = slot.borrow();
+        let application = slot
+            .as_ref()
+            .ok_or_else(|| WebError("a Web application is not mounted".into()))?;
+        application.frames.register_resource_url(resource, url)
+    })?;
     request_frame();
     Ok(())
 }

@@ -1,8 +1,8 @@
 use whisker_engine::FrameSink;
-use whisker_protocol::{ApplyResult, FramePacket, RenderCapabilities, SurfaceId};
+use whisker_protocol::{ApplyResult, FramePacket, RenderCapabilities, ResourceId, SurfaceId};
 
 use crate::element::DesktopElementRegistry;
-use crate::gpu::{GpuError, GpuRenderer};
+use crate::gpu::{GpuError, GpuRenderer, RasterResource};
 use crate::scene::DesktopProviderEvent;
 use crate::scene::{DesktopPresentError, DesktopScene};
 use crate::text::NativeTextHost;
@@ -29,6 +29,15 @@ impl DesktopSurface {
 
     pub(crate) fn resize(&mut self, physical_size: [u32; 2]) {
         self.gpu.resize(physical_size);
+    }
+
+    pub(crate) fn register_raster_resource(
+        &mut self,
+        resource: ResourceId,
+        raster: &RasterResource,
+    ) {
+        self.gpu.register_raster_resource(resource, raster);
+        self.scene.register_raster_resource(resource);
     }
 
     pub(crate) fn paint(

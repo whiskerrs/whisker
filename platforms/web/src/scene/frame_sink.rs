@@ -10,6 +10,7 @@ use whisker_protocol::{
 
 use crate::application::request_frame;
 use crate::scene::element_registry::DomElementRegistry;
+use crate::scene::resource_store::WebResourceStore;
 use crate::{
     WebElementFactory, WebElementFactoryKind, WebError, WebEventEmitter, WebNativeElement,
     WebNativeEvent, WhiskerValue, js_error, paint, px, set_style,
@@ -25,6 +26,7 @@ pub(crate) struct DomFrameSink {
     parents: HashMap<NodeId, NodeId>,
     layouts: HashMap<NodeId, whisker_protocol::LayoutGeometry>,
     box_paints: HashMap<NodeId, whisker_protocol::BoxPaint>,
+    resources: WebResourceStore,
     text_nodes: HashMap<NodeId, web_sys::Element>,
     native_nodes: HashMap<NodeId, Box<dyn WebNativeElement>>,
     event_masks: HashMap<NodeId, Rc<Cell<u64>>>,
@@ -46,6 +48,24 @@ impl DomFrameSink {
         registrations: &[ElementRegistration],
         factories: &[WebElementFactory],
     ) -> Result<Self, WebError> {
+        Self::new_with_resources(
+            document,
+            root,
+            surface,
+            registrations,
+            factories,
+            WebResourceStore::new(),
+        )
+    }
+
+    pub(crate) fn new_with_resources(
+        document: web_sys::Document,
+        root: web_sys::Element,
+        surface: SurfaceId,
+        registrations: &[ElementRegistration],
+        factories: &[WebElementFactory],
+        resources: WebResourceStore,
+    ) -> Result<Self, WebError> {
         Ok(Self {
             document,
             root,
@@ -56,6 +76,7 @@ impl DomFrameSink {
             parents: HashMap::new(),
             layouts: HashMap::new(),
             box_paints: HashMap::new(),
+            resources,
             text_nodes: HashMap::new(),
             native_nodes: HashMap::new(),
             event_masks: HashMap::new(),
@@ -65,6 +86,14 @@ impl DomFrameSink {
 
     pub(crate) fn take_events(&self) -> Vec<WebProviderEvent> {
         self.pending_events.borrow_mut().drain(..).collect()
+    }
+
+    pub(crate) fn register_resource_url(
+        &self,
+        resource: whisker_protocol::ResourceId,
+        url: impl Into<String>,
+    ) -> Result<(), WebError> {
+        self.resources.register_url(resource, url)
     }
 
     fn apply(&mut self, packet: &FramePacket) -> Result<(), WebError> {
@@ -93,6 +122,24 @@ impl DomFrameSink {
         {
             return Err(WebError(format!(
                 "DOM Host does not implement protocol feature {feature}"
+            )));
+        }
+        if let Some(resource) = packet.operations.iter().find_map(|operation| {
+            let Operation::SetBackgroundLayers { layers, .. } = operation else {
+                return None;
+            };
+            layers.iter().find_map(|layer| match &layer.image {
+                whisker_protocol::PaintImage::Resource(resource)
+                    if !self.resources.contains(*resource) =>
+                {
+                    Some(*resource)
+                }
+                _ => None,
+            })
+        }) {
+            return Err(WebError(format!(
+                "DOM Host background resource {} is not registered",
+                resource.get()
             )));
         }
         if packet.header.mode == FrameMode::Snapshot {
@@ -238,7 +285,9 @@ impl DomFrameSink {
                 self.sync_text(*node)?;
             }
             Operation::SetBackgroundLayers { node, layers } => {
-                paint::background_layers::apply(&self.node(*node)?, layers)?;
+                paint::background_layers::apply(&self.node(*node)?, layers, |resource| {
+                    self.resources.url(resource)
+                })?;
             }
             Operation::SetClip { node, clip } => {
                 let element = self.node(*node)?;
@@ -572,6 +621,10 @@ impl FrameSink for DomFrameSink {
                 },
                 whisker_protocol::CapabilityEntry {
                     capability: whisker_protocol::RenderCapability::BackgroundLayerStacking,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::BackgroundImageResources,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
             ],

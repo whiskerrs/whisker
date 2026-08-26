@@ -1,6 +1,7 @@
 package rs.whisker.runtime.scene
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.RectF
 import android.util.Log
 import android.view.View
@@ -21,6 +22,7 @@ import rs.whisker.runtime.paint.HostGradientStop
 import rs.whisker.runtime.paint.HostLinearGradient
 import rs.whisker.runtime.paint.HostPaintCoordinate
 import rs.whisker.runtime.paint.HostRadialGradient
+import rs.whisker.runtime.paint.HostRasterResourceStore
 import rs.whisker.runtime.paint.applyBoxPaint
 import rs.whisker.runtime.paint.parseNamedColor
 import rs.whisker.runtime.paint.rgba
@@ -50,6 +52,7 @@ internal class HostScene(
     private val emitElementEvent: (Long, String, WhiskerValue) -> Unit,
 ) {
     private val nodes = LinkedHashMap<Long, HostNode>()
+    private val rasterResources = HostRasterResourceStore()
     private val parents = HashMap<Long, Long>()
     private var sceneEpoch = 0
     private var revision = 0L
@@ -72,6 +75,9 @@ internal class HostScene(
     }
 
     fun currentRevision(): Long = revision
+
+    fun registerRasterResource(resourceId: Long, bitmap: Bitmap): Boolean =
+        rasterResources.register(resourceId, bitmap)
 
     fun stage(operation: HostSceneOperation): Boolean {
         stagedOperations += operation
@@ -388,9 +394,14 @@ internal class HostScene(
         val stopOffset = imageOffset + when (operation.flags) {
             BACKGROUND_RADIAL -> 8
             BACKGROUND_CONIC -> 4
+            BACKGROUND_RESOURCE -> BACKGROUND_RESOURCE_ID_WORDS
             else -> 0
         }
-        val stops = decodeGradientStops(numbers, stopOffset, names, density)
+        val stops = if (operation.flags == BACKGROUND_RESOURCE) {
+            emptyList()
+        } else {
+            decodeGradientStops(numbers, stopOffset, names, density)
+        }
         fun coordinate(offset: Int) = HostPaintCoordinate(
             length = numbers[offset] * density,
             fraction = numbers[offset + 1],
@@ -413,7 +424,14 @@ internal class HostScene(
             origin = backgroundBox(numbers[11]),
             clip = backgroundBox(numbers[12]),
         )
-        return if (operation.flags == BACKGROUND_RADIAL) {
+        return if (operation.flags == BACKGROUND_RESOURCE) {
+            val resourceId = requireNotNull(decodeResourceId(numbers, imageOffset))
+            HostBackgroundLayer(
+                linearGradient = null,
+                rasterBitmap = requireNotNull(rasterResources.resolve(resourceId)),
+                geometry = geometry,
+            )
+        } else if (operation.flags == BACKGROUND_RADIAL) {
             HostBackgroundLayer(
                 linearGradient = null,
                 radialGradient = HostRadialGradient(
@@ -458,7 +476,7 @@ internal class HostScene(
         val result = ArrayList<HostSceneOperation>(layerCount)
         repeat(layerCount) {
             if (cursor + BACKGROUND_PACKED_LAYER_HEADER_SIZE > packed.size) return null
-            val kind = packedCount(packed[cursor], BACKGROUND_CONIC) ?: return null
+            val kind = packedCount(packed[cursor], BACKGROUND_RESOURCE) ?: return null
             val scalar = packed[cursor + 1]
             val valueCount = packedCount(packed[cursor + 2], packed.size) ?: return null
             cursor += BACKGROUND_PACKED_LAYER_HEADER_SIZE
@@ -468,6 +486,7 @@ internal class HostScene(
             val imagePrefix = when (kind) {
                 BACKGROUND_RADIAL -> 8
                 BACKGROUND_CONIC -> 4
+                BACKGROUND_RESOURCE -> BACKGROUND_RESOURCE_ID_WORDS
                 else -> 0
             }
             val stopValues = valueCount - BACKGROUND_GEOMETRY_PACKED_SIZE - imagePrefix
@@ -490,6 +509,16 @@ internal class HostScene(
         if (!value.isFinite() || value < 0f || value > maximum.toFloat()) return null
         val integer = value.toInt()
         return integer.takeIf { it.toFloat() == value }
+    }
+
+    private fun decodeResourceId(numbers: FloatArray, offset: Int): Long? {
+        if (offset + BACKGROUND_RESOURCE_ID_WORDS > numbers.size) return null
+        var resourceId = 0L
+        repeat(BACKGROUND_RESOURCE_ID_WORDS) { wordIndex ->
+            val word = packedCount(numbers[offset + wordIndex], RESOURCE_ID_WORD_MAX) ?: return null
+            resourceId = resourceId or (word.toLong() shl (wordIndex * RESOURCE_ID_WORD_BITS))
+        }
+        return resourceId.takeIf { it != 0L }
     }
 
     private fun decodeGradientStops(
@@ -547,7 +576,7 @@ internal class HostScene(
 
     private fun validBackgroundLayer(operation: HostSceneOperation): Boolean {
         if (
-            operation.flags !in BACKGROUND_LINEAR..BACKGROUND_CONIC ||
+            operation.flags !in BACKGROUND_LINEAR..BACKGROUND_RESOURCE ||
             !operation.scalar.isFinite()
         ) return false
         val numbers = operation.numbers ?: return false
@@ -558,7 +587,14 @@ internal class HostScene(
         val stopOffset = BACKGROUND_GEOMETRY_PACKED_SIZE + when (operation.flags) {
             BACKGROUND_RADIAL -> 8
             BACKGROUND_CONIC -> 4
+            BACKGROUND_RESOURCE -> BACKGROUND_RESOURCE_ID_WORDS
             else -> 0
+        }
+        if (operation.flags == BACKGROUND_RESOURCE) {
+            return numbers.size == stopOffset && names.isEmpty() &&
+                numbers.indices.all { numbers[it].isFinite() } &&
+                decodeResourceId(numbers, BACKGROUND_GEOMETRY_PACKED_SIZE)
+                    ?.let(rasterResources::resolve) != null
         }
         if (
             numbers.size < stopOffset + 14 || (numbers.size - stopOffset) % 7 != 0 ||
@@ -616,9 +652,13 @@ internal class HostScene(
         const val BACKGROUND_PACKED_LAYER_HEADER_SIZE = 3
         const val BACKGROUND_PACKED_LAYERS = 256
         const val MAX_BACKGROUND_LAYERS = 256
+        const val BACKGROUND_RESOURCE_ID_WORDS = 4
+        const val RESOURCE_ID_WORD_BITS = 16
+        const val RESOURCE_ID_WORD_MAX = 0xffff
         const val BACKGROUND_LINEAR = 0
         const val BACKGROUND_RADIAL = 1
         const val BACKGROUND_CONIC = 2
+        const val BACKGROUND_RESOURCE = 3
         const val BACKGROUND_SIZE_AUTO = 0
         const val BACKGROUND_SIZE_EXPLICIT = 1
         const val BACKGROUND_REPEAT = 0

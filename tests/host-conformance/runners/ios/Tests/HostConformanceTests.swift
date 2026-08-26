@@ -71,7 +71,26 @@ final class HostConformanceTests: XCTestCase {
         )
     }
 
-    func testBackgroundLayerArrayRejectsAnInvalidTrailingLayerTransactionally() {
+    func testBackgroundLayerArrayRejectsAnUnregisteredResourceTransactionally() throws {
+        var pixel: [UInt8] = [0, 0, 255, 255]
+        let context = try XCTUnwrap(CGContext(
+            data: &pixel,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        let raster = try XCTUnwrap(context.makeImage())
+        let view = WhiskerView(frame: .zero)
+        let registration = WhiskerElementRegistration(
+            elementType: 1,
+            name: WhiskerBuiltInElements.viewName,
+            childPolicy: .elements,
+            measurement: .none
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
         var stops = [WhiskerMobileGradientStop(), WhiskerMobileGradientStop()]
         for index in stops.indices {
             stops[index].color.kind = 1
@@ -91,36 +110,46 @@ final class HostConformanceTests: XCTestCase {
             valid.repeat_y = UInt32(WHISKER_BACKGROUND_NO_REPEAT)
             valid.origin = UInt32(WHISKER_BACKGROUND_BOX_BORDER)
             valid.clip = UInt32(WHISKER_BACKGROUND_BOX_BORDER)
-            var invalid = valid
-            invalid.image.kind = UInt32.max
-            var layers = [valid, invalid]
-            layers.withUnsafeMutableBufferPointer { layerBuffer in
-                var operations = [
-                    operation(tag: UInt32(WHISKER_OP_CREATE), node: 1, member: 1),
-                    operation(
-                        tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
-                        node: 1,
-                        payload: UnsafeRawPointer(layerBuffer.baseAddress!),
-                        count: layerBuffer.count
-                    )
-                ]
-                operations.withUnsafeMutableBufferPointer { operationBuffer in
-                    var frame = WhiskerMobileFrame()
-                    frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
-                    frame.abi_minor = UInt16(WHISKER_MOBILE_ABI_MINOR)
-                    frame.protocol_major = 1
-                    frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
-                    frame.surface = 1
-                    frame.scene_epoch = 1
-                    frame.viewport_epoch = 1
-                    frame.frame_id = 1
-                    frame.target_revision = 1
-                    frame.operations = UnsafePointer(operationBuffer.baseAddress!)
-                    frame.operation_count = operationBuffer.count
-                    var response = WhiskerMobileApplyResponse()
-                    let view = WhiskerView(frame: .zero)
-                    XCTAssertTrue(view.applyConformanceFrame(frame, response: &response))
-                    XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_REJECTED))
+            let resourceID = UInt64.max
+            var resourcePayload = resourceID
+            withUnsafePointer(to: &resourcePayload) { resourcePointer in
+                var invalid = valid
+                invalid.image.kind = UInt32(WHISKER_BACKGROUND_RESOURCE)
+                invalid.image.payload = UnsafeRawPointer(resourcePointer)
+                invalid.image.payload_count = 1
+                var layers = [valid, invalid]
+                layers.withUnsafeMutableBufferPointer { layerBuffer in
+                    var operations = [
+                        operation(tag: UInt32(WHISKER_OP_CREATE), node: 1, member: 1),
+                        operation(
+                            tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
+                            node: 1,
+                            payload: UnsafeRawPointer(layerBuffer.baseAddress!),
+                            count: layerBuffer.count
+                        )
+                    ]
+                    operations.withUnsafeMutableBufferPointer { operationBuffer in
+                        var frame = WhiskerMobileFrame()
+                        frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                        frame.abi_minor = UInt16(WHISKER_MOBILE_ABI_MINOR)
+                        frame.protocol_major = 1
+                        frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
+                        frame.surface = 1
+                        frame.scene_epoch = 1
+                        frame.viewport_epoch = 1
+                        frame.frame_id = 1
+                        frame.target_revision = 1
+                        frame.operations = UnsafePointer(operationBuffer.baseAddress!)
+                        frame.operation_count = operationBuffer.count
+                        var response = WhiskerMobileApplyResponse()
+                        XCTAssertTrue(view.applyConformanceFrame(frame, response: &response))
+                        XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_REJECTED))
+                        XCTAssertTrue(
+                            view.registerRasterResource(id: resourceID, image: raster)
+                        )
+                        XCTAssertTrue(view.applyConformanceFrame(frame, response: &response))
+                        XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
+                    }
                 }
             }
         }
@@ -269,6 +298,8 @@ private final class Driver {
                     height: try number(command, "height")
                 )
                 surfaceScale = CGFloat(try number(command, "scale"))
+            case "register_raster_resource":
+                try registerRasterResource(command)
             case "present_box":
                 try present(command)
             case "present_scene":
@@ -292,7 +323,8 @@ private final class Driver {
                     name == "paint.background-layers.repeat-round-position" ||
                     name == "paint.background-layers.origin-content-box" ||
                     name == "paint.background-layers.clip-content-box" ||
-                    name == "paint.background-layers.stacking" else {
+                    name == "paint.background-layers.stacking" ||
+                    name == "paint.background-layers.resource-image" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -308,6 +340,37 @@ private final class Driver {
             }
         }
         return try unwrap(checkpoint, "paint checkpoint")
+    }
+
+    private func registerRasterResource(_ command: [String: Any]) throws {
+        let id = UInt64(try number(command, "id"))
+        let width = Int(try number(command, "width"))
+        let height = Int(try number(command, "height"))
+        let pixels = try objectArray(command, "pixels").map { try color($0) }
+        guard id != 0, width > 0, height > 0, pixels.count == width * height else {
+            throw Failure("invalid raster resource")
+        }
+        var bytes = pixels.flatMap { pixel -> [UInt8] in
+            let alpha = CGFloat(pixel.alpha)
+            return [
+                UInt8((CGFloat(pixel.red) * alpha).rounded()),
+                UInt8((CGFloat(pixel.green) * alpha).rounded()),
+                UInt8((CGFloat(pixel.blue) * alpha).rounded()),
+                UInt8((alpha * 255).rounded())
+            ]
+        }
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ), let image = context.makeImage(), view.registerRasterResource(id: id, image: image) else {
+            throw Failure("register raster resource")
+        }
     }
 
     private func present(_ command: [String: Any]) throws {
@@ -391,14 +454,25 @@ private final class Driver {
             layerRanges.append(start..<stagedLayers.count)
         }
         var gradientStops = [WhiskerMobileGradientStop]()
-        var gradientOffsets = [Int]()
+        var gradientOffsets = [Int?]()
         for layer in stagedLayers {
-            gradientOffsets.append(gradientStops.count)
             switch layer.image {
-            case let .linear(gradient): gradientStops.append(contentsOf: gradient.stops)
-            case let .radial(gradient): gradientStops.append(contentsOf: gradient.stops)
-            case let .conic(gradient): gradientStops.append(contentsOf: gradient.stops)
+            case .resource:
+                gradientOffsets.append(nil)
+            case let .linear(gradient):
+                gradientOffsets.append(gradientStops.count)
+                gradientStops.append(contentsOf: gradient.stops)
+            case let .radial(gradient):
+                gradientOffsets.append(gradientStops.count)
+                gradientStops.append(contentsOf: gradient.stops)
+            case let .conic(gradient):
+                gradientOffsets.append(gradientStops.count)
+                gradientStops.append(contentsOf: gradient.stops)
             }
+        }
+        var resourceIDs = stagedLayers.map { layer -> UInt64 in
+            if case let .resource(id) = layer.image { return id }
+            return 0
         }
         var radialPayloads = [WhiskerMobileRadialGradient](
             repeating: WhiskerMobileRadialGradient(),
@@ -417,7 +491,7 @@ private final class Driver {
                 try transforms.withUnsafeMutableBufferPointer { transformBuffer in
                     try gradientStops.withUnsafeMutableBufferPointer { gradientBuffer in
                         for (index, layer) in stagedLayers.enumerated() {
-                            let offset = gradientOffsets[index]
+                            guard let offset = gradientOffsets[index] else { continue }
                             let stops = UnsafePointer(
                                 gradientBuffer.baseAddress!.advanced(by: offset)
                             )
@@ -449,6 +523,7 @@ private final class Driver {
                         }
                         try radialPayloads.withUnsafeMutableBufferPointer { radialBuffer in
                             try conicPayloads.withUnsafeMutableBufferPointer { conicBuffer in
+                            try resourceIDs.withUnsafeMutableBufferPointer { resourceBuffer in
                             for (index, layer) in stagedLayers.enumerated() {
                                 let offset = gradientOffsets[index]
                                 let geometry = layer.geometry
@@ -472,7 +547,16 @@ private final class Driver {
                                     WHISKER_BACKGROUND_BLEND_NORMAL
                                 )
                                 switch layer.image {
+                                case .resource:
+                                    backgroundPayloads[index].image.kind = UInt32(
+                                        WHISKER_BACKGROUND_RESOURCE
+                                    )
+                                    backgroundPayloads[index].image.payload = UnsafeRawPointer(
+                                        resourceBuffer.baseAddress!.advanced(by: index)
+                                    )
+                                    backgroundPayloads[index].image.payload_count = 1
                                 case let .linear(gradient):
+                                    guard let offset else { throw Failure("missing gradient stops") }
                                     backgroundPayloads[index].image.kind = UInt32(
                                         WHISKER_BACKGROUND_LINEAR
                                     )
@@ -607,6 +691,7 @@ private final class Driver {
                             }
                             }
                             }
+                            }
                         }
                     }
                 }
@@ -678,6 +763,7 @@ private struct ScenePaintLayer {
 }
 
 private enum ScenePaintImage {
+    case resource(UInt64)
     case linear(SceneLinearGradient)
     case radial(SceneRadialGradient)
     case conic(SceneConicGradient)
@@ -831,6 +917,11 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         layer -> ScenePaintLayer in
         let geometry = try layer["geometry"].map { try sceneBackgroundLayer($0) } ?? .initial
         let image = try object(layer, "image")
+        if let resource = image["resource"] as? NSNumber {
+            let id = resource.uint64Value
+            guard id != 0 else { throw Failure("resource id must be non-zero") }
+            return ScenePaintLayer(geometry: geometry, image: .resource(id))
+        }
         if let gradient = image["linear_gradient"] as? [String: Any] {
             return ScenePaintLayer(geometry: geometry, image: .linear(try sceneLinearGradient(gradient)))
         }

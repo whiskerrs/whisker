@@ -23,11 +23,12 @@ mod module_api;
 mod paint;
 mod scene;
 
-pub use application::run;
+pub use application::{register_resource_url, run};
 pub use dom::WebError;
 pub(crate) use dom::{js_error, px, set_style};
 pub(crate) use module_api::WebElementFactoryKind;
 pub use module_api::*;
+pub use scene::resource_store::WebResourceStore;
 
 #[cfg(all(test, target_arch = "wasm32"))]
 #[path = "tests/host_conformance.rs"]

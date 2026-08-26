@@ -50,6 +50,7 @@
     "command": {
       "oneOf": [
         { "$ref": "#/$defs/attachSurface" },
+        { "$ref": "#/$defs/registerRasterResource" },
         { "$ref": "#/$defs/presentBox" },
         { "$ref": "#/$defs/presentScene" },
         { "$ref": "#/$defs/checkpoint" },
@@ -68,6 +69,22 @@
         "width": { "type": "number", "exclusiveMinimum": 0 },
         "height": { "type": "number", "exclusiveMinimum": 0 },
         "scale": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "registerRasterResource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "width", "height", "pixels"],
+      "properties": {
+        "type": { "const": "register_raster_resource" },
+        "id": { "type": "integer", "minimum": 1 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "pixels": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/color" }
+        }
       }
     },
     "presentBox": {
@@ -398,6 +415,12 @@
     },
     "backgroundImage": {
       "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["resource"],
+          "properties": { "resource": { "type": "integer", "minimum": 1 } }
+        },
         {
           "type": "object",
           "additionalProperties": false,

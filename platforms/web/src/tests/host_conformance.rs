@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use wasm_bindgen::Clamped;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
 use whisker::ElementRegistry;
@@ -15,9 +18,11 @@ use whisker_protocol::{
     BoxPaint, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat, LayoutGeometry,
     LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
     PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
-    ProtocolVersion, RadialGradientExtent, RadialGradientShape, SurfaceId, Transform, Visibility,
+    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceId, SurfaceId, Transform,
+    Visibility,
 };
 
+use crate::WebResourceStore;
 use crate::module_api::built_in_element_factories;
 use crate::scene::frame_sink::DomFrameSink;
 
@@ -129,9 +134,80 @@ fn padded_parent_preserves_child_border_box_coordinates() {
     assert_style(&parent_style, "padding", "10px");
 }
 
+#[wasm_bindgen_test]
+fn missing_background_resource_rejects_before_dom_mutation() {
+    let mut driver = Driver::new();
+    driver
+        .sink
+        .present(&packet(
+            1,
+            [0.0, 0.0, 20.0, 20.0],
+            &ColorFixture::Named {
+                value: "red".into(),
+            },
+            None,
+        ))
+        .unwrap();
+    let before = driver.root.inner_html();
+    let node = NodeId::new(1).unwrap();
+    let view = ElementRegistry::standard()
+        .registration_for_builtin(whisker::ElementTag::View)
+        .unwrap()
+        .element_type;
+    let missing = FramePacket {
+        header: FrameHeader {
+            version: ProtocolVersion::CURRENT,
+            surface: SurfaceId::new(1).unwrap(),
+            scene_epoch: 2,
+            frame_id: 2,
+            base_revision: 0,
+            target_revision: 2,
+            viewport_epoch: 1,
+            mode: FrameMode::Snapshot,
+        },
+        operations: vec![
+            Operation::CreateNode {
+                node,
+                element_type: view,
+            },
+            Operation::SetLayout {
+                node,
+                geometry: LayoutRect {
+                    width: 20.0,
+                    height: 20.0,
+                    ..LayoutRect::default()
+                }
+                .into(),
+            },
+            Operation::SetBackgroundLayers {
+                node,
+                layers: vec![BackgroundLayer {
+                    image: PaintImage::Resource(ResourceId::new(99).unwrap()),
+                    position: PaintPosition::default(),
+                    size: BackgroundSize::Auto,
+                    repeat_x: ImageRepeat::Repeat,
+                    repeat_y: ImageRepeat::Repeat,
+                    origin: PaintBox::Padding,
+                    clip: PaintBox::Border,
+                    attachment: BackgroundAttachment::Scroll,
+                    blend_mode: BlendMode::Normal,
+                }],
+            },
+        ],
+    };
+    let error = driver.sink.present(&missing).unwrap_err();
+    assert!(
+        error.to_string().contains("resource 99 is not registered"),
+        "unexpected rejection: {error}"
+    );
+    assert_eq!(driver.root.inner_html(), before);
+}
+
 struct Driver {
     root: web_sys::Element,
     sink: DomFrameSink,
+    resources: WebResourceStore,
+    resource_urls: HashMap<u64, String>,
     expected_box: Option<ExpectedBox>,
     expected_scene: Option<Vec<SceneNodeFixture>>,
 }
@@ -152,17 +228,21 @@ impl Driver {
         document.body().unwrap().append_child(&root).unwrap();
         let surface = SurfaceId::new(1).unwrap();
         let elements = ElementRegistry::standard();
-        let sink = DomFrameSink::new(
+        let resources = WebResourceStore::new();
+        let sink = DomFrameSink::new_with_resources(
             document,
             root.clone(),
             surface,
             elements.registrations(),
             &built_in_element_factories(),
+            resources.clone(),
         )
         .unwrap();
         Self {
             root,
             sink,
+            resources,
+            resource_urls: HashMap::new(),
             expected_box: None,
             expected_scene: None,
         }
@@ -181,6 +261,12 @@ impl Driver {
                     set_style(&self.root, "width", &format!("{width}px"));
                     set_style(&self.root, "height", &format!("{height}px"));
                 }
+                Command::RegisterRasterResource {
+                    id,
+                    width,
+                    height,
+                    pixels,
+                } => self.register_raster_resource(*id, *width, *height, pixels),
                 Command::PresentBox {
                     revision,
                     rect,
@@ -209,8 +295,18 @@ impl Driver {
                             .and_then(|nodes| {
                                 nodes
                                     .iter()
-                                    .any(|node| !node.background_layers.is_empty())
-                                    .then_some("paint.background-layers.stacking")
+                                    .any(|node| {
+                                        node.background_layers.iter().any(|layer| {
+                                            matches!(layer.image, BackgroundImageFixture::Resource(_))
+                                        })
+                                    })
+                                    .then_some("paint.background-layers.resource-image")
+                                    .or_else(|| {
+                                        nodes
+                                            .iter()
+                                            .any(|node| !node.background_layers.is_empty())
+                                            .then_some("paint.background-layers.stacking")
+                                    })
                                     .or_else(|| background_repeat_checkpoint(nodes))
                                     .or_else(|| {
                                         nodes
@@ -312,6 +408,45 @@ impl Driver {
         }
     }
 
+    fn register_raster_resource(
+        &mut self,
+        id: u64,
+        width: u32,
+        height: u32,
+        pixels: &[ColorFixture],
+    ) {
+        let document = web_sys::window().unwrap().document().unwrap();
+        let canvas = document
+            .create_element("canvas")
+            .unwrap()
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap();
+        canvas.set_width(width);
+        canvas.set_height(height);
+        let context = canvas
+            .get_context("2d")
+            .unwrap()
+            .unwrap()
+            .dyn_into::<web_sys::CanvasRenderingContext2d>()
+            .unwrap();
+        let rgba = pixels
+            .iter()
+            .flat_map(fixture_color_rgba)
+            .collect::<Vec<_>>();
+        let image = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
+            Clamped(rgba.as_slice()),
+            width,
+            height,
+        )
+        .unwrap();
+        context.put_image_data(&image, 0.0, 0.0).unwrap();
+        let url = canvas.to_data_url_with_type("image/png").unwrap();
+        self.resources
+            .register_url(ResourceId::new(id).unwrap(), url.clone())
+            .unwrap();
+        self.resource_urls.insert(id, url);
+    }
+
     fn assert_box_is_projected(&self) {
         let expected = self
             .expected_box
@@ -399,7 +534,11 @@ impl Driver {
                 assert_eq!(style.get_property_value("z-index").unwrap(), "");
             }
             if !fixture_node.background_layers.is_empty() {
-                assert_background_layers_are_projected(&style, &fixture_node.background_layers);
+                assert_background_layers_are_projected(
+                    &style,
+                    &fixture_node.background_layers,
+                    &self.resource_urls,
+                );
             } else if let Some(gradient) = &fixture_node.linear_gradient {
                 assert_style(
                     &style,
@@ -619,6 +758,9 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-backgrounds/background-layer-stacking.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-layer-stacking.json"
+        ),
+        "wpt/css/css-backgrounds/background-resource-image.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-resource-image.json"
         ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
@@ -955,6 +1097,17 @@ fn linear_gradient_layer(gradient: &LinearGradientFixture) -> BackgroundLayer {
 
 fn background_paint_layer(layer: &BackgroundPaintLayerFixture) -> BackgroundLayer {
     let image_layer = match &layer.image {
+        BackgroundImageFixture::Resource(id) => BackgroundLayer {
+            image: PaintImage::Resource(ResourceId::new(*id).unwrap()),
+            position: PaintPosition::default(),
+            size: BackgroundSize::Auto,
+            repeat_x: ImageRepeat::Repeat,
+            repeat_y: ImageRepeat::Repeat,
+            origin: PaintBox::Padding,
+            clip: PaintBox::Border,
+            attachment: BackgroundAttachment::Scroll,
+            blend_mode: BlendMode::Normal,
+        },
         BackgroundImageFixture::LinearGradient(gradient) => linear_gradient_layer(gradient),
         BackgroundImageFixture::RadialGradient(gradient) => radial_gradient_layer(gradient),
         BackgroundImageFixture::ConicGradient(gradient) => conic_gradient_layer(gradient),
@@ -1293,6 +1446,33 @@ fn fixture_color_css(value: &ColorFixture) -> String {
     }
 }
 
+fn fixture_color_rgba(value: &ColorFixture) -> [u8; 4] {
+    match value {
+        ColorFixture::Srgba {
+            red,
+            green,
+            blue,
+            alpha,
+        } => [
+            *red,
+            *green,
+            *blue,
+            (*alpha * 255.0).round().clamp(0.0, 255.0) as u8,
+        ],
+        ColorFixture::Named { value } => match value.as_str() {
+            "transparent" => [0, 0, 0, 0],
+            "black" => [0, 0, 0, 255],
+            "white" => [255, 255, 255, 255],
+            "red" => [255, 0, 0, 255],
+            "green" => [0, 128, 0, 255],
+            "blue" => [0, 0, 255, 255],
+            "yellow" => [255, 255, 0, 255],
+            "gray" => [128, 128, 128, 255],
+            name => panic!("raster fixture uses unsupported named color {name}"),
+        },
+    }
+}
+
 fn fixture_color_is_transparent(value: &ColorFixture) -> bool {
     match value {
         ColorFixture::Named { value } => value == "transparent",
@@ -1351,10 +1531,14 @@ fn fixture_conic_gradient_css(gradient: &ConicGradientFixture) -> String {
 fn assert_background_layers_are_projected(
     style: &web_sys::CssStyleDeclaration,
     layers: &[BackgroundPaintLayerFixture],
+    resource_urls: &HashMap<u64, String>,
 ) {
     let images = layers
         .iter()
         .map(|layer| match &layer.image {
+            BackgroundImageFixture::Resource(id) => {
+                format!("url(\"{}\")", resource_urls.get(id).unwrap())
+            }
             BackgroundImageFixture::LinearGradient(gradient) => {
                 fixture_linear_gradient_css(gradient)
             }
@@ -1411,8 +1595,14 @@ fn assert_background_layers_are_projected(
             .collect::<Vec<_>>()
             .join(", "),
     );
-    assert_style(style, "background-attachment", "scroll, scroll");
-    assert_style(style, "background-blend-mode", "normal, normal");
+    let attachments = std::iter::repeat_n("scroll", layers.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let blend_modes = std::iter::repeat_n("normal", layers.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert_style(style, "background-attachment", &attachments);
+    assert_style(style, "background-blend-mode", &blend_modes);
 }
 
 fn assert_background_layer_is_projected(

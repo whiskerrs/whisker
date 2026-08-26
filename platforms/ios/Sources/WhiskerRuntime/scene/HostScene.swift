@@ -4,6 +4,7 @@ import WhiskerModule
 /// Owns the transactional UIKit projection of one Whisker surface.
 final class HostScene {
     private unowned let root: UIView
+    private let resources: HostResourceStore
     private let logicalBounds: () -> CGRect
     private let emitElementEvent: (UInt64, String, WhiskerValue) -> Void
     private var nodes: [UInt64: WhiskerNodeView] = [:]
@@ -17,10 +18,12 @@ final class HostScene {
 
     init(
         root: UIView,
+        resources: HostResourceStore,
         logicalBounds: @escaping () -> CGRect,
         emitElementEvent: @escaping (UInt64, String, WhiskerValue) -> Void
     ) {
         self.root = root
+        self.resources = resources
         self.logicalBounds = logicalBounds
         self.emitElementEvent = emitElementEvent
     }
@@ -151,7 +154,7 @@ final class HostScene {
                     start: pointer,
                     count: operation.payload_count
                 )
-                guard layers.allSatisfy(validBackgroundLayer) else {
+                guard layers.allSatisfy({ validBackgroundLayer($0, resources: resources) }) else {
                     return false
                 }
             case UInt32(WHISKER_OP_OPACITY):
@@ -228,7 +231,7 @@ final class HostScene {
                 to: WhiskerMobileBackgroundLayer.self
             ) else { return false }
             let rawLayers = UnsafeBufferPointer(start: pointer, count: operation.payload_count)
-            let layers = rawLayers.compactMap(hostBackgroundLayer)
+            let layers = rawLayers.compactMap { hostBackgroundLayer($0, resources: resources) }
             guard layers.count == rawLayers.count else { return false }
             node.boxPainter.updateBackgroundLayers(layers)
             node.setNeedsDisplay()
@@ -434,9 +437,17 @@ private func validGradientStops(
     }
 }
 
-private func validBackgroundLayer(_ layer: WhiskerMobileBackgroundLayer) -> Bool {
+private func validBackgroundLayer(
+    _ layer: WhiskerMobileBackgroundLayer,
+    resources: HostResourceStore
+) -> Bool {
     guard validBackgroundGeometry(layer), layer.image.scalar.isFinite else { return false }
     switch layer.image.kind {
+    case UInt32(WHISKER_BACKGROUND_RESOURCE):
+        guard layer.image.payload_count == 1,
+              let resource = layer.image.payload?.assumingMemoryBound(to: UInt64.self).pointee,
+              resource != 0 else { return false }
+        return resources.rasterImage(id: resource) != nil
     case UInt32(WHISKER_BACKGROUND_LINEAR):
         return layer.image.payload.map {
             validGradientStops($0, count: layer.image.payload_count)
@@ -517,10 +528,18 @@ private func hostBackgroundGeometry(
     )
 }
 
-private func hostBackgroundLayer(_ layer: WhiskerMobileBackgroundLayer) -> HostBackgroundLayer? {
+private func hostBackgroundLayer(
+    _ layer: WhiskerMobileBackgroundLayer,
+    resources: HostResourceStore
+) -> HostBackgroundLayer? {
     guard let geometry = hostBackgroundGeometry(layer) else { return nil }
     let image: HostBackgroundImage
     switch layer.image.kind {
+    case UInt32(WHISKER_BACKGROUND_RESOURCE):
+        guard layer.image.payload_count == 1,
+              let resource = layer.image.payload?.assumingMemoryBound(to: UInt64.self).pointee,
+              let raster = resources.rasterImage(id: resource) else { return nil }
+        image = .raster(raster)
     case UInt32(WHISKER_BACKGROUND_LINEAR):
         guard let payload = layer.image.payload else { return nil }
         image = .linear(HostLinearGradient(
