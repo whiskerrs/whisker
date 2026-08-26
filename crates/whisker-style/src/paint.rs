@@ -167,8 +167,8 @@ pub struct ComputedPaintStyle {
     pub background_color: ColorValue,
     /// Ordered Host-independent background image sources, front to back.
     pub background_images: Vec<BackgroundImageValue>,
-    /// Scalar longhands applied to the current background image layer.
-    pub background_layer: ComputedBackgroundLayerStyle,
+    /// Per-layer geometry aligned with `background_images` using CSS list cycling.
+    pub background_layers: Vec<ComputedBackgroundLayerStyle>,
     /// Resolved border colors in physical edge order.
     pub border_colors: Edges<ColorValue>,
     /// Border line styles in physical edge order.
@@ -198,7 +198,7 @@ impl ComputedPaintStyle {
         Self {
             background_color: transparent,
             background_images: Vec::new(),
-            background_layer: ComputedBackgroundLayerStyle::default(),
+            background_layers: vec![ComputedBackgroundLayerStyle::default()],
             border_colors: Edges {
                 top: current_color.clone(),
                 right: current_color.clone(),
@@ -241,6 +241,47 @@ pub(crate) fn resolve_paint_style(
         let property = declaration.property();
         let value = declaration.value();
         match property {
+            StyleProperty::Background => {
+                let StyleValue::Background(value) = value else {
+                    return Err(invalid(property));
+                };
+                paint.background_color = value.color.clone();
+                paint.background_images = value
+                    .layers
+                    .iter()
+                    .map(|layer| layer.image.clone())
+                    .collect();
+                paint.background_layers = value
+                    .layers
+                    .iter()
+                    .map(|layer| {
+                        Ok(ComputedBackgroundLayerStyle {
+                            position: resolve_background_position(
+                                &layer.position,
+                                inherited,
+                                environment,
+                                property,
+                            )?,
+                            size: resolve_background_size(
+                                &layer.size,
+                                inherited,
+                                environment,
+                                property,
+                            )?,
+                            repeat_x: layer.repeat.horizontal,
+                            repeat_y: layer.repeat.vertical,
+                            origin: layer.origin,
+                            clip: layer.clip,
+                            attachment: layer.attachment,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, StyleResolutionError>>()?;
+                if paint.background_layers.is_empty() {
+                    paint
+                        .background_layers
+                        .push(ComputedBackgroundLayerStyle::default());
+                }
+            }
             StyleProperty::BackgroundColor => {
                 paint.background_color = color(value, property)?;
             }
@@ -254,48 +295,66 @@ pub(crate) fn resolve_paint_style(
                 let StyleValue::BackgroundRepeat(value) = value else {
                     return Err(invalid(property));
                 };
-                paint.background_layer.repeat_x = value.horizontal;
-                paint.background_layer.repeat_y = value.vertical;
+                for layer in &mut paint.background_layers {
+                    layer.repeat_x = value.horizontal;
+                    layer.repeat_y = value.vertical;
+                }
             }
             StyleProperty::BackgroundPosition => {
                 let StyleValue::BackgroundPosition(value) = value else {
                     return Err(invalid(property));
                 };
-                paint.background_layer.position =
+                let position =
                     resolve_background_position(value, inherited, environment, property)?;
+                for layer in &mut paint.background_layers {
+                    layer.position = position;
+                }
             }
             StyleProperty::BackgroundPositionX => {
-                paint.background_layer.position.horizontal =
+                let horizontal =
                     resolve_length_percentage(value, inherited, environment, property)?;
+                for layer in &mut paint.background_layers {
+                    layer.position.horizontal = horizontal;
+                }
             }
             StyleProperty::BackgroundPositionY => {
-                paint.background_layer.position.vertical =
-                    resolve_length_percentage(value, inherited, environment, property)?;
+                let vertical = resolve_length_percentage(value, inherited, environment, property)?;
+                for layer in &mut paint.background_layers {
+                    layer.position.vertical = vertical;
+                }
             }
             StyleProperty::BackgroundSize => {
                 let StyleValue::BackgroundSize(value) = value else {
                     return Err(invalid(property));
                 };
-                paint.background_layer.size =
-                    resolve_background_size(value, inherited, environment, property)?;
+                let size = resolve_background_size(value, inherited, environment, property)?;
+                for layer in &mut paint.background_layers {
+                    layer.size = size;
+                }
             }
             StyleProperty::BackgroundOrigin => {
                 let StyleValue::BackgroundBox(value) = value else {
                     return Err(invalid(property));
                 };
-                paint.background_layer.origin = *value;
+                for layer in &mut paint.background_layers {
+                    layer.origin = *value;
+                }
             }
             StyleProperty::BackgroundClip => {
                 let StyleValue::BackgroundBox(value) = value else {
                     return Err(invalid(property));
                 };
-                paint.background_layer.clip = *value;
+                for layer in &mut paint.background_layers {
+                    layer.clip = *value;
+                }
             }
             StyleProperty::BackgroundAttachment => {
                 let StyleValue::BackgroundAttachment(value) = value else {
                     return Err(invalid(property));
                 };
-                paint.background_layer.attachment = *value;
+                for layer in &mut paint.background_layers {
+                    layer.attachment = *value;
+                }
             }
             StyleProperty::BorderTopColor => paint.border_colors.top = color(value, property)?,
             StyleProperty::BorderRightColor => paint.border_colors.right = color(value, property)?,
@@ -538,7 +597,8 @@ fn invalid(property: StyleProperty) -> StyleResolutionError {
 mod tests {
     use super::*;
     use crate::{
-        BackgroundRepeatValue, BorderRadiusValue, LengthPercentageValue, LengthUnit, LengthValue,
+        BackgroundLayerValue, BackgroundRepeatValue, BackgroundValue, BorderRadiusValue,
+        LengthPercentageValue, LengthUnit, LengthValue,
     };
 
     fn number(value: f32) -> StyleNumber {
@@ -701,9 +761,143 @@ mod tests {
             crate::resolve_style(&SpecifiedStyle::new(), None, StyleEnvironment::default())
                 .unwrap();
         assert_eq!(
-            resolved.computed().paint().background_layer,
+            resolved.computed().paint().background_layers[0],
             ComputedBackgroundLayerStyle::default()
         );
+    }
+
+    #[test]
+    fn background_shorthand_resolves_layer_lists_and_empty_initials() {
+        let layer = |url: &str, x: f32, size, repeat_x, origin, clip| BackgroundLayerValue {
+            image: BackgroundImageValue::Url(url.into()),
+            position: BackgroundPositionValue {
+                horizontal: percentage(x),
+                vertical: px_length(4.0),
+            },
+            size,
+            repeat: BackgroundRepeatValue {
+                horizontal: repeat_x,
+                vertical: BackgroundRepeatModeValue::NoRepeat,
+            },
+            origin,
+            clip,
+            attachment: BackgroundAttachmentValue::Scroll,
+        };
+        let color = ColorValue::Named("background".into());
+        let specified = SpecifiedStyle::new()
+            .push(
+                StyleProperty::Background,
+                StyleValue::Background(BackgroundValue {
+                    layers: vec![
+                        layer(
+                            "front",
+                            25.0,
+                            BackgroundSizeValue::Cover,
+                            BackgroundRepeatModeValue::Space,
+                            BackgroundBoxValue::Content,
+                            BackgroundBoxValue::Padding,
+                        ),
+                        layer(
+                            "back",
+                            75.0,
+                            BackgroundSizeValue::Contain,
+                            BackgroundRepeatModeValue::Round,
+                            BackgroundBoxValue::Border,
+                            BackgroundBoxValue::Content,
+                        ),
+                    ],
+                    color: color.clone(),
+                }),
+            )
+            .push(StyleProperty::BackgroundPositionY, px(9.0));
+        let resolved = crate::resolve_style(&specified, None, StyleEnvironment::default()).unwrap();
+        let paint = resolved.computed().paint();
+        assert_eq!(paint.background_color, color);
+        assert_eq!(
+            paint.background_images,
+            vec![
+                BackgroundImageValue::Url("front".into()),
+                BackgroundImageValue::Url("back".into()),
+            ]
+        );
+        assert_eq!(paint.background_layers.len(), 2);
+        assert_eq!(
+            paint.background_layers[0].position.horizontal.fraction(),
+            0.25
+        );
+        assert_eq!(
+            paint.background_layers[1].position.horizontal.fraction(),
+            0.75
+        );
+        assert!(
+            paint
+                .background_layers
+                .iter()
+                .all(|layer| layer.position.vertical.length() == 9.0)
+        );
+        assert_eq!(
+            paint.background_layers[0].size,
+            ComputedBackgroundSize::Cover
+        );
+        assert_eq!(
+            paint.background_layers[1].size,
+            ComputedBackgroundSize::Contain
+        );
+
+        let empty = crate::resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::Background,
+                StyleValue::Background(BackgroundValue {
+                    layers: Vec::new(),
+                    color: ColorValue::Named("empty".into()),
+                }),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert!(empty.computed().paint().background_images.is_empty());
+        assert_eq!(empty.computed().paint().background_layers.len(), 1);
+
+        let mut invalid_position = layer(
+            "invalid-position",
+            0.0,
+            BackgroundSizeValue::Auto,
+            BackgroundRepeatModeValue::Repeat,
+            BackgroundBoxValue::Padding,
+            BackgroundBoxValue::Border,
+        );
+        invalid_position.position.horizontal = px_length(f32::NAN);
+        let mut invalid_size = layer(
+            "invalid-size",
+            0.0,
+            BackgroundSizeValue::Auto,
+            BackgroundRepeatModeValue::Repeat,
+            BackgroundBoxValue::Padding,
+            BackgroundBoxValue::Border,
+        );
+        invalid_size.size = BackgroundSizeValue::Explicit {
+            width: Some(px_length(-1.0)),
+            height: None,
+        };
+        for layer in [invalid_position, invalid_size] {
+            assert_eq!(
+                crate::resolve_style(
+                    &SpecifiedStyle::new().push(
+                        StyleProperty::Background,
+                        StyleValue::Background(BackgroundValue {
+                            layers: vec![layer],
+                            color: ColorValue::Named("invalid".into()),
+                        }),
+                    ),
+                    None,
+                    StyleEnvironment::default(),
+                ),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::Background
+                ))
+            );
+        }
     }
 
     #[test]
@@ -835,28 +1029,34 @@ mod tests {
                 "https://example.com/image.png".into()
             )]
         );
-        assert_eq!(paint.background_layer.position.horizontal.length(), 5.0);
-        assert_eq!(paint.background_layer.position.horizontal.fraction(), 0.0);
-        assert_eq!(paint.background_layer.position.vertical.length(), 10.0);
+        assert_eq!(paint.background_layers[0].position.horizontal.length(), 5.0);
         assert_eq!(
-            paint.background_layer.size,
+            paint.background_layers[0].position.horizontal.fraction(),
+            0.0
+        );
+        assert_eq!(paint.background_layers[0].position.vertical.length(), 10.0);
+        assert_eq!(
+            paint.background_layers[0].size,
             ComputedBackgroundSize::Explicit {
                 width: Some(ComputedLengthPercentage::new(0.0, 0.5)),
                 height: Some(ComputedLengthPercentage::new(20.0, 0.0)),
             }
         );
         assert_eq!(
-            paint.background_layer.repeat_x,
+            paint.background_layers[0].repeat_x,
             BackgroundRepeatModeValue::Space
         );
         assert_eq!(
-            paint.background_layer.repeat_y,
+            paint.background_layers[0].repeat_y,
             BackgroundRepeatModeValue::Round
         );
-        assert_eq!(paint.background_layer.origin, BackgroundBoxValue::Content);
-        assert_eq!(paint.background_layer.clip, BackgroundBoxValue::Padding);
         assert_eq!(
-            paint.background_layer.attachment,
+            paint.background_layers[0].origin,
+            BackgroundBoxValue::Content
+        );
+        assert_eq!(paint.background_layers[0].clip, BackgroundBoxValue::Padding);
+        assert_eq!(
+            paint.background_layers[0].attachment,
             BackgroundAttachmentValue::Scroll
         );
         assert_eq!(paint.border_colors.top, ColorValue::Named("top".into()));
@@ -940,7 +1140,7 @@ mod tests {
                     .unwrap()
                     .computed()
                     .paint()
-                    .background_layer
+                    .background_layers[0]
                     .size,
                 computed
             );
@@ -997,6 +1197,7 @@ mod tests {
     #[test]
     fn invalid_paint_values_are_diagnostic() {
         for property in [
+            StyleProperty::Background,
             StyleProperty::BackgroundColor,
             StyleProperty::BackgroundImage,
             StyleProperty::BackgroundRepeat,

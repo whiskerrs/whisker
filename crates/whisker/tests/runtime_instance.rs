@@ -7,10 +7,11 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use whisker::css::{
-    BackgroundAttachment as CssBackgroundAttachment, BackgroundClip as CssBackgroundClip,
+    Background as CssBackground, BackgroundAttachment as CssBackgroundAttachment,
+    BackgroundClip as CssBackgroundClip, BackgroundLayer as CssBackgroundLayer,
     BackgroundOrigin as CssBackgroundOrigin, BackgroundRepeat as CssBackgroundRepeat,
     BackgroundSize as CssBackgroundSize, BackgroundSizeAxis as CssBackgroundSizeAxis, CalcExpr,
-    CssString, ImageRef, LengthPercentage, Percentage,
+    CssString, ImageRef, LengthPercentage, Percentage, Position,
 };
 use whisker::prelude::*;
 use whisker::{
@@ -477,6 +478,130 @@ fn background_url_lowers_explicit_geometry_repeat_boxes_and_attachment() {
     assert_eq!(layer.origin, PaintBox::Content);
     assert_eq!(layer.clip, PaintBox::Padding);
     assert_eq!(layer.attachment, BackgroundAttachment::Scroll);
+}
+
+#[test]
+fn background_shorthand_preserves_geometry_for_each_url_layer() {
+    let front_url = "https://example.com/front.png";
+    let back_url = "https://example.com/back.png";
+    let style = Css::new().width(px(100)).height(px(100)).background(
+        CssBackground::new()
+            .layer(
+                CssBackgroundLayer::new(ImageRef::Url(CssString::new(front_url)))
+                    .position(Position::Coords(Percentage(25.0).into(), px(8).into()))
+                    .size(CssBackgroundSize::Cover)
+                    .repeat(CssBackgroundRepeat::NoRepeat)
+                    .origin(CssBackgroundOrigin::ContentBox)
+                    .clip(CssBackgroundClip::PaddingBox),
+            )
+            .layer(
+                CssBackgroundLayer::new(ImageRef::Url(CssString::new(back_url)))
+                    .position(Position::Coords(Percentage(75.0).into(), px(12).into()))
+                    .size(CssBackgroundSize::Contain)
+                    .repeat(CssBackgroundRepeat::RepeatY)
+                    .origin(CssBackgroundOrigin::BorderBox)
+                    .clip(CssBackgroundClip::ContentBox),
+            ),
+    );
+    let surface = surface(46);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime
+        .mount(move || render! { view(style: style) })
+        .unwrap();
+
+    let commands = surface.take_resource_commands();
+    assert_eq!(commands.len(), 2);
+    let mut front_resource = None;
+    let mut back_resource = None;
+    for command in &commands {
+        let ResourceCommand::Load(request) = command else {
+            panic!("background URL must produce a load")
+        };
+        match &request.source {
+            ResourceSource::Url(url) if url == front_url => front_resource = Some(request.resource),
+            ResourceSource::Url(url) if url == back_url => back_resource = Some(request.resource),
+            source => panic!("unexpected background source: {source:?}"),
+        }
+        runtime
+            .dispatch_resource_event(&ready_raster(request.resource, request.generation))
+            .unwrap();
+    }
+    let front_resource = front_resource.unwrap();
+    let back_resource = back_resource.unwrap();
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let layers = sink
+        .frames()
+        .iter()
+        .rev()
+        .flat_map(|frame| frame.packet.operations.iter().rev())
+        .find_map(|operation| match operation {
+            Operation::SetBackgroundLayers { layers, .. } if layers.len() == 2 => Some(layers),
+            _ => None,
+        })
+        .expect("both ready layers must be emitted together");
+
+    assert_eq!(layers[0].image, PaintImage::Resource(front_resource));
+    assert_eq!(
+        layers[0].position.x,
+        PaintCoordinate {
+            length: 0.0,
+            fraction: 0.25
+        }
+    );
+    assert_eq!(
+        layers[0].position.y,
+        PaintCoordinate {
+            length: 8.0,
+            fraction: 0.0
+        }
+    );
+    assert_eq!(layers[0].size, BackgroundSize::Cover);
+    assert_eq!(
+        (layers[0].repeat_x, layers[0].repeat_y),
+        (ImageRepeat::NoRepeat, ImageRepeat::NoRepeat)
+    );
+    assert_eq!(
+        (layers[0].origin, layers[0].clip),
+        (PaintBox::Content, PaintBox::Padding)
+    );
+
+    assert_eq!(layers[1].image, PaintImage::Resource(back_resource));
+    assert_eq!(
+        layers[1].position.x,
+        PaintCoordinate {
+            length: 0.0,
+            fraction: 0.75
+        }
+    );
+    assert_eq!(
+        layers[1].position.y,
+        PaintCoordinate {
+            length: 12.0,
+            fraction: 0.0
+        }
+    );
+    assert_eq!(layers[1].size, BackgroundSize::Contain);
+    assert_eq!(
+        (layers[1].repeat_x, layers[1].repeat_y),
+        (ImageRepeat::NoRepeat, ImageRepeat::Repeat)
+    );
+    assert_eq!(
+        (layers[1].origin, layers[1].clip),
+        (PaintBox::Border, PaintBox::Content)
+    );
 }
 
 #[test]

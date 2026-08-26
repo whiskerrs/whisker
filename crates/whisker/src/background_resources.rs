@@ -94,7 +94,7 @@ pub(super) struct BackgroundResourceManager {
     entries: HashMap<ResourceId, ResourceEntry>,
     owned_ids: HashSet<ResourceId>,
     node_images: HashMap<NodeId, Vec<DesiredImage>>,
-    node_layer_styles: HashMap<NodeId, ComputedBackgroundLayerStyle>,
+    node_layer_styles: HashMap<NodeId, Vec<ComputedBackgroundLayerStyle>>,
     dirty_nodes: HashSet<NodeId>,
 }
 
@@ -121,7 +121,7 @@ impl BackgroundResourceManager {
         &mut self,
         node: NodeId,
         images: &[BackgroundImageValue],
-        layer_style: ComputedBackgroundLayerStyle,
+        layer_styles: &[ComputedBackgroundLayerStyle],
         externally_used: &HashSet<ResourceId>,
     ) -> Result<ReconcileResult, BackgroundResourceError> {
         let desired = images
@@ -157,7 +157,14 @@ impl BackgroundResourceManager {
         }
 
         self.node_images.insert(node, desired);
-        self.node_layer_styles.insert(node, layer_style);
+        self.node_layer_styles.insert(
+            node,
+            if layer_styles.is_empty() {
+                vec![ComputedBackgroundLayerStyle::default()]
+            } else {
+                layer_styles.to_vec()
+            },
+        );
         self.refresh_projected_node(node);
 
         for key in previous_keys.difference(&desired_keys) {
@@ -380,12 +387,14 @@ impl BackgroundResourceManager {
             .get(&node)
             .into_iter()
             .flatten()
-            .filter_map(|image| match image {
+            .enumerate()
+            .filter_map(|(index, image)| match image {
                 DesiredImage::None => None,
                 DesiredImage::Resource(key) => {
                     let resource = self.resources_by_key[key];
+                    let styles = &self.node_layer_styles[&node];
                     (self.entries[&resource].phase == ResourcePhase::Ready)
-                        .then(|| initial_resource_layer(resource, self.node_layer_styles[&node]))
+                        .then(|| initial_resource_layer(resource, styles[index % styles.len()]))
                 }
             })
             .collect()
@@ -499,7 +508,7 @@ mod tests {
             .reconcile_node(
                 node(1),
                 &[url("https://example.test/a.png")],
-                ComputedBackgroundLayerStyle::default(),
+                &[ComputedBackgroundLayerStyle::default()],
                 &HashSet::new(),
             )
             .unwrap();
@@ -511,7 +520,7 @@ mod tests {
             .reconcile_node(
                 node(2),
                 &[url("https://example.test/a.png")],
-                ComputedBackgroundLayerStyle::default(),
+                &[ComputedBackgroundLayerStyle::default()],
                 &HashSet::new(),
             )
             .unwrap();
@@ -536,7 +545,7 @@ mod tests {
             .reconcile_node(
                 node(1),
                 &[url("same")],
-                ComputedBackgroundLayerStyle::default(),
+                &[ComputedBackgroundLayerStyle::default()],
                 &HashSet::new(),
             )
             .unwrap();
@@ -554,7 +563,7 @@ mod tests {
             .reconcile_node(
                 node(1),
                 &[],
-                ComputedBackgroundLayerStyle::default(),
+                &[ComputedBackgroundLayerStyle::default()],
                 &HashSet::new(),
             )
             .unwrap();
@@ -563,7 +572,7 @@ mod tests {
             .reconcile_node(
                 node(1),
                 &[url("same")],
-                ComputedBackgroundLayerStyle::default(),
+                &[ComputedBackgroundLayerStyle::default()],
                 &HashSet::new(),
             )
             .unwrap();
@@ -579,7 +588,7 @@ mod tests {
             .reconcile_node(
                 node(1),
                 &[url("same")],
-                ComputedBackgroundLayerStyle::default(),
+                &[ComputedBackgroundLayerStyle::default()],
                 &HashSet::new(),
             )
             .unwrap();
@@ -588,7 +597,7 @@ mod tests {
             .reconcile_node(
                 node(1),
                 &[],
-                ComputedBackgroundLayerStyle::default(),
+                &[ComputedBackgroundLayerStyle::default()],
                 &HashSet::new(),
             )
             .unwrap();
@@ -603,7 +612,7 @@ mod tests {
             .reconcile_node(
                 node(1),
                 &[url("same")],
-                ComputedBackgroundLayerStyle::default(),
+                &[ComputedBackgroundLayerStyle::default()],
                 &HashSet::new(),
             )
             .unwrap();

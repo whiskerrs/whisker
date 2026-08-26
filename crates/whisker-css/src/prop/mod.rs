@@ -7,7 +7,7 @@
 //! corresponding `lynxjs.org/api/css/properties/<name>` page.
 
 mod animation;
-mod background;
+pub(crate) mod background;
 mod border;
 mod box_model;
 mod display;

@@ -259,6 +259,34 @@ pub enum BackgroundAttachmentValue {
     Local,
 }
 
+/// One fully expanded background layer before environment resolution.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BackgroundLayerValue {
+    /// Image source painted by this layer.
+    pub image: BackgroundImageValue,
+    /// Position within the selected origin box.
+    pub position: BackgroundPositionValue,
+    /// Image sizing behavior.
+    pub size: BackgroundSizeValue,
+    /// Two-axis tiling behavior.
+    pub repeat: BackgroundRepeatValue,
+    /// Box defining the positioning area.
+    pub origin: BackgroundBoxValue,
+    /// Box clipping background paint.
+    pub clip: BackgroundBoxValue,
+    /// Relationship to scrolling.
+    pub attachment: BackgroundAttachmentValue,
+}
+
+/// Expanded semantic value of the `background` shorthand.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BackgroundValue {
+    /// Ordered image layers, front to back.
+    pub layers: Vec<BackgroundLayerValue>,
+    /// The shorthand's resolved specified color, including transparent default.
+    pub color: ColorValue,
+}
+
 /// An owned value in a specified inline-style declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StyleValue {
@@ -278,6 +306,8 @@ pub enum StyleValue {
     BorderRadius(BorderRadiusValue),
     /// Ordered background images, front to back.
     BackgroundImages(Vec<BackgroundImageValue>),
+    /// Fully expanded `background` shorthand.
+    Background(BackgroundValue),
     /// Expanded tiling behavior of one background layer.
     BackgroundRepeat(BackgroundRepeatValue),
     /// Specified position of one background layer.
