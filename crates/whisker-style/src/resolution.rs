@@ -974,24 +974,13 @@ fn collect_custom_references<'a>(
     value: &'a StyleValue,
     references: &mut Vec<&'a CustomPropertyName>,
 ) {
-    match value {
-        StyleValue::Variable(reference) => collect_reference(reference, references),
-        StyleValue::LengthPercentage(value) => {
-            collect_length_percentage_references(value, references)
-        }
-        StyleValue::Size(SizeValue::LengthPercentage(value))
-        | StyleValue::Size(SizeValue::FitContent(Some(value)))
-        | StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(value))
-        | StyleValue::FlexBasis(FlexBasisValue::LengthPercentage(value))
-        | StyleValue::LineHeight(LineHeightValue::LengthPercentage(value)) => {
-            collect_length_percentage_references(value, references);
-        }
-        StyleValue::BorderRadius(value) => {
-            collect_length_percentage_references(&value.horizontal, references);
-            collect_length_percentage_references(&value.vertical, references);
-        }
-        _ => {}
+    if let StyleValue::Variable(reference) = value {
+        collect_reference(reference, references);
+        return;
     }
+    crate::value_tree::visit_length_percentages(value, &mut |value| {
+        collect_length_percentage_references(value, references);
+    });
 }
 
 fn collect_reference<'a>(
@@ -1121,34 +1110,7 @@ fn map_nested_length_percentages(
     value: &StyleValue,
     resolve: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
 ) -> Option<StyleValue> {
-    Some(match value {
-        StyleValue::LengthPercentage(value) => StyleValue::LengthPercentage(resolve(value)?),
-        StyleValue::Size(SizeValue::LengthPercentage(value)) => {
-            StyleValue::Size(SizeValue::LengthPercentage(resolve(value)?))
-        }
-        StyleValue::Size(SizeValue::FitContent(Some(value))) => {
-            StyleValue::Size(SizeValue::FitContent(Some(resolve(value)?)))
-        }
-        StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(value)) => {
-            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(resolve(
-                value,
-            )?))
-        }
-        StyleValue::FlexBasis(FlexBasisValue::LengthPercentage(value)) => {
-            StyleValue::FlexBasis(FlexBasisValue::LengthPercentage(resolve(value)?))
-        }
-        StyleValue::LineHeight(LineHeightValue::LengthPercentage(value)) => {
-            StyleValue::LineHeight(LineHeightValue::LengthPercentage(resolve(value)?))
-        }
-        StyleValue::BorderRadius(BorderRadiusValue {
-            horizontal,
-            vertical,
-        }) => StyleValue::BorderRadius(BorderRadiusValue {
-            horizontal: resolve(horizontal)?,
-            vertical: resolve(vertical)?,
-        }),
-        value => value.clone(),
-    })
+    crate::value_tree::try_map_length_percentages(value, resolve)
 }
 
 fn resolve_length_percentage_from_candidates(
@@ -2969,13 +2931,13 @@ mod tests {
                 1,
             ),
             (
-                StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(
-                    length_percentage(),
-                )),
+                StyleValue::LengthPercentageAuto(
+                    crate::LengthPercentageAutoValue::LengthPercentage(length_percentage()),
+                ),
                 1,
             ),
             (
-                StyleValue::FlexBasis(FlexBasisValue::LengthPercentage(length_percentage())),
+                StyleValue::FlexBasis(crate::FlexBasisValue::LengthPercentage(length_percentage())),
                 1,
             ),
             (
@@ -2983,7 +2945,7 @@ mod tests {
                 1,
             ),
             (
-                StyleValue::BorderRadius(BorderRadiusValue {
+                StyleValue::BorderRadius(crate::BorderRadiusValue {
                     horizontal: length_percentage(),
                     vertical: length_percentage(),
                 }),
@@ -3019,6 +2981,91 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn typed_calc_variables_resolve_inside_nested_paint_and_grid_values() {
+        let spacing = CustomPropertyName::new("--spacing").unwrap();
+        let nested = || {
+            LengthPercentageValue::Calc(Box::new(CalcExpression::Add(
+                Box::new(CalcExpression::Variable(CustomPropertyReference::new(
+                    spacing.clone(),
+                ))),
+                Box::new(CalcExpression::Value(Box::new(
+                    LengthPercentageValue::Length(px(5.0)),
+                ))),
+            )))
+        };
+        let track = crate::GridTrackSizingValue {
+            min: crate::GridMinTrackSizingValue::Fixed(nested()),
+            max: crate::GridMaxTrackSizingValue::Fixed(nested()),
+        };
+        let specified = SpecifiedStyle::new()
+            .push_custom(spacing.clone(), StyleValue::Length(px(10.0)))
+            .push(
+                StyleProperty::BackgroundImage,
+                StyleValue::BackgroundImages(vec![crate::BackgroundImageValue::Gradient(
+                    crate::GradientValue::Linear {
+                        angle_degrees: number(180.0),
+                        stops: vec![
+                            crate::GradientStopValue {
+                                color: ColorValue::Named("red".into()),
+                                position: Some(nested()),
+                            },
+                            crate::GradientStopValue {
+                                color: ColorValue::Named("blue".into()),
+                                position: None,
+                            },
+                        ],
+                    },
+                )]),
+            )
+            .push(
+                StyleProperty::Transform,
+                StyleValue::Transform(crate::TransformValue(vec![
+                    crate::TransformFunctionValue::TranslateX(nested()),
+                ])),
+            )
+            .push(
+                StyleProperty::GridAutoColumns,
+                StyleValue::GridTracks(vec![track]),
+            );
+
+        let resolved = resolve_style(&specified, None, StyleEnvironment::default()).unwrap();
+        let expected = crate::ComputedLengthPercentage::new(15.0, 0.0);
+        assert_eq!(
+            resolved.computed().paint().background_images,
+            vec![crate::ComputedBackgroundImage::Gradient(
+                crate::ComputedGradient::Linear {
+                    angle_degrees: number(180.0),
+                    stops: vec![
+                        crate::ComputedGradientStop {
+                            color: ColorValue::Named("red".into()),
+                            position: Some(expected),
+                        },
+                        crate::ComputedGradientStop {
+                            color: ColorValue::Named("blue".into()),
+                            position: Some(crate::ComputedLengthPercentage::new(0.0, 1.0)),
+                        },
+                    ],
+                }
+            )]
+        );
+        assert_eq!(
+            resolved.computed().paint().transform.functions,
+            vec![crate::ComputedTransformFunction::Translate {
+                x: expected,
+                y: crate::ComputedLengthPercentage::ZERO,
+                z: number(0.0),
+            }]
+        );
+        assert_eq!(
+            resolved.computed().layout().grid_auto_columns[0],
+            crate::ComputedGridTrackSizing {
+                min: crate::ComputedGridMinTrackSizing::Fixed(expected),
+                max: crate::ComputedGridMaxTrackSizing::Fixed(expected),
+            }
+        );
     }
 
     #[test]

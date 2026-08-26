@@ -15,6 +15,7 @@ mod paint;
 mod property;
 mod resolution;
 mod value;
+mod value_tree;
 
 pub use declaration::{CustomPropertyDeclaration, SpecifiedStyle, StyleDeclaration};
 pub use layout::{

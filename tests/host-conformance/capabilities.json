@@ -197,7 +197,7 @@
       "properties": [],
       "supported_subset": ["case-sensitive-inherited-typed-values", "whole-value-var-references", "typed-fallbacks", "forward-references", "cycle-invalidation", "typed-var-substitution-inside-length-percentage-calc"],
       "pending_subset": ["token-stream-values", "var-substitution-inside-non-calc-composite-values-and-functions"],
-      "compatibility_notes": ["Whisker resolves typed custom-property values entirely in Rust and sends only the resulting layout or paint value to Hosts", "Whisker supports typed calc(var(--gap) + 2px) composition for common length-percentage properties without introducing a runtime CSS parser; arbitrary CSS token-stream substitution remains pending"],
+      "compatibility_notes": ["Whisker resolves typed custom-property values entirely in Rust and sends only the resulting layout or paint value to Hosts", "Whisker supports typed calc(var(--gap) + 2px) composition in every length-percentage position, including layout, Grid, backgrounds, gradients, transforms, and motion paths, without introducing a runtime CSS parser; arbitrary CSS token-stream substitution remains pending"],
       "protocol": [],
       "rust": "partial",
       "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
