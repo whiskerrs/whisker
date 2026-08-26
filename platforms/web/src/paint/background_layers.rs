@@ -50,10 +50,10 @@ pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
         }
     ) && matches!(
         layer.repeat_x,
-        ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space
+        ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space | ImageRepeat::Round
     ) && matches!(
         layer.repeat_y,
-        ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space
+        ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space | ImageRepeat::Round
     );
     let supported_geometry =
         (initial_geometry && layer.origin == PaintBox::Padding && layer.clip == PaintBox::Border)
@@ -72,7 +72,7 @@ pub(crate) fn apply(
 ) -> Result<(), WebError> {
     if !supports(layers) {
         return Err(WebError(
-            "DOM Host only implements one supported gradient with explicit stops, supported border/padding boxes, two-axis auto or explicit size, and repeat/no-repeat/space"
+            "DOM Host only implements one supported gradient with explicit stops, supported border/padding boxes, two-axis auto or explicit size, and supported repeat modes"
                 .into(),
         ));
     }
@@ -257,7 +257,13 @@ fn background_repeat(layer: &BackgroundLayer) -> String {
         (ImageRepeat::Space, ImageRepeat::NoRepeat) => "space no-repeat".into(),
         (ImageRepeat::Repeat, ImageRepeat::Space) => "repeat space".into(),
         (ImageRepeat::NoRepeat, ImageRepeat::Space) => "no-repeat space".into(),
-        _ => unreachable!("unsupported background repeat passed preflight"),
+        (ImageRepeat::Round, ImageRepeat::Round) => "round".into(),
+        (ImageRepeat::Round, ImageRepeat::Repeat) => "round repeat".into(),
+        (ImageRepeat::Round, ImageRepeat::NoRepeat) => "round no-repeat".into(),
+        (ImageRepeat::Round, ImageRepeat::Space) => "round space".into(),
+        (ImageRepeat::Repeat, ImageRepeat::Round) => "repeat round".into(),
+        (ImageRepeat::NoRepeat, ImageRepeat::Round) => "no-repeat round".into(),
+        (ImageRepeat::Space, ImageRepeat::Round) => "space round".into(),
     }
 }
 

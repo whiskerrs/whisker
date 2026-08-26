@@ -36,6 +36,7 @@ enum HostBackgroundRepeat {
     case `repeat`
     case noRepeat
     case space
+    case round
 }
 
 enum HostBackgroundBox {
@@ -66,8 +67,16 @@ struct HostBackgroundGeometry {
 
     func imageBounds(in positioningBox: CGRect) -> CGRect {
         guard let sizeWidth, let sizeHeight else { return positioningBox }
-        let width = resolve(sizeWidth, extent: positioningBox.width)
-        let height = resolve(sizeHeight, extent: positioningBox.height)
+        let width = backgroundRoundTileSize(
+            originalTileSize: resolve(sizeWidth, extent: positioningBox.width),
+            positioningSize: positioningBox.width,
+            repeatMode: repeatX
+        )
+        let height = backgroundRoundTileSize(
+            originalTileSize: resolve(sizeHeight, extent: positioningBox.height),
+            positioningSize: positioningBox.height,
+            repeatMode: repeatY
+        )
         return CGRect(
             x: positioningBox.minX + CGFloat(positionX.length) +
                 CGFloat(positionX.fraction) * (positioningBox.width - width),
@@ -311,7 +320,7 @@ func backgroundTileOrigins(
     switch repeatMode {
     case .noRepeat:
         return [base]
-    case .repeat:
+    case .repeat, .round:
         let first = base + floor((coverage.lowerBound - base) / tileSize) * tileSize
         let rawCount = ceil((coverage.upperBound - first) / tileSize)
         guard rawCount.isFinite, rawCount > 0, rawCount <= 65_536 else { return [] }
@@ -328,6 +337,20 @@ func backgroundTileOrigins(
             positioning.lowerBound + CGFloat($0) * (tileSize + gap)
         }
     }
+}
+
+func backgroundRoundTileSize(
+    originalTileSize: CGFloat,
+    positioningSize: CGFloat,
+    repeatMode: HostBackgroundRepeat
+) -> CGFloat {
+    guard repeatMode == .round, originalTileSize.isFinite, positioningSize.isFinite,
+          originalTileSize > 0, positioningSize > 0 else {
+        return originalTileSize
+    }
+    let rawCount = (positioningSize / originalTileSize).rounded()
+    guard rawCount.isFinite, rawCount <= 65_536 else { return 0 }
+    return positioningSize / max(1, rawCount)
 }
 
 private struct ResolvedGradient {

@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-repeat.round-x",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/background-repeat-round-2.html",
+    "reference_path": "css/css-backgrounds/background-repeat-round-2-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "Round repetition rescales the background image on its repeated axis so a whole number of copies exactly fits the positioning area.",
+    "adaptation": "The upstream 32 by 36 gradient image in a 72 by 72 box resolves to two 36px-wide copies. A sharp horizontal red/blue transition makes the adjusted tile boundaries observable while no-repeat on the vertical axis verifies independent axis handling."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 72.0, "height": 72.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 72.0, 72.0],
+            "background": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 },
+            "background_layer": {
+              "size": [
+                { "length": 32.0, "fraction": 0.0 },
+                { "length": 36.0, "fraction": 0.0 }
+              ],
+              "repeat_x": "round",
+              "repeat_y": "no_repeat"
+            },
+            "linear_gradient": {
+              "angle_degrees": 90.0,
+              "stops": [
+                { "color": { "kind": "named", "value": "red" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "red" }, "position": 0.49 },
+                { "color": { "kind": "named", "value": "blue" }, "position": 0.51 },
+                { "color": { "kind": "named", "value": "blue" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.repeat-round-x",
+        "samples": [
+          { "point": [17.0, 10.0], "color": { "kind": "named", "value": "red" }, "tolerance": 12 },
+          { "point": [19.0, 10.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 12 },
+          { "point": [34.0, 10.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 12 },
+          { "point": [52.0, 10.0], "color": { "kind": "named", "value": "red" }, "tolerance": 12 },
+          { "point": [70.0, 10.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 12 },
+          { "point": [10.0, 37.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

@@ -454,7 +454,8 @@ internal class HostScene(
         when (value) {
             BACKGROUND_REPEAT.toFloat() -> HostBackgroundRepeat.Repeat
             BACKGROUND_NO_REPEAT.toFloat() -> HostBackgroundRepeat.NoRepeat
-            else -> HostBackgroundRepeat.Space
+            BACKGROUND_SPACE.toFloat() -> HostBackgroundRepeat.Space
+            else -> HostBackgroundRepeat.Round
         }
 
     private fun backgroundBox(value: Float): HostBackgroundBox =
@@ -527,7 +528,8 @@ internal class HostScene(
     private fun validBackgroundRepeat(value: Float): Boolean =
         value == BACKGROUND_REPEAT.toFloat() ||
             value == BACKGROUND_NO_REPEAT.toFloat() ||
-            value == BACKGROUND_SPACE.toFloat()
+            value == BACKGROUND_SPACE.toFloat() ||
+            value == BACKGROUND_ROUND.toFloat()
 
     private fun validBackgroundBox(value: Float): Boolean =
         value == BACKGROUND_BOX_BORDER.toFloat() || value == BACKGROUND_BOX_PADDING.toFloat()
@@ -542,6 +544,7 @@ internal class HostScene(
         const val BACKGROUND_REPEAT = 0
         const val BACKGROUND_NO_REPEAT = 1
         const val BACKGROUND_SPACE = 2
+        const val BACKGROUND_ROUND = 3
         const val BACKGROUND_BOX_BORDER = 0
         const val BACKGROUND_BOX_PADDING = 1
         const val BACKGROUND_ATTACHMENT_SCROLL = 0
