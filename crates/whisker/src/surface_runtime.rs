@@ -434,7 +434,8 @@ impl SurfaceRuntime {
         state.ensure_valid()?;
         let mut samples = Vec::new();
         for entry in state.elements.values_mut() {
-            let (Some(node), Some(transition)) = (entry.node, entry.opacity_transition.as_mut())
+            let (Some(node), Some(transition)) =
+                (entry.node, entry.opacity_transition.as_deref_mut())
             else {
                 continue;
             };
@@ -712,7 +713,7 @@ struct BoundElement {
     raw_text: String,
     listeners: HashMap<String, Vec<RuntimeListener>>,
     style_initialized: bool,
-    opacity_transition: Option<ActiveOpacityTransition>,
+    opacity_transition: Option<Box<ActiveOpacityTransition>>,
 }
 
 #[derive(Clone, Copy)]
@@ -1170,7 +1171,9 @@ impl BindingState {
         surface: &mut SurfaceEngine,
     ) -> Result<(), RuntimeBindingError> {
         for entry in elements.values() {
-            if let (Some(node), Some(transition)) = (entry.node, entry.opacity_transition) {
+            if let (Some(node), Some(transition)) =
+                (entry.node, entry.opacity_transition.as_deref())
+            {
                 surface.set_opacity(node, transition.current)?;
             }
         }
@@ -1224,7 +1227,7 @@ impl BindingState {
             entry.opacity_transition = None;
             return Ok(());
         };
-        entry.opacity_transition = Some(ActiveOpacityTransition {
+        entry.opacity_transition = Some(Box::new(ActiveOpacityTransition {
             from: previous_current,
             to: target,
             current: previous_current,
@@ -1232,7 +1235,7 @@ impl BindingState {
             delay_ms: transition.delay.get(),
             easing: transition.easing,
             start_ms: None,
-        });
+        }));
         self.surface.set_opacity(node, previous_current)?;
         crate::runtime::runtime_wake::wake_runtime();
         Ok(())
@@ -1752,6 +1755,7 @@ impl DynRenderer for SurfaceRuntime {
                 .map_or(1.0, |style| style.computed().paint().opacity.get());
             let previous_current = entry
                 .opacity_transition
+                .as_deref()
                 .map_or(previous_target, |transition| transition.current);
             let was_initialized = entry.style_initialized;
             state.element_mut(handle)?.specified = style.clone();
