@@ -68,6 +68,10 @@ static jstring new_string(JNIEnv* env, const char* bytes, size_t length) {
     return result;
 }
 
+static bool valid_nonempty_string_ref(WhiskerStringRef value) {
+    return value.ptr != NULL && value.len > 0 && value.len <= INT32_MAX;
+}
+
 static jintArray member_ints(JNIEnv* env, const WhiskerMobileMemberRegistration* values,
                              size_t count, bool kinds, bool optional) {
     jintArray result = (*env)->NewIntArray(env, (jsize)count);
@@ -518,9 +522,18 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
             case WHISKER_OP_TEXT: {
                 const WhiskerMobileText* p = op->payload; if (!p) { ok = false; break; }
                 if (p->font_optical_sizing > 1 ||
+                    p->font_family_count == 0 ||
+                    (p->font_families == NULL) != (p->font_family_count == 0) ||
                     (p->font_features == NULL) != (p->font_feature_count == 0) ||
                     (p->font_variations == NULL) != (p->font_variation_count == 0) ||
-                    p->font_feature_count + p->font_variation_count > 4096) { ok = false; break; }
+                    p->font_family_count > 4096 ||
+                    p->font_feature_count > 4096 ||
+                    p->font_variation_count > 4096 ||
+                    p->font_family_count + p->font_feature_count + p->font_variation_count > 4096) { ok = false; break; }
+                for (size_t j=0;j<p->font_family_count;++j) {
+                    if (!valid_nonempty_string_ref(p->font_families[j])) { ok = false; break; }
+                }
+                if (!ok) break;
                 text = new_string(env, p->text.ptr, p->text.len);
                 storage[0]=p->font_size; storage[1]=(float)p->font_weight; storage[2]=(float)p->font_style;
                 storage[3]=(float)p->color.red; storage[4]=(float)p->color.green; storage[5]=(float)p->color.blue;
@@ -538,13 +551,16 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 storage[27]=(float)p->wrap; storage[28]=(float)p->word_break;
                 storage[29]=(float)p->max_lines; storage[30]=(float)p->overflow;
                 storage[31]=(float)p->font_optical_sizing; storage[32]=(float)p->font_feature_count;
-                numbers = floats(env, storage, 33);
-                jclass cls = (*env)->FindClass(env, "java/lang/String"); names = (*env)->NewObjectArray(env, (jsize)(3 + p->font_feature_count + p->font_variation_count), cls, NULL);
+                storage[33]=(float)p->font_family_count;
+                storage[34]=p->line_height; storage[35]=p->letter_spacing;
+                numbers = floats(env, storage, 36);
+                jclass cls = (*env)->FindClass(env, "java/lang/String"); names = (*env)->NewObjectArray(env, (jsize)(3 + p->font_family_count + p->font_feature_count + p->font_variation_count), cls, NULL);
                 jstring color_name = new_string(env, p->color.name.ptr, p->color.name.len); (*env)->SetObjectArrayElement(env, names, 0, color_name);
                 jstring shadow_name = new_string(env, p->shadow_color.name.ptr, p->shadow_color.name.len); (*env)->SetObjectArrayElement(env, names, 1, shadow_name);
                 jstring decoration_name = new_string(env, p->decoration_color.name.ptr, p->decoration_color.name.len); (*env)->SetObjectArrayElement(env, names, 2, decoration_name);
-                for (size_t j=0;j<p->font_feature_count;++j) { jstring value=font_setting(env,p->font_features[j].tag,p->font_features[j].value,true); (*env)->SetObjectArrayElement(env,names,(jsize)(3+j),value); if(value)(*env)->DeleteLocalRef(env,value); }
-                for (size_t j=0;j<p->font_variation_count;++j) { jstring value=font_setting(env,p->font_variations[j].tag,p->font_variations[j].value,false); (*env)->SetObjectArrayElement(env,names,(jsize)(3+p->font_feature_count+j),value); if(value)(*env)->DeleteLocalRef(env,value); }
+                for (size_t j=0;j<p->font_family_count;++j) { jstring value=new_string(env,p->font_families[j].ptr,p->font_families[j].len); (*env)->SetObjectArrayElement(env,names,(jsize)(3+j),value); if(value)(*env)->DeleteLocalRef(env,value); }
+                for (size_t j=0;j<p->font_feature_count;++j) { jstring value=font_setting(env,p->font_features[j].tag,p->font_features[j].value,true); (*env)->SetObjectArrayElement(env,names,(jsize)(3+p->font_family_count+j),value); if(value)(*env)->DeleteLocalRef(env,value); }
+                for (size_t j=0;j<p->font_variation_count;++j) { jstring value=font_setting(env,p->font_variations[j].tag,p->font_variations[j].value,false); (*env)->SetObjectArrayElement(env,names,(jsize)(3+p->font_family_count+p->font_feature_count+j),value); if(value)(*env)->DeleteLocalRef(env,value); }
                 if (color_name) (*env)->DeleteLocalRef(env, color_name);
                 if (shadow_name) (*env)->DeleteLocalRef(env, shadow_name);
                 if (decoration_name) (*env)->DeleteLocalRef(env, decoration_name);

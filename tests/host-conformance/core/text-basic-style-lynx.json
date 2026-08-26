@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "id": "core.text-basic-style-lynx",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 260.0, "height": 64.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 260.0, 64.0],
+            "background": { "kind": "named", "value": "transparent" },
+            "text": {
+              "value": "Whisker text metrics",
+              "font_families": ["Whisker Fixture Sans", "system"],
+              "font_size": 20.0,
+              "font_weight": 650,
+              "font_style": "italic",
+              "line_height": 28.0,
+              "letter_spacing": 1.5,
+              "color": { "kind": "srgba", "red": 32, "green": 64, "blue": 192, "alpha": 1.0 }
+            }
+          }
+        ]
+      },
+      { "type": "checkpoint", "name": "paint.text.basic-style-lynx", "samples": [] }
+    ]
+  }
+}

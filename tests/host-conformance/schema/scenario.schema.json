@@ -173,8 +173,16 @@
       "required": ["value", "font_size", "color"],
       "properties": {
         "value": { "type": "string" },
+        "font_families": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
         "font_size": { "type": "number", "exclusiveMinimum": 0 },
         "font_weight": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "font_style": { "enum": ["normal", "italic", "oblique"] },
+        "line_height": { "type": "number", "exclusiveMinimum": 0 },
+        "letter_spacing": { "type": "number" },
         "font_features": { "type": "array", "items": { "$ref": "#/$defs/fontFeature" } },
         "font_variations": { "type": "array", "items": { "$ref": "#/$defs/fontVariation" } },
         "font_optical_sizing": { "enum": ["auto", "none"] },

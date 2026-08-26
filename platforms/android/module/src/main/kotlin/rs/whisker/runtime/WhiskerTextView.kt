@@ -25,6 +25,14 @@ public class WhiskerTextView(context: Context) : TextView(context) {
         private set
     public var whiskerFontOpticalSizing: WhiskerFontOpticalSizing = WhiskerFontOpticalSizing.NONE
         private set
+    public var whiskerFontFamilies: List<String> = listOf("system")
+        private set
+    public var whiskerFontStyle: WhiskerFontStyle = WhiskerFontStyle.NORMAL
+        private set
+    public var whiskerLineHeight: Float? = null
+        private set
+    public var whiskerLetterSpacing: Float = 0f
+        private set
 
     public fun setWhiskerText(content: WhiskerTextContent) {
         whiskerTextValue = content.value
@@ -33,6 +41,10 @@ public class WhiskerTextView(context: Context) : TextView(context) {
         whiskerFontFeatures = content.fontFeatures
         whiskerFontVariations = content.fontVariations
         whiskerFontOpticalSizing = content.fontOpticalSizing
+        whiskerFontFamilies = content.fontFamilies
+        whiskerFontStyle = content.fontStyle
+        whiskerLineHeight = content.lineHeight
+        whiskerLetterSpacing = content.letterSpacing
         fontFeatureSettings = content.fontFeatures.joinToString(", ") {
             "'${it.tag}' ${it.value}"
         }.ifEmpty { null }

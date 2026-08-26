@@ -1,6 +1,7 @@
 package rs.whisker.runtime
 
 import android.graphics.Bitmap
+import android.os.Build
 import android.view.ViewGroup
 import android.widget.TextView
 import android.graphics.Canvas
@@ -327,6 +328,27 @@ private class Driver(
                             listOf("wdth" to 90f, "wght" to 650f))
                         check(texts[2].whiskerFontOpticalSizing == WhiskerFontOpticalSizing.AUTO)
                     }
+                    if (command.getString("name") == "paint.text.basic-style-lynx") {
+                        val text = findTextViews(view).single()
+                        val density = context.resources.displayMetrics.density
+                        check(text.whiskerFontFamilies ==
+                            listOf("Whisker Fixture Sans", "system"))
+                        check(text.whiskerFontStyle == WhiskerFontStyle.ITALIC)
+                        check(text.whiskerLineHeight == 28f)
+                        check(text.whiskerLetterSpacing == 1.5f)
+                        check(abs(text.textSize / density - 20f) < 0.01f)
+                        check(text.typeface.isItalic)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            check(text.typeface.weight == 650)
+                        } else {
+                            check(text.typeface.isBold)
+                        }
+                        check(abs(text.letterSpacing - 0.075f) < 0.0001f)
+                        val actualLineHeight =
+                            text.paint.fontMetrics.run { descent - ascent } + text.lineSpacingExtra
+                        check(abs(actualLineHeight / density - 28f) < 0.01f)
+                        check(text.lineSpacingMultiplier == 1f)
+                    }
                     check(
                         command.getString("name") == "paint.box" ||
                             command.getString("name") == "paint.background-layers.linear-gradient" ||
@@ -411,6 +433,7 @@ private class Driver(
                             command.getString("name") == "paint.text.indent-lynx" ||
                             command.getString("name") == "paint.text.wrap-overflow-lynx" ||
                             command.getString("name") == "paint.text.font-features-lynx" ||
+                            command.getString("name") == "paint.text.basic-style-lynx" ||
                             command.getString("name") == "interaction.pointer.lynx",
                     )
                     checkpoint = capture()
@@ -609,11 +632,15 @@ private class Driver(
             val (numbers, names) = paint(node)
             check(stage(tag = 7, node = id, numbers = numbers, names = names))
             node.optJSONObject("text")?.let { text ->
-                val textNumbers = ArrayList<Float>(33)
+                val textNumbers = ArrayList<Float>(36)
                 val textNames = ArrayList<String>(3)
                 textNumbers += text.getDouble("font_size").toFloat()
                 textNumbers += text.optInt("font_weight", 400).toFloat()
-                textNumbers += 0f
+                textNumbers += when (text.optString("font_style", "normal")) {
+                    "italic" -> 1f
+                    "oblique" -> 2f
+                    else -> 0f
+                }
                 appendColor(text.getJSONObject("color"), textNumbers, textNames)
                 val shadow = text.optJSONObject("shadow")
                 textNumbers += if (shadow == null) 0f else 1f
@@ -667,6 +694,11 @@ private class Driver(
                 textNumbers += if (text.optString("font_optical_sizing", "none") == "auto") 0f else 1f
                 val features = text.optJSONArray("font_features")
                 textNumbers += (features?.length() ?: 0).toFloat()
+                val families = text.optJSONArray("font_families") ?: JSONArray("[\"system\"]")
+                textNumbers += families.length().toFloat()
+                textNumbers += text.optDouble("line_height", 0.0).toFloat()
+                textNumbers += text.optDouble("letter_spacing", 0.0).toFloat()
+                families.strings().forEach(textNames::add)
                 features?.objects()?.forEach { setting ->
                     textNames += "${setting.getString("tag")}=${setting.getLong("value")}"
                 }

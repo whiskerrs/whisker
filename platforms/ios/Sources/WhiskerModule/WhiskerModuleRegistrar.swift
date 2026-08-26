@@ -40,8 +40,12 @@ public struct WhiskerMeasuredSize {
 
 public struct WhiskerTextContent {
     public let value: String
+    public let fontFamilies: [String]
     public let fontSize: CGFloat
     public let fontWeight: Int
+    public let fontStyle: WhiskerTextFontStyle
+    public let lineHeight: CGFloat?
+    public let letterSpacing: CGFloat
     public let fontFeatures: [WhiskerFontFeature]
     public let fontVariations: [WhiskerFontVariation]
     public let fontOpticalSizing: WhiskerFontOpticalSizing
@@ -57,8 +61,12 @@ public struct WhiskerTextContent {
 
     public init(
         value: String,
+        fontFamilies: [String] = ["system"],
         fontSize: CGFloat,
         fontWeight: Int,
+        fontStyle: WhiskerTextFontStyle = .normal,
+        lineHeight: CGFloat? = nil,
+        letterSpacing: CGFloat = 0,
         fontFeatures: [WhiskerFontFeature] = [],
         fontVariations: [WhiskerFontVariation] = [],
         fontOpticalSizing: WhiskerFontOpticalSizing = .none,
@@ -73,8 +81,12 @@ public struct WhiskerTextContent {
         shadow: WhiskerTextShadow? = nil
     ) {
         self.value = value
+        self.fontFamilies = fontFamilies
         self.fontSize = fontSize
         self.fontWeight = fontWeight
+        self.fontStyle = fontStyle
+        self.lineHeight = lineHeight
+        self.letterSpacing = letterSpacing
         self.fontFeatures = fontFeatures
         self.fontVariations = fontVariations
         self.fontOpticalSizing = fontOpticalSizing
@@ -88,6 +100,12 @@ public struct WhiskerTextContent {
         self.decoration = decoration
         self.shadow = shadow
     }
+}
+
+public enum WhiskerTextFontStyle: Equatable {
+    case normal
+    case italic
+    case oblique
 }
 
 public struct WhiskerFontFeature: Equatable {
