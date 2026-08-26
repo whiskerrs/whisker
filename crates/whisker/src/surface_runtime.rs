@@ -21,13 +21,14 @@ use whisker_engine::whisker_protocol::{
     ResourceId, ResourceMessageError, SurfaceId,
 };
 use whisker_engine::whisker_style::{
+    ComputedLengthPercentage, ComputedTransformFunction, ComputedTransformStyle,
     ComputedTransitionProperty, InheritedStyle, MotionEasing, ResolvedNodeStyle, SpecifiedStyle,
-    StyleEnvironment, StyleProperty, StyleResolutionError, resolve_style,
+    StyleEnvironment, StyleNumber, StyleProperty, StyleResolutionError, resolve_style,
 };
 use whisker_engine::{
     DeferredMeasurementApply, FrameSink, LayoutError, LayoutOptions, LayoutProgress,
     MeasurementProvider, PlainTextInput, SurfaceEngine, SurfaceError, SurfacePresentError,
-    lower_color, lower_paint,
+    lower_color, lower_paint, lower_transform,
 };
 
 /// A mutation emitted by `render!` that could not enter the retained surface.
@@ -464,12 +465,23 @@ impl SurfaceRuntime {
                     transition.current = transition.from.interpolate(transition.to, progress);
                     complete
                 });
-            if opacity.is_some() || !colors.is_empty() || text_color.is_some() {
-                samples.push((*element, node, opacity, colors, text_color));
+            let transform = entry.transform_transition.as_deref_mut().map(|transition| {
+                let (progress, complete) = transition.sample_progress(timestamp_ms);
+                transition.current =
+                    interpolate_transform_style(&transition.from, &transition.to, progress)
+                        .expect("only compatible transform lists enter the active timeline");
+                (transition.current.clone(), complete)
+            });
+            if opacity.is_some()
+                || !colors.is_empty()
+                || text_color.is_some()
+                || transform.is_some()
+            {
+                samples.push((*element, node, opacity, colors, text_color, transform));
             }
         }
         let mut completed_text_colors = Vec::new();
-        for (element, node, opacity, colors, text_color) in samples {
+        for (element, node, opacity, colors, text_color, transform) in samples {
             if let Some((opacity, complete)) = opacity {
                 state.surface.set_opacity(node, opacity)?;
                 if complete {
@@ -499,6 +511,12 @@ impl SurfaceRuntime {
             }
             if text_color == Some(true) {
                 completed_text_colors.push(element);
+            }
+            if let Some((transform, complete)) = transform {
+                BindingState::apply_transform_update(node, &transform, &mut state.surface)?;
+                if complete {
+                    state.element_mut(element)?.transform_transition = None;
+                }
             }
         }
         let text_updates = BindingState::active_text_color_updates(&state.elements);
@@ -690,10 +708,14 @@ impl SurfaceRuntime {
             .flush_background_projections()
             .map_err(RuntimeLayoutError::Binding)?;
         let root = state.root.ok_or(RuntimeLayoutError::MissingRoot)?;
-        state
+        let layout = state
             .surface
             .drive_layout(root, viewport, environment_epoch, provider, options)
-            .map_err(RuntimeLayoutError::Measurement)
+            .map_err(RuntimeLayoutError::Measurement)?;
+        let transform_updates = BindingState::active_transform_updates(&state.elements);
+        BindingState::apply_transform_updates(transform_updates, &mut state.surface)
+            .map_err(RuntimeLayoutError::Binding)?;
+        Ok(layout)
     }
 
     /// Presents the next transaction and records the Host acknowledgement.
@@ -765,9 +787,10 @@ struct BoundElement {
     opacity_transition: Option<Box<ActiveTransition<f32>>>,
     color_transitions: Option<Box<ActiveColorTransitions>>,
     text_color_transition: Option<Box<ActiveTransition<RgbaColor>>>,
+    transform_transition: Option<Box<ActiveTransition<ComputedTransformStyle>>>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ActiveTransition<Value> {
     from: Value,
     to: Value,
@@ -784,6 +807,7 @@ struct ActiveColorTransitions(HashMap<StyleProperty, ActiveTransition<RgbaColor>
 fn has_active_transition(entry: &BoundElement) -> bool {
     entry.opacity_transition.is_some()
         || entry.text_color_transition.is_some()
+        || entry.transform_transition.is_some()
         || entry
             .color_transitions
             .as_deref()
@@ -798,7 +822,7 @@ struct RgbaColor {
     alpha: f32,
 }
 
-impl<Value: Copy> ActiveTransition<Value> {
+impl<Value> ActiveTransition<Value> {
     fn sample_progress(&mut self, timestamp_ms: f64) -> (f32, bool) {
         let start_ms = *self.start_ms.get_or_insert(timestamp_ms);
         let elapsed_ms = timestamp_ms - start_ms - f64::from(self.delay_ms);
@@ -807,6 +831,134 @@ impl<Value: Copy> ActiveTransition<Value> {
             self.easing.sample(linear),
             elapsed_ms >= f64::from(self.duration_ms),
         )
+    }
+}
+
+fn interpolate_transform_style(
+    from: &ComputedTransformStyle,
+    to: &ComputedTransformStyle,
+    progress: f32,
+) -> Option<ComputedTransformStyle> {
+    let count = from.functions.len().max(to.functions.len());
+    let mut functions = Vec::with_capacity(count);
+    for index in 0..count {
+        let function = match (from.functions.get(index), to.functions.get(index)) {
+            (Some(from), Some(to)) => interpolate_transform_function(from, to, progress)?,
+            (Some(from), None) => {
+                interpolate_transform_function(from, &identity_transform_function(from)?, progress)?
+            }
+            (None, Some(to)) => {
+                interpolate_transform_function(&identity_transform_function(to)?, to, progress)?
+            }
+            (None, None) => unreachable!("index is bounded by the longest transform list"),
+        };
+        functions.push(function);
+    }
+    let mut current = to.clone();
+    current.functions = functions;
+    Some(current)
+}
+
+fn interpolate_transform_function(
+    from: &ComputedTransformFunction,
+    to: &ComputedTransformFunction,
+    progress: f32,
+) -> Option<ComputedTransformFunction> {
+    let number = |from: StyleNumber, to: StyleNumber| {
+        StyleNumber::new(from.get() + (to.get() - from.get()) * progress)
+    };
+    let length = |from: ComputedLengthPercentage, to: ComputedLengthPercentage| {
+        ComputedLengthPercentage::new(
+            from.length() + (to.length() - from.length()) * progress,
+            from.fraction() + (to.fraction() - from.fraction()) * progress,
+        )
+    };
+    match (from, to) {
+        (
+            ComputedTransformFunction::Translate {
+                x: from_x,
+                y: from_y,
+                z: from_z,
+            },
+            ComputedTransformFunction::Translate {
+                x: to_x,
+                y: to_y,
+                z: to_z,
+            },
+        ) => Some(ComputedTransformFunction::Translate {
+            x: length(*from_x, *to_x),
+            y: length(*from_y, *to_y),
+            z: number(*from_z, *to_z),
+        }),
+        (ComputedTransformFunction::RotateX(from), ComputedTransformFunction::RotateX(to)) => {
+            Some(ComputedTransformFunction::RotateX(number(*from, *to)))
+        }
+        (ComputedTransformFunction::RotateY(from), ComputedTransformFunction::RotateY(to)) => {
+            Some(ComputedTransformFunction::RotateY(number(*from, *to)))
+        }
+        (ComputedTransformFunction::RotateZ(from), ComputedTransformFunction::RotateZ(to)) => {
+            Some(ComputedTransformFunction::RotateZ(number(*from, *to)))
+        }
+        (
+            ComputedTransformFunction::Scale {
+                x: from_x,
+                y: from_y,
+                z: from_z,
+            },
+            ComputedTransformFunction::Scale {
+                x: to_x,
+                y: to_y,
+                z: to_z,
+            },
+        ) => Some(ComputedTransformFunction::Scale {
+            x: number(*from_x, *to_x),
+            y: number(*from_y, *to_y),
+            z: number(*from_z, *to_z),
+        }),
+        (
+            ComputedTransformFunction::Skew {
+                x_degrees: from_x,
+                y_degrees: from_y,
+            },
+            ComputedTransformFunction::Skew {
+                x_degrees: to_x,
+                y_degrees: to_y,
+            },
+        ) => Some(ComputedTransformFunction::Skew {
+            x_degrees: number(*from_x, *to_x),
+            y_degrees: number(*from_y, *to_y),
+        }),
+        // CSS matrix pairs require decomposition; they intentionally snap in
+        // this work unit instead of using visually incorrect element-wise
+        // interpolation.
+        _ => None,
+    }
+}
+
+fn identity_transform_function(
+    function: &ComputedTransformFunction,
+) -> Option<ComputedTransformFunction> {
+    let zero = StyleNumber::new(0.0);
+    let one = StyleNumber::new(1.0);
+    match function {
+        ComputedTransformFunction::Translate { .. } => Some(ComputedTransformFunction::Translate {
+            x: ComputedLengthPercentage::ZERO,
+            y: ComputedLengthPercentage::ZERO,
+            z: zero,
+        }),
+        ComputedTransformFunction::RotateX(_) => Some(ComputedTransformFunction::RotateX(zero)),
+        ComputedTransformFunction::RotateY(_) => Some(ComputedTransformFunction::RotateY(zero)),
+        ComputedTransformFunction::RotateZ(_) => Some(ComputedTransformFunction::RotateZ(zero)),
+        ComputedTransformFunction::Scale { .. } => Some(ComputedTransformFunction::Scale {
+            x: one,
+            y: one,
+            z: one,
+        }),
+        ComputedTransformFunction::Skew { .. } => Some(ComputedTransformFunction::Skew {
+            x_degrees: zero,
+            y_degrees: zero,
+        }),
+        ComputedTransformFunction::Matrix(_) => None,
     }
 }
 
@@ -1238,6 +1390,7 @@ impl BindingState {
                 opacity_transition: None,
                 color_transitions: None,
                 text_color_transition: None,
+                transform_transition: None,
             },
         );
         if let Some(node) = node {
@@ -1384,6 +1537,9 @@ impl BindingState {
                 }
                 surface.set_box_paint(node, paint)?;
             }
+            if let Some(transition) = entry.transform_transition.as_deref() {
+                Self::apply_transform_update(node, &transition.current, surface)?;
+            }
         }
         Self::reapply_active_text_colors(elements, surface)?;
         Ok(())
@@ -1445,6 +1601,45 @@ impl BindingState {
             current = entry.parent;
         }
         None
+    }
+
+    fn active_transform_updates(
+        elements: &HashMap<Element, BoundElement>,
+    ) -> Vec<(NodeId, ComputedTransformStyle)> {
+        elements
+            .values()
+            .filter_map(|entry| {
+                Some((
+                    entry.node?,
+                    entry.transform_transition.as_deref()?.current.clone(),
+                ))
+            })
+            .collect()
+    }
+
+    fn apply_transform_updates(
+        updates: Vec<(NodeId, ComputedTransformStyle)>,
+        surface: &mut SurfaceEngine,
+    ) -> Result<(), RuntimeBindingError> {
+        for (node, transform) in updates {
+            Self::apply_transform_update(node, &transform, surface)?;
+        }
+        Ok(())
+    }
+
+    fn apply_transform_update(
+        node: NodeId,
+        transform: &ComputedTransformStyle,
+        surface: &mut SurfaceEngine,
+    ) -> Result<(), RuntimeBindingError> {
+        let Some(layout) = surface.node(node).and_then(|node| node.layout()) else {
+            return Ok(());
+        };
+        let transform =
+            lower_transform(transform, layout.border_box.width, layout.border_box.height)
+                .expect("resolved transform and layout geometry must produce a finite matrix");
+        surface.set_transform(node, transform)?;
+        Ok(())
     }
 
     fn configure_opacity_transition(
@@ -1653,6 +1848,92 @@ impl BindingState {
             easing: transition.easing,
             start_ms: None,
         }));
+        crate::runtime::runtime_wake::wake_runtime();
+        Ok(())
+    }
+
+    fn configure_transform_transition(
+        &mut self,
+        element: Element,
+        previous_target: &ComputedTransformStyle,
+        previous_current: &ComputedTransformStyle,
+        was_initialized: bool,
+    ) -> Result<(), RuntimeBindingError> {
+        let (node, target, transition) = {
+            let entry = self.element(element)?;
+            let node = entry
+                .node
+                .ok_or(RuntimeBindingError::UnknownElement { element })?;
+            let resolved = entry
+                .resolved
+                .as_ref()
+                .ok_or(RuntimeBindingError::UnknownElement { element })?;
+            let target = resolved.computed().paint().transform.clone();
+            let transition = resolved
+                .computed()
+                .motion()
+                .transitions
+                .iter()
+                .rev()
+                .find(|transition| {
+                    matches!(transition.property, ComputedTransitionProperty::All)
+                        || transition.property
+                            == ComputedTransitionProperty::Property(StyleProperty::Transform)
+                })
+                .copied();
+            (node, target, transition)
+        };
+
+        let entry = self.element_mut(element)?;
+        if !was_initialized {
+            entry.transform_transition = None;
+            return Ok(());
+        }
+        if previous_target.functions == target.functions {
+            let current = entry.transform_transition.as_deref_mut().map(|active| {
+                let from_functions = active.from.functions.clone();
+                let to_functions = active.to.functions.clone();
+                let current_functions = active.current.functions.clone();
+                active.from = target.clone();
+                active.from.functions = from_functions;
+                active.to = target.clone();
+                active.to.functions = to_functions;
+                active.current = target;
+                active.current.functions = current_functions;
+                active.current.clone()
+            });
+            if let Some(current) = current {
+                Self::apply_transform_update(node, &current, &mut self.surface)?;
+            }
+            return Ok(());
+        }
+        let Some(transition) = transition.filter(|transition| transition.duration.get() > 0.0)
+        else {
+            entry.transform_transition = None;
+            return Ok(());
+        };
+        let mut from = target.clone();
+        from.functions = previous_current.functions.clone();
+        if interpolate_transform_style(&from, &target, 0.0).is_none() {
+            entry.transform_transition = None;
+            return Ok(());
+        }
+        entry.transform_transition = Some(Box::new(ActiveTransition {
+            from: from.clone(),
+            to: target,
+            current: from,
+            duration_ms: transition.duration.get(),
+            delay_ms: transition.delay.get(),
+            easing: transition.easing,
+            start_ms: None,
+        }));
+        let current = entry
+            .transform_transition
+            .as_deref()
+            .expect("transition was installed above")
+            .current
+            .clone();
+        Self::apply_transform_update(node, &current, &mut self.surface)?;
         crate::runtime::runtime_wake::wake_runtime();
         Ok(())
     }
@@ -2202,6 +2483,15 @@ impl DynRenderer for SurfaceRuntime {
                 .flat_map(|transitions| transitions.0.iter())
                 .map(|(property, transition)| (*property, transition.current))
                 .collect::<HashMap<_, _>>();
+            let previous_transform = entry
+                .resolved
+                .as_ref()
+                .map(|resolved| resolved.computed().paint().transform.clone())
+                .unwrap_or_default();
+            let previous_current_transform = entry.transform_transition.as_deref().map_or_else(
+                || previous_transform.clone(),
+                |transition| transition.current.clone(),
+            );
             let was_initialized = entry.style_initialized;
             let text_color_snapshots = state
                 .element_subtree(handle)?
@@ -2234,6 +2524,12 @@ impl DynRenderer for SurfaceRuntime {
                 handle,
                 &previous_paint,
                 &previous_current_colors,
+                was_initialized,
+            )?;
+            state.configure_transform_transition(
+                handle,
+                &previous_transform,
+                &previous_current_transform,
                 was_initialized,
             )?;
             for (element, target, current, initialized) in text_color_snapshots {
@@ -2343,7 +2639,7 @@ impl DynRenderer for SurfaceRuntime {
 }
 
 #[cfg(test)]
-mod motion_color_tests {
+mod motion_tests {
     use super::*;
 
     fn hsla(hue_degrees: f32) -> PaintColor {
@@ -2424,6 +2720,112 @@ mod motion_color_tests {
                 blue: 0,
                 alpha: 0.0,
             }
+        );
+    }
+
+    #[test]
+    fn compatible_transform_functions_interpolate_with_identity_padding() {
+        let number = StyleNumber::new;
+        let length = |value| ComputedLengthPercentage::new(value, value / 100.0);
+        let cases = [
+            (
+                ComputedTransformFunction::Translate {
+                    x: length(0.0),
+                    y: length(10.0),
+                    z: number(20.0),
+                },
+                ComputedTransformFunction::Translate {
+                    x: length(100.0),
+                    y: length(30.0),
+                    z: number(40.0),
+                },
+            ),
+            (
+                ComputedTransformFunction::RotateX(number(0.0)),
+                ComputedTransformFunction::RotateX(number(90.0)),
+            ),
+            (
+                ComputedTransformFunction::RotateY(number(0.0)),
+                ComputedTransformFunction::RotateY(number(90.0)),
+            ),
+            (
+                ComputedTransformFunction::RotateZ(number(0.0)),
+                ComputedTransformFunction::RotateZ(number(90.0)),
+            ),
+            (
+                ComputedTransformFunction::Scale {
+                    x: number(1.0),
+                    y: number(2.0),
+                    z: number(3.0),
+                },
+                ComputedTransformFunction::Scale {
+                    x: number(3.0),
+                    y: number(4.0),
+                    z: number(5.0),
+                },
+            ),
+            (
+                ComputedTransformFunction::Skew {
+                    x_degrees: number(0.0),
+                    y_degrees: number(10.0),
+                },
+                ComputedTransformFunction::Skew {
+                    x_degrees: number(20.0),
+                    y_degrees: number(30.0),
+                },
+            ),
+        ];
+        for (from, to) in cases {
+            assert!(interpolate_transform_function(&from, &to, 0.5).is_some());
+            let from = ComputedTransformStyle {
+                functions: vec![from],
+                ..ComputedTransformStyle::default()
+            };
+            let to = ComputedTransformStyle {
+                functions: vec![to],
+                origin_x: ComputedLengthPercentage::new(12.0, 0.0),
+                ..ComputedTransformStyle::default()
+            };
+            let current = interpolate_transform_style(&from, &to, 0.5).unwrap();
+            assert_eq!(current.origin_x, to.origin_x);
+            assert_eq!(current.functions.len(), 1);
+            assert!(
+                interpolate_transform_style(&ComputedTransformStyle::default(), &to, 0.5).is_some()
+            );
+            assert!(
+                interpolate_transform_style(&to, &ComputedTransformStyle::default(), 0.5).is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn incompatible_and_matrix_transform_functions_require_decomposition() {
+        let number = StyleNumber::new;
+        let matrix = ComputedTransformFunction::Matrix([number(1.0); 16]);
+        assert!(identity_transform_function(&matrix).is_none());
+        assert!(
+            interpolate_transform_function(
+                &matrix,
+                &ComputedTransformFunction::Matrix([number(2.0); 16]),
+                0.5,
+            )
+            .is_none()
+        );
+        assert!(
+            interpolate_transform_function(
+                &ComputedTransformFunction::RotateX(number(0.0)),
+                &ComputedTransformFunction::RotateY(number(90.0)),
+                0.5,
+            )
+            .is_none()
+        );
+        assert!(
+            interpolate_transform_style(
+                &ComputedTransformStyle::default(),
+                &ComputedTransformStyle::default(),
+                0.5,
+            )
+            .is_some()
         );
     }
 }
