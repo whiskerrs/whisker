@@ -33,6 +33,8 @@ public class WhiskerTextView(context: Context) : TextView(context) {
         private set
     public var whiskerLetterSpacing: Float = 0f
         private set
+    public var whiskerDirection: WhiskerTextDirection = WhiskerTextDirection.AUTO
+        private set
 
     public fun setWhiskerText(content: WhiskerTextContent) {
         whiskerTextValue = content.value
@@ -45,6 +47,7 @@ public class WhiskerTextView(context: Context) : TextView(context) {
         whiskerFontStyle = content.fontStyle
         whiskerLineHeight = content.lineHeight
         whiskerLetterSpacing = content.letterSpacing
+        whiskerDirection = content.direction
         fontFeatureSettings = content.fontFeatures.joinToString(", ") {
             "'${it.tag}' ${it.value}"
         }.ifEmpty { null }
