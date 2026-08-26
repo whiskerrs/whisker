@@ -700,6 +700,10 @@ impl Driver {
                     font_features,
                     font_variations,
                     font_optical_sizing,
+                    white_space,
+                    word_break,
+                    max_lines,
+                    overflow,
                     available_width,
                 } => self.measure_text(
                     *key,
@@ -713,6 +717,10 @@ impl Driver {
                     font_features,
                     font_variations,
                     *font_optical_sizing,
+                    *white_space,
+                    *word_break,
+                    *max_lines,
+                    *overflow,
                     *available_width,
                 ),
                 Command::CheckpointMeasurement {
@@ -1441,6 +1449,10 @@ impl Driver {
         font_features: &[whisker_host_conformance::FontFeatureFixture],
         font_variations: &[whisker_host_conformance::FontVariationFixture],
         font_optical_sizing: whisker_host_conformance::FontOpticalSizingFixture,
+        white_space: whisker_host_conformance::WhiteSpaceFixture,
+        word_break: whisker_host_conformance::WordBreakFixture,
+        max_lines: u32,
+        overflow: whisker_host_conformance::TextOverflowFixture,
         available_width: f32,
     ) {
         let surface = self.surface.expect("attach_surface precedes measure_text");
@@ -1512,10 +1524,30 @@ impl Driver {
                 direction: MeasureTextDirection::Auto,
                 alignment: whisker_protocol::MeasureTextAlignment::Start,
                 indent: Default::default(),
-                wrap: MeasureTextWrap::Wrap,
-                word_break: Default::default(),
-                max_lines: None,
-                overflow: MeasureTextOverflow::Clip,
+                wrap: match white_space {
+                    whisker_host_conformance::WhiteSpaceFixture::Normal => MeasureTextWrap::Wrap,
+                    whisker_host_conformance::WhiteSpaceFixture::NoWrap => MeasureTextWrap::NoWrap,
+                },
+                word_break: match word_break {
+                    whisker_host_conformance::WordBreakFixture::Normal => {
+                        MeasureTextWordBreak::Normal
+                    }
+                    whisker_host_conformance::WordBreakFixture::BreakAll => {
+                        MeasureTextWordBreak::BreakAll
+                    }
+                    whisker_host_conformance::WordBreakFixture::KeepAll => {
+                        MeasureTextWordBreak::KeepAll
+                    }
+                },
+                max_lines: (max_lines > 0).then_some(max_lines),
+                overflow: match overflow {
+                    whisker_host_conformance::TextOverflowFixture::Clip => {
+                        MeasureTextOverflow::Clip
+                    }
+                    whisker_host_conformance::TextOverflowFixture::Ellipsis => {
+                        MeasureTextOverflow::Ellipsis
+                    }
+                },
             }),
         };
         self.text

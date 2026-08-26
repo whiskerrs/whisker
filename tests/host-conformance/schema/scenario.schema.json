@@ -400,6 +400,10 @@
         "font_features": { "type": "array", "items": { "$ref": "#/$defs/fontFeature" } },
         "font_variations": { "type": "array", "items": { "$ref": "#/$defs/fontVariation" } },
         "font_optical_sizing": { "enum": ["auto", "none"], "default": "none" },
+        "white_space": { "enum": ["normal", "no_wrap"], "default": "normal" },
+        "word_break": { "enum": ["normal", "break_all", "keep_all"], "default": "normal" },
+        "max_lines": { "type": "integer", "minimum": 0, "default": 0 },
+        "overflow": { "enum": ["clip", "ellipsis"], "default": "clip" },
         "available_width": { "type": "number", "minimum": 0 }
       }
     },
