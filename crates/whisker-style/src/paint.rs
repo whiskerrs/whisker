@@ -214,6 +214,8 @@ pub enum ComputedTransformFunction {
 /// Transform functions and origin retained until border-box layout is known.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ComputedTransformStyle {
+    /// Lynx-compatible perspective distance applied to this node, or none.
+    pub perspective: Option<StyleNumber>,
     /// Ordered transform functions.
     pub functions: Vec<ComputedTransformFunction>,
     /// Horizontal origin relative to border-box width.
@@ -225,6 +227,7 @@ pub struct ComputedTransformStyle {
 impl Default for ComputedTransformStyle {
     fn default() -> Self {
         Self {
+            perspective: None,
             functions: Vec::new(),
             origin_x: ComputedLengthPercentage::new(0.0, 0.5),
             origin_y: ComputedLengthPercentage::new(0.0, 0.5),
@@ -386,6 +389,22 @@ pub(crate) fn resolve_paint_style(
                 };
                 paint.transform.functions =
                     resolve_transform_functions(value, inherited, environment, property)?;
+            }
+            StyleProperty::Perspective => {
+                let StyleValue::Length(value) = value else {
+                    return Err(invalid(property));
+                };
+                let distance = resolve_affine(
+                    &LengthPercentageValue::Length(*value),
+                    inherited.font_size(),
+                    environment,
+                    property,
+                )?
+                .length();
+                if distance < 0.0 {
+                    return Err(invalid(property));
+                }
+                paint.transform.perspective = Some(StyleNumber::new(distance));
             }
             StyleProperty::TransformOrigin => {
                 let StyleValue::TransformOrigin(value) = value else {
@@ -1421,6 +1440,48 @@ mod tests {
                     StyleEnvironment::default(),
                 ),
                 Err(StyleResolutionError::InvalidPropertyValue(property))
+            );
+        }
+    }
+
+    #[test]
+    fn perspective_resolves_absolute_length_and_rejects_negative_distance() {
+        let perspective = |value| {
+            StyleValue::Length(LengthValue::Dimension {
+                value: number(value),
+                unit: LengthUnit::Rem,
+            })
+        };
+        let resolved = crate::resolve_style(
+            &SpecifiedStyle::new().push(StyleProperty::Perspective, perspective(2.0)),
+            None,
+            StyleEnvironment::new(320.0, 480.0, 2.0, 16.0),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.computed().paint().transform.perspective,
+            Some(number(32.0))
+        );
+        assert_eq!(
+            crate::resolve_style(
+                &SpecifiedStyle::new().push(StyleProperty::Perspective, perspective(-1.0)),
+                None,
+                StyleEnvironment::default(),
+            ),
+            Err(StyleResolutionError::InvalidPropertyValue(
+                StyleProperty::Perspective
+            ))
+        );
+        for value in [StyleValue::Number(number(1.0)), perspective(f32::NAN)] {
+            assert_eq!(
+                crate::resolve_style(
+                    &SpecifiedStyle::new().push(StyleProperty::Perspective, value),
+                    None,
+                    StyleEnvironment::default(),
+                ),
+                Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::Perspective
+                ))
             );
         }
     }

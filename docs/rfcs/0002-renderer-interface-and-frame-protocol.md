@@ -827,8 +827,11 @@ transform is unchanged. The current common subset includes CSS/Lynx 2-D
 transforms and 3-D functions or `matrix3d` values that project a node's flat
 local plane. Each Host applies the projective result and flattens at that node;
 Android maps the `z = 0` slice exactly to a density-adjusted 3-by-3 homography.
-Parent `perspective`, shared `preserve-3d` descendant spaces, and motion paths
-remain later capability slices rather than silently degrading on any Host.
+Lynx-compatible `perspective` applies to the current node rather than its
+children; Rust prepends its projection to the node transform before this same
+flat-plane normalization. Browser-style parent perspective, `perspective-origin`,
+shared `preserve-3d` descendant spaces, and motion paths are outside this
+subset rather than silently changing semantics on any Host.
 
 The final opcode set may combine common operations for compactness. The
 semantic separation matters because it enables dirty classification,

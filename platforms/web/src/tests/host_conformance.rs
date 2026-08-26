@@ -1233,6 +1233,9 @@ fn fixture(path: &str) -> &'static str {
         "core/transform-projective-plane.json" => {
             include_str!("../../../../tests/host-conformance/core/transform-projective-plane.json")
         }
+        "core/transform-perspective-current-node.json" => include_str!(
+            "../../../../tests/host-conformance/core/transform-perspective-current-node.json"
+        ),
         "wpt/css/css-color/t32-opacity-basic-0.6-a.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-color/t32-opacity-basic-0.6-a.json"
         ),

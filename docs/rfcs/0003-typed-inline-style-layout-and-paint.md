@@ -481,8 +481,12 @@ matrix at its local border-box origin and does not repeat CSS resolution. This
 slice accepts 2-D transforms plus 3-D functions and projective `matrix3d`
 values applied to the node's flat local plane. Hosts flatten at each node;
 Android derives the exact density-adjusted 3-by-3 homography for that `z = 0`
-plane. Parent `perspective`, shared `preserve-3d` descendant spaces, and
-offset-path motion remain separate planned capabilities.
+plane. In accordance with Lynx, `perspective` affects the current node rather
+than its children: Rust resolves the length, clamps values below one logical
+pixel for rendering, prepends the projection, and emits the same canonical
+flat-plane matrix. Browser-style parent perspective, `perspective-origin`,
+shared `preserve-3d` descendant spaces, and offset-path motion are outside the
+current subset.
 
 Protocol minor 1 groups those resolved meanings by Host capability rather
 than by CSS spelling. `SetBackgroundLayers` carries resource-backed images,

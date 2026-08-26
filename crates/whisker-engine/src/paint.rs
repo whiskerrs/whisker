@@ -90,7 +90,13 @@ pub fn lower_transform(
         return None;
     }
 
-    let mut matrix = identity();
+    // Lynx intentionally differs from browser CSS here: `perspective` affects
+    // the current node. Prepending it makes the node's transform functions run
+    // first and the perspective divide run afterward.
+    let mut matrix = style
+        .perspective
+        .map(|distance| perspective(distance.get().max(1.0)))
+        .unwrap_or_else(identity);
     for function in &style.functions {
         matrix = multiply(
             matrix,
@@ -220,6 +226,12 @@ fn translation(x: f32, y: f32, z: f32) -> [f32; 16] {
     [
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, x, y, z, 1.0,
     ]
+}
+
+fn perspective(distance: f32) -> [f32; 16] {
+    let mut matrix = identity();
+    matrix[11] = -1.0 / distance;
+    matrix
 }
 
 fn multiply(left: [f32; 16], right: [f32; 16]) -> [f32; 16] {
@@ -425,6 +437,7 @@ mod tests {
     #[test]
     fn resolves_transform_percentages_and_origin_against_border_box() {
         let style = ComputedTransformStyle {
+            perspective: None,
             functions: vec![ComputedTransformFunction::Scale {
                 x: StyleNumber::new(2.0),
                 y: StyleNumber::new(2.0),
@@ -441,6 +454,7 @@ mod tests {
         );
 
         let translated = ComputedTransformStyle {
+            perspective: None,
             functions: vec![ComputedTransformFunction::Translate {
                 x: ComputedLengthPercentage::new(3.0, 0.5),
                 y: ComputedLengthPercentage::new(4.0, 0.25),
@@ -486,6 +500,7 @@ mod tests {
             ]),
         ] {
             let style = ComputedTransformStyle {
+                perspective: None,
                 functions: vec![function],
                 origin_x: ComputedLengthPercentage::ZERO,
                 origin_y: ComputedLengthPercentage::ZERO,
@@ -511,6 +526,7 @@ mod tests {
     #[test]
     fn canonicalizes_three_dimensional_output_to_the_node_plane() {
         let style = ComputedTransformStyle {
+            perspective: None,
             functions: vec![ComputedTransformFunction::RotateY(StyleNumber::new(60.0))],
             origin_x: ComputedLengthPercentage::ZERO,
             origin_y: ComputedLengthPercentage::ZERO,
@@ -518,6 +534,41 @@ mod tests {
         let transform = lower_transform(&style, 40.0, 20.0).expect("finite transform");
         let expected = [
             0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ];
+        for (actual, expected) in transform.0.into_iter().zip(expected) {
+            assert!(
+                (actual - expected).abs() < 0.000_001,
+                "{actual} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn prepends_lynx_current_node_perspective_to_the_transform_matrix() {
+        let style = ComputedTransformStyle {
+            perspective: Some(StyleNumber::new(100.0)),
+            functions: vec![ComputedTransformFunction::RotateY(StyleNumber::new(60.0))],
+            origin_x: ComputedLengthPercentage::ZERO,
+            origin_y: ComputedLengthPercentage::ZERO,
+        };
+        let transform = lower_transform(&style, 40.0, 20.0).expect("finite perspective");
+        let expected = [
+            0.5,
+            0.0,
+            0.0,
+            3.0_f32.sqrt() / 200.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
         ];
         for (actual, expected) in transform.0.into_iter().zip(expected) {
             assert!(

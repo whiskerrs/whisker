@@ -1,8 +1,8 @@
 use std::convert::Infallible;
 
 use whisker::css::{
-    BorderStyle, Clear, Direction, Float, GridLine, GridTemplate, GridTrack, Overflow, Position,
-    TransformFn,
+    Angle, BorderStyle, Clear, Direction, Float, GridLine, GridTemplate, GridTrack, Overflow,
+    Position, TransformFn,
 };
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -618,6 +618,52 @@ fn render_projective_matrix3d_reaches_the_frame_sink() {
                     if *node == root && transform.0 == matrix
             ))
     );
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn render_lynx_perspective_is_lowered_into_the_current_node_transform() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(26).expect("test surface"),
+        StyleEnvironment::new(100.0, 60.0, 1.0, 14.0),
+    );
+    let style = Css::new()
+        .width(px(40))
+        .height(px(20))
+        .perspective(px(100))
+        .transform(TransformFn::RotateY(Angle::Deg(60.0)))
+        .transform_origin(Position::Coords(px(0).into(), px(0).into()));
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| render! { view(style: style) });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 60.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("perspective frame");
+    let root = surface.root().expect("surface root");
+    let transform = renderer.frames()[0]
+        .packet
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::SetTransform { node, transform } if *node == root => Some(*transform),
+            _ => None,
+        })
+        .expect("perspective emits SetTransform");
+    assert!((transform.0[3] - 3.0_f32.sqrt() / 200.0).abs() < 0.000_001);
+    assert_eq!(transform.0[11], 0.0);
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
