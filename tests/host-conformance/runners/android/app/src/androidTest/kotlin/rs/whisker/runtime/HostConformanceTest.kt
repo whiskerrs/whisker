@@ -5,6 +5,8 @@ import android.os.Build
 import android.view.ViewGroup
 import android.widget.TextView
 import android.graphics.Canvas
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.util.Base64
 import android.text.Spanned
 import android.text.style.LeadingMarginSpan
@@ -29,6 +31,17 @@ import rs.whisker.runtime.resource.HostResourceSnapshot
 import rs.whisker.runtime.resource.HostResourceState
 
 private const val BACKGROUND_PACKED_LAYERS = 256
+
+private data class CapturedPointerInput(
+    val event: Int,
+    val pointerId: Long,
+    val kind: Int,
+    val buttons: Int,
+    val changedButton: Int,
+    val timestampMs: Double,
+    val x: Float,
+    val y: Float,
+)
 
 @RunWith(AndroidJUnit4::class)
 class HostConformanceTest {
@@ -89,6 +102,27 @@ class HostConformanceTest {
                     count += 1
                 }
                 assertTrue("at least one shared measurement scenario", count > 0)
+            }
+    }
+
+    @Test
+    fun everySharedPointerScenarioUsesTheProductionAndroidNormalizer() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val manifest = JSONObject(asset("manifest.json"))
+                var count = 0
+                manifest.getJSONArray("cases").objects().forEach { entry ->
+                    val scenario = JSONObject(asset(entry.getString("fixture")))
+                    val testSide = scenario.getJSONObject("test")
+                    if (testSide.getJSONArray("commands").objects().none {
+                            it.getString("type") == "emit_pointer"
+                        }) return@forEach
+                    Driver(context, scenario.getString("id")).executeInput(testSide)
+                    count += 1
+                }
+                assertTrue("at least one shared pointer scenario", count > 0)
             }
     }
 
@@ -247,6 +281,7 @@ private class Driver(
     private var logicalHeight = 0f
     private var checkpoint: Bitmap? = null
     private val measurements = HashMap<Long, FloatArray>()
+    private var pointerInput: CapturedPointerInput? = null
 
     init {
         view.beginBootstrapFromNative()
@@ -275,6 +310,18 @@ private class Driver(
             intArrayOf(), intArrayOf(), emptyArray(),
         )
         check(view.finishBootstrapFromNative())
+        view.observePointerInputForTesting { semantics, geometry ->
+            pointerInput = CapturedPointerInput(
+                event = semantics[0].toInt(),
+                pointerId = semantics[1],
+                kind = semantics[2].toInt(),
+                buttons = semantics[3].toInt(),
+                changedButton = semantics[4].toInt(),
+                timestampMs = geometry[0].toDouble(),
+                x = geometry[1].toFloat(),
+                y = geometry[2].toFloat(),
+            )
+        }
     }
 
     fun execute(side: JSONObject): Bitmap {
@@ -496,6 +543,98 @@ private class Driver(
                 else -> error("unsupported Android measurement command: ${command.getString("type")}")
             }
         }
+    }
+
+    fun executeInput(side: JSONObject) {
+        side.getJSONArray("commands").objects().forEach { command ->
+            when (command.getString("type")) {
+                "attach_surface" -> {
+                    logicalWidth = command.getDouble("width").toFloat()
+                    logicalHeight = command.getDouble("height").toFloat()
+                }
+                "emit_pointer" -> emitPointer(command)
+                "checkpoint_input" -> checkpointInput(command)
+                else -> error("unsupported Android pointer command: ${command.getString("type")}")
+            }
+        }
+    }
+
+    private fun emitPointer(command: JSONObject) {
+        val eventKind = when (command.getString("event")) {
+            "down" -> MotionEvent.ACTION_DOWN
+            "move" -> MotionEvent.ACTION_MOVE
+            "up" -> MotionEvent.ACTION_UP
+            "cancel" -> MotionEvent.ACTION_CANCEL
+            else -> error("unsupported pointer event: $command")
+        }
+        val pointerId = command.getLong("pointer_id")
+        check(pointerId in 1..Int.MAX_VALUE.toLong())
+        val density = context.resources.displayMetrics.density
+        val (toolType, source) = when (command.getString("pointer_kind")) {
+            "mouse" -> MotionEvent.TOOL_TYPE_MOUSE to InputDevice.SOURCE_MOUSE
+            "touch" -> MotionEvent.TOOL_TYPE_FINGER to InputDevice.SOURCE_TOUCHSCREEN
+            "pen" -> MotionEvent.TOOL_TYPE_STYLUS to InputDevice.SOURCE_STYLUS
+            "unknown" -> MotionEvent.TOOL_TYPE_UNKNOWN to InputDevice.SOURCE_UNKNOWN
+            else -> error("unsupported pointer kind: $command")
+        }
+        val properties = arrayOf(MotionEvent.PointerProperties().apply {
+            id = (pointerId - 1).toInt()
+            this.toolType = toolType
+        })
+        val coordinates = arrayOf(MotionEvent.PointerCoords().apply {
+            x = command.getDouble("x").toFloat() * density
+            y = command.getDouble("y").toFloat() * density
+            pressure = 1f
+            size = 1f
+        })
+        val timestampMs = command.getDouble("timestamp_ms").toLong()
+        val event = MotionEvent.obtain(
+            timestampMs,
+            timestampMs,
+            eventKind,
+            1,
+            properties,
+            coordinates,
+            0,
+            command.getInt("buttons"),
+            1f,
+            1f,
+            0,
+            0,
+            source,
+            0,
+        )
+        try {
+            view.dispatchTouchEvent(event)
+        } finally {
+            event.recycle()
+        }
+        val normalized = checkNotNull(pointerInput)
+        check(normalized.buttons == command.getInt("buttons"))
+        check(normalized.changedButton == command.getInt("changed_button"))
+    }
+
+    private fun checkpointInput(command: JSONObject) {
+        val normalized = checkNotNull(pointerInput)
+        val expectedEvent = when (command.getString("event")) {
+            "down" -> 0
+            "move" -> 1
+            "up" -> 2
+            "cancel" -> 3
+            else -> error("unsupported pointer checkpoint: $command")
+        }
+        check(normalized.event == expectedEvent)
+        check(normalized.pointerId == command.getLong("pointer_id"))
+        val expectedKind = when (command.getString("pointer_kind")) {
+            "mouse" -> 0
+            "touch" -> 1
+            "pen" -> 2
+            "unknown" -> 3
+            else -> error("unsupported pointer kind: $command")
+        }
+        check(normalized.kind == expectedKind)
+        check(abs(normalized.x - command.getDouble("x").toFloat()) < 0.001f)
+        check(abs(normalized.y - command.getDouble("y").toFloat()) < 0.001f)
     }
 
     private fun measureText(command: JSONObject) {

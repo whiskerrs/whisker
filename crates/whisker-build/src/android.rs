@@ -179,7 +179,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     let vs_path = vs_dir.join("android-jni-exports.ver");
     std::fs::write(
         &vs_path,
-        b"{\n  global:\n    Java_*;\n    JNI_OnLoad;\n    whisker_view_create;\n    whisker_view_tick;\n    whisker_view_destroy;\n    whisker_view_dispatch_event;\n    whisker_view_dispatch_module_event;\n    whisker_view_dispatch_resource_event;\n};\n",
+        b"{\n  global:\n    Java_*;\n    JNI_OnLoad;\n    whisker_view_create;\n    whisker_view_tick;\n    whisker_view_destroy;\n    whisker_view_dispatch_event;\n    whisker_view_dispatch_pointer;\n    whisker_view_dispatch_module_event;\n    whisker_view_dispatch_resource_event;\n};\n",
     )
     .with_context(|| format!("write {}", vs_path.display()))?;
 

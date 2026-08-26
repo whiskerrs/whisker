@@ -15,7 +15,16 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 24;
+pub const MOBILE_ABI_MINOR: u16 = 25;
+
+pub const POINTER_DOWN: u32 = 0;
+pub const POINTER_MOVE: u32 = 1;
+pub const POINTER_UP: u32 = 2;
+pub const POINTER_CANCEL: u32 = 3;
+pub const POINTER_MOUSE: u32 = 0;
+pub const POINTER_TOUCH: u32 = 1;
+pub const POINTER_PEN: u32 = 2;
+pub const POINTER_UNKNOWN: u32 = 3;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;

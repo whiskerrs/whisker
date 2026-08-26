@@ -28,7 +28,8 @@ final class HostConformanceTests: XCTestCase {
             let testSide = try object(scenario, "test")
             guard try array(testSide, "commands").contains(where: {
                 let type = try string($0, "type")
-                return type == "present_box" || type == "present_scene" || type == "measure_text"
+                return type == "present_box" || type == "present_scene" || type == "measure_text" ||
+                    type == "emit_pointer"
             }) else { continue }
             let test = try Driver(id: id).execute(testSide)
             if let reference = scenario["reference"] as? [String: Any] {
@@ -72,6 +73,38 @@ final class HostConformanceTests: XCTestCase {
             .unsupportedSystemFallback, .unsupportedSystemFallback,
         ]
         XCTAssertEqual((0...34).map { hostCursorPresentation(keyword: Int32($0)) }, expected)
+    }
+
+    func testTouchObserverDoesNotArbitrateDescendantGestures() {
+        let observer = WhiskerTouchObserverGestureRecognizer(target: nil, action: nil)
+        let controlGesture = UITapGestureRecognizer()
+        XCTAssertFalse(observer.cancelsTouchesInView)
+        XCTAssertFalse(observer.delaysTouchesBegan)
+        XCTAssertFalse(observer.delaysTouchesEnded)
+        XCTAssertFalse(observer.canPrevent(controlGesture))
+        XCTAssertFalse(observer.canBePrevented(by: controlGesture))
+    }
+
+    func testTouchIdentityRemainsStableForTheStream() {
+        let firstTouch = NSObject()
+        let secondTouch = NSObject()
+        let firstKey = ObjectIdentifier(firstTouch)
+        let secondKey = ObjectIdentifier(secondTouch)
+        var identities = HostTouchIdentityMap()
+        let pointerID = identities.begin(firstKey)
+        XCTAssertNotEqual(pointerID, 0)
+        XCTAssertEqual(identities.existing(firstKey), pointerID)
+        XCTAssertEqual(identities.begin(firstKey), pointerID)
+        XCTAssertNotEqual(identities.begin(secondKey), pointerID)
+        identities.end(firstKey)
+        XCTAssertNil(identities.existing(firstKey))
+        XCTAssertEqual(
+            logicalPointerPosition(
+                CGPoint(x: 34, y: 27),
+                viewport: CGRect(x: 10, y: 11, width: 200, height: 100)
+            ),
+            CGPoint(x: 24, y: 16)
+        )
     }
 
     func testContentBoxRadiiUseTheCompleteInsetFromTheBorderBox() {
@@ -400,6 +433,7 @@ private final class Driver {
     private var surfaceScale: CGFloat = 1
     private var checkpoint: Pixels?
     private var measurements: [UInt64: WhiskerMobileMeasureResponse] = [:]
+    private var pointerInput: WhiskerPointerDispatch?
 
     init(id: String) throws {
         self.id = id
@@ -445,6 +479,10 @@ private final class Driver {
                 try measureText(command)
             case "checkpoint_measurement":
                 try checkpointMeasurement(command)
+            case "emit_pointer":
+                try emitPointer(command)
+            case "checkpoint_input":
+                try checkpointInput(command)
             case "checkpoint":
                 let name = try string(command, "name")
                 guard name == "paint.box" ||
@@ -837,6 +875,57 @@ private final class Driver {
         if id == "host.measure.text.basic" {
             XCTAssertGreaterThanOrEqual(response.height, 28)
         }
+        checkpoint = Pixels(width: 0, height: 0, bytes: [])
+    }
+
+    private func emitPointer(_ command: [String: Any]) throws {
+        let event: HostPointerEvent = switch try string(command, "event") {
+        case "down": .down
+        case "move": .move
+        case "up": .up
+        case "cancel": .cancel
+        default: throw Failure("unknown pointer event")
+        }
+        guard try string(command, "pointer_kind") == "touch" else {
+            throw Failure("iOS touch fixture requires pointer_kind=touch")
+        }
+        var observed: WhiskerPointerDispatch?
+        whiskerPointerDispatchObserver = { observed = $0 }
+        defer { whiskerPointerDispatchObserver = nil }
+        view.dispatchConformanceTouchSample(
+            timestampMs: try number(command, "timestamp_ms"),
+            event: event,
+            pointerID: UInt64(try number(command, "pointer_id")),
+            x: Float(try number(command, "x")),
+            y: Float(try number(command, "y"))
+        )
+        let input = try unwrap(observed, "production pointer ABI dispatch")
+        XCTAssertEqual(input.timestampMs, try number(command, "timestamp_ms"))
+        XCTAssertEqual(input.event, event.rawValue)
+        XCTAssertNotEqual(input.pointerID, 0)
+        XCTAssertEqual(input.pointerKind, UInt32(WHISKER_POINTER_TOUCH))
+        XCTAssertEqual(input.buttons, UInt32(try number(command, "buttons")))
+        XCTAssertEqual(input.changedButton, Int16(try number(command, "changed_button")))
+        pointerInput = input
+    }
+
+    private func checkpointInput(_ command: [String: Any]) throws {
+        let input = try unwrap(pointerInput, "pointer input checkpoint")
+        let event: HostPointerEvent = switch try string(command, "event") {
+        case "down": .down
+        case "move": .move
+        case "up": .up
+        case "cancel": .cancel
+        default: throw Failure("unknown checkpoint pointer event")
+        }
+        guard try string(command, "pointer_kind") == "touch" else {
+            throw Failure("iOS touch checkpoint requires pointer_kind=touch")
+        }
+        XCTAssertEqual(input.event, event.rawValue)
+        XCTAssertEqual(input.pointerID, UInt64(try number(command, "pointer_id")))
+        XCTAssertEqual(input.pointerKind, UInt32(WHISKER_POINTER_TOUCH))
+        XCTAssertEqual(input.x, Float(try number(command, "x")))
+        XCTAssertEqual(input.y, Float(try number(command, "y")))
         checkpoint = Pixels(width: 0, height: 0, bytes: [])
     }
 

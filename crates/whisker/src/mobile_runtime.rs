@@ -9,14 +9,15 @@ use whisker_driver::module::{
 use whisker_engine::whisker_protocol::{
     ApplyResult, AvailableSpace, BackgroundAttachment, BackgroundSize, BlendMode, BorderLineStyle,
     ChildPolicy, ClipShape, ElementMeasurement, ElementRegistration, ElementValueKind, FillRule,
-    FrameMode, FramePacket, ImageRendering, ImageRepeat, MeasureFontFamily, MeasureFontStyle,
-    MeasureLineHeight, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasuredSize,
-    MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementRequestId,
-    MeasurementResponse, NodeId, Operation, PaintBox, PaintColor, PaintImage,
-    PaintLengthPercentage, PaintPosition, PathCommand, PreparedContentId, RadialGradientExtent,
-    RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode,
-    ResourceId, ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason,
-    VisualEffects,
+    FrameMode, FramePacket, ImageRendering, ImageRepeat, InputEvent, InputEventKind, InputPoint,
+    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextOverflow,
+    MeasureTextWordBreak, MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload,
+    MeasurementRequest, MeasurementRequestId, MeasurementResponse, NodeId, Operation, PaintBox,
+    PaintColor, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand, PointerId,
+    PointerInput, PointerKind, PreparedContentId, RadialGradientExtent, RadialGradientShape,
+    ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode, ResourceId,
+    ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason, VisualEffects,
+    WhiskerValue,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
@@ -231,6 +232,92 @@ pub unsafe fn dispatch_event(
             eprintln!("Whisker mobile event failed: {error}");
             false
         })
+}
+
+/// Dispatches one Host-normalized pointer event. The target intentionally
+/// remains empty so the retained Rust scene performs hit testing and pointer
+/// capture resolution consistently across Hosts.
+///
+/// # Safety
+/// `handle` must identify a live mobile runtime for the duration of this call.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn dispatch_pointer(
+    handle: *mut c_void,
+    timestamp_ms: f64,
+    event: u32,
+    pointer_id: u64,
+    pointer_kind: u32,
+    x: f32,
+    y: f32,
+    buttons: u32,
+    changed_button: i16,
+) -> bool {
+    let Some(mobile) = (unsafe { handle.cast::<MobileRuntime>().as_ref() }) else {
+        return false;
+    };
+    let Some(event) = mobile_pointer_event(
+        timestamp_ms,
+        event,
+        pointer_id,
+        pointer_kind,
+        x,
+        y,
+        buttons,
+        changed_button,
+    ) else {
+        return false;
+    };
+    let modules = std::sync::Arc::clone(&mobile.modules);
+    with_mobile_module_host(&modules, || mobile.runtime.dispatch_input(&event))
+        .map(|value| value.consumed)
+        .unwrap_or_else(|error| {
+            eprintln!("Whisker mobile pointer input failed: {error}");
+            false
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mobile_pointer_event(
+    timestamp_ms: f64,
+    event: u32,
+    pointer_id: u64,
+    pointer_kind: u32,
+    x: f32,
+    y: f32,
+    buttons: u32,
+    changed_button: i16,
+) -> Option<InputEvent> {
+    let kind = match event {
+        POINTER_DOWN => InputEventKind::PointerDown,
+        POINTER_MOVE => InputEventKind::PointerMove,
+        POINTER_UP => InputEventKind::PointerUp,
+        POINTER_CANCEL => InputEventKind::PointerCancel,
+        _ => return None,
+    };
+    let pointer_kind = match pointer_kind {
+        POINTER_MOUSE => PointerKind::Mouse,
+        POINTER_TOUCH => PointerKind::Touch,
+        POINTER_PEN => PointerKind::Pen,
+        POINTER_UNKNOWN => PointerKind::Unknown,
+        _ => return None,
+    };
+    let pointer_id = PointerId::new(pointer_id)?;
+    let event = InputEvent {
+        surface: SurfaceId::new(1).unwrap(),
+        timestamp_ms,
+        kind,
+        pointer: Some(PointerInput {
+            id: pointer_id,
+            kind: pointer_kind,
+            position: InputPoint { x, y },
+            buttons,
+            changed_button,
+        }),
+        target: None,
+        detail: WhiskerValue::Null,
+    };
+    event.validate().ok()?;
+    Some(event)
 }
 
 /// # Safety
@@ -1953,6 +2040,25 @@ mod tests {
         GradientStop, PaintCoordinate, PaintPosition, ProtocolVersion, TextContent,
         TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow,
     };
+
+    #[test]
+    fn mobile_pointer_input_decodes_without_host_specific_types() {
+        let event = mobile_pointer_event(42.5, 0, 7, 1, 24.0, 16.0, 1, -1).unwrap();
+        assert_eq!(event.kind, InputEventKind::PointerDown);
+        assert_eq!(event.target, None);
+        let pointer = event.pointer.unwrap();
+        assert_eq!(pointer.id.get(), 7);
+        assert_eq!(pointer.kind, PointerKind::Touch);
+        assert_eq!(pointer.position, InputPoint { x: 24.0, y: 16.0 });
+        assert_eq!(pointer.buttons, 1);
+        assert_eq!(pointer.changed_button, -1);
+
+        assert!(mobile_pointer_event(0.0, 4, 1, 0, 0.0, 0.0, 0, -1).is_none());
+        assert!(mobile_pointer_event(0.0, 0, 0, 0, 0.0, 0.0, 0, -1).is_none());
+        assert!(mobile_pointer_event(0.0, 0, 1, 4, 0.0, 0.0, 0, -1).is_none());
+        assert!(mobile_pointer_event(f64::NAN, 0, 1, 0, 0.0, 0.0, 0, -1).is_none());
+        assert!(mobile_pointer_event(0.0, 0, 1, 0, f32::NAN, 0.0, 0, -1).is_none());
+    }
 
     fn linear_background(name: &str) -> BackgroundLayer {
         BackgroundLayer {

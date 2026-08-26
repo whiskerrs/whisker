@@ -1827,7 +1827,8 @@ pub mod __main_runtime {
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub mod __mobile_runtime {
     pub use crate::mobile_runtime::{
-        create, destroy, dispatch_event, dispatch_module_event, dispatch_resource_event, tick,
+        create, destroy, dispatch_event, dispatch_module_event, dispatch_pointer,
+        dispatch_resource_event, tick,
     };
 }
 

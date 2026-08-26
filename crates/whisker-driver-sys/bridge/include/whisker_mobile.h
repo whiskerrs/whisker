@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 24 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 25 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -296,6 +296,16 @@ bool whisker_view_tick(void*, double, float, float, float);
 void whisker_view_destroy(void*);
 bool whisker_view_dispatch_event(void*, double, uint64_t, const uint8_t*, size_t,
                                  const WhiskerValueRaw*);
+enum {
+  WHISKER_POINTER_DOWN = 0, WHISKER_POINTER_MOVE = 1,
+  WHISKER_POINTER_UP = 2, WHISKER_POINTER_CANCEL = 3
+};
+enum {
+  WHISKER_POINTER_MOUSE = 0, WHISKER_POINTER_TOUCH = 1,
+  WHISKER_POINTER_PEN = 2, WHISKER_POINTER_UNKNOWN = 3
+};
+bool whisker_view_dispatch_pointer(void*, double, uint32_t, uint64_t, uint32_t,
+                                   float, float, uint32_t, int16_t);
 bool whisker_view_dispatch_module_event(void*, const uint8_t*, size_t, const uint8_t*, size_t,
                                         const WhiskerValueRaw*);
 bool whisker_view_dispatch_resource_event(void*, const WhiskerMobileResourceEvent*);

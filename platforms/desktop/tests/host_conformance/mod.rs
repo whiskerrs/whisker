@@ -13,8 +13,9 @@ use whisker_host_conformance::{
     CursorFixture, FillRuleFixture, Host, ImageRenderingFixture, ImageRepeatFixture,
     LinearGradientFixture, LoadedCase, OverflowClipFixture, PathCommandFixture,
     PixelRelationFixture, PixelRelationKind, PixelSampleFixture, PointerEventFixture,
-    PointerEventsFixture, RadialGradientFixture, ResourceSourceFixture, ResourceStateFixture,
-    Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture, load_required,
+    PointerEventsFixture, PointerKindFixture, RadialGradientFixture, ResourceSourceFixture,
+    ResourceStateFixture, Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
+    load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
@@ -56,6 +57,15 @@ const fn pointer_event_protocol(value: PointerEventFixture) -> InputEventKind {
         PointerEventFixture::Move => InputEventKind::PointerMove,
         PointerEventFixture::Up => InputEventKind::PointerUp,
         PointerEventFixture::Cancel => InputEventKind::PointerCancel,
+    }
+}
+
+const fn pointer_kind_protocol(value: PointerKindFixture) -> PointerKind {
+    match value {
+        PointerKindFixture::Mouse => PointerKind::Mouse,
+        PointerKindFixture::Touch => PointerKind::Touch,
+        PointerKindFixture::Pen => PointerKind::Pen,
+        PointerKindFixture::Unknown => PointerKind::Unknown,
     }
 }
 
@@ -717,6 +727,7 @@ impl Driver {
                 ),
                 Command::EmitPointer {
                     event,
+                    pointer_kind,
                     pointer_id,
                     timestamp_ms,
                     x,
@@ -725,6 +736,7 @@ impl Driver {
                     changed_button,
                 } => self.emit_pointer(
                     *event,
+                    *pointer_kind,
                     *pointer_id,
                     *timestamp_ms,
                     [*x, *y],
@@ -733,10 +745,11 @@ impl Driver {
                 ),
                 Command::CheckpointInput {
                     event,
+                    pointer_kind,
                     pointer_id,
                     x,
                     y,
-                } => self.check_input(*event, *pointer_id, [*x, *y]),
+                } => self.check_input(*event, *pointer_kind, *pointer_id, [*x, *y]),
             }
         }
         checkpoints
@@ -1583,6 +1596,7 @@ impl Driver {
     fn emit_pointer(
         &mut self,
         kind: PointerEventFixture,
+        pointer_kind: PointerKindFixture,
         pointer_id: u64,
         timestamp_ms: f64,
         position: [f32; 2],
@@ -1596,7 +1610,7 @@ impl Driver {
             kind: pointer_event_protocol(kind),
             pointer: Some(PointerInput {
                 id: PointerId::new(pointer_id).expect("scenario pointer id is non-zero"),
-                kind: PointerKind::Mouse,
+                kind: pointer_kind_protocol(pointer_kind),
                 position: InputPoint {
                     x: position[0],
                     y: position[1],
@@ -1609,7 +1623,13 @@ impl Driver {
         });
     }
 
-    fn check_input(&self, kind: PointerEventFixture, pointer_id: u64, position: [f32; 2]) {
+    fn check_input(
+        &self,
+        kind: PointerEventFixture,
+        pointer_kind: PointerKindFixture,
+        pointer_id: u64,
+        position: [f32; 2],
+    ) {
         let event = self
             .input
             .events
@@ -1620,7 +1640,7 @@ impl Driver {
         assert_eq!(event.target, None);
         let pointer = event.pointer.expect("pointer checkpoint has pointer data");
         assert_eq!(pointer.id.get(), pointer_id);
-        assert_eq!(pointer.kind, PointerKind::Mouse);
+        assert_eq!(pointer.kind, pointer_kind_protocol(pointer_kind));
         assert_close(pointer.position.x, position[0], "pointer x");
         assert_close(pointer.position.y, position[1], "pointer y");
     }

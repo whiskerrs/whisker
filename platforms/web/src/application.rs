@@ -7,10 +7,13 @@ use whisker::runtime::RuntimeWakeHandle;
 use whisker::{Element, ElementRegistry, RuntimeInstance, SurfaceRuntime, WhiskerModule};
 use whisker_engine::LayoutOptions;
 use whisker_protocol::{
-    InputEvent, InputEventKind, ResourceCommand, ResourceEvent, ResourceId, SurfaceId,
+    InputEvent, InputEventKind, InputPoint, ResourceCommand, ResourceEvent, ResourceId, SurfaceId,
 };
 use whisker_style::StyleEnvironment;
 
+use crate::input::{
+    WebPointerEvent, WebPointerPhase, dispatch_pointer, pointer_kind, stable_pointer_id,
+};
 use crate::measure::text::DomMeasurementProvider;
 use crate::scene::frame_sink::DomFrameSink;
 use crate::scene::resource_service::WebResourceService;
@@ -47,6 +50,18 @@ pub fn run(config: WebAppConfig, application: fn() -> Element) -> Result<(), Web
             .map_err(|error| WebError(format!("mount Whisker application: {error}")))
     });
     if let Err(error) = mount {
+        APPLICATION.with(|slot| *slot.borrow_mut() = None);
+        return Err(error);
+    }
+
+    let pointer_listeners = APPLICATION.with(|slot| {
+        let slot = slot.borrow();
+        let application = slot
+            .as_ref()
+            .ok_or_else(|| WebError("Web application is not mounted".into()))?;
+        install_pointer_listeners(&application.root)
+    });
+    if let Err(error) = pointer_listeners {
         APPLICATION.with(|slot| *slot.borrow_mut() = None);
         return Err(error);
     }
@@ -97,6 +112,7 @@ pub async fn handle_resource_command(
 }
 
 struct WebApplication {
+    root: web_sys::Element,
     runtime: RuntimeInstance,
     measurements: DomMeasurementProvider,
     frames: DomFrameSink,
@@ -144,6 +160,7 @@ impl WebApplication {
         let resource_store = WebResourceStore::new();
         let resources = WebResourceService::new(resource_store.clone());
         Ok(Self {
+            root: root.clone(),
             runtime: RuntimeInstance::new(surface, wake),
             measurements: DomMeasurementProvider::new(document.clone()),
             frames: DomFrameSink::new_with_resources(
@@ -230,6 +247,56 @@ impl WebApplication {
             });
         }
     }
+}
+
+fn install_pointer_listeners(root: &web_sys::Element) -> Result<(), WebError> {
+    for (event_name, phase) in [
+        ("pointerdown", WebPointerPhase::Down),
+        ("pointermove", WebPointerPhase::Move),
+        ("pointerup", WebPointerPhase::Up),
+        ("pointercancel", WebPointerPhase::Cancel),
+    ] {
+        let event_root = root.clone();
+        let listener = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(
+            move |event: web_sys::PointerEvent| {
+                let bounds = event_root.get_bounding_client_rect();
+                let input = WebPointerEvent {
+                    phase,
+                    timestamp_ms: event.time_stamp(),
+                    pointer_id: stable_pointer_id(event.pointer_id()),
+                    pointer_kind: pointer_kind(&event.pointer_type()),
+                    client_position: InputPoint {
+                        x: event.client_x() as f32,
+                        y: event.client_y() as f32,
+                    },
+                    buttons: u32::from(event.buttons()),
+                    changed_button: event.button(),
+                };
+                let result = APPLICATION.with(|slot| {
+                    let slot = slot.borrow();
+                    let application = slot
+                        .as_ref()
+                        .ok_or_else(|| WebError("Web application is not mounted".into()))?;
+                    dispatch_pointer(
+                        &application.runtime,
+                        InputPoint {
+                            x: bounds.left() as f32,
+                            y: bounds.top() as f32,
+                        },
+                        input,
+                    )
+                    .map(|_| ())
+                });
+                if let Err(error) = result {
+                    web_sys::console::error_1(&error.to_string().into());
+                }
+            },
+        );
+        root.add_event_listener_with_callback(event_name, listener.as_ref().unchecked_ref())
+            .map_err(|error| js_error("register pointer listener", error))?;
+        listener.forget();
+    }
+    Ok(())
 }
 
 pub(crate) fn request_frame() {

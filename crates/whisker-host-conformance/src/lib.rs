@@ -267,6 +267,8 @@ pub enum Command {
     EmitPointer {
         /// Pointer event phase.
         event: PointerEventFixture,
+        /// Physical pointer source after Host normalization.
+        pointer_kind: PointerKindFixture,
         /// Stable pointer identifier.
         pointer_id: u64,
         /// Host monotonic timestamp.
@@ -284,6 +286,8 @@ pub enum Command {
     CheckpointInput {
         /// Expected pointer event phase.
         event: PointerEventFixture,
+        /// Expected physical pointer source.
+        pointer_kind: PointerKindFixture,
         /// Expected pointer identifier.
         pointer_id: u64,
         /// Expected logical x coordinate.
@@ -336,6 +340,20 @@ pub enum PointerEventFixture {
     Up,
     /// Pointer sequence cancelled.
     Cancel,
+}
+
+/// Physical pointer source used by input fixtures.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PointerKindFixture {
+    /// Mouse or trackpad cursor.
+    Mouse,
+    /// Direct touch contact.
+    Touch,
+    /// Stylus or pen contact.
+    Pen,
+    /// Host source not otherwise represented.
+    Unknown,
 }
 
 /// Color syntax accepted by Host scenarios.
@@ -1535,12 +1553,19 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
                 && min_width <= max_width
                 && min_height <= max_height => {}
             Command::EmitPointer {
-                timestamp_ms, x, y, ..
-            } if timestamp_ms.is_finite()
+                pointer_id,
+                timestamp_ms,
+                x,
+                y,
+                ..
+            } if *pointer_id > 0
+                && timestamp_ms.is_finite()
                 && *timestamp_ms >= 0.0
                 && x.is_finite()
                 && y.is_finite() => {}
-            Command::CheckpointInput { x, y, .. } if x.is_finite() && y.is_finite() => {}
+            Command::CheckpointInput {
+                pointer_id, x, y, ..
+            } if *pointer_id > 0 && x.is_finite() && y.is_finite() => {}
             _ => {
                 return Err(FixtureError(format!(
                     "scenario {id} has an invalid {label} command"

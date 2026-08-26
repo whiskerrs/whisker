@@ -30,13 +30,15 @@ use whisker_protocol::{
     MeasureTextWordBreak, MeasureTextWrap, MeasurementKey, MeasurementMetrics, MeasurementPayload,
     MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
     PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
-    PaintLengthPercentage, PaintPosition, PathCommand, ProtocolVersion, RadialGradientExtent,
-    RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceId,
-    ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent, TextMeasurePayload,
-    TextMeasureStyle, TextPaint, TextShadow, Transform, Visibility,
+    PaintLengthPercentage, PaintPosition, PathCommand, PointerKind, ProtocolVersion,
+    RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent,
+    ResourceId, ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent,
+    TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform, Visibility,
+    WhiskerValue,
 };
 use whisker_style::StyleEnvironment;
 
+use crate::input::{WebPointerEvent, WebPointerPhase, dispatch_pointer};
 use crate::measure::text::DomMeasurementProvider;
 use crate::module_api::built_in_element_factories;
 use crate::scene::frame_sink::DomFrameSink;
@@ -337,6 +339,9 @@ struct Driver {
     resource_lifecycle: bool,
     measurements: DomMeasurementProvider,
     measurement_results: HashMap<u64, MeasurementMetrics>,
+    attached_surface: Option<(f32, f32, f32)>,
+    input_runtime: Option<RuntimeInstance>,
+    last_input: Option<whisker_protocol::InputEvent>,
     expected_box: Option<ExpectedBox>,
     expected_scene: Option<Vec<SceneNodeFixture>>,
 }
@@ -379,6 +384,9 @@ impl Driver {
             resource_lifecycle: false,
             measurements,
             measurement_results: HashMap::new(),
+            attached_surface: None,
+            input_runtime: None,
+            last_input: None,
             expected_box: None,
             expected_scene: None,
         }
@@ -396,6 +404,7 @@ impl Driver {
                     set_style(&self.root, "position", "relative");
                     set_style(&self.root, "width", &format!("{width}px"));
                     set_style(&self.root, "height", &format!("{height}px"));
+                    self.attached_surface = Some((*width, *height, *scale));
                 }
                 Command::RegisterRasterResource {
                     id,
@@ -762,11 +771,99 @@ impl Driver {
                     [*min_height, *max_height],
                     *prepared_content,
                 ),
-                Command::EmitPointer { .. } | Command::CheckpointInput { .. } => {
-                    panic!("non-paint command reached the Web paint runner")
-                }
+                Command::EmitPointer {
+                    event,
+                    pointer_kind,
+                    pointer_id,
+                    timestamp_ms,
+                    x,
+                    y,
+                    buttons,
+                    changed_button,
+                } => self.emit_pointer(
+                    *event,
+                    *pointer_kind,
+                    *pointer_id,
+                    *timestamp_ms,
+                    [*x, *y],
+                    *buttons,
+                    *changed_button,
+                ),
+                Command::CheckpointInput {
+                    event,
+                    pointer_kind,
+                    pointer_id,
+                    x,
+                    y,
+                } => self.assert_input(*event, *pointer_kind, *pointer_id, [*x, *y]),
             }
         }
+    }
+
+    fn emit_pointer(
+        &mut self,
+        phase: whisker_host_conformance::PointerEventFixture,
+        pointer_kind: whisker_host_conformance::PointerKindFixture,
+        pointer_id: u64,
+        timestamp_ms: f64,
+        position: [f32; 2],
+        buttons: u32,
+        changed_button: i16,
+    ) {
+        if self.input_runtime.is_none() {
+            let (width, height, scale) = self
+                .attached_surface
+                .expect("attach_surface precedes emit_pointer");
+            let surface = SurfaceRuntime::new(
+                SurfaceId::new(1).unwrap(),
+                StyleEnvironment::new(width, height, scale, 16.0),
+            );
+            let mut runtime = RuntimeInstance::new(surface, RuntimeWakeHandle::new(|| {}));
+            runtime.mount(|| render! { view() }).unwrap();
+            assert!(runtime.surface().root().is_some());
+            self.input_runtime = Some(runtime);
+        }
+        let root_origin = whisker_protocol::InputPoint { x: 13.0, y: 7.0 };
+        let event = dispatch_pointer(
+            self.input_runtime.as_ref().unwrap(),
+            root_origin,
+            WebPointerEvent {
+                phase: fixture_pointer_phase(phase),
+                timestamp_ms,
+                pointer_id,
+                pointer_kind: fixture_pointer_kind_source(pointer_kind),
+                client_position: whisker_protocol::InputPoint {
+                    x: root_origin.x + position[0],
+                    y: root_origin.y + position[1],
+                },
+                buttons,
+                changed_button,
+            },
+        )
+        .expect("fixture pointer dispatch succeeds through the production Web path");
+        self.last_input = Some(event);
+    }
+
+    fn assert_input(
+        &self,
+        phase: whisker_host_conformance::PointerEventFixture,
+        pointer_kind: whisker_host_conformance::PointerKindFixture,
+        pointer_id: u64,
+        position: [f32; 2],
+    ) {
+        let event = self
+            .last_input
+            .as_ref()
+            .expect("input checkpoint follows emit_pointer");
+        assert_eq!(event.kind, fixture_pointer_kind(phase));
+        assert_eq!(event.surface, SurfaceId::new(1).unwrap());
+        assert_eq!(event.target, None);
+        assert_eq!(event.detail, WhiskerValue::Null);
+        let pointer = event.pointer.expect("pointer fixture has pointer payload");
+        assert_eq!(pointer.id.get(), pointer_id);
+        assert_eq!(pointer.kind, fixture_pointer_kind_source(pointer_kind));
+        assert_close(pointer.position.x, position[0], "pointer x");
+        assert_close(pointer.position.y, position[1], "pointer y");
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1555,6 +1652,7 @@ async fn every_shared_paint_fixture_reaches_the_production_dom_sink() {
                 Command::PresentBox { .. }
                     | Command::PresentScene { .. }
                     | Command::MeasureText { .. }
+                    | Command::EmitPointer { .. }
             )
         }) {
             continue;
@@ -2521,6 +2619,43 @@ fn fixture_measure_font_style(
     }
 }
 
+fn fixture_pointer_phase(value: whisker_host_conformance::PointerEventFixture) -> WebPointerPhase {
+    match value {
+        whisker_host_conformance::PointerEventFixture::Down => WebPointerPhase::Down,
+        whisker_host_conformance::PointerEventFixture::Move => WebPointerPhase::Move,
+        whisker_host_conformance::PointerEventFixture::Up => WebPointerPhase::Up,
+        whisker_host_conformance::PointerEventFixture::Cancel => WebPointerPhase::Cancel,
+    }
+}
+
+fn fixture_pointer_kind(
+    value: whisker_host_conformance::PointerEventFixture,
+) -> whisker_protocol::InputEventKind {
+    match value {
+        whisker_host_conformance::PointerEventFixture::Down => {
+            whisker_protocol::InputEventKind::PointerDown
+        }
+        whisker_host_conformance::PointerEventFixture::Move => {
+            whisker_protocol::InputEventKind::PointerMove
+        }
+        whisker_host_conformance::PointerEventFixture::Up => {
+            whisker_protocol::InputEventKind::PointerUp
+        }
+        whisker_host_conformance::PointerEventFixture::Cancel => {
+            whisker_protocol::InputEventKind::PointerCancel
+        }
+    }
+}
+
+fn fixture_pointer_kind_source(value: whisker_host_conformance::PointerKindFixture) -> PointerKind {
+    match value {
+        whisker_host_conformance::PointerKindFixture::Mouse => PointerKind::Mouse,
+        whisker_host_conformance::PointerKindFixture::Touch => PointerKind::Touch,
+        whisker_host_conformance::PointerKindFixture::Pen => PointerKind::Pen,
+        whisker_host_conformance::PointerKindFixture::Unknown => PointerKind::Unknown,
+    }
+}
+
 fn fixture_font_optical_sizing(
     value: whisker_host_conformance::FontOpticalSizingFixture,
 ) -> whisker_protocol::FontOpticalSizing {
@@ -2764,6 +2899,13 @@ fn assert_style(style: &web_sys::CssStyleDeclaration, property: &str, expected: 
     assert_eq!(
         actual, expected,
         "production DOM projection for {property} did not match the fixture"
+    );
+}
+
+fn assert_close(actual: f32, expected: f32, label: &str) {
+    assert!(
+        (actual - expected).abs() <= f32::EPSILON,
+        "{label} mismatch: expected {expected}, got {actual}",
     );
 }
 

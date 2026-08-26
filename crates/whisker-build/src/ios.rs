@@ -63,6 +63,7 @@ const BRIDGE_EXPORTS: &[&str] = &[
     "_whisker_view_tick",
     "_whisker_view_destroy",
     "_whisker_view_dispatch_event",
+    "_whisker_view_dispatch_pointer",
     "_whisker_view_dispatch_module_event",
     "_whisker_view_dispatch_resource_event",
     "_whisker_aslr_anchor",

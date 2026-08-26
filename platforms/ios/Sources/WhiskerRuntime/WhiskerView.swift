@@ -7,6 +7,14 @@ public final class WhiskerView: UIView {
     private var hostToken: UnsafeMutableRawPointer?
     private var runtimeHandle: UnsafeMutableRawPointer?
     private var isApplicationActive = true
+    private lazy var pointerInputRecognizer: WhiskerTouchObserverGestureRecognizer = {
+        let recognizer = WhiskerTouchObserverGestureRecognizer(target: nil, action: nil)
+        recognizer.touchHandler = { [weak self] touches, event in
+            self?.dispatchTouches(touches, event: event)
+        }
+        return recognizer
+    }()
+    private var touchIdentities = HostTouchIdentityMap()
     private let modules = HostModuleDispatcher()
     private let resources = HostResourceStore()
     private lazy var resourceService = HostResourceService(store: resources)
@@ -26,6 +34,8 @@ public final class WhiskerView: UIView {
         super.init(frame: frame)
         backgroundColor = .clear
         autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        isMultipleTouchEnabled = true
+        addGestureRecognizer(pointerInputRecognizer)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(applicationDidBecomeActive),
@@ -166,6 +176,73 @@ public final class WhiskerView: UIView {
         }
     }
 
+    private func dispatchTouches(_ touches: Set<UITouch>, event: HostPointerEvent) {
+        for touch in touches {
+            let key = ObjectIdentifier(touch)
+            let pointerID: UInt64
+            if event == .down {
+                pointerID = touchIdentities.begin(key)
+            } else if let existing = touchIdentities.existing(key) {
+                pointerID = existing
+            } else { continue }
+            let location = touch.location(in: self)
+            let viewport = logicalBounds
+            let logicalPosition = logicalPointerPosition(location, viewport: viewport)
+            dispatchTouchSample(
+                timestampMs: touch.timestamp * 1_000,
+                event: event,
+                pointerID: pointerID,
+                x: Float(logicalPosition.x),
+                y: Float(logicalPosition.y)
+            )
+            if event == .up || event == .cancel { touchIdentities.end(key) }
+        }
+    }
+
+    private func dispatchTouchSample(
+        timestampMs: Double,
+        event: HostPointerEvent,
+        pointerID: UInt64,
+        x: Float,
+        y: Float,
+        handle overrideHandle: UnsafeMutableRawPointer? = nil
+    ) {
+        guard timestampMs.isFinite, pointerID != 0, x.isFinite, y.isFinite,
+              let handle = overrideHandle ?? runtimeHandle else { return }
+        _ = dispatchWhiskerPointer(
+            handle: handle,
+            input: WhiskerPointerDispatch(
+                timestampMs: timestampMs,
+                event: event.rawValue,
+                pointerID: pointerID,
+                pointerKind: UInt32(WHISKER_POINTER_TOUCH),
+                x: x,
+                y: y,
+                buttons: event.buttons,
+                changedButton: -1
+            )
+        )
+    }
+
+#if WHISKER_HOST_CONFORMANCE
+    func dispatchConformanceTouchSample(
+        timestampMs: Double,
+        event: HostPointerEvent,
+        pointerID: UInt64,
+        x: Float,
+        y: Float
+    ) {
+        dispatchTouchSample(
+            timestampMs: timestampMs,
+            event: event,
+            pointerID: pointerID,
+            x: x,
+            y: y,
+            handle: UnsafeMutableRawPointer(bitPattern: 1)
+        )
+    }
+#endif
+
     private func unmount() {
         guard let handle = runtimeHandle else { return }
         runtimeHandle = nil
@@ -174,6 +251,7 @@ public final class WhiskerView: UIView {
         whiskerViewDestroy(handle)
         WhiskerModuleEventCenter.installEventSink(nil)
         scene.clear()
+        touchIdentities.clear()
         if let token = hostToken {
             Unmanaged<WhiskerView>.fromOpaque(token).release()
             hostToken = nil

@@ -853,6 +853,13 @@ JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchEve
     release_raw(&raw);free(bytes);return consumed?JNI_TRUE:JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchPointer(JNIEnv* env,jobject self,jlong handle,jdouble timestamp,jint event,jlong pointer_id,jint pointer_kind,jfloat x,jfloat y,jint buttons,jint changed_button){
+    (void)env;(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;
+    if(!view||!view->runtime||pointer_id<=0||buttons<0||changed_button<INT16_MIN||changed_button>INT16_MAX)return JNI_FALSE;
+    return whisker_view_dispatch_pointer(view->runtime,timestamp,(uint32_t)event,(uint64_t)pointer_id,
+        (uint32_t)pointer_kind,x,y,(uint32_t)buttons,(int16_t)changed_button)?JNI_TRUE:JNI_FALSE;
+}
+
 JNIEXPORT void JNICALL Java_rs_whisker_runtime_WhiskerView_nativeResolveModule(JNIEnv* env,jobject self,jlong callback_ptr,jlong data_ptr,jobject payload){
     (void)self;WhiskerMobileModuleResultCallback callback=(void*)(uintptr_t)callback_ptr;if(!callback)return;WhiskerValueRaw raw=object_to_raw(env,payload);callback((void*)(uintptr_t)data_ptr,&raw);release_raw(&raw);
 }
