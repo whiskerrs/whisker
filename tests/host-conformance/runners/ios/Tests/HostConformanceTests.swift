@@ -52,6 +52,28 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(backgroundLeadingEdgeInset(deviceScale: 3), 1.0 / 6.0, accuracy: 0.000_001)
     }
 
+    func testUIKitCursorCompatibilityTable() {
+        let expected: [HostCursorPresentation] = [
+            .system, .system, .hidden,
+            .unsupportedSystemFallback, .unsupportedSystemFallback,
+            .unsupportedSystemFallback, .unsupportedSystemFallback,
+            .unsupportedSystemFallback, .unsupportedSystemFallback,
+            .crosshair, .verticalBeam, .horizontalBeam,
+            .unsupportedSystemFallback, .unsupportedSystemFallback,
+            .unsupportedSystemFallback, .unsupportedSystemFallback,
+            .unsupportedSystemFallback, .unsupportedSystemFallback,
+            .unsupportedSystemFallback,
+            .horizontalResize, .verticalResize, .verticalResize,
+            .horizontalResize, .verticalResize, .horizontalResize,
+            .northeastSouthwestResize, .northwestSoutheastResize,
+            .northwestSoutheastResize, .northeastSouthwestResize,
+            .horizontalResize, .verticalResize,
+            .northeastSouthwestResize, .northwestSoutheastResize,
+            .unsupportedSystemFallback, .unsupportedSystemFallback,
+        ]
+        XCTAssertEqual((0...34).map { hostCursorPresentation(keyword: Int32($0)) }, expected)
+    }
+
     func testContentBoxRadiiUseTheCompleteInsetFromTheBorderBox() {
         XCTAssertEqual(
             insetCornerRadii(
@@ -476,6 +498,20 @@ private final class Driver {
                     XCTAssertTrue(
                         containsActiveBackdropBlur(view),
                         "\(id) must project backdrop blur to UIVisualEffectView"
+                    )
+                }
+                if id == "core.pointer-cursor-fidelity" {
+                    let nodes = findNodeViews(view).sorted { $0.frame.minX < $1.frame.minX }
+                    XCTAssertEqual(nodes.map(\.cursorKeyword), [0, 5, 10, 17, 2])
+                    XCTAssertEqual(
+                        nodes.map(\.cursorPresentation),
+                        [
+                            .system,
+                            .unsupportedSystemFallback,
+                            .verticalBeam,
+                            .unsupportedSystemFallback,
+                            .hidden,
+                        ]
                     )
                 }
                 if name == "paint.transform.projective-plane" {
@@ -2204,6 +2240,12 @@ private func findLabel(_ view: UIView) -> UILabel? {
 private func findTextLabels(_ view: UIView) -> [WhiskerTextLabel] {
     var result = view.subviews.flatMap(findTextLabels)
     if let label = view as? WhiskerTextLabel { result.insert(label, at: 0) }
+    return result
+}
+
+private func findNodeViews(_ view: UIView) -> [WhiskerNodeView] {
+    var result = view.subviews.flatMap(findNodeViews)
+    if let node = view as? WhiskerNodeView { result.insert(node, at: 0) }
     return result
 }
 

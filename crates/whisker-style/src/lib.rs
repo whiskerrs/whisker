@@ -16,7 +16,7 @@ mod property;
 mod resolution;
 mod value;
 
-pub use declaration::{SpecifiedStyle, StyleDeclaration};
+pub use declaration::{CustomPropertyDeclaration, SpecifiedStyle, StyleDeclaration};
 pub use layout::{
     Axes, ComputedFlexBasis, ComputedGridMaxTrackSizing, ComputedGridMinTrackSizing,
     ComputedGridTemplate, ComputedGridTemplateComponent, ComputedGridTemplateRepetition,
@@ -56,12 +56,12 @@ pub use value::{
     BackdropFilterValue, BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue,
     BackgroundLayerValue, BackgroundPositionValue, BackgroundRepeatModeValue,
     BackgroundRepeatValue, BackgroundSizeValue, BackgroundValue, BorderRadiusValue, CalcExpression,
-    ColorValue, CursorValue, FontFamilyValue, FontFeatureValue, FontOpticalSizingValue,
-    FontStyleValue, FontVariationValue, FontWeightValue, GradientStopValue, GradientValue,
-    ImageRenderingValue, InsetPathValue, LengthPercentageValue, LengthUnit, LengthValue,
-    LineHeightValue, MotionPathCommandValue, MotionPathPointValue, OffsetPathValue,
-    OffsetRotateValue, OpenTypeTagValue, PointerEventsValue, RadialGradientValue, StyleNumber,
-    StyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
+    ColorValue, CursorValue, CustomPropertyName, CustomPropertyReference, FontFamilyValue,
+    FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue, FontWeightValue,
+    GradientStopValue, GradientValue, ImageRenderingValue, InsetPathValue, LengthPercentageValue,
+    LengthUnit, LengthValue, LineHeightValue, MotionPathCommandValue, MotionPathPointValue,
+    OffsetPathValue, OffsetRotateValue, OpenTypeTagValue, PointerEventsValue, RadialGradientValue,
+    StyleNumber, StyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
     TextDecorationValue, TextOverflowValue, TextShadowValue, TransformFunctionValue,
     TransformOriginValue, TransformValue, WhiteSpaceValue, WordBreakValue,
 };

@@ -271,6 +271,8 @@
           "items": { "$ref": "#/$defs/boxShadow" }
         },
         "backdrop_blur": { "type": "number", "minimum": 0 },
+        "cursor": { "enum": ["auto", "pointer", "text", "grab", "none"] },
+        "pointer_events": { "enum": ["auto", "none"] },
         "clip": { "$ref": "#/$defs/boxClip" },
         "background_layer": { "$ref": "#/$defs/backgroundGeometry" },
         "background_layers": {

@@ -1,15 +1,16 @@
 //! Deterministic resolution for Whisker's fixed inherited text context.
 
 use core::fmt;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     CalcExpression, ColorValue, ComputedLayoutStyle, ComputedMotionStyle, ComputedPaintStyle,
-    CursorValue, FontFamilyValue, FontFeatureValue, FontOpticalSizingValue, FontStyleValue,
-    FontVariationValue, FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue,
-    LineHeightValue, PointerEventsValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue,
-    TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue,
-    TextOverflowValue, TextShadowValue, WhiteSpaceValue, WordBreakValue,
+    CursorValue, CustomPropertyName, CustomPropertyReference, FontFamilyValue, FontFeatureValue,
+    FontOpticalSizingValue, FontStyleValue, FontVariationValue, FontWeightValue,
+    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, PointerEventsValue,
+    SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
+    TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
+    TextShadowValue, WhiteSpaceValue, WordBreakValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -161,6 +162,7 @@ impl ComputedTextDecoration {
 /// The computed text values inherited by descendant nodes.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InheritedStyle {
+    custom_properties: BTreeMap<CustomPropertyName, StyleValue>,
     cursor: CursorValue,
     pointer_events: PointerEventsValue,
     font_family: FontFamilyValue,
@@ -181,6 +183,7 @@ pub struct InheritedStyle {
 impl InheritedStyle {
     fn initial(environment: StyleEnvironment) -> Self {
         Self {
+            custom_properties: BTreeMap::new(),
             cursor: CursorValue::Auto,
             pointer_events: PointerEventsValue::Auto,
             font_family: FontFamilyValue::System,
@@ -221,6 +224,16 @@ impl InheritedStyle {
     /// Returns the inherited pointer hit-test participation.
     pub const fn pointer_events(&self) -> PointerEventsValue {
         self.pointer_events
+    }
+
+    /// Returns one resolved inherited custom property.
+    pub fn custom_property(&self, name: &CustomPropertyName) -> Option<&StyleValue> {
+        self.custom_properties.get(name)
+    }
+
+    /// Iterates over resolved inherited custom properties in name order.
+    pub fn custom_properties(&self) -> impl Iterator<Item = (&CustomPropertyName, &StyleValue)> {
+        self.custom_properties.iter()
     }
 
     /// Returns the selected font family.
@@ -299,6 +312,10 @@ impl InheritedStyle {
         if self.pointer_events != previous.pointer_events {
             properties |= InheritedPropertySet::POINTER_EVENTS;
             impacts |= PropertyImpactSet::INPUT;
+        }
+        if self.custom_properties != previous.custom_properties {
+            properties |= InheritedPropertySet::CUSTOM_PROPERTIES;
+            impacts |= PropertyImpactSet::ALL;
         }
         if self.font_family != previous.font_family {
             properties |= InheritedPropertySet::FONT_FAMILY;
@@ -510,6 +527,8 @@ impl InheritedPropertySet {
     pub const CURSOR: Self = Self(1 << 13);
     /// `pointer-events`.
     pub const POINTER_EVENTS: Self = Self(1 << 14);
+    /// Inherited CSS custom-property environment.
+    pub const CUSTOM_PROPERTIES: Self = Self(1 << 15);
 
     /// Returns whether this set contains every bit from `other`.
     pub const fn contains(self, other: Self) -> bool {
@@ -545,6 +564,9 @@ impl PropertyImpactSet {
     pub const INPUT: Self = Self(1 << 3);
     /// All work caused by a text metric change.
     pub const TEXT_METRICS: Self = Self(Self::INTRINSIC_MEASURE.0 | Self::LAYOUT.0 | Self::PAINT.0);
+    /// Every downstream style-dependent work category.
+    pub const ALL: Self =
+        Self(Self::INTRINSIC_MEASURE.0 | Self::LAYOUT.0 | Self::PAINT.0 | Self::INPUT.0);
 
     /// Returns whether this set contains every bit from `other`.
     pub const fn contains(self, other: Self) -> bool {
@@ -596,6 +618,8 @@ pub fn resolve_style(
     environment.validate()?;
     let initial = InheritedStyle::initial(environment);
     let base = parent.unwrap_or(&initial);
+    let (specified, custom_properties) = materialize_custom_properties(specified, base);
+    let specified = &specified;
     let declarations = InheritedDeclarations::from_specified(specified);
 
     let cursor = match declarations.cursor {
@@ -830,6 +854,7 @@ pub fn resolve_style(
     };
 
     let inherited_text = InheritedStyle {
+        custom_properties,
         cursor,
         pointer_events,
         font_family,
@@ -867,6 +892,142 @@ pub fn resolve_style(
             paint,
             motion,
         },
+    })
+}
+
+fn materialize_custom_properties(
+    specified: &SpecifiedStyle,
+    inherited: &InheritedStyle,
+) -> (SpecifiedStyle, BTreeMap<CustomPropertyName, StyleValue>) {
+    let mut candidates = inherited.custom_properties.clone();
+    let mut local_names = BTreeSet::new();
+    for declaration in specified.resolved_custom() {
+        local_names.insert(declaration.name().clone());
+        candidates.insert(declaration.name().clone(), declaration.value().clone());
+    }
+    let cyclic = local_names
+        .iter()
+        .filter(|name| custom_property_reaches(name, name, &candidates, &mut BTreeSet::new()))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    let mut cache: BTreeMap<CustomPropertyName, Option<StyleValue>> = BTreeMap::new();
+    let names = candidates.keys().cloned().collect::<Vec<_>>();
+    for name in names {
+        let mut visiting = Vec::new();
+        let _ = resolve_custom_name(&name, &candidates, &cyclic, &mut cache, &mut visiting);
+    }
+    let computed = cache
+        .into_iter()
+        .filter_map(|(name, value)| value.map(|value| (name, value)))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut materialized = SpecifiedStyle::new();
+    for declaration in specified.declarations() {
+        let value = match declaration.value() {
+            StyleValue::Variable(reference) => {
+                resolve_reference_from_computed(reference, &computed)
+            }
+            value => Some(value.clone()),
+        };
+        if let Some(value) = value {
+            materialized = materialized.push(declaration.property(), value);
+        }
+    }
+    (materialized, computed)
+}
+
+fn custom_property_reaches(
+    start: &CustomPropertyName,
+    current: &CustomPropertyName,
+    candidates: &BTreeMap<CustomPropertyName, StyleValue>,
+    visited: &mut BTreeSet<CustomPropertyName>,
+) -> bool {
+    if !visited.insert(current.clone()) {
+        return false;
+    }
+    let Some(value) = candidates.get(current) else {
+        return false;
+    };
+    let mut references = Vec::new();
+    collect_custom_references(value, &mut references);
+    references
+        .into_iter()
+        .any(|next| next == start || custom_property_reaches(start, next, candidates, visited))
+}
+
+fn collect_custom_references<'a>(
+    value: &'a StyleValue,
+    references: &mut Vec<&'a CustomPropertyName>,
+) {
+    if let StyleValue::Variable(reference) = value {
+        references.push(&reference.name);
+        if let Some(fallback) = reference.fallback.as_deref() {
+            collect_custom_references(fallback, references);
+        }
+    }
+}
+
+fn resolve_custom_name(
+    name: &CustomPropertyName,
+    candidates: &BTreeMap<CustomPropertyName, StyleValue>,
+    cyclic: &BTreeSet<CustomPropertyName>,
+    cache: &mut BTreeMap<CustomPropertyName, Option<StyleValue>>,
+    visiting: &mut Vec<CustomPropertyName>,
+) -> Option<StyleValue> {
+    if let Some(cached) = cache.get(name) {
+        return cached.clone();
+    }
+    if cyclic.contains(name) || visiting.iter().any(|candidate| candidate == name) {
+        cache.insert(name.clone(), None);
+        return None;
+    }
+    visiting.push(name.clone());
+    let resolved = candidates.get(name).and_then(|value| match value {
+        StyleValue::Variable(reference) => {
+            resolve_reference_from_candidates(reference, candidates, cyclic, cache, visiting)
+        }
+        value => Some(value.clone()),
+    });
+    visiting.pop();
+    cache.insert(name.clone(), resolved.clone());
+    resolved
+}
+
+fn resolve_reference_from_candidates(
+    reference: &CustomPropertyReference,
+    candidates: &BTreeMap<CustomPropertyName, StyleValue>,
+    cyclic: &BTreeSet<CustomPropertyName>,
+    cache: &mut BTreeMap<CustomPropertyName, Option<StyleValue>>,
+    visiting: &mut Vec<CustomPropertyName>,
+) -> Option<StyleValue> {
+    resolve_custom_name(&reference.name, candidates, cyclic, cache, visiting).or_else(|| {
+        reference
+            .fallback
+            .as_deref()
+            .and_then(|fallback| match fallback {
+                StyleValue::Variable(reference) => resolve_reference_from_candidates(
+                    reference, candidates, cyclic, cache, visiting,
+                ),
+                value => Some(value.clone()),
+            })
+    })
+}
+
+fn resolve_reference_from_computed(
+    reference: &CustomPropertyReference,
+    computed: &BTreeMap<CustomPropertyName, StyleValue>,
+) -> Option<StyleValue> {
+    computed.get(&reference.name).cloned().or_else(|| {
+        reference
+            .fallback
+            .as_deref()
+            .and_then(|fallback| match fallback {
+                StyleValue::Variable(reference) => {
+                    resolve_reference_from_computed(reference, computed)
+                }
+                value => Some(value.clone()),
+            })
     })
 }
 
@@ -2255,6 +2416,10 @@ mod tests {
         assert!(unchanged.impacts().is_empty());
 
         let changed = InheritedStyle {
+            custom_properties: BTreeMap::from([(
+                CustomPropertyName::new("--accent").unwrap(),
+                StyleValue::Color(ColorValue::Named("red".into())),
+            )]),
             cursor: CursorValue::Grab,
             pointer_events: PointerEventsValue::None,
             font_family: FontFamilyValue::Named("Inter".into()),
@@ -2297,6 +2462,7 @@ mod tests {
             InheritedPropertySet::FONT_OPTICAL_SIZING,
             InheritedPropertySet::CURSOR,
             InheritedPropertySet::POINTER_EVENTS,
+            InheritedPropertySet::CUSTOM_PROPERTIES,
             InheritedPropertySet::LINE_HEIGHT,
             InheritedPropertySet::LETTER_SPACING,
             InheritedPropertySet::COLOR,
@@ -2314,5 +2480,235 @@ mod tests {
         ] {
             assert!(change.impacts().contains(impact));
         }
+    }
+
+    #[test]
+    fn custom_properties_inherit_and_resolve_whole_typed_values() {
+        let accent = CustomPropertyName::new("--Accent").unwrap();
+        let parent = resolve_style(
+            &SpecifiedStyle::new().push_custom(
+                accent.clone(),
+                StyleValue::Color(ColorValue::Named("rebeccapurple".into())),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        let child = resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::Color,
+                StyleValue::Variable(CustomPropertyReference::new(accent.clone())),
+            ),
+            Some(parent.inherited_for_children()),
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            child.inherited_for_children().custom_property(&accent),
+            Some(&StyleValue::Color(ColorValue::Named(
+                "rebeccapurple".into()
+            )))
+        );
+        assert_eq!(
+            child.inherited_for_children().color(),
+            &ColorValue::Named("rebeccapurple".into())
+        );
+    }
+
+    #[test]
+    fn custom_properties_support_forward_references() {
+        let a = CustomPropertyName::new("--a").unwrap();
+        let b = CustomPropertyName::new("--b").unwrap();
+        let resolved = resolve_style(
+            &SpecifiedStyle::new()
+                .push_custom(
+                    a.clone(),
+                    StyleValue::Variable(CustomPropertyReference::new(b.clone())),
+                )
+                .push_custom(
+                    b,
+                    StyleValue::Size(crate::SizeValue::LengthPercentage(
+                        LengthPercentageValue::Length(LengthValue::Dimension {
+                            value: number(48.0),
+                            unit: LengthUnit::Px,
+                        }),
+                    )),
+                )
+                .push(
+                    StyleProperty::Width,
+                    StyleValue::Variable(CustomPropertyReference::new(a)),
+                ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolved.computed().layout().size.width,
+            crate::ComputedSizeValue::Value(crate::ComputedLengthPercentage::new(48.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn cyclic_or_missing_custom_property_uses_typed_fallback() {
+        let a = CustomPropertyName::new("--a").unwrap();
+        let b = CustomPropertyName::new("--b").unwrap();
+        let resolved = resolve_style(
+            &SpecifiedStyle::new()
+                .push_custom(
+                    a.clone(),
+                    StyleValue::Variable(CustomPropertyReference::new(b.clone())),
+                )
+                .push_custom(
+                    b,
+                    StyleValue::Variable(CustomPropertyReference::new(a.clone())),
+                )
+                .push(
+                    StyleProperty::Color,
+                    StyleValue::Variable(CustomPropertyReference::with_fallback(
+                        a,
+                        StyleValue::Color(ColorValue::Named("green".into())),
+                    )),
+                ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolved.inherited_for_children().color(),
+            &ColorValue::Named("green".into())
+        );
+        assert_eq!(
+            resolved
+                .inherited_for_children()
+                .custom_properties()
+                .count(),
+            0
+        );
+
+        let self_reference = CustomPropertyName::new("--self").unwrap();
+        let resolved = resolve_style(
+            &SpecifiedStyle::new()
+                .push_custom(
+                    self_reference.clone(),
+                    StyleValue::Variable(CustomPropertyReference::with_fallback(
+                        self_reference.clone(),
+                        StyleValue::Color(ColorValue::Named("red".into())),
+                    )),
+                )
+                .push(
+                    StyleProperty::Color,
+                    StyleValue::Variable(CustomPropertyReference::with_fallback(
+                        self_reference,
+                        StyleValue::Color(ColorValue::Named("blue".into())),
+                    )),
+                ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.inherited_for_children().color(),
+            &ColorValue::Named("blue".into())
+        );
+    }
+
+    #[test]
+    fn custom_property_fallback_graph_covers_missing_nested_and_shared_references() {
+        let missing = CustomPropertyName::new("--missing").unwrap();
+        let base = CustomPropertyName::new("--base").unwrap();
+        let left = CustomPropertyName::new("--left").unwrap();
+        let right = CustomPropertyName::new("--right").unwrap();
+        let diamond = CustomPropertyName::new("--diamond").unwrap();
+        let value_fallback = CustomPropertyName::new("--value-fallback").unwrap();
+        let nested_fallback = CustomPropertyName::new("--nested-fallback").unwrap();
+        let purple = StyleValue::Color(ColorValue::Named("purple".into()));
+        let orange = StyleValue::Color(ColorValue::Named("orange".into()));
+        let variable = |name| StyleValue::Variable(CustomPropertyReference::new(name));
+
+        let parent = resolve_style(
+            &SpecifiedStyle::new()
+                .push_custom(base.clone(), purple.clone())
+                .push_custom(left.clone(), variable(base.clone()))
+                .push_custom(right.clone(), variable(base.clone()))
+                .push_custom(
+                    diamond.clone(),
+                    StyleValue::Variable(CustomPropertyReference::with_fallback(
+                        left,
+                        variable(right),
+                    )),
+                )
+                .push_custom(
+                    value_fallback.clone(),
+                    StyleValue::Variable(CustomPropertyReference::with_fallback(
+                        missing.clone(),
+                        orange.clone(),
+                    )),
+                )
+                .push_custom(
+                    nested_fallback.clone(),
+                    StyleValue::Variable(CustomPropertyReference::with_fallback(
+                        missing.clone(),
+                        variable(base.clone()),
+                    )),
+                ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            parent.inherited_for_children().custom_property(&diamond),
+            Some(&purple)
+        );
+        assert_eq!(
+            parent
+                .inherited_for_children()
+                .custom_property(&value_fallback),
+            Some(&orange)
+        );
+        assert_eq!(
+            parent
+                .inherited_for_children()
+                .custom_property(&nested_fallback),
+            Some(&purple)
+        );
+
+        let child = resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::Color,
+                StyleValue::Variable(CustomPropertyReference::with_fallback(
+                    missing,
+                    variable(base),
+                )),
+            ),
+            Some(parent.inherited_for_children()),
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            child.inherited_for_children().color(),
+            &ColorValue::Named("purple".into())
+        );
+
+        let invalid_at_computed_value_time = resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::Width,
+                variable(CustomPropertyName::new("--absent").unwrap()),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            invalid_at_computed_value_time
+                .computed()
+                .layout()
+                .size
+                .width,
+            crate::ComputedSizeValue::Auto
+        );
     }
 }

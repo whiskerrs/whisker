@@ -25,6 +25,7 @@ final class WhiskerNodeView: UIView {
     private(set) var hitTestBehavior: Int32 = 0
     private(set) var cursorKeyword: Int32 = 0
     private var pointerDelegate: AnyObject?
+    private var pointerInteraction: AnyObject?
 
     init(element: String) {
         self.element = element
@@ -40,8 +41,10 @@ final class WhiskerNodeView: UIView {
         addSubview(defaultChildrenHost)
         if #available(iOS 13.4, *) {
             let delegate = HostNodePointerDelegate(node: self)
-            addInteraction(UIPointerInteraction(delegate: delegate))
+            let interaction = UIPointerInteraction(delegate: delegate)
+            addInteraction(interaction)
             pointerDelegate = delegate
+            pointerInteraction = interaction
         }
     }
 
@@ -191,6 +194,13 @@ final class WhiskerNodeView: UIView {
     func setCursorKeyword(_ value: Int32) {
         precondition((0...34).contains(value))
         cursorKeyword = value
+        if #available(iOS 13.4, *) {
+            (pointerInteraction as? UIPointerInteraction)?.invalidate()
+        }
+    }
+
+    var cursorPresentation: HostCursorPresentation {
+        hostCursorPresentation(keyword: cursorKeyword)
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -351,6 +361,47 @@ final class WhiskerNodeView: UIView {
     }
 }
 
+/// UIKit can draw beam, crosshair, and resize pointer shapes, but does not
+/// expose the platform glyphs for semantic CSS cursors such as link, grab,
+/// help, wait, copy, forbidden, and zoom.
+enum HostCursorPresentation: Equatable {
+    case system
+    case hidden
+    case verticalBeam
+    case horizontalBeam
+    case crosshair
+    case horizontalResize
+    case verticalResize
+    case northwestSoutheastResize
+    case northeastSouthwestResize
+    case unsupportedSystemFallback
+}
+
+func hostCursorPresentation(keyword: Int32) -> HostCursorPresentation {
+    switch keyword {
+    case 0, 1:
+        .system
+    case 2:
+        .hidden
+    case 9:
+        .crosshair
+    case 10:
+        .verticalBeam
+    case 11:
+        .horizontalBeam
+    case 19, 22, 24, 29:
+        .horizontalResize
+    case 20, 21, 23, 30:
+        .verticalResize
+    case 26, 27, 32:
+        .northwestSoutheastResize
+    case 25, 28, 31:
+        .northeastSouthwestResize
+    default:
+        .unsupportedSystemFallback
+    }
+}
+
 @available(iOS 13.4, *)
 private final class HostNodePointerDelegate: NSObject, UIPointerInteractionDelegate {
     private unowned let node: WhiskerNodeView
@@ -363,8 +414,52 @@ private final class HostNodePointerDelegate: NSObject, UIPointerInteractionDeleg
         _ interaction: UIPointerInteraction,
         styleFor region: UIPointerRegion
     ) -> UIPointerStyle? {
-        node.cursorKeyword == 2 ? .hidden() : nil
+        switch node.cursorPresentation {
+        case .system, .unsupportedSystemFallback:
+            nil
+        case .hidden:
+            .hidden()
+        case .verticalBeam:
+            UIPointerStyle(shape: .verticalBeam(length: 20))
+        case .horizontalBeam:
+            UIPointerStyle(shape: .horizontalBeam(length: 20))
+        case .crosshair:
+            UIPointerStyle(shape: .path(crosshairPointerPath()))
+        case .horizontalResize:
+            UIPointerStyle(shape: .path(resizePointerPath(angle: 0)))
+        case .verticalResize:
+            UIPointerStyle(shape: .path(resizePointerPath(angle: .pi / 2)))
+        case .northwestSoutheastResize:
+            UIPointerStyle(shape: .path(resizePointerPath(angle: .pi / 4)))
+        case .northeastSouthwestResize:
+            UIPointerStyle(shape: .path(resizePointerPath(angle: -.pi / 4)))
+        }
     }
+}
+
+@available(iOS 13.4, *)
+private func crosshairPointerPath() -> UIBezierPath {
+    let path = UIBezierPath(rect: CGRect(x: -1, y: -9, width: 2, height: 18))
+    path.append(UIBezierPath(rect: CGRect(x: -9, y: -1, width: 18, height: 2)))
+    return path
+}
+
+@available(iOS 13.4, *)
+private func resizePointerPath(angle: CGFloat) -> UIBezierPath {
+    let path = UIBezierPath()
+    path.move(to: CGPoint(x: -10, y: 0))
+    path.addLine(to: CGPoint(x: -5, y: -5))
+    path.addLine(to: CGPoint(x: -5, y: -2))
+    path.addLine(to: CGPoint(x: 5, y: -2))
+    path.addLine(to: CGPoint(x: 5, y: -5))
+    path.addLine(to: CGPoint(x: 10, y: 0))
+    path.addLine(to: CGPoint(x: 5, y: 5))
+    path.addLine(to: CGPoint(x: 5, y: 2))
+    path.addLine(to: CGPoint(x: -5, y: 2))
+    path.addLine(to: CGPoint(x: -5, y: 5))
+    path.close()
+    path.apply(CGAffineTransform(rotationAngle: angle))
+    return path
 }
 
 private final class WhiskerChildrenHostView: UIView {
