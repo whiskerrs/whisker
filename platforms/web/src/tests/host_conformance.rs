@@ -1887,6 +1887,9 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
         ),
+        "wpt/css/css-backgrounds/border-radius-sum-of-radii-001-remaining.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001-remaining.json"
+        ),
         "wpt/css/css-backgrounds/border-radius-004.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-004.json"
         ),

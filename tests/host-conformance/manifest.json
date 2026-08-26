@@ -206,6 +206,13 @@
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel"]
     },
     {
+      "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.remaining",
+      "feature": "border-radius-overlap-normalization",
+      "fixture": "wpt/css/css-backgrounds/border-radius-sum-of-radii-001-remaining.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel"]
+    },
+    {
       "id": "wpt.css-backgrounds.border-radius-004",
       "feature": "border-radius",
       "fixture": "wpt/css/css-backgrounds/border-radius-004.json",

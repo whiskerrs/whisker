@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.remaining",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/border-radius-sum-of-radii-001.htm",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "If any pair of adjacent radii exceeds the border box, every corner radius is reduced by the same factor until no pair overlaps.",
+    "adaptation": "WPT test/reference pairs 2 through 8 are arranged in one scene. The original overlay and table layout are replaced by a full-raster comparison between the oversized radii and their mathematically normalized references."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 430.0, "height": 210.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          { "id": 1, "parent": null, "rect": [0.0, 0.0, 430.0, 210.0], "background": { "kind": "named", "value": "transparent" } },
+          { "id": 2, "parent": 1, "rect": [0.0, 0.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [0.0, 150.0, 0.0, 30.0] } },
+          { "id": 3, "parent": 1, "rect": [110.0, 0.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [150.0, 0.0, 30.0, 0.0] } },
+          { "id": 4, "parent": 1, "rect": [220.0, 0.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [50.0, 70.0, 30.0, 30.0] } },
+          { "id": 5, "parent": 1, "rect": [330.0, 0.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [150.0, 150.0, 30.0, 30.0] } },
+          { "id": 6, "parent": 1, "rect": [0.0, 110.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [30.0, 50.0, 70.0, 30.0] } },
+          { "id": 7, "parent": 1, "rect": [110.0, 110.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [30.0, 30.0, 50.0, 70.0] } },
+          { "id": 8, "parent": 1, "rect": [220.0, 110.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [70.0, 30.0, 30.0, 50.0] } }
+        ]
+      },
+      { "type": "checkpoint", "name": "paint.box" }
+    ]
+  },
+  "reference": {
+    "commands": [
+      { "type": "attach_surface", "width": 430.0, "height": 210.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          { "id": 1, "parent": null, "rect": [0.0, 0.0, 430.0, 210.0], "background": { "kind": "named", "value": "transparent" } },
+          { "id": 2, "parent": 1, "rect": [0.0, 0.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [0.0, 100.0, 0.0, 20.0] } },
+          { "id": 3, "parent": 1, "rect": [110.0, 0.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [100.0, 0.0, 20.0, 0.0] } },
+          { "id": 4, "parent": 1, "rect": [220.0, 0.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [41.666667, 58.333333, 25.0, 25.0] } },
+          { "id": 5, "parent": 1, "rect": [330.0, 0.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [50.0, 50.0, 10.0, 10.0] } },
+          { "id": 6, "parent": 1, "rect": [0.0, 110.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [25.0, 41.666667, 58.333333, 25.0] } },
+          { "id": 7, "parent": 1, "rect": [110.0, 110.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [25.0, 25.0, 41.666667, 58.333333] } },
+          { "id": 8, "parent": 1, "rect": [220.0, 110.0, 100.0, 100.0], "background": { "kind": "named", "value": "white" }, "border": { "widths": [10.0, 10.0, 10.0, 10.0], "colors": [{ "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }, { "kind": "named", "value": "black" }], "styles": ["solid", "solid", "solid", "solid"], "radii": [58.333333, 25.0, 25.0, 41.666667] } }
+        ]
+      },
+      { "type": "checkpoint", "name": "paint.box" }
+    ]
+  }
+}
