@@ -12,7 +12,7 @@ use whisker::css::{
     BackgroundOrigin as CssBackgroundOrigin, BackgroundRepeat as CssBackgroundRepeat,
     BackgroundSize as CssBackgroundSize, BackgroundSizeAxis as CssBackgroundSizeAxis, CalcExpr,
     ColorStop, CssString, Gradient, ImageRef, LengthPercentage, NamedColor, Percentage, Position,
-    RadialShape,
+    RadialShape, Transition, TransitionPropertyKind,
 };
 use whisker::prelude::*;
 use whisker::{
@@ -311,6 +311,92 @@ fn host_drives_mount_frame_pause_resume_and_unmount() {
     assert_eq!(runtime.lifecycle(), RuntimeLifecycle::Running);
     runtime.unmount().unwrap();
     assert_eq!(runtime.lifecycle(), RuntimeLifecycle::Unmounted);
+}
+
+#[test]
+fn runtime_drive_requests_frames_until_an_opacity_transition_finishes() {
+    let surface = surface(52);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    let transition = || {
+        Transition::new(TransitionPropertyKind::name("opacity"))
+            .duration(100.ms())
+            .timing(whisker::css::EasingFunction::Linear)
+    };
+    let root = runtime
+        .mount(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(40))
+                    .height(px(20))
+                    .opacity(0.2)
+                    .transition(transition()))
+            }
+        })
+        .unwrap();
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            0.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    whisker::runtime::view::with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            Css::new()
+                .width(px(40))
+                .height(px(20))
+                .opacity(1.0)
+                .transition(transition()),
+        );
+    });
+
+    let started = runtime
+        .drive_frame(
+            1_000.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(started.needs_frame);
+    let midpoint = runtime
+        .drive_frame(
+            1_050.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(midpoint.needs_frame);
+    assert!(sink.frames().last().unwrap().packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetOpacity { opacity, .. } if (*opacity - 0.6).abs() < 0.0001)
+    ));
+    let finished = runtime
+        .drive_frame(
+            1_100.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(!finished.needs_frame);
 }
 
 #[test]

@@ -181,8 +181,12 @@
       "id": "motion.rust",
       "basis": "lynx-4.0",
       "properties": ["animation", "animation-delay", "animation-direction", "animation-duration", "animation-fill-mode", "animation-iteration-count", "animation-name", "animation-play-state", "animation-timing-function", "transition", "transition-delay", "transition-duration", "transition-property", "transition-timing-function"],
+      "implemented_subset": ["typed-shorthand-longhand-normalization", "time-unit-normalization", "timing-function-validation", "css-list-cycling", "lynx-transition-property-validation", "runtime-opacity-transition-sampling", "runtime-srgb-hsl-named-box-color-transition-sampling", "runtime-inherited-text-color-transition-sampling", "runtime-compatible-transform-function-transition-sampling", "transform-identity-list-padding", "css-color-4-named-color-canonicalization", "premultiplied-alpha-color-interpolation", "host-independent-frame-delta-emission"],
+      "pending_subset": ["runtime-layout-transition-sampling", "transform-matrix-decomposition-fallback", "transform-origin-transition-sampling", "typed-keyframe-registry", "keyframe-timeline-sampling", "motion-lifecycle-events"],
+      "unsupported_browser_subset": ["transition-filter"],
+      "compatibility_notes": ["Box and inherited text foreground color transitions are sampled in premultiplied sRGB after canonicalizing rgb/rgba/hsl/hsla and all 148 CSS Color 4 named colors", "Compatible translate/rotate/scale/skew transform lists interpolate in Rust with CSS identity padding; matrix functions and incompatible suffixes snap until matrix decomposition lands"],
       "protocol": [],
-      "rust": "planned",
+      "rust": "partial",
       "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
     },
     {

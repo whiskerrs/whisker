@@ -4,6 +4,8 @@ use crate::css::Css;
 use crate::data_type::Time;
 use crate::data_type_ext::EasingFunction;
 use crate::keyword::TransitionPropertyKind;
+use crate::style_value::{to_motion_easing, to_motion_time};
+use crate::to_css::ToCss;
 
 impl Css {
     /// Sets `transition-property` — the property to transition.
@@ -15,20 +17,32 @@ impl Css {
     /// Sets `transition-duration`.
     /// <https://lynxjs.org/api/css/properties/transition-duration>
     pub fn transition_duration(self, v: Time) -> Self {
-        self.push(crate::StyleProperty::TransitionDuration, v)
+        self.push_semantic(
+            crate::StyleProperty::TransitionDuration,
+            whisker_style::StyleValue::TransitionDurations(vec![to_motion_time(v)]),
+            v.to_css_string(),
+        )
     }
 
     /// Sets `transition-timing-function`.
     /// <https://lynxjs.org/api/css/properties/transition-timing-function>
     pub fn transition_timing_function(self, v: EasingFunction) -> Self {
-        self.push(crate::StyleProperty::TransitionTimingFunction, v)
+        self.push_semantic(
+            crate::StyleProperty::TransitionTimingFunction,
+            whisker_style::StyleValue::TransitionEasings(vec![to_motion_easing(v)]),
+            v.to_css_string(),
+        )
     }
 
     /// Sets `transition-delay`. Negative delays cause the transition
     /// to begin partway through its progression.
     /// <https://lynxjs.org/api/css/properties/transition-delay>
     pub fn transition_delay(self, v: Time) -> Self {
-        self.push(crate::StyleProperty::TransitionDelay, v)
+        self.push_semantic(
+            crate::StyleProperty::TransitionDelay,
+            whisker_style::StyleValue::TransitionDelays(vec![to_motion_time(v)]),
+            v.to_css_string(),
+        )
     }
 }
 

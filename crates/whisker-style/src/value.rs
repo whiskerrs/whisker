@@ -816,6 +816,34 @@ pub enum StyleValue {
     Cursor(CursorValue),
     /// Pointer hit-test participation.
     PointerEvents(PointerEventsValue),
+    /// Fully expanded `transition` shorthand layers.
+    Transitions(Vec<crate::TransitionValue>),
+    /// `transition-property` list.
+    TransitionProperties(Vec<crate::TransitionPropertyValue>),
+    /// `transition-duration` list.
+    TransitionDurations(Vec<crate::MotionTime>),
+    /// `transition-timing-function` list.
+    TransitionEasings(Vec<crate::MotionEasing>),
+    /// `transition-delay` list.
+    TransitionDelays(Vec<crate::MotionTime>),
+    /// Fully expanded `animation` shorthand layers.
+    Animations(Vec<crate::AnimationValue>),
+    /// `animation-name` list; `None` is the CSS `none` keyword.
+    AnimationNames(Vec<Option<String>>),
+    /// `animation-duration` list.
+    AnimationDurations(Vec<crate::MotionTime>),
+    /// `animation-timing-function` list.
+    AnimationEasings(Vec<crate::MotionEasing>),
+    /// `animation-delay` list.
+    AnimationDelays(Vec<crate::MotionTime>),
+    /// `animation-iteration-count` list.
+    AnimationIterationCounts(Vec<crate::MotionIterationCount>),
+    /// `animation-direction` list.
+    AnimationDirections(Vec<crate::MotionDirection>),
+    /// `animation-fill-mode` list.
+    AnimationFillModes(Vec<crate::MotionFillMode>),
+    /// `animation-play-state` list.
+    AnimationPlayStates(Vec<crate::MotionPlayState>),
     /// Font face style.
     FontStyle(FontStyleValue),
     /// Numeric font weight.
