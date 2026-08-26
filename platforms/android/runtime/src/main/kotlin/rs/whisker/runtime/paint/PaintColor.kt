@@ -10,4 +10,8 @@ internal fun rgba(red: Float, green: Float, blue: Float, alpha: Float): Int = Co
 )
 
 internal fun parseNamedColor(name: String): Int =
-    runCatching { Color.parseColor(name) }.getOrDefault(Color.TRANSPARENT)
+    when (name.lowercase()) {
+        "gold" -> Color.rgb(255, 215, 0)
+        "transparent" -> Color.TRANSPARENT
+        else -> runCatching { Color.parseColor(name) }.getOrDefault(Color.TRANSPARENT)
+    }

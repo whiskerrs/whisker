@@ -16,7 +16,7 @@ pub(crate) fn text_color(color: &PaintColor, opacity: f32) -> TextColor {
 /// CSS source-over compositing is defined in the sRGB color space. Keeping the
 /// swapchain unorm avoids the implicit linear-light blend performed by an sRGB
 /// GPU attachment.
-pub(super) fn gpu_color(color: &PaintColor, opacity: f32) -> [f32; 4] {
+pub(crate) fn gpu_color(color: &PaintColor, opacity: f32) -> [f32; 4] {
     srgba(color, opacity)
 }
 

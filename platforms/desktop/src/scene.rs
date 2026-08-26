@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use whisker_engine::FrameSink;
 use whisker_protocol::{
-    ApplyResult, BoxClip, BoxPaint, ElementTypeId, FrameMode, FramePacket, LayoutGeometry,
-    LayoutRect, NodeId, Operation, OverflowClip, PaintColor, SceneProjection, SurfaceId,
+    ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BoxClip,
+    BoxPaint, ElementTypeId, FrameMode, FramePacket, ImageRepeat, LayoutGeometry, LayoutRect,
+    NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintImage, SceneProjection, SurfaceId,
     TextContent, Transform, ValidationError, Visibility, WhiskerValue,
 };
 
@@ -19,6 +20,7 @@ struct CommonPresentation {
     children: Vec<NodeId>,
     layout: LayoutGeometry,
     paint: Option<BoxPaint>,
+    background_layers: Vec<BackgroundLayer>,
     clip: BoxClip,
     transform: Transform,
     opacity: f32,
@@ -33,6 +35,7 @@ impl Default for CommonPresentation {
             children: Vec::new(),
             layout: LayoutGeometry::default(),
             paint: None,
+            background_layers: Vec::new(),
             clip: BoxClip {
                 horizontal: OverflowClip::Visible,
                 vertical: OverflowClip::Visible,
@@ -258,7 +261,8 @@ fn preserves_screen_axes(transform: Transform) -> bool {
 pub(crate) enum PaintCommand<'a> {
     Box {
         rect: LayoutRect,
-        paint: &'a BoxPaint,
+        paint: Option<&'a BoxPaint>,
+        background_layers: &'a [BackgroundLayer],
         clip: LogicalClip,
         shape_clips: ShapeClipStack,
         transform: Transform,
@@ -338,10 +342,11 @@ impl DesktopScene {
             context.transform,
             transform_around(presentation.transform, border.x, border.y),
         );
-        if let Some(paint) = &presentation.paint {
+        if presentation.paint.is_some() || !presentation.background_layers.is_empty() {
             commands.push(PaintCommand::Box {
                 rect: border,
-                paint,
+                paint: presentation.paint.as_ref(),
+                background_layers: &presentation.background_layers,
                 clip: context.clip,
                 shape_clips: context.shape_clips.clone(),
                 transform,
@@ -503,8 +508,10 @@ impl DesktopScene {
                             .validate_command(element_type, *node, *command, arguments)?;
                     }
                 }
-                Operation::SetBackgroundLayers { .. } => {
-                    return Err(DesktopPresentError::Unsupported("background-layers"));
+                Operation::SetBackgroundLayers { layers, .. } => {
+                    if !layers.iter().all(supports_linear_gradient_layer) {
+                        return Err(DesktopPresentError::Unsupported("background-layers"));
+                    }
                 }
                 Operation::SetVisualEffects { .. } => {
                     return Err(DesktopPresentError::Unsupported("visual-effects"));
@@ -619,6 +626,13 @@ impl DesktopScene {
                         .presentation
                         .paint = Some(paint.clone());
                 }
+                Operation::SetBackgroundLayers { node, layers } => {
+                    self.nodes
+                        .get_mut(node)
+                        .expect("validated node")
+                        .presentation
+                        .background_layers = layers.clone();
+                }
                 Operation::SetClip { node, clip } => {
                     self.nodes
                         .get_mut(node)
@@ -717,8 +731,7 @@ impl DesktopScene {
                 Operation::SetHitTest { .. }
                 | Operation::SetPointerCapture { .. }
                 | Operation::ReleasePointerCapture { .. } => {}
-                Operation::SetBackgroundLayers { .. }
-                | Operation::SetVisualEffects { .. }
+                Operation::SetVisualEffects { .. }
                 | Operation::SetImage { .. }
                 | Operation::SetCursor { .. } => {
                     unreachable!("unsupported operations are rejected before commit")
@@ -751,10 +764,16 @@ impl FrameSink for DesktopScene {
     fn capabilities(&self) -> whisker_protocol::RenderCapabilities {
         whisker_protocol::RenderCapabilities::new(
             whisker_protocol::ProtocolVersion::CURRENT,
-            [whisker_protocol::CapabilityEntry {
-                capability: whisker_protocol::RenderCapability::EllipticalBorderRadius,
-                support: whisker_protocol::CapabilitySupport::Native,
-            }],
+            [
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::EllipticalBorderRadius,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::LinearGradients,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+            ],
         )
         .expect("Desktop capability profile is unique")
     }
@@ -815,6 +834,24 @@ impl From<DesktopElementError> for DesktopPresentError {
     fn from(error: DesktopElementError) -> Self {
         Self::Element(error)
     }
+}
+
+fn supports_linear_gradient_layer(layer: &BackgroundLayer) -> bool {
+    matches!(
+        &layer.image,
+        PaintImage::LinearGradient {
+            repeating: false,
+            stops,
+            ..
+        } if stops.iter().all(|stop| stop.position.is_some())
+    ) && layer.position == Default::default()
+        && layer.size == BackgroundSize::Auto
+        && layer.repeat_x == ImageRepeat::Repeat
+        && layer.repeat_y == ImageRepeat::Repeat
+        && layer.origin == PaintBox::Padding
+        && layer.clip == PaintBox::Border
+        && layer.attachment == BackgroundAttachment::Scroll
+        && layer.blend_mode == BlendMode::Normal
 }
 
 pub(crate) fn is_transparent(color: &PaintColor) -> bool {

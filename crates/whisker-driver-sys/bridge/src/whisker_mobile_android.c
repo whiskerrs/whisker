@@ -201,6 +201,19 @@ static jobjectArray color_names(JNIEnv* env, const WhiskerMobileBoxPaint* paint)
     (*env)->DeleteLocalRef(env, cls); return result;
 }
 
+static jobjectArray gradient_stop_names(JNIEnv* env, const WhiskerMobileGradientStop* stops,
+                                        size_t count) {
+    jclass cls = (*env)->FindClass(env, "java/lang/String");
+    jobjectArray result = (*env)->NewObjectArray(env, (jsize)count, cls, NULL);
+    for (size_t i = 0; i < count; ++i) {
+        jstring name = new_string(env, stops[i].color.name.ptr, stops[i].color.name.len);
+        (*env)->SetObjectArrayElement(env, result, (jsize)i, name);
+        if (name) (*env)->DeleteLocalRef(env, name);
+    }
+    (*env)->DeleteLocalRef(env, cls);
+    return result;
+}
+
 static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMobileApplyResponse* response) {
     if (frame == NULL || response == NULL || frame->abi_major != WHISKER_MOBILE_ABI_MAJOR) return false;
     bool attached; JNIEnv* env = whisker_env(&attached); jobject view = env != NULL ? local_view(env, data) : NULL;
@@ -247,6 +260,25 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 for (int j=0;j<4;++j) { storage[count++]=p->radii_vertical[j].length; storage[count++]=p->radii_vertical[j].fraction; }
                 for (int j=0;j<4;++j) storage[count++]=(float)p->styles[j];
                 numbers = floats(env, storage, count); names = color_names(env, p); break;
+            }
+            case WHISKER_OP_BACKGROUND_LAYERS: {
+                const WhiskerMobileGradientStop* p = op->payload;
+                if ((p == NULL && op->payload_count != 0) || op->payload_count > INT32_MAX / 7) {
+                    ok = false; break;
+                }
+                size_t value_count = op->payload_count * 7;
+                float* values = malloc((value_count > 0 ? value_count : 1) * sizeof(float));
+                if (values == NULL) { ok = false; break; }
+                size_t cursor = 0;
+                for (size_t j = 0; j < op->payload_count; ++j) {
+                    append_color(values, &cursor, &p[j].color);
+                    values[cursor++] = p[j].position.length;
+                    values[cursor++] = p[j].position.fraction;
+                }
+                numbers = floats(env, values, value_count);
+                names = gradient_stop_names(env, p, op->payload_count);
+                free(values);
+                break;
             }
             case WHISKER_OP_TRANSFORM: numbers = floats(env, op->payload, op->payload_count); break;
             case WHISKER_OP_TEXT: {

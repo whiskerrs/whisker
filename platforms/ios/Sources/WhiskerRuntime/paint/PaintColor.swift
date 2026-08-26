@@ -15,6 +15,7 @@ func parsePaintColor(_ value: WhiskerMobileColor) -> UIColor {
     case "white": return .white
     case "red": return .red
     case "green": return .green
+    case "gold": return UIColor(red: 1, green: 215 / 255, blue: 0, alpha: 1)
     case "blue": return .blue
     default: return .clear
     }

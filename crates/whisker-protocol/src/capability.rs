@@ -22,11 +22,14 @@ pub enum RenderCapability {
     Cursor,
     /// Resource load, readiness, failure, and release messages.
     ResourceLifecycle,
+    /// One resolved, non-repeating linear-gradient background image using the
+    /// initial layer geometry and explicit color-stop positions.
+    LinearGradients,
 }
 
 impl RenderCapability {
     /// Every optional capability in stable declaration order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::EllipticalBorderRadius,
         Self::BackgroundLayers,
         Self::VisualEffects,
@@ -35,6 +38,7 @@ impl RenderCapability {
         Self::ImageContent,
         Self::Cursor,
         Self::ResourceLifecycle,
+        Self::LinearGradients,
     ];
 
     /// Stable diagnostic spelling shared by Host errors and checklists.
@@ -48,6 +52,7 @@ impl RenderCapability {
             Self::ImageContent => "image-content",
             Self::Cursor => "cursor",
             Self::ResourceLifecycle => "resource-lifecycle",
+            Self::LinearGradients => "linear-gradients",
         }
     }
 
@@ -130,9 +135,13 @@ impl RenderCapabilities {
     /// Resource lifecycle is deliberately omitted because it uses a separate
     /// service boundary rather than [`crate::FramePacket`].
     pub fn all_frame_native() -> Self {
+        let native = RenderCapability::ALL
+            .into_iter()
+            .filter(|capability| *capability != RenderCapability::ResourceLifecycle)
+            .fold(0, |bits, capability| bits | capability.bit());
         Self {
             protocol: ProtocolVersion::CURRENT,
-            native: RenderCapability::ResourceLifecycle.bit() - 1,
+            native,
             emulated: 0,
         }
     }
@@ -206,6 +215,10 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 2
         {
             Some(RenderCapability::EllipticalBorderRadius)
         }
+        Operation::SetBackgroundLayers { layers, .. } if layers.is_empty() => None,
+        Operation::SetBackgroundLayers { layers, .. } if is_basic_linear_gradient(layers) => {
+            Some(RenderCapability::LinearGradients)
+        }
         Operation::SetBackgroundLayers { .. } => Some(RenderCapability::BackgroundLayers),
         Operation::SetVisualEffects { .. } => Some(RenderCapability::VisualEffects),
         Operation::SetText { content, .. } if content.paint.uses_extended_features() => {
@@ -224,15 +237,36 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 2
     [first, second]
 }
 
+fn is_basic_linear_gradient(layers: &[crate::BackgroundLayer]) -> bool {
+    let [layer] = layers else { return false };
+    matches!(
+        &layer.image,
+        crate::PaintImage::LinearGradient {
+            repeating: false,
+            stops,
+            ..
+        } if stops.iter().all(|stop| stop.position.is_some())
+    ) && layer.position == Default::default()
+        && layer.size == crate::BackgroundSize::Auto
+        && layer.repeat_x == crate::ImageRepeat::Repeat
+        && layer.repeat_y == crate::ImageRepeat::Repeat
+        && layer.origin == crate::PaintBox::Padding
+        && layer.clip == crate::PaintBox::Border
+        && layer.attachment == crate::BackgroundAttachment::Scroll
+        && layer.blend_mode == crate::BlendMode::Normal
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        BoxPaint, Cursor, ElementTypeId, FontFeature, FontOpticalSizing, FontTag, FrameHeader,
-        FrameMode, ImageContent, MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap,
-        NodeId, ObjectFit, PaintCornerRadius, PaintLengthPercentage, PaintPosition, ResourceId,
-        SurfaceId, TextContent, TextDecorationLines, TextMeasurePayload, TextMeasureStyle,
-        TextPaint, VisualEffects,
+        BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BoxPaint, Cursor,
+        ElementTypeId, FontFeature, FontOpticalSizing, FontTag, FrameHeader, FrameMode,
+        GradientStop, ImageContent, ImageRepeat, MeasureTextDirection, MeasureTextOverflow,
+        MeasureTextWrap, NodeId, ObjectFit, PaintBox, PaintColor, PaintCoordinate,
+        PaintCornerRadius, PaintImage, PaintLengthPercentage, PaintPosition, ResourceId, SurfaceId,
+        TextContent, TextDecorationLines, TextMeasurePayload, TextMeasureStyle, TextPaint,
+        VisualEffects,
     };
 
     fn packet(operations: Vec<Operation>) -> FramePacket {
@@ -249,6 +283,40 @@ mod tests {
             },
             operations,
         }
+    }
+
+    fn background_layer(image: PaintImage) -> BackgroundLayer {
+        BackgroundLayer {
+            image,
+            position: PaintPosition::default(),
+            size: BackgroundSize::Auto,
+            repeat_x: ImageRepeat::Repeat,
+            repeat_y: ImageRepeat::Repeat,
+            origin: PaintBox::Padding,
+            clip: PaintBox::Border,
+            attachment: BackgroundAttachment::Scroll,
+            blend_mode: BlendMode::Normal,
+        }
+    }
+
+    fn basic_linear_layer() -> BackgroundLayer {
+        background_layer(PaintImage::LinearGradient {
+            angle_degrees: 90.0,
+            repeating: false,
+            stops: vec![
+                GradientStop {
+                    color: PaintColor::Named("black".into()),
+                    position: Some(PaintCoordinate::default()),
+                },
+                GradientStop {
+                    color: PaintColor::Named("white".into()),
+                    position: Some(PaintCoordinate {
+                        length: 0.0,
+                        fraction: 1.0,
+                    }),
+                },
+            ],
+        })
     }
 
     #[test]
@@ -293,6 +361,41 @@ mod tests {
     }
 
     #[test]
+    fn linear_gradient_capability_does_not_claim_the_complete_layer_protocol() {
+        let node = NodeId::new(1).unwrap();
+        assert_eq!(
+            packet(vec![
+                Operation::SetBackgroundLayers {
+                    node,
+                    layers: vec![basic_linear_layer()],
+                },
+                Operation::SetBackgroundLayers {
+                    node,
+                    layers: vec![basic_linear_layer()],
+                },
+            ])
+            .required_capabilities(),
+            vec![RenderCapability::LinearGradients]
+        );
+        assert_eq!(
+            packet(vec![Operation::SetBackgroundLayers {
+                node,
+                layers: vec![basic_linear_layer(), basic_linear_layer()],
+            }])
+            .required_capabilities(),
+            vec![RenderCapability::BackgroundLayers]
+        );
+        assert!(
+            packet(vec![Operation::SetBackgroundLayers {
+                node,
+                layers: Vec::new(),
+            }])
+            .required_capabilities()
+            .is_empty()
+        );
+    }
+
+    #[test]
     fn profiles_and_packets_cover_every_optional_capability() {
         assert_eq!(
             RenderCapability::ALL.map(RenderCapability::as_str),
@@ -305,6 +408,7 @@ mod tests {
                 "image-content",
                 "cursor",
                 "resource-lifecycle",
+                "linear-gradients",
             ]
         );
 
@@ -371,7 +475,7 @@ mod tests {
             Operation::SetBoxPaint { node, paint },
             Operation::SetBackgroundLayers {
                 node,
-                layers: Vec::new(),
+                layers: vec![basic_linear_layer()],
             },
             Operation::SetVisualEffects {
                 node,
@@ -407,7 +511,9 @@ mod tests {
             },
             Operation::SetBackgroundLayers {
                 node,
-                layers: Vec::new(),
+                layers: vec![background_layer(PaintImage::Resource(
+                    ResourceId::new(2).unwrap(),
+                ))],
             },
         ];
         let packet = packet(operations);
@@ -415,12 +521,13 @@ mod tests {
             packet.required_capabilities(),
             vec![
                 RenderCapability::EllipticalBorderRadius,
-                RenderCapability::BackgroundLayers,
+                RenderCapability::LinearGradients,
                 RenderCapability::VisualEffects,
                 RenderCapability::TextEffects,
                 RenderCapability::TextTypography,
                 RenderCapability::ImageContent,
                 RenderCapability::Cursor,
+                RenderCapability::BackgroundLayers,
             ]
         );
         assert_eq!(
@@ -437,7 +544,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             elliptical_only.first_unsupported(&packet),
-            Some(RenderCapability::BackgroundLayers)
+            Some(RenderCapability::LinearGradients)
         );
         assert_eq!(
             RenderCapabilities::all_frame_native().first_unsupported(&packet),

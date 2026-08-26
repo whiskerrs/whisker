@@ -10,6 +10,13 @@
       "checkpoints": ["semantic-projection", "pixel"]
     },
     {
+      "id": "wpt.css-images.linear-gradient-1",
+      "feature": "background-image-linear-gradient",
+      "fixture": "wpt/css/css-images/linear-gradient-1.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.test1",
       "feature": "border-radius",
       "fixture": "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json",

@@ -70,7 +70,11 @@ impl DomFrameSink {
             .operations
             .iter()
             .find_map(|operation| match operation {
-                Operation::SetBackgroundLayers { .. } => Some("background-layers"),
+                Operation::SetBackgroundLayers { layers, .. }
+                    if !paint::background_layers::supports(layers) =>
+                {
+                    Some("background-layers payload")
+                }
                 Operation::SetVisualEffects { .. } => Some("visual-effects"),
                 Operation::SetImage { .. } => Some("image-content"),
                 Operation::SetCursor { .. } => Some("cursor"),
@@ -230,6 +234,9 @@ impl DomFrameSink {
                 let element = self.node(*node)?;
                 paint::box_paint::apply(&element, paint)?;
             }
+            Operation::SetBackgroundLayers { node, layers } => {
+                paint::background_layers::apply(&self.node(*node)?, layers)?;
+            }
             Operation::SetClip { node, clip } => {
                 let element = self.node(*node)?;
                 let element_type = *self
@@ -378,8 +385,7 @@ impl DomFrameSink {
                     .map_err(|error| js_error("invoke native DOM command", error))?;
             }
             Operation::SetPointerCapture { .. } | Operation::ReleasePointerCapture { .. } => {}
-            Operation::SetBackgroundLayers { .. }
-            | Operation::SetVisualEffects { .. }
+            Operation::SetVisualEffects { .. }
             | Operation::SetImage { .. }
             | Operation::SetCursor { .. } => {
                 unreachable!("unsupported operations are rejected before DOM mutation")
@@ -439,10 +445,16 @@ impl FrameSink for DomFrameSink {
     fn capabilities(&self) -> whisker_protocol::RenderCapabilities {
         whisker_protocol::RenderCapabilities::new(
             whisker_protocol::ProtocolVersion::CURRENT,
-            [whisker_protocol::CapabilityEntry {
-                capability: whisker_protocol::RenderCapability::EllipticalBorderRadius,
-                support: whisker_protocol::CapabilitySupport::Native,
-            }],
+            [
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::EllipticalBorderRadius,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::LinearGradients,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+            ],
         )
         .expect("Web capability profile is unique")
     }

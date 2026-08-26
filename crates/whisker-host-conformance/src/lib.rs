@@ -342,6 +342,34 @@ pub struct SceneNodeFixture {
     /// Optional resolved sibling stacking order.
     #[serde(default)]
     pub z_order: Option<i32>,
+    /// Optional resolved linear-gradient background image. The fixture DSL
+    /// supplies the remaining `BackgroundLayer` fields as their CSS initial
+    /// values so every Host receives the same protocol operation.
+    #[serde(default)]
+    pub linear_gradient: Option<LinearGradientFixture>,
+}
+
+/// One resolved linear-gradient image used by a retained scene node.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LinearGradientFixture {
+    /// Direction in clockwise degrees from the positive vertical axis.
+    pub angle_degrees: f32,
+    /// Whether the gradient repeats beyond its final stop.
+    #[serde(default)]
+    pub repeating: bool,
+    /// Ordered, explicitly resolved color stops.
+    pub stops: Vec<GradientStopFixture>,
+}
+
+/// One resolved stop on a fixture gradient line.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GradientStopFixture {
+    /// Stop color.
+    pub color: ColorFixture,
+    /// Position as a fraction of the gradient line.
+    pub position: f32,
 }
 
 /// Paint visibility delivered by `SetVisibility`.
@@ -794,6 +822,14 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                 && node
                     .opacity
                     .is_none_or(|opacity| opacity.is_finite() && (0.0..=1.0).contains(&opacity))
+                && node.linear_gradient.as_ref().is_none_or(|gradient| {
+                    gradient.angle_degrees.is_finite()
+                        && gradient.stops.len() >= 2
+                        && gradient
+                            .stops
+                            .iter()
+                            .all(|stop| valid_color(&stop.color) && stop.position.is_finite())
+                })
         })
         && nodes.iter().all(|node| {
             let mut seen = std::collections::BTreeSet::new();

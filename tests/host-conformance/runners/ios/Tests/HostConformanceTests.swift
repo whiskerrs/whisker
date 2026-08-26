@@ -80,7 +80,8 @@ private final class Driver {
             case "present_scene":
                 try presentScene(command)
             case "checkpoint":
-                guard try string(command, "name") == "paint.box" else {
+                let name = try string(command, "name")
+                guard name == "paint.box" || name == "paint.background-layers.linear-gradient" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -161,9 +162,20 @@ private final class Driver {
         var transforms = fixtures.flatMap { fixture in
             fixture.transform ?? [Float](repeating: 0, count: 16)
         }
+        var gradientStops = [WhiskerMobileGradientStop]()
+        var gradientOffsets = [Int?]()
+        for fixture in fixtures {
+            guard let gradient = fixture.linearGradient else {
+                gradientOffsets.append(nil)
+                continue
+            }
+            gradientOffsets.append(gradientStops.count)
+            gradientStops.append(contentsOf: gradient.stops)
+        }
         try layouts.withUnsafeMutableBufferPointer { layoutBuffer in
             try paints.withUnsafeMutableBufferPointer { paintBuffer in
                 try transforms.withUnsafeMutableBufferPointer { transformBuffer in
+                    try gradientStops.withUnsafeMutableBufferPointer { gradientBuffer in
                     var operations = fixtures.map {
                         operation(tag: UInt32(WHISKER_OP_CREATE), node: $0.id, member: 1)
                     }
@@ -228,6 +240,18 @@ private final class Driver {
                                 integer: zOrder
                             ))
                         }
+                        if let gradient = fixture.linearGradient,
+                           let offset = gradientOffsets[index] {
+                            operations.append(operation(
+                                tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
+                                node: fixture.id,
+                                scalar: gradient.angleDegrees,
+                                payload: UnsafeRawPointer(
+                                    gradientBuffer.baseAddress!.advanced(by: offset)
+                                ),
+                                count: gradient.stops.count
+                            ))
+                        }
                     }
                     try operations.withUnsafeMutableBufferPointer { buffer in
                         var frame = WhiskerMobileFrame()
@@ -249,6 +273,7 @@ private final class Driver {
                               response.status == UInt8(WHISKER_APPLY_ACCEPTED) else {
                             throw Failure("UIKit Host rejected scene fixture frame")
                         }
+                    }
                     }
                 }
             }
@@ -298,6 +323,12 @@ private struct SceneFixtureNode {
     let opacity: Float?
     let visible: Bool?
     let zOrder: Int32?
+    let linearGradient: SceneLinearGradient?
+}
+
+private struct SceneLinearGradient {
+    let angleDegrees: Float
+    let stops: [WhiskerMobileGradientStop]
 }
 
 private struct Failure: Error, CustomStringConvertible {
@@ -382,6 +413,25 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     } else {
         zOrder = nil
     }
+    let linearGradient: SceneLinearGradient?
+    if let gradient = fixture["linear_gradient"] as? [String: Any] {
+        let stops = try objectArray(gradient, "stops").map { stop -> WhiskerMobileGradientStop in
+            var raw = WhiskerMobileGradientStop()
+            raw.color = try color(try object(stop, "color"))
+            raw.position = WhiskerMobileLengthPercentage(
+                length: 0,
+                fraction: Float(try number(stop, "position"))
+            )
+            return raw
+        }
+        guard stops.count >= 2 else { throw Failure("linear gradient needs at least two stops") }
+        linearGradient = SceneLinearGradient(
+            angleDegrees: Float(try number(gradient, "angle_degrees")),
+            stops: stops
+        )
+    } else {
+        linearGradient = nil
+    }
     return SceneFixtureNode(
         id: id,
         parent: parent,
@@ -391,7 +441,8 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         transform: transform,
         opacity: opacity,
         visible: visible,
-        zOrder: zOrder
+        zOrder: zOrder,
+        linearGradient: linearGradient
     )
 }
 
@@ -439,6 +490,7 @@ private func color(_ fixture: [String: Any]) throws -> WhiskerMobileColor {
         case "black": rgba = (0, 0, 0, 1)
         case "blue": rgba = (0, 0, 255, 1)
         case "green": rgba = (0, 128, 0, 1)
+        case "gold": rgba = (255, 215, 0, 1)
         case "red": rgba = (255, 0, 0, 1)
         case "transparent": rgba = (0, 0, 0, 0)
         case "white": rgba = (255, 255, 255, 1)

@@ -6,26 +6,32 @@ use whisker::{SurfaceRuntime, standard_element_registrations};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
-    BorderFixture, BorderStyleFixture, ColorFixture, Command, Host, LoadedCase,
-    OverflowClipFixture, PixelRelationFixture, PixelRelationKind, PixelSampleFixture,
+    BorderFixture, BorderStyleFixture, ColorFixture, Command, Host, LinearGradientFixture,
+    LoadedCase, OverflowClipFixture, PixelRelationFixture, PixelRelationKind, PixelSampleFixture,
     PointerEventFixture, Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
     load_required,
 };
 use whisker_protocol::{
-    AvailableSpace, BorderLineStyle, BoxClip, BoxPaint, ElementTypeId, FrameHeader, FrameMode,
-    FramePacket, InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect,
+    AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
+    BorderLineStyle, BoxClip, BoxPaint, ElementTypeId, FrameHeader, FrameMode, FramePacket,
+    GradientStop, ImageRepeat, InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect,
     MeasureConstraints, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
     MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasurementKey, MeasurementPayload,
-    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintColor,
-    PaintCornerRadius, PaintCorners, PaintEdges, PaintLengthPercentage, PointerId, PointerInput,
-    PointerKind, ProtocolVersion, SurfaceId, TextMeasurePayload, TextMeasureStyle, Transform,
-    Visibility, WhiskerValue,
+    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
+    PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
+    PaintLengthPercentage, PaintPosition, PointerId, PointerInput, PointerKind, ProtocolVersion,
+    SurfaceId, TextMeasurePayload, TextMeasureStyle, Transform, Visibility, WhiskerValue,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
 use crate::element::{DesktopElementRegistry, built_in_element_factories};
-use crate::gpu::{render_box_primitives_offscreen, render_clipped_box_primitives_offscreen};
-use crate::paint::box_paint::{BoxPrimitive, BoxPrimitiveKind, lower_box};
+use crate::gpu::{
+    LinearGradientDraw, linear_gradient_draw, render_box_primitives_offscreen,
+    render_clipped_box_primitives_offscreen,
+};
+use crate::paint::box_paint::{
+    BoxPrimitive, BoxPrimitiveKind, linear_gradient_primitive, lower_box, resolve_box_geometry,
+};
 use crate::paint::color::srgba;
 use crate::scene::{DesktopScene, LogicalClip, PaintCommand, ShapeClipStack};
 use crate::text::NativeTextHost;
@@ -55,6 +61,34 @@ fn color_protocol(value: &ColorFixture) -> PaintColor {
             blue: *blue,
             alpha: *alpha,
         },
+    }
+}
+
+fn linear_gradient_protocol(value: &LinearGradientFixture) -> BackgroundLayer {
+    BackgroundLayer {
+        image: PaintImage::LinearGradient {
+            angle_degrees: value.angle_degrees,
+            repeating: value.repeating,
+            stops: value
+                .stops
+                .iter()
+                .map(|stop| GradientStop {
+                    color: color_protocol(&stop.color),
+                    position: Some(PaintCoordinate {
+                        length: 0.0,
+                        fraction: stop.position,
+                    }),
+                })
+                .collect(),
+        },
+        position: PaintPosition::default(),
+        size: BackgroundSize::Auto,
+        repeat_x: ImageRepeat::Repeat,
+        repeat_y: ImageRepeat::Repeat,
+        origin: PaintBox::Padding,
+        clip: PaintBox::Border,
+        attachment: BackgroundAttachment::Scroll,
+        blend_mode: BlendMode::Normal,
     }
 }
 
@@ -99,7 +133,13 @@ impl RecordingInputSink {
 
 struct Checkpoint {
     logical_size: [u32; 2],
-    primitives: Vec<(BoxPrimitive, LogicalClip, Transform, ShapeClipStack)>,
+    primitives: Vec<(
+        BoxPrimitive,
+        LogicalClip,
+        Transform,
+        ShapeClipStack,
+        Option<LinearGradientDraw>,
+    )>,
     samples: Vec<PixelSampleFixture>,
     relations: Vec<PixelRelationFixture>,
 }
@@ -170,7 +210,7 @@ impl Driver {
                     samples,
                     relations,
                 } => {
-                    assert_eq!(name, "paint.box", "unsupported Desktop checkpoint");
+                    assert!(name.starts_with("paint."), "unsupported Desktop checkpoint");
                     checkpoints.push(Checkpoint {
                         logical_size: [
                             self.logical_size[0].round() as u32,
@@ -284,7 +324,7 @@ impl Driver {
                 },
             ] => {
                 assert_eq!(*actual_rect, layout_rect(rect));
-                assert_eq!(*actual_paint, &expected_paint);
+                assert_eq!(*actual_paint, Some(&expected_paint));
             }
             _ => panic!("one projected Desktop box command"),
         }
@@ -324,6 +364,12 @@ impl Driver {
                 node,
                 paint: box_paint(&fixture.background, fixture.border.as_ref()),
             });
+            if let Some(gradient) = &fixture.linear_gradient {
+                operations.push(Operation::SetBackgroundLayers {
+                    node,
+                    layers: vec![linear_gradient_protocol(gradient)],
+                });
+            }
             operations.push(Operation::SetClip {
                 node,
                 clip: BoxClip {
@@ -374,13 +420,20 @@ impl Driver {
 
     fn clipped_box_primitives(
         &self,
-    ) -> Vec<(BoxPrimitive, LogicalClip, Transform, ShapeClipStack)> {
+    ) -> Vec<(
+        BoxPrimitive,
+        LogicalClip,
+        Transform,
+        ShapeClipStack,
+        Option<LinearGradientDraw>,
+    )> {
         let scene = self.scene.as_ref().expect("checkpoint follows attach");
         let mut primitives = Vec::new();
         for command in scene.paint_commands() {
             if let PaintCommand::Box {
                 rect,
                 paint,
+                background_layers,
                 clip,
                 shape_clips,
                 transform,
@@ -388,9 +441,47 @@ impl Driver {
                 ..
             } = command
             {
-                lower_box(rect, paint, opacity, |primitive| {
-                    primitives.push((primitive, clip, transform, shape_clips.clone()));
-                });
+                let default_paint = BoxPaint::default();
+                let paint = paint.unwrap_or(&default_paint);
+                let mut boxes = Vec::new();
+                lower_box(rect, paint, opacity, |primitive| boxes.push(primitive));
+                primitives.extend(
+                    boxes
+                        .iter()
+                        .copied()
+                        .filter(|primitive| primitive.kind == BoxPrimitiveKind::Fill)
+                        .map(|primitive| (primitive, clip, transform, shape_clips.clone(), None)),
+                );
+                let positioning_rect = resolve_box_geometry(rect, paint).inner_rect;
+                for layer in background_layers.iter().rev() {
+                    let PaintImage::LinearGradient {
+                        angle_degrees,
+                        repeating,
+                        stops,
+                    } = &layer.image
+                    else {
+                        continue;
+                    };
+                    primitives.push((
+                        linear_gradient_primitive(rect, paint),
+                        clip,
+                        transform,
+                        shape_clips.clone(),
+                        Some(linear_gradient_draw(
+                            positioning_rect,
+                            *angle_degrees,
+                            *repeating,
+                            stops,
+                            opacity,
+                        )),
+                    ));
+                }
+                primitives.extend(
+                    boxes
+                        .into_iter()
+                        .filter(|primitive| primitive.kind == BoxPrimitiveKind::Border)
+                        .map(|primitive| (primitive, clip, transform, shape_clips.clone(), None)),
+                );
             }
         }
         primitives
@@ -807,9 +898,14 @@ fn render_taffy_protocol_and_desktop_box_paint_compose() {
         {
             assert_close(rect.width, 100.0, "Taffy border-box width");
             assert_close(rect.height, 100.0, "Taffy border-box height");
-            lower_box(rect, paint, opacity, |primitive| {
-                primitives.push(primitive);
-            });
+            lower_box(
+                rect,
+                paint.expect("render! emits box paint"),
+                opacity,
+                |primitive| {
+                    primitives.push(primitive);
+                },
+            );
         }
     }
     assert_eq!(primitives.len(), 2);

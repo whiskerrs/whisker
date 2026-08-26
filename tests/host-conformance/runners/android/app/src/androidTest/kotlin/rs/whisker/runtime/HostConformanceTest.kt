@@ -135,7 +135,10 @@ private class Driver(
                 "present_box" -> present(command)
                 "present_scene" -> presentScene(command)
                 "checkpoint" -> {
-                    check(command.getString("name") == "paint.box")
+                    check(
+                        command.getString("name") == "paint.box" ||
+                            command.getString("name") == "paint.background-layers.linear-gradient",
+                    )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
                         assertPixelSamples(
@@ -240,6 +243,19 @@ private class Driver(
             if (node.has("z_order")) {
                 check(stage(tag = 12, node = id, integer = node.getInt("z_order")))
             }
+            node.optJSONObject("linear_gradient")?.let { gradient ->
+                val (numbers, names) = linearGradient(gradient)
+                check(
+                    stage(
+                        tag = 21,
+                        flags = if (gradient.optBoolean("repeating", false)) 1 else 0,
+                        node = id,
+                        scalar = gradient.getDouble("angle_degrees").toFloat(),
+                        numbers = numbers,
+                        names = names,
+                    ),
+                )
+            }
         }
         check(view.commitFrameFromNative())
     }
@@ -330,6 +346,17 @@ private class Driver(
         }
     }
 
+    private fun linearGradient(gradient: JSONObject): Pair<FloatArray, Array<String>> {
+        val numbers = ArrayList<Float>()
+        val names = ArrayList<String>()
+        gradient.getJSONArray("stops").objects().forEach { stop ->
+            appendColor(stop.getJSONObject("color"), numbers, names)
+            numbers += 0f
+            numbers += stop.getDouble("position").toFloat()
+        }
+        return numbers.toFloatArray() to names.toTypedArray()
+    }
+
     private fun borderStyle(value: String): Int {
         val names = arrayOf(
             "none", "hidden", "solid", "dashed", "dotted",
@@ -377,7 +404,12 @@ private fun assertPixelSamples(id: String, bitmap: Bitmap, samples: JSONArray, d
             android.graphics.Color.green(actual) to android.graphics.Color.green(expected),
             android.graphics.Color.blue(actual) to android.graphics.Color.blue(expected),
         ).maxOf { (left, right) -> abs(left - right) }
-        assertTrue("$id sample ($x, $y) differs by $difference", difference <= tolerance)
+        assertTrue(
+            "$id sample ($x, $y) differs by $difference: " +
+                "actual=${android.graphics.Color.valueOf(actual)} " +
+                "expected=${android.graphics.Color.valueOf(expected)}",
+            difference <= tolerance,
+        )
     }
 }
 

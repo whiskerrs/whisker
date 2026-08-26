@@ -135,6 +135,24 @@ final class HostScene {
                     count: 16
                 )
                 guard values.allSatisfy(\.isFinite) else { return false }
+            case UInt32(WHISKER_OP_BACKGROUND_LAYERS):
+                guard existing.contains(operation.node), operation.scalar.isFinite,
+                      operation.flags == 0 else { return false }
+                if operation.payload_count == 0 {
+                    guard operation.payload == nil else { return false }
+                    continue
+                }
+                guard operation.payload_count >= 2, operation.payload_count <= 4_096,
+                      let payload = operation.payload else { return false }
+                let stops = UnsafeBufferPointer(
+                    start: payload.assumingMemoryBound(to: WhiskerMobileGradientStop.self),
+                    count: operation.payload_count
+                )
+                guard stops.allSatisfy({ stop in
+                    stop.position.length.isFinite && stop.position.fraction.isFinite &&
+                        stop.color.kind <= 1 && stop.color.alpha.isFinite &&
+                        (0...1).contains(stop.color.alpha)
+                }) else { return false }
             case UInt32(WHISKER_OP_OPACITY):
                 guard existing.contains(operation.node), operation.scalar.isFinite,
                       (0...1).contains(operation.scalar) else { return false }
@@ -198,6 +216,22 @@ final class HostScene {
                 start: payload.assumingMemoryBound(to: Float.self),
                 count: 16
             ))
+        case UInt32(WHISKER_OP_BACKGROUND_LAYERS):
+            guard let node = nodes[id] else { return false }
+            if operation.payload_count == 0 {
+                node.boxPainter.updateBackgroundLayers(nil)
+            } else {
+                guard let payload = operation.payload else { return false }
+                let stops = UnsafeBufferPointer(
+                    start: payload.assumingMemoryBound(to: WhiskerMobileGradientStop.self),
+                    count: operation.payload_count
+                ).map(HostLinearGradientStop.init)
+                node.boxPainter.updateBackgroundLayers(HostLinearGradient(
+                    angleDegrees: CGFloat(operation.scalar),
+                    stops: stops
+                ))
+            }
+            node.setNeedsDisplay()
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):
