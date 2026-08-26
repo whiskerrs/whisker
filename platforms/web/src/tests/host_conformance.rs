@@ -1956,6 +1956,15 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/CSS2/zindex/z-index-003.json" => {
             include_str!("../../../../tests/host-conformance/wpt/css/CSS2/zindex/z-index-003.json")
         }
+        "wpt/css/CSS2/zindex/z-index-010.json" => {
+            include_str!("../../../../tests/host-conformance/wpt/css/CSS2/zindex/z-index-010.json")
+        }
+        "wpt/css/CSS2/zindex/z-index-stack-001.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/zindex/z-index-stack-001.json"
+        ),
+        "wpt/css/CSS2/zindex/z-index-stack-002.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/zindex/z-index-stack-002.json"
+        ),
         "wpt/css/CSS2/borders/border-top-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-top-003.json"
         ),

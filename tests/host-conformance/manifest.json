@@ -353,6 +353,27 @@
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css2.z-index-010",
+      "feature": "z-index-signed-32-bit-maximum",
+      "fixture": "wpt/css/CSS2/zindex/z-index-010.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.z-index-stack-001",
+      "feature": "z-index-sibling-stacking-levels",
+      "fixture": "wpt/css/CSS2/zindex/z-index-stack-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css2.z-index-stack-002",
+      "feature": "z-index-document-order-tiebreak",
+      "fixture": "wpt/css/CSS2/zindex/z-index-stack-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.border-radius-overflow-hidden",
       "feature": "border-radius-overflow-clip",
       "fixture": "wpt/css/css-backgrounds/border-radius-overflow-hidden.json",
