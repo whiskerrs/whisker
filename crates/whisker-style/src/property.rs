@@ -43,7 +43,7 @@ pub struct PropertyMetadata {
     pub origin: PropertyOrigin,
     /// Whether an omitted value inherits from the nearest ancestor.
     ///
-    /// Version 1 deliberately limits inheritance to seven text properties.
+    /// Whisker resolves this property from the nearest ancestor when omitted.
     pub inherited: bool,
     /// Host-independent stage that owns the property's resolved semantics.
     pub domain: StylePropertyDomain,
@@ -124,7 +124,9 @@ macro_rules! define_style_properties {
                 let origin = PropertyOrigin::Css;
                 let inherited = matches!(
                     self,
-                    Self::FontFamily
+                    Self::Cursor
+                        | Self::PointerEvents
+                        | Self::FontFamily
                         | Self::FontSize
                         | Self::FontWeight
                         | Self::FontStyle
@@ -566,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn inheritance_is_limited_to_the_rfc_whitelist() {
+    fn inheritance_metadata_matches_the_resolver_whitelist() {
         let inherited: Vec<_> = StyleProperty::ALL
             .iter()
             .copied()
@@ -576,12 +578,14 @@ mod tests {
             inherited,
             [
                 StyleProperty::Color,
+                StyleProperty::Cursor,
                 StyleProperty::FontFamily,
                 StyleProperty::FontSize,
                 StyleProperty::FontStyle,
                 StyleProperty::FontWeight,
                 StyleProperty::LetterSpacing,
                 StyleProperty::LineHeight,
+                StyleProperty::PointerEvents,
                 StyleProperty::TextAlign,
                 StyleProperty::TextDecoration,
                 StyleProperty::TextShadow,
