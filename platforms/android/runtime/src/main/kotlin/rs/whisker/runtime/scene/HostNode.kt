@@ -17,6 +17,7 @@ import rs.whisker.runtime.paint.HostBackgroundLayers
 import rs.whisker.runtime.paint.HostBoxShadow
 import rs.whisker.runtime.paint.HostBackdropBlurRenderer
 import rs.whisker.runtime.paint.HostClipPath
+import rs.whisker.runtime.paint.HostImageRendering
 import rs.whisker.runtime.paint.ResolvedBoxGeometry
 import rs.whisker.runtime.paint.normalizeRadii
 import rs.whisker.runtime.paint.drawInsetBoxShadows
@@ -52,7 +53,7 @@ internal class HostNode(
     var clipPath: HostClipPath? = null
     var mountedElement: WhiskerMountedElement? = null
     var zOrder: Int = 0
-    var pixelatedImages: Boolean = false
+    var imageRendering: HostImageRendering = HostImageRendering.Auto
     var backdropBlur: Float = 0f
         set(value) {
             field = value

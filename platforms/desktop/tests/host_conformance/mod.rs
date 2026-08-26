@@ -1349,7 +1349,10 @@ impl Driver {
                         Some(gradient),
                         resource,
                         resource.is_some()
-                            && visual_effects.image_rendering == ImageRendering::Pixelated,
+                            && matches!(
+                                visual_effects.image_rendering,
+                                ImageRendering::Pixelated | ImageRendering::CrispEdges
+                            ),
                     ));
                 }
                 primitives.extend(

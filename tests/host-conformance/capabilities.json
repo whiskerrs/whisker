@@ -111,6 +111,7 @@
       "properties": ["box-shadow", "clip-path", "image-rendering"],
       "supported_subset": ["box-shadow-outer-offset-spread-and-blur", "box-shadow-inset-offset-spread-and-blur", "multiple-box-shadows", "clip-path-inset", "clip-path-circle-and-ellipse", "clip-path-path", "image-rendering-auto-pixelated-crisp-edges"],
       "pending_subset": [],
+      "compatibility_notes": ["Web preserves the crisp-edges keyword; native Hosts implement its contrast-preserving scaling requirement with nearest-neighbor sampling while retaining the distinct protocol value."],
       "protocol": ["SetVisualEffects"],
       "rust": "implemented",
       "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}

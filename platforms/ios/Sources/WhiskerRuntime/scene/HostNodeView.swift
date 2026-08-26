@@ -22,6 +22,7 @@ final class WhiskerNodeView: UIView {
     private var clipsOverflowHorizontally = false
     private var clipsOverflowVertically = false
     private var backdropBlurView: HostBackdropBlurView?
+    private(set) var imageRendering: HostImageRendering = .auto
     private(set) var hitTestBehavior: Int32 = 0
     private(set) var cursorKeyword: Int32 = 0
     private var pointerDelegate: AnyObject?
@@ -181,8 +182,9 @@ final class WhiskerNodeView: UIView {
         updateBackdropBlurGeometry()
     }
 
-    func setImageRendering(pixelated: Bool) {
-        boxPainter.setPixelatedImages(pixelated)
+    func setImageRendering(_ value: HostImageRendering) {
+        imageRendering = value
+        boxPainter.setImageRendering(value)
         paintView.setNeedsDisplay()
     }
 

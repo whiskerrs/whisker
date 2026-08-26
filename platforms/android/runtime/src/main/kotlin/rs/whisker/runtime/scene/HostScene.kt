@@ -38,6 +38,7 @@ import rs.whisker.runtime.paint.HostClipReferenceBox
 import rs.whisker.runtime.paint.HostCircleClipPath
 import rs.whisker.runtime.paint.HostEllipseClipPath
 import rs.whisker.runtime.paint.HostInsetClipPath
+import rs.whisker.runtime.paint.HostImageRendering
 import rs.whisker.runtime.paint.HostPathClipPath
 import rs.whisker.runtime.paint.HostPathCommand
 import rs.whisker.runtime.paint.HostLinearGradient
@@ -278,7 +279,7 @@ internal class HostScene(
                 operation.scalar * root.resources.displayMetrics.density
             25 -> {
                 val node = nodes[id] ?: return
-                node.pixelatedImages = operation.integer == 1
+                node.imageRendering = HostImageRendering.fromWire(operation.integer) ?: return
                 node.paint?.let { applyPaint(node, it) }
             }
             26 -> (nodes[id] ?: return).setCursorKeyword(operation.integer)
@@ -484,7 +485,7 @@ internal class HostScene(
             node.geometry.height,
             root.resources.displayMetrics.density,
             node.backgroundLayers,
-            node.pixelatedImages,
+            node.imageRendering,
             RectF(
                 node.geometry.contentX,
                 node.geometry.contentY,

@@ -484,6 +484,7 @@ private final class Driver {
                     name == "paint.visual-effects.clip-path-path-evenodd" ||
                     name == "paint.visual-effects.backdrop-blur" ||
                     name == "paint.visual-effects.image-rendering-pixelated" ||
+                    name == "paint.visual-effects.image-rendering-crisp-edges" ||
                     name == "paint.transform.projective-plane" ||
                     name == "paint.transform.motion-path-line" ||
                     name == "paint.transform.motion-path-curves" ||
@@ -504,6 +505,15 @@ private final class Driver {
                     XCTAssertTrue(
                         containsActiveBackdropBlur(view),
                         "\(id) must project backdrop blur to UIVisualEffectView"
+                    )
+                }
+                if name == "paint.visual-effects.image-rendering-crisp-edges" {
+                    let nodes = findNodeViews(view)
+                    XCTAssertEqual(nodes.count, 1)
+                    XCTAssertEqual(nodes.first?.imageRendering, .crispEdges)
+                    XCTAssertEqual(
+                        nodes.first?.imageRendering.interpolationQuality,
+                        CGInterpolationQuality.none
                     )
                 }
                 if id == "core.pointer-cursor-fidelity" {

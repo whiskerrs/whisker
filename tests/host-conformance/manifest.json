@@ -66,6 +66,13 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "core.image-rendering-crisp-edges",
+      "feature": "image-rendering-crisp-edges",
+      "fixture": "core/image-rendering-crisp-edges.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.background-size-009",
       "feature": "background-size-no-repeat",
       "fixture": "wpt/css/css-backgrounds/background-size-009.json",

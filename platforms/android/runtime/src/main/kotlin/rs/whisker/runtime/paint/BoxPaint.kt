@@ -31,7 +31,7 @@ internal fun applyBoxPaint(
     logicalHeight: Float,
     density: Float,
     backgroundLayers: HostBackgroundLayers? = null,
-    pixelatedImages: Boolean = false,
+    imageRendering: HostImageRendering = HostImageRendering.Auto,
     logicalContentBox: RectF = RectF(0f, 0f, logicalWidth, logicalHeight),
 ): ResolvedBoxGeometry {
     val values = paint.values
@@ -89,7 +89,7 @@ internal fun applyBoxPaint(
             physicalWidth,
             physicalHeight,
             backgroundLayers,
-            pixelatedImages,
+            imageRendering,
             RectF(
                 logicalContentBox.left * density,
                 logicalContentBox.top * density,
@@ -119,7 +119,7 @@ private class WhiskerBoxDrawable(
     private val backgroundBoxWidth: Float,
     private val backgroundBoxHeight: Float,
     private val backgroundLayers: HostBackgroundLayers?,
-    private val pixelatedImages: Boolean,
+    private val imageRendering: HostImageRendering,
     private val localContentBox: RectF,
 ) : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -214,7 +214,7 @@ private class WhiskerBoxDrawable(
             ),
             backgroundLayers,
             paint,
-            pixelatedImages,
+            imageRendering,
         )
 
         val widths = floatArrayOf(top, right, bottom, left)
