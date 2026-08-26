@@ -234,6 +234,41 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.border-radius-style-001",
+      "feature": "border-radius-dotted-style",
+      "fixture": "wpt/css/css-backgrounds/border-radius-style-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-style-002",
+      "feature": "border-radius-dashed-style",
+      "fixture": "wpt/css/css-backgrounds/border-radius-style-002.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-style-003",
+      "feature": "border-radius-double-style",
+      "fixture": "wpt/css/css-backgrounds/border-radius-style-003.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-style-004",
+      "feature": "border-radius-solid-style",
+      "fixture": "wpt/css/css-backgrounds/border-radius-style-004.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-style-005",
+      "feature": "border-radius-none-style",
+      "fixture": "wpt/css/css-backgrounds/border-radius-style-005.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-overflow.clip-002.horizontal",
       "feature": "overflow-x",
       "fixture": "wpt/css/css-overflow/clip-002.json",

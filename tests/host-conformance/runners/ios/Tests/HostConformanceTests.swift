@@ -31,16 +31,20 @@ final class HostConformanceTests: XCTestCase {
                 return type == "present_box" || type == "present_scene" || type == "measure_text" ||
                     type == "emit_pointer"
             }) else { continue }
-            let test = try Driver(id: id).execute(testSide)
-            if let reference = scenario["reference"] as? [String: Any] {
-                let expected = try Driver(id: id).execute(reference)
-                XCTAssertEqual(test.width, expected.width)
-                XCTAssertEqual(test.height, expected.height)
-                XCTAssertLessThanOrEqual(
-                    largestDifference(test.bytes, expected.bytes),
-                    1,
-                    id
-                )
+            do {
+                let test = try Driver(id: id).execute(testSide)
+                if let reference = scenario["reference"] as? [String: Any] {
+                    let expected = try Driver(id: id).execute(reference)
+                    XCTAssertEqual(test.width, expected.width)
+                    XCTAssertEqual(test.height, expected.height)
+                    XCTAssertLessThanOrEqual(
+                        largestDifference(test.bytes, expected.bytes),
+                        1,
+                        id
+                    )
+                }
+            } catch {
+                throw Failure("\(id): \(error)")
             }
             count += 1
         }
