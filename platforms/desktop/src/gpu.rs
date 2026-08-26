@@ -628,7 +628,7 @@ const BACKDROP_SHADER: &str = r#"
 struct BlurUniform {
     direction: vec2<f32>,
     radius: f32,
-    _padding: f32,
+    opacity: f32,
 };
 
 @group(0) @binding(0) var source_texture: texture_2d<f32>;
@@ -656,7 +656,7 @@ fn vs_main(@builtin(vertex_index) index: u32) -> VertexOutput {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if blur.radius <= 0.0 {
-        return textureSample(source_texture, source_sampler, input.uv);
+        return textureSample(source_texture, source_sampler, input.uv) * blur.opacity;
     }
     let dimensions = vec2<f32>(textureDimensions(source_texture));
     let step = blur.direction * max(blur.radius / 8.0, 0.5) / dimensions;
@@ -668,7 +668,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         color += textureSample(source_texture, source_sampler, input.uv + step * f32(offset)) * weight;
         weight_sum += weight;
     }
-    return color / weight_sum;
+    return color / weight_sum * blur.opacity;
 }
 "#;
 
@@ -677,11 +677,12 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 struct BackdropUniform {
     direction: [f32; 2],
     radius: f32,
-    _padding: f32,
+    opacity: f32,
 }
 
 struct BackdropGpuPipeline {
     pipeline: RenderPipeline,
+    composite_pipeline: RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
 }
@@ -728,31 +729,38 @@ impl BackdropGpuPipeline {
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
-        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("whisker Desktop backdrop pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: PipelineCompilationOptions::default(),
-                buffers: &[],
-            },
-            fragment: Some(FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: PipelineCompilationOptions::default(),
-                targets: &[Some(ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: ColorWrites::ALL,
-                })],
-            }),
-            primitive: PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let create_pipeline = |label, blend| {
+            device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                vertex: VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                fragment: Some(FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: PipelineCompilationOptions::default(),
+                    targets: &[Some(ColorTargetState {
+                        format,
+                        blend,
+                        write_mask: ColorWrites::ALL,
+                    })],
+                }),
+                primitive: PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            })
+        };
+        let pipeline = create_pipeline("whisker Desktop backdrop pipeline", None);
+        let composite_pipeline = create_pipeline(
+            "whisker Desktop opacity group compositor",
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+        );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("whisker Desktop backdrop sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -764,6 +772,7 @@ impl BackdropGpuPipeline {
         });
         Self {
             pipeline,
+            composite_pipeline,
             layout,
             sampler,
         }
@@ -997,6 +1006,7 @@ pub(crate) type ClippedBoxPrimitive = (
     Option<LinearGradientDraw>,
     Option<ResourceId>,
     bool,
+    Vec<(NodeId, f32)>,
 );
 
 #[cfg(all(test, feature = "host-conformance"))]
@@ -1471,6 +1481,13 @@ impl BoxGpuPipeline {
 }
 
 enum DrawCommand {
+    BeginOpacityGroup {
+        node: NodeId,
+        opacity: f32,
+    },
+    EndOpacityGroup {
+        node: NodeId,
+    },
     BackdropBlur {
         rect: LayoutRect,
         radius: f32,
@@ -1494,7 +1511,10 @@ impl DrawCommand {
     fn gradient(&self) -> Option<&LinearGradientDraw> {
         match self {
             Self::Quads { gradient, .. } => gradient.as_ref(),
-            Self::Text { .. } | Self::BackdropBlur { .. } => None,
+            Self::BeginOpacityGroup { .. }
+            | Self::EndOpacityGroup { .. }
+            | Self::Text { .. }
+            | Self::BackdropBlur { .. } => None,
         }
     }
 }
@@ -2034,6 +2054,15 @@ impl GpuRenderer {
         let mut draws = Vec::new();
         for (index, command) in commands.iter().enumerate() {
             match command {
+                PaintCommand::BeginOpacityGroup { node, opacity } => {
+                    draws.push(DrawCommand::BeginOpacityGroup {
+                        node: *node,
+                        opacity: *opacity,
+                    });
+                }
+                PaintCommand::EndOpacityGroup { node } => {
+                    draws.push(DrawCommand::EndOpacityGroup { node: *node });
+                }
                 PaintCommand::BackdropBlur { rect, radius, clip } => {
                     draws.push(DrawCommand::BackdropBlur {
                         rect: *rect,
@@ -2238,7 +2267,10 @@ impl GpuRenderer {
             .iter()
             .filter_map(|draw| match draw {
                 DrawCommand::Text { node, .. } => Some(*node),
-                DrawCommand::Quads { .. } | DrawCommand::BackdropBlur { .. } => None,
+                DrawCommand::BeginOpacityGroup { .. }
+                | DrawCommand::EndOpacityGroup { .. }
+                | DrawCommand::Quads { .. }
+                | DrawCommand::BackdropBlur { .. } => None,
             })
             .collect::<HashSet<_>>();
         self.text_renderers
@@ -2395,6 +2427,45 @@ impl GpuRenderer {
         });
         let scene_view = scene_texture.create_view(&TextureViewDescriptor::default());
         let scratch_view = scratch_texture.create_view(&TextureViewDescriptor::default());
+        let mut opacity_depth = 0usize;
+        let mut maximum_opacity_depth = 0usize;
+        for draw in &draws {
+            match draw {
+                DrawCommand::BeginOpacityGroup { .. } => {
+                    opacity_depth += 1;
+                    maximum_opacity_depth = maximum_opacity_depth.max(opacity_depth);
+                }
+                DrawCommand::EndOpacityGroup { .. } => {
+                    opacity_depth = opacity_depth
+                        .checked_sub(1)
+                        .expect("scene emits balanced opacity groups");
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(opacity_depth, 0, "scene emits balanced opacity groups");
+        let opacity_textures = (0..maximum_opacity_depth)
+            .map(|_| {
+                self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("whisker Desktop opacity group"),
+                    size: wgpu::Extent3d {
+                        width: self.config.width,
+                        height: self.config.height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: self.config.format,
+                    usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+            })
+            .collect::<Vec<_>>();
+        let opacity_views = opacity_textures
+            .iter()
+            .map(|texture| texture.create_view(&TextureViewDescriptor::default()))
+            .collect::<Vec<_>>();
         let mut encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor {
@@ -2417,17 +2488,77 @@ impl GpuRenderer {
             });
         }
 
+        let mut active_opacity_groups = Vec::new();
         for (draw_index, draw) in draws.into_iter().enumerate() {
             match draw {
+                DrawCommand::BeginOpacityGroup { node, opacity } => {
+                    let view = &opacity_views[active_opacity_groups.len()];
+                    let _clear = encoder.begin_render_pass(&RenderPassDescriptor {
+                        label: Some("whisker Desktop clear opacity group"),
+                        color_attachments: &[Some(RenderPassColorAttachment {
+                            view,
+                            resolve_target: None,
+                            ops: Operations {
+                                load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    active_opacity_groups.push((node, opacity));
+                }
+                DrawCommand::EndOpacityGroup { node } => {
+                    let (open_node, opacity) = active_opacity_groups
+                        .pop()
+                        .expect("scene emits balanced opacity groups");
+                    assert_eq!(open_node, node, "scene opacity groups remain nested");
+                    let source = &opacity_views[active_opacity_groups.len()];
+                    let target = active_opacity_groups
+                        .len()
+                        .checked_sub(1)
+                        .map_or(&scene_view, |depth| &opacity_views[depth]);
+                    let (_buffer, bind_group) = self.backdrop_gpu.bind_group(
+                        &self.device,
+                        source,
+                        BackdropUniform {
+                            direction: [0.0, 0.0],
+                            radius: 0.0,
+                            opacity,
+                        },
+                    );
+                    let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                        label: Some("whisker Desktop composite opacity group"),
+                        color_attachments: &[Some(RenderPassColorAttachment {
+                            view: target,
+                            resolve_target: None,
+                            ops: Operations {
+                                load: LoadOp::Load,
+                                store: StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(&self.backdrop_gpu.composite_pipeline);
+                    pass.set_bind_group(0, &bind_group, &[]);
+                    pass.draw(0..3, 0..1);
+                }
                 DrawCommand::BackdropBlur { rect, radius, clip } => {
+                    let target = active_opacity_groups
+                        .len()
+                        .checked_sub(1)
+                        .map_or(&scene_view, |depth| &opacity_views[depth]);
                     let horizontal = BackdropUniform {
                         direction: [1.0, 0.0],
                         radius: radius * scale,
-                        _padding: 0.0,
+                        opacity: 1.0,
                     };
                     let (_horizontal_buffer, horizontal_group) =
                         self.backdrop_gpu
-                            .bind_group(&self.device, &scene_view, horizontal);
+                            .bind_group(&self.device, target, horizontal);
                     {
                         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                             label: Some("whisker Desktop backdrop horizontal blur"),
@@ -2450,7 +2581,7 @@ impl GpuRenderer {
                     let vertical = BackdropUniform {
                         direction: [0.0, 1.0],
                         radius: radius * scale,
-                        _padding: 0.0,
+                        opacity: 1.0,
                     };
                     let (_vertical_buffer, vertical_group) =
                         self.backdrop_gpu
@@ -2463,7 +2594,7 @@ impl GpuRenderer {
                     let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                         label: Some("whisker Desktop backdrop vertical blur"),
                         color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &scene_view,
+                            view: target,
                             resolve_target: None,
                             ops: Operations {
                                 load: LoadOp::Load,
@@ -2486,13 +2617,17 @@ impl GpuRenderer {
                     pixelated,
                     ..
                 } => {
+                    let target = active_opacity_groups
+                        .len()
+                        .checked_sub(1)
+                        .map_or(&scene_view, |depth| &opacity_views[depth]);
                     let Some((x, y, width, height)) = self.scissor(clip, scale) else {
                         continue;
                     };
                     let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                         label: Some("whisker Desktop boxes"),
                         color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &scene_view,
+                            view: target,
                             resolve_target: None,
                             ops: Operations {
                                 load: LoadOp::Load,
@@ -2532,10 +2667,14 @@ impl GpuRenderer {
                     if !prepared_text_nodes.contains(&node) {
                         continue;
                     }
+                    let target = active_opacity_groups
+                        .len()
+                        .checked_sub(1)
+                        .map_or(&scene_view, |depth| &opacity_views[depth]);
                     let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                         label: Some("whisker Desktop text"),
                         color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &scene_view,
+                            view: target,
                             resolve_target: None,
                             ops: Operations {
                                 load: LoadOp::Load,
@@ -2554,10 +2693,14 @@ impl GpuRenderer {
                 }
             }
         }
+        assert!(
+            active_opacity_groups.is_empty(),
+            "scene emits balanced opacity groups"
+        );
         let present_uniform = BackdropUniform {
             direction: [0.0, 0.0],
             radius: 0.0,
-            _padding: 0.0,
+            opacity: 1.0,
         };
         let (_present_buffer, present_group) =
             self.backdrop_gpu
@@ -2740,6 +2883,7 @@ pub(crate) async fn render_box_primitives_offscreen(
                 None,
                 None,
                 false,
+                Vec::new(),
             )
         })
         .collect::<Vec<_>>();
@@ -2790,7 +2934,25 @@ pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
 
     let mut vertices = Vec::new();
     let mut draws = Vec::new();
-    for (primitive, clip, transform, shape_clips, gradient, resource, pixelated) in primitives {
+    let mut active_opacity_groups = Vec::<(NodeId, f32)>::new();
+    for (primitive, clip, transform, shape_clips, gradient, resource, pixelated, groups) in
+        primitives
+    {
+        let shared = active_opacity_groups
+            .iter()
+            .zip(groups)
+            .take_while(|(left, right)| left.0 == right.0)
+            .count();
+        for (node, _) in active_opacity_groups.drain(shared..).rev() {
+            draws.push(DrawCommand::EndOpacityGroup { node });
+        }
+        for (node, opacity) in &groups[shared..] {
+            draws.push(DrawCommand::BeginOpacityGroup {
+                node: *node,
+                opacity: *opacity,
+            });
+        }
+        active_opacity_groups.extend_from_slice(&groups[shared..]);
         let start = vertices.len() as u32;
         push_transformed_quad(&mut vertices, *primitive, *transform);
         draws.push(DrawCommand::Quads {
@@ -2801,6 +2963,9 @@ pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
             resource: *resource,
             pixelated: *pixelated,
         });
+    }
+    for (node, _) in active_opacity_groups.into_iter().rev() {
+        draws.push(DrawCommand::EndOpacityGroup { node });
     }
     let image_resources = resources
         .iter()
@@ -2845,6 +3010,48 @@ pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
         view_formats: &[],
     });
     let scratch_view = scratch.create_view(&TextureViewDescriptor::default());
+    let mut opacity_depth = 0usize;
+    let mut maximum_opacity_depth = 0usize;
+    for draw in &draws {
+        match draw {
+            DrawCommand::BeginOpacityGroup { .. } => {
+                opacity_depth += 1;
+                maximum_opacity_depth = maximum_opacity_depth.max(opacity_depth);
+            }
+            DrawCommand::EndOpacityGroup { .. } => {
+                opacity_depth = opacity_depth
+                    .checked_sub(1)
+                    .expect("conformance draw emits balanced opacity groups");
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        opacity_depth, 0,
+        "conformance draw emits balanced opacity groups"
+    );
+    let opacity_textures = (0..maximum_opacity_depth)
+        .map(|_| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("whisker Desktop conformance opacity group"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+        })
+        .collect::<Vec<_>>();
+    let opacity_views = opacity_textures
+        .iter()
+        .map(|texture| texture.create_view(&TextureViewDescriptor::default()))
+        .collect::<Vec<_>>();
     let unpadded_bytes_per_row = width * 4;
     let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
         * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -2876,54 +3083,120 @@ pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
         });
     }
     if let Some(vertex_buffer) = &vertex_buffer {
+        let mut active_opacity_groups = Vec::new();
         for (draw_index, draw) in draws.into_iter().enumerate() {
-            let DrawCommand::Quads {
-                vertices: range,
-                clip,
-                resource,
-                pixelated,
-                ..
-            } = draw
-            else {
-                unreachable!();
-            };
-            let Some((x, y, clip_width, clip_height)) = offscreen_scissor(clip, width, height)
-            else {
-                continue;
-            };
-            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("whisker Desktop conformance boxes"),
-                color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: Operations {
-                        load: LoadOp::Load,
-                        store: StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_scissor_rect(x, y, clip_width, clip_height);
-            pass.set_pipeline(&box_gpu.pipeline);
-            pass.set_bind_group(0, &box_gpu.viewport_bind_group, &[]);
-            pass.set_bind_group(1, &shape_clip_bind_group, &[]);
-            let image = resource
-                .and_then(|resource| image_resources.get(&resource))
-                .unwrap_or(&box_gpu.fallback_image);
-            pass.set_bind_group(
-                2,
-                if pixelated {
-                    &image.nearest_bind_group
-                } else {
-                    &image.linear_bind_group
-                },
-                &[],
-            );
-            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            pass.draw(range, draw_index as u32..draw_index as u32 + 1);
+            match draw {
+                DrawCommand::BeginOpacityGroup { node, opacity } => {
+                    let target = &opacity_views[active_opacity_groups.len()];
+                    let _clear = encoder.begin_render_pass(&RenderPassDescriptor {
+                        label: Some("whisker Desktop conformance clear opacity group"),
+                        color_attachments: &[Some(RenderPassColorAttachment {
+                            view: target,
+                            resolve_target: None,
+                            ops: Operations {
+                                load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    active_opacity_groups.push((node, opacity));
+                }
+                DrawCommand::EndOpacityGroup { node } => {
+                    let (open_node, opacity) = active_opacity_groups
+                        .pop()
+                        .expect("conformance draw emits balanced opacity groups");
+                    assert_eq!(open_node, node, "opacity groups remain nested");
+                    let source = &opacity_views[active_opacity_groups.len()];
+                    let target = active_opacity_groups
+                        .len()
+                        .checked_sub(1)
+                        .map_or(&view, |depth| &opacity_views[depth]);
+                    let (_buffer, bind_group) = backdrop_gpu.bind_group(
+                        &device,
+                        source,
+                        BackdropUniform {
+                            direction: [0.0, 0.0],
+                            radius: 0.0,
+                            opacity,
+                        },
+                    );
+                    let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                        label: Some("whisker Desktop conformance composite opacity group"),
+                        color_attachments: &[Some(RenderPassColorAttachment {
+                            view: target,
+                            resolve_target: None,
+                            ops: Operations {
+                                load: LoadOp::Load,
+                                store: StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(&backdrop_gpu.composite_pipeline);
+                    pass.set_bind_group(0, &bind_group, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                DrawCommand::Quads {
+                    vertices: range,
+                    clip,
+                    resource,
+                    pixelated,
+                    ..
+                } => {
+                    let Some((x, y, clip_width, clip_height)) =
+                        offscreen_scissor(clip, width, height)
+                    else {
+                        continue;
+                    };
+                    let target = active_opacity_groups
+                        .len()
+                        .checked_sub(1)
+                        .map_or(&view, |depth| &opacity_views[depth]);
+                    let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                        label: Some("whisker Desktop conformance boxes"),
+                        color_attachments: &[Some(RenderPassColorAttachment {
+                            view: target,
+                            resolve_target: None,
+                            ops: Operations {
+                                load: LoadOp::Load,
+                                store: StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_scissor_rect(x, y, clip_width, clip_height);
+                    pass.set_pipeline(&box_gpu.pipeline);
+                    pass.set_bind_group(0, &box_gpu.viewport_bind_group, &[]);
+                    pass.set_bind_group(1, &shape_clip_bind_group, &[]);
+                    let image = resource
+                        .and_then(|resource| image_resources.get(&resource))
+                        .unwrap_or(&box_gpu.fallback_image);
+                    pass.set_bind_group(
+                        2,
+                        if pixelated {
+                            &image.nearest_bind_group
+                        } else {
+                            &image.linear_bind_group
+                        },
+                        &[],
+                    );
+                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pass.draw(range, draw_index as u32..draw_index as u32 + 1);
+                }
+                DrawCommand::Text { .. } | DrawCommand::BackdropBlur { .. } => unreachable!(),
+            }
         }
+        assert!(
+            active_opacity_groups.is_empty(),
+            "conformance draw emits balanced opacity groups"
+        );
     }
     for (rect, radius, clip) in backdrops {
         let (_horizontal_buffer, horizontal_group) = backdrop_gpu.bind_group(
@@ -2932,7 +3205,7 @@ pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
             BackdropUniform {
                 direction: [1.0, 0.0],
                 radius: *radius,
-                _padding: 0.0,
+                opacity: 1.0,
             },
         );
         {
@@ -2960,7 +3233,7 @@ pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
             BackdropUniform {
                 direction: [0.0, 1.0],
                 radius: *radius,
-                _padding: 0.0,
+                opacity: 1.0,
             },
         );
         let Some((x, y, clip_width, clip_height)) =

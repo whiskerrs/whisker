@@ -1666,7 +1666,19 @@ impl Driver {
                                 )
                             })
                         })
-                        .or_else(|| expected.iter().rev().find(|node| node.opacity.is_some()))
+                        .or_else(|| {
+                            let painted = opaque_hit.and_then(|id| {
+                                expected.iter().find(|node| node.id.to_string() == *id)
+                            })?;
+                            hit_nodes
+                                .iter()
+                                .any(|id| {
+                                    expected.iter().any(|node| {
+                                        node.id.to_string() == *id && node.opacity.is_some()
+                                    })
+                                })
+                                .then_some(painted)
+                        })
                         .or_else(|| {
                             expected.iter().find(|node| {
                                 !node.background_layers.is_empty()

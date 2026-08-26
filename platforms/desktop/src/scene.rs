@@ -151,7 +151,6 @@ struct PresentationContext {
     transform: Transform,
     clip: LogicalClip,
     shape_clips: ShapeClipStack,
-    opacity: f32,
 }
 
 impl Default for PresentationContext {
@@ -161,7 +160,6 @@ impl Default for PresentationContext {
             transform: Transform::IDENTITY,
             clip: LogicalClip::default(),
             shape_clips: ShapeClipStack::default(),
-            opacity: 1.0,
         }
     }
 }
@@ -275,6 +273,13 @@ fn preserves_screen_axes(transform: Transform) -> bool {
 
 #[derive(Clone, Debug)]
 pub(crate) enum PaintCommand<'a> {
+    BeginOpacityGroup {
+        node: NodeId,
+        opacity: f32,
+    },
+    EndOpacityGroup {
+        node: NodeId,
+    },
     BackdropBlur {
         rect: LayoutRect,
         radius: f32,
@@ -428,13 +433,20 @@ impl DesktopScene {
         if presentation.visibility == Visibility::Hidden {
             return;
         }
+        let opacity_group = presentation.opacity < 1.0;
+        if opacity_group {
+            commands.push(PaintCommand::BeginOpacityGroup {
+                node: id,
+                opacity: presentation.opacity,
+            });
+        }
         let border = LayoutRect {
             x: context.origin[0] + presentation.layout.border_box.x,
             y: context.origin[1] + presentation.layout.border_box.y,
             width: presentation.layout.border_box.width,
             height: presentation.layout.border_box.height,
         };
-        let opacity = context.opacity * presentation.opacity;
+        let opacity = 1.0;
         let content = LayoutRect {
             x: border.x + presentation.layout.content_box.x,
             y: border.y + presentation.layout.content_box.y,
@@ -581,10 +593,12 @@ impl DesktopScene {
                     transform,
                     clip: descendant_clip,
                     shape_clips: descendant_shape_clips.clone(),
-                    opacity,
                 },
                 commands,
             );
+        }
+        if opacity_group {
+            commands.push(PaintCommand::EndOpacityGroup { node: id });
         }
     }
 
@@ -1760,19 +1774,38 @@ mod tests {
             Ok(ApplyResult::Accepted { revision: 1 })
         );
         let commands = scene.paint_commands();
+        assert_eq!(commands.len(), 6);
         assert!(matches!(
             &commands[0],
-            PaintCommand::Box { rect, opacity, .. }
-                if *rect == LayoutRect { x: 4.0, y: 5.0, width: 100.0, height: 80.0 }
-                    && *opacity == 0.5
+            PaintCommand::BeginOpacityGroup { node, opacity }
+                if *node == root && *opacity == 0.5
         ));
         assert!(matches!(
             &commands[1],
+            PaintCommand::Box { rect, opacity, .. }
+                if *rect == LayoutRect { x: 4.0, y: 5.0, width: 100.0, height: 80.0 }
+                    && *opacity == 1.0
+        ));
+        assert!(matches!(
+            &commands[2],
+            PaintCommand::BeginOpacityGroup { node, opacity }
+                if *node == child && *opacity == 0.5
+        ));
+        assert!(matches!(
+            &commands[3],
             PaintCommand::Text { rect, clip, opacity, .. }
                 if *rect == LayoutRect { x: 7.0, y: 10.0, width: 18.0, height: 6.0 }
                     && clip.left == Some(7.0)
                     && clip.right == Some(25.0)
-                    && *opacity == 0.25
+                    && *opacity == 1.0
+        ));
+        assert!(matches!(
+            &commands[4],
+            PaintCommand::EndOpacityGroup { node } if *node == child
+        ));
+        assert!(matches!(
+            &commands[5],
+            PaintCommand::EndOpacityGroup { node } if *node == root
         ));
     }
 

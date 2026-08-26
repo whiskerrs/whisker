@@ -1265,7 +1265,20 @@ impl Driver {
     fn clipped_box_primitives(&self) -> Vec<ClippedBoxPrimitive> {
         let scene = self.scene.as_ref().expect("checkpoint follows attach");
         let mut primitives = Vec::new();
+        let mut opacity_groups = Vec::new();
         for command in scene.paint_commands() {
+            match &command {
+                PaintCommand::BeginOpacityGroup { node, opacity } => {
+                    opacity_groups.push((*node, *opacity));
+                }
+                PaintCommand::EndOpacityGroup { node } => {
+                    let (open_node, _) = opacity_groups
+                        .pop()
+                        .expect("scene emits balanced opacity groups");
+                    assert_eq!(open_node, *node, "scene opacity groups remain nested");
+                }
+                _ => {}
+            }
             if let PaintCommand::Box {
                 rect,
                 content_rect,
@@ -1300,6 +1313,7 @@ impl Driver {
                                     None,
                                     None,
                                     false,
+                                    opacity_groups.clone(),
                                 )
                             })
                         }),
@@ -1320,6 +1334,7 @@ impl Driver {
                                 None,
                                 None,
                                 false,
+                                opacity_groups.clone(),
                             )
                         }),
                 );
@@ -1367,6 +1382,7 @@ impl Driver {
                                 visual_effects.image_rendering,
                                 ImageRendering::Pixelated | ImageRendering::CrispEdges
                             ),
+                        opacity_groups.clone(),
                     ));
                 }
                 primitives.extend(
@@ -1388,6 +1404,7 @@ impl Driver {
                                     None,
                                     None,
                                     false,
+                                    opacity_groups.clone(),
                                 )
                             })
                         }),
@@ -1405,11 +1422,16 @@ impl Driver {
                                 None,
                                 None,
                                 false,
+                                opacity_groups.clone(),
                             )
                         }),
                 );
             }
         }
+        assert!(
+            opacity_groups.is_empty(),
+            "scene emits balanced opacity groups"
+        );
         primitives
     }
 
