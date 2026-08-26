@@ -23,13 +23,14 @@ use whisker_protocol::{
     FrameHeader, FrameMode, FramePacket, GradientStop, HitTestBehavior, ImageRendering,
     ImageRepeat, InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect,
     MeasureConstraints, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
-    MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap,
-    MeasurementKey, MeasurementPayload, MeasurementRequest, MeasurementResponse, NodeId, Operation,
-    OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius, PaintCorners,
-    PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand, PointerKind,
-    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceId,
-    ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent, TextMeasurePayload,
-    TextMeasureStyle, TextPaint, TextShadow, Transform, Visibility,
+    MeasureTextAlignment, MeasureTextDirection, MeasureTextIndent, MeasureTextOverflow,
+    MeasureTextWordBreak, MeasureTextWrap, MeasurementKey, MeasurementPayload, MeasurementRequest,
+    MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
+    PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
+    PathCommand, PointerKind, ProtocolVersion, RadialGradientExtent, RadialGradientShape,
+    ResourceCommand, ResourceId, ResourceKind, ResourceRequest, ResourceSource, SurfaceId,
+    TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform,
+    Visibility,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
@@ -168,10 +169,17 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
                         whisker_protocol::FontOpticalSizing::None
                     }
                 },
-                ..TextMeasureStyle::default()
             },
             locale: None,
-            direction: MeasureTextDirection::Auto,
+            direction: match text.direction {
+                whisker_host_conformance::TextDirectionFixture::Auto => MeasureTextDirection::Auto,
+                whisker_host_conformance::TextDirectionFixture::LeftToRight => {
+                    MeasureTextDirection::LeftToRight
+                }
+                whisker_host_conformance::TextDirectionFixture::RightToLeft => {
+                    MeasureTextDirection::RightToLeft
+                }
+            },
             alignment: fixture_alignment(text.alignment),
             indent: whisker_protocol::MeasureTextIndent {
                 logical_pixels: text.indent.logical_pixels,
@@ -239,7 +247,6 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
                     color: color_protocol(&shadow.color),
                 })
                 .collect(),
-            ..TextPaint::default()
         },
         prepared_content: None,
     }
@@ -688,41 +695,7 @@ impl Driver {
                         relations: relations.clone(),
                     });
                 }
-                Command::MeasureText {
-                    key,
-                    text,
-                    font_families,
-                    font_size,
-                    font_weight,
-                    font_style,
-                    line_height,
-                    letter_spacing,
-                    font_features,
-                    font_variations,
-                    font_optical_sizing,
-                    white_space,
-                    word_break,
-                    max_lines,
-                    overflow,
-                    available_width,
-                } => self.measure_text(
-                    *key,
-                    text,
-                    font_families,
-                    *font_size,
-                    *font_weight,
-                    *font_style,
-                    *line_height,
-                    *letter_spacing,
-                    font_features,
-                    font_variations,
-                    *font_optical_sizing,
-                    *white_space,
-                    *word_break,
-                    *max_lines,
-                    *overflow,
-                    *available_width,
-                ),
+                command @ Command::MeasureText { .. } => self.measure_text(command),
                 Command::CheckpointMeasurement {
                     key,
                     min_width,
@@ -1226,6 +1199,23 @@ impl Driver {
                 whisker_protocol::MeasureTextAlignment::End,
             ]
         );
+        let directions = commands
+            .iter()
+            .filter_map(|command| match command {
+                PaintCommand::Text { content, .. } => Some(content.payload.direction),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            directions,
+            [
+                MeasureTextDirection::Auto,
+                MeasureTextDirection::Auto,
+                MeasureTextDirection::Auto,
+                MeasureTextDirection::RightToLeft,
+                MeasureTextDirection::RightToLeft,
+            ]
+        );
     }
 
     fn assert_text_indent(&self) {
@@ -1436,40 +1426,46 @@ impl Driver {
             .collect()
     }
 
-    fn measure_text(
-        &mut self,
-        key: u64,
-        value: &str,
-        font_families: &[String],
-        font_size: f32,
-        font_weight: u16,
-        font_style: whisker_host_conformance::FontStyleFixture,
-        line_height: f32,
-        letter_spacing: f32,
-        font_features: &[whisker_host_conformance::FontFeatureFixture],
-        font_variations: &[whisker_host_conformance::FontVariationFixture],
-        font_optical_sizing: whisker_host_conformance::FontOpticalSizingFixture,
-        white_space: whisker_host_conformance::WhiteSpaceFixture,
-        word_break: whisker_host_conformance::WordBreakFixture,
-        max_lines: u32,
-        overflow: whisker_host_conformance::TextOverflowFixture,
-        available_width: f32,
-    ) {
+    fn measure_text(&mut self, command: &Command) {
+        let Command::MeasureText {
+            key,
+            text: value,
+            font_families,
+            font_size,
+            font_weight,
+            font_style,
+            line_height,
+            letter_spacing,
+            font_features,
+            font_variations,
+            font_optical_sizing,
+            white_space,
+            word_break,
+            max_lines,
+            overflow,
+            direction,
+            alignment,
+            indent,
+            available_width,
+        } = command
+        else {
+            unreachable!("measure_text is only called for MeasureText commands")
+        };
         let surface = self.surface.expect("attach_surface precedes measure_text");
         let request = MeasurementRequest {
-            key: MeasurementKey::new(key).expect("scenario measurement key is non-zero"),
-            node: NodeId::new(key).expect("scenario node key is non-zero"),
+            key: MeasurementKey::new(*key).expect("scenario measurement key is non-zero"),
+            node: NodeId::new(*key).expect("scenario node key is non-zero"),
             element_type: standard_element_type(whisker::TEXT_ELEMENT_NAME),
             environment_epoch: 1,
             constraints: MeasureConstraints {
                 known_dimensions: [None, None],
                 available_space: [
-                    AvailableSpace::Definite(available_width),
+                    AvailableSpace::Definite(*available_width),
                     AvailableSpace::MaxContent,
                 ],
             },
             payload: MeasurementPayload::Text(TextMeasurePayload {
-                text: value.into(),
+                text: value.clone(),
                 style: TextMeasureStyle {
                     font_families: font_families
                         .iter()
@@ -1481,9 +1477,9 @@ impl Driver {
                             }
                         })
                         .collect(),
-                    font_size,
-                    font_weight,
-                    font_style: match font_style {
+                    font_size: *font_size,
+                    font_weight: *font_weight,
+                    font_style: match *font_style {
                         whisker_host_conformance::FontStyleFixture::Normal => {
                             MeasureFontStyle::Normal
                         }
@@ -1494,8 +1490,8 @@ impl Driver {
                             MeasureFontStyle::Oblique
                         }
                     },
-                    line_height: MeasureLineHeight::LogicalPixels(line_height),
-                    letter_spacing,
+                    line_height: MeasureLineHeight::LogicalPixels(*line_height),
+                    letter_spacing: *letter_spacing,
                     features: font_features
                         .iter()
                         .map(|feature| whisker_protocol::FontFeature {
@@ -1510,7 +1506,7 @@ impl Driver {
                             value: variation.value,
                         })
                         .collect(),
-                    optical_sizing: match font_optical_sizing {
+                    optical_sizing: match *font_optical_sizing {
                         whisker_host_conformance::FontOpticalSizingFixture::Auto => {
                             whisker_protocol::FontOpticalSizing::Auto
                         }
@@ -1518,17 +1514,45 @@ impl Driver {
                             whisker_protocol::FontOpticalSizing::None
                         }
                     },
-                    ..TextMeasureStyle::default()
                 },
                 locale: None,
-                direction: MeasureTextDirection::Auto,
-                alignment: whisker_protocol::MeasureTextAlignment::Start,
-                indent: Default::default(),
-                wrap: match white_space {
+                direction: match *direction {
+                    whisker_host_conformance::TextDirectionFixture::Auto => {
+                        MeasureTextDirection::Auto
+                    }
+                    whisker_host_conformance::TextDirectionFixture::LeftToRight => {
+                        MeasureTextDirection::LeftToRight
+                    }
+                    whisker_host_conformance::TextDirectionFixture::RightToLeft => {
+                        MeasureTextDirection::RightToLeft
+                    }
+                },
+                alignment: match *alignment {
+                    whisker_host_conformance::TextAlignmentFixture::Start => {
+                        MeasureTextAlignment::Start
+                    }
+                    whisker_host_conformance::TextAlignmentFixture::End => {
+                        MeasureTextAlignment::End
+                    }
+                    whisker_host_conformance::TextAlignmentFixture::Left => {
+                        MeasureTextAlignment::Left
+                    }
+                    whisker_host_conformance::TextAlignmentFixture::Right => {
+                        MeasureTextAlignment::Right
+                    }
+                    whisker_host_conformance::TextAlignmentFixture::Center => {
+                        MeasureTextAlignment::Center
+                    }
+                },
+                indent: MeasureTextIndent {
+                    logical_pixels: indent.logical_pixels,
+                    percentage: indent.percentage,
+                },
+                wrap: match *white_space {
                     whisker_host_conformance::WhiteSpaceFixture::Normal => MeasureTextWrap::Wrap,
                     whisker_host_conformance::WhiteSpaceFixture::NoWrap => MeasureTextWrap::NoWrap,
                 },
-                word_break: match word_break {
+                word_break: match *word_break {
                     whisker_host_conformance::WordBreakFixture::Normal => {
                         MeasureTextWordBreak::Normal
                     }
@@ -1539,8 +1563,8 @@ impl Driver {
                         MeasureTextWordBreak::KeepAll
                     }
                 },
-                max_lines: (max_lines > 0).then_some(max_lines),
-                overflow: match overflow {
+                max_lines: (*max_lines > 0).then_some(*max_lines),
+                overflow: match *overflow {
                     whisker_host_conformance::TextOverflowFixture::Clip => {
                         MeasureTextOverflow::Clip
                     }
@@ -1628,6 +1652,7 @@ impl Driver {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_pointer(
         &mut self,
         kind: PointerEventFixture,

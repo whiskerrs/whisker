@@ -10,14 +10,14 @@ use whisker_engine::whisker_protocol::{
     ApplyResult, AvailableSpace, BackgroundAttachment, BackgroundSize, BlendMode, BorderLineStyle,
     ChildPolicy, ClipShape, ElementMeasurement, ElementRegistration, ElementValueKind, FillRule,
     FrameMode, FramePacket, ImageRendering, ImageRepeat, InputEvent, InputEventKind, InputPoint,
-    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextOverflow,
-    MeasureTextWordBreak, MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload,
-    MeasurementRequest, MeasurementRequestId, MeasurementResponse, NodeId, Operation, PaintBox,
-    PaintColor, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand, PointerId,
-    PointerInput, PointerKind, PreparedContentId, RadialGradientExtent, RadialGradientShape,
-    ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode, ResourceId,
-    ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason, VisualEffects,
-    WhiskerValue,
+    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
+    MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasuredSize, MeasurementMetrics,
+    MeasurementPayload, MeasurementRequest, MeasurementRequestId, MeasurementResponse, NodeId,
+    Operation, PaintBox, PaintColor, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand,
+    PointerId, PointerInput, PointerKind, PreparedContentId, RadialGradientExtent,
+    RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode,
+    ResourceId, ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason,
+    VisualEffects, WhiskerValue,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
@@ -818,6 +818,9 @@ impl MobileMeasureBatch {
                 intrinsic_width: 0.0,
                 intrinsic_height: 0.0,
                 intrinsic_mask: 0,
+                direction: 0,
+                alignment: 0,
+                _flow_pad: [0; 6],
             };
             match &request.payload {
                 MeasurementPayload::Text(value) => {
@@ -878,6 +881,18 @@ impl MobileMeasureBatch {
                     raw.indent_logical_pixels = value.indent.logical_pixels;
                     raw.indent_percentage = value.indent.percentage;
                     raw.max_lines = value.max_lines.unwrap_or(0);
+                    raw.direction = match value.direction {
+                        MeasureTextDirection::Auto => 0,
+                        MeasureTextDirection::LeftToRight => 1,
+                        MeasureTextDirection::RightToLeft => 2,
+                    };
+                    raw.alignment = match value.alignment {
+                        whisker_engine::whisker_protocol::MeasureTextAlignment::Start => 0,
+                        whisker_engine::whisker_protocol::MeasureTextAlignment::End => 1,
+                        whisker_engine::whisker_protocol::MeasureTextAlignment::Left => 2,
+                        whisker_engine::whisker_protocol::MeasureTextAlignment::Right => 3,
+                        whisker_engine::whisker_protocol::MeasureTextAlignment::Center => 4,
+                    };
                 }
                 MeasurementPayload::ReplacedContent(value) => {
                     raw.kind = MEASURE_REPLACED_CONTENT;
@@ -1705,6 +1720,12 @@ impl MobileFrameOwned {
                         indent_logical_pixels: content.payload.indent.logical_pixels,
                         indent_percentage: content.payload.indent.percentage,
                         prepared_content: content.prepared_content.map_or(0, |value| value.get()),
+                        direction: match content.payload.direction {
+                            MeasureTextDirection::Auto => 0,
+                            MeasureTextDirection::LeftToRight => 1,
+                            MeasureTextDirection::RightToLeft => 2,
+                        },
+                        _direction_pad: 0,
                     }));
                     raw.payload = texts.last().unwrap().as_ref() as *const _ as *const c_void;
                 }
@@ -2353,6 +2374,8 @@ mod tests {
         content.payload.word_break = MeasureTextWordBreak::KeepAll;
         content.payload.max_lines = Some(2);
         content.payload.overflow = MeasureTextOverflow::Ellipsis;
+        content.payload.direction = MeasureTextDirection::RightToLeft;
+        content.payload.alignment = whisker_engine::whisker_protocol::MeasureTextAlignment::End;
         content.payload.style.features = vec![FontFeature {
             tag: FontTag::new(*b"kern").unwrap(),
             value: 0,
@@ -2426,6 +2449,8 @@ mod tests {
         assert_eq!(variation.tag, *b"wght");
         assert_eq!(variation.value, 650.0);
         assert_eq!(text.font_optical_sizing, 0);
+        assert_eq!(text.alignment, 1);
+        assert_eq!(text.direction, 2);
     }
 
     #[test]
@@ -2435,6 +2460,8 @@ mod tests {
             MeasureFontFamily::Named("Whisker Fixture Sans".into()),
             MeasureFontFamily::System,
         ];
+        payload.direction = MeasureTextDirection::LeftToRight;
+        payload.alignment = whisker_engine::whisker_protocol::MeasureTextAlignment::Center;
         let request = MeasurementRequest {
             key: whisker_engine::whisker_protocol::MeasurementKey::new(1).unwrap(),
             node: NodeId::new(1).unwrap(),
@@ -2460,6 +2487,8 @@ mod tests {
         };
         assert_eq!(decode(families[0]), "Whisker Fixture Sans");
         assert_eq!(decode(families[1]), "system");
+        assert_eq!(raw.direction, 1);
+        assert_eq!(raw.alignment, 4);
     }
 
     #[test]

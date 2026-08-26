@@ -37,6 +37,21 @@ fn cosmic_alignment(value: whisker_protocol::MeasureTextAlignment) -> Option<Ali
     }
 }
 
+fn directional_text(
+    value: &str,
+    direction: whisker_protocol::MeasureTextDirection,
+) -> Cow<'_, str> {
+    match direction {
+        whisker_protocol::MeasureTextDirection::Auto => Cow::Borrowed(value),
+        whisker_protocol::MeasureTextDirection::LeftToRight => {
+            Cow::Owned(format!("\u{2066}{value}\u{2069}"))
+        }
+        whisker_protocol::MeasureTextDirection::RightToLeft => {
+            Cow::Owned(format!("\u{2067}{value}\u{2069}"))
+        }
+    }
+}
+
 impl NativeTextHost {
     pub(crate) fn new(elements: DesktopElementRegistry) -> Self {
         Self {
@@ -55,6 +70,8 @@ impl NativeTextHost {
         height: Option<f32>,
         line_height: f32,
     ) -> Buffer {
+        let directional_text = directional_text(text, payload.direction);
+        let text = directional_text.as_ref();
         let mut buffer = Buffer::new(
             &mut self.font_system,
             Metrics::new(payload.style.font_size, line_height),
@@ -333,6 +350,20 @@ mod tests {
         assert_eq!(cosmic_alignment(Protocol::Left), Some(Align::Left));
         assert_eq!(cosmic_alignment(Protocol::Right), Some(Align::Right));
         assert_eq!(cosmic_alignment(Protocol::Center), Some(Align::Center));
+    }
+
+    #[test]
+    fn explicit_direction_wraps_text_in_a_zero_width_unicode_isolate() {
+        use whisker_protocol::MeasureTextDirection as Protocol;
+        assert_eq!(directional_text("abc", Protocol::Auto), "abc");
+        assert_eq!(
+            directional_text("abc", Protocol::LeftToRight),
+            "\u{2066}abc\u{2069}"
+        );
+        assert_eq!(
+            directional_text("abc", Protocol::RightToLeft),
+            "\u{2067}abc\u{2069}"
+        );
     }
 
     fn text_element_type() -> ElementTypeId {

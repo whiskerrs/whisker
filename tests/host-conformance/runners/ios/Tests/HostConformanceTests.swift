@@ -611,7 +611,11 @@ private final class Driver {
                 }
                 if name == "paint.text.align-lynx" {
                     let labels = findTextLabels(view)
-                    XCTAssertEqual(labels.map(\.textAlignment), [.left, .right, .center, .left, .right])
+                    XCTAssertEqual(labels.map(\.textAlignment), [.left, .right, .center, .right, .left])
+                    XCTAssertEqual(
+                        labels.map(\.whiskerDirection),
+                        [.auto, .auto, .auto, .rightToLeft, .rightToLeft]
+                    )
                 }
                 if name == "paint.text.indent-lynx" {
                     let labels = findTextLabels(view)
@@ -758,6 +762,29 @@ private final class Driver {
         case "ellipsis": overflow = 1
         default: throw Failure("unknown measurement overflow")
         }
+        let direction: UInt8
+        switch command["direction"] as? String ?? "auto" {
+        case "auto": direction = 0
+        case "left_to_right": direction = 1
+        case "right_to_left": direction = 2
+        default: throw Failure("unknown measurement direction")
+        }
+        let alignment: UInt8
+        switch command["alignment"] as? String ?? "start" {
+        case "start": alignment = 0
+        case "end": alignment = 1
+        case "left": alignment = 2
+        case "right": alignment = 3
+        case "center": alignment = 4
+        default: throw Failure("unknown measurement alignment")
+        }
+        let indent = command["indent"] as? [String: Any]
+        let indentLogicalPixels = Float(
+            try indent.map { try number($0, "logical_pixels") } ?? 0
+        )
+        let indentPercentage = Float(
+            try indent.map { try number($0, "percentage") } ?? 0
+        )
 
         let textBytes = Array(value.utf8CString)
         let textStorage = UnsafeMutablePointer<CChar>.allocate(capacity: textBytes.count)
@@ -841,11 +868,35 @@ private final class Driver {
         request.font_variations = variationStorage.map { UnsafePointer($0) }
         request.font_variation_count = fontVariations.count
         request.font_optical_sizing = fontOpticalSizing
+        request.direction = direction
+        request.alignment = alignment
+        request.indent_logical_pixels = indentLogicalPixels
+        request.indent_percentage = indentPercentage
 
         XCTAssertEqual(request.wrap, wrap)
         XCTAssertEqual(request.word_break, wordBreak)
         XCTAssertEqual(request.max_lines, maxLines)
         XCTAssertEqual(request.overflow, overflow)
+        XCTAssertEqual(request.direction, direction)
+        XCTAssertEqual(request.alignment, alignment)
+        XCTAssertEqual(request.indent_logical_pixels, indentLogicalPixels)
+        XCTAssertEqual(request.indent_percentage, indentPercentage)
+
+        if id == "host.measure.text.direction" {
+            let paragraph = whiskerTextParagraphStyle(
+                request,
+                widthBasis: CGFloat(request.available_width)
+            )
+            if key == 20 {
+                XCTAssertEqual(paragraph.baseWritingDirection, .rightToLeft)
+                XCTAssertEqual(paragraph.alignment, .left)
+                XCTAssertEqual(paragraph.firstLineHeadIndent, 30, accuracy: 0.001)
+            } else if key == 21 {
+                XCTAssertEqual(paragraph.baseWritingDirection, .leftToRight)
+                XCTAssertEqual(paragraph.alignment, .center)
+                XCTAssertEqual(paragraph.firstLineHeadIndent, 0, accuracy: 0.001)
+            }
+        }
 
         if !fontFeatures.isEmpty || !fontVariations.isEmpty {
             XCTAssertEqual(request.font_feature_count, 2)
@@ -1206,6 +1257,7 @@ private final class Driver {
                 payload.decoration_flags = text.decorationFlags
                 payload.decoration_style = text.decorationStyle
                 payload.decoration_color = text.decorationColor
+                payload.direction = text.direction
                 payload.alignment = text.alignment
                 payload.indent_logical_pixels = text.indentLogicalPixels
                 payload.indent_percentage = text.indentPercentage
@@ -1830,6 +1882,7 @@ private struct SceneText {
     let lineHeight: Float
     let letterSpacing: Float
     let color: WhiskerMobileColor
+    let direction: UInt32
     let alignment: UInt32
     let indentLogicalPixels: Float
     let indentPercentage: Float
@@ -2045,6 +2098,13 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         case "center": alignment = 4
         default: throw Failure("unknown text alignment")
         }
+        let direction: UInt32
+        switch raw["direction"] as? String ?? "auto" {
+        case "auto": direction = 0
+        case "left_to_right": direction = 1
+        case "right_to_left": direction = 2
+        default: throw Failure("unknown text direction")
+        }
         let indent = raw["indent"] as? [String: Any]
         let wordBreak: UInt8
         switch raw["word_break"] as? String ?? "normal" {
@@ -2074,6 +2134,7 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
             lineHeight: (raw["line_height"] as? NSNumber)?.floatValue ?? 0,
             letterSpacing: (raw["letter_spacing"] as? NSNumber)?.floatValue ?? 0,
             color: try color(object(raw, "color")),
+            direction: direction,
             alignment: alignment,
             indentLogicalPixels: Float(try indent.map { try number($0, "logical_pixels") } ?? 0),
             indentPercentage: Float(try indent.map { try number($0, "percentage") } ?? 0),

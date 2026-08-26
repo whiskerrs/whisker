@@ -187,6 +187,7 @@
         "font_variations": { "type": "array", "items": { "$ref": "#/$defs/fontVariation" } },
         "font_optical_sizing": { "enum": ["auto", "none"] },
         "color": { "$ref": "#/$defs/color" },
+        "direction": { "enum": ["auto", "left_to_right", "right_to_left"] },
         "alignment": { "enum": ["start", "end", "left", "right", "center"] },
         "indent": { "$ref": "#/$defs/textIndent" },
         "white_space": { "enum": ["normal", "no_wrap"] },
@@ -404,6 +405,9 @@
         "word_break": { "enum": ["normal", "break_all", "keep_all"], "default": "normal" },
         "max_lines": { "type": "integer", "minimum": 0, "default": 0 },
         "overflow": { "enum": ["clip", "ellipsis"], "default": "clip" },
+        "direction": { "enum": ["auto", "left_to_right", "right_to_left"], "default": "auto" },
+        "alignment": { "enum": ["start", "end", "left", "right", "center"], "default": "start" },
+        "indent": { "$ref": "#/$defs/textIndent" },
         "available_width": { "type": "number", "minimum": 0 }
       }
     },

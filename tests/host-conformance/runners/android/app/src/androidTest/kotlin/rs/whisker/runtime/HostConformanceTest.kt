@@ -43,6 +43,14 @@ private data class CapturedPointerInput(
     val y: Float,
 )
 
+private data class CapturedTextMeasurement(
+    val direction: Int,
+    val alignment: Int,
+    val paragraphDirection: Int,
+    val layoutAlignment: Int,
+    val indent: Float,
+)
+
 @RunWith(AndroidJUnit4::class)
 class HostConformanceTest {
     companion object {
@@ -282,6 +290,7 @@ private class Driver(
     private var checkpoint: Bitmap? = null
     private val measurements = HashMap<Long, FloatArray>()
     private var pointerInput: CapturedPointerInput? = null
+    private var textMeasurement: CapturedTextMeasurement? = null
 
     init {
         view.beginBootstrapFromNative()
@@ -320,6 +329,15 @@ private class Driver(
                 timestampMs = geometry[0].toDouble(),
                 x = geometry[1].toFloat(),
                 y = geometry[2].toFloat(),
+            )
+        }
+        view.observeTextMeasurementForTesting { semantics, geometry ->
+            textMeasurement = CapturedTextMeasurement(
+                direction = semantics[0],
+                alignment = semantics[1],
+                paragraphDirection = semantics[2],
+                layoutAlignment = semantics[3],
+                indent = geometry[0],
             )
         }
     }
@@ -366,6 +384,13 @@ private class Driver(
                             Gravity.CENTER_HORIZONTAL,
                             Gravity.START,
                             Gravity.END,
+                        ))
+                        check(texts.map { it.whiskerDirection } == listOf(
+                            WhiskerTextDirection.AUTO,
+                            WhiskerTextDirection.AUTO,
+                            WhiskerTextDirection.AUTO,
+                            WhiskerTextDirection.RIGHT_TO_LEFT,
+                            WhiskerTextDirection.RIGHT_TO_LEFT,
                         ))
                     }
                     if (command.getString("name") == "paint.text.indent-lynx") {
@@ -669,6 +694,23 @@ private class Driver(
         }
         val maxLines = command.optInt("max_lines", 0)
         check(maxLines >= 0)
+        val direction = when (command.optString("direction", "auto")) {
+            "auto" -> 0
+            "left_to_right" -> 1
+            "right_to_left" -> 2
+            else -> error("unsupported direction: $command")
+        }
+        val alignment = when (command.optString("alignment", "start")) {
+            "start" -> 0
+            "end" -> 1
+            "left" -> 2
+            "right" -> 3
+            "center" -> 4
+            else -> error("unsupported alignment: $command")
+        }
+        val indent = command.optJSONObject("indent")
+        val indentLogicalPixels = indent?.optDouble("logical_pixels", 0.0)?.toFloat() ?: 0f
+        val indentPercentage = indent?.optDouble("percentage", 0.0)?.toFloat() ?: 0f
         val result = view.measureFromNative(
             elementType = 2,
             kind = 1,
@@ -694,8 +736,8 @@ private class Driver(
             overflow = overflow,
             letterSpacing = command.optDouble("letter_spacing", 0.0).toFloat(),
             lineHeight = command.getDouble("line_height").toFloat(),
-            indentLogicalPixels = 0f,
-            indentPercentage = 0f,
+            indentLogicalPixels = indentLogicalPixels,
+            indentPercentage = indentPercentage,
             maxLines = maxLines,
             fontSettings = (featureSettings + variationSettings).toTypedArray(),
             fontFeatureCount = featureSettings.size,
@@ -705,12 +747,31 @@ private class Driver(
             intrinsicWidth = 0f,
             intrinsicHeight = 0f,
             intrinsicMask = 0,
+            direction = direction,
+            alignment = alignment,
         )
         check(result.size >= 7 && result[0] == 1f) { "$id text measurement was not ready" }
         if (id == "host.measure.text.font-features") {
             check(featureSettings == listOf("kern=0", "liga=0"))
             check(variationSettings == listOf("wght=720.0"))
             check(opticalSizing == 1)
+        }
+        if (id == "host.measure.text.direction") {
+            val applied = checkNotNull(textMeasurement)
+            check(applied.direction == direction)
+            check(applied.alignment == alignment)
+            check(abs(applied.indent - (indentLogicalPixels +
+                command.getDouble("available_width").toFloat() * indentPercentage / 100f)) < 0.01f)
+            when (command.getLong("key")) {
+                20L -> {
+                    check(applied.paragraphDirection == -1)
+                    check(applied.layoutAlignment == android.text.Layout.Alignment.ALIGN_OPPOSITE.ordinal)
+                }
+                21L -> {
+                    check(applied.paragraphDirection == 1)
+                    check(applied.layoutAlignment == android.text.Layout.Alignment.ALIGN_CENTER.ordinal)
+                }
+            }
         }
         measurements[command.getLong("key")] = result
     }
@@ -900,7 +961,7 @@ private class Driver(
             val (numbers, names) = paint(node)
             check(stage(tag = 7, node = id, numbers = numbers, names = names))
             node.optJSONObject("text")?.let { text ->
-                val textNumbers = ArrayList<Float>(36)
+                val textNumbers = ArrayList<Float>(37)
                 val textNames = ArrayList<String>(3)
                 textNumbers += text.getDouble("font_size").toFloat()
                 textNumbers += text.optInt("font_weight", 400).toFloat()
@@ -966,6 +1027,11 @@ private class Driver(
                 textNumbers += families.length().toFloat()
                 textNumbers += text.optDouble("line_height", 0.0).toFloat()
                 textNumbers += text.optDouble("letter_spacing", 0.0).toFloat()
+                textNumbers += when (text.optString("direction", "auto")) {
+                    "left_to_right" -> 1f
+                    "right_to_left" -> 2f
+                    else -> 0f
+                }
                 families.strings().forEach(textNames::add)
                 features?.objects()?.forEach { setting ->
                     textNames += "${setting.getString("tag")}=${setting.getLong("value")}"

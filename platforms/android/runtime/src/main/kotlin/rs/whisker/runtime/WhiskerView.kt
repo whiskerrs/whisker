@@ -186,6 +186,11 @@ class WhiskerView(context: Context) :
         }
     }
 
+    /** Test-only observer at the production text shaping configuration seam. */
+    fun observeTextMeasurementForTesting(observer: ((IntArray, FloatArray) -> Unit)?) {
+        measurements.textInspectionObserver = observer
+    }
+
     /** Called from Rust through JNI. Safe even when the wake originates off-main. */
     fun requestFrameFromNative() {
         if (!isAttachedToWindow || !windowVisible || nativeHandle == 0L) return
@@ -442,6 +447,7 @@ class WhiskerView(context: Context) :
         maxLines: Int, fontSettings: Array<String>, fontFeatureCount: Int,
         fontOpticalSizing: Int, payloadVersion: Int, payload: ByteArray,
         intrinsicWidth: Float, intrinsicHeight: Float, intrinsicMask: Int,
+        direction: Int, alignment: Int,
     ): FloatArray = measurements.measure(
         elementType, kind,
         knownWidth, knownHeight, knownMask,
@@ -450,7 +456,7 @@ class WhiskerView(context: Context) :
         fontStyle, wrap, wordBreak, overflow, letterSpacing,
         lineHeight, indentLogicalPixels, indentPercentage,
         maxLines, fontSettings, fontFeatureCount, fontOpticalSizing, payloadVersion, payload,
-        intrinsicWidth, intrinsicHeight, intrinsicMask,
+        intrinsicWidth, intrinsicHeight, intrinsicMask, direction, alignment,
     )
 
     private external fun nativeCreate(width: Float, height: Float, scale: Float): Long

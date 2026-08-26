@@ -9,17 +9,6 @@ use crate::{WebError, px, set_style};
 
 pub(crate) fn apply(element: &web_sys::Element, content: &TextContent) -> Result<(), WebError> {
     apply_metrics_style(element, &content.payload)?;
-    set_style(
-        element,
-        "text-align",
-        match content.payload.alignment {
-            whisker_protocol::MeasureTextAlignment::Start => "start",
-            whisker_protocol::MeasureTextAlignment::End => "end",
-            whisker_protocol::MeasureTextAlignment::Left => "left",
-            whisker_protocol::MeasureTextAlignment::Right => "right",
-            whisker_protocol::MeasureTextAlignment::Center => "center",
-        },
-    )?;
     set_style(element, "color", &css_color(&content.paint.foreground))?;
     let decoration = &content.paint.decoration;
     let line = if decoration.lines.underline {
@@ -175,6 +164,17 @@ pub(crate) fn apply_metrics_style(
             MeasureTextDirection::Auto => "initial",
             MeasureTextDirection::LeftToRight => "ltr",
             MeasureTextDirection::RightToLeft => "rtl",
+        },
+    )?;
+    set_style(
+        element,
+        "text-align",
+        match text.alignment {
+            whisker_protocol::MeasureTextAlignment::Start => "start",
+            whisker_protocol::MeasureTextAlignment::End => "end",
+            whisker_protocol::MeasureTextAlignment::Left => "left",
+            whisker_protocol::MeasureTextAlignment::Right => "right",
+            whisker_protocol::MeasureTextAlignment::Center => "center",
         },
     )?;
     set_style(element, "overflow-wrap", "normal")

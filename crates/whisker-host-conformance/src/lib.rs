@@ -255,6 +255,15 @@ pub enum Command {
         /// Lynx `text-overflow` value applied at the line limit.
         #[serde(default)]
         overflow: TextOverflowFixture,
+        /// Base shaping direction.
+        #[serde(default)]
+        direction: TextDirectionFixture,
+        /// Inline-axis alignment inside the measured text box.
+        #[serde(default)]
+        alignment: TextAlignmentFixture,
+        /// First-line indentation as a resolved length-plus-percentage pair.
+        #[serde(default)]
+        indent: TextIndentFixture,
         /// Definite available width.
         available_width: f32,
     },
@@ -715,6 +724,9 @@ pub struct TextFixture {
     pub font_optical_sizing: FontOpticalSizingFixture,
     /// Foreground glyph color.
     pub color: ColorFixture,
+    /// Base shaping direction.
+    #[serde(default)]
+    pub direction: TextDirectionFixture,
     /// Inline-axis alignment within the text element's layout box.
     #[serde(default)]
     pub alignment: TextAlignmentFixture,
@@ -828,6 +840,19 @@ pub enum TextOverflowFixture {
     Clip,
     /// Shape an ellipsis on the final visible line.
     Ellipsis,
+}
+
+/// Base direction used by Host text shaping.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TextDirectionFixture {
+    /// Resolve direction from Unicode content and the Host locale.
+    #[default]
+    Auto,
+    /// Force left-to-right shaping.
+    LeftToRight,
+    /// Force right-to-left shaping.
+    RightToLeft,
 }
 
 /// Lynx-supported `text-align` values.
@@ -1534,6 +1559,7 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
                 letter_spacing,
                 font_features,
                 font_variations,
+                indent,
                 available_width,
                 ..
             } if *key > 0
@@ -1549,6 +1575,8 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
                 && font_variations.iter().all(|variation| {
                     valid_font_tag(&variation.tag) && variation.value.is_finite()
                 })
+                && indent.logical_pixels.is_finite()
+                && indent.percentage.is_finite()
                 && available_width.is_finite()
                 && *available_width >= 0.0 => {}
             Command::CheckpointMeasurement {

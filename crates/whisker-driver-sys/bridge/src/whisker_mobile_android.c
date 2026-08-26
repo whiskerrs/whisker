@@ -566,6 +566,7 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
             case WHISKER_OP_TEXT: {
                 const WhiskerMobileText* p = op->payload; if (!p) { ok = false; break; }
                 if (p->font_optical_sizing > 1 ||
+                    p->direction > 2 || p->alignment > 4 ||
                     p->font_family_count == 0 ||
                     (p->font_families == NULL) != (p->font_family_count == 0) ||
                     (p->font_features == NULL) != (p->font_feature_count == 0) ||
@@ -599,7 +600,8 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 storage[31]=(float)p->font_optical_sizing; storage[32]=(float)p->font_feature_count;
                 storage[33]=(float)p->font_family_count;
                 storage[34]=p->line_height; storage[35]=p->letter_spacing;
-                numbers = floats(env, storage, 36);
+                storage[36]=(float)p->direction;
+                numbers = floats(env, storage, 37);
                 jclass cls = (*env)->FindClass(env, "java/lang/String"); names = (*env)->NewObjectArray(env, (jsize)(3 + p->font_family_count + p->font_feature_count + p->font_variation_count), cls, NULL);
                 jstring color_name = new_string(env, p->color.name.ptr, p->color.name.len); (*env)->SetObjectArrayElement(env, names, 0, color_name);
                 jstring shadow_name = new_string(env, p->shadow_color.name.ptr, p->shadow_color.name.len); (*env)->SetObjectArrayElement(env, names, 1, shadow_name);
@@ -655,6 +657,7 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
             (r->kind == WHISKER_MEASURE_TEXT && r->font_family_count == 0) ||
             r->font_feature_count > 4096 ||
             r->font_variation_count > 4096 ||
+            r->direction > 2 || r->alignment > 4 ||
             r->font_family_count + r->font_feature_count + r->font_variation_count > 4096) {
             ok = false;
             break;
@@ -673,7 +676,8 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
             (jint)r->word_break,(jint)r->overflow,
             r->letter_spacing,r->line_height,r->indent_logical_pixels,r->indent_percentage,
             (jint)r->max_lines,font_values,(jint)r->font_feature_count,(jint)r->font_optical_sizing,
-            (jint)r->payload_version,payload,r->intrinsic_width,r->intrinsic_height,(jint)r->intrinsic_mask) : NULL;
+            (jint)r->payload_version,payload,r->intrinsic_width,r->intrinsic_height,
+            (jint)r->intrinsic_mask,(jint)r->direction,(jint)r->alignment) : NULL;
         if (clear_exception(env) || result == NULL || (*env)->GetArrayLength(env, result) < 7) ok = false;
         if (ok) {
             jfloat values[7]; (*env)->GetFloatArrayRegion(env, result, 0, 7, values);
@@ -830,7 +834,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     METHOD(g_current_revision,"currentRevisionFromNative","()J")
     METHOD(g_stage_operation,"stageOperationFromNative","(IIJJJIIIFJ[FLjava/lang/String;[Ljava/lang/String;Lrs/whisker/runtime/WhiskerValue;)Z")
     METHOD(g_commit_frame,"commitFrameFromNative","()Z")
-    METHOD(g_measure,"measureFromNative","(IIFFIFFIILjava/lang/String;[Ljava/lang/String;FIIIIIFFFFI[Ljava/lang/String;III[BFFI)[F")
+    METHOD(g_measure,"measureFromNative","(IIFFIFFIILjava/lang/String;[Ljava/lang/String;FIIIIIFFFFI[Ljava/lang/String;III[BFFIII)[F")
     METHOD(g_resource_command,"resourceCommandFromNative","(IIIJJLjava/lang/String;[B)Z")
     METHOD(g_invoke_module,"invokeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;ZJJ)Z")
     METHOD(g_observe_module,"observeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;Z)V")

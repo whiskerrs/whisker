@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "whisker_bridge.h"
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 25 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 26 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -141,6 +141,7 @@ typedef struct {
   uint32_t decoration_flags, decoration_style;
   WhiskerMobileColor decoration_color; uint32_t alignment;
   float indent_logical_pixels, indent_percentage; uint64_t prepared_content;
+  uint32_t direction, _direction_pad;
 } WhiskerMobileText;
 typedef struct {
   uint32_t tag, flags; uint64_t node, parent, child; uint32_t index, member;
@@ -198,6 +199,7 @@ typedef struct {
   float indent_logical_pixels, indent_percentage;
   uint32_t max_lines; WhiskerBytesRef payload;
   float intrinsic_width, intrinsic_height; uint32_t intrinsic_mask;
+  uint8_t direction, alignment, _flow_pad[6];
 } WhiskerMobileMeasureRequest;
 typedef struct {
   uint64_t key, environment_epoch; uint32_t status, reason;
@@ -223,10 +225,10 @@ enum {
 _Static_assert(sizeof(WhiskerMobileMemberRegistration) == 24, "WhiskerMobileMemberRegistration ABI drift");
 _Static_assert(sizeof(WhiskerMobileElementRegistration) == 72, "WhiskerMobileElementRegistration ABI drift");
 _Static_assert(sizeof(WhiskerMobileBootstrap) == 24, "WhiskerMobileBootstrap ABI drift");
-_Static_assert(sizeof(WhiskerMobileMeasureRequest) == 216, "WhiskerMobileMeasureRequest ABI drift");
+_Static_assert(sizeof(WhiskerMobileMeasureRequest) == 224, "WhiskerMobileMeasureRequest ABI drift");
 _Static_assert(sizeof(WhiskerMobileMeasureResponse) == 64, "WhiskerMobileMeasureResponse ABI drift");
 _Static_assert(sizeof(WhiskerMobileResourceCommand) == 64, "WhiskerMobileResourceCommand ABI drift");
 _Static_assert(sizeof(WhiskerMobileResourceEvent) == 56, "WhiskerMobileResourceEvent ABI drift");
-_Static_assert(sizeof(WhiskerMobileText) == 240, "WhiskerMobileText ABI drift");
+_Static_assert(sizeof(WhiskerMobileText) == 248, "WhiskerMobileText ABI drift");
 _Static_assert(sizeof(WhiskerMobileBoxPaint) == 272, "WhiskerMobileBoxPaint ABI drift");
 #endif
