@@ -13,7 +13,7 @@ final class HostConformanceTests: XCTestCase {
         BuiltInElementModule().registerWithWhisker()
     }
 
-    func testEverySharedPaintScenarioUsesProductionUIKitHost() throws {
+    func testEverySharedHostScenarioUsesProductionUIKitHost() throws {
         let manifest = try json(at: fixtureRoot.appendingPathComponent("manifest.json"))
         let cases = try XCTUnwrap(manifest["cases"] as? [[String: Any]])
         var count = 0
@@ -28,7 +28,7 @@ final class HostConformanceTests: XCTestCase {
             let testSide = try object(scenario, "test")
             guard try array(testSide, "commands").contains(where: {
                 let type = try string($0, "type")
-                return type == "present_box" || type == "present_scene"
+                return type == "present_box" || type == "present_scene" || type == "measure_text"
             }) else { continue }
             let test = try Driver(id: id).execute(testSide)
             if let reference = scenario["reference"] as? [String: Any] {
@@ -399,6 +399,7 @@ private final class Driver {
     private var logicalSize = CGSize.zero
     private var surfaceScale: CGFloat = 1
     private var checkpoint: Pixels?
+    private var measurements: [UInt64: WhiskerMobileMeasureResponse] = [:]
 
     init(id: String) throws {
         self.id = id
@@ -440,6 +441,10 @@ private final class Driver {
                 try present(command)
             case "present_scene":
                 try presentScene(command)
+            case "measure_text":
+                try measureText(command)
+            case "checkpoint_measurement":
+                try checkpointMeasurement(command)
             case "checkpoint":
                 let name = try string(command, "name")
                 guard name == "paint.box" ||
@@ -634,6 +639,130 @@ private final class Driver {
             }
         }
         return try unwrap(checkpoint, "paint checkpoint")
+    }
+
+    private func measureText(_ command: [String: Any]) throws {
+        let key = UInt64(try number(command, "key"))
+        let value = try string(command, "text")
+        let families = try (command["font_families"] as? [Any] ?? ["system"]).map {
+            guard let family = $0 as? String else {
+                throw Failure("measurement font family must be a string")
+            }
+            return family
+        }
+        guard !families.isEmpty else { throw Failure("measurement needs a font family") }
+        let fontStyle: UInt8
+        switch command["font_style"] as? String ?? "normal" {
+        case "normal": fontStyle = 0
+        case "italic": fontStyle = 1
+        case "oblique": fontStyle = 2
+        default: throw Failure("unknown measurement font style")
+        }
+
+        let textBytes = Array(value.utf8CString)
+        let textStorage = UnsafeMutablePointer<CChar>.allocate(capacity: textBytes.count)
+        textStorage.initialize(from: textBytes, count: textBytes.count)
+        defer { textStorage.deallocate() }
+
+        let familyReferences = UnsafeMutablePointer<WhiskerStringRef>.allocate(
+            capacity: families.count
+        )
+        var familyStrings = [UnsafeMutablePointer<CChar>]()
+        defer {
+            familyReferences.deinitialize(count: families.count)
+            familyReferences.deallocate()
+            for storage in familyStrings { storage.deallocate() }
+        }
+        for (index, family) in families.enumerated() {
+            let bytes = Array(family.utf8CString)
+            let storage = UnsafeMutablePointer<CChar>.allocate(capacity: bytes.count)
+            storage.initialize(from: bytes, count: bytes.count)
+            familyStrings.append(storage)
+            familyReferences.advanced(by: index).initialize(to: WhiskerStringRef(
+                ptr: UnsafePointer(storage),
+                len: bytes.count - 1
+            ))
+        }
+
+        var request = WhiskerMobileMeasureRequest()
+        request.key = key
+        request.node = 1
+        request.element_type = 2
+        request.kind = UInt32(WHISKER_MEASURE_TEXT)
+        request.environment_epoch = 1
+        request.available_width = Float(try number(command, "available_width"))
+        request.available_width_kind = 0
+        request.available_height_kind = 2
+        request.font_style = fontStyle
+        request.wrap = 1
+        request.text = WhiskerStringRef(
+            ptr: UnsafePointer(textStorage),
+            len: textBytes.count - 1
+        )
+        request.font_families = UnsafePointer(familyReferences)
+        request.font_family_count = families.count
+        request.font_size = Float(try number(command, "font_size"))
+        request.font_weight = UInt16((command["font_weight"] as? NSNumber)?.uintValue ?? 400)
+        request.line_height = Float(try number(command, "line_height"))
+        request.letter_spacing = (command["letter_spacing"] as? NSNumber)?.floatValue ?? 0
+        request.font_optical_sizing = 1
+
+        if id == "host.measure.text.basic" {
+            XCTAssertEqual(families, ["Whisker Fixture Missing", "system"])
+            XCTAssertEqual(request.font_size, 20)
+            XCTAssertEqual(request.font_weight, 650)
+            XCTAssertEqual(request.font_style, 1)
+            XCTAssertEqual(request.line_height, 28)
+            XCTAssertEqual(request.letter_spacing, 1.5)
+            let resolved = resolveWhiskerBaseFont(
+                fontFamilies: families,
+                fontSize: CGFloat(request.font_size),
+                fontWeight: Int(request.font_weight),
+                fontStyle: .italic
+            )
+            XCTAssertEqual(resolved.family, "system")
+            XCTAssertTrue(
+                resolved.font.fontDescriptor.symbolicTraits.contains(.traitItalic)
+            )
+            let traits = try XCTUnwrap(
+                resolved.font.fontDescriptor.object(forKey: .traits)
+                    as? [UIFontDescriptor.TraitKey: Any]
+            )
+            XCTAssertGreaterThan(
+                try XCTUnwrap(traits[.weight] as? NSNumber).doubleValue,
+                0
+            )
+        }
+
+        var response = WhiskerMobileMeasureResponse()
+        let accepted = withUnsafePointer(to: &request) { requestPointer in
+            withUnsafeMutablePointer(to: &response) { responsePointer in
+                whiskerIOSMeasure(
+                    Unmanaged.passUnretained(view).toOpaque(),
+                    requestPointer,
+                    1,
+                    responsePointer
+                )
+            }
+        }
+        guard accepted else { throw Failure("production iOS text measurer rejected fixture") }
+        measurements[key] = response
+    }
+
+    private func checkpointMeasurement(_ command: [String: Any]) throws {
+        let key = UInt64(try number(command, "key"))
+        let response = try unwrap(measurements[key], "measurement key \(key)")
+        XCTAssertEqual(response.status, UInt32(WHISKER_MEASURE_READY))
+        XCTAssertEqual(response.key, key)
+        XCTAssertGreaterThanOrEqual(response.width, Float(try number(command, "min_width")))
+        XCTAssertLessThanOrEqual(response.width, Float(try number(command, "max_width")))
+        XCTAssertGreaterThanOrEqual(response.height, Float(try number(command, "min_height")))
+        XCTAssertLessThanOrEqual(response.height, Float(try number(command, "max_height")))
+        XCTAssertEqual(response.metrics_mask & 3, 3)
+        if id == "host.measure.text.basic" {
+            XCTAssertGreaterThanOrEqual(response.height, 28)
+        }
+        checkpoint = Pixels(width: 0, height: 0, bytes: [])
     }
 
     private func registerRasterResource(_ command: [String: Any]) throws {

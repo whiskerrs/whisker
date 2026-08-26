@@ -4,6 +4,19 @@ import WhiskerModule
 
 let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses in
     guard data != nil, let requests, let responses else { return false }
+    var textFontFamilies = [[String]?](repeating: nil, count: count)
+    for index in 0..<count {
+        let request = requests.advanced(by: index).pointee
+        guard request.kind == UInt32(WHISKER_MEASURE_TEXT) else { continue }
+        guard request.font_style <= 2,
+              request.font_size.isFinite,
+              request.font_size > 0,
+              request.line_height.isFinite,
+              request.line_height >= 0,
+              request.letter_spacing.isFinite,
+              let families = validatedFontFamilies(request) else { return false }
+        textFontFamilies[index] = families
+    }
     for index in 0..<count {
         let request = requests.advanced(by: index).pointee
         var response = responses.advanced(by: index).pointee
@@ -11,7 +24,11 @@ let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses i
         response.environment_epoch = request.environment_epoch
         switch request.kind {
         case UInt32(WHISKER_MEASURE_TEXT):
-            measureText(request, response: &response)
+            measureText(
+                request,
+                fontFamilies: textFontFamilies[index] ?? ["system"],
+                response: &response
+            )
         case UInt32(WHISKER_MEASURE_REPLACED_CONTENT) where request.intrinsic_mask == 3,
              UInt32(WHISKER_MEASURE_EMBEDDED_SURFACE) where request.intrinsic_mask == 3:
             response.status = UInt32(WHISKER_MEASURE_READY)
@@ -29,23 +46,20 @@ let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses i
 
 private func measureText(
     _ request: WhiskerMobileMeasureRequest,
+    fontFamilies: [String],
     response: inout WhiskerMobileMeasureResponse
 ) {
-    let family = hostString(request.font_family)
-    let weightValue = max(-1, min(1, CGFloat(Int(request.font_weight) - 400) / 500))
-    var baseFont = family.isEmpty
-        ? UIFont.systemFont(
-            ofSize: CGFloat(request.font_size),
-            weight: UIFont.Weight(rawValue: weightValue)
-        )
-        : UIFont(name: family, size: CGFloat(request.font_size))
-            ?? UIFont.systemFont(ofSize: CGFloat(request.font_size))
-    if request.font_style != 0,
-       let descriptor = baseFont.fontDescriptor.withSymbolicTraits(
-           baseFont.fontDescriptor.symbolicTraits.union(.traitItalic)
-       ) {
-        baseFont = UIFont(descriptor: descriptor, size: CGFloat(request.font_size))
+    let style: WhiskerTextFontStyle = switch request.font_style {
+    case 0: .normal
+    case 1: .italic
+    default: .oblique
     }
+    var baseFont = resolveWhiskerBaseFont(
+        fontFamilies: fontFamilies,
+        fontSize: CGFloat(request.font_size),
+        fontWeight: Int(request.font_weight),
+        fontStyle: style
+    ).font
     baseFont = configuredMeasureFont(baseFont, request)
     let paragraph = NSMutableParagraphStyle()
     let widthBasis: CGFloat
@@ -96,6 +110,29 @@ private func measureText(
         response.height - Float(abs(baseFont.descender))
     )
     response.metrics_mask = 3
+}
+
+private func validatedFontFamilies(_ request: WhiskerMobileMeasureRequest) -> [String]? {
+    guard request.font_family_count > 0,
+          request.font_family_count <= 4_096,
+          let pointer = request.font_families else { return nil }
+    var result = [String]()
+    result.reserveCapacity(request.font_family_count)
+    for reference in UnsafeBufferPointer(start: pointer, count: request.font_family_count) {
+        guard reference.len > 0,
+              reference.len <= 1_048_576,
+              let bytes = reference.ptr,
+              let family = String(
+                  bytes: UnsafeBufferPointer(
+                      start: UnsafeRawPointer(bytes).assumingMemoryBound(to: UInt8.self),
+                      count: reference.len
+                  ),
+                  encoding: .utf8
+              ),
+              !family.isEmpty else { return nil }
+        result.append(family)
+    }
+    return result
 }
 
 private func configuredMeasureFont(

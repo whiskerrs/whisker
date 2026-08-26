@@ -12,6 +12,7 @@ import android.text.TextUtils
 import android.text.style.LeadingMarginSpan
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerMeasureRequest
+import rs.whisker.runtime.resolveWhiskerTypeface
 
 /** Intrinsic measurement implementation shared by all Android Host frames. */
 internal class HostMeasurementProvider(private val context: Context) {
@@ -21,7 +22,7 @@ internal class HostMeasurementProvider(private val context: Context) {
         knownWidth: Float, knownHeight: Float, knownMask: Int,
         availableWidth: Float, availableHeight: Float,
         availableWidthKind: Int, availableHeightKind: Int,
-        text: String, fontFamily: String, fontSize: Float, fontWeight: Int,
+        text: String, fontFamilies: Array<String>, fontSize: Float, fontWeight: Int,
         fontStyle: Int, wrap: Int, wordBreak: Int, overflow: Int, letterSpacing: Float,
         lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float,
         maxLines: Int, fontSettings: Array<String>, fontFeatureCount: Int,
@@ -32,7 +33,7 @@ internal class HostMeasurementProvider(private val context: Context) {
             return measureText(
                 knownWidth, knownHeight, knownMask,
                 availableWidth, availableWidthKind,
-                text, fontFamily, fontSize, fontWeight, fontStyle, wrap, wordBreak, overflow,
+                text, fontFamilies, fontSize, fontWeight, fontStyle, wrap, wordBreak, overflow,
                 letterSpacing, lineHeight, indentLogicalPixels, indentPercentage, maxLines,
                 fontSettings, fontFeatureCount, fontOpticalSizing,
             )
@@ -66,7 +67,7 @@ internal class HostMeasurementProvider(private val context: Context) {
     private fun measureText(
         knownWidth: Float, knownHeight: Float, knownMask: Int,
         availableWidth: Float, availableWidthKind: Int,
-        text: String, fontFamily: String, fontSize: Float, fontWeight: Int,
+        text: String, fontFamilies: Array<String>, fontSize: Float, fontWeight: Int,
         fontStyle: Int, wrap: Int, wordBreak: Int, overflow: Int, letterSpacing: Float,
         lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float, maxLines: Int,
         fontSettings: Array<String>, fontFeatureCount: Int, fontOpticalSizing: Int,
@@ -74,11 +75,15 @@ internal class HostMeasurementProvider(private val context: Context) {
         val density = context.resources.displayMetrics.density
         val paint = TextPaint().apply {
             textSize = fontSize * density
-            val typefaceStyle = (if (fontWeight >= 600) Typeface.BOLD else 0) or
-                (if (fontStyle != 0) Typeface.ITALIC else 0)
-            val baseTypeface = if (fontFamily.isEmpty()) Typeface.DEFAULT else
-                Typeface.create(fontFamily, Typeface.NORMAL)
-            typeface = Typeface.create(baseTypeface, typefaceStyle)
+            val italic = fontStyle != FONT_STYLE_NORMAL
+            val baseTypeface = resolveWhiskerTypeface(fontFamilies.asList())
+            typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                Typeface.create(baseTypeface, fontWeight.coerceIn(1, 1000), italic)
+            } else {
+                val typefaceStyle = (if (fontWeight >= 600) Typeface.BOLD else 0) or
+                    (if (italic) Typeface.ITALIC else 0)
+                Typeface.create(baseTypeface, typefaceStyle)
+            }
             this.letterSpacing = if (fontSize > 0f) letterSpacing / fontSize else 0f
             fontFeatureSettings = fontSettings.take(fontFeatureCount).joinToString(", ") {
                 val (tag, value) = parseFontSetting(it)
@@ -180,6 +185,7 @@ private const val BOTH_DIMENSIONS = WIDTH or HEIGHT
 private const val MEASURE_TEXT = 1
 private const val MEASURE_REPLACED_CONTENT = 2
 private const val MEASURE_EMBEDDED_SURFACE = 4
+private const val FONT_STYLE_NORMAL = 0
 private const val READY = 1f
 private const val WORD_BREAK_BREAK_ALL = 1
 private const val WORD_BREAK_KEEP_ALL = 2

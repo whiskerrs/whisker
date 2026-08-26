@@ -73,11 +73,21 @@ impl NativeTextHost {
         let family = payload
             .style
             .font_families
-            .first()
-            .map_or(Family::SansSerif, |family| match family {
-                MeasureFontFamily::System => Family::SansSerif,
-                MeasureFontFamily::Named(name) => Family::Name(name),
-            });
+            .iter()
+            .find_map(|family| match family {
+                MeasureFontFamily::System => Some(Family::SansSerif),
+                MeasureFontFamily::Named(name)
+                    if self.font_system.db().faces().any(|face| {
+                        face.families
+                            .iter()
+                            .any(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+                    }) =>
+                {
+                    Some(Family::Name(name))
+                }
+                MeasureFontFamily::Named(_) => None,
+            })
+            .unwrap_or(Family::SansSerif);
         let style = match payload.style.font_style {
             MeasureFontStyle::Normal => Style::Normal,
             MeasureFontStyle::Italic => Style::Italic,
@@ -100,7 +110,9 @@ impl NativeTextHost {
             .family(family)
             .style(style)
             .weight(Weight(variation_weight))
-            .letter_spacing(payload.style.letter_spacing)
+            // cosmic-text accepts tracking in em while the protocol carries
+            // CSS logical pixels.
+            .letter_spacing(payload.style.letter_spacing / payload.style.font_size)
             .font_features(font_features);
         let indent = payload.indent.resolve(width.unwrap_or(0.0));
         if indent == 0.0 {

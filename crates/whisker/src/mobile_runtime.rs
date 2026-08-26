@@ -671,6 +671,7 @@ impl MeasurementProvider for MobileMeasurementHost {
 struct MobileMeasureBatch {
     _strings: Vec<CString>,
     _bytes: Vec<Vec<u8>>,
+    _font_families: Vec<Box<[WhiskerStringRef]>>,
     _font_features: Vec<Box<[MobileFontFeature]>>,
     _font_variations: Vec<Box<[MobileFontVariation]>>,
     requests: Vec<MobileMeasureRequest>,
@@ -681,6 +682,7 @@ impl MobileMeasureBatch {
     fn new(source: &[MeasurementRequest]) -> Self {
         let mut strings = Vec::new();
         let mut bytes = Vec::new();
+        let mut font_families = Vec::new();
         let mut font_features = Vec::new();
         let mut font_variations = Vec::new();
         let mut requests = Vec::with_capacity(source.len());
@@ -706,7 +708,8 @@ impl MobileMeasureBatch {
                 overflow: 0,
                 text: empty_string(),
                 locale: empty_string(),
-                font_family: empty_string(),
+                font_families: std::ptr::null(),
+                font_family_count: 0,
                 font_size: 0.0,
                 font_weight: 400,
                 payload_version: 0,
@@ -738,10 +741,21 @@ impl MobileMeasureBatch {
                         .as_deref()
                         .map(|value| push_string(&mut strings, value))
                         .unwrap_or_else(empty_string);
-                    if let Some(MeasureFontFamily::Named(value)) = value.style.font_families.first()
-                    {
-                        raw.font_family = push_string(&mut strings, value);
-                    }
+                    font_families.push(
+                        value
+                            .style
+                            .font_families
+                            .iter()
+                            .map(|family| match family {
+                                MeasureFontFamily::System => push_string(&mut strings, "system"),
+                                MeasureFontFamily::Named(value) => push_string(&mut strings, value),
+                            })
+                            .collect::<Vec<_>>()
+                            .into_boxed_slice(),
+                    );
+                    let families = font_families.last().unwrap();
+                    raw.font_families = nonempty_ptr(families);
+                    raw.font_family_count = families.len();
                     raw.font_size = value.style.font_size;
                     raw.font_weight = value.style.font_weight;
                     raw.font_style = match value.style.font_style {
@@ -815,6 +829,7 @@ impl MobileMeasureBatch {
         Self {
             _strings: strings,
             _bytes: bytes,
+            _font_families: font_families,
             _font_features: font_features,
             _font_variations: font_variations,
             requests,
@@ -2305,6 +2320,40 @@ mod tests {
         assert_eq!(variation.tag, *b"wght");
         assert_eq!(variation.value, 650.0);
         assert_eq!(text.font_optical_sizing, 0);
+    }
+
+    #[test]
+    fn mobile_measure_batch_owns_ordered_font_fallbacks() {
+        let mut payload = text_with_shadow(Vec::new()).payload;
+        payload.style.font_families = vec![
+            MeasureFontFamily::Named("Whisker Fixture Sans".into()),
+            MeasureFontFamily::System,
+        ];
+        let request = MeasurementRequest {
+            key: whisker_engine::whisker_protocol::MeasurementKey::new(1).unwrap(),
+            node: NodeId::new(1).unwrap(),
+            element_type: whisker_engine::whisker_protocol::ElementTypeId::new(2).unwrap(),
+            environment_epoch: 3,
+            constraints: whisker_engine::whisker_protocol::MeasureConstraints {
+                known_dimensions: [None, None],
+                available_space: [AvailableSpace::Definite(240.0), AvailableSpace::MaxContent],
+            },
+            payload: MeasurementPayload::Text(payload),
+        };
+
+        let batch = MobileMeasureBatch::new(&[request]);
+        let raw = &batch.requests[0];
+        assert_eq!(raw.font_family_count, 2);
+        let families =
+            unsafe { std::slice::from_raw_parts(raw.font_families, raw.font_family_count) };
+        let decode = |value: WhiskerStringRef| unsafe {
+            String::from_utf8(
+                std::slice::from_raw_parts(value.ptr.cast::<u8>(), value.len).to_vec(),
+            )
+            .unwrap()
+        };
+        assert_eq!(decode(families[0]), "Whisker Fixture Sans");
+        assert_eq!(decode(families[1]), "system");
     }
 
     #[test]

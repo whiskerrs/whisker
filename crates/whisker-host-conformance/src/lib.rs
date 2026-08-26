@@ -218,10 +218,22 @@ pub enum Command {
         key: u64,
         /// Text content.
         text: String,
+        /// Ordered font-family fallback list. `system` selects the Host UI font.
+        #[serde(default = "default_font_families")]
+        font_families: Vec<String>,
         /// Font size in logical pixels.
         font_size: f32,
+        /// CSS numeric font weight.
+        #[serde(default = "default_font_weight")]
+        font_weight: u16,
+        /// Resolved font posture.
+        #[serde(default)]
+        font_style: FontStyleFixture,
         /// Line height in logical pixels.
         line_height: f32,
+        /// Additional logical pixels between glyph advances.
+        #[serde(default)]
+        letter_spacing: f32,
         /// Definite available width.
         available_width: f32,
     },
@@ -237,8 +249,10 @@ pub enum Command {
         min_height: f32,
         /// Inclusive maximum height.
         max_height: f32,
-        /// Whether reusable prepared content is required.
-        prepared_content: bool,
+        /// Whether reusable prepared content is required, when the Host
+        /// exposes that optimization through its measurement API.
+        #[serde(default)]
+        prepared_content: Option<bool>,
     },
     /// Emits one normalized pointer event into the mock runtime sink.
     EmitPointer {
@@ -1474,13 +1488,20 @@ fn validate_side(id: &str, label: &str, side: &ScenarioSide) -> Result<(), Fixtu
                 }) => {}
             Command::MeasureText {
                 key,
+                font_families,
                 font_size,
+                font_weight,
                 line_height,
+                letter_spacing,
                 available_width,
                 ..
             } if *key > 0
+                && !font_families.is_empty()
+                && font_families.iter().all(|family| !family.is_empty())
                 && finite_positive(*font_size)
+                && (1..=1000).contains(font_weight)
                 && finite_positive(*line_height)
+                && letter_spacing.is_finite()
                 && available_width.is_finite()
                 && *available_width >= 0.0 => {}
             Command::CheckpointMeasurement {
