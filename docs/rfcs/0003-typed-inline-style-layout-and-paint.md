@@ -484,9 +484,15 @@ Android derives the exact density-adjusted 3-by-3 homography for that `z = 0`
 plane. In accordance with Lynx, `perspective` affects the current node rather
 than its children: Rust resolves the length, clamps values below one logical
 pixel for rendering, prepends the projection, and emits the same canonical
-flat-plane matrix. Browser-style parent perspective, `perspective-origin`,
-shared `preserve-3d` descendant spaces, and offset-path motion are outside the
-current subset.
+flat-plane matrix. Browser-style parent perspective, `perspective-origin`, and
+shared `preserve-3d` descendant spaces are outside the current subset. Lynx
+motion-path positioning is lowered through that same matrix operation: Rust
+measures absolute `path()` polylines (`M`, `L`, and `Z`), clamps normalized
+`offset-distance`, derives the tangent for `offset-rotate: auto` or uses a fixed
+angle, composes rotation before the ordinary transform list, and applies path
+translation after transform-origin. Quadratic/cubic commands, SVG arcs, and
+the `circle()`, `ellipse()`, and `inset()` path forms remain explicit pending
+subsets rather than Host-specific interpretations.
 
 Protocol minor 1 groups those resolved meanings by Host capability rather
 than by CSS spelling. `SetBackgroundLayers` carries resource-backed images,

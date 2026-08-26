@@ -8,7 +8,8 @@ use whisker_style::{
     GridPlacementValue, GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue,
     GridTemplateComponentValue, GridTemplateRepetitionValue, GridTemplateValue,
     GridTrackSizingValue, JustifyContentValue, LengthPercentageAutoValue, LengthPercentageValue,
-    LengthUnit, LengthValue, LineHeightValue, PositionValue, SizeValue, StyleNumber, StyleValue,
+    LengthUnit, LengthValue, LineHeightValue, MotionPathCommandValue, MotionPathPointValue,
+    OffsetPathValue, OffsetRotateValue, PositionValue, SizeValue, StyleNumber, StyleValue,
     TransformFunctionValue, TransformOriginValue, TransformValue,
 };
 
@@ -18,8 +19,9 @@ use crate::{
     CssString, Direction, Display, FlexBasis, FlexDirection, FlexWrap, Float, FontStyle,
     FontWeight, GridAutoFlow, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
     GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, Integer, JustifyContent, Length,
-    LengthPercentage, LineHeight, MarginValue, Number, Overflow, Percentage, Position,
-    PositionKind, Size, Transform, TransformFn, Visibility,
+    LengthPercentage, LineHeight, MarginValue, MotionPathCommand, Number, OffsetDistance,
+    OffsetPath, OffsetRotate, Overflow, Percentage, Position, PositionKind, Size, Transform,
+    TransformFn, Visibility,
 };
 use whisker_style::{OverflowValue, VisibilityValue};
 
@@ -47,6 +49,50 @@ impl ToStyleValue for Transform {
         StyleValue::Transform(TransformValue(
             self.0.iter().map(to_transform_function).collect(),
         ))
+    }
+}
+
+impl ToStyleValue for OffsetPath {
+    fn to_style_value(&self) -> StyleValue {
+        let point = |point: &crate::MotionPathPoint| MotionPathPointValue {
+            x: StyleNumber::new(point.x),
+            y: StyleNumber::new(point.y),
+        };
+        StyleValue::OffsetPath(match self {
+            Self::None => OffsetPathValue::None,
+            Self::Path(commands) => OffsetPathValue::Path(
+                commands
+                    .iter()
+                    .map(|command| match command {
+                        MotionPathCommand::MoveTo(value) => {
+                            MotionPathCommandValue::MoveTo(point(value))
+                        }
+                        MotionPathCommand::LineTo(value) => {
+                            MotionPathCommandValue::LineTo(point(value))
+                        }
+                        MotionPathCommand::Close => MotionPathCommandValue::Close,
+                    })
+                    .collect(),
+            ),
+        })
+    }
+}
+
+impl ToStyleValue for OffsetDistance {
+    fn to_style_value(&self) -> StyleValue {
+        match self {
+            Self::Number(value) => value.to_style_value(),
+            Self::Percentage(value) => value.to_style_value(),
+        }
+    }
+}
+
+impl ToStyleValue for OffsetRotate {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::OffsetRotate(match self {
+            Self::Auto => OffsetRotateValue::Auto,
+            Self::Angle(angle) => OffsetRotateValue::Angle(StyleNumber::new(angle_degrees(*angle))),
+        })
     }
 }
 

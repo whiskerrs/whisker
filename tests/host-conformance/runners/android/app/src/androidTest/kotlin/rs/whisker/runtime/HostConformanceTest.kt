@@ -319,7 +319,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.visual-effects.backdrop-blur" ||
                             command.getString("name") ==
-                            "paint.transform.projective-plane",
+                            "paint.transform.projective-plane" ||
+                            command.getString("name") ==
+                            "paint.transform.motion-path-line",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->

@@ -6,8 +6,8 @@ use whisker_protocol::{
 };
 use whisker_style::{
     BorderStyleValue, ColorValue, ComputedLayoutStyle, ComputedLengthPercentage,
-    ComputedPaintStyle, ComputedTransformFunction, ComputedTransformStyle, OverflowValue,
-    VisibilityValue,
+    ComputedPaintStyle, ComputedTransformFunction, ComputedTransformStyle, MotionPathCommandValue,
+    OffsetPathValue, OffsetRotateValue, OverflowValue, VisibilityValue,
 };
 
 /// Complete common presentation values derived from one computed node style.
@@ -97,6 +97,17 @@ pub fn lower_transform(
         .perspective
         .map(|distance| perspective(distance.get().max(1.0)))
         .unwrap_or_else(identity);
+    let motion = match &style.offset_path {
+        OffsetPathValue::None => None,
+        path => Some(motion_path_state(path, style.offset_distance.get())?),
+    };
+    if let Some((_, _, tangent)) = motion {
+        let angle = match style.offset_rotate {
+            OffsetRotateValue::Auto => tangent,
+            OffsetRotateValue::Angle(angle) => angle.get(),
+        };
+        matrix = multiply(matrix, rotation_z(angle));
+    }
     for function in &style.functions {
         matrix = multiply(
             matrix,
@@ -113,23 +124,26 @@ pub fn lower_transform(
     // X/Y/W projection of points on the local z=0 plane, but canonicalize the
     // unused depth row and column so GPU clip-space depth cannot discard CSS
     // pixels and descendants cannot accidentally share a 3-D context.
+    let positioned = motion.map_or(around_origin, |(x, y, _)| {
+        multiply(translation(x, y, 0.0), around_origin)
+    });
     let flat_plane = [
-        around_origin[0],
-        around_origin[1],
+        positioned[0],
+        positioned[1],
         0.0,
-        around_origin[3],
-        around_origin[4],
-        around_origin[5],
+        positioned[3],
+        positioned[4],
+        positioned[5],
         0.0,
-        around_origin[7],
+        positioned[7],
         0.0,
         0.0,
         1.0,
         0.0,
-        around_origin[12],
-        around_origin[13],
+        positioned[12],
+        positioned[13],
         0.0,
-        around_origin[15],
+        positioned[15],
     ];
     flat_plane
         .iter()
@@ -162,13 +176,7 @@ fn function_matrix(
                 cos, 0.0, -sin, 0.0, 0.0, 1.0, 0.0, 0.0, sin, 0.0, cos, 0.0, 0.0, 0.0, 0.0, 1.0,
             ]
         }
-        ComputedTransformFunction::RotateZ(degrees) => {
-            let radians = degrees.get().to_radians();
-            let (sin, cos) = radians.sin_cos();
-            [
-                cos, sin, 0.0, 0.0, -sin, cos, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-            ]
-        }
+        ComputedTransformFunction::RotateZ(degrees) => rotation_z(degrees.get()),
         ComputedTransformFunction::Scale { x, y, z } => [
             x.get(),
             0.0,
@@ -214,6 +222,67 @@ fn function_matrix(
         .iter()
         .all(|value| value.is_finite())
         .then_some(matrix)
+}
+
+fn motion_path_state(path: &OffsetPathValue, progress: f32) -> Option<(f32, f32, f32)> {
+    let OffsetPathValue::Path(commands) = path else {
+        return None;
+    };
+    let mut segments = Vec::new();
+    let mut current = None;
+    let mut subpath_start = None;
+    let mut total_length = 0.0_f32;
+    for command in commands {
+        let next = match *command {
+            MotionPathCommandValue::MoveTo(point) => {
+                let point = (point.x.get(), point.y.get());
+                current = Some(point);
+                subpath_start = Some(point);
+                continue;
+            }
+            MotionPathCommandValue::LineTo(point) => (point.x.get(), point.y.get()),
+            MotionPathCommandValue::Close => subpath_start?,
+        };
+        let from = current?;
+        let length = (next.0 - from.0).hypot(next.1 - from.1);
+        if length > 0.0 && length.is_finite() {
+            segments.push((from, next, length));
+            total_length += length;
+        }
+        current = Some(next);
+    }
+    if segments.is_empty() || !total_length.is_finite() {
+        return None;
+    }
+    let target = progress.clamp(0.0, 1.0) * total_length;
+    let mut traversed = 0.0;
+    let (last, preceding) = segments
+        .split_last()
+        .expect("motion path segments were checked as non-empty");
+    for (from, to, length) in preceding {
+        if target <= traversed + length {
+            let local = ((target - traversed) / length).clamp(0.0, 1.0);
+            let x = from.0 + (to.0 - from.0) * local;
+            let y = from.1 + (to.1 - from.1) * local;
+            let angle = (to.1 - from.1).atan2(to.0 - from.0).to_degrees();
+            return Some((x, y, angle.rem_euclid(360.0)));
+        }
+        traversed += length;
+    }
+    let (from, to, length) = *last;
+    let local = ((target - traversed) / length).clamp(0.0, 1.0);
+    let x = from.0 + (to.0 - from.0) * local;
+    let y = from.1 + (to.1 - from.1) * local;
+    let angle = (to.1 - from.1).atan2(to.0 - from.0).to_degrees();
+    Some((x, y, angle.rem_euclid(360.0)))
+}
+
+fn rotation_z(degrees: f32) -> [f32; 16] {
+    let radians = degrees.to_radians();
+    let (sin, cos) = radians.sin_cos();
+    [
+        cos, sin, 0.0, 0.0, -sin, cos, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]
 }
 
 fn identity() -> [f32; 16] {
@@ -340,7 +409,7 @@ fn lower_overflow(value: OverflowValue) -> OverflowClip {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whisker_style::{ComputedCornerRadius, Corners, Edges, StyleNumber};
+    use whisker_style::{ComputedCornerRadius, Corners, Edges, MotionPathPointValue, StyleNumber};
 
     fn color(name: &str) -> ColorValue {
         ColorValue::Named(name.into())
@@ -438,6 +507,9 @@ mod tests {
     fn resolves_transform_percentages_and_origin_against_border_box() {
         let style = ComputedTransformStyle {
             perspective: None,
+            offset_path: OffsetPathValue::None,
+            offset_distance: StyleNumber::new(0.0),
+            offset_rotate: OffsetRotateValue::Auto,
             functions: vec![ComputedTransformFunction::Scale {
                 x: StyleNumber::new(2.0),
                 y: StyleNumber::new(2.0),
@@ -455,6 +527,9 @@ mod tests {
 
         let translated = ComputedTransformStyle {
             perspective: None,
+            offset_path: OffsetPathValue::None,
+            offset_distance: StyleNumber::new(0.0),
+            offset_rotate: OffsetRotateValue::Auto,
             functions: vec![ComputedTransformFunction::Translate {
                 x: ComputedLengthPercentage::new(3.0, 0.5),
                 y: ComputedLengthPercentage::new(4.0, 0.25),
@@ -501,6 +576,9 @@ mod tests {
         ] {
             let style = ComputedTransformStyle {
                 perspective: None,
+                offset_path: OffsetPathValue::None,
+                offset_distance: StyleNumber::new(0.0),
+                offset_rotate: OffsetRotateValue::Auto,
                 functions: vec![function],
                 origin_x: ComputedLengthPercentage::ZERO,
                 origin_y: ComputedLengthPercentage::ZERO,
@@ -527,6 +605,9 @@ mod tests {
     fn canonicalizes_three_dimensional_output_to_the_node_plane() {
         let style = ComputedTransformStyle {
             perspective: None,
+            offset_path: OffsetPathValue::None,
+            offset_distance: StyleNumber::new(0.0),
+            offset_rotate: OffsetRotateValue::Auto,
             functions: vec![ComputedTransformFunction::RotateY(StyleNumber::new(60.0))],
             origin_x: ComputedLengthPercentage::ZERO,
             origin_y: ComputedLengthPercentage::ZERO,
@@ -547,6 +628,9 @@ mod tests {
     fn prepends_lynx_current_node_perspective_to_the_transform_matrix() {
         let style = ComputedTransformStyle {
             perspective: Some(StyleNumber::new(100.0)),
+            offset_path: OffsetPathValue::None,
+            offset_distance: StyleNumber::new(0.0),
+            offset_rotate: OffsetRotateValue::Auto,
             functions: vec![ComputedTransformFunction::RotateY(StyleNumber::new(60.0))],
             origin_x: ComputedLengthPercentage::ZERO,
             origin_y: ComputedLengthPercentage::ZERO,
@@ -574,6 +658,79 @@ mod tests {
             assert!(
                 (actual - expected).abs() < 0.000_001,
                 "{actual} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn lowers_polyline_motion_progress_auto_rotation_and_post_translation() {
+        let point = |x, y| MotionPathPointValue {
+            x: StyleNumber::new(x),
+            y: StyleNumber::new(y),
+        };
+        assert_eq!(motion_path_state(&OffsetPathValue::None, 0.5), None);
+        let style = ComputedTransformStyle {
+            offset_path: OffsetPathValue::Path(vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::LineTo(point(40.0, 0.0)),
+                MotionPathCommandValue::LineTo(point(40.0, 30.0)),
+            ]),
+            offset_distance: StyleNumber::new(0.75),
+            offset_rotate: OffsetRotateValue::Auto,
+            ..ComputedTransformStyle::default()
+        };
+        let transform = lower_transform(&style, 20.0, 10.0).unwrap();
+        let expected = [
+            0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 55.0, 7.5, 0.0, 1.0,
+        ];
+        for (actual, expected) in transform.0.into_iter().zip(expected) {
+            assert!(
+                (actual - expected).abs() < 0.000_01,
+                "{actual} != {expected}"
+            );
+        }
+
+        let first_segment = ComputedTransformStyle {
+            offset_distance: StyleNumber::new(0.25),
+            ..style.clone()
+        };
+        let transform = lower_transform(&first_segment, 20.0, 10.0).unwrap();
+        assert_eq!(transform.0[12], 17.5);
+        assert_eq!(transform.0[13], 0.0);
+
+        let fixed = ComputedTransformStyle {
+            offset_path: OffsetPathValue::Path(vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::LineTo(point(10.0, 0.0)),
+                MotionPathCommandValue::Close,
+            ]),
+            offset_distance: StyleNumber::new(1.0),
+            offset_rotate: OffsetRotateValue::Angle(StyleNumber::new(0.0)),
+            ..ComputedTransformStyle::default()
+        };
+        let transform = lower_transform(&fixed, 1.0, 1.0).unwrap();
+        assert_eq!(transform.0[12], 0.0);
+        assert_eq!(transform.0[13], 0.0);
+
+        for offset_path in [
+            OffsetPathValue::Path(Vec::new()),
+            OffsetPathValue::Path(vec![MotionPathCommandValue::LineTo(point(1.0, 0.0))]),
+            OffsetPathValue::Path(vec![MotionPathCommandValue::Close]),
+            OffsetPathValue::Path(vec![
+                MotionPathCommandValue::MoveTo(point(1.0, 1.0)),
+                MotionPathCommandValue::LineTo(point(1.0, 1.0)),
+            ]),
+        ] {
+            assert_eq!(
+                lower_transform(
+                    &ComputedTransformStyle {
+                        offset_path,
+                        ..ComputedTransformStyle::default()
+                    },
+                    1.0,
+                    1.0,
+                ),
+                None
             );
         }
     }

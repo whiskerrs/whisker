@@ -4,6 +4,7 @@ use crate::css::Css;
 use crate::data_type::Length;
 use crate::data_type_ext::Position;
 use crate::keyword::{BackfaceVisibility, TransformBox, TransformStyle};
+use crate::{OffsetDistance, OffsetPath, OffsetRotate};
 
 impl Css {
     /// Sets `transform-origin`.
@@ -41,6 +42,24 @@ impl Css {
     pub fn perspective_origin(self, v: Position) -> Self {
         self.push(crate::StyleProperty::PerspectiveOrigin, v)
     }
+
+    /// Sets `offset-path` to a typed polyline path or `none`.
+    /// <https://lynxjs.org/api/css/properties/offset-path>
+    pub fn offset_path(self, value: OffsetPath) -> Self {
+        self.push_typed(crate::StyleProperty::OffsetPath, value)
+    }
+
+    /// Sets normalized progress along `offset-path`.
+    /// <https://lynxjs.org/api/css/properties/offset-distance>
+    pub fn offset_distance(self, value: impl Into<OffsetDistance>) -> Self {
+        self.push_typed(crate::StyleProperty::OffsetDistance, value.into())
+    }
+
+    /// Sets tangent-following or fixed motion-path rotation.
+    /// <https://lynxjs.org/api/css/properties/offset-rotate>
+    pub fn offset_rotate(self, value: OffsetRotate) -> Self {
+        self.push_typed(crate::StyleProperty::OffsetRotate, value)
+    }
 }
 
 #[cfg(test)]
@@ -49,6 +68,7 @@ mod tests {
     use crate::data_type_ext::{Position, PositionKeyword};
     use crate::ext::*;
     use crate::keyword::*;
+    use crate::{MotionPathCommand, MotionPathPoint, OffsetPath, OffsetRotate};
 
     #[test]
     fn transform_origin_keywords() {
@@ -77,5 +97,32 @@ mod tests {
             s.to_string(),
             "perspective: 500px; perspective-origin: center;"
         );
+    }
+
+    #[test]
+    fn motion_path_props_keep_css_and_semantic_values_together() {
+        let style = Css::new()
+            .offset_path(OffsetPath::path(vec![
+                MotionPathCommand::MoveTo(MotionPathPoint::new(0.0, 0.0)),
+                MotionPathCommand::LineTo(MotionPathPoint::new(40.0, 0.0)),
+                MotionPathCommand::Close,
+            ]))
+            .offset_distance(75.0.percent())
+            .offset_rotate(OffsetRotate::Auto);
+        assert_eq!(
+            style.to_string(),
+            "offset-path: path(\"M 0 0 L 40 0 Z\"); offset-distance: 75%; offset-rotate: auto;"
+        );
+        assert!(style.to_specified_style().is_ok());
+
+        let fixed = Css::new()
+            .offset_path(OffsetPath::None)
+            .offset_distance(crate::Number::new(0.5))
+            .offset_rotate(OffsetRotate::Angle(45.0.deg()));
+        assert_eq!(
+            fixed.to_string(),
+            "offset-path: none; offset-distance: 0.5; offset-rotate: 45deg;"
+        );
+        assert!(fixed.to_specified_style().is_ok());
     }
 }

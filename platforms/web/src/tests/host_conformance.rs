@@ -457,8 +457,8 @@ impl Driver {
                 }
                 Command::Checkpoint { name, samples, .. } => {
                     if self.expected_scene.is_some() {
-                        let expected_checkpoint = if name == "paint.transform.projective-plane" {
-                            "paint.transform.projective-plane"
+                        let expected_checkpoint = if name.starts_with("paint.transform.") {
+                            name.as_str()
                         } else if self.resource_lifecycle {
                             "paint.background-layers.resource-lifecycle"
                         } else {
@@ -1236,6 +1236,9 @@ fn fixture(path: &str) -> &'static str {
         "core/transform-perspective-current-node.json" => include_str!(
             "../../../../tests/host-conformance/core/transform-perspective-current-node.json"
         ),
+        "core/transform-motion-path-line.json" => {
+            include_str!("../../../../tests/host-conformance/core/transform-motion-path-line.json")
+        }
         "wpt/css/css-color/t32-opacity-basic-0.6-a.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-color/t32-opacity-basic-0.6-a.json"
         ),
@@ -2119,9 +2122,11 @@ fn fixture_clip_path_css(value: &ClipPathFixture) -> String {
             }
         }
     };
-    let suffix = (!reference_box.is_empty())
-        .then(|| format!(" {reference_box}"))
-        .unwrap_or_default();
+    let suffix = if reference_box.is_empty() {
+        String::new()
+    } else {
+        format!(" {reference_box}")
+    };
     format!("{shape}{suffix}")
 }
 

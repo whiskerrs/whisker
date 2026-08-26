@@ -1,8 +1,8 @@
 use std::convert::Infallible;
 
 use whisker::css::{
-    Angle, BorderStyle, Clear, Direction, Float, GridLine, GridTemplate, GridTrack, Overflow,
-    Position, TransformFn,
+    Angle, BorderStyle, Clear, Direction, Float, GridLine, GridTemplate, GridTrack,
+    MotionPathCommand, MotionPathPoint, OffsetPath, OffsetRotate, Overflow, Position, TransformFn,
 };
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -664,6 +664,58 @@ fn render_lynx_perspective_is_lowered_into_the_current_node_transform() {
         .expect("perspective emits SetTransform");
     assert!((transform.0[3] - 3.0_f32.sqrt() / 200.0).abs() < 0.000_001);
     assert_eq!(transform.0[11], 0.0);
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn render_motion_path_is_baked_into_the_existing_transform_operation() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(27).expect("test surface"),
+        StyleEnvironment::new(100.0, 70.0, 1.0, 14.0),
+    );
+    let style = Css::new()
+        .width(px(20))
+        .height(px(10))
+        .offset_path(OffsetPath::path(vec![
+            MotionPathCommand::MoveTo(MotionPathPoint::new(0.0, 0.0)),
+            MotionPathCommand::LineTo(MotionPathPoint::new(40.0, 0.0)),
+            MotionPathCommand::LineTo(MotionPathPoint::new(40.0, 30.0)),
+        ]))
+        .offset_distance(percent(75))
+        .offset_rotate(OffsetRotate::Auto);
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| render! { view(style: style) });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 70.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("motion-path frame");
+    let root = surface.root().expect("surface root");
+    assert!(
+        renderer.frames()[0]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| matches!(
+                operation,
+                Operation::SetTransform { node, transform }
+                    if *node == root
+                        && (transform.0[12] - 55.0).abs() < 0.000_01
+                        && (transform.0[13] - 7.5).abs() < 0.000_01
+            ))
+    );
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
