@@ -729,6 +729,9 @@ impl Driver {
                     font_style,
                     line_height,
                     letter_spacing,
+                    font_features,
+                    font_variations,
+                    font_optical_sizing,
                     available_width,
                 } => self.measure_text(
                     *key,
@@ -739,6 +742,9 @@ impl Driver {
                     *font_style,
                     *line_height,
                     *letter_spacing,
+                    font_features,
+                    font_variations,
+                    *font_optical_sizing,
                     *available_width,
                 ),
                 Command::CheckpointMeasurement {
@@ -772,6 +778,9 @@ impl Driver {
         font_style: whisker_host_conformance::FontStyleFixture,
         line_height: f32,
         letter_spacing: f32,
+        font_features: &[whisker_host_conformance::FontFeatureFixture],
+        font_variations: &[whisker_host_conformance::FontVariationFixture],
+        font_optical_sizing: whisker_host_conformance::FontOpticalSizingFixture,
         available_width: f32,
     ) {
         let key_id = MeasurementKey::new(key).expect("fixture measurement key is non-zero");
@@ -809,6 +818,21 @@ impl Driver {
                     font_style: fixture_measure_font_style(font_style),
                     line_height: MeasureLineHeight::LogicalPixels(line_height),
                     letter_spacing,
+                    features: font_features
+                        .iter()
+                        .map(|feature| whisker_protocol::FontFeature {
+                            tag: fixture_font_tag(&feature.tag),
+                            value: feature.value,
+                        })
+                        .collect(),
+                    variations: font_variations
+                        .iter()
+                        .map(|variation| whisker_protocol::FontVariation {
+                            tag: fixture_font_tag(&variation.tag),
+                            value: variation.value,
+                        })
+                        .collect(),
+                    optical_sizing: fixture_font_optical_sizing(font_optical_sizing),
                     ..TextMeasureStyle::default()
                 },
                 locale: None,
@@ -821,6 +845,12 @@ impl Driver {
                 overflow: MeasureTextOverflow::Clip,
             }),
         };
+        self.assert_measurement_style(
+            &request,
+            font_features,
+            font_variations,
+            font_optical_sizing,
+        );
         let mut responses = Vec::new();
         self.measurements
             .measure_batch(SurfaceId::new(1).unwrap(), &[request], &mut responses)
@@ -841,6 +871,46 @@ impl Driver {
         assert_eq!(environment_epoch, 1);
         assert!(metrics.is_valid());
         self.measurement_results.insert(key, metrics);
+    }
+
+    fn assert_measurement_style(
+        &self,
+        request: &MeasurementRequest,
+        font_features: &[whisker_host_conformance::FontFeatureFixture],
+        font_variations: &[whisker_host_conformance::FontVariationFixture],
+        font_optical_sizing: whisker_host_conformance::FontOpticalSizingFixture,
+    ) {
+        let MeasurementPayload::Text(text) = &request.payload else {
+            panic!("Web text measurement fixture produced a non-text request")
+        };
+        let probe = web_sys::window()
+            .expect("browser window")
+            .document()
+            .expect("browser document")
+            .create_element("div")
+            .expect("create measurement style assertion probe");
+        crate::paint::text::apply_metrics_style(&probe, text)
+            .expect("production text measurement style projection succeeds");
+        let style = probe.dyn_ref::<web_sys::HtmlElement>().unwrap().style();
+
+        assert_style(
+            &style,
+            "font-feature-settings",
+            &fixture_font_settings(font_features, |value| value.value.to_string()),
+        );
+        assert_style(
+            &style,
+            "font-variation-settings",
+            &fixture_font_settings(font_variations, |value| value.value.to_string()),
+        );
+        assert_style(
+            &style,
+            "font-optical-sizing",
+            match font_optical_sizing {
+                whisker_host_conformance::FontOpticalSizingFixture::Auto => "auto",
+                whisker_host_conformance::FontOpticalSizingFixture::None => "none",
+            },
+        );
     }
 
     fn assert_measurement(
@@ -1714,6 +1784,9 @@ fn fixture(path: &str) -> &'static str {
         "core/text-measure-basic.json" => {
             include_str!("../../../../tests/host-conformance/core/text-measure-basic.json")
         }
+        "core/text-measure-font-features.json" => {
+            include_str!("../../../../tests/host-conformance/core/text-measure-font-features.json")
+        }
         "core/pointer-input-basic.json" => {
             include_str!("../../../../tests/host-conformance/core/pointer-input-basic.json")
         }
@@ -2438,6 +2511,19 @@ fn fixture_measure_font_style(
         whisker_host_conformance::FontStyleFixture::Normal => MeasureFontStyle::Normal,
         whisker_host_conformance::FontStyleFixture::Italic => MeasureFontStyle::Italic,
         whisker_host_conformance::FontStyleFixture::Oblique => MeasureFontStyle::Oblique,
+    }
+}
+
+fn fixture_font_optical_sizing(
+    value: whisker_host_conformance::FontOpticalSizingFixture,
+) -> whisker_protocol::FontOpticalSizing {
+    match value {
+        whisker_host_conformance::FontOpticalSizingFixture::Auto => {
+            whisker_protocol::FontOpticalSizing::Auto
+        }
+        whisker_host_conformance::FontOpticalSizingFixture::None => {
+            whisker_protocol::FontOpticalSizing::None
+        }
     }
 }
 

@@ -549,6 +549,13 @@
       "checkpoints": ["measurement"]
     },
     {
+      "id": "host.measure.text.font-features",
+      "feature": "text-measurement-font-features",
+      "fixture": "core/text-measure-font-features.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["measurement", "semantic-projection"]
+    },
+    {
       "id": "core.pointer-style-lynx",
       "feature": "cursor-pointer-events",
       "fixture": "core/pointer-style-lynx.json",

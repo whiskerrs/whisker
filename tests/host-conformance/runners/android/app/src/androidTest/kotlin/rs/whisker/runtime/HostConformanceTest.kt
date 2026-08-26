@@ -499,6 +499,16 @@ private class Driver(
     private fun measureText(command: JSONObject) {
         val families = command.getJSONArray("font_families").strings()
         check(families.isNotEmpty())
+        val featureSettings = command.optJSONArray("font_features")?.objects()?.map { setting ->
+            "${setting.getString("tag")}=${setting.getLong("value")}"
+        }?.toList().orEmpty()
+        val variationSettings = command.optJSONArray("font_variations")?.objects()?.map { setting ->
+            "${setting.getString("tag")}=${setting.getDouble("value")}"
+        }?.toList().orEmpty()
+        val opticalSizing = when (command.optString("font_optical_sizing", "none")) {
+            "auto" -> 0
+            else -> 1
+        }
         val result = view.measureFromNative(
             elementType = 2,
             kind = 1,
@@ -526,9 +536,9 @@ private class Driver(
             indentLogicalPixels = 0f,
             indentPercentage = 0f,
             maxLines = 0,
-            fontSettings = emptyArray(),
-            fontFeatureCount = 0,
-            fontOpticalSizing = 1,
+            fontSettings = (featureSettings + variationSettings).toTypedArray(),
+            fontFeatureCount = featureSettings.size,
+            fontOpticalSizing = opticalSizing,
             payloadVersion = 0,
             payload = byteArrayOf(),
             intrinsicWidth = 0f,
@@ -536,6 +546,11 @@ private class Driver(
             intrinsicMask = 0,
         )
         check(result.size >= 7 && result[0] == 1f) { "$id text measurement was not ready" }
+        if (id == "host.measure.text.font-features") {
+            check(featureSettings == listOf("kern=0", "liga=0"))
+            check(variationSettings == listOf("wght=720.0"))
+            check(opticalSizing == 1)
+        }
         measurements[command.getLong("key")] = result
     }
 

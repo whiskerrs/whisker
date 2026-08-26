@@ -1,6 +1,7 @@
 #if defined(__ANDROID__)
 
 #include <jni.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -236,13 +237,32 @@ static jstring font_setting(JNIEnv* env, const uint8_t tag[4], double value, boo
     return length < 0 ? NULL : new_string(env, buffer, (size_t)length);
 }
 
-static jobjectArray font_settings(JNIEnv* env,
-                                  const WhiskerMobileFontFeature* features, size_t feature_count,
-                                  const WhiskerMobileFontVariation* variations, size_t variation_count) {
+static bool valid_font_tag(const uint8_t tag[4]) {
+    for (size_t i = 0; i < 4; ++i) {
+        if (tag[i] < 0x20 || tag[i] > 0x7e) return false;
+    }
+    return true;
+}
+
+static bool valid_font_settings(const WhiskerMobileFontFeature* features, size_t feature_count,
+                                const WhiskerMobileFontVariation* variations, size_t variation_count) {
     if (feature_count > 4096 || variation_count > 4096 ||
         (features == NULL) != (feature_count == 0) ||
         (variations == NULL) != (variation_count == 0) ||
-        feature_count + variation_count > 4096) return NULL;
+        feature_count + variation_count > 4096) return false;
+    for (size_t i = 0; i < feature_count; ++i) {
+        if (!valid_font_tag(features[i].tag)) return false;
+    }
+    for (size_t i = 0; i < variation_count; ++i) {
+        if (!valid_font_tag(variations[i].tag) || !isfinite(variations[i].value)) return false;
+    }
+    return true;
+}
+
+static jobjectArray font_settings(JNIEnv* env,
+                                  const WhiskerMobileFontFeature* features, size_t feature_count,
+                                  const WhiskerMobileFontVariation* variations, size_t variation_count) {
+    if (!valid_font_settings(features, feature_count, variations, variation_count)) return NULL;
     jclass cls = (*env)->FindClass(env, "java/lang/String");
     jobjectArray result = cls == NULL ? NULL : (*env)->NewObjectArray(
         env, (jsize)(feature_count + variation_count), cls, NULL);
@@ -553,7 +573,9 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                     p->font_family_count > 4096 ||
                     p->font_feature_count > 4096 ||
                     p->font_variation_count > 4096 ||
-                    p->font_family_count + p->font_feature_count + p->font_variation_count > 4096) { ok = false; break; }
+                    p->font_family_count + p->font_feature_count + p->font_variation_count > 4096 ||
+                    !valid_font_settings(p->font_features, p->font_feature_count,
+                                         p->font_variations, p->font_variation_count)) { ok = false; break; }
                 for (size_t j=0;j<p->font_family_count;++j) {
                     if (!valid_nonempty_string_ref(p->font_families[j])) { ok = false; break; }
                 }

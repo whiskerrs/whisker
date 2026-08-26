@@ -14,6 +14,12 @@ let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses i
               request.line_height.isFinite,
               request.line_height >= 0,
               request.letter_spacing.isFinite,
+              request.font_optical_sizing <= 1,
+              request.font_feature_count <= 4_096,
+              request.font_variation_count <= 4_096,
+              request.font_feature_count + request.font_variation_count <= 4_096,
+              validMeasureFontFeatures(request),
+              validMeasureFontVariations(request),
               let families = validatedFontFamilies(request) else { return false }
         textFontFamilies[index] = families
     }
@@ -133,6 +139,32 @@ private func validatedFontFamilies(_ request: WhiskerMobileMeasureRequest) -> [S
         result.append(family)
     }
     return result
+}
+
+private func validMeasureFontFeatures(_ request: WhiskerMobileMeasureRequest) -> Bool {
+    guard (request.font_features == nil) == (request.font_feature_count == 0) else {
+        return false
+    }
+    guard let pointer = request.font_features else { return true }
+    return UnsafeBufferPointer(start: pointer, count: request.font_feature_count).allSatisfy {
+        validOpenTypeTag($0.tag)
+    }
+}
+
+private func validMeasureFontVariations(_ request: WhiskerMobileMeasureRequest) -> Bool {
+    guard (request.font_variations == nil) == (request.font_variation_count == 0) else {
+        return false
+    }
+    guard let pointer = request.font_variations else { return true }
+    return UnsafeBufferPointer(start: pointer, count: request.font_variation_count).allSatisfy {
+        validOpenTypeTag($0.tag) && $0.value.isFinite
+    }
+}
+
+private func validOpenTypeTag<T>(_ tag: T) -> Bool {
+    withUnsafeBytes(of: tag) { bytes in
+        bytes.count == 4 && bytes.allSatisfy { (0x20...0x7E).contains($0) }
+    }
 }
 
 private func configuredMeasureFont(
