@@ -9,6 +9,7 @@ use crate::data_type_ext::EasingFunction;
 use crate::keyword::{
     AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
 };
+use crate::style_value::to_animation_value;
 use crate::to_css::ToCss;
 
 /// One animation layer.
@@ -131,20 +132,31 @@ impl Css {
     /// Sets the `animation` shorthand for a single animation.
     /// <https://lynxjs.org/api/css/properties/animation>
     pub fn animation(self, a: Animation) -> Self {
-        self.push(crate::StyleProperty::Animation, a)
+        let lynx = a.to_css_string();
+        self.push_semantic(
+            crate::StyleProperty::Animation,
+            whisker_style::StyleValue::Animations(vec![to_animation_value(&a)]),
+            lynx,
+        )
     }
 
     /// Sets the `animation` shorthand for multiple comma-separated
     /// animations.
     pub fn animations(self, anims: impl IntoIterator<Item = Animation>) -> Self {
+        let anims = anims.into_iter().collect::<Vec<_>>();
         let mut s = String::new();
-        for (i, a) in anims.into_iter().enumerate() {
+        for (i, a) in anims.iter().enumerate() {
             if i > 0 {
                 s.push_str(", ");
             }
             let _ = a.to_css(&mut s);
         }
-        self.push_raw(crate::StyleProperty::Animation, s)
+        let semantic = anims.iter().map(to_animation_value).collect();
+        self.push_semantic(
+            crate::StyleProperty::Animation,
+            whisker_style::StyleValue::Animations(semantic),
+            s,
+        )
     }
 }
 
@@ -188,5 +200,20 @@ mod tests {
             Animation::new("slide").duration(500.ms()).delay(100.ms()),
         ]);
         assert_eq!(s.to_string(), "animation: fade 300ms, slide 500ms 100ms;");
+        let resolved = whisker_style::resolve_style(
+            &s.to_specified_style().unwrap(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(resolved.computed().motion().animations.len(), 2);
+        assert_eq!(
+            resolved.computed().motion().animations[1].name.as_deref(),
+            Some("slide")
+        );
+        assert_eq!(
+            resolved.computed().motion().animations[1].delay.get(),
+            100.0
+        );
     }
 }

@@ -1,33 +1,190 @@
 //! Conversion from the compatibility authoring types to semantic style values.
 
 use whisker_style::{
-    AlignContentValue, AlignItemsValue, AlignSelfValue, BackdropFilterValue, BorderRadiusValue,
-    BorderStyleValue, BoxSizingValue, CalcExpression, ClearValue, ColorValue, CursorValue,
-    CustomPropertyReference, DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue,
-    FlexWrapValue, FloatValue, FontStyleValue, FontWeightValue, GridAutoFlowValue,
-    GridMaxTrackSizingValue, GridMinTrackSizingValue, GridPlacementValue, GridRepetitionCountValue,
-    GridTemplateAreaValue, GridTemplateAreasValue, GridTemplateComponentValue,
-    GridTemplateRepetitionValue, GridTemplateValue, GridTrackSizingValue, ImageRenderingValue,
-    InsetPathValue, JustifyContentValue, LengthPercentageAutoValue, LengthPercentageValue,
-    LengthUnit, LengthValue, LineHeightValue, MotionPathCommandValue, MotionPathPointValue,
-    OffsetPathValue, OffsetRotateValue, PointerEventsValue, PositionValue, SizeValue, StyleNumber,
-    StyleValue, TransformFunctionValue, TransformOriginValue, TransformValue,
+    AlignContentValue, AlignItemsValue, AlignSelfValue, AnimationValue, BackdropFilterValue,
+    BorderRadiusValue, BorderStyleValue, BoxSizingValue, CalcExpression, ClearValue, ColorValue,
+    CursorValue, CustomPropertyReference, DirectionValue, DisplayValue, FlexBasisValue,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyleValue, FontWeightValue,
+    GridAutoFlowValue, GridMaxTrackSizingValue, GridMinTrackSizingValue, GridPlacementValue,
+    GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue,
+    GridTemplateComponentValue, GridTemplateRepetitionValue, GridTemplateValue,
+    GridTrackSizingValue, ImageRenderingValue, InsetPathValue, JustifyContentValue,
+    LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
+    MotionDirection, MotionEasing, MotionFillMode, MotionIterationCount, MotionPathCommandValue,
+    MotionPathPointValue, MotionPlayState, MotionStepPosition, MotionTime, OffsetPathValue,
+    OffsetRotateValue, PointerEventsValue, PositionValue, SizeValue, StyleNumber, StyleValue,
+    TransformFunctionValue, TransformOriginValue, TransformValue, TransitionPropertyValue,
+    TransitionValue,
 };
 
-use crate::data_type_ext::PositionKeyword;
+use crate::data_type_ext::{PositionKeyword, StepPosition};
 use crate::{
-    AlignContent, AlignItems, AlignSelf, Angle, BackdropFilter, BoxSizing, CalcExpr, Clear, Color,
-    CssString, Cursor, Direction, Display, FlexBasis, FlexDirection, FlexWrap, Float, FontStyle,
-    FontWeight, GridAutoFlow, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
-    GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, ImageRendering, Integer,
-    JustifyContent, Length, LengthPercentage, LineHeight, MarginValue, MotionPathCommand, Number,
-    OffsetDistance, OffsetPath, OffsetRotate, Overflow, Percentage, PointerEvents, Position,
-    PositionKind, Size, Transform, TransformFn, Visibility,
+    AlignContent, AlignItems, AlignSelf, Angle, Animation, AnimationDirection, AnimationFillMode,
+    AnimationIterationCount, AnimationPlayState, BackdropFilter, BoxSizing, CalcExpr, Clear, Color,
+    CssString, Cursor, Direction, Display, EasingFunction, FlexBasis, FlexDirection, FlexWrap,
+    Float, FontStyle, FontWeight, GridAutoFlow, GridLine, GridRepeatCount, GridTemplate,
+    GridTemplateAreas, GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin,
+    ImageRendering, Integer, JustifyContent, Length, LengthPercentage, LineHeight, MarginValue,
+    MotionPathCommand, Number, OffsetDistance, OffsetPath, OffsetRotate, Overflow, Percentage,
+    PointerEvents, Position, PositionKind, Size, Time, Transform, TransformFn, Transition,
+    TransitionPropertyKind, Visibility,
 };
 use whisker_style::{OverflowValue, VisibilityValue};
 
 pub(crate) trait ToStyleValue {
     fn to_style_value(&self) -> StyleValue;
+}
+
+pub(crate) fn to_motion_time(value: Time) -> MotionTime {
+    match value {
+        Time::S(value) => MotionTime::milliseconds(value * 1_000.0),
+        Time::Ms(value) => MotionTime::milliseconds(value),
+    }
+}
+
+pub(crate) fn to_motion_easing(value: EasingFunction) -> MotionEasing {
+    match value {
+        EasingFunction::Linear => MotionEasing::Linear,
+        EasingFunction::Ease => MotionEasing::Ease,
+        EasingFunction::EaseIn => MotionEasing::EaseIn,
+        EasingFunction::EaseOut => MotionEasing::EaseOut,
+        EasingFunction::EaseInOut => MotionEasing::EaseInOut,
+        EasingFunction::StepStart => MotionEasing::Steps {
+            count: 1,
+            position: MotionStepPosition::JumpStart,
+        },
+        EasingFunction::StepEnd => MotionEasing::Steps {
+            count: 1,
+            position: MotionStepPosition::JumpEnd,
+        },
+        EasingFunction::CubicBezier(x1, y1, x2, y2) => MotionEasing::CubicBezier([
+            StyleNumber::new(x1),
+            StyleNumber::new(y1),
+            StyleNumber::new(x2),
+            StyleNumber::new(y2),
+        ]),
+        EasingFunction::Steps(count, position) => MotionEasing::Steps {
+            count,
+            position: match position {
+                StepPosition::JumpStart | StepPosition::Start => MotionStepPosition::JumpStart,
+                StepPosition::JumpEnd | StepPosition::End => MotionStepPosition::JumpEnd,
+                StepPosition::JumpNone => MotionStepPosition::JumpNone,
+                StepPosition::JumpBoth => MotionStepPosition::JumpBoth,
+            },
+        },
+    }
+}
+
+pub(crate) fn to_transition_property(value: &TransitionPropertyKind) -> TransitionPropertyValue {
+    match value {
+        TransitionPropertyKind::All => TransitionPropertyValue::All,
+        TransitionPropertyKind::None => TransitionPropertyValue::None,
+        TransitionPropertyKind::Name(name) => {
+            TransitionPropertyValue::Named(name.as_str().to_owned())
+        }
+    }
+}
+
+pub(crate) fn to_motion_direction(value: AnimationDirection) -> MotionDirection {
+    match value {
+        AnimationDirection::Normal => MotionDirection::Normal,
+        AnimationDirection::Reverse => MotionDirection::Reverse,
+        AnimationDirection::Alternate => MotionDirection::Alternate,
+        AnimationDirection::AlternateReverse => MotionDirection::AlternateReverse,
+    }
+}
+
+pub(crate) fn to_motion_fill(value: AnimationFillMode) -> MotionFillMode {
+    match value {
+        AnimationFillMode::None => MotionFillMode::None,
+        AnimationFillMode::Forwards => MotionFillMode::Forwards,
+        AnimationFillMode::Backwards => MotionFillMode::Backwards,
+        AnimationFillMode::Both => MotionFillMode::Both,
+    }
+}
+
+pub(crate) fn to_motion_iterations(value: AnimationIterationCount) -> MotionIterationCount {
+    match value {
+        AnimationIterationCount::Infinite => MotionIterationCount::Infinite,
+        AnimationIterationCount::Count(value) => {
+            MotionIterationCount::Count(StyleNumber::new(value))
+        }
+    }
+}
+
+pub(crate) fn to_motion_play_state(value: AnimationPlayState) -> MotionPlayState {
+    match value {
+        AnimationPlayState::Running => MotionPlayState::Running,
+        AnimationPlayState::Paused => MotionPlayState::Paused,
+    }
+}
+
+pub(crate) fn to_transition_value(value: &Transition) -> TransitionValue {
+    TransitionValue {
+        property: to_transition_property(&value.property),
+        duration: value
+            .duration
+            .map_or_else(MotionTime::default, to_motion_time),
+        easing: value
+            .timing
+            .map_or_else(MotionEasing::default, to_motion_easing),
+        delay: value.delay.map_or_else(MotionTime::default, to_motion_time),
+    }
+}
+
+pub(crate) fn to_animation_value(value: &Animation) -> AnimationValue {
+    AnimationValue {
+        name: (value.name != "none").then(|| value.name.clone()),
+        duration: value
+            .duration
+            .map_or_else(MotionTime::default, to_motion_time),
+        easing: value
+            .timing
+            .map_or_else(MotionEasing::default, to_motion_easing),
+        delay: value.delay.map_or_else(MotionTime::default, to_motion_time),
+        iteration_count: value
+            .iteration_count
+            .map_or_else(MotionIterationCount::default, to_motion_iterations),
+        direction: value
+            .direction
+            .map_or_else(MotionDirection::default, to_motion_direction),
+        fill_mode: value
+            .fill_mode
+            .map_or_else(MotionFillMode::default, to_motion_fill),
+        play_state: value
+            .play_state
+            .map_or_else(MotionPlayState::default, to_motion_play_state),
+    }
+}
+
+impl ToStyleValue for TransitionPropertyKind {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::TransitionProperties(vec![to_transition_property(self)])
+    }
+}
+
+impl ToStyleValue for AnimationDirection {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::AnimationDirections(vec![to_motion_direction(*self)])
+    }
+}
+
+impl ToStyleValue for AnimationFillMode {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::AnimationFillModes(vec![to_motion_fill(*self)])
+    }
+}
+
+impl ToStyleValue for AnimationIterationCount {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::AnimationIterationCounts(vec![to_motion_iterations(*self)])
+    }
+}
+
+impl ToStyleValue for AnimationPlayState {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::AnimationPlayStates(vec![to_motion_play_state(*self)])
+    }
 }
 
 impl ToStyleValue for Length {

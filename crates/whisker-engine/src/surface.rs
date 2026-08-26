@@ -4,9 +4,10 @@ use std::{collections::HashMap, error::Error, fmt};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
-    ApplyResult, CommandId, Cursor, CursorKeyword, ElementTypeId, FramePacket, HitTestBehavior,
-    InputPoint, LayoutGeometry, MeasurementMetrics, MeasurementReady, MeasurementResponse,
-    MeasurementSpec, NodeId, PointerId, PropertyId, ResultId, SurfaceId, TextContent, WhiskerValue,
+    ApplyResult, BoxPaint, CommandId, Cursor, CursorKeyword, ElementTypeId, FramePacket,
+    HitTestBehavior, InputPoint, LayoutGeometry, MeasurementMetrics, MeasurementReady,
+    MeasurementResponse, MeasurementSpec, NodeId, PointerId, PropertyId, ResultId, SurfaceId,
+    TextContent, WhiskerValue,
 };
 use whisker_style::{
     ComputedLayoutStyle, ComputedStyle, ComputedTransformStyle, CursorValue, PointerEventsValue,
@@ -330,6 +331,47 @@ impl SurfaceEngine {
     pub fn set_cursor(&mut self, node: NodeId, cursor: Cursor) -> Result<(), SurfaceError> {
         self.scene
             .set_cursor(node, cursor)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Replaces one node's already-resolved group opacity.
+    pub fn set_opacity(&mut self, node: NodeId, opacity: f32) -> Result<(), SurfaceError> {
+        self.scene
+            .set_opacity(node, opacity)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Replaces one node's resolved background, border, and radius paint.
+    pub fn set_box_paint(&mut self, node: NodeId, paint: BoxPaint) -> Result<(), SurfaceError> {
+        self.scene
+            .set_box_paint(node, paint)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Replaces one node's already-lowered text presentation.
+    ///
+    /// Runtime-owned paint animation uses this after intrinsic measurement is
+    /// complete; callers must preserve the retained payload and prepared
+    /// content when changing paint-only fields.
+    pub fn set_text_content(
+        &mut self,
+        node: NodeId,
+        content: TextContent,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .set_text(node, content)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Replaces one node's already-resolved transform matrix without changing
+    /// its computed transform target.
+    pub fn set_transform(
+        &mut self,
+        node: NodeId,
+        transform: whisker_protocol::Transform,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .set_transform(node, transform)
             .map_err(SurfaceError::Scene)
     }
 
@@ -1262,9 +1304,14 @@ mod tests {
             None
         );
         empty_surface
-            .scene
             .set_transform(empty, whisker_protocol::Transform::IDENTITY)
             .unwrap();
+        assert_eq!(
+            empty_surface.set_transform(node_id(99), whisker_protocol::Transform::IDENTITY),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: node_id(99)
+            }))
+        );
         assert_eq!(
             empty_surface
                 .resolve_node_transform(empty, &ComputedTransformStyle::default(), 1.0, 1.0)
@@ -1353,6 +1400,15 @@ mod tests {
             node.cursor().map(|cursor| cursor.fallback),
             Some(whisker_protocol::CursorKeyword::Auto)
         );
+        surface.set_opacity(root, 0.5).unwrap();
+        assert_eq!(surface.node(root).unwrap().opacity(), Some(0.5));
+        assert_eq!(
+            surface.set_opacity(missing, 0.5),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        surface.set_opacity(root, lowered.opacity).unwrap();
         assert!(
             surface
                 .update_computed_style(root, style)
@@ -1362,12 +1418,30 @@ mod tests {
 
         let mut different_box = lowered.box_paint.clone();
         different_box.background_color = whisker_protocol::PaintColor::Named("changed".into());
-        surface.scene.set_box_paint(root, different_box).unwrap();
+        surface.set_box_paint(root, different_box).unwrap();
         assert!(
             surface
                 .update_computed_style(root, style)
                 .unwrap()
                 .contains(PropertyImpactSet::PAINT)
+        );
+        surface
+            .set_plain_text(root, &PlainTextInput::new("animated"), style)
+            .unwrap();
+        let mut text = surface.node(root).unwrap().text().unwrap().clone();
+        text.paint.foreground = whisker_protocol::PaintColor::Srgba {
+            red: 255,
+            green: 0,
+            blue: 0,
+            alpha: 1.0,
+        };
+        surface.set_text_content(root, text.clone()).unwrap();
+        assert_eq!(surface.node(root).unwrap().text(), Some(&text));
+        assert_eq!(
+            surface.set_text_content(missing, text),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
         );
         surface
             .scene

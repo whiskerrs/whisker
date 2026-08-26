@@ -4,13 +4,14 @@ use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    BorderRadiusValue, CalcExpression, ColorValue, ComputedLayoutStyle, ComputedPaintStyle,
-    CursorValue, CustomPropertyName, CustomPropertyReference, DirectionValue, FlexBasisValue,
-    FontFamilyValue, FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue,
-    FontWeightValue, LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue,
-    LineHeightValue, PointerEventsValue, SizeValue, SpecifiedStyle, StyleNumber, StyleProperty,
-    StyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
-    TextDecorationValue, TextOverflowValue, TextShadowValue, WhiteSpaceValue, WordBreakValue,
+    BorderRadiusValue, CalcExpression, ColorValue, ComputedLayoutStyle, ComputedMotionStyle,
+    ComputedPaintStyle, CursorValue, CustomPropertyName, CustomPropertyReference, DirectionValue,
+    FlexBasisValue, FontFamilyValue, FontFeatureValue, FontOpticalSizingValue, FontStyleValue,
+    FontVariationValue, FontWeightValue, LengthPercentageAutoValue, LengthPercentageValue,
+    LengthUnit, LengthValue, LineHeightValue, PointerEventsValue, SizeValue, SpecifiedStyle,
+    StyleNumber, StyleProperty, StyleValue, TextAlignValue, TextDecorationLineValue,
+    TextDecorationStyleValue, TextDecorationValue, TextOverflowValue, TextShadowValue,
+    WhiteSpaceValue, WordBreakValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -397,6 +398,7 @@ pub struct ComputedStyle {
     text_overflow: TextOverflowValue,
     layout: ComputedLayoutStyle,
     paint: ComputedPaintStyle,
+    motion: ComputedMotionStyle,
 }
 
 impl ComputedStyle {
@@ -443,6 +445,11 @@ impl ComputedStyle {
     /// Returns Host-independent computed paint input for this node.
     pub const fn paint(&self) -> &ComputedPaintStyle {
         &self.paint
+    }
+
+    /// Returns Host-independent transition and keyframe timeline settings.
+    pub const fn motion(&self) -> &ComputedMotionStyle {
+        &self.motion
     }
 }
 
@@ -891,6 +898,7 @@ pub fn resolve_style(
         layout.direction,
         environment,
     )?;
+    let motion = crate::motion::resolve_motion_style(specified)?;
 
     Ok(ResolvedNodeStyle {
         computed: ComputedStyle {
@@ -901,6 +909,7 @@ pub fn resolve_style(
             text_overflow,
             layout,
             paint,
+            motion,
         },
     })
 }
