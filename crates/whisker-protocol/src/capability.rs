@@ -468,10 +468,16 @@ mod tests {
     fn linear_gradient_capability_does_not_claim_the_complete_layer_protocol() {
         let node = NodeId::new(1).unwrap();
         assert_eq!(
-            packet(vec![Operation::SetBackgroundLayers {
-                node,
-                layers: vec![basic_linear_layer()],
-            }])
+            packet(vec![
+                Operation::SetBackgroundLayers {
+                    node,
+                    layers: vec![basic_linear_layer()],
+                },
+                Operation::SetBackgroundLayers {
+                    node,
+                    layers: vec![basic_linear_layer()],
+                },
+            ])
             .required_capabilities(),
             vec![RenderCapability::LinearGradients]
         );
@@ -627,6 +633,10 @@ mod tests {
         };
         let operations = vec![
             Operation::SetBoxPaint { node, paint },
+            Operation::SetBackgroundLayers {
+                node,
+                layers: vec![basic_linear_layer()],
+            },
             Operation::SetBackgroundLayers {
                 node,
                 layers: vec![basic_linear_layer()],
