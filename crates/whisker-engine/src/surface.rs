@@ -1515,6 +1515,63 @@ mod tests {
     }
 
     #[test]
+    fn pointer_input_lowering_covers_every_retained_keyword() {
+        assert_eq!(
+            lower_hit_test(PointerEventsValue::Auto),
+            HitTestBehavior::Auto
+        );
+        assert_eq!(
+            lower_hit_test(PointerEventsValue::None),
+            HitTestBehavior::None
+        );
+        for (value, expected) in [
+            (CursorValue::Auto, CursorKeyword::Auto),
+            (CursorValue::Default, CursorKeyword::Default),
+            (CursorValue::None, CursorKeyword::None),
+            (CursorValue::ContextMenu, CursorKeyword::ContextMenu),
+            (CursorValue::Help, CursorKeyword::Help),
+            (CursorValue::Pointer, CursorKeyword::Pointer),
+            (CursorValue::Progress, CursorKeyword::Progress),
+            (CursorValue::Wait, CursorKeyword::Wait),
+            (CursorValue::Cell, CursorKeyword::Cell),
+            (CursorValue::Crosshair, CursorKeyword::Crosshair),
+            (CursorValue::Text, CursorKeyword::Text),
+            (CursorValue::VerticalText, CursorKeyword::VerticalText),
+            (CursorValue::Alias, CursorKeyword::Alias),
+            (CursorValue::Copy, CursorKeyword::Copy),
+            (CursorValue::Move, CursorKeyword::Move),
+            (CursorValue::NoDrop, CursorKeyword::NoDrop),
+            (CursorValue::NotAllowed, CursorKeyword::NotAllowed),
+            (CursorValue::Grab, CursorKeyword::Grab),
+            (CursorValue::Grabbing, CursorKeyword::Grabbing),
+            (CursorValue::ColResize, CursorKeyword::ColResize),
+            (CursorValue::RowResize, CursorKeyword::RowResize),
+            (CursorValue::NResize, CursorKeyword::NResize),
+            (CursorValue::EResize, CursorKeyword::EResize),
+            (CursorValue::SResize, CursorKeyword::SResize),
+            (CursorValue::WResize, CursorKeyword::WResize),
+            (CursorValue::NeResize, CursorKeyword::NeResize),
+            (CursorValue::NwResize, CursorKeyword::NwResize),
+            (CursorValue::SeResize, CursorKeyword::SeResize),
+            (CursorValue::SwResize, CursorKeyword::SwResize),
+            (CursorValue::EwResize, CursorKeyword::EwResize),
+            (CursorValue::NsResize, CursorKeyword::NsResize),
+            (CursorValue::NeswResize, CursorKeyword::NeswResize),
+            (CursorValue::NwseResize, CursorKeyword::NwseResize),
+            (CursorValue::ZoomIn, CursorKeyword::ZoomIn),
+            (CursorValue::ZoomOut, CursorKeyword::ZoomOut),
+        ] {
+            assert_eq!(
+                lower_cursor(value),
+                Cursor {
+                    resources: Vec::new(),
+                    fallback: expected,
+                }
+            );
+        }
+    }
+
+    #[test]
     fn structural_operations_keep_scene_and_layout_in_lockstep() {
         let mut surface = SurfaceEngine::new(surface_id());
         let unsupported = ComputedLayoutStyle {

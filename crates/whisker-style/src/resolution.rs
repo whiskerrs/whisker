@@ -1281,6 +1281,17 @@ mod tests {
         .unwrap();
         assert_eq!(reset.computed().cursor(), CursorValue::Auto);
         assert_eq!(reset.computed().pointer_events(), PointerEventsValue::Auto);
+
+        for property in [StyleProperty::Cursor, StyleProperty::PointerEvents] {
+            assert_eq!(
+                resolve_style(
+                    &SpecifiedStyle::new().push(property, StyleValue::Number(number(1.0))),
+                    None,
+                    environment,
+                ),
+                Err(StyleResolutionError::InvalidPropertyValue(property))
+            );
+        }
     }
 
     #[test]
