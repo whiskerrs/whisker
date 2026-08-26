@@ -279,7 +279,11 @@ impl LayoutTree {
         if impact.is_empty() {
             return Ok(impact);
         }
-        let converted = convert_retained_style(&style, retained.measurable)?;
+        let converted = if self.surface_child == Some(node) {
+            convert_surface_child_style(&style, retained.measurable)?
+        } else {
+            convert_retained_style(&style, retained.measurable)?
+        };
         let backend_node = retained.backend;
         let parent = retained.parent;
         self.backend
@@ -302,8 +306,12 @@ impl LayoutTree {
             return Ok(false);
         }
         let backend = retained.backend;
-        let converted = convert_retained_style(&retained.style, measurable)
-            .expect("a retained style was validated when it entered layout");
+        let converted = if self.surface_child == Some(node) {
+            convert_surface_child_style(&retained.style, measurable)
+        } else {
+            convert_retained_style(&retained.style, measurable)
+        }
+        .expect("a retained style was validated when it entered layout");
         self.backend
             .set_style(backend, converted)
             .expect("retained backend node");
@@ -480,6 +488,20 @@ impl LayoutTree {
             self.surface_viewport = Some(viewport);
         }
         if self.surface_child != Some(root) {
+            if let Some(previous) = self.surface_child
+                && let Some(retained) = self.nodes.get(&previous)
+            {
+                let restored = convert_retained_style(&retained.style, retained.measurable)
+                    .expect("a retained style was validated when it entered layout");
+                self.backend
+                    .set_style(retained.backend, restored)
+                    .expect("previous surface child remains retained");
+            }
+            let constrained = convert_surface_child_style(&retained.style, retained.measurable)
+                .expect("a retained style was validated when it entered layout");
+            self.backend
+                .set_style(backend_root, constrained)
+                .expect("application root remains retained");
             self.backend
                 .set_children(self.surface_root, &[backend_root])
                 .expect("retained surface and application roots");
@@ -601,6 +623,23 @@ fn surface_root_style(viewport: LayoutSize) -> Style {
         },
         ..Style::default()
     }
+}
+
+fn convert_surface_child_style(
+    input: &ComputedLayoutStyle,
+    measurable: bool,
+) -> Result<Style, LayoutError> {
+    let mut style = convert_retained_style(input, measurable)?;
+    // The application root represents the Host viewport. CSS automatic
+    // minimums must not let descendant content enlarge that viewport; an
+    // explicit author min-size is still honored.
+    if style.min_size.width == Dimension::auto() {
+        style.min_size.width = Dimension::length(0.0);
+    }
+    if style.min_size.height == Dimension::auto() {
+        style.min_size.height = Dimension::length(0.0);
+    }
+    Ok(style)
 }
 
 fn from_taffy_available(value: TaffyAvailableSpace) -> AvailableSpace {
@@ -1627,6 +1666,42 @@ mod tests {
                 height: 300.0,
             }
         );
+    }
+
+    #[test]
+    fn application_root_auto_minimum_does_not_grow_past_viewport() {
+        let root = id(1);
+        let content = id(2);
+        let mut tree = LayoutTree::new();
+        tree.create_node(
+            root,
+            ComputedLayoutStyle {
+                flex_grow: StyleNumber::new(1.0),
+                flex_direction: FlexDirectionValue::Column,
+                ..ComputedLayoutStyle::default()
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            content,
+            ComputedLayoutStyle {
+                size: Axes {
+                    width: ComputedSizeValue::Auto,
+                    height: ComputedSizeValue::Value(ComputedLengthPercentage::new(400.0, 0.0)),
+                },
+                flex_shrink: StyleNumber::new(0.0),
+                ..ComputedLayoutStyle::default()
+            },
+        )
+        .unwrap();
+        tree.set_children(root, &[content]).unwrap();
+
+        let snapshot = tree
+            .compute(root, LayoutSize::new(320.0, 240.0), &mut zero_measure)
+            .unwrap();
+        assert_eq!(snapshot.get(root).unwrap().border_box.width, 320.0);
+        assert_eq!(snapshot.get(root).unwrap().border_box.height, 240.0);
+        assert_eq!(snapshot.get(content).unwrap().border_box.height, 400.0);
     }
 
     #[test]

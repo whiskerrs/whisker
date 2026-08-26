@@ -8,6 +8,7 @@ use crate::ElementTag;
 use whisker_engine::whisker_protocol::{
     ElementRegistration, ElementRegistrationError, ElementSchema, ElementTypeId,
 };
+use whisker_engine::whisker_style::SpecifiedStyle;
 
 type SchemaKey = String;
 
@@ -32,6 +33,8 @@ pub struct ElementProviderMetadata {
     pub schema: ElementSchema,
     /// Authoring syntax that resolves to this contract.
     pub authoring: ElementAuthoringBinding,
+    /// Host-independent declarations applied before the caller's style.
+    pub base_style: SpecifiedStyle,
 }
 
 /// Generated Rust-side definition for one element-provider module.
@@ -66,6 +69,7 @@ impl ElementProviderMetadata {
         Self {
             schema,
             authoring: ElementAuthoringBinding::Builtin(tag),
+            base_style: SpecifiedStyle::new(),
         }
     }
 
@@ -77,7 +81,15 @@ impl ElementProviderMetadata {
         Self {
             schema,
             authoring: ElementAuthoringBinding::Named,
+            base_style: SpecifiedStyle::new(),
         }
+    }
+
+    /// Applies provider-owned defaults while preserving caller declarations as
+    /// the later, overriding style fragment.
+    pub fn with_base_style(mut self, style: SpecifiedStyle) -> Self {
+        self.base_style = style;
+        self
     }
 }
 
@@ -89,6 +101,7 @@ impl ElementProviderMetadata {
 #[derive(Clone, Debug)]
 pub struct ElementRegistry {
     registrations: Vec<ElementRegistration>,
+    base_styles: Vec<SpecifiedStyle>,
     builtins: HashMap<ElementTag, usize>,
     names: HashMap<String, usize>,
 }
@@ -117,6 +130,13 @@ impl ElementRegistry {
     /// Returns the normalized contracts in compact-ID order.
     pub fn registrations(&self) -> &[ElementRegistration] {
         &self.registrations
+    }
+
+    pub(crate) fn base_style(&self, registration: &ElementRegistration) -> &SpecifiedStyle {
+        let index = registration.element_type.get() as usize - 1;
+        self.base_styles
+            .get(index)
+            .expect("registrations and base styles share one compact-ID order")
     }
 
     /// Resolves one built-in authoring tag to its normalized contract.
@@ -163,6 +183,7 @@ impl ElementRegistry {
         let name = schema.name.clone();
         let index = self.registrations.len();
         self.registrations.push(schema.bind(raw_id));
+        self.base_styles.push(SpecifiedStyle::new());
         self.names.insert(name, index);
         Ok(&self.registrations[index])
     }
@@ -171,7 +192,7 @@ impl ElementRegistry {
 /// Mutable bootstrap description used to construct an [`ElementRegistry`].
 #[derive(Clone, Debug, Default)]
 pub struct ElementRegistryBuilder {
-    schemas: Vec<ElementSchema>,
+    schemas: Vec<(ElementSchema, SpecifiedStyle)>,
     builtin_bindings: Vec<(ElementTag, SchemaKey)>,
     name_bindings: Vec<(String, SchemaKey)>,
 }
@@ -196,7 +217,7 @@ impl ElementRegistryBuilder {
     /// Adds generated metadata for one UI-providing module.
     pub fn register_provider(mut self, provider: ElementProviderMetadata) -> Self {
         let name = provider.schema.name.clone();
-        self.schemas.push(provider.schema);
+        self.schemas.push((provider.schema, provider.base_style));
         match provider.authoring {
             ElementAuthoringBinding::Builtin(tag) => {
                 self.builtin_bindings.push((tag, name));
@@ -225,7 +246,7 @@ impl ElementRegistryBuilder {
     /// lower-level method supports schemas whose authoring binding is supplied
     /// separately or which are retained only for Host negotiation.
     pub fn register(mut self, schema: ElementSchema) -> Self {
-        self.schemas.push(schema);
+        self.schemas.push((schema, SpecifiedStyle::new()));
         self
     }
 
@@ -249,8 +270,9 @@ impl ElementRegistryBuilder {
     /// Validates schemas and bindings, then assigns compact IDs for the epoch.
     pub fn build(self) -> Result<ElementRegistry, ElementRegistryError> {
         let mut registrations = Vec::with_capacity(self.schemas.len());
+        let mut base_styles = Vec::with_capacity(self.schemas.len());
         let mut schemas = HashMap::with_capacity(self.schemas.len());
-        for (index, schema) in self.schemas.into_iter().enumerate() {
+        for (index, (schema, base_style)) in self.schemas.into_iter().enumerate() {
             schema
                 .validate()
                 .map_err(|error| ElementRegistryError::InvalidSchema {
@@ -268,6 +290,7 @@ impl ElementRegistryBuilder {
                 .ok_or(ElementRegistryError::ElementTypeIdExhausted)?;
             schemas.insert(key, registrations.len());
             registrations.push(schema.bind(raw_id));
+            base_styles.push(base_style);
         }
 
         let mut builtins = HashMap::with_capacity(self.builtin_bindings.len());
@@ -300,6 +323,7 @@ impl ElementRegistryBuilder {
 
         Ok(ElementRegistry {
             registrations,
+            base_styles,
             builtins,
             names,
         })

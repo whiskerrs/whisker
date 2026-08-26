@@ -1,6 +1,9 @@
 //! Rust-side definition of Whisker's built-in primitive element module.
 
 use crate::{ElementModuleDefinition, ElementProviderMetadata, ElementSchema, ElementTag};
+use whisker_engine::whisker_style::{
+    FlexDirectionValue, OverflowValue, SpecifiedStyle, StyleProperty, StyleValue,
+};
 
 #[whisker::builtin_component(
     name = "whisker.ui/View",
@@ -53,8 +56,28 @@ pub(crate) fn standard_element_providers() -> Vec<ElementProviderMetadata> {
     vec![
         ElementProviderMetadata::builtin(ElementTag::View, view_element_binding()),
         ElementProviderMetadata::builtin(ElementTag::Text, text_element_binding()),
-        ElementProviderMetadata::builtin(ElementTag::ScrollView, scroll_view_element_binding()),
+        ElementProviderMetadata::builtin(ElementTag::ScrollView, scroll_view_element_binding())
+            .with_base_style(scroll_view_base_style()),
     ]
+}
+
+fn scroll_view_base_style() -> SpecifiedStyle {
+    // A vertical ScrollView is a bounded viewport, not a row-shaped content
+    // container. Hidden layout overflow gives Taffy the CSS scroll-container
+    // automatic-minimum behavior; each native Host still owns scrolling.
+    SpecifiedStyle::new()
+        .push(
+            StyleProperty::FlexDirection,
+            StyleValue::FlexDirection(FlexDirectionValue::Column),
+        )
+        .push(
+            StyleProperty::OverflowX,
+            StyleValue::Overflow(OverflowValue::Hidden),
+        )
+        .push(
+            StyleProperty::OverflowY,
+            StyleValue::Overflow(OverflowValue::Hidden),
+        )
 }
 
 /// Returns the Rust-side module definition for `whisker.ui`.
@@ -93,6 +116,7 @@ mod tests {
         assert_eq!(definition.elements[0].schema, view_element_binding());
         assert_eq!(definition.elements[1].schema, text_element_binding());
         assert_eq!(definition.elements[2].schema, scroll_view_element_binding());
+        assert!(!definition.elements[2].base_style.is_empty());
         assert_eq!(
             definition.elements[0].authoring,
             crate::ElementAuthoringBinding::Builtin(ElementTag::View)

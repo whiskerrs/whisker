@@ -14,6 +14,7 @@ import android.text.TextUtils
 import android.text.style.LeadingMarginSpan
 import android.view.View
 import java.text.Bidi
+import kotlin.math.ceil
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerMeasureRequest
 import rs.whisker.runtime.resolveWhiskerTypeface
@@ -132,9 +133,9 @@ internal class HostMeasurementProvider(private val context: Context) {
             }
         }
         val maxWidthPx = if (availableWidthKind == DEFINITE && wrap != 0) {
-            (availableWidth * density).toInt().coerceAtLeast(1)
+            ceil(availableWidth * density).toInt().coerceAtLeast(1)
         } else {
-            (paint.measureText(text) + indentPixels).toInt().coerceAtLeast(1)
+            ceil(paint.measureText(text) + indentPixels).toInt().coerceAtLeast(1)
         }
         val builder = StaticLayout.Builder.obtain(
             layoutText, 0, layoutText.length, paint, maxWidthPx,

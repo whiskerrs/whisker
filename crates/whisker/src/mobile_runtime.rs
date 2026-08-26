@@ -26,6 +26,31 @@ use whisker_runtime::view::Element;
 
 use crate::{RuntimeInstance, SurfaceRuntime};
 
+#[cfg(target_os = "android")]
+fn mobile_error(message: impl std::fmt::Display) {
+    #[link(name = "log")]
+    unsafe extern "C" {
+        fn __android_log_write(
+            priority: std::os::raw::c_int,
+            tag: *const std::os::raw::c_char,
+            text: *const std::os::raw::c_char,
+        ) -> std::os::raw::c_int;
+    }
+    const ANDROID_LOG_ERROR: std::os::raw::c_int = 6;
+    let tag = c"WhiskerRust";
+    let Ok(text) = CString::new(message.to_string()) else {
+        return;
+    };
+    unsafe {
+        __android_log_write(ANDROID_LOG_ERROR, tag.as_ptr(), text.as_ptr());
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn mobile_error(message: impl std::fmt::Display) {
+    eprintln!("{message}");
+}
+
 pub type RequestFrameCallback = extern "C" fn(*mut c_void);
 
 struct MobileRuntime {
@@ -101,7 +126,7 @@ pub fn create(
     let mut runtime = RuntimeInstance::new(surface, wake);
     let modules = MobileModuleHost::new(module_data, invoke_module, observe_module);
     if let Err(error) = with_mobile_module_host(&modules, || runtime.mount(application)) {
-        eprintln!("Whisker mobile mount failed: {error}");
+        mobile_error(format_args!("Whisker mobile mount failed: {error}"));
         return std::ptr::null_mut();
     }
     let registrations = runtime.surface().element_registrations();
@@ -171,13 +196,13 @@ pub unsafe fn tick(
         )
     });
     if !mobile.drain_resource_commands() {
-        eprintln!("Whisker mobile Host rejected a resource command");
+        mobile_error("Whisker mobile Host rejected a resource command");
         return true;
     }
     match frame_result {
         Ok(drive) => !drive.needs_frame,
         Err(error) => {
-            eprintln!("Whisker mobile frame failed: {error}");
+            mobile_error(format_args!("Whisker mobile frame failed: {error}"));
             true
         }
     }

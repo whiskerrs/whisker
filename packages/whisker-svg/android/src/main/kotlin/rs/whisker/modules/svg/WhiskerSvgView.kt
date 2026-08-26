@@ -25,7 +25,7 @@ open class WhiskerSvgView(context: WhiskerContext) : WhiskerUI<WhiskerSvgDrawing
      * (renders nothing).
      */
     fun setDisplayList(value: String) {
-        val v = view ?: return
+        val v = view()
         if (value.isEmpty()) {
             v.displayListBytes = null
             v.invalidate()
@@ -47,7 +47,7 @@ open class WhiskerSvgView(context: WhiskerContext) : WhiskerUI<WhiskerSvgDrawing
      * `stroke="currentColor"` — the `FILL_TINT` / `STROKE_TINT` opcodes.
      */
     fun setColor(value: String) {
-        val v = view ?: return
+        val v = view()
         v.tintArgb = parseCssColor(value)
         v.invalidate()
     }

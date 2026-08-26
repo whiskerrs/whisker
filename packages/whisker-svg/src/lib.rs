@@ -121,8 +121,20 @@ pub fn svg(content: Signal<String>, color: Signal<String>, style: Style) -> Elem
 /// signal "internal transport, not a user-facing API surface".
 /// (Whisker doesn't enforce visibility on Prop names yet — this
 /// is documentation-level.)
-#[whisker::module_component("Svg")]
+#[whisker::module_component(
+    name = "whisker-svg:Svg",
+    measurement = None,
+)]
 pub fn svg_renderer(display_list: Signal<String>, color: Signal<String>, style: Style) {}
+
+/// Element schemas exported by this package for surface bootstrap.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        [svg_renderer_schema::element_provider()],
+    )
+}
 
 /// Compile `svg_xml` to a base64-cased display list. Returns empty
 /// string on parse failure (the replayer treats that as

@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
@@ -102,7 +103,11 @@ class WhiskerView(context: Context) :
             }
             val density = resources.displayMetrics.density
             nativeHandle = nativeCreate(width / density, height / density, density)
-            if (nativeHandle != 0L) requestFrameFromNative()
+            if (nativeHandle != 0L) {
+                requestFrameFromNative()
+            } else {
+                Log.e("WhiskerView", "Unable to create the Rust runtime; see bootstrap diagnostics above")
+            }
         }
     }
 
@@ -131,8 +136,8 @@ class WhiskerView(context: Context) :
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val childConsumed = super.dispatchTouchEvent(event)
-        val runtimeConsumed = dispatchPointerInput(event)
-        return childConsumed || runtimeConsumed
+        val runtimeReceived = dispatchPointerInput(event)
+        return childConsumed || runtimeReceived
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
@@ -143,12 +148,12 @@ class WhiskerView(context: Context) :
 
     private fun dispatchPointerInput(event: MotionEvent): Boolean {
         val density = resources.displayMetrics.density
-        var consumed = false
-        normalizePointerInput(event, density).forEach { pointer ->
+        val pointers = normalizePointerInput(event, density)
+        pointers.forEach { pointer ->
             pointerInputObserver?.invoke(pointer)
             val handle = nativeHandle
             if (handle != 0L) {
-                consumed = nativeDispatchPointer(
+                nativeDispatchPointer(
                     handle,
                     pointer.timestampMs,
                     pointer.event,
@@ -158,10 +163,14 @@ class WhiskerView(context: Context) :
                     pointer.y,
                     pointer.buttons,
                     pointer.changedButton,
-                ) || consumed
+                )
             }
         }
-        return consumed
+        // Android requires the View that accepted ACTION_DOWN to retain the
+        // complete stream. Listener consumption is a Rust routing result, not
+        // an Android ownership decision, so receiving a normalized sample is
+        // enough to claim it while the runtime is mounted.
+        return nativeHandle != 0L && pointers.isNotEmpty()
     }
 
     /** Test-only observer at the production MotionEvent-to-runtime dispatch seam. */

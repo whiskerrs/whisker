@@ -13,7 +13,10 @@
 //! state you'd built up (the selected segment, the hidden/shown balance,
 //! your scroll position) survives the patch.
 
-use whisker::css::{AlignItems, Color, Display, FlexDirection, FontWeight, JustifyContent, ToCss};
+use whisker::css::{
+    AlignItems, Color, ColorStop, Display, FlexDirection, FontWeight, Gradient, JustifyContent,
+    LinearDirection,
+};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_icons::{Icon, lucide};
@@ -28,7 +31,6 @@ const NEGATIVE: Color = Color::hex(0xFF6B6B); // expense
 const CURRENCY: &str = "$"; // try "€" / "£" / "¥"
 const USER: &str = "Alex"; // greeting name
 const CARD_RADIUS: i32 = 24; // balance-card corner radius
-const CARD_GRADIENT: &str = "linear-gradient(135deg, #7C5CFF 0%, #4E9BFF 100%)";
 // ─────────────────────────────────────────────────────────────────────
 
 fn muted() -> Color {
@@ -80,9 +82,6 @@ pub fn app() -> Element {
                 flex_grow: 1.0,
                 width: percent(100),
             ),
-            scroll_orientation: ScrollOrientation::Vertical,
-            scroll_bar_enable: false,
-            bounces: true,
         ) {
             view(style: css!(
                 display: Display::Flex,
@@ -129,7 +128,13 @@ pub fn app() -> Element {
                     border_radius: px(CARD_RADIUS),
                     padding: px(22),
                     margin_bottom: px(22),
-                ).raw("background", CARD_GRADIENT)) {
+                ).background_image(Gradient::Linear {
+                    direction: LinearDirection::ToBottomRight,
+                    stops: vec![
+                        ColorStop::new(ACCENT),
+                        ColorStop::new(Color::hex(0x4E9BFF)),
+                    ],
+                })) {
                     view(style: css!(
                         display: Display::Flex,
                         flex_direction: FlexDirection::Row,
@@ -229,7 +234,6 @@ fn segment(label: &'static str, index: usize, selected: RwSignal<usize>) -> Elem
             justify_content: JustifyContent::Center,
             background_color: if on { Color::hex(0xFF5CFF) } else { Color::rgba(0, 0, 0, 0.0) },
         )
-        .to_css_string()
     });
     let label_style = computed(move || {
         let on = selected.get() == index;
@@ -238,7 +242,6 @@ fn segment(label: &'static str, index: usize, selected: RwSignal<usize>) -> Elem
             font_weight: FontWeight::Numeric(600),
             color: if on { Color::hex(0xFFFFFF) } else { muted() },
         )
-        .to_css_string()
     });
 
     render! {

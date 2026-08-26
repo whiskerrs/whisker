@@ -3,6 +3,7 @@ package {{android_application_id}}
 import android.app.Activity
 import android.os.Bundle
 import rs.whisker.runtime.WhiskerView{{main_activity_imports}}
+import rs.whisker.runtime.WhiskerWindow
 import rs.whisker.runtime.generated.WhiskerModuleBehaviors
 
 /**
@@ -12,6 +13,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
 {{main_activity_pre_super}}        super.onCreate(savedInstanceState)
 
+        WhiskerWindow.enableEdgeToEdge(this)
         System.loadLibrary("{{rust_lib_name}}")
         WhiskerModuleBehaviors.registerAll()
         setContentView(WhiskerView(this))
