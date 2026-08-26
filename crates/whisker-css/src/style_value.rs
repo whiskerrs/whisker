@@ -89,6 +89,26 @@ impl ToStyleValue for OffsetPath {
                     })
                     .collect(),
             ),
+            Self::Circle {
+                radius,
+                center_x,
+                center_y,
+            } => OffsetPathValue::Circle {
+                radius: to_length_percentage(radius),
+                center_x: to_length_percentage(center_x),
+                center_y: to_length_percentage(center_y),
+            },
+            Self::Ellipse {
+                radius_x,
+                radius_y,
+                center_x,
+                center_y,
+            } => OffsetPathValue::Ellipse {
+                radius_x: to_length_percentage(radius_x),
+                radius_y: to_length_percentage(radius_y),
+                center_x: to_length_percentage(center_x),
+                center_y: to_length_percentage(center_y),
+            },
         })
     }
 }

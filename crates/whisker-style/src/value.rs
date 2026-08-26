@@ -449,6 +449,26 @@ pub enum OffsetPathValue {
     None,
     /// Follow an absolute path in the node's local logical-pixel space.
     Path(Vec<MotionPathCommandValue>),
+    /// Follow a circle resolved against the node border box.
+    Circle {
+        /// Radius; percentages use the normalized border-box diagonal.
+        radius: LengthPercentageValue,
+        /// Center position relative to border-box width.
+        center_x: LengthPercentageValue,
+        /// Center position relative to border-box height.
+        center_y: LengthPercentageValue,
+    },
+    /// Follow an ellipse resolved against the node border box.
+    Ellipse {
+        /// Horizontal radius relative to border-box width.
+        radius_x: LengthPercentageValue,
+        /// Vertical radius relative to border-box height.
+        radius_y: LengthPercentageValue,
+        /// Center position relative to border-box width.
+        center_x: LengthPercentageValue,
+        /// Center position relative to border-box height.
+        center_y: LengthPercentageValue,
+    },
 }
 
 /// Typed value of `offset-rotate`.
