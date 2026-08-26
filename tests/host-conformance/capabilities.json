@@ -88,6 +88,8 @@
       "id": "paint.background-layers",
       "basis": "lynx-4.0",
       "properties": ["background", "background-clip", "background-image", "background-origin", "background-position", "background-repeat", "background-size"],
+      "supported_subset": ["url-resource-lifecycle", "linear-radial-conic-gradients", "multiple-layers-with-independent-geometry"],
+      "pending_subset": ["background-clip-border-area"],
       "protocol": ["SetBackgroundLayers"],
       "rust": "partial",
       "hosts": {"desktop": "partial", "web": "partial", "android": "partial", "ios": "partial"}

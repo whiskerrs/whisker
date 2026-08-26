@@ -7,11 +7,12 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use whisker::css::{
-    Background as CssBackground, BackgroundAttachment as CssBackgroundAttachment,
+    Angle, Background as CssBackground, BackgroundAttachment as CssBackgroundAttachment,
     BackgroundClip as CssBackgroundClip, BackgroundLayer as CssBackgroundLayer,
     BackgroundOrigin as CssBackgroundOrigin, BackgroundRepeat as CssBackgroundRepeat,
     BackgroundSize as CssBackgroundSize, BackgroundSizeAxis as CssBackgroundSizeAxis, CalcExpr,
-    CssString, ImageRef, LengthPercentage, Percentage, Position,
+    ColorStop, CssString, Gradient, ImageRef, LengthPercentage, NamedColor, Percentage, Position,
+    RadialShape,
 };
 use whisker::prelude::*;
 use whisker::{
@@ -175,6 +176,41 @@ fn render_ready_background(surface_id: u64, style: Css) -> BackgroundLayer {
             _ => None,
         })
         .expect("Ready URL must be lowered into SetBackgroundLayers")
+}
+
+fn render_gradient(surface_id: u64, gradient: Gradient) -> PaintImage {
+    let surface = surface(surface_id);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime
+        .mount(move || {
+            render! { view(style: Css::new().width(px(100)).height(px(100)).background_image(gradient.clone())) }
+        })
+        .unwrap();
+    assert!(surface.take_resource_commands().is_empty());
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    sink.frames()
+        .iter()
+        .rev()
+        .flat_map(|frame| frame.packet.operations.iter().rev())
+        .find_map(|operation| match operation {
+            Operation::SetBackgroundLayers { layers, .. } if layers.len() == 1 => {
+                Some(layers[0].image.clone())
+            }
+            _ => None,
+        })
+        .expect("gradient must be lowered into SetBackgroundLayers")
 }
 
 fn dispatch_control_tap(runtime: &RuntimeInstance, surface: &SurfaceRuntime, timestamp_ms: f64) {
@@ -602,6 +638,87 @@ fn background_shorthand_preserves_geometry_for_each_url_layer() {
         (layers[1].origin, layers[1].clip),
         (PaintBox::Border, PaintBox::Content)
     );
+}
+
+#[test]
+fn background_gradients_lower_without_host_resources() {
+    let stops = || {
+        vec![
+            ColorStop::new(NamedColor::Red.into()),
+            ColorStop::new(NamedColor::Blue.into()),
+        ]
+    };
+    let linear = render_gradient(
+        47,
+        Gradient::Linear {
+            direction: whisker::css::LinearDirection::ToRight,
+            stops: stops(),
+        },
+    );
+    let PaintImage::LinearGradient {
+        angle_degrees,
+        repeating,
+        stops: linear_stops,
+    } = linear
+    else {
+        panic!("expected linear gradient")
+    };
+    assert_eq!(angle_degrees, 90.0);
+    assert!(!repeating);
+    assert_eq!(linear_stops.len(), 2);
+    assert_eq!(linear_stops[0].position.unwrap().fraction, 0.0);
+    assert_eq!(linear_stops[1].position.unwrap().fraction, 1.0);
+
+    let radial = render_gradient(
+        48,
+        Gradient::Radial {
+            shape: RadialShape::EllipseSized(px(40).into(), Percentage(25.0).into()),
+            stops: stops(),
+        },
+    );
+    let PaintImage::RadialGradient {
+        shape,
+        extent,
+        center,
+        radii,
+        ..
+    } = radial
+    else {
+        panic!("expected radial gradient")
+    };
+    assert_eq!(
+        shape,
+        whisker_engine::whisker_protocol::RadialGradientShape::Ellipse
+    );
+    assert_eq!(
+        extent,
+        whisker_engine::whisker_protocol::RadialGradientExtent::Explicit
+    );
+    assert_eq!(center.x.fraction, 0.5);
+    let (radius_x, radius_y) = radii.unwrap();
+    assert_eq!(radius_x.length, 40.0);
+    assert_eq!(radius_y.fraction, 0.25);
+
+    let conic = render_gradient(
+        49,
+        Gradient::Conic {
+            from: Some(Angle::Turn(0.25)),
+            at: Some((Percentage(25.0).into(), Percentage(75.0).into())),
+            stops: stops(),
+        },
+    );
+    let PaintImage::ConicGradient {
+        from_degrees,
+        center,
+        stops: conic_stops,
+        ..
+    } = conic
+    else {
+        panic!("expected conic gradient")
+    };
+    assert_eq!(from_degrees, 90.0);
+    assert_eq!((center.x.fraction, center.y.fraction), (0.25, 0.75));
+    assert_eq!(conic_stops.len(), 2);
 }
 
 #[test]

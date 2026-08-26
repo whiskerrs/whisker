@@ -86,7 +86,8 @@ fn corner_radius(value: &whisker_style::ComputedCornerRadius) -> PaintCornerRadi
     }
 }
 
-fn lower_color(color: &ColorValue) -> PaintColor {
+/// Lowers a renderer-independent computed color into the paint protocol.
+pub fn lower_color(color: &ColorValue) -> PaintColor {
     match color {
         ColorValue::Named(name) => PaintColor::Named(name.clone()),
         ColorValue::Rgba {

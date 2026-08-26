@@ -186,6 +186,58 @@ pub enum BackgroundImageValue {
     None,
     /// URL text resolved under Host resource policy.
     Url(String),
+    /// A procedural gradient resolved without Host resource loading.
+    Gradient(GradientValue),
+}
+
+/// One specified gradient color stop.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GradientStopValue {
+    /// Stop color.
+    pub color: ColorValue,
+    /// Optional distance along the gradient line.
+    pub position: Option<LengthPercentageValue>,
+}
+
+/// Shape and optional explicit radii of a radial gradient.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RadialGradientValue {
+    /// Circle using the CSS farthest-corner extent.
+    Circle,
+    /// Ellipse using the CSS farthest-corner extent.
+    Ellipse,
+    /// Circle with an explicit radius.
+    CircleSized(LengthPercentageValue),
+    /// Ellipse with explicit horizontal and vertical radii.
+    EllipseSized(LengthPercentageValue, LengthPercentageValue),
+}
+
+/// A specified procedural gradient image.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum GradientValue {
+    /// Linear gradient with a clockwise angle from the positive vertical axis.
+    Linear {
+        /// Direction in degrees.
+        angle_degrees: StyleNumber,
+        /// Ordered stops.
+        stops: Vec<GradientStopValue>,
+    },
+    /// Radial gradient centered in its image box.
+    Radial {
+        /// Shape and sizing rule.
+        shape: RadialGradientValue,
+        /// Ordered stops.
+        stops: Vec<GradientStopValue>,
+    },
+    /// Conic gradient around a configurable center.
+    Conic {
+        /// Starting angle in degrees.
+        from_degrees: StyleNumber,
+        /// Center in the image box.
+        center: BackgroundPositionValue,
+        /// Ordered stops.
+        stops: Vec<GradientStopValue>,
+    },
 }
 
 /// Tiling behavior on one background axis.
