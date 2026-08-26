@@ -464,7 +464,7 @@ impl SurfaceEngine {
             let current = self
                 .scene
                 .node(node)
-                .ok_or(SceneError::UnknownNode { node })?;
+                .expect("the retained scene node was validated above");
             current.hit_test() != Some(lower_hit_test(style.pointer_events()))
                 || current.cursor() != Some(&lower_cursor(style.cursor()))
         };
@@ -2137,6 +2137,16 @@ mod tests {
         assert_eq!(
             surface.scene.set_clip(root, lowered.clip),
             Err(SceneError::FramePending)
+        );
+        assert_eq!(
+            surface.set_cursor(
+                root,
+                Cursor {
+                    resources: Vec::new(),
+                    fallback: CursorKeyword::Pointer,
+                },
+            ),
+            Err(SurfaceError::Scene(SceneError::FramePending))
         );
         assert_eq!(
             surface.set_measurable(root, true),
