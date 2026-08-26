@@ -277,6 +277,34 @@ final class HostBoxPainter {
         let right = min(widths[1], bounds.width)
         let bottom = min(widths[2], bounds.height)
         let left = min(widths[3], bounds.width)
+        if widths.allSatisfy({ $0 > 0 }) &&
+            styles.allSatisfy({ $0 == borderStyleSolid }) &&
+            colors.dropFirst().allSatisfy({ $0.isEqual(colors[0]) }) {
+            let innerRect = CGRect(
+                x: bounds.minX + left,
+                y: bounds.minY + top,
+                width: max(0, bounds.width - left - right),
+                height: max(0, bounds.height - top - bottom)
+            )
+            let innerRadii = insetCornerRadii(
+                normalizedRadii(cornerRadii, in: bounds),
+                top: top,
+                right: right,
+                bottom: bottom,
+                left: left
+            )
+            let ring = CGMutablePath()
+            ring.addPath(outerPath.cgPath)
+            if !innerRect.isEmpty {
+                ring.addPath(roundedPath(in: innerRect, radii: innerRadii).cgPath)
+            }
+            context.saveGState()
+            colors[0].setFill()
+            context.addPath(ring)
+            context.drawPath(using: .eoFill)
+            context.restoreGState()
+            return
+        }
         let innerTopLeft = CGPoint(x: bounds.minX + left, y: bounds.minY + top)
         let innerTopRight = CGPoint(x: bounds.maxX - right, y: bounds.minY + top)
         let innerBottomRight = CGPoint(x: bounds.maxX - right, y: bounds.maxY - bottom)
