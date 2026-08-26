@@ -19,12 +19,12 @@
     ]
   },
   "target": {
-    "feature_count": 158,
-    "property_count": 157,
+    "feature_count": 155,
+    "property_count": 154,
     "registered_property_count": 177,
-    "target_registered_property_count": 157,
+    "target_registered_property_count": 154,
     "pending_registry_properties": [],
-    "excluded_registered_property_count": 20,
+    "excluded_registered_property_count": 23,
     "non_property_features": ["custom-properties"],
     "lynx_inventory": {
       "revision": "18a0a91009809de1d52a5637b82f573dc924e32a",
@@ -39,6 +39,9 @@
     {"property": "background-position-y", "reason": "not-in-lynx-non-layout-baseline"},
     {"property": "caret-color", "reason": "not-in-lynx-non-layout-baseline"},
     {"property": "font-variant", "reason": "not-in-lynx-non-layout-baseline"},
+    {"property": "mask", "reason": "excluded-from-core-to-avoid-offscreen-mask-compositing"},
+    {"property": "mask-composite", "reason": "excluded-from-core-to-avoid-offscreen-mask-compositing"},
+    {"property": "mask-image", "reason": "excluded-from-core-to-avoid-offscreen-mask-compositing"},
     {"property": "outline-color", "reason": "not-in-lynx-non-layout-baseline"},
     {"property": "outline-offset", "reason": "not-in-lynx-non-layout-baseline"},
     {"property": "outline-style", "reason": "not-in-lynx-non-layout-baseline"},
@@ -105,12 +108,12 @@
     {
       "id": "paint.visual-effects",
       "basis": "lynx-4.0",
-      "properties": ["box-shadow", "clip-path", "image-rendering", "mask", "mask-composite", "mask-image"],
+      "properties": ["box-shadow", "clip-path", "image-rendering"],
       "supported_subset": ["box-shadow-outer-offset-spread-and-blur", "box-shadow-inset-offset-spread-and-blur", "multiple-box-shadows", "clip-path-inset", "clip-path-circle-and-ellipse", "clip-path-path", "image-rendering-auto-pixelated-crisp-edges"],
-      "pending_subset": ["mask", "mask-composite", "mask-image"],
+      "pending_subset": [],
       "protocol": ["SetVisualEffects"],
-      "rust": "partial",
-      "hosts": {"desktop": "partial", "web": "partial", "android": "partial", "ios": "partial"}
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.backdrop-filter",
@@ -131,8 +134,8 @@
       "compatibility_notes": ["ellipse is resolved in Rust on all Hosts; unlike Lynx iOS it is supported, and vertical percentages use border-box height rather than Lynx Android's width-based implementation", "inset follows the CSS Motion Path clockwise starting point after the top-left radius, avoiding Lynx Android/iOS path-library start-point divergence", "SVG elliptical arcs use the standard endpoint-to-center conversion, including absolute negative radii, radii correction, and zero-radius line fallback"],
       "unsupported_browser_subset": ["web-parent-perspective-semantics", "perspective-origin", "preserve-3d"],
       "protocol": ["SetTransform", "SetVisualEffects"],
-      "rust": "partial",
-      "hosts": {"desktop": "partial", "web": "partial", "android": "partial", "ios": "partial"}
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.compositing",
@@ -146,11 +149,11 @@
       "id": "paint.clip-scroll",
       "basis": "taffy-0.13-layout-and-lynx-4.0-paint",
       "properties": ["overflow", "overflow-x", "overflow-y"],
-      "supported_subset": ["visible", "clip", "hidden", "scroll"],
-      "unsupported_browser_subset": ["auto"],
+      "supported_subset": ["visible", "hidden"],
+      "unsupported_browser_subset": ["clip", "scroll", "auto"],
       "protocol": ["SetClip"],
-      "rust": "partial",
-      "hosts": {"desktop": "partial", "web": "implemented", "android": "partial", "ios": "partial"}
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "paint.text",
