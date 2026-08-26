@@ -1,12 +1,16 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
 
 use base64::Engine as _;
 use wasm_bindgen::Clamped;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
-use whisker::ElementRegistry;
+use whisker::prelude::*;
+use whisker::runtime::RuntimeWakeHandle;
+use whisker::{ElementRegistry, RuntimeInstance, SurfaceRuntime};
 use whisker_engine::FrameSink;
 use whisker_host_conformance::{
     BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture,
@@ -25,6 +29,7 @@ use whisker_protocol::{
     ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
     SurfaceId, Transform, Visibility,
 };
+use whisker_style::StyleEnvironment;
 
 use crate::module_api::built_in_element_factories;
 use crate::scene::frame_sink::DomFrameSink;
@@ -262,6 +267,56 @@ async fn stale_resource_completion_cannot_replace_or_release_current_generation(
         service.state(resource, 2),
         Some(WebResourceState::Ready { .. })
     ));
+}
+
+#[wasm_bindgen_test]
+async fn typed_resource_commands_and_events_cross_the_web_runtime_boundary() {
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let wake_count = Arc::clone(&wakes);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(1).unwrap(),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 16.0),
+    );
+    let mut runtime = RuntimeInstance::new(
+        surface,
+        RuntimeWakeHandle::new(move || {
+            wake_count.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
+    runtime.mount(|| render! { view() }).unwrap();
+    let store = WebResourceStore::new();
+    let service = WebResourceService::new(store);
+    let resource = ResourceId::new(8).unwrap();
+    runtime
+        .surface()
+        .enqueue_resource_command(ResourceCommand::Load(ResourceRequest {
+            resource,
+            generation: 1,
+            kind: ResourceKind::RasterImage,
+            source: ResourceSource::Url(format!("data:image/png;base64,{RASTER_PNG_BASE64}")),
+        }))
+        .unwrap();
+
+    let commands = runtime.surface().take_resource_commands();
+    assert_eq!(commands.len(), 1);
+    for command in commands {
+        service.handle(command).await.unwrap();
+    }
+    let events = service.take_events();
+    assert_eq!(events.len(), 1);
+    let expected = events[0].clone();
+    let wakes_before_event = wakes.load(Ordering::SeqCst);
+    for event in events {
+        assert_eq!(
+            runtime.dispatch_resource_event(&event).unwrap(),
+            whisker::ResourceEventApply::Applied
+        );
+    }
+    assert_eq!(
+        runtime.surface().resource_event(resource, 1),
+        Some(expected)
+    );
+    assert!(wakes.load(Ordering::SeqCst) > wakes_before_event);
 }
 
 struct Driver {

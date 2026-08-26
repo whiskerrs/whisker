@@ -15,7 +15,7 @@ static JavaVM* g_vm;
 static jclass g_view_class;
 static jmethodID g_request_frame, g_begin_bootstrap, g_register_element, g_finish_bootstrap;
 static jmethodID g_begin_frame, g_current_revision, g_stage_operation, g_commit_frame, g_measure;
-static jmethodID g_invoke_module, g_observe_module;
+static jmethodID g_resource_command, g_invoke_module, g_observe_module;
 
 void whisker_mobile_bridge_anchor(void) {}
 
@@ -564,6 +564,24 @@ static void request_frame(void* data) {
     if(view){(*env)->CallVoidMethod(env,view,g_request_frame);clear_exception(env);(*env)->DeleteLocalRef(env,view);} if(attached)(*g_vm)->DetachCurrentThread(g_vm);
 }
 
+static bool resource_command(void* data, const WhiskerMobileResourceCommand* command) {
+    if (command == NULL || command->identifier.len > INT32_MAX || command->data.len > INT32_MAX ||
+        (command->identifier.len > 0 && command->identifier.ptr == NULL) ||
+        (command->data.len > 0 && command->data.ptr == NULL)) return false;
+    bool attached; JNIEnv* env=whisker_env(&attached); jobject view=env?local_view(env,data):NULL;
+    if(!view){if(attached)(*g_vm)->DetachCurrentThread(g_vm);return false;}
+    jstring identifier=new_string(env,command->identifier.ptr,command->identifier.len);
+    jbyteArray bytes=(*env)->NewByteArray(env,(jsize)command->data.len);
+    if(bytes&&command->data.len)(*env)->SetByteArrayRegion(
+        env,bytes,0,(jsize)command->data.len,(const jbyte*)command->data.ptr);
+    bool accepted=identifier&&bytes&&(*env)->CallBooleanMethod(
+        env,view,g_resource_command,(jint)command->command,(jint)command->kind,
+        (jint)command->source,(jlong)command->resource,(jlong)command->generation,
+        identifier,bytes)==JNI_TRUE&&!clear_exception(env);
+    if(bytes)(*env)->DeleteLocalRef(env,bytes);if(identifier)(*env)->DeleteLocalRef(env,identifier);
+    (*env)->DeleteLocalRef(env,view);if(attached)(*g_vm)->DetachCurrentThread(g_vm);return accepted;
+}
+
 static bool invoke_module(void* data,const uint8_t* module,size_t module_len,const uint8_t* method,size_t method_len,
                           const WhiskerValueRaw* args,size_t arg_count,bool async,
                           WhiskerMobileModuleResultCallback result,void* result_data) {
@@ -594,6 +612,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     METHOD(g_stage_operation,"stageOperationFromNative","(IIJJJIIIFJ[FLjava/lang/String;[Ljava/lang/String;Lrs/whisker/runtime/WhiskerValue;)Z")
     METHOD(g_commit_frame,"commitFrameFromNative","()Z")
     METHOD(g_measure,"measureFromNative","(IIFFIFFIILjava/lang/String;Ljava/lang/String;FIIIFFII[BFFI)[F")
+    METHOD(g_resource_command,"resourceCommandFromNative","(IIIJJLjava/lang/String;[B)Z")
     METHOD(g_invoke_module,"invokeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;ZJJ)Z")
     METHOD(g_observe_module,"observeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;Z)V")
 #undef METHOD
@@ -602,7 +621,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
 
 JNIEXPORT jlong JNICALL Java_rs_whisker_runtime_WhiskerView_nativeCreate(JNIEnv* env,jobject self,jfloat width,jfloat height,jfloat scale){
     WhiskerAndroidView* view=calloc(1,sizeof(*view));if(!view)return 0;view->surface=(*env)->NewGlobalRef(env,self);if(!view->surface){free(view);return 0;}
-    view->runtime=whisker_view_create(width,height,scale,request_frame,view,bootstrap_host,view,measure_host,view,present_frame,view,invoke_module,observe_module,view);
+    view->runtime=whisker_view_create(width,height,scale,request_frame,view,bootstrap_host,view,measure_host,view,present_frame,view,resource_command,view,invoke_module,observe_module,view);
     if(!view->runtime){(*env)->DeleteGlobalRef(env,view->surface);free(view);return 0;}return(jlong)(uintptr_t)view;
 }
 JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeTick(JNIEnv* env,jobject self,jlong handle,jdouble timestamp,jfloat width,jfloat height,jfloat scale){(void)env;(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;return view&&view->runtime&&whisker_view_tick(view->runtime,timestamp,width,height,scale)?JNI_TRUE:JNI_FALSE;}
@@ -624,6 +643,20 @@ JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchMod
     size_t m_len=0,e_len=0;char* m=copy_utf8(env,module,&m_len);char* e=copy_utf8(env,event,&e_len);WhiskerValueRaw raw=object_to_raw(env,payload);
     bool consumed=m&&e&&whisker_view_dispatch_module_event(view->runtime,(const uint8_t*)m,m_len,(const uint8_t*)e,e_len,&raw);
     release_raw(&raw);free(e);free(m);return consumed?JNI_TRUE:JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchResourceEvent(JNIEnv* env,jobject self,jlong handle,jint status,jint failure_code,jlong resource,jlong generation,jfloat width,jfloat height,jfloat scale,jint dimensions_mask,jstring diagnostic){
+    (void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;if(!view||!view->runtime||!diagnostic)return JNI_FALSE;
+    size_t diagnostic_len=0;char* diagnostic_bytes=copy_utf8(env,diagnostic,&diagnostic_len);
+    if(!diagnostic_bytes)return JNI_FALSE;
+    WhiskerMobileResourceEvent event={
+        .status=(uint32_t)status,.failure_code=(uint32_t)failure_code,
+        .resource=(uint64_t)resource,.generation=(uint64_t)generation,
+        .width=width,.height=height,.scale=scale,.dimensions_mask=(uint32_t)dimensions_mask,
+        .diagnostic={.ptr=diagnostic_bytes,.len=diagnostic_len}
+    };
+    bool consumed=whisker_view_dispatch_resource_event(view->runtime,&event);
+    free(diagnostic_bytes);return consumed?JNI_TRUE:JNI_FALSE;
 }
 
 #endif

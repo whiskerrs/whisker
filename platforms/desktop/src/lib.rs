@@ -173,24 +173,25 @@ impl DesktopRuntime {
         context: DesktopFrameContext,
     ) -> Result<DesktopFrameResult, DesktopError> {
         validate_context(context)?;
-        self.apply_pending_resource_updates();
+        self.drain_runtime_resource_commands(runtime)?;
+        let dispatched_resource_event = self.dispatch_pending_resource_events(runtime)?;
         let environment = StyleEnvironment::new(
             context.logical_width,
             context.logical_height,
             context.scale,
             14.0,
         );
-        let drive = runtime
-            .drive_frame(
-                context.timestamp_ms,
-                environment,
-                context.environment_epoch,
-                context.viewport_epoch,
-                &mut self.measurements,
-                &mut self.surface,
-                LayoutOptions::default(),
-            )
-            .map_err(|error| DesktopError(format!("drive Desktop frame: {error}")))?;
+        let drive = runtime.drive_frame(
+            context.timestamp_ms,
+            environment,
+            context.environment_epoch,
+            context.viewport_epoch,
+            &mut self.measurements,
+            &mut self.surface,
+            LayoutOptions::default(),
+        );
+        self.drain_runtime_resource_commands(runtime)?;
+        let drive = drive.map_err(|error| DesktopError(format!("drive Desktop frame: {error}")))?;
         let events = self.surface.take_events();
         let dispatched_provider_event = !events.is_empty();
         for event in events {
@@ -215,8 +216,25 @@ impl DesktopRuntime {
             )
             .map_err(|error| DesktopError(format!("paint Desktop frame: {error}")))?;
         Ok(DesktopFrameResult {
-            needs_frame: drive.needs_frame || dispatched_provider_event,
+            needs_frame: drive.needs_frame
+                || dispatched_provider_event
+                || dispatched_resource_event,
         })
+    }
+
+    fn drain_runtime_resource_commands(
+        &mut self,
+        runtime: &RuntimeInstance,
+    ) -> Result<(), DesktopError> {
+        drain_resource_commands(runtime, |command| self.resource_command(command)).map(|_| ())
+    }
+
+    fn dispatch_pending_resource_events(
+        &mut self,
+        runtime: &RuntimeInstance,
+    ) -> Result<bool, DesktopError> {
+        self.apply_pending_resource_updates();
+        dispatch_resource_events(runtime, std::mem::take(&mut self.resource_events))
     }
 
     fn apply_pending_resource_updates(&mut self) {
@@ -247,6 +265,32 @@ impl DesktopRuntime {
     }
 }
 
+fn drain_resource_commands(
+    runtime: &RuntimeInstance,
+    mut send: impl FnMut(whisker_protocol::ResourceCommand) -> Result<(), DesktopError>,
+) -> Result<usize, DesktopError> {
+    let commands = runtime.surface().take_resource_commands();
+    let count = commands.len();
+    for command in commands {
+        send(command)?;
+    }
+    Ok(count)
+}
+
+fn dispatch_resource_events(
+    runtime: &RuntimeInstance,
+    events: Vec<whisker_protocol::ResourceEvent>,
+) -> Result<bool, DesktopError> {
+    let mut applied = false;
+    for event in events {
+        applied |= runtime
+            .dispatch_resource_event(&event)
+            .map_err(|error| DesktopError(format!("dispatch Desktop resource event: {error}")))?
+            == whisker::ResourceEventApply::Applied;
+    }
+    Ok(applied)
+}
+
 fn validate_context(context: DesktopFrameContext) -> Result<(), DesktopError> {
     if !context.timestamp_ms.is_finite()
         || !context.logical_width.is_finite()
@@ -266,6 +310,15 @@ fn validate_context(context: DesktopFrameContext) -> Result<(), DesktopError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use whisker::SurfaceRuntime;
+    use whisker::prelude::*;
+    use whisker_protocol::{
+        ResourceCommand, ResourceDimensions, ResourceEvent, ResourceId, ResourceKind,
+        ResourceRequest, ResourceSource,
+    };
 
     #[test]
     fn frame_context_rejects_invalid_host_metrics() {
@@ -292,5 +345,62 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn typed_resource_commands_and_events_cross_the_desktop_runtime_boundary() {
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let wake_count = Arc::clone(&wakes);
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(1).unwrap(),
+            StyleEnvironment::new(100.0, 100.0, 1.0, 16.0),
+        );
+        let mut runtime = RuntimeInstance::new(
+            surface,
+            RuntimeWakeHandle::new(move || {
+                wake_count.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+        runtime.mount(|| render! { view() }).unwrap();
+        let resource = ResourceId::new(7).unwrap();
+        let command = ResourceCommand::Load(ResourceRequest {
+            resource,
+            generation: 1,
+            kind: ResourceKind::RasterImage,
+            source: ResourceSource::Bytes {
+                media_type: "image/png".into(),
+                data: vec![1, 2, 3],
+            },
+        });
+        runtime
+            .surface()
+            .enqueue_resource_command(command.clone())
+            .unwrap();
+
+        let mut sent = Vec::new();
+        assert_eq!(
+            drain_resource_commands(&runtime, |command| {
+                sent.push(command);
+                Ok(())
+            })
+            .unwrap(),
+            1
+        );
+        assert_eq!(sent, vec![command]);
+        assert!(runtime.surface().take_resource_commands().is_empty());
+
+        let event = ResourceEvent::Ready {
+            resource,
+            generation: 1,
+            dimensions: Some(ResourceDimensions {
+                width: 2.0,
+                height: 2.0,
+                scale: 1.0,
+            }),
+        };
+        let wakes_before_event = wakes.load(Ordering::SeqCst);
+        assert!(dispatch_resource_events(&runtime, vec![event.clone()]).unwrap());
+        assert_eq!(runtime.surface().resource_event(resource, 1), Some(event));
+        assert!(wakes.load(Ordering::SeqCst) > wakes_before_event);
     }
 }

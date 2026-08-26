@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
+use wasm_bindgen_futures::spawn_local;
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::{Element, ElementRegistry, RuntimeInstance, SurfaceRuntime, WhiskerModule};
 use whisker_engine::LayoutOptions;
@@ -88,6 +89,7 @@ pub async fn handle_resource_command(
             .ok_or_else(|| WebError("a Web application is not mounted".into()))
     })?;
     let event = resources.handle(command).await?;
+    resources.take_events();
     if event.is_some() {
         request_frame();
     }
@@ -160,6 +162,7 @@ impl WebApplication {
     }
 
     fn drive_frame(&mut self, timestamp_ms: f64) -> Result<(), WebError> {
+        self.start_resource_commands();
         for event in self.frames.take_events() {
             self.runtime
                 .dispatch_input(&InputEvent {
@@ -190,10 +193,42 @@ impl WebApplication {
                 LayoutOptions::default(),
             )
             .map_err(|error| WebError(format!("drive Web frame: {error}")))?;
+        self.start_resource_commands();
         if drive.needs_frame {
             request_frame();
         }
         Ok(())
+    }
+
+    fn start_resource_commands(&self) {
+        for command in self.runtime.surface().take_resource_commands() {
+            let resources = self.resources.clone();
+            spawn_local(async move {
+                let result = async {
+                    resources.handle(command).await?;
+                    let events = resources.take_events();
+                    APPLICATION.with(|slot| {
+                        let slot = slot.borrow();
+                        let application = slot
+                            .as_ref()
+                            .ok_or_else(|| WebError("a Web application is not mounted".into()))?;
+                        for event in events {
+                            application
+                                .runtime
+                                .dispatch_resource_event(&event)
+                                .map_err(|error| {
+                                    WebError(format!("dispatch Web resource event: {error}"))
+                                })?;
+                        }
+                        Ok::<_, WebError>(())
+                    })
+                }
+                .await;
+                if let Err(error) = result {
+                    web_sys::console::error_1(&error.to_string().into());
+                }
+            });
+        }
     }
 }
 

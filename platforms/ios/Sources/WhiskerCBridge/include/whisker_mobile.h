@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "whisker_bridge.h"
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 8 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 9 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -38,6 +38,23 @@ enum {
   WHISKER_MEASURE_CUSTOM
 };
 enum { WHISKER_MEASURE_READY = 1, WHISKER_MEASURE_PENDING, WHISKER_MEASURE_UNSUPPORTED };
+enum { WHISKER_RESOURCE_COMMAND_LOAD = 1, WHISKER_RESOURCE_COMMAND_RELEASE = 2 };
+enum {
+  WHISKER_RESOURCE_RASTER_IMAGE = 1, WHISKER_RESOURCE_VECTOR_IMAGE,
+  WHISKER_RESOURCE_FONT, WHISKER_RESOURCE_CURSOR, WHISKER_RESOURCE_PAINT_SERVER
+};
+enum {
+  WHISKER_RESOURCE_SOURCE_NONE = 0, WHISKER_RESOURCE_SOURCE_URL,
+  WHISKER_RESOURCE_SOURCE_BUNDLED_ASSET, WHISKER_RESOURCE_SOURCE_BYTES
+};
+enum { WHISKER_RESOURCE_EVENT_READY = 1, WHISKER_RESOURCE_EVENT_FAILED = 2 };
+enum {
+  WHISKER_RESOURCE_FAILURE_NONE = 0, WHISKER_RESOURCE_FAILURE_NOT_FOUND,
+  WHISKER_RESOURCE_FAILURE_DENIED, WHISKER_RESOURCE_FAILURE_NETWORK,
+  WHISKER_RESOURCE_FAILURE_DECODE, WHISKER_RESOURCE_FAILURE_CANCELLED,
+  WHISKER_RESOURCE_FAILURE_UNSUPPORTED
+};
+enum { WHISKER_RESOURCE_DIMENSIONS_PRESENT = 1 };
 
 typedef struct { float x, y, width, height; } WhiskerMobileRect;
 typedef struct { WhiskerMobileRect border, content; } WhiskerMobileLayoutGeometry;
@@ -128,11 +145,21 @@ typedef struct {
   float width, height, first_baseline, last_baseline; uint32_t metrics_mask;
   uint64_t request_id, prepared_content;
 } WhiskerMobileMeasureResponse;
+typedef struct {
+  uint32_t command, kind, source, _reserved; uint64_t resource, generation;
+  WhiskerStringRef identifier; WhiskerBytesRef data;
+} WhiskerMobileResourceCommand;
+typedef struct {
+  uint32_t status, failure_code; uint64_t resource, generation;
+  float width, height, scale; uint32_t dimensions_mask; WhiskerStringRef diagnostic;
+} WhiskerMobileResourceEvent;
 _Static_assert(sizeof(WhiskerMobileMemberRegistration) == 24, "WhiskerMobileMemberRegistration ABI drift");
 _Static_assert(sizeof(WhiskerMobileElementRegistration) == 72, "WhiskerMobileElementRegistration ABI drift");
 _Static_assert(sizeof(WhiskerMobileBootstrap) == 24, "WhiskerMobileBootstrap ABI drift");
 _Static_assert(sizeof(WhiskerMobileMeasureRequest) == 160, "WhiskerMobileMeasureRequest ABI drift");
 _Static_assert(sizeof(WhiskerMobileMeasureResponse) == 64, "WhiskerMobileMeasureResponse ABI drift");
+_Static_assert(sizeof(WhiskerMobileResourceCommand) == 64, "WhiskerMobileResourceCommand ABI drift");
+_Static_assert(sizeof(WhiskerMobileResourceEvent) == 56, "WhiskerMobileResourceEvent ABI drift");
 _Static_assert(sizeof(WhiskerMobileText) == 80, "WhiskerMobileText ABI drift");
 _Static_assert(sizeof(WhiskerMobileBoxPaint) == 272, "WhiskerMobileBoxPaint ABI drift");
 #endif

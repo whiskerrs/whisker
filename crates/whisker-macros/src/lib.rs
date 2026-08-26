@@ -185,6 +185,8 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             measure_data: *mut ::std::ffi::c_void,
             present_frame: ::whisker::__mobile_abi::PresentFrameCallback,
             present_frame_data: *mut ::std::ffi::c_void,
+            resource_command: ::whisker::__mobile_abi::ResourceCommandCallback,
+            resource_data: *mut ::std::ffi::c_void,
             invoke_module: ::whisker::__mobile_module::InvokeModuleCallback,
             observe_module: ::whisker::__mobile_module::ObserveModuleCallback,
             module_data: *mut ::std::ffi::c_void,
@@ -201,6 +203,8 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 measure_data,
                 present_frame,
                 present_frame_data,
+                resource_command,
+                resource_data,
                 invoke_module,
                 observe_module,
                 module_data,
@@ -277,6 +281,17 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     event_len,
                     payload,
                 )
+            }
+        }
+
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn whisker_view_dispatch_resource_event(
+            handle: *mut ::std::ffi::c_void,
+            event: *const ::whisker::__mobile_abi::MobileResourceEvent,
+        ) -> bool {
+            unsafe {
+                ::whisker::__mobile_runtime::dispatch_resource_event(handle, event)
             }
         }
 
