@@ -109,6 +109,74 @@ pub enum FlexBasisValue {
     LengthPercentage(LengthPercentageValue),
 }
 
+/// Minimum sizing function for one specified CSS Grid track.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum GridMinTrackSizingValue {
+    /// A fixed length or percentage.
+    Fixed(LengthPercentageValue),
+    /// The min-content contribution.
+    MinContent,
+    /// The max-content contribution.
+    MaxContent,
+    /// Automatic minimum sizing.
+    Auto,
+}
+
+/// Maximum sizing function for one specified CSS Grid track.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum GridMaxTrackSizingValue {
+    /// A fixed length or percentage.
+    Fixed(LengthPercentageValue),
+    /// The min-content contribution.
+    MinContent,
+    /// The max-content contribution.
+    MaxContent,
+    /// Fit content up to a limit.
+    FitContent(LengthPercentageValue),
+    /// Automatic maximum sizing.
+    Auto,
+    /// A flexible `fr` share.
+    Fraction(StyleNumber),
+}
+
+/// Specified minimum and maximum sizing functions for one Grid track.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GridTrackSizingValue {
+    /// Minimum sizing function.
+    pub min: GridMinTrackSizingValue,
+    /// Maximum sizing function.
+    pub max: GridMaxTrackSizingValue,
+}
+
+/// One repeated fragment in a specified Grid template.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GridTemplateRepetitionValue {
+    /// Repetition count.
+    pub count: crate::GridRepetitionCountValue,
+    /// Tracks inside the repeated fragment.
+    pub tracks: Vec<GridTrackSizingValue>,
+    /// Named lines surrounding the repeated tracks.
+    pub line_names: Vec<Vec<String>>,
+}
+
+/// One component in a specified Grid template.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum GridTemplateComponentValue {
+    /// One non-repeated track.
+    Track(GridTrackSizingValue),
+    /// A `repeat()` fragment.
+    Repeat(GridTemplateRepetitionValue),
+}
+
+/// Specified track components and named lines for one Grid axis.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct GridTemplateValue {
+    /// Track or repetition components.
+    pub components: Vec<GridTemplateComponentValue>,
+    /// Named lines outside repetition components.
+    pub line_names: Vec<Vec<String>>,
+}
+
 /// Main-axis distribution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum JustifyContentValue {

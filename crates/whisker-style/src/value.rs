@@ -330,6 +330,16 @@ pub enum StyleValue {
     AlignSelf(crate::AlignSelfValue),
     /// Cross-axis line distribution.
     AlignContent(crate::AlignContentValue),
+    /// Explicit Grid track template for one axis.
+    GridTemplate(crate::GridTemplateValue),
+    /// Implicit Grid track sizing functions for one axis.
+    GridTracks(Vec<crate::GridTrackSizingValue>),
+    /// Grid auto-placement direction and density.
+    GridAutoFlow(crate::GridAutoFlowValue),
+    /// One Grid item edge placement.
+    GridPlacement(crate::GridPlacementValue),
+    /// Named Grid area rectangles.
+    GridTemplateAreas(crate::GridTemplateAreasValue),
     /// Width-to-height ratio.
     AspectRatio(crate::AspectRatioValue),
 }

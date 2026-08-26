@@ -13,9 +13,9 @@
   "target": {
     "feature_count": 158,
     "property_count": 157,
-    "registered_property_count": 174,
-    "target_registered_property_count": 154,
-    "pending_registry_properties": ["clear", "float", "grid-template-areas"],
+    "registered_property_count": 175,
+    "target_registered_property_count": 155,
+    "pending_registry_properties": ["clear", "float"],
     "excluded_registered_property_count": 20,
     "non_property_features": ["custom-properties"],
     "lynx_inventory": {
@@ -64,7 +64,7 @@
       "supported_subset": ["explicit-implicit-tracks", "fr-minmax-fit-content-repeat", "auto-fill-auto-fit", "row-column-dense-flow", "line-span-named-placement", "named-areas"],
       "unsupported_browser_subset": ["subgrid", "masonry"],
       "protocol": ["SetLayout"],
-      "rust": "planned",
+      "rust": "implemented",
       "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
     },
     {

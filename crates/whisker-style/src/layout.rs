@@ -3,9 +3,10 @@
 use crate::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, AspectRatioValue, BoxSizingValue,
     CalcExpression, DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue,
-    FlexWrapValue, JustifyContentValue, LengthPercentageAutoValue, LengthPercentageValue,
-    LengthUnit, LengthValue, PositionValue, PropertyImpactSet, SizeValue, SpecifiedStyle,
-    StyleEnvironment, StyleNumber, StyleProperty, StyleResolutionError, StyleValue,
+    FlexWrapValue, GridMaxTrackSizingValue, GridMinTrackSizingValue, GridTemplateComponentValue,
+    GridTemplateValue, GridTrackSizingValue, JustifyContentValue, LengthPercentageAutoValue,
+    LengthPercentageValue, LengthUnit, LengthValue, PositionValue, PropertyImpactSet, SizeValue,
+    SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty, StyleResolutionError, StyleValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -121,6 +122,201 @@ pub struct Axes<T> {
     pub height: T,
 }
 
+/// Minimum sizing function for one computed CSS Grid track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedGridMinTrackSizing {
+    /// A fixed length or percentage.
+    Fixed(ComputedLengthPercentage),
+    /// The track's min-content contribution.
+    MinContent,
+    /// The track's max-content contribution.
+    MaxContent,
+    /// Automatic minimum sizing.
+    Auto,
+}
+
+/// Maximum sizing function for one computed CSS Grid track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedGridMaxTrackSizing {
+    /// A fixed length or percentage.
+    Fixed(ComputedLengthPercentage),
+    /// The track's min-content contribution.
+    MinContent,
+    /// The track's max-content contribution.
+    MaxContent,
+    /// Fit content up to the supplied limit.
+    FitContent(ComputedLengthPercentage),
+    /// Automatic maximum sizing.
+    Auto,
+    /// A flexible `fr` share.
+    Fraction(StyleNumber),
+}
+
+/// Computed minimum and maximum sizing functions for one CSS Grid track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedGridTrackSizing {
+    /// Minimum sizing function.
+    pub min: ComputedGridMinTrackSizing,
+    /// Maximum sizing function.
+    pub max: ComputedGridMaxTrackSizing,
+}
+
+impl ComputedGridTrackSizing {
+    /// Creates a fixed logical-pixel track.
+    pub const fn length(value: f32) -> Self {
+        let value = ComputedLengthPercentage::new(value, 0.0);
+        Self {
+            min: ComputedGridMinTrackSizing::Fixed(value),
+            max: ComputedGridMaxTrackSizing::Fixed(value),
+        }
+    }
+
+    /// Creates a flexible `fr` track with an automatic minimum.
+    pub const fn fraction(value: f32) -> Self {
+        Self {
+            min: ComputedGridMinTrackSizing::Auto,
+            max: ComputedGridMaxTrackSizing::Fraction(StyleNumber::new(value)),
+        }
+    }
+
+    /// Creates an automatic track.
+    pub const fn auto() -> Self {
+        Self {
+            min: ComputedGridMinTrackSizing::Auto,
+            max: ComputedGridMaxTrackSizing::Auto,
+        }
+    }
+}
+
+/// Repetition count used by `repeat()` in a computed Grid template.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GridRepetitionCountValue {
+    /// Repeat a fixed number of times.
+    Count(u16),
+    /// Add tracks while they fit.
+    AutoFill,
+    /// Add tracks while they fit and collapse empty tracks.
+    AutoFit,
+}
+
+/// One repeated fragment in a computed Grid template.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedGridTemplateRepetition {
+    /// Repetition count.
+    pub count: GridRepetitionCountValue,
+    /// Track sizing functions inside the repeated fragment.
+    pub tracks: Vec<ComputedGridTrackSizing>,
+    /// Named lines surrounding the repeated tracks.
+    pub line_names: Vec<Vec<String>>,
+}
+
+/// One component of a computed Grid template.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedGridTemplateComponent {
+    /// One non-repeated track.
+    Track(ComputedGridTrackSizing),
+    /// A `repeat()` fragment.
+    Repeat(ComputedGridTemplateRepetition),
+}
+
+/// Computed track components and named lines for one Grid axis.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ComputedGridTemplate {
+    /// Track or repetition components.
+    pub components: Vec<ComputedGridTemplateComponent>,
+    /// Named lines outside repetition components.
+    pub line_names: Vec<Vec<String>>,
+}
+
+impl ComputedGridTemplate {
+    /// Creates a template containing only non-repeated tracks.
+    pub fn tracks(tracks: impl IntoIterator<Item = ComputedGridTrackSizing>) -> Self {
+        let components = tracks
+            .into_iter()
+            .map(ComputedGridTemplateComponent::Track)
+            .collect::<Vec<_>>();
+        Self {
+            line_names: vec![Vec::new(); components.len() + 1],
+            components,
+        }
+    }
+}
+
+/// Placement of one edge of a Grid item.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GridPlacementValue {
+    /// Use auto-placement.
+    #[default]
+    Auto,
+    /// Place at a numbered Grid line.
+    Line(i16),
+    /// Place at the nth line with this name.
+    NamedLine(String, i16),
+    /// Span a number of tracks.
+    Span(u16),
+    /// Span to the nth line with this name.
+    NamedSpan(String, u16),
+}
+
+/// Start and end placement for one Grid item axis.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct GridPlacementLineValue {
+    /// Start edge placement.
+    pub start: GridPlacementValue,
+    /// End edge placement.
+    pub end: GridPlacementValue,
+}
+
+impl GridPlacementLineValue {
+    /// Places an item between two numbered lines.
+    pub const fn lines(start: i16, end: i16) -> Self {
+        Self {
+            start: GridPlacementValue::Line(start),
+            end: GridPlacementValue::Line(end),
+        }
+    }
+}
+
+/// Auto-placement direction and packing mode for Grid items.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GridAutoFlowValue {
+    /// Fill rows using sparse placement.
+    #[default]
+    Row,
+    /// Fill columns using sparse placement.
+    Column,
+    /// Fill rows and back-fill holes.
+    RowDense,
+    /// Fill columns and back-fill holes.
+    ColumnDense,
+}
+
+/// One named rectangle in a Grid area template.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GridTemplateAreaValue {
+    /// Area name.
+    pub name: String,
+    /// Zero-based starting row.
+    pub row_start: u16,
+    /// Exclusive ending row.
+    pub row_end: u16,
+    /// Zero-based starting column.
+    pub column_start: u16,
+    /// Exclusive ending column.
+    pub column_end: u16,
+}
+
+/// Named area rectangles and dimensions for `grid-template-areas`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GridTemplateAreasValue {
+    /// Named rectangles.
+    pub areas: Vec<GridTemplateAreaValue>,
+    /// Number of template rows.
+    pub row_count: u16,
+    /// Number of template columns.
+    pub column_count: u16,
+}
+
 impl<T: Copy> Axes<T> {
     const fn all(value: T) -> Self {
         Self {
@@ -171,6 +367,10 @@ pub struct ComputedLayoutStyle {
     pub align_items: AlignItemsValue,
     /// Per-item cross-axis alignment.
     pub align_self: AlignSelfValue,
+    /// Inline-axis child alignment for Grid containers.
+    pub justify_items: Option<AlignItemsValue>,
+    /// Inline-axis alignment for one Grid item.
+    pub justify_self: Option<AlignSelfValue>,
     /// Wrapped-line cross-axis distribution.
     pub align_content: AlignContentValue,
     /// Row and column gaps.
@@ -179,6 +379,22 @@ pub struct ComputedLayoutStyle {
     pub aspect_ratio: Option<StyleNumber>,
     /// Flex/grid ordering key.
     pub order: i32,
+    /// Explicit Grid column template.
+    pub grid_template_columns: ComputedGridTemplate,
+    /// Explicit Grid row template.
+    pub grid_template_rows: ComputedGridTemplate,
+    /// Implicit Grid column sizing functions.
+    pub grid_auto_columns: Vec<ComputedGridTrackSizing>,
+    /// Implicit Grid row sizing functions.
+    pub grid_auto_rows: Vec<ComputedGridTrackSizing>,
+    /// Grid auto-placement mode.
+    pub grid_auto_flow: GridAutoFlowValue,
+    /// Optional named area template.
+    pub grid_template_areas: Option<GridTemplateAreasValue>,
+    /// Grid column placement for this item.
+    pub grid_column: GridPlacementLineValue,
+    /// Grid row placement for this item.
+    pub grid_row: GridPlacementLineValue,
 }
 
 impl Default for ComputedLayoutStyle {
@@ -205,10 +421,20 @@ impl Default for ComputedLayoutStyle {
             justify_content: JustifyContentValue::FlexStart,
             align_items: AlignItemsValue::Stretch,
             align_self: AlignSelfValue::Auto,
+            justify_items: None,
+            justify_self: None,
             align_content: AlignContentValue::Stretch,
             gap: Axes::all(ComputedLengthPercentage::ZERO),
             aspect_ratio: None,
             order: 0,
+            grid_template_columns: ComputedGridTemplate::default(),
+            grid_template_rows: ComputedGridTemplate::default(),
+            grid_auto_columns: Vec::new(),
+            grid_auto_rows: Vec::new(),
+            grid_auto_flow: GridAutoFlowValue::Row,
+            grid_template_areas: None,
+            grid_column: GridPlacementLineValue::default(),
+            grid_row: GridPlacementLineValue::default(),
         }
     }
 }
@@ -476,6 +702,19 @@ pub(crate) fn resolve_layout_style(
         },
     )?
     .unwrap_or(style.align_self);
+    style.justify_items = copied(
+        declarations.justify_items,
+        StyleProperty::JustifyItems,
+        |value| match value {
+            StyleValue::AlignItems(value) => Some(*value),
+            _ => None,
+        },
+    )?;
+    style.justify_self = match declarations.justify_self {
+        Some(StyleValue::AlignSelf(AlignSelfValue::Auto)) | None => None,
+        Some(StyleValue::AlignSelf(value)) => Some(*value),
+        Some(_) => return Err(invalid(StyleProperty::JustifySelf)),
+    };
     style.align_content = copied(
         declarations.align_content,
         StyleProperty::AlignContent,
@@ -511,8 +750,223 @@ pub(crate) fn resolve_layout_style(
         };
         style.order = i32::try_from(*value).map_err(|_| invalid(StyleProperty::Order))?;
     }
+    style.grid_template_columns = resolve_optional_grid_template(
+        declarations.grid_template_columns,
+        font_size,
+        environment,
+        StyleProperty::GridTemplateColumns,
+    )?;
+    style.grid_template_rows = resolve_optional_grid_template(
+        declarations.grid_template_rows,
+        font_size,
+        environment,
+        StyleProperty::GridTemplateRows,
+    )?;
+    style.grid_auto_columns = resolve_optional_grid_tracks(
+        declarations.grid_auto_columns,
+        font_size,
+        environment,
+        StyleProperty::GridAutoColumns,
+    )?;
+    style.grid_auto_rows = resolve_optional_grid_tracks(
+        declarations.grid_auto_rows,
+        font_size,
+        environment,
+        StyleProperty::GridAutoRows,
+    )?;
+    style.grid_auto_flow = copied(
+        declarations.grid_auto_flow,
+        StyleProperty::GridAutoFlow,
+        |value| match value {
+            StyleValue::GridAutoFlow(value) => Some(*value),
+            _ => None,
+        },
+    )?
+    .unwrap_or(style.grid_auto_flow);
+    style.grid_template_areas = match declarations.grid_template_areas {
+        Some(StyleValue::GridTemplateAreas(value)) => {
+            validate_grid_template_areas(value)?;
+            Some(value.clone())
+        }
+        Some(_) => return Err(invalid(StyleProperty::GridTemplateAreas)),
+        None => None,
+    };
+    style.grid_column.start = resolve_grid_placement(
+        declarations.grid_column_start,
+        StyleProperty::GridColumnStart,
+    )?;
+    style.grid_column.end =
+        resolve_grid_placement(declarations.grid_column_end, StyleProperty::GridColumnEnd)?;
+    style.grid_row.start =
+        resolve_grid_placement(declarations.grid_row_start, StyleProperty::GridRowStart)?;
+    style.grid_row.end =
+        resolve_grid_placement(declarations.grid_row_end, StyleProperty::GridRowEnd)?;
 
     Ok(style)
+}
+
+fn resolve_optional_grid_template(
+    value: Option<&StyleValue>,
+    font_size: f32,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedGridTemplate, StyleResolutionError> {
+    match value {
+        Some(StyleValue::GridTemplate(value)) => {
+            resolve_grid_template(value, font_size, environment, property)
+        }
+        Some(_) => Err(invalid(property)),
+        None => Ok(ComputedGridTemplate::default()),
+    }
+}
+
+fn resolve_grid_template(
+    value: &GridTemplateValue,
+    font_size: f32,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedGridTemplate, StyleResolutionError> {
+    let components = value
+        .components
+        .iter()
+        .map(|component| match component {
+            GridTemplateComponentValue::Track(track) => {
+                resolve_grid_track(track, font_size, environment, property)
+                    .map(ComputedGridTemplateComponent::Track)
+            }
+            GridTemplateComponentValue::Repeat(repetition) => {
+                if matches!(repetition.count, GridRepetitionCountValue::Count(0)) {
+                    return Err(invalid(property));
+                }
+                let tracks = repetition
+                    .tracks
+                    .iter()
+                    .map(|track| resolve_grid_track(track, font_size, environment, property))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if tracks.is_empty() || repetition.line_names.len() != tracks.len() + 1 {
+                    return Err(invalid(property));
+                }
+                Ok(ComputedGridTemplateComponent::Repeat(
+                    ComputedGridTemplateRepetition {
+                        count: repetition.count,
+                        tracks,
+                        line_names: repetition.line_names.clone(),
+                    },
+                ))
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if value.line_names.len() != components.len() + 1 {
+        return Err(invalid(property));
+    }
+    Ok(ComputedGridTemplate {
+        components,
+        line_names: value.line_names.clone(),
+    })
+}
+
+fn resolve_optional_grid_tracks(
+    value: Option<&StyleValue>,
+    font_size: f32,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<Vec<ComputedGridTrackSizing>, StyleResolutionError> {
+    match value {
+        Some(StyleValue::GridTracks(value)) => value
+            .iter()
+            .map(|track| resolve_grid_track(track, font_size, environment, property))
+            .collect(),
+        Some(_) => Err(invalid(property)),
+        None => Ok(Vec::new()),
+    }
+}
+
+fn resolve_grid_track(
+    value: &GridTrackSizingValue,
+    font_size: f32,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedGridTrackSizing, StyleResolutionError> {
+    let min =
+        match &value.min {
+            GridMinTrackSizingValue::Fixed(value) => ComputedGridMinTrackSizing::Fixed(
+                resolve_affine(value, font_size, environment, property)?,
+            ),
+            GridMinTrackSizingValue::MinContent => ComputedGridMinTrackSizing::MinContent,
+            GridMinTrackSizingValue::MaxContent => ComputedGridMinTrackSizing::MaxContent,
+            GridMinTrackSizingValue::Auto => ComputedGridMinTrackSizing::Auto,
+        };
+    let max =
+        match &value.max {
+            GridMaxTrackSizingValue::Fixed(value) => ComputedGridMaxTrackSizing::Fixed(
+                resolve_affine(value, font_size, environment, property)?,
+            ),
+            GridMaxTrackSizingValue::MinContent => ComputedGridMaxTrackSizing::MinContent,
+            GridMaxTrackSizingValue::MaxContent => ComputedGridMaxTrackSizing::MaxContent,
+            GridMaxTrackSizingValue::FitContent(value) => ComputedGridMaxTrackSizing::FitContent(
+                resolve_affine(value, font_size, environment, property)?,
+            ),
+            GridMaxTrackSizingValue::Auto => ComputedGridMaxTrackSizing::Auto,
+            GridMaxTrackSizingValue::Fraction(value)
+                if value.get().is_finite() && value.get() >= 0.0 =>
+            {
+                ComputedGridMaxTrackSizing::Fraction(*value)
+            }
+            GridMaxTrackSizingValue::Fraction(_) => return Err(invalid(property)),
+        };
+    Ok(ComputedGridTrackSizing { min, max })
+}
+
+fn resolve_grid_placement(
+    value: Option<&StyleValue>,
+    property: StyleProperty,
+) -> Result<GridPlacementValue, StyleResolutionError> {
+    match value {
+        Some(StyleValue::GridPlacement(GridPlacementValue::Line(0)))
+        | Some(StyleValue::GridPlacement(GridPlacementValue::Span(0))) => Err(invalid(property)),
+        Some(StyleValue::GridPlacement(GridPlacementValue::NamedLine(name, _)))
+        | Some(StyleValue::GridPlacement(GridPlacementValue::NamedSpan(name, _)))
+            if name.is_empty() || name.chars().any(char::is_whitespace) =>
+        {
+            Err(invalid(property))
+        }
+        Some(StyleValue::GridPlacement(value)) => Ok(value.clone()),
+        Some(_) => Err(invalid(property)),
+        None => Ok(GridPlacementValue::Auto),
+    }
+}
+
+fn validate_grid_template_areas(
+    value: &GridTemplateAreasValue,
+) -> Result<(), StyleResolutionError> {
+    let area_shapes_are_valid = value.row_count > 0
+        && value.column_count > 0
+        && value.areas.iter().all(|area| {
+            !area.name.is_empty()
+                && !area.name.chars().any(char::is_whitespace)
+                && area.row_start < area.row_end
+                && area.row_end <= value.row_count
+                && area.column_start < area.column_end
+                && area.column_end <= value.column_count
+        });
+    let names_are_unique = value.areas.iter().enumerate().all(|(index, area)| {
+        value.areas[index + 1..]
+            .iter()
+            .all(|other| other.name != area.name)
+    });
+    let areas_do_not_overlap = value.areas.iter().enumerate().all(|(index, area)| {
+        value.areas[index + 1..].iter().all(|other| {
+            area.row_end <= other.row_start
+                || other.row_end <= area.row_start
+                || area.column_end <= other.column_start
+                || other.column_end <= area.column_start
+        })
+    });
+    if area_shapes_are_valid && names_are_unique && areas_do_not_overlap {
+        Ok(())
+    } else {
+        Err(invalid(StyleProperty::GridTemplateAreas))
+    }
 }
 
 fn copied<T: Copy>(
@@ -894,11 +1348,23 @@ struct LayoutDeclarations<'a> {
     justify_content: Option<&'a StyleValue>,
     align_items: Option<&'a StyleValue>,
     align_self: Option<&'a StyleValue>,
+    justify_items: Option<&'a StyleValue>,
+    justify_self: Option<&'a StyleValue>,
     align_content: Option<&'a StyleValue>,
     row_gap: Option<&'a StyleValue>,
     column_gap: Option<&'a StyleValue>,
     aspect_ratio: Option<&'a StyleValue>,
     order: Option<&'a StyleValue>,
+    grid_template_columns: Option<&'a StyleValue>,
+    grid_template_rows: Option<&'a StyleValue>,
+    grid_auto_columns: Option<&'a StyleValue>,
+    grid_auto_rows: Option<&'a StyleValue>,
+    grid_auto_flow: Option<&'a StyleValue>,
+    grid_template_areas: Option<&'a StyleValue>,
+    grid_column_start: Option<&'a StyleValue>,
+    grid_column_end: Option<&'a StyleValue>,
+    grid_row_start: Option<&'a StyleValue>,
+    grid_row_end: Option<&'a StyleValue>,
 }
 
 impl<'a> LayoutDeclarations<'a> {
@@ -936,11 +1402,23 @@ impl<'a> LayoutDeclarations<'a> {
                 StyleProperty::JustifyContent => &mut values.justify_content,
                 StyleProperty::AlignItems => &mut values.align_items,
                 StyleProperty::AlignSelf => &mut values.align_self,
+                StyleProperty::JustifyItems => &mut values.justify_items,
+                StyleProperty::JustifySelf => &mut values.justify_self,
                 StyleProperty::AlignContent => &mut values.align_content,
                 StyleProperty::RowGap => &mut values.row_gap,
                 StyleProperty::ColumnGap => &mut values.column_gap,
                 StyleProperty::AspectRatio => &mut values.aspect_ratio,
                 StyleProperty::Order => &mut values.order,
+                StyleProperty::GridTemplateColumns => &mut values.grid_template_columns,
+                StyleProperty::GridTemplateRows => &mut values.grid_template_rows,
+                StyleProperty::GridAutoColumns => &mut values.grid_auto_columns,
+                StyleProperty::GridAutoRows => &mut values.grid_auto_rows,
+                StyleProperty::GridAutoFlow => &mut values.grid_auto_flow,
+                StyleProperty::GridTemplateAreas => &mut values.grid_template_areas,
+                StyleProperty::GridColumnStart => &mut values.grid_column_start,
+                StyleProperty::GridColumnEnd => &mut values.grid_column_end,
+                StyleProperty::GridRowStart => &mut values.grid_row_start,
+                StyleProperty::GridRowEnd => &mut values.grid_row_end,
                 _ => continue,
             };
             *slot = Some(declaration.value());
@@ -952,6 +1430,7 @@ impl<'a> LayoutDeclarations<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::GridTemplateRepetitionValue;
 
     fn number(value: f32) -> StyleNumber {
         StyleNumber::new(value)
@@ -1016,6 +1495,414 @@ mod tests {
         assert_eq!(style.order, 0);
         assert!(style.aspect_ratio.is_none());
         assert!(style.changes_from(&style).is_empty());
+    }
+
+    #[test]
+    fn grid_declarations_resolve_to_backend_independent_values() {
+        let fixed = |value: LengthPercentageValue| GridTrackSizingValue {
+            min: GridMinTrackSizingValue::Fixed(value.clone()),
+            max: GridMaxTrackSizingValue::Fixed(value),
+        };
+        let fraction = |value| GridTrackSizingValue {
+            min: GridMinTrackSizingValue::Auto,
+            max: GridMaxTrackSizingValue::Fraction(number(value)),
+        };
+        let columns = GridTemplateValue {
+            components: vec![
+                GridTemplateComponentValue::Track(fixed(LengthPercentageValue::Length(length(
+                    2.0,
+                    LengthUnit::Em,
+                )))),
+                GridTemplateComponentValue::Track(fraction(1.0)),
+            ],
+            line_names: vec![vec!["start".into()], Vec::new(), vec!["end".into()]],
+        };
+        let areas = GridTemplateAreasValue {
+            areas: vec![GridTemplateAreaValue {
+                name: "content".into(),
+                row_start: 0,
+                row_end: 1,
+                column_start: 0,
+                column_end: 2,
+            }],
+            row_count: 1,
+            column_count: 2,
+        };
+        let specified = SpecifiedStyle::new()
+            .push(
+                StyleProperty::GridTemplateColumns,
+                StyleValue::GridTemplate(columns),
+            )
+            .push(
+                StyleProperty::GridAutoRows,
+                StyleValue::GridTracks(vec![fixed(percent(25.0))]),
+            )
+            .push(
+                StyleProperty::GridAutoFlow,
+                StyleValue::GridAutoFlow(GridAutoFlowValue::ColumnDense),
+            )
+            .push(
+                StyleProperty::GridColumnStart,
+                StyleValue::GridPlacement(GridPlacementValue::NamedLine("start".into(), 0)),
+            )
+            .push(
+                StyleProperty::GridColumnEnd,
+                StyleValue::GridPlacement(GridPlacementValue::Span(2)),
+            )
+            .push(
+                StyleProperty::GridTemplateAreas,
+                StyleValue::GridTemplateAreas(areas.clone()),
+            )
+            .push(
+                StyleProperty::JustifyItems,
+                StyleValue::AlignItems(AlignItemsValue::Center),
+            )
+            .push(
+                StyleProperty::JustifySelf,
+                StyleValue::AlignSelf(AlignSelfValue::End),
+            );
+
+        let style = resolve(&specified).unwrap();
+        assert_eq!(style.grid_template_columns.components.len(), 2);
+        assert_eq!(
+            style.grid_template_columns.components[0],
+            ComputedGridTemplateComponent::Track(ComputedGridTrackSizing::length(40.0))
+        );
+        assert_eq!(
+            style.grid_auto_rows[0].min,
+            ComputedGridMinTrackSizing::Fixed(ComputedLengthPercentage::new(0.0, 0.25))
+        );
+        assert_eq!(style.grid_auto_flow, GridAutoFlowValue::ColumnDense);
+        assert_eq!(
+            style.grid_column,
+            GridPlacementLineValue {
+                start: GridPlacementValue::NamedLine("start".into(), 0),
+                end: GridPlacementValue::Span(2),
+            }
+        );
+        assert_eq!(style.grid_template_areas, Some(areas));
+        assert_eq!(style.justify_items, Some(AlignItemsValue::Center));
+        assert_eq!(style.justify_self, Some(AlignSelfValue::End));
+    }
+
+    #[test]
+    fn invalid_grid_placements_and_overlapping_areas_are_rejected() {
+        let invalid_line = SpecifiedStyle::new().push(
+            StyleProperty::GridColumnStart,
+            StyleValue::GridPlacement(GridPlacementValue::Line(0)),
+        );
+        assert_eq!(
+            resolve(&invalid_line),
+            Err(StyleResolutionError::InvalidPropertyValue(
+                StyleProperty::GridColumnStart
+            ))
+        );
+
+        let overlapping = GridTemplateAreasValue {
+            areas: vec![
+                GridTemplateAreaValue {
+                    name: "first".into(),
+                    row_start: 0,
+                    row_end: 2,
+                    column_start: 0,
+                    column_end: 2,
+                },
+                GridTemplateAreaValue {
+                    name: "second".into(),
+                    row_start: 1,
+                    row_end: 2,
+                    column_start: 1,
+                    column_end: 2,
+                },
+            ],
+            row_count: 2,
+            column_count: 2,
+        };
+        let invalid_areas = SpecifiedStyle::new().push(
+            StyleProperty::GridTemplateAreas,
+            StyleValue::GridTemplateAreas(overlapping),
+        );
+        assert_eq!(
+            resolve(&invalid_areas),
+            Err(StyleResolutionError::InvalidPropertyValue(
+                StyleProperty::GridTemplateAreas
+            ))
+        );
+    }
+
+    #[test]
+    fn grid_helpers_and_every_track_sizing_variant_resolve() {
+        assert_eq!(
+            ComputedGridTrackSizing::fraction(2.0).max,
+            ComputedGridMaxTrackSizing::Fraction(number(2.0))
+        );
+        assert_eq!(
+            ComputedGridTrackSizing::auto(),
+            ComputedGridTrackSizing {
+                min: ComputedGridMinTrackSizing::Auto,
+                max: ComputedGridMaxTrackSizing::Auto,
+            }
+        );
+        assert_eq!(
+            ComputedGridTemplate::tracks([ComputedGridTrackSizing::length(10.0)])
+                .components
+                .len(),
+            1
+        );
+        assert_eq!(
+            GridPlacementLineValue::lines(1, 3),
+            GridPlacementLineValue {
+                start: GridPlacementValue::Line(1),
+                end: GridPlacementValue::Line(3),
+            }
+        );
+
+        let fixed = |value: LengthPercentageValue| GridTrackSizingValue {
+            min: GridMinTrackSizingValue::Fixed(value.clone()),
+            max: GridMaxTrackSizingValue::Fixed(value),
+        };
+        let variants = vec![
+            GridTrackSizingValue {
+                min: GridMinTrackSizingValue::MinContent,
+                max: GridMaxTrackSizingValue::MinContent,
+            },
+            GridTrackSizingValue {
+                min: GridMinTrackSizingValue::MaxContent,
+                max: GridMaxTrackSizingValue::MaxContent,
+            },
+            GridTrackSizingValue {
+                min: GridMinTrackSizingValue::Auto,
+                max: GridMaxTrackSizingValue::Auto,
+            },
+            GridTrackSizingValue {
+                min: GridMinTrackSizingValue::Fixed(px(10.0)),
+                max: GridMaxTrackSizingValue::FitContent(percent(50.0)),
+            },
+            GridTrackSizingValue {
+                min: GridMinTrackSizingValue::Auto,
+                max: GridMaxTrackSizingValue::Fraction(number(2.0)),
+            },
+        ];
+        let repeated = GridTemplateValue {
+            components: vec![GridTemplateComponentValue::Repeat(
+                GridTemplateRepetitionValue {
+                    count: GridRepetitionCountValue::AutoFit,
+                    tracks: vec![fixed(px(20.0))],
+                    line_names: vec![vec!["repeat-start".into()], vec!["repeat-end".into()]],
+                },
+            )],
+            line_names: vec![vec!["outer-start".into()], vec!["outer-end".into()]],
+        };
+        let specified = SpecifiedStyle::new()
+            .push(
+                StyleProperty::GridTemplateRows,
+                StyleValue::GridTemplate(repeated),
+            )
+            .push(
+                StyleProperty::GridAutoColumns,
+                StyleValue::GridTracks(variants),
+            )
+            .push(
+                StyleProperty::GridRowStart,
+                StyleValue::GridPlacement(GridPlacementValue::NamedLine("outer-start".into(), 0)),
+            )
+            .push(
+                StyleProperty::GridRowEnd,
+                StyleValue::GridPlacement(GridPlacementValue::NamedSpan("outer-end".into(), 0)),
+            );
+        let style = resolve(&specified).unwrap();
+        assert!(matches!(
+            style.grid_template_rows.components.as_slice(),
+            [ComputedGridTemplateComponent::Repeat(_)]
+        ));
+        assert_eq!(style.grid_auto_columns.len(), 5);
+        assert_eq!(
+            style.grid_row,
+            GridPlacementLineValue {
+                start: GridPlacementValue::NamedLine("outer-start".into(), 0),
+                end: GridPlacementValue::NamedSpan("outer-end".into(), 0),
+            }
+        );
+    }
+
+    #[test]
+    fn every_invalid_grid_shape_is_rejected() {
+        let fixed = || GridTrackSizingValue {
+            min: GridMinTrackSizingValue::Fixed(px(10.0)),
+            max: GridMaxTrackSizingValue::Fixed(px(10.0)),
+        };
+        for template in [
+            GridTemplateValue {
+                components: vec![GridTemplateComponentValue::Repeat(
+                    GridTemplateRepetitionValue {
+                        count: GridRepetitionCountValue::Count(0),
+                        tracks: vec![fixed()],
+                        line_names: vec![Vec::new(), Vec::new()],
+                    },
+                )],
+                line_names: vec![Vec::new(), Vec::new()],
+            },
+            GridTemplateValue {
+                components: vec![GridTemplateComponentValue::Repeat(
+                    GridTemplateRepetitionValue {
+                        count: GridRepetitionCountValue::AutoFill,
+                        tracks: Vec::new(),
+                        line_names: vec![Vec::new()],
+                    },
+                )],
+                line_names: vec![Vec::new(), Vec::new()],
+            },
+            GridTemplateValue {
+                components: vec![GridTemplateComponentValue::Repeat(
+                    GridTemplateRepetitionValue {
+                        count: GridRepetitionCountValue::Count(2),
+                        tracks: vec![fixed()],
+                        line_names: vec![Vec::new()],
+                    },
+                )],
+                line_names: vec![Vec::new(), Vec::new()],
+            },
+            GridTemplateValue {
+                components: vec![GridTemplateComponentValue::Track(fixed())],
+                line_names: vec![Vec::new()],
+            },
+            GridTemplateValue {
+                components: vec![GridTemplateComponentValue::Repeat(
+                    GridTemplateRepetitionValue {
+                        count: GridRepetitionCountValue::Count(1),
+                        tracks: vec![GridTrackSizingValue {
+                            min: GridMinTrackSizingValue::Fixed(px(f32::NAN)),
+                            max: GridMaxTrackSizingValue::Auto,
+                        }],
+                        line_names: vec![Vec::new(), Vec::new()],
+                    },
+                )],
+                line_names: vec![Vec::new(), Vec::new()],
+            },
+        ] {
+            assert!(
+                resolve(&declaration(
+                    StyleProperty::GridTemplateColumns,
+                    StyleValue::GridTemplate(template)
+                ))
+                .is_err()
+            );
+        }
+
+        for track in [
+            GridTrackSizingValue {
+                min: GridMinTrackSizingValue::Fixed(px(f32::NAN)),
+                max: GridMaxTrackSizingValue::Auto,
+            },
+            GridTrackSizingValue {
+                min: GridMinTrackSizingValue::Auto,
+                max: GridMaxTrackSizingValue::FitContent(px(f32::NAN)),
+            },
+            GridTrackSizingValue {
+                min: GridMinTrackSizingValue::Auto,
+                max: GridMaxTrackSizingValue::Fixed(px(f32::NAN)),
+            },
+            GridTrackSizingValue {
+                min: GridMinTrackSizingValue::Auto,
+                max: GridMaxTrackSizingValue::Fraction(number(-1.0)),
+            },
+            GridTrackSizingValue {
+                min: GridMinTrackSizingValue::Auto,
+                max: GridMaxTrackSizingValue::Fraction(number(f32::NAN)),
+            },
+        ] {
+            assert!(
+                resolve(&declaration(
+                    StyleProperty::GridAutoRows,
+                    StyleValue::GridTracks(vec![track])
+                ))
+                .is_err()
+            );
+        }
+
+        for placement in [
+            GridPlacementValue::Span(0),
+            GridPlacementValue::NamedLine(String::new(), 0),
+            GridPlacementValue::NamedLine("two words".into(), 1),
+            GridPlacementValue::NamedSpan(String::new(), 0),
+            GridPlacementValue::NamedSpan("two words".into(), 1),
+        ] {
+            assert!(
+                resolve(&declaration(
+                    StyleProperty::GridRowStart,
+                    StyleValue::GridPlacement(placement)
+                ))
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn every_invalid_named_area_shape_is_rejected() {
+        let area =
+            |name: &str, row_start, row_end, column_start, column_end| GridTemplateAreaValue {
+                name: name.into(),
+                row_start,
+                row_end,
+                column_start,
+                column_end,
+            };
+        let cases = [
+            GridTemplateAreasValue {
+                areas: vec![],
+                row_count: 0,
+                column_count: 1,
+            },
+            GridTemplateAreasValue {
+                areas: vec![],
+                row_count: 1,
+                column_count: 0,
+            },
+            GridTemplateAreasValue {
+                areas: vec![area("", 0, 1, 0, 1)],
+                row_count: 1,
+                column_count: 1,
+            },
+            GridTemplateAreasValue {
+                areas: vec![area("two words", 0, 1, 0, 1)],
+                row_count: 1,
+                column_count: 1,
+            },
+            GridTemplateAreasValue {
+                areas: vec![area("bad-row", 1, 1, 0, 1)],
+                row_count: 1,
+                column_count: 1,
+            },
+            GridTemplateAreasValue {
+                areas: vec![area("row-bounds", 0, 2, 0, 1)],
+                row_count: 1,
+                column_count: 1,
+            },
+            GridTemplateAreasValue {
+                areas: vec![area("bad-column", 0, 1, 1, 1)],
+                row_count: 1,
+                column_count: 1,
+            },
+            GridTemplateAreasValue {
+                areas: vec![area("column-bounds", 0, 1, 0, 2)],
+                row_count: 1,
+                column_count: 1,
+            },
+            GridTemplateAreasValue {
+                areas: vec![area("same", 0, 1, 0, 1), area("same", 1, 2, 0, 1)],
+                row_count: 2,
+                column_count: 1,
+            },
+        ];
+        for areas in cases {
+            assert!(
+                resolve(&declaration(
+                    StyleProperty::GridTemplateAreas,
+                    StyleValue::GridTemplateAreas(areas)
+                ))
+                .is_err()
+            );
+        }
     }
 
     #[test]
@@ -1417,11 +2304,23 @@ mod tests {
             StyleProperty::JustifyContent,
             StyleProperty::AlignItems,
             StyleProperty::AlignSelf,
+            StyleProperty::JustifyItems,
+            StyleProperty::JustifySelf,
             StyleProperty::AlignContent,
             StyleProperty::RowGap,
             StyleProperty::ColumnGap,
             StyleProperty::AspectRatio,
             StyleProperty::Order,
+            StyleProperty::GridTemplateColumns,
+            StyleProperty::GridTemplateRows,
+            StyleProperty::GridAutoColumns,
+            StyleProperty::GridAutoRows,
+            StyleProperty::GridAutoFlow,
+            StyleProperty::GridTemplateAreas,
+            StyleProperty::GridColumnStart,
+            StyleProperty::GridColumnEnd,
+            StyleProperty::GridRowStart,
+            StyleProperty::GridRowEnd,
         ];
         for property in properties {
             assert_eq!(

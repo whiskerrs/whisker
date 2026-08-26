@@ -3,16 +3,20 @@
 use whisker_style::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, BorderRadiusValue, BorderStyleValue,
     BoxSizingValue, CalcExpression, ColorValue, DirectionValue, DisplayValue, FlexBasisValue,
-    FlexDirectionValue, FlexWrapValue, FontStyleValue, FontWeightValue, JustifyContentValue,
+    FlexDirectionValue, FlexWrapValue, FontStyleValue, FontWeightValue, GridAutoFlowValue,
+    GridMaxTrackSizingValue, GridMinTrackSizingValue, GridPlacementValue, GridRepetitionCountValue,
+    GridTemplateAreaValue, GridTemplateAreasValue, GridTemplateComponentValue,
+    GridTemplateRepetitionValue, GridTemplateValue, GridTrackSizingValue, JustifyContentValue,
     LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
     PositionValue, SizeValue, StyleNumber, StyleValue,
 };
 
 use crate::{
     AlignContent, AlignItems, AlignSelf, Angle, BoxSizing, CalcExpr, Color, CssString, Direction,
-    Display, FlexBasis, FlexDirection, FlexWrap, FontStyle, FontWeight, Integer, JustifyContent,
-    Length, LengthPercentage, LineHeight, MarginValue, Number, Overflow, Percentage, PositionKind,
-    Size, Visibility,
+    Display, FlexBasis, FlexDirection, FlexWrap, FontStyle, FontWeight, GridAutoFlow, GridLine,
+    GridRepeatCount, GridTemplate, GridTemplateAreas, GridTemplateComponent, GridTrack,
+    GridTrackMax, GridTrackMin, Integer, JustifyContent, Length, LengthPercentage, LineHeight,
+    MarginValue, Number, Overflow, Percentage, PositionKind, Size, Visibility,
 };
 use whisker_style::{OverflowValue, VisibilityValue};
 
@@ -261,6 +265,127 @@ impl ToStyleValue for FlexBasis {
                 FlexBasisValue::LengthPercentage(to_length_percentage(value))
             }
         })
+    }
+}
+
+impl ToStyleValue for GridLine {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::GridPlacement(match self {
+            Self::Auto => GridPlacementValue::Auto,
+            Self::Number(value) => GridPlacementValue::Line(*value),
+            Self::Span(value) => GridPlacementValue::Span(*value),
+            Self::Named(name, occurrence) => {
+                GridPlacementValue::NamedLine(name.clone(), *occurrence)
+            }
+            Self::NamedSpan(name, occurrence) => {
+                GridPlacementValue::NamedSpan(name.clone(), *occurrence)
+            }
+        })
+    }
+}
+
+impl ToStyleValue for GridAutoFlow {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::GridAutoFlow(match self {
+            Self::Row => GridAutoFlowValue::Row,
+            Self::Column => GridAutoFlowValue::Column,
+            Self::RowDense => GridAutoFlowValue::RowDense,
+            Self::ColumnDense => GridAutoFlowValue::ColumnDense,
+        })
+    }
+}
+
+impl ToStyleValue for GridTemplate {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::GridTemplate(GridTemplateValue {
+            components: self
+                .components
+                .iter()
+                .map(to_grid_template_component)
+                .collect(),
+            line_names: self.line_names.clone(),
+        })
+    }
+}
+
+impl ToStyleValue for GridTemplateAreas {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::GridTemplateAreas(GridTemplateAreasValue {
+            areas: self
+                .areas
+                .iter()
+                .map(|area| GridTemplateAreaValue {
+                    name: area.name.clone(),
+                    row_start: area.row_start,
+                    row_end: area.row_end,
+                    column_start: area.column_start,
+                    column_end: area.column_end,
+                })
+                .collect(),
+            row_count: self.row_count,
+            column_count: self.column_count,
+        })
+    }
+}
+
+pub(crate) fn grid_auto_tracks(value: &GridTemplate) -> StyleValue {
+    StyleValue::GridTracks(
+        value
+            .components
+            .iter()
+            .filter_map(|component| match component {
+                GridTemplateComponent::Track(track) => Some(to_grid_track(track)),
+                GridTemplateComponent::Repeat { .. } => None,
+            })
+            .collect(),
+    )
+}
+
+fn to_grid_template_component(value: &GridTemplateComponent) -> GridTemplateComponentValue {
+    match value {
+        GridTemplateComponent::Track(track) => {
+            GridTemplateComponentValue::Track(to_grid_track(track))
+        }
+        GridTemplateComponent::Repeat {
+            count,
+            tracks,
+            line_names,
+        } => GridTemplateComponentValue::Repeat(GridTemplateRepetitionValue {
+            count: match count {
+                GridRepeatCount::Count(value) => GridRepetitionCountValue::Count(*value),
+                GridRepeatCount::AutoFill => GridRepetitionCountValue::AutoFill,
+                GridRepeatCount::AutoFit => GridRepetitionCountValue::AutoFit,
+            },
+            tracks: tracks.iter().map(to_grid_track).collect(),
+            line_names: line_names.clone(),
+        }),
+    }
+}
+
+fn to_grid_track(value: &GridTrack) -> GridTrackSizingValue {
+    GridTrackSizingValue {
+        min: match &value.min {
+            GridTrackMin::Fixed(value) => {
+                GridMinTrackSizingValue::Fixed(to_length_percentage(value))
+            }
+            GridTrackMin::MinContent => GridMinTrackSizingValue::MinContent,
+            GridTrackMin::MaxContent => GridMinTrackSizingValue::MaxContent,
+            GridTrackMin::Auto => GridMinTrackSizingValue::Auto,
+        },
+        max: match &value.max {
+            GridTrackMax::Fixed(value) => {
+                GridMaxTrackSizingValue::Fixed(to_length_percentage(value))
+            }
+            GridTrackMax::MinContent => GridMaxTrackSizingValue::MinContent,
+            GridTrackMax::MaxContent => GridMaxTrackSizingValue::MaxContent,
+            GridTrackMax::FitContent(value) => {
+                GridMaxTrackSizingValue::FitContent(to_length_percentage(value))
+            }
+            GridTrackMax::Auto => GridMaxTrackSizingValue::Auto,
+            GridTrackMax::Fraction(value) => {
+                GridMaxTrackSizingValue::Fraction(StyleNumber::new(*value))
+            }
+        },
     }
 }
 
