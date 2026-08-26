@@ -111,6 +111,58 @@ final class HostConformanceTests: XCTestCase {
         )
     }
 
+    func testViewportIncludesSystemBarRegions() {
+        let bounds = CGRect(x: 0, y: 0, width: 390, height: 844)
+        XCTAssertEqual(
+            edgeToEdgeViewportBounds(
+                bounds,
+                safeAreaInsets: UIEdgeInsets(top: 47, left: 0, bottom: 34, right: 0)
+            ),
+            bounds
+        )
+    }
+
+    func testScrollViewDoesNotInjectSafeAreaInsets() {
+        let scrollView = WhiskerScrollContainerView(frame: .zero)
+        XCTAssertEqual(scrollView.contentInsetAdjustmentBehavior, .never)
+        XCTAssertFalse(scrollView.automaticallyAdjustsScrollIndicatorInsets)
+        XCTAssertEqual(scrollView.contentInset, .zero)
+    }
+
+    func testScrollOverflowClipUsesStationaryViewportInsteadOfMovingContent() throws {
+        let registration = WhiskerElementRegistration(
+            elementType: 3,
+            name: WhiskerBuiltInElements.scrollViewName,
+            childPolicy: .elements,
+            measurement: .none
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
+        let mounted = try XCTUnwrap(WhiskerElementRegistry.mount(3) { _, _ in })
+        let scrollView = try XCTUnwrap(mounted.view as? WhiskerScrollContainerView)
+        let node = WhiskerNodeView(element: registration.name)
+        node.mountedElement = mounted
+        node.addSubview(scrollView)
+        node.mountedContentDidInstall()
+        node.contentFrame = CGRect(x: 0, y: 0, width: 100, height: 100)
+        node.setLayoutFrame(CGRect(x: 0, y: 0, width: 100, height: 100))
+        node.layoutIfNeeded()
+
+        let initiallyOffscreenChild = UIView(frame: CGRect(x: 0, y: 150, width: 100, height: 50))
+        scrollView.contentView.addSubview(initiallyOffscreenChild)
+        scrollView.setNeedsLayout()
+        scrollView.layoutIfNeeded()
+        node.setOverflowClip(horizontal: true, vertical: true)
+
+        XCTAssertTrue(scrollView.layer.mask != nil)
+        XCTAssertNil(scrollView.contentView.layer.mask)
+        XCTAssertGreaterThan(scrollView.contentSize.height, scrollView.bounds.height)
+
+        scrollView.contentOffset = CGPoint(x: 0, y: 100)
+        scrollView.layoutIfNeeded()
+        XCTAssertTrue(scrollView.layer.mask != nil)
+        XCTAssertNil(scrollView.contentView.layer.mask)
+    }
+
     func testUIKitTouchTypesMapToProtocolPointerKinds() {
         XCTAssertEqual(hostPointerKind(for: .direct), .touch)
         XCTAssertEqual(hostPointerKind(for: .pencil), .pen)

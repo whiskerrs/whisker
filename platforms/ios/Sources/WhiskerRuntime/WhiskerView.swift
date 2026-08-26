@@ -28,7 +28,9 @@ public final class WhiskerView: UIView {
         }
     )
 
-    private var logicalBounds: CGRect { bounds.inset(by: safeAreaInsets) }
+    private var logicalBounds: CGRect {
+        edgeToEdgeViewportBounds(bounds, safeAreaInsets: safeAreaInsets)
+    }
 
     public override init(frame: CGRect) {
         super.init(frame: frame)

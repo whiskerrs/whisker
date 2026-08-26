@@ -487,6 +487,7 @@ pub struct XcodebuildArgs<'a> {
 pub fn stage_module_swift_sources(
     gen_ios: &Path,
     modules: &[crate::modules::ResolvedModule],
+    workspace_root: &Path,
 ) -> Result<()> {
     let root = gen_ios.join("whisker_modules");
     let sources_root = root.join("Sources/WhiskerModules");
@@ -506,9 +507,22 @@ pub fn stage_module_swift_sources(
         .filter(|m| m.manifest_dir.join("Package.swift").is_file())
         .collect();
 
+    // A Whisker source checkout contains the root Swift package that owns
+    // WhiskerModule, WhiskerRuntime, and the codegen plugin. Prefer it while
+    // developing the framework itself so the generated app tests the current
+    // Host sources instead of the last published SDK tag. Consumer workspaces
+    // do not have this layout and continue to resolve the released package.
+    let local_whisker_package = workspace_root
+        .join("platforms/ios/Sources/WhiskerRuntime")
+        .is_dir()
+        .then_some(workspace_root);
+
     let package_path = root.join("Package.swift");
-    std::fs::write(&package_path, render_modules_package_swift(&ios_modules))
-        .with_context(|| format!("write {}", package_path.display()))?;
+    std::fs::write(
+        &package_path,
+        render_modules_package_swift(local_whisker_package, &ios_modules),
+    )
+    .with_context(|| format!("write {}", package_path.display()))?;
 
     let register_all_path = sources_root.join("RegisterAll.swift");
     std::fs::write(&register_all_path, render_register_all_swift(&ios_modules))
@@ -580,9 +594,14 @@ fn ios_platform_major(modules: &[&crate::modules::ResolvedModule]) -> u32 {
 }
 
 /// Render `Package.swift` for the generated `WhiskerModules`
-/// aggregator. Depends on the released `WhiskerRuntime` package + each
-/// discovered module package via local-path SwiftPM dependency.
-fn render_modules_package_swift(modules: &[&crate::modules::ResolvedModule]) -> String {
+/// aggregator. Depends on the current checkout's `WhiskerRuntime` package
+/// while developing Whisker, or the released package from consumer
+/// workspaces, plus each discovered module package via local-path SwiftPM
+/// dependency.
+fn render_modules_package_swift(
+    local_whisker_package: Option<&Path>,
+    modules: &[&crate::modules::ResolvedModule],
+) -> String {
     let mut out = String::new();
     out.push_str(
         "// swift-tools-version:5.9\n\
@@ -612,11 +631,18 @@ fn render_modules_package_swift(modules: &[&crate::modules::ResolvedModule]) -> 
     out.push_str("        .library(name: \"WhiskerModules\", targets: [\"WhiskerModules\"]),\n");
     out.push_str("    ],\n");
     out.push_str("    dependencies: [\n");
-    out.push_str(&format!(
-        "        .package(url: {url:?}, exact: {version:?}),\n",
-        url = WHISKER_IOS_SPM_URL,
-        version = WHISKER_IOS_SPM_VERSION,
-    ));
+    if let Some(path) = local_whisker_package {
+        out.push_str(&format!(
+            "        .package(name: \"whisker\", path: {path:?}),\n",
+            path = path.display().to_string(),
+        ));
+    } else {
+        out.push_str(&format!(
+            "        .package(url: {url:?}, exact: {version:?}),\n",
+            url = WHISKER_IOS_SPM_URL,
+            version = WHISKER_IOS_SPM_VERSION,
+        ));
+    }
     for m in modules {
         // The module's SwiftPM package is rooted at the package
         // directory (Package.swift lives there, identity = the
@@ -974,13 +1000,21 @@ mod tests {
     }
 
     #[test]
-    fn generated_aggregator_links_the_source_host_runtime() {
-        let manifest = render_modules_package_swift(&[]);
+    fn generated_aggregator_links_the_released_host_runtime_for_consumers() {
+        let manifest = render_modules_package_swift(None, &[]);
         assert!(manifest.contains(&format!(
             ".package(url: {WHISKER_IOS_SPM_URL:?}, exact: {WHISKER_IOS_SPM_VERSION:?})"
         )));
         assert!(manifest.contains(".product(name: \"WhiskerRuntime\", package: \"whisker\")"));
         assert!(!manifest.contains(".package(name: \"whisker\", path:"));
+    }
+
+    #[test]
+    fn generated_aggregator_prefers_the_in_tree_host_runtime() {
+        let manifest = render_modules_package_swift(Some(Path::new("/workspace/whisker")), &[]);
+        assert!(manifest.contains(".package(name: \"whisker\", path: \"/workspace/whisker\")"));
+        assert!(!manifest.contains(WHISKER_IOS_SPM_URL));
+        assert!(manifest.contains(".product(name: \"WhiskerRuntime\", package: \"whisker\")"));
     }
 
     /// Every module package and the generated aggregator pin the runtime

@@ -19,6 +19,12 @@ public final class WhiskerScrollContainerView: UIScrollView {
     public override init(frame: CGRect) {
         super.init(frame: frame)
         alwaysBounceVertical = false
+        // Whisker lays out against the complete edge-to-edge viewport and
+        // exposes safe-area insets separately through the SafeArea module.
+        // UIKit's automatic adjustment would add those insets a second time
+        // and make the Host disagree with Rust about every child coordinate.
+        contentInsetAdjustmentBehavior = .never
+        automaticallyAdjustsScrollIndicatorInsets = false
         addSubview(contentView)
     }
 
