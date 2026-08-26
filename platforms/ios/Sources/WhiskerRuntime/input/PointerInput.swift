@@ -1,5 +1,17 @@
 import UIKit
 
+/// The runtime viewport owns the complete Host view, including the regions
+/// behind the status bar and home indicator. Safe-area insets remain available
+/// independently through `WhiskerInsetsDispatcher`; they never shrink the
+/// surface itself.
+func edgeToEdgeViewportBounds(
+    _ bounds: CGRect,
+    safeAreaInsets: UIEdgeInsets
+) -> CGRect {
+    _ = safeAreaInsets
+    return bounds
+}
+
 func logicalPointerPosition(_ location: CGPoint, viewport: CGRect) -> CGPoint {
     CGPoint(x: location.x - viewport.minX, y: location.y - viewport.minY)
 }

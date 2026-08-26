@@ -332,8 +332,9 @@ final class WhiskerNodeView: UIView {
     }
 
     private func updateOverflowMask() {
+        let host = overflowClipHost()
         guard clipsOverflowHorizontally || clipsOverflowVertically else {
-            sceneChildrenHost().layer.mask = nil
+            host.layer.mask = nil
             return
         }
         let compositionBounds = hostCompositionBounds()
@@ -343,7 +344,6 @@ final class WhiskerNodeView: UIView {
             horizontal: clipsOverflowHorizontally,
             vertical: clipsOverflowVertically
         )
-        let host = sceneChildrenHost()
         let origin = host.convert(CGPoint.zero, from: self)
         let xUnit = host.convert(CGPoint(x: 1, y: 0), from: self)
         let yUnit = host.convert(CGPoint(x: 0, y: 1), from: self)
@@ -366,6 +366,21 @@ final class WhiskerNodeView: UIView {
         overflowMask.backgroundColor = UIColor.clear.cgColor
         overflowMask.fillColor = UIColor.white.cgColor
         host.layer.mask = overflowMask
+    }
+
+    /// Returns the stationary view that owns the element's clipping viewport.
+    ///
+    /// A children host is allowed to move inside its element root. In
+    /// particular, `UIScrollView` translates its content view as the user
+    /// scrolls. Attaching the overflow mask to that moving content view would
+    /// pin the mask to the initial content coordinates and permanently hide
+    /// every child that started outside the first viewport. The mounted root
+    /// remains stationary and is therefore the correct clip coordinate space.
+    private func overflowClipHost() -> UIView {
+        if let mountedElement, mountedElement.childrenHost() != nil {
+            return mountedElement.view
+        }
+        return defaultChildrenHost
     }
 
     private func updateClipPathMask() {
