@@ -927,6 +927,9 @@ fn fixture(path: &str) -> &'static str {
         "core/resource-raster-lifecycle.json" => {
             include_str!("../../../../tests/host-conformance/core/resource-raster-lifecycle.json")
         }
+        "core/background-layer-geometry-symmetry.json" => include_str!(
+            "../../../../tests/host-conformance/core/background-layer-geometry-symmetry.json"
+        ),
         "wpt/css/CSS2/backgrounds/background-color-129.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/backgrounds/background-color-129.json"
         ),
@@ -1970,11 +1973,54 @@ fn fixture_background_layer_paints_at(
             + layer.position[1].length
             + layer.position[1].fraction * (positioning_area[3] - size[1]),
     ];
-    let paints_x = layer.repeat_x != ImageRepeatFixture::NoRepeat
-        || (position[0]..position[0] + size[0]).contains(&point[0]);
-    let paints_y = layer.repeat_y != ImageRepeatFixture::NoRepeat
-        || (position[1]..position[1] + size[1]).contains(&point[1]);
+    let paints_x = fixture_background_axis_paints_at(
+        positioning_area[0],
+        positioning_area[2],
+        position[0],
+        size[0],
+        layer.repeat_x,
+        point[0],
+    );
+    let paints_y = fixture_background_axis_paints_at(
+        positioning_area[1],
+        positioning_area[3],
+        position[1],
+        size[1],
+        layer.repeat_y,
+        point[1],
+    );
     paints_x && paints_y
+}
+
+fn fixture_background_axis_paints_at(
+    area_start: f32,
+    area_length: f32,
+    tile_start: f32,
+    tile_length: f32,
+    repeat: ImageRepeatFixture,
+    point: f32,
+) -> bool {
+    if tile_length <= 0.0 {
+        return false;
+    }
+    match repeat {
+        ImageRepeatFixture::NoRepeat => (tile_start..tile_start + tile_length).contains(&point),
+        ImageRepeatFixture::Repeat | ImageRepeatFixture::Round => true,
+        ImageRepeatFixture::Space => {
+            let tile_count = (area_length / tile_length).floor() as usize;
+            if tile_count < 2 {
+                return (tile_start..tile_start + tile_length).contains(&point);
+            }
+            let offset = point - area_start;
+            if !(0.0..area_length).contains(&offset) {
+                return false;
+            }
+            let gap = (area_length - tile_count as f32 * tile_length)
+                / (tile_count.saturating_sub(1)) as f32;
+            let stride = tile_length + gap;
+            offset % stride < tile_length
+        }
+    }
 }
 
 fn fixture_background_area(

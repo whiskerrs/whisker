@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "id": "core.background-layer-geometry-symmetry",
+  "test": {
+    "commands": [
+      {
+        "type": "attach_surface",
+        "width": 120.0,
+        "height": 120.0,
+        "scale": 1.0
+      },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 120.0, 120.0],
+            "content_box": [30.0, 30.0, 60.0, 60.0],
+            "background": { "kind": "named", "value": "transparent" },
+            "border": {
+              "widths": [10.0, 10.0, 10.0, 10.0],
+              "colors": [
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" }
+              ],
+              "styles": ["solid", "solid", "solid", "solid"],
+              "radii": [0.0, 0.0, 0.0, 0.0]
+            },
+            "background_layers": [
+              {
+                "geometry": {
+                  "position": [
+                    { "length": 7.0, "fraction": 0.25 },
+                    { "length": -20.0, "fraction": 0.25 }
+                  ],
+                  "size": [
+                    { "length": 16.0, "fraction": 0.0 },
+                    { "length": 16.0, "fraction": 0.0 }
+                  ],
+                  "repeat_x": "space",
+                  "repeat_y": "no_repeat",
+                  "origin": "content",
+                  "clip": "padding"
+                },
+                "image": {
+                  "linear_gradient": {
+                    "angle_degrees": 180.0,
+                    "stops": [
+                      { "color": { "kind": "named", "value": "red" }, "position": 0.0 },
+                      { "color": { "kind": "named", "value": "red" }, "position": 1.0 }
+                    ]
+                  }
+                }
+              },
+              {
+                "geometry": {
+                  "position": [
+                    { "length": 7.0, "fraction": 0.25 },
+                    { "length": 3.0, "fraction": 0.25 }
+                  ],
+                  "size": [
+                    { "length": 18.0, "fraction": 0.0 },
+                    { "length": 18.0, "fraction": 0.0 }
+                  ],
+                  "repeat_x": "no_repeat",
+                  "repeat_y": "space",
+                  "origin": "padding",
+                  "clip": "content"
+                },
+                "image": {
+                  "linear_gradient": {
+                    "angle_degrees": 180.0,
+                    "stops": [
+                      { "color": { "kind": "named", "value": "green" }, "position": 0.0 },
+                      { "color": { "kind": "named", "value": "green" }, "position": 1.0 }
+                    ]
+                  }
+                }
+              },
+              {
+                "geometry": {
+                  "position": [
+                    { "length": 2.0, "fraction": 0.0 },
+                    { "length": 2.0, "fraction": 0.0 }
+                  ],
+                  "size": [
+                    { "length": 18.0, "fraction": 0.0 },
+                    { "length": 18.0, "fraction": 0.0 }
+                  ],
+                  "repeat_x": "no_repeat",
+                  "repeat_y": "no_repeat",
+                  "origin": "border",
+                  "clip": "border"
+                },
+                "image": {
+                  "linear_gradient": {
+                    "angle_degrees": 180.0,
+                    "stops": [
+                      { "color": { "kind": "named", "value": "blue" }, "position": 0.0 },
+                      { "color": { "kind": "named", "value": "blue" }, "position": 1.0 }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.stacking",
+        "samples": [
+          {
+            "point": [5.0, 5.0],
+            "color": { "kind": "named", "value": "blue" },
+            "tolerance": 5
+          },
+          {
+            "point": [80.0, 22.0],
+            "color": { "kind": "named", "value": "red" },
+            "tolerance": 5
+          },
+          {
+            "point": [48.0, 22.0],
+            "color": { "kind": "named", "value": "transparent" },
+            "tolerance": 5
+          },
+          {
+            "point": [40.0, 60.0],
+            "color": { "kind": "named", "value": "green" },
+            "tolerance": 5
+          },
+          {
+            "point": [40.0, 20.0],
+            "color": { "kind": "named", "value": "transparent" },
+            "tolerance": 5
+          },
+          {
+            "point": [60.0, 60.0],
+            "color": { "kind": "named", "value": "transparent" },
+            "tolerance": 5
+          }
+        ]
+      }
+    ]
+  }
+}

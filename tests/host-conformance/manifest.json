@@ -38,6 +38,13 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "core.background-layer-geometry-symmetry",
+      "feature": "background-layer-geometry-symmetry",
+      "fixture": "core/background-layer-geometry-symmetry.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.background-resource-image",
       "feature": "background-image-resource",
       "fixture": "wpt/css/css-backgrounds/background-resource-image.json",

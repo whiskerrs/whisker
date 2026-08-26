@@ -863,6 +863,7 @@ impl BindingState {
             let background = background_resources.reconcile_node(
                 update.node,
                 &update.resolved.computed().paint().background_images,
+                update.resolved.computed().paint().background_layer,
                 &externally_used,
             )?;
             surface.set_background_layers(update.node, background.layers)?;
@@ -1124,6 +1125,7 @@ impl BindingState {
         let background = background_resources.reconcile_node(
             node,
             &resolved.computed().paint().background_images,
+            resolved.computed().paint().background_layer,
             externally_used,
         )?;
         surface.set_background_layers(node, background.layers)?;

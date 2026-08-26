@@ -26,7 +26,8 @@ pub use layout_value::{
     JustifyContentValue, LengthPercentageAutoValue, PositionValue, SizeValue,
 };
 pub use paint::{
-    BorderStyleValue, ComputedCornerRadius, ComputedPaintStyle, Corners, OverflowValue,
+    BorderStyleValue, ComputedBackgroundLayerStyle, ComputedBackgroundPosition,
+    ComputedBackgroundSize, ComputedCornerRadius, ComputedPaintStyle, Corners, OverflowValue,
     VisibilityValue,
 };
 pub use property::{
@@ -38,7 +39,8 @@ pub use resolution::{
     resolve_text_style,
 };
 pub use value::{
-    BackgroundImageValue, BorderRadiusValue, CalcExpression, ColorValue, FontFamilyValue,
-    FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue,
-    LineHeightValue, StyleNumber, StyleValue,
+    BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue, BackgroundPositionValue,
+    BackgroundRepeatModeValue, BackgroundRepeatValue, BackgroundSizeValue, BorderRadiusValue,
+    CalcExpression, ColorValue, FontFamilyValue, FontStyleValue, FontWeightValue,
+    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, StyleNumber, StyleValue,
 };

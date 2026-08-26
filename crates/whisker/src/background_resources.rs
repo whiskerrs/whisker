@@ -4,10 +4,13 @@ use std::collections::{HashMap, HashSet};
 
 use whisker_engine::whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, ImageRepeat, NodeId,
-    PaintBox, PaintImage, PaintPosition, ResourceCommand, ResourceEvent, ResourceId, ResourceKind,
-    ResourceRequest, ResourceSource,
+    PaintBox, PaintCoordinate, PaintImage, PaintLengthPercentage, PaintPosition, ResourceCommand,
+    ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
 };
-use whisker_engine::whisker_style::BackgroundImageValue;
+use whisker_engine::whisker_style::{
+    BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue, BackgroundRepeatModeValue,
+    ComputedBackgroundLayerStyle, ComputedBackgroundSize, ComputedLengthPercentage,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ResourceKey {
@@ -91,6 +94,7 @@ pub(super) struct BackgroundResourceManager {
     entries: HashMap<ResourceId, ResourceEntry>,
     owned_ids: HashSet<ResourceId>,
     node_images: HashMap<NodeId, Vec<DesiredImage>>,
+    node_layer_styles: HashMap<NodeId, ComputedBackgroundLayerStyle>,
     dirty_nodes: HashSet<NodeId>,
 }
 
@@ -102,6 +106,7 @@ impl Default for BackgroundResourceManager {
             entries: HashMap::new(),
             owned_ids: HashSet::new(),
             node_images: HashMap::new(),
+            node_layer_styles: HashMap::new(),
             dirty_nodes: HashSet::new(),
         }
     }
@@ -116,6 +121,7 @@ impl BackgroundResourceManager {
         &mut self,
         node: NodeId,
         images: &[BackgroundImageValue],
+        layer_style: ComputedBackgroundLayerStyle,
         externally_used: &HashSet<ResourceId>,
     ) -> Result<ReconcileResult, BackgroundResourceError> {
         let desired = images
@@ -151,6 +157,7 @@ impl BackgroundResourceManager {
         }
 
         self.node_images.insert(node, desired);
+        self.node_layer_styles.insert(node, layer_style);
         self.refresh_projected_node(node);
 
         for key in previous_keys.difference(&desired_keys) {
@@ -158,6 +165,7 @@ impl BackgroundResourceManager {
         }
         if images.is_empty() {
             self.node_images.remove(&node);
+            self.node_layer_styles.remove(&node);
         }
         self.dirty_nodes.remove(&node);
 
@@ -171,6 +179,7 @@ impl BackgroundResourceManager {
         let mut commands = Vec::new();
         for node in nodes {
             let previous = self.node_images.remove(node).unwrap_or_default();
+            self.node_layer_styles.remove(node);
             self.dirty_nodes.remove(node);
             for key in resource_keys(&previous) {
                 if let Some(resource) = self.resources_by_key.get(&key).copied()
@@ -376,7 +385,7 @@ impl BackgroundResourceManager {
                 DesiredImage::Resource(key) => {
                     let resource = self.resources_by_key[key];
                     (self.entries[&resource].phase == ResourcePhase::Ready)
-                        .then(|| initial_resource_layer(resource))
+                        .then(|| initial_resource_layer(resource, self.node_layer_styles[&node]))
                 }
             })
             .collect()
@@ -393,17 +402,74 @@ fn resource_keys(images: &[DesiredImage]) -> HashSet<ResourceKey> {
         .collect()
 }
 
-fn initial_resource_layer(resource: ResourceId) -> BackgroundLayer {
+fn initial_resource_layer(
+    resource: ResourceId,
+    style: ComputedBackgroundLayerStyle,
+) -> BackgroundLayer {
     BackgroundLayer {
         image: PaintImage::Resource(resource),
-        position: PaintPosition::default(),
-        size: BackgroundSize::Auto,
-        repeat_x: ImageRepeat::Repeat,
-        repeat_y: ImageRepeat::Repeat,
-        origin: PaintBox::Padding,
-        clip: PaintBox::Border,
-        attachment: BackgroundAttachment::Scroll,
+        position: PaintPosition {
+            x: paint_coordinate(style.position.horizontal),
+            y: paint_coordinate(style.position.vertical),
+        },
+        size: background_size(style.size),
+        repeat_x: image_repeat(style.repeat_x),
+        repeat_y: image_repeat(style.repeat_y),
+        origin: paint_box(style.origin),
+        clip: paint_box(style.clip),
+        attachment: background_attachment(style.attachment),
         blend_mode: BlendMode::Normal,
+    }
+}
+
+fn paint_coordinate(value: ComputedLengthPercentage) -> PaintCoordinate {
+    PaintCoordinate {
+        length: value.length(),
+        fraction: value.fraction(),
+    }
+}
+
+fn paint_length_percentage(value: ComputedLengthPercentage) -> PaintLengthPercentage {
+    PaintLengthPercentage {
+        length: value.length(),
+        fraction: value.fraction(),
+    }
+}
+
+fn background_size(value: ComputedBackgroundSize) -> BackgroundSize {
+    match value {
+        ComputedBackgroundSize::Auto => BackgroundSize::Auto,
+        ComputedBackgroundSize::Cover => BackgroundSize::Cover,
+        ComputedBackgroundSize::Contain => BackgroundSize::Contain,
+        ComputedBackgroundSize::Explicit { width, height } => BackgroundSize::Explicit {
+            width: Some(paint_length_percentage(width)),
+            height: Some(paint_length_percentage(height)),
+        },
+    }
+}
+
+fn image_repeat(value: BackgroundRepeatModeValue) -> ImageRepeat {
+    match value {
+        BackgroundRepeatModeValue::Repeat => ImageRepeat::Repeat,
+        BackgroundRepeatModeValue::NoRepeat => ImageRepeat::NoRepeat,
+        BackgroundRepeatModeValue::Space => ImageRepeat::Space,
+        BackgroundRepeatModeValue::Round => ImageRepeat::Round,
+    }
+}
+
+fn paint_box(value: BackgroundBoxValue) -> PaintBox {
+    match value {
+        BackgroundBoxValue::Border => PaintBox::Border,
+        BackgroundBoxValue::Padding => PaintBox::Padding,
+        BackgroundBoxValue::Content => PaintBox::Content,
+    }
+}
+
+fn background_attachment(value: BackgroundAttachmentValue) -> BackgroundAttachment {
+    match value {
+        BackgroundAttachmentValue::Scroll => BackgroundAttachment::Scroll,
+        BackgroundAttachmentValue::Fixed => BackgroundAttachment::Fixed,
+        BackgroundAttachmentValue::Local => BackgroundAttachment::Local,
     }
 }
 
@@ -433,6 +499,7 @@ mod tests {
             .reconcile_node(
                 node(1),
                 &[url("https://example.test/a.png")],
+                ComputedBackgroundLayerStyle::default(),
                 &HashSet::new(),
             )
             .unwrap();
@@ -444,6 +511,7 @@ mod tests {
             .reconcile_node(
                 node(2),
                 &[url("https://example.test/a.png")],
+                ComputedBackgroundLayerStyle::default(),
                 &HashSet::new(),
             )
             .unwrap();
@@ -465,7 +533,12 @@ mod tests {
     fn accepted_reference_defers_release_and_reacquire_cancels_retirement() {
         let mut manager = BackgroundResourceManager::default();
         let acquired = manager
-            .reconcile_node(node(1), &[url("same")], &HashSet::new())
+            .reconcile_node(
+                node(1),
+                &[url("same")],
+                ComputedBackgroundLayerStyle::default(),
+                &HashSet::new(),
+            )
             .unwrap();
         let (resource, generation) = load(&acquired.commands[0]);
         manager.apply_event(&ResourceEvent::Ready {
@@ -478,11 +551,21 @@ mod tests {
         assert!(manager.accept_frame().is_empty());
 
         let removed = manager
-            .reconcile_node(node(1), &[], &HashSet::new())
+            .reconcile_node(
+                node(1),
+                &[],
+                ComputedBackgroundLayerStyle::default(),
+                &HashSet::new(),
+            )
             .unwrap();
         assert!(removed.commands.is_empty());
         let reacquired = manager
-            .reconcile_node(node(1), &[url("same")], &HashSet::new())
+            .reconcile_node(
+                node(1),
+                &[url("same")],
+                ComputedBackgroundLayerStyle::default(),
+                &HashSet::new(),
+            )
             .unwrap();
         assert!(reacquired.commands.is_empty());
         assert_eq!(reacquired.layers[0].image, PaintImage::Resource(resource));
@@ -493,11 +576,21 @@ mod tests {
     fn source_reacquired_after_release_gets_fresh_id() {
         let mut manager = BackgroundResourceManager::default();
         let acquired = manager
-            .reconcile_node(node(1), &[url("same")], &HashSet::new())
+            .reconcile_node(
+                node(1),
+                &[url("same")],
+                ComputedBackgroundLayerStyle::default(),
+                &HashSet::new(),
+            )
             .unwrap();
         let (first, _) = load(&acquired.commands[0]);
         let removed = manager
-            .reconcile_node(node(1), &[], &HashSet::new())
+            .reconcile_node(
+                node(1),
+                &[],
+                ComputedBackgroundLayerStyle::default(),
+                &HashSet::new(),
+            )
             .unwrap();
         assert_eq!(
             removed.commands,
@@ -507,7 +600,12 @@ mod tests {
             }]
         );
         let reacquired = manager
-            .reconcile_node(node(1), &[url("same")], &HashSet::new())
+            .reconcile_node(
+                node(1),
+                &[url("same")],
+                ComputedBackgroundLayerStyle::default(),
+                &HashSet::new(),
+            )
             .unwrap();
         let (second, generation) = load(&reacquired.commands[0]);
         assert_ne!(first, second);
