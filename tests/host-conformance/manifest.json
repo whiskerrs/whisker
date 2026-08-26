@@ -59,6 +59,20 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.background-origin.content-box",
+      "feature": "background-origin-content-box",
+      "fixture": "wpt/css/css-backgrounds/background-origin-content-box.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-clip.content-box",
+      "feature": "background-clip-content-box",
+      "fixture": "wpt/css/css-backgrounds/background-clip-content-box.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.background-repeat.repeat-x",
       "feature": "background-repeat-x",
       "fixture": "wpt/css/css-backgrounds/background-repeat/background-repeat-repeat-x.json",

@@ -16,6 +16,7 @@ internal enum class HostBackgroundRepeat {
 internal enum class HostBackgroundBox {
     Border,
     Padding,
+    Content,
 }
 
 internal data class HostBackgroundPaintBox(
@@ -26,10 +27,12 @@ internal data class HostBackgroundPaintBox(
 internal data class HostBackgroundPaintBoxes(
     val border: HostBackgroundPaintBox,
     val padding: HostBackgroundPaintBox,
+    val content: HostBackgroundPaintBox,
 ) {
     fun select(box: HostBackgroundBox): HostBackgroundPaintBox = when (box) {
         HostBackgroundBox.Border -> border
         HostBackgroundBox.Padding -> padding
+        HostBackgroundBox.Content -> content
     }
 }
 

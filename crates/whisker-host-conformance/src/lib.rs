@@ -322,6 +322,10 @@ pub struct SceneNodeFixture {
     pub parent: Option<u64>,
     /// Parent-relative x, y, width, and height in logical pixels.
     pub rect: [f32; 4],
+    /// Content box relative to this node's border-box origin. When omitted,
+    /// the content box is the complete border box.
+    #[serde(default)]
+    pub content_box: Option<[f32; 4]>,
     /// Box background color.
     pub background: ColorFixture,
     /// Optional border semantics.
@@ -356,6 +360,14 @@ pub struct SceneNodeFixture {
     /// Optional explicit, non-repeating conic-gradient background image.
     #[serde(default)]
     pub conic_gradient: Option<ConicGradientFixture>,
+}
+
+impl SceneNodeFixture {
+    /// Returns the explicit content box or the no-border/no-padding default.
+    pub fn resolved_content_box(&self) -> [f32; 4] {
+        self.content_box
+            .unwrap_or([0.0, 0.0, self.rect[2], self.rect[3]])
+    }
 }
 
 /// One resolved linear-gradient image used by a retained scene node.
@@ -929,6 +941,9 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                 && node.rect.iter().all(|value| value.is_finite())
                 && node.rect[2] >= 0.0
                 && node.rect[3] >= 0.0
+                && node.content_box.is_none_or(|rect| {
+                    rect.into_iter().all(f32::is_finite) && rect[2] >= 0.0 && rect[3] >= 0.0
+                })
                 && valid_color(&node.background)
                 && node.border.as_ref().is_none_or(valid_border)
                 && node

@@ -261,6 +261,7 @@ fn preserves_screen_axes(transform: Transform) -> bool {
 pub(crate) enum PaintCommand<'a> {
     Box {
         rect: LayoutRect,
+        content_rect: LayoutRect,
         paint: Option<&'a BoxPaint>,
         background_layers: &'a [BackgroundLayer],
         clip: LogicalClip,
@@ -338,6 +339,12 @@ impl DesktopScene {
             height: presentation.layout.border_box.height,
         };
         let opacity = context.opacity * presentation.opacity;
+        let content = LayoutRect {
+            x: border.x + presentation.layout.content_box.x,
+            y: border.y + presentation.layout.content_box.y,
+            width: presentation.layout.content_box.width,
+            height: presentation.layout.content_box.height,
+        };
         let transform = multiply_transform(
             context.transform,
             transform_around(presentation.transform, border.x, border.y),
@@ -345,6 +352,7 @@ impl DesktopScene {
         if presentation.paint.is_some() || !presentation.background_layers.is_empty() {
             commands.push(PaintCommand::Box {
                 rect: border,
+                content_rect: content,
                 paint: presentation.paint.as_ref(),
                 background_layers: &presentation.background_layers,
                 clip: context.clip,
@@ -888,8 +896,7 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
             width: Some(_),
             height: Some(_)
         }
-    ) && matches!(layer.origin, PaintBox::Border | PaintBox::Padding)
-        && matches!(layer.clip, PaintBox::Border | PaintBox::Padding);
+    );
     supported_image
         && (initial_geometry || explicit_geometry)
         && layer.attachment == BackgroundAttachment::Scroll

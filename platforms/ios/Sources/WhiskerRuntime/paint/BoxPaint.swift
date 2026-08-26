@@ -46,7 +46,7 @@ final class HostBoxPainter {
         }
     }
 
-    func draw(in bounds: CGRect) {
+    func draw(in bounds: CGRect, contentBox: CGRect) {
         let path = roundedPath(in: bounds, radii: cornerRadii)
         let widths = Array((borderWidths + [0, 0, 0, 0]).prefix(4)).map { max(0, $0) }
         let paddingBox = CGRect(
@@ -56,32 +56,31 @@ final class HostBoxPainter {
             height: max(0, bounds.height - min(widths[0], bounds.height) - min(widths[2], bounds.height))
         )
         let outerRadii = normalizedRadii(cornerRadii, in: bounds)
-        let paddingRadii = [
-            CGSize(
-                width: max(0, outerRadii[0].width - widths[3]),
-                height: max(0, outerRadii[0].height - widths[0])
-            ),
-            CGSize(
-                width: max(0, outerRadii[1].width - widths[1]),
-                height: max(0, outerRadii[1].height - widths[0])
-            ),
-            CGSize(
-                width: max(0, outerRadii[2].width - widths[1]),
-                height: max(0, outerRadii[2].height - widths[2])
-            ),
-            CGSize(
-                width: max(0, outerRadii[3].width - widths[3]),
-                height: max(0, outerRadii[3].height - widths[2])
-            )
-        ]
+        let paddingRadii = insetCornerRadii(
+            outerRadii,
+            top: widths[0],
+            right: widths[1],
+            bottom: widths[2],
+            left: widths[3]
+        )
+        let contentRadii = insetCornerRadii(
+            outerRadii,
+            top: max(0, contentBox.minY - bounds.minY),
+            right: max(0, bounds.maxX - contentBox.maxX),
+            bottom: max(0, bounds.maxY - contentBox.maxY),
+            left: max(0, contentBox.minX - bounds.minX)
+        )
         let paddingPath = roundedPath(in: paddingBox, radii: paddingRadii)
+        let contentPath = roundedPath(in: contentBox, radii: contentRadii)
         fillColor.setFill()
         path.fill()
         backgroundPainter.draw(
             borderBox: bounds,
             paddingBox: paddingBox,
+            contentBox: contentBox,
             borderClip: path.cgPath,
-            paddingClip: paddingPath.cgPath
+            paddingClip: paddingPath.cgPath,
+            contentClip: contentPath.cgPath
         )
         drawBorders(in: bounds, clippedBy: path)
     }
@@ -381,6 +380,34 @@ private func tupleArray<T>(_ value: (T, T, T, T)) -> [T] {
 
 private func resolve(_ value: WhiskerMobileLengthPercentage, axis: CGFloat) -> CGFloat {
     CGFloat(value.length) + CGFloat(value.fraction) * axis
+}
+
+func insetCornerRadii(
+    _ radii: [CGSize],
+    top: CGFloat,
+    right: CGFloat,
+    bottom: CGFloat,
+    left: CGFloat
+) -> [CGSize] {
+    let resolved = Array((radii + [.zero, .zero, .zero, .zero]).prefix(4))
+    return [
+        CGSize(
+            width: max(0, resolved[0].width - left),
+            height: max(0, resolved[0].height - top)
+        ),
+        CGSize(
+            width: max(0, resolved[1].width - right),
+            height: max(0, resolved[1].height - top)
+        ),
+        CGSize(
+            width: max(0, resolved[2].width - right),
+            height: max(0, resolved[2].height - bottom)
+        ),
+        CGSize(
+            width: max(0, resolved[3].width - left),
+            height: max(0, resolved[3].height - bottom)
+        )
+    ]
 }
 
 private func roundedPath(in rect: CGRect, radii: [CGSize]) -> UIBezierPath {

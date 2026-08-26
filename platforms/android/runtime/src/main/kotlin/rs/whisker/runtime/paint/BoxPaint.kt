@@ -31,6 +31,7 @@ internal fun applyBoxPaint(
     logicalHeight: Float,
     density: Float,
     backgroundLayers: HostBackgroundLayers? = null,
+    logicalContentBox: RectF = RectF(0f, 0f, logicalWidth, logicalHeight),
 ): ResolvedBoxGeometry {
     val values = paint.values
     require(values.size >= BOX_PAINT_PACKED_SIZE)
@@ -85,6 +86,12 @@ internal fun applyBoxPaint(
             borderStyles,
             normalizedRadii,
             backgroundLayers,
+            RectF(
+                logicalContentBox.left * density,
+                logicalContentBox.top * density,
+                logicalContentBox.right * density,
+                logicalContentBox.bottom * density,
+            ),
         )
     }
     return ResolvedBoxGeometry(
@@ -106,6 +113,7 @@ private class WhiskerBoxDrawable(
     private val borderStyles: IntArray,
     private val cornerRadii: FloatArray,
     private val backgroundLayers: HostBackgroundLayers?,
+    private val localContentBox: RectF,
 ) : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
@@ -141,6 +149,35 @@ private class WhiskerBoxDrawable(
         } else {
             Path()
         }
+        val contentBox = RectF(
+            box.left + localContentBox.left,
+            box.top + localContentBox.top,
+            box.left + localContentBox.right,
+            box.top + localContentBox.bottom,
+        )
+        val contentPath = if (contentBox.width() > 0f && contentBox.height() > 0f) {
+            val contentLeft = (contentBox.left - box.left).coerceAtLeast(0f)
+            val contentTop = (contentBox.top - box.top).coerceAtLeast(0f)
+            val contentRight = (box.right - contentBox.right).coerceAtLeast(0f)
+            val contentBottom = (box.bottom - contentBox.bottom).coerceAtLeast(0f)
+            val contentRadii = normalizeRadii(
+                floatArrayOf(
+                    (radii[0] - contentLeft).coerceAtLeast(0f),
+                    (radii[1] - contentTop).coerceAtLeast(0f),
+                    (radii[2] - contentRight).coerceAtLeast(0f),
+                    (radii[3] - contentTop).coerceAtLeast(0f),
+                    (radii[4] - contentRight).coerceAtLeast(0f),
+                    (radii[5] - contentBottom).coerceAtLeast(0f),
+                    (radii[6] - contentLeft).coerceAtLeast(0f),
+                    (radii[7] - contentBottom).coerceAtLeast(0f),
+                ),
+                contentBox.width(),
+                contentBox.height(),
+            )
+            roundedPath(contentBox, contentRadii)
+        } else {
+            Path()
+        }
         paint.color = fillColor
         canvas.drawPath(outer, paint)
         drawBackgroundLayers(
@@ -148,6 +185,7 @@ private class WhiskerBoxDrawable(
             HostBackgroundPaintBoxes(
                 border = HostBackgroundPaintBox(box, outer),
                 padding = HostBackgroundPaintBox(paddingBox, paddingPath),
+                content = HostBackgroundPaintBox(contentBox, contentPath),
             ),
             backgroundLayers,
             paint,

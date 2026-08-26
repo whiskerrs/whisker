@@ -156,7 +156,11 @@ private class Driver(
                             command.getString("name") == "paint.background-layers.repeat-round-x" ||
                             command.getString("name") == "paint.background-layers.repeat-round-y" ||
                             command.getString("name") ==
-                            "paint.background-layers.repeat-round-position",
+                            "paint.background-layers.repeat-round-position" ||
+                            command.getString("name") ==
+                            "paint.background-layers.origin-content-box" ||
+                            command.getString("name") ==
+                            "paint.background-layers.clip-content-box",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -234,11 +238,13 @@ private class Driver(
         nodes.objects().forEach { node ->
             val id = node.getLong("id")
             val rect = node.getJSONArray("rect").floats()
+            val content = node.optJSONArray("content_box")?.floats()
+                ?: floatArrayOf(0f, 0f, rect[2], rect[3])
             check(
                 stage(
                     tag = 6,
                     node = id,
-                    numbers = rect + floatArrayOf(0f, 0f, rect[2], rect[3]),
+                    numbers = rect + content,
                 ),
             )
             val (numbers, names) = paint(node)

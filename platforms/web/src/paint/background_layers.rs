@@ -58,8 +58,14 @@ pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
     let supported_geometry =
         (initial_geometry && layer.origin == PaintBox::Padding && layer.clip == PaintBox::Border)
             || (explicit_geometry
-                && matches!(layer.origin, PaintBox::Border | PaintBox::Padding)
-                && matches!(layer.clip, PaintBox::Border | PaintBox::Padding));
+                && matches!(
+                    layer.origin,
+                    PaintBox::Border | PaintBox::Padding | PaintBox::Content
+                )
+                && matches!(
+                    layer.clip,
+                    PaintBox::Border | PaintBox::Padding | PaintBox::Content
+                ));
     supported_image
         && supported_geometry
         && layer.attachment == BackgroundAttachment::Scroll
@@ -271,6 +277,7 @@ fn background_box(value: PaintBox) -> &'static str {
     match value {
         PaintBox::Border => "border-box",
         PaintBox::Padding => "padding-box",
+        PaintBox::Content => "content-box",
         _ => unreachable!("unsupported background box passed preflight"),
     }
 }

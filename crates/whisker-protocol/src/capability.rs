@@ -336,11 +336,11 @@ fn has_explicit_background_geometry(layer: &crate::BackgroundLayer) -> bool {
         )
         && matches!(
             layer.origin,
-            crate::PaintBox::Border | crate::PaintBox::Padding
+            crate::PaintBox::Border | crate::PaintBox::Padding | crate::PaintBox::Content
         )
         && matches!(
             layer.clip,
-            crate::PaintBox::Border | crate::PaintBox::Padding
+            crate::PaintBox::Border | crate::PaintBox::Padding | crate::PaintBox::Content
         )
         && layer.attachment == crate::BackgroundAttachment::Scroll
         && layer.blend_mode == crate::BlendMode::Normal
@@ -686,6 +686,9 @@ mod tests {
             (PaintBox::Border, PaintBox::Border),
             (PaintBox::Border, PaintBox::Padding),
             (PaintBox::Padding, PaintBox::Padding),
+            (PaintBox::Content, PaintBox::Border),
+            (PaintBox::Border, PaintBox::Content),
+            (PaintBox::Content, PaintBox::Content),
         ] {
             let mut layer = explicit_no_repeat(basic_linear_layer());
             layer.origin = origin;
@@ -700,13 +703,13 @@ mod tests {
         }
 
         let mut unsupported_box = explicit_no_repeat(basic_linear_layer());
-        unsupported_box.origin = PaintBox::Content;
+        unsupported_box.origin = PaintBox::Margin;
         assert_eq!(
             packet(vec![operation(unsupported_box)]).required_capabilities(),
             vec![RenderCapability::BackgroundLayers]
         );
         let mut unsupported_clip = explicit_no_repeat(basic_linear_layer());
-        unsupported_clip.clip = PaintBox::Content;
+        unsupported_clip.clip = PaintBox::Text;
         assert_eq!(
             packet(vec![operation(unsupported_clip)]).required_capabilities(),
             vec![RenderCapability::BackgroundLayers]

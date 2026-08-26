@@ -528,9 +528,11 @@ private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> B
     return layer.size_kind == UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT) &&
         layer.size_width.isNonNegativeFinite && layer.size_height.isNonNegativeFinite &&
         supportedRepeats.contains(layer.repeat_x) && supportedRepeats.contains(layer.repeat_y) &&
-        [UInt32(WHISKER_BACKGROUND_BOX_BORDER), UInt32(WHISKER_BACKGROUND_BOX_PADDING)]
+        [UInt32(WHISKER_BACKGROUND_BOX_BORDER), UInt32(WHISKER_BACKGROUND_BOX_PADDING),
+         UInt32(WHISKER_BACKGROUND_BOX_CONTENT)]
             .contains(layer.origin) &&
-        [UInt32(WHISKER_BACKGROUND_BOX_BORDER), UInt32(WHISKER_BACKGROUND_BOX_PADDING)]
+        [UInt32(WHISKER_BACKGROUND_BOX_BORDER), UInt32(WHISKER_BACKGROUND_BOX_PADDING),
+         UInt32(WHISKER_BACKGROUND_BOX_CONTENT)]
             .contains(layer.clip)
 }
 
@@ -546,8 +548,8 @@ private func hostBackgroundGeometry(
         sizeHeight: explicit ? layer.size_height : nil,
         repeatX: hostBackgroundRepeat(layer.repeat_x),
         repeatY: hostBackgroundRepeat(layer.repeat_y),
-        origin: layer.origin == UInt32(WHISKER_BACKGROUND_BOX_BORDER) ? .border : .padding,
-        clip: layer.clip == UInt32(WHISKER_BACKGROUND_BOX_BORDER) ? .border : .padding
+        origin: hostBackgroundBox(layer.origin),
+        clip: hostBackgroundBox(layer.clip)
     )
 }
 
@@ -557,6 +559,14 @@ private func hostBackgroundRepeat(_ value: UInt32) -> HostBackgroundRepeat {
     case UInt32(WHISKER_BACKGROUND_SPACE): .space
     case UInt32(WHISKER_BACKGROUND_ROUND): .round
     default: .repeat
+    }
+}
+
+private func hostBackgroundBox(_ value: UInt32) -> HostBackgroundBox {
+    switch value {
+    case UInt32(WHISKER_BACKGROUND_BOX_BORDER): .border
+    case UInt32(WHISKER_BACKGROUND_BOX_CONTENT): .content
+    default: .padding
     }
 }
 

@@ -24,6 +24,7 @@ pub(crate) struct DomFrameSink {
     node_types: HashMap<NodeId, ElementTypeId>,
     parents: HashMap<NodeId, NodeId>,
     layouts: HashMap<NodeId, whisker_protocol::LayoutGeometry>,
+    box_paints: HashMap<NodeId, whisker_protocol::BoxPaint>,
     text_nodes: HashMap<NodeId, web_sys::Element>,
     native_nodes: HashMap<NodeId, Box<dyn WebNativeElement>>,
     event_masks: HashMap<NodeId, Rc<Cell<u64>>>,
@@ -54,6 +55,7 @@ impl DomFrameSink {
             node_types: HashMap::new(),
             parents: HashMap::new(),
             layouts: HashMap::new(),
+            box_paints: HashMap::new(),
             text_nodes: HashMap::new(),
             native_nodes: HashMap::new(),
             event_masks: HashMap::new(),
@@ -99,6 +101,7 @@ impl DomFrameSink {
             self.node_types.clear();
             self.parents.clear();
             self.layouts.clear();
+            self.box_paints.clear();
             self.text_nodes.clear();
             self.native_nodes.clear();
             self.event_masks.clear();
@@ -211,6 +214,7 @@ impl DomFrameSink {
                     .insert_before(&child_element, reference.as_ref().map(AsRef::as_ref))
                     .map_err(|error| js_error("insert Whisker DOM child", error))?;
                 self.parents.insert(*child, *parent);
+                self.sync_layout(*child)?;
             }
             Operation::RemoveChild { parent: _, child } => {
                 if let Some(element) = self.nodes.get(child) {
@@ -219,20 +223,19 @@ impl DomFrameSink {
                 self.parents.remove(child);
             }
             Operation::SetLayout { node, geometry } => {
-                let element = self.node(*node)?;
-                let rect = geometry.border_box;
-                set_style(&element, "left", &px(rect.x))?;
-                set_style(&element, "top", &px(rect.y))?;
-                set_style(&element, "width", &px(rect.width))?;
-                set_style(&element, "height", &px(rect.height))?;
                 self.layouts.insert(*node, *geometry);
-                if let Some(text) = self.text_nodes.get(node) {
-                    position_text(text, geometry.content_box)?;
-                }
+                self.sync_layout(*node)?;
+                self.sync_content_box(*node)?;
+                self.sync_child_layouts(*node)?;
+                self.sync_text(*node)?;
             }
             Operation::SetBoxPaint { node, paint } => {
                 let element = self.node(*node)?;
                 paint::box_paint::apply(&element, paint)?;
+                self.box_paints.insert(*node, paint.clone());
+                self.sync_content_box(*node)?;
+                self.sync_child_layouts(*node)?;
+                self.sync_text(*node)?;
             }
             Operation::SetBackgroundLayers { node, layers } => {
                 paint::background_layers::apply(&self.node(*node)?, layers)?;
@@ -284,9 +287,7 @@ impl DomFrameSink {
                     self.text_nodes.insert(*node, text.clone());
                     text
                 };
-                if let Some(geometry) = self.layouts.get(node) {
-                    position_text(&text, geometry.content_box)?;
-                }
+                self.sync_text(*node)?;
                 paint::text::apply(&text, content)?;
             }
             Operation::SetHitTest { node, behavior } => {
@@ -401,6 +402,108 @@ impl DomFrameSink {
             .ok_or_else(|| WebError(format!("DOM projection is missing node {}", node.get())))
     }
 
+    fn sync_layout(&self, node: NodeId) -> Result<(), WebError> {
+        let Some(geometry) = self.layouts.get(&node) else {
+            return Ok(());
+        };
+        let element = self.node(node)?;
+        let rect = geometry.border_box;
+        let parent_border = self
+            .parents
+            .get(&node)
+            .map_or([0.0; 4], |parent| self.effective_border_widths(*parent));
+        set_style(&element, "left", &px(rect.x - parent_border[3]))?;
+        set_style(&element, "top", &px(rect.y - parent_border[0]))?;
+        set_style(&element, "width", &px(rect.width))?;
+        set_style(&element, "height", &px(rect.height))
+    }
+
+    fn sync_child_layouts(&self, parent: NodeId) -> Result<(), WebError> {
+        let children = self
+            .parents
+            .iter()
+            .filter_map(|(child, candidate)| (*candidate == parent).then_some(*child))
+            .collect::<Vec<_>>();
+        for child in children {
+            self.sync_layout(child)?;
+        }
+        Ok(())
+    }
+
+    fn effective_border_widths(&self, node: NodeId) -> [f32; 4] {
+        let Some(paint) = self.box_paints.get(&node) else {
+            return [0.0; 4];
+        };
+        let border_box = self
+            .layouts
+            .get(&node)
+            .map_or(whisker_protocol::LayoutRect::default(), |geometry| {
+                geometry.border_box
+            });
+        let resolve = |value: whisker_protocol::PaintLengthPercentage, axis: f32| {
+            value.length + value.fraction * axis
+        };
+        [
+            if paint.border_styles.top == whisker_protocol::BorderLineStyle::None {
+                0.0
+            } else {
+                resolve(paint.border_widths.top, border_box.height)
+            },
+            if paint.border_styles.right == whisker_protocol::BorderLineStyle::None {
+                0.0
+            } else {
+                resolve(paint.border_widths.right, border_box.width)
+            },
+            if paint.border_styles.bottom == whisker_protocol::BorderLineStyle::None {
+                0.0
+            } else {
+                resolve(paint.border_widths.bottom, border_box.height)
+            },
+            if paint.border_styles.left == whisker_protocol::BorderLineStyle::None {
+                0.0
+            } else {
+                resolve(paint.border_widths.left, border_box.width)
+            },
+        ]
+    }
+
+    fn sync_content_box(&self, node: NodeId) -> Result<(), WebError> {
+        let Some(geometry) = self.layouts.get(&node) else {
+            return Ok(());
+        };
+        let element = self.node(node)?;
+        let border_box = geometry.border_box;
+        let content_box = geometry.content_box;
+        let border_widths = self.effective_border_widths(node);
+        let padding = [
+            (content_box.y - border_widths[0]).max(0.0),
+            (border_box.width - content_box.x - content_box.width - border_widths[1]).max(0.0),
+            (border_box.height - content_box.y - content_box.height - border_widths[2]).max(0.0),
+            (content_box.x - border_widths[3]).max(0.0),
+        ];
+        set_style(&element, "padding-top", &px(padding[0]))?;
+        set_style(&element, "padding-right", &px(padding[1]))?;
+        set_style(&element, "padding-bottom", &px(padding[2]))?;
+        set_style(&element, "padding-left", &px(padding[3]))
+    }
+
+    fn sync_text(&self, node: NodeId) -> Result<(), WebError> {
+        let (Some(geometry), Some(text)) = (self.layouts.get(&node), self.text_nodes.get(&node))
+        else {
+            return Ok(());
+        };
+        let border_widths = self.effective_border_widths(node);
+        position_text(
+            text,
+            whisker_protocol::LayoutRect {
+                x: geometry.content_box.x - border_widths[3],
+                y: geometry.content_box.y - border_widths[0],
+                width: geometry.content_box.width,
+                height: geometry.content_box.height,
+            },
+        )
+    }
+
     fn delete_subtree(&mut self, root: NodeId) {
         if let Some(element) = self.nodes.get(&root) {
             element.remove();
@@ -421,6 +524,7 @@ impl DomFrameSink {
             self.node_types.remove(&node);
             self.parents.remove(&node);
             self.layouts.remove(&node);
+            self.box_paints.remove(&node);
             self.text_nodes.remove(&node);
             self.native_nodes.remove(&node);
             self.event_masks.remove(&node);
