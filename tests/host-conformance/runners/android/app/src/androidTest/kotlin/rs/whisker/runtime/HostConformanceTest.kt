@@ -385,13 +385,16 @@ private class Driver(
                             Gravity.START,
                             Gravity.END,
                         ))
-                        check(texts.map { it.textDirection } == listOf(
-                            android.view.View.TEXT_DIRECTION_FIRST_STRONG,
-                            android.view.View.TEXT_DIRECTION_FIRST_STRONG,
-                            android.view.View.TEXT_DIRECTION_FIRST_STRONG,
-                            android.view.View.TEXT_DIRECTION_RTL,
-                            android.view.View.TEXT_DIRECTION_RTL,
+                        check(texts.map { it.whiskerDirection } == listOf(
+                            WhiskerTextDirection.AUTO,
+                            WhiskerTextDirection.AUTO,
+                            WhiskerTextDirection.AUTO,
+                            WhiskerTextDirection.RIGHT_TO_LEFT,
+                            WhiskerTextDirection.RIGHT_TO_LEFT,
                         ))
+                        check(texts.takeLast(2).all {
+                            it.textDirection == android.view.View.TEXT_DIRECTION_RTL
+                        })
                     }
                     if (command.getString("name") == "paint.text.indent-lynx") {
                         val texts = findTextViews(view)
