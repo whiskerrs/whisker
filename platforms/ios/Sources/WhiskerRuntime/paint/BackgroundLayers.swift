@@ -37,6 +37,11 @@ enum HostBackgroundRepeat {
     case noRepeat
 }
 
+enum HostBackgroundBox {
+    case border
+    case padding
+}
+
 struct HostBackgroundGeometry {
     let positionX: WhiskerMobileLengthPercentage
     let positionY: WhiskerMobileLengthPercentage
@@ -44,6 +49,8 @@ struct HostBackgroundGeometry {
     let sizeHeight: WhiskerMobileLengthPercentage?
     let repeatX: HostBackgroundRepeat
     let repeatY: HostBackgroundRepeat
+    let origin: HostBackgroundBox
+    let clip: HostBackgroundBox
 
     static let initial = HostBackgroundGeometry(
         positionX: WhiskerMobileLengthPercentage(),
@@ -51,7 +58,9 @@ struct HostBackgroundGeometry {
         sizeWidth: nil,
         sizeHeight: nil,
         repeatX: .repeat,
-        repeatY: .repeat
+        repeatY: .repeat,
+        origin: .padding,
+        clip: .border
     )
 
     func imageBounds(in positioningBox: CGRect) -> CGRect {
@@ -105,8 +114,15 @@ final class HostBackgroundPainter {
         conicCache = nil
     }
 
-    func draw(in bounds: CGRect, clippedBy clipPath: CGPath) {
-        let imageBounds = geometry.imageBounds(in: bounds)
+    func draw(
+        borderBox: CGRect,
+        paddingBox: CGRect,
+        borderClip: CGPath,
+        paddingClip: CGPath
+    ) {
+        let positioningBox = geometry.origin == .border ? borderBox : paddingBox
+        let clipPath = geometry.clip == .border ? borderClip : paddingClip
+        let imageBounds = geometry.imageBounds(in: positioningBox)
         guard let image, imageBounds.width > 0, imageBounds.height > 0,
               let context = UIGraphicsGetCurrentContext() else { return }
         context.saveGState()
@@ -123,11 +139,11 @@ final class HostBackgroundPainter {
             // leading edge. Move that edge to the next pixel center so a
             // no-repeat image cannot bleed into the preceding CSS pixel.
             let leadingEdgeInset = backgroundLeadingEdgeInset(deviceScale: deviceScale)
-            if imageClip.minX > bounds.minX {
+            if imageClip.minX > positioningBox.minX {
                 imageClip.origin.x += leadingEdgeInset
                 imageClip.size.width = max(0, imageClip.width - leadingEdgeInset)
             }
-            if imageClip.minY > bounds.minY {
+            if imageClip.minY > positioningBox.minY {
                 imageClip.origin.y += leadingEdgeInset
                 imageClip.size.height = max(0, imageClip.height - leadingEdgeInset)
             }

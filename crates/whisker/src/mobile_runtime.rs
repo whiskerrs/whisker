@@ -801,9 +801,7 @@ impl MobileFrameOwned {
                         let [layer] = layers.as_slice() else {
                             return Err(MobileFrameError);
                         };
-                        if layer.origin != PaintBox::Padding
-                            || layer.clip != PaintBox::Border
-                            || layer.attachment != BackgroundAttachment::Scroll
+                        if layer.attachment != BackgroundAttachment::Scroll
                             || layer.blend_mode != BlendMode::Normal
                         {
                             return Err(MobileFrameError);
@@ -814,13 +812,18 @@ impl MobileFrameOwned {
                                     BackgroundSize::Auto,
                                     ImageRepeat::Repeat,
                                     ImageRepeat::Repeat,
-                                ) if layer.position == Default::default() => (
-                                    BACKGROUND_SIZE_AUTO,
-                                    MobileLengthPercentage::default(),
-                                    MobileLengthPercentage::default(),
-                                    BACKGROUND_REPEAT_REPEAT,
-                                    BACKGROUND_REPEAT_REPEAT,
-                                ),
+                                ) if layer.position == Default::default()
+                                    && layer.origin == PaintBox::Padding
+                                    && layer.clip == PaintBox::Border =>
+                                {
+                                    (
+                                        BACKGROUND_SIZE_AUTO,
+                                        MobileLengthPercentage::default(),
+                                        MobileLengthPercentage::default(),
+                                        BACKGROUND_REPEAT_REPEAT,
+                                        BACKGROUND_REPEAT_REPEAT,
+                                    )
+                                }
                                 (
                                     BackgroundSize::Explicit {
                                         width: Some(width),
@@ -837,6 +840,16 @@ impl MobileFrameOwned {
                                 ),
                                 _ => return Err(MobileFrameError),
                             };
+                        let origin = match layer.origin {
+                            PaintBox::Border => BACKGROUND_BOX_BORDER,
+                            PaintBox::Padding => BACKGROUND_BOX_PADDING,
+                            _ => return Err(MobileFrameError),
+                        };
+                        let clip = match layer.clip {
+                            PaintBox::Border => BACKGROUND_BOX_BORDER,
+                            PaintBox::Padding => BACKGROUND_BOX_PADDING,
+                            _ => return Err(MobileFrameError),
+                        };
                         let image = match &layer.image {
                             PaintImage::LinearGradient {
                                 angle_degrees,
@@ -917,8 +930,8 @@ impl MobileFrameOwned {
                             size_kind,
                             repeat_x,
                             repeat_y,
-                            origin: BACKGROUND_BOX_PADDING,
-                            clip: BACKGROUND_BOX_BORDER,
+                            origin,
+                            clip,
                             attachment: BACKGROUND_ATTACHMENT_SCROLL,
                             blend_mode: BACKGROUND_BLEND_NORMAL,
                         }));

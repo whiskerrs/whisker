@@ -143,7 +143,11 @@ private class Driver(
                             command.getString("name") ==
                             "paint.background-layers.explicit-size-no-repeat" ||
                             command.getString("name") ==
-                            "paint.background-layers.position-length-percentage",
+                            "paint.background-layers.position-length-percentage" ||
+                            command.getString("name") ==
+                            "paint.background-layers.origin-border-box" ||
+                            command.getString("name") ==
+                            "paint.background-layers.clip-padding-box",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->

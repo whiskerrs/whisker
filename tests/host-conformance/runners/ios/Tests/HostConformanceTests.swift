@@ -92,7 +92,9 @@ private final class Driver {
                     name == "paint.background-layers.radial-gradient" ||
                     name == "paint.background-layers.conic-gradient" ||
                     name == "paint.background-layers.explicit-size-no-repeat" ||
-                    name == "paint.background-layers.position-length-percentage" else {
+                    name == "paint.background-layers.position-length-percentage" ||
+                    name == "paint.background-layers.origin-border-box" ||
+                    name == "paint.background-layers.clip-padding-box" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()

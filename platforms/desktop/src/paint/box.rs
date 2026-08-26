@@ -1,5 +1,5 @@
 use whisker_protocol::{
-    BorderLineStyle, BoxPaint, LayoutRect, PaintColor, PaintCornerRadius, PaintCorners,
+    BorderLineStyle, BoxPaint, LayoutRect, PaintBox, PaintColor, PaintCornerRadius, PaintCorners,
     PaintLengthPercentage,
 };
 
@@ -40,10 +40,26 @@ impl BoxPrimitiveKind {
     }
 }
 
-/// Builds the border-box quad used by a background image layer. The shader
-/// evaluates the gradient against its independently resolved positioning box.
-pub(crate) fn linear_gradient_primitive(rect: LayoutRect, paint: &BoxPaint) -> BoxPrimitive {
-    resolve_box_geometry(rect, paint).primitive(
+/// Builds the quad used by a background image layer. The shader evaluates the
+/// gradient against its independently resolved positioning box.
+pub(crate) fn background_gradient_primitive(
+    rect: LayoutRect,
+    paint: &BoxPaint,
+    clip: PaintBox,
+) -> BoxPrimitive {
+    let geometry = resolve_box_geometry(rect, paint);
+    let geometry = match clip {
+        PaintBox::Border => geometry,
+        PaintBox::Padding => BoxGeometry {
+            outer_rect: geometry.inner_rect,
+            outer_radii: geometry.inner_radii,
+            inner_rect: geometry.inner_rect,
+            inner_radii: geometry.inner_radii,
+            border_widths: [0.0; 4],
+        },
+        _ => geometry,
+    };
+    geometry.primitive(
         [0.0; 4],
         [[0.0; 4]; 4],
         [0.0; 4],

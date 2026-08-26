@@ -32,7 +32,7 @@ use crate::gpu::{
     render_clipped_box_primitives_offscreen,
 };
 use crate::paint::box_paint::{
-    BoxPrimitive, BoxPrimitiveKind, linear_gradient_primitive, lower_box, resolve_box_geometry,
+    BoxPrimitive, BoxPrimitiveKind, background_gradient_primitive, lower_box, resolve_box_geometry,
 };
 use crate::paint::color::srgba;
 use crate::scene::{DesktopScene, LogicalClip, PaintCommand, ShapeClipStack};
@@ -617,14 +617,19 @@ impl Driver {
                         .filter(|primitive| primitive.kind == BoxPrimitiveKind::Fill)
                         .map(|primitive| (primitive, clip, transform, shape_clips.clone(), None)),
                 );
-                let positioning_rect = resolve_box_geometry(rect, paint).inner_rect;
+                let box_geometry = resolve_box_geometry(rect, paint);
                 for layer in background_layers.iter().rev() {
+                    let positioning_rect = match layer.origin {
+                        PaintBox::Border => box_geometry.outer_rect,
+                        PaintBox::Padding => box_geometry.inner_rect,
+                        _ => continue,
+                    };
                     let Some(gradient) = background_gradient_draw(positioning_rect, layer, opacity)
                     else {
                         continue;
                     };
                     primitives.push((
-                        linear_gradient_primitive(rect, paint),
+                        background_gradient_primitive(rect, paint, layer.clip),
                         clip,
                         transform,
                         shape_clips.clone(),
