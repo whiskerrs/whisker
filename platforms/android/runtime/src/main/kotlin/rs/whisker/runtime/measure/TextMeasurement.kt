@@ -7,6 +7,7 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.TextUtils
 import android.text.style.LeadingMarginSpan
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerMeasureRequest
@@ -20,7 +21,7 @@ internal class HostMeasurementProvider(private val context: Context) {
         availableWidth: Float, availableHeight: Float,
         availableWidthKind: Int, availableHeightKind: Int,
         text: String, fontFamily: String, fontSize: Float, fontWeight: Int,
-        fontStyle: Int, wrap: Int, letterSpacing: Float,
+        fontStyle: Int, wrap: Int, wordBreak: Int, overflow: Int, letterSpacing: Float,
         lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float,
         maxLines: Int, payloadVersion: Int, payload: ByteArray,
         intrinsicWidth: Float, intrinsicHeight: Float, intrinsicMask: Int,
@@ -29,7 +30,7 @@ internal class HostMeasurementProvider(private val context: Context) {
             return measureText(
                 knownWidth, knownHeight, knownMask,
                 availableWidth, availableWidthKind,
-                text, fontFamily, fontSize, fontWeight, fontStyle, wrap,
+                text, fontFamily, fontSize, fontWeight, fontStyle, wrap, wordBreak, overflow,
                 letterSpacing, lineHeight, indentLogicalPixels, indentPercentage, maxLines,
             )
         }
@@ -63,7 +64,7 @@ internal class HostMeasurementProvider(private val context: Context) {
         knownWidth: Float, knownHeight: Float, knownMask: Int,
         availableWidth: Float, availableWidthKind: Int,
         text: String, fontFamily: String, fontSize: Float, fontWeight: Int,
-        fontStyle: Int, wrap: Int, letterSpacing: Float,
+        fontStyle: Int, wrap: Int, wordBreak: Int, overflow: Int, letterSpacing: Float,
         lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float, maxLines: Int,
     ): FloatArray {
         val density = context.resources.displayMetrics.density
@@ -83,8 +84,11 @@ internal class HostMeasurementProvider(private val context: Context) {
         }
         val indentPixels = indentLogicalPixels * density +
             widthBasis * density * indentPercentage / 100f
-        val layoutText: CharSequence = if (text.isEmpty() || indentPixels == 0f) text else {
-            SpannableString(text).apply {
+        val displayText = if (wordBreak == WORD_BREAK_KEEP_ALL) protectCjkBreaks(text) else text
+        val layoutText: CharSequence = if (displayText.isEmpty() || indentPixels == 0f) {
+            displayText
+        } else {
+            SpannableString(displayText).apply {
                 setSpan(
                     LeadingMarginSpan.Standard(indentPixels.toInt(), 0),
                     0,
@@ -104,6 +108,13 @@ internal class HostMeasurementProvider(private val context: Context) {
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setIncludePad(false)
             .setMaxLines(if (maxLines == 0) Int.MAX_VALUE else maxLines)
+            .setBreakStrategy(
+                if (wordBreak == WORD_BREAK_BREAK_ALL) Layout.BREAK_STRATEGY_SIMPLE
+                else Layout.BREAK_STRATEGY_HIGH_QUALITY,
+            )
+        if (overflow == TEXT_OVERFLOW_ELLIPSIS) {
+            builder.setEllipsize(TextUtils.TruncateAt.END).setEllipsizedWidth(maxWidthPx)
+        }
         if (lineHeight > 0f) {
             val fontHeight = paint.fontMetrics.run { descent - ascent }
             builder.setLineSpacing((lineHeight * density - fontHeight).coerceAtLeast(0f), 1f)
@@ -124,6 +135,19 @@ internal class HostMeasurementProvider(private val context: Context) {
         floatArrayOf(READY, 0f, width, height, 0f, 0f, 0f)
 }
 
+private fun protectCjkBreaks(value: String): String = buildString {
+    var previousWasCjk = false
+    value.forEach { character ->
+        val currentIsCjk = character.isCjk()
+        if (previousWasCjk && currentIsCjk) append('\u2060')
+        append(character)
+        previousWasCjk = currentIsCjk
+    }
+}
+
+private fun Char.isCjk(): Boolean = code in 0x2E80..0x9FFF || code in 0xF900..0xFAFF ||
+    code in 0xAC00..0xD7AF
+
 private const val DEFINITE = 0
 private const val WIDTH = 1
 private const val HEIGHT = 2
@@ -132,6 +156,9 @@ private const val MEASURE_TEXT = 1
 private const val MEASURE_REPLACED_CONTENT = 2
 private const val MEASURE_EMBEDDED_SURFACE = 4
 private const val READY = 1f
+private const val WORD_BREAK_BREAK_ALL = 1
+private const val WORD_BREAK_KEEP_ALL = 2
+private const val TEXT_OVERFLOW_ELLIPSIS = 1
 private const val UNSUPPORTED = 3f
 private const val UNSUPPORTED_FEATURE = 1f
 private const val BASELINES = 3f

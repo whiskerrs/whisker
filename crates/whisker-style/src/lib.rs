@@ -54,6 +54,7 @@ pub use value::{
     ImageRenderingValue, InsetPathValue, LengthPercentageValue, LengthUnit, LengthValue,
     LineHeightValue, MotionPathCommandValue, MotionPathPointValue, OffsetPathValue,
     OffsetRotateValue, RadialGradientValue, StyleNumber, StyleValue, TextAlignValue,
-    TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextShadowValue,
-    TransformFunctionValue, TransformOriginValue, TransformValue,
+    TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
+    TextShadowValue, TransformFunctionValue, TransformOriginValue, TransformValue, WhiteSpaceValue,
+    WordBreakValue,
 };

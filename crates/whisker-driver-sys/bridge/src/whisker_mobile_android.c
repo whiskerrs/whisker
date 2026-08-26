@@ -500,7 +500,9 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 storage[23]=(float)p->decoration_color.kind;
                 storage[24]=(float)p->alignment;
                 storage[25]=p->indent_logical_pixels; storage[26]=p->indent_percentage;
-                numbers = floats(env, storage, 27);
+                storage[27]=(float)p->wrap; storage[28]=(float)p->word_break;
+                storage[29]=(float)p->max_lines; storage[30]=(float)p->overflow;
+                numbers = floats(env, storage, 31);
                 jclass cls = (*env)->FindClass(env, "java/lang/String"); names = (*env)->NewObjectArray(env, 3, cls, NULL);
                 jstring color_name = new_string(env, p->color.name.ptr, p->color.name.len); (*env)->SetObjectArrayElement(env, names, 0, color_name);
                 jstring shadow_name = new_string(env, p->shadow_color.name.ptr, p->shadow_color.name.len); (*env)->SetObjectArrayElement(env, names, 1, shadow_name);
@@ -551,6 +553,7 @@ static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests
             (jint)r->element_type,(jint)r->kind,r->known_width,r->known_height,(jint)r->known_mask,
             r->available_width,r->available_height,(jint)r->available_width_kind,(jint)r->available_height_kind,
             text,family,r->font_size,(jint)r->font_weight,(jint)r->font_style,(jint)r->wrap,
+            (jint)r->word_break,(jint)r->overflow,
             r->letter_spacing,r->line_height,r->indent_logical_pixels,r->indent_percentage,
             (jint)r->max_lines,
             (jint)r->payload_version,payload,r->intrinsic_width,r->intrinsic_height,(jint)r->intrinsic_mask);
@@ -709,7 +712,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     METHOD(g_current_revision,"currentRevisionFromNative","()J")
     METHOD(g_stage_operation,"stageOperationFromNative","(IIJJJIIIFJ[FLjava/lang/String;[Ljava/lang/String;Lrs/whisker/runtime/WhiskerValue;)Z")
     METHOD(g_commit_frame,"commitFrameFromNative","()Z")
-    METHOD(g_measure,"measureFromNative","(IIFFIFFIILjava/lang/String;Ljava/lang/String;FIIIFFFFII[BFFI)[F")
+    METHOD(g_measure,"measureFromNative","(IIFFIFFIILjava/lang/String;Ljava/lang/String;FIIIIIFFFFII[BFFI)[F")
     METHOD(g_resource_command,"resourceCommandFromNative","(IIIJJLjava/lang/String;[B)Z")
     METHOD(g_invoke_module,"invokeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;ZJJ)Z")
     METHOD(g_observe_module,"observeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;Z)V")

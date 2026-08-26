@@ -466,7 +466,8 @@ private final class Driver {
                     name == "paint.text.shadow-single" ||
                     name == "paint.text.decoration-lynx" ||
                     name == "paint.text.align-lynx" ||
-                    name == "paint.text.indent-lynx" else {
+                    name == "paint.text.indent-lynx" ||
+                    name == "paint.text.wrap-overflow-lynx" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 if name == "paint.visual-effects.backdrop-blur" {
@@ -518,6 +519,15 @@ private final class Driver {
                         return paragraph?.firstLineHeadIndent ?? 0
                     }
                     XCTAssertEqual(indents, [24, 30])
+                }
+                if name == "paint.text.wrap-overflow-lynx" {
+                    let labels = findTextLabels(view)
+                    XCTAssertEqual(labels.count, 5)
+                    XCTAssertEqual(labels[1].numberOfLines, 1)
+                    XCTAssertEqual(labels[2].lineBreakMode, .byCharWrapping)
+                    XCTAssertTrue(labels[3].attributedText?.string.contains("\u{2060}") == true)
+                    XCTAssertEqual(labels[4].numberOfLines, 1)
+                    XCTAssertEqual(labels[4].lineBreakMode, .byTruncatingTail)
                 }
                 let pixels = try capture()
                 checkpoint = pixels
@@ -728,6 +738,10 @@ private final class Driver {
                 payload.alignment = text.alignment
                 payload.indent_logical_pixels = text.indentLogicalPixels
                 payload.indent_percentage = text.indentPercentage
+                payload.wrap = text.wrap
+                payload.word_break = text.wordBreak
+                payload.max_lines = text.maxLines
+                payload.overflow = text.overflow
             }
             textPayloads.advanced(by: index).initialize(to: payload)
         }
@@ -1286,6 +1300,10 @@ private struct SceneText {
     let alignment: UInt32
     let indentLogicalPixels: Float
     let indentPercentage: Float
+    let wrap: UInt8
+    let wordBreak: UInt8
+    let maxLines: UInt32
+    let overflow: UInt8
     let decorationFlags: UInt32
     let decorationStyle: UInt32
     let decorationColor: WhiskerMobileColor
@@ -1482,6 +1500,13 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         default: throw Failure("unknown text alignment")
         }
         let indent = raw["indent"] as? [String: Any]
+        let wordBreak: UInt8
+        switch raw["word_break"] as? String ?? "normal" {
+        case "normal": wordBreak = 0
+        case "break_all": wordBreak = 1
+        case "keep_all": wordBreak = 2
+        default: throw Failure("unknown word-break")
+        }
         text = SceneText(
             value: try string(raw, "value"),
             fontSize: Float(try number(raw, "font_size")),
@@ -1490,6 +1515,10 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
             alignment: alignment,
             indentLogicalPixels: Float(try indent.map { try number($0, "logical_pixels") } ?? 0),
             indentPercentage: Float(try indent.map { try number($0, "percentage") } ?? 0),
+            wrap: (raw["white_space"] as? String ?? "normal") == "normal" ? 1 : 0,
+            wordBreak: wordBreak,
+            maxLines: UInt32((raw["max_lines"] as? NSNumber)?.uintValue ?? 0),
+            overflow: (raw["overflow"] as? String ?? "clip") == "ellipsis" ? 1 : 0,
             decorationFlags: try decoration.map {
                 switch try string($0, "line") {
                 case "underline": 1

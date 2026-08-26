@@ -25,10 +25,10 @@ use whisker_host_conformance::{
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
     BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat,
-    LayoutGeometry, LayoutRect, MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, NodeId,
-    Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius,
-    PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand,
-    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand,
+    LayoutGeometry, LayoutRect, MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak,
+    MeasureTextWrap, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
+    PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
+    PathCommand, ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand,
     ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
     SurfaceId, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform,
     Visibility,
@@ -470,6 +470,8 @@ impl Driver {
                             "paint.text.align-lynx"
                         } else if name == "paint.text.indent-lynx" {
                             "paint.text.indent-lynx"
+                        } else if name == "paint.text.wrap-overflow-lynx" {
+                            "paint.text.wrap-overflow-lynx"
                         } else if name == "paint.visual-effects.image-rendering-pixelated" {
                             "paint.visual-effects.image-rendering-pixelated"
                         } else if self.resource_lifecycle {
@@ -896,6 +898,31 @@ impl Driver {
                         ),
                     );
                 }
+                assert_style(
+                    &text_style,
+                    "white-space",
+                    match text.white_space {
+                        whisker_host_conformance::WhiteSpaceFixture::Normal => "normal",
+                        whisker_host_conformance::WhiteSpaceFixture::NoWrap => "nowrap",
+                    },
+                );
+                assert_style(
+                    &text_style,
+                    "word-break",
+                    match text.word_break {
+                        whisker_host_conformance::WordBreakFixture::Normal => "normal",
+                        whisker_host_conformance::WordBreakFixture::BreakAll => "break-all",
+                        whisker_host_conformance::WordBreakFixture::KeepAll => "keep-all",
+                    },
+                );
+                assert_style(
+                    &text_style,
+                    "text-overflow",
+                    match text.overflow {
+                        whisker_host_conformance::TextOverflowFixture::Clip => "clip",
+                        whisker_host_conformance::TextOverflowFixture::Ellipsis => "ellipsis",
+                    },
+                );
                 assert_style(&text_style, "font-weight", &text.font_weight.to_string());
                 assert_style(&text_style, "color", &fixture_color_css(&text.color));
                 let expected_shadow = text.shadow.as_ref().map_or_else(
@@ -1479,6 +1506,9 @@ fn fixture(path: &str) -> &'static str {
         }
         "core/text-indent-lynx.json" => {
             include_str!("../../../../tests/host-conformance/core/text-indent-lynx.json")
+        }
+        "core/text-wrap-overflow-lynx.json" => {
+            include_str!("../../../../tests/host-conformance/core/text-wrap-overflow-lynx.json")
         }
         _ => panic!("manifest fixture is not embedded in the Web test: {path}"),
     }
@@ -2131,6 +2161,7 @@ fn fixture_alignment(
 }
 
 fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextContent {
+    use whisker_host_conformance::{TextOverflowFixture, WhiteSpaceFixture, WordBreakFixture};
     TextContent {
         payload: TextMeasurePayload {
             text: text.value.clone(),
@@ -2146,9 +2177,20 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
                 logical_pixels: text.indent.logical_pixels,
                 percentage: text.indent.percentage,
             },
-            wrap: MeasureTextWrap::Wrap,
-            max_lines: None,
-            overflow: MeasureTextOverflow::Clip,
+            wrap: match text.white_space {
+                WhiteSpaceFixture::Normal => MeasureTextWrap::Wrap,
+                WhiteSpaceFixture::NoWrap => MeasureTextWrap::NoWrap,
+            },
+            word_break: match text.word_break {
+                WordBreakFixture::Normal => MeasureTextWordBreak::Normal,
+                WordBreakFixture::BreakAll => MeasureTextWordBreak::BreakAll,
+                WordBreakFixture::KeepAll => MeasureTextWordBreak::KeepAll,
+            },
+            max_lines: (text.max_lines > 0).then_some(text.max_lines),
+            overflow: match text.overflow {
+                TextOverflowFixture::Clip => MeasureTextOverflow::Clip,
+                TextOverflowFixture::Ellipsis => MeasureTextOverflow::Ellipsis,
+            },
         },
         paint: TextPaint {
             foreground: color(&text.color),

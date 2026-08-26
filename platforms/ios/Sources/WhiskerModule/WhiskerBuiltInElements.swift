@@ -60,6 +60,7 @@ public final class WhiskerTextLabel: UILabel {
         let mutable = NSMutableAttributedString(attributedString: attributedText)
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = textAlignment
+        paragraph.lineBreakMode = lineBreakMode
         paragraph.firstLineHeadIndent = resolved
         mutable.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: mutable.length))
         self.attributedText = mutable
@@ -157,10 +158,18 @@ public enum WhiskerBuiltInElements {
                     }
                 }
                 label.attributedText = NSAttributedString(
-                    string: content.value,
+                    string: content.wordBreak == .keepAll
+                        ? protectCJKBreaks(content.value) : content.value,
                     attributes: attributes
                 )
                 label.setWhiskerIndent(content.indent)
+                label.numberOfLines = content.wrap
+                    ? (content.maxLines == 0 ? 0 : content.maxLines)
+                    : 1
+                label.lineBreakMode = switch content.overflow {
+                case .ellipsis: .byTruncatingTail
+                case .clip: content.wordBreak == .breakAll ? .byCharWrapping : .byWordWrapping
+                }
             }
         ) {
             let label = WhiskerTextLabel(frame: .zero)
@@ -184,6 +193,24 @@ public enum WhiskerBuiltInElements {
             WhiskerScrollContainerView(frame: .zero)
         }
     }
+}
+
+private func protectCJKBreaks(_ value: String) -> String {
+    var result = ""
+    var previousWasCJK = false
+    for character in value {
+        let currentIsCJK = character.unicodeScalars.contains(where: isCJK)
+        if previousWasCJK && currentIsCJK { result.append("\u{2060}") }
+        result.append(character)
+        previousWasCJK = currentIsCJK
+    }
+    return result
+}
+
+private func isCJK(_ scalar: UnicodeScalar) -> Bool {
+    (0x2E80...0x9FFF).contains(scalar.value)
+        || (0xF900...0xFAFF).contains(scalar.value)
+        || (0xAC00...0xD7AF).contains(scalar.value)
 }
 
 /** Built-ins use exactly the same checked-in ModuleDefinition path as libraries. */

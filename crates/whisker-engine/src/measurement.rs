@@ -759,6 +759,7 @@ mod tests {
                 alignment: whisker_protocol::MeasureTextAlignment::Start,
                 indent: Default::default(),
                 wrap: MeasureTextWrap::Wrap,
+                word_break: Default::default(),
                 max_lines: None,
                 overflow: MeasureTextOverflow::Clip,
             }),

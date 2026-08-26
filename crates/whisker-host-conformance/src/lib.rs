@@ -612,6 +612,18 @@ pub struct TextFixture {
     /// First-line indentation as a resolved length-plus-percentage pair.
     #[serde(default)]
     pub indent: TextIndentFixture,
+    /// Lynx `white-space` value.
+    #[serde(default)]
+    pub white_space: WhiteSpaceFixture,
+    /// Lynx `word-break` value.
+    #[serde(default)]
+    pub word_break: WordBreakFixture,
+    /// Maximum visible line count; zero means unlimited.
+    #[serde(default)]
+    pub max_lines: u32,
+    /// Lynx `text-overflow` value.
+    #[serde(default)]
+    pub overflow: TextOverflowFixture,
     /// Optional single Lynx text decoration.
     #[serde(default)]
     pub decoration: Option<TextDecorationFixture>,
@@ -628,6 +640,41 @@ pub struct TextIndentFixture {
     pub logical_pixels: f32,
     /// Percentage number before the `%` suffix.
     pub percentage: f32,
+}
+
+/// Lynx-supported `white-space` values.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WhiteSpaceFixture {
+    /// Collapse whitespace and allow wrapping.
+    #[default]
+    Normal,
+    /// Collapse whitespace and suppress wrapping.
+    NoWrap,
+}
+
+/// Lynx-supported `word-break` values.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WordBreakFixture {
+    /// Use ordinary Unicode break opportunities.
+    #[default]
+    Normal,
+    /// Permit a break between any characters.
+    BreakAll,
+    /// Suppress ordinary breaks inside CJK text.
+    KeepAll,
+}
+
+/// Lynx-supported `text-overflow` values.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TextOverflowFixture {
+    /// Clip overflowing glyphs.
+    #[default]
+    Clip,
+    /// Shape an ellipsis on the final visible line.
+    Ellipsis,
 }
 
 /// Lynx-supported `text-align` values.

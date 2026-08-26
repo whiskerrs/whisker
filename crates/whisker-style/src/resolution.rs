@@ -6,7 +6,8 @@ use crate::{
     CalcExpression, ColorValue, ComputedLayoutStyle, ComputedPaintStyle, FontFamilyValue,
     FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue,
     LineHeightValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
-    TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextShadowValue,
+    TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
+    TextShadowValue, WhiteSpaceValue, WordBreakValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -306,6 +307,9 @@ impl InheritedStyle {
 pub struct ComputedStyle {
     inherited_text: InheritedStyle,
     text_indent: ComputedTextIndent,
+    white_space: WhiteSpaceValue,
+    word_break: WordBreakValue,
+    text_overflow: TextOverflowValue,
     layout: ComputedLayoutStyle,
     paint: ComputedPaintStyle,
 }
@@ -319,6 +323,21 @@ impl ComputedStyle {
     /// Returns this node's non-inherited first-line indentation.
     pub const fn text_indent(&self) -> ComputedTextIndent {
         self.text_indent
+    }
+
+    /// Returns this node's non-inherited whitespace and wrapping policy.
+    pub const fn white_space(&self) -> WhiteSpaceValue {
+        self.white_space
+    }
+
+    /// Returns this node's non-inherited word-breaking policy.
+    pub const fn word_break(&self) -> WordBreakValue {
+        self.word_break
+    }
+
+    /// Returns this node's non-inherited text overflow treatment.
+    pub const fn text_overflow(&self) -> TextOverflowValue {
+        self.text_overflow
     }
 
     /// Returns Taffy-independent computed layout input for this node.
@@ -675,6 +694,29 @@ pub fn resolve_style(
         }
         None => ComputedTextIndent::default(),
     };
+    let local_text_value = |property| {
+        specified
+            .resolved()
+            .iter()
+            .rev()
+            .find(|declaration| declaration.property() == property)
+            .map(|declaration| declaration.value())
+    };
+    let white_space = match local_text_value(StyleProperty::WhiteSpace) {
+        Some(StyleValue::WhiteSpace(value)) => *value,
+        Some(_) => return Err(wrong_type(StyleProperty::WhiteSpace)),
+        None => WhiteSpaceValue::default(),
+    };
+    let word_break = match local_text_value(StyleProperty::WordBreak) {
+        Some(StyleValue::WordBreak(value)) => *value,
+        Some(_) => return Err(wrong_type(StyleProperty::WordBreak)),
+        None => WordBreakValue::default(),
+    };
+    let text_overflow = match local_text_value(StyleProperty::TextOverflow) {
+        Some(StyleValue::TextOverflow(value)) => *value,
+        Some(_) => return Err(wrong_type(StyleProperty::TextOverflow)),
+        None => TextOverflowValue::default(),
+    };
 
     let inherited_text = InheritedStyle {
         font_family,
@@ -701,6 +743,9 @@ pub fn resolve_style(
         computed: ComputedStyle {
             inherited_text,
             text_indent,
+            white_space,
+            word_break,
+            text_overflow,
             layout,
             paint,
         },
@@ -1354,6 +1399,9 @@ mod tests {
             StyleProperty::Color,
             StyleProperty::TextAlign,
             StyleProperty::TextIndent,
+            StyleProperty::WhiteSpace,
+            StyleProperty::WordBreak,
+            StyleProperty::TextOverflow,
             StyleProperty::TextDecoration,
             StyleProperty::TextShadow,
         ] {
@@ -1473,6 +1521,40 @@ mod tests {
                 StyleResolutionError::InvalidPropertyValue(StyleProperty::TextIndent)
             );
         }
+    }
+
+    #[test]
+    fn wrapping_and_overflow_resolve_without_inheriting() {
+        let specified = SpecifiedStyle::new()
+            .push(
+                StyleProperty::WhiteSpace,
+                StyleValue::WhiteSpace(WhiteSpaceValue::NoWrap),
+            )
+            .push(
+                StyleProperty::WordBreak,
+                StyleValue::WordBreak(WordBreakValue::BreakAll),
+            )
+            .push(
+                StyleProperty::TextOverflow,
+                StyleValue::TextOverflow(TextOverflowValue::Ellipsis),
+            );
+        let resolved = resolve_text_style(&specified, None, StyleEnvironment::default()).unwrap();
+        assert_eq!(resolved.computed().white_space(), WhiteSpaceValue::NoWrap);
+        assert_eq!(resolved.computed().word_break(), WordBreakValue::BreakAll);
+        assert_eq!(
+            resolved.computed().text_overflow(),
+            TextOverflowValue::Ellipsis
+        );
+
+        let child = resolve_text_style(
+            &SpecifiedStyle::new(),
+            Some(resolved.inherited_for_children()),
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(child.computed().white_space(), WhiteSpaceValue::Normal);
+        assert_eq!(child.computed().word_break(), WordBreakValue::Normal);
+        assert_eq!(child.computed().text_overflow(), TextOverflowValue::Clip);
     }
 
     #[test]

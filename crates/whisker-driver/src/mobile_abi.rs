@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 19;
+pub const MOBILE_ABI_MINOR: u16 = 20;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -305,6 +305,8 @@ pub struct MobileText {
     pub font_weight: u16,
     pub font_style: u8,
     pub wrap: u8,
+    pub word_break: u8,
+    pub overflow: u8,
     pub max_lines: u32,
     pub line_height: f32,
     pub letter_spacing: f32,
@@ -420,6 +422,8 @@ pub struct MobileMeasureRequest {
     pub available_height_kind: u8,
     pub font_style: u8,
     pub wrap: u8,
+    pub word_break: u8,
+    pub overflow: u8,
     pub text: WhiskerStringRef,
     pub locale: WhiskerStringRef,
     pub font_family: WhiskerStringRef,
@@ -663,7 +667,7 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileMemberRegistration>(), 24);
             assert_eq!(std::mem::size_of::<MobileElementRegistration>(), 72);
             assert_eq!(std::mem::size_of::<MobileBootstrap>(), 24);
-            assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 168);
+            assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 176);
             assert_eq!(std::mem::size_of::<MobileMeasureResponse>(), 64);
             assert_eq!(std::mem::size_of::<MobileText>(), 184);
             assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);

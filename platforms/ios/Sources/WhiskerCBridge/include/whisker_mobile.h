@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "whisker_bridge.h"
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 19 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 20 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -127,7 +127,7 @@ typedef struct {
 } WhiskerMobileBackgroundLayer;
 typedef struct {
   WhiskerStringRef text; float font_size; uint16_t font_weight;
-  uint8_t font_style, wrap; uint32_t max_lines; float line_height, letter_spacing;
+  uint8_t font_style, wrap, word_break, overflow; uint32_t max_lines; float line_height, letter_spacing;
   WhiskerMobileColor color;
   float shadow_offset_x, shadow_offset_y, shadow_blur_radius; uint32_t shadow_flags;
   WhiskerMobileColor shadow_color;
@@ -179,6 +179,7 @@ typedef struct {
   float known_width, known_height; uint32_t known_mask;
   float available_width, available_height;
   uint8_t available_width_kind, available_height_kind, font_style, wrap;
+  uint8_t word_break, overflow, _text_pad[2];
   WhiskerStringRef text, locale, font_family; float font_size;
   uint16_t font_weight, payload_version;
   float line_height, letter_spacing, indent_logical_pixels, indent_percentage;
@@ -201,7 +202,7 @@ typedef struct {
 _Static_assert(sizeof(WhiskerMobileMemberRegistration) == 24, "WhiskerMobileMemberRegistration ABI drift");
 _Static_assert(sizeof(WhiskerMobileElementRegistration) == 72, "WhiskerMobileElementRegistration ABI drift");
 _Static_assert(sizeof(WhiskerMobileBootstrap) == 24, "WhiskerMobileBootstrap ABI drift");
-_Static_assert(sizeof(WhiskerMobileMeasureRequest) == 168, "WhiskerMobileMeasureRequest ABI drift");
+_Static_assert(sizeof(WhiskerMobileMeasureRequest) == 176, "WhiskerMobileMeasureRequest ABI drift");
 _Static_assert(sizeof(WhiskerMobileMeasureResponse) == 64, "WhiskerMobileMeasureResponse ABI drift");
 _Static_assert(sizeof(WhiskerMobileResourceCommand) == 64, "WhiskerMobileResourceCommand ABI drift");
 _Static_assert(sizeof(WhiskerMobileResourceEvent) == 56, "WhiskerMobileResourceEvent ABI drift");

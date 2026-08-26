@@ -571,6 +571,7 @@ mod tests {
                 alignment: crate::MeasureTextAlignment::Start,
                 indent: Default::default(),
                 wrap: MeasureTextWrap::Wrap,
+                word_break: Default::default(),
                 max_lines: None,
                 overflow: MeasureTextOverflow::Clip,
             },

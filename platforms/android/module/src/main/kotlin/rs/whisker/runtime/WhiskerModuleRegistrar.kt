@@ -22,11 +22,19 @@ public data class WhiskerTextContent(
     public val color: Int,
     public val alignment: WhiskerTextAlignment = WhiskerTextAlignment.START,
     public val indent: WhiskerTextIndent = WhiskerTextIndent(),
+    public val wrap: Boolean = true,
+    public val wordBreak: WhiskerTextWordBreak = WhiskerTextWordBreak.NORMAL,
+    public val maxLines: Int = 0,
+    public val overflow: WhiskerTextOverflow = WhiskerTextOverflow.CLIP,
     public val decoration: WhiskerTextDecoration? = null,
     public val shadow: WhiskerTextShadow? = null,
 )
 
 public enum class WhiskerTextAlignment { START, END, LEFT, RIGHT, CENTER }
+
+public enum class WhiskerTextWordBreak { NORMAL, BREAK_ALL, KEEP_ALL }
+
+public enum class WhiskerTextOverflow { CLIP, ELLIPSIS }
 
 /** First-line indentation; percentage is relative to the final Text width. */
 public data class WhiskerTextIndent(

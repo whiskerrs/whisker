@@ -7,6 +7,8 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.Layout
+import android.text.TextUtils
 import android.text.style.LeadingMarginSpan
 import android.widget.TextView
 import kotlin.math.max
@@ -15,10 +17,28 @@ import kotlin.math.max
 public class WhiskerTextView(context: Context) : TextView(context) {
     private var whiskerTextValue: String = ""
     private var whiskerTextIndent: WhiskerTextIndent = WhiskerTextIndent()
+    private var whiskerWordBreak: WhiskerTextWordBreak = WhiskerTextWordBreak.NORMAL
 
-    public fun setWhiskerText(value: String, indent: WhiskerTextIndent) {
-        whiskerTextValue = value
-        whiskerTextIndent = indent
+    public fun setWhiskerText(content: WhiskerTextContent) {
+        whiskerTextValue = content.value
+        whiskerTextIndent = content.indent
+        whiskerWordBreak = content.wordBreak
+        setHorizontallyScrolling(!content.wrap)
+        maxLines = when {
+            !content.wrap -> 1
+            content.maxLines > 0 -> content.maxLines
+            else -> Int.MAX_VALUE
+        }
+        ellipsize = if (content.overflow == WhiskerTextOverflow.ELLIPSIS) {
+            TextUtils.TruncateAt.END
+        } else {
+            null
+        }
+        breakStrategy = if (content.wordBreak == WhiskerTextWordBreak.BREAK_ALL) {
+            Layout.BREAK_STRATEGY_SIMPLE
+        } else {
+            Layout.BREAK_STRATEGY_HIGH_QUALITY
+        }
         applyWhiskerText()
     }
 
@@ -36,7 +56,12 @@ public class WhiskerTextView(context: Context) : TextView(context) {
         val resolvedWidth = if (width > 0) width else layoutParams?.width ?: 0
         val indentPixels = whiskerTextIndent.logicalPixels * density +
             resolvedWidth * whiskerTextIndent.percentage / 100f
-        text = SpannableString(whiskerTextValue).apply {
+        val displayValue = if (whiskerWordBreak == WhiskerTextWordBreak.KEEP_ALL) {
+            protectCjkBreaks(whiskerTextValue)
+        } else {
+            whiskerTextValue
+        }
+        text = SpannableString(displayValue).apply {
             setSpan(
                 LeadingMarginSpan.Standard(indentPixels.toInt(), 0),
                 0,
@@ -117,3 +142,16 @@ public class WhiskerTextView(context: Context) : TextView(context) {
         }
     }
 }
+
+private fun protectCjkBreaks(value: String): String = buildString {
+    var previousWasCjk = false
+    value.forEach { character ->
+        val currentIsCjk = character.isCjk()
+        if (previousWasCjk && currentIsCjk) append('\u2060')
+        append(character)
+        previousWasCjk = currentIsCjk
+    }
+}
+
+private fun Char.isCjk(): Boolean = code in 0x2E80..0x9FFF || code in 0xF900..0xFAFF ||
+    code in 0xAC00..0xD7AF

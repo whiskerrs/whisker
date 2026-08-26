@@ -1,6 +1,6 @@
 use whisker_protocol::{
-    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextWrap,
-    TextContent, TextMeasurePayload,
+    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
+    MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, TextContent, TextMeasurePayload,
 };
 
 use super::color::css_color;
@@ -120,6 +120,33 @@ pub(crate) fn apply_metrics_style(
     )?;
     set_style(
         element,
+        "word-break",
+        match text.word_break {
+            MeasureTextWordBreak::Normal => "normal",
+            MeasureTextWordBreak::BreakAll => "break-all",
+            MeasureTextWordBreak::KeepAll => "keep-all",
+        },
+    )?;
+    set_style(
+        element,
+        "text-overflow",
+        match text.overflow {
+            MeasureTextOverflow::Clip => "clip",
+            MeasureTextOverflow::Ellipsis => "ellipsis",
+        },
+    )?;
+    set_style(element, "overflow", "hidden")?;
+    if let Some(max_lines) = text.max_lines {
+        set_style(element, "display", "-webkit-box")?;
+        set_style(element, "-webkit-box-orient", "vertical")?;
+        set_style(element, "-webkit-line-clamp", &max_lines.to_string())?;
+    } else {
+        set_style(element, "display", "block")?;
+        set_style(element, "-webkit-box-orient", "initial")?;
+        set_style(element, "-webkit-line-clamp", "initial")?;
+    }
+    set_style(
+        element,
         "direction",
         match text.direction {
             MeasureTextDirection::Auto => "initial",
@@ -127,5 +154,5 @@ pub(crate) fn apply_metrics_style(
             MeasureTextDirection::RightToLeft => "rtl",
         },
     )?;
-    set_style(element, "overflow-wrap", "anywhere")
+    set_style(element, "overflow-wrap", "normal")
 }
