@@ -67,7 +67,8 @@ pub(crate) fn apply(element: &web_sys::Element, effects: &VisualEffects) -> Resu
         "image-rendering",
         match effects.image_rendering {
             ImageRendering::Pixelated => "pixelated",
-            ImageRendering::Auto | ImageRendering::CrispEdges => "auto",
+            ImageRendering::CrispEdges => "crisp-edges",
+            ImageRendering::Auto => "auto",
             _ => unreachable!("unsupported image-rendering rejected above"),
         },
     )?;

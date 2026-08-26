@@ -217,16 +217,29 @@ final class HostBackgroundLayer {
     }
 }
 
+enum HostImageRendering: Int32, Equatable {
+    case auto = 0
+    case pixelated = 1
+    case crispEdges = 2
+
+    var interpolationQuality: CGInterpolationQuality {
+        switch self {
+        case .auto: .default
+        case .pixelated, .crispEdges: .none
+        }
+    }
+}
+
 final class HostBackgroundPainter {
     private var layers = [HostBackgroundLayer]()
-    private var pixelatedImages = false
+    private var imageRendering: HostImageRendering = .auto
 
     func update(_ layers: [HostBackgroundLayer]) {
         self.layers = layers
     }
 
-    func setPixelatedImages(_ pixelated: Bool) {
-        pixelatedImages = pixelated
+    func setImageRendering(_ value: HostImageRendering) {
+        imageRendering = value
     }
 
     func draw(
@@ -330,7 +343,7 @@ final class HostBackgroundPainter {
 
     private func drawRaster(_ image: CGImage, in bounds: CGRect, context: CGContext) {
         context.saveGState()
-        context.interpolationQuality = pixelatedImages ? .none : .default
+        context.interpolationQuality = imageRendering.interpolationQuality
         UIImage(cgImage: image, scale: 1, orientation: .up).draw(in: bounds)
         context.restoreGState()
     }

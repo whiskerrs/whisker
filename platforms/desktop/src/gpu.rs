@@ -2136,8 +2136,11 @@ impl GpuRenderer {
                                 Some(gradient),
                                 resource,
                                 resource.is_some()
-                                    && visual_effects.image_rendering
-                                        == whisker_protocol::ImageRendering::Pixelated,
+                                    && matches!(
+                                        visual_effects.image_rendering,
+                                        whisker_protocol::ImageRendering::Pixelated
+                                            | whisker_protocol::ImageRendering::CrispEdges
+                                    ),
                             ),
                         );
                     }

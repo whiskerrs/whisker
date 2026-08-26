@@ -62,15 +62,30 @@ internal data class HostBackgroundLayer(
 /** CSS-ordered layers. The first entry is painted nearest the user. */
 internal data class HostBackgroundLayers(val layers: List<HostBackgroundLayer>)
 
+internal enum class HostImageRendering(val wireValue: Int) {
+    Auto(0),
+    Pixelated(1),
+    CrispEdges(2);
+
+    val usesNearestSampling: Boolean
+        get() = this != Auto
+
+    companion object {
+        fun fromWire(value: Int): HostImageRendering? = entries.firstOrNull {
+            it.wireValue == value
+        }
+    }
+}
+
 internal fun drawBackgroundLayers(
     canvas: Canvas,
     boxes: HostBackgroundPaintBoxes,
     layers: HostBackgroundLayers?,
     paint: Paint,
-    pixelatedImages: Boolean,
+    imageRendering: HostImageRendering,
 ) {
     layers?.layers?.asReversed()?.forEach { layer ->
-        drawBackgroundLayer(canvas, boxes, layer, paint, pixelatedImages)
+        drawBackgroundLayer(canvas, boxes, layer, paint, imageRendering)
     }
 }
 
@@ -79,7 +94,7 @@ private fun drawBackgroundLayer(
     boxes: HostBackgroundPaintBoxes,
     layer: HostBackgroundLayer,
     paint: Paint,
-    pixelatedImages: Boolean,
+    imageRendering: HostImageRendering,
 ) {
     val geometry = layer.geometry
     val positioningBox = boxes.select(geometry.origin).rect
@@ -96,7 +111,7 @@ private fun drawBackgroundLayer(
         ) { imageBox ->
             val tileSaveCount = canvas.save().also { canvas.clipRect(imageBox) }
             try {
-                drawBackgroundImage(canvas, painting.clip, imageBox, layer, paint, pixelatedImages)
+                drawBackgroundImage(canvas, painting.clip, imageBox, layer, paint, imageRendering)
             } finally {
                 canvas.restoreToCount(tileSaveCount)
             }
@@ -112,12 +127,12 @@ private fun drawBackgroundImage(
     imageBox: RectF,
     layer: HostBackgroundLayer,
     paint: Paint,
-    pixelatedImages: Boolean,
+    imageRendering: HostImageRendering,
 ) {
     layer.rasterBitmap?.let { bitmap ->
         paint.color = Color.WHITE
         paint.shader = null
-        paint.isFilterBitmap = !pixelatedImages
+        paint.isFilterBitmap = !imageRendering.usesNearestSampling
         canvas.drawBitmap(bitmap, null, imageBox, paint)
         return
     }

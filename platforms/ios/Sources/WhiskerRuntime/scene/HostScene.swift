@@ -381,10 +381,10 @@ final class HostScene {
             guard let node = nodes[id] else { return false }
             node.setBackdropBlur(CGFloat(operation.scalar))
         case UInt32(WHISKER_OP_IMAGE_RENDERING):
-            guard let node = nodes[id] else { return false }
-            node.setImageRendering(
-                pixelated: operation.integer == Int32(WHISKER_IMAGE_RENDERING_PIXELATED)
-            )
+            guard let node = nodes[id],
+                  let imageRendering = HostImageRendering(rawValue: operation.integer)
+            else { return false }
+            node.setImageRendering(imageRendering)
         case UInt32(WHISKER_OP_HIT_TEST):
             nodes[id]?.setHitTestBehavior(operation.integer)
         case UInt32(WHISKER_OP_CURSOR):

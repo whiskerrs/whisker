@@ -438,6 +438,8 @@ private class Driver(
                             command.getString("name") ==
                             "paint.visual-effects.image-rendering-pixelated" ||
                             command.getString("name") ==
+                            "paint.visual-effects.image-rendering-crisp-edges" ||
+                            command.getString("name") ==
                             "paint.transform.projective-plane" ||
                             command.getString("name") ==
                             "paint.transform.motion-path-line" ||

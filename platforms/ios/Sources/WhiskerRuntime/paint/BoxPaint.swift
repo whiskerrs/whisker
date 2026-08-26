@@ -97,8 +97,8 @@ final class HostBoxPainter {
         backgroundPainter.update(layers)
     }
 
-    func setPixelatedImages(_ pixelated: Bool) {
-        backgroundPainter.setPixelatedImages(pixelated)
+    func setImageRendering(_ value: HostImageRendering) {
+        backgroundPainter.setImageRendering(value)
     }
 
     func hardBoxShadowPath(in bounds: CGRect, shadow: HostBoxShadow) -> CGPath? {

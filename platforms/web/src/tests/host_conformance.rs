@@ -488,6 +488,8 @@ impl Driver {
                             "interaction.pointer.lynx"
                         } else if name == "paint.visual-effects.image-rendering-pixelated" {
                             "paint.visual-effects.image-rendering-pixelated"
+                        } else if name == "paint.visual-effects.image-rendering-crisp-edges" {
+                            "paint.visual-effects.image-rendering-crisp-edges"
                         } else if self.resource_lifecycle {
                             "paint.background-layers.resource-lifecycle"
                         } else {
@@ -1315,8 +1317,10 @@ impl Driver {
                     "image-rendering",
                     match fixture_node.image_rendering {
                         whisker_host_conformance::ImageRenderingFixture::Pixelated => "pixelated",
-                        whisker_host_conformance::ImageRenderingFixture::Auto
-                        | whisker_host_conformance::ImageRenderingFixture::CrispEdges => "auto",
+                        whisker_host_conformance::ImageRenderingFixture::CrispEdges => {
+                            "crisp-edges"
+                        }
+                        whisker_host_conformance::ImageRenderingFixture::Auto => "auto",
                     },
                 );
             }
@@ -1573,6 +1577,9 @@ fn fixture(path: &str) -> &'static str {
         }
         "core/image-rendering-pixelated.json" => {
             include_str!("../../../../tests/host-conformance/core/image-rendering-pixelated.json")
+        }
+        "core/image-rendering-crisp-edges.json" => {
+            include_str!("../../../../tests/host-conformance/core/image-rendering-crisp-edges.json")
         }
         "core/background-layer-geometry-symmetry.json" => include_str!(
             "../../../../tests/host-conformance/core/background-layer-geometry-symmetry.json"
