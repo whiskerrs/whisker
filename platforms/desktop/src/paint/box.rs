@@ -27,6 +27,7 @@ pub(crate) struct BoxPrimitive {
 pub(crate) enum BoxPrimitiveKind {
     Fill,
     BoxShadowBlur,
+    InsetShadow,
     LinearGradient,
     BackgroundBorderArea,
     Border,
@@ -37,6 +38,7 @@ impl BoxPrimitiveKind {
         match self {
             Self::Fill => -1.0,
             Self::BoxShadowBlur => -3.0,
+            Self::InsetShadow => 3.0,
             Self::LinearGradient => -2.0,
             Self::BackgroundBorderArea => 2.0,
             Self::Border => 1.0,
@@ -180,15 +182,39 @@ pub(crate) fn lower_box(
     }
 }
 
-/// Lowers a hard-edged outer shadow to the shared rounded-rect primitive.
-pub(crate) fn hard_box_shadow_primitive(
+/// Lowers a supported outer or inset shadow to the shared rounded-rect primitive.
+pub(crate) fn box_shadow_primitive(
     rect: LayoutRect,
     paint: &BoxPaint,
     shadow: &BoxShadow,
     opacity: f32,
 ) -> Option<BoxPrimitive> {
     if shadow.inset {
-        return None;
+        if shadow.blur_radius != 0.0 || shadow.spread_radius != 0.0 {
+            return None;
+        }
+        let base = resolve_box_geometry(rect, paint);
+        let padding_rect = base.inner_rect;
+        let hole_rect = LayoutRect {
+            x: padding_rect.x + shadow.offset_x,
+            y: padding_rect.y + shadow.offset_y,
+            ..padding_rect
+        };
+        return Some(
+            BoxGeometry {
+                outer_rect: padding_rect,
+                outer_radii: base.inner_radii,
+                inner_rect: hole_rect,
+                inner_radii: base.inner_radii,
+                border_widths: [0.0; 4],
+            }
+            .primitive(
+                gpu_color(&shadow.color, opacity),
+                [[0.0; 4]; 4],
+                [0.0; 4],
+                BoxPrimitiveKind::InsetShadow,
+            ),
+        );
     }
     let base = resolve_box_geometry(rect, paint);
     let spread = shadow.spread_radius;
@@ -494,7 +520,7 @@ mod tests {
     fn hard_outer_shadow_applies_offset_spread_and_corner_growth() {
         let mut box_paint = paint(PaintColor::Named("transparent".into()));
         box_paint.border_radii.top_left = elliptical(8.0, 4.0);
-        let primitive = hard_box_shadow_primitive(
+        let primitive = box_shadow_primitive(
             LayoutRect {
                 x: 10.0,
                 y: 20.0,
@@ -521,6 +547,48 @@ mod tests {
         assert_eq!(primitive.outer_radii_x[0], 10.0);
         assert_eq!(primitive.outer_radii_y[0], 6.0);
         assert_eq!(primitive.kind, BoxPrimitiveKind::Fill);
+    }
+
+    #[test]
+    fn hard_inset_shadow_uses_the_padding_edge_and_offsets_its_hole() {
+        let mut box_paint = paint(PaintColor::Named("transparent".into()));
+        let width = PaintLengthPercentage {
+            length: 8.0,
+            fraction: 0.0,
+        };
+        box_paint.border_widths = PaintEdges {
+            top: width,
+            right: width,
+            bottom: width,
+            left: width,
+        };
+        let primitive = box_shadow_primitive(
+            LayoutRect {
+                x: 20.0,
+                y: 20.0,
+                width: 80.0,
+                height: 80.0,
+            },
+            &box_paint,
+            &BoxShadow {
+                offset_x: 10.0,
+                offset_y: 10.0,
+                blur_radius: 0.0,
+                spread_radius: 0.0,
+                color: PaintColor::Named("black".into()),
+                inset: true,
+            },
+            1.0,
+        )
+        .unwrap();
+
+        assert_eq!(primitive.kind, BoxPrimitiveKind::InsetShadow);
+        assert_eq!(primitive.outer_rect.x, 28.0);
+        assert_eq!(primitive.outer_rect.y, 28.0);
+        assert_eq!(primitive.outer_rect.width, 64.0);
+        assert_eq!(primitive.outer_rect.height, 64.0);
+        assert_eq!(primitive.inner_rect.x, 38.0);
+        assert_eq!(primitive.inner_rect.y, 38.0);
     }
 
     #[test]

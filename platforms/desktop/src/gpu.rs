@@ -21,8 +21,8 @@ use whisker_protocol::{
 };
 
 use crate::paint::box_paint::{
-    BoxPrimitive, BoxPrimitiveKind, background_gradient_primitive, hard_box_shadow_primitive,
-    lower_box, resolve_box_geometry,
+    BoxPrimitive, BoxPrimitiveKind, background_gradient_primitive, box_shadow_primitive, lower_box,
+    resolve_box_geometry,
 };
 use crate::paint::color::{gpu_color, text_color};
 use crate::scene::{LogicalClip, PaintCommand, ShapeClipStack};
@@ -546,8 +546,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         inner_coverage = shape_coverage(inner_distance);
     }
     if input.mode > 1.5 {
-        let color = linear_gradient_color(input.draw_index, input.logical_position);
         let coverage = max(outer_coverage - inner_coverage, 0.0);
+        if input.mode > 2.5 {
+            return vec4<f32>(
+                input.color.rgb,
+                input.color.a * coverage * clip_coverage,
+            );
+        }
+        let color = linear_gradient_color(input.draw_index, input.logical_position);
         return vec4<f32>(color.rgb, color.a * coverage * clip_coverage);
     }
     let side_and_depth = border_side(
@@ -1722,9 +1728,14 @@ impl GpuRenderer {
                 } => {
                     let default_paint = whisker_protocol::BoxPaint::default();
                     let paint = paint.unwrap_or(&default_paint);
-                    for shadow in visual_effects.box_shadows.iter().rev() {
+                    for shadow in visual_effects
+                        .box_shadows
+                        .iter()
+                        .rev()
+                        .filter(|shadow| !shadow.inset)
+                    {
                         if let Some(primitive) =
-                            hard_box_shadow_primitive(*rect, paint, shadow, *opacity)
+                            box_shadow_primitive(*rect, paint, shadow, *opacity)
                         {
                             push_quad_draw(
                                 &mut vertices,
@@ -1797,6 +1808,26 @@ impl GpuRenderer {
                             shape_clips,
                             (Some(gradient), resource),
                         );
+                    }
+                    for shadow in visual_effects
+                        .box_shadows
+                        .iter()
+                        .rev()
+                        .filter(|shadow| shadow.inset)
+                    {
+                        if let Some(primitive) =
+                            box_shadow_primitive(*rect, paint, shadow, *opacity)
+                        {
+                            push_quad_draw(
+                                &mut vertices,
+                                &mut draws,
+                                primitive,
+                                *transform,
+                                *clip,
+                                shape_clips,
+                                (None, None),
+                            );
+                        }
                     }
                     for primitive in box_primitives
                         .into_iter()

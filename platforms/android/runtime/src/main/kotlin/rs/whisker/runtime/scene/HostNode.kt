@@ -13,7 +13,8 @@ import rs.whisker.runtime.paint.HostBackgroundLayers
 import rs.whisker.runtime.paint.HostBoxShadow
 import rs.whisker.runtime.paint.ResolvedBoxGeometry
 import rs.whisker.runtime.paint.normalizeRadii
-import rs.whisker.runtime.paint.drawHardBoxShadows
+import rs.whisker.runtime.paint.drawInsetBoxShadows
+import rs.whisker.runtime.paint.drawOuterBoxShadows
 
 /** Mutable logical geometry attached to one Host scene node. */
 internal data class HostGeometry(
@@ -46,6 +47,10 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
     private var overflowClipRect = RectF()
     private var overflowClipPath: Path? = null
     private var resolvedBoxGeometry: ResolvedBoxGeometry? = null
+
+    init {
+        setWillNotDraw(false)
+    }
 
     fun setOverflowClipGeometry(geometry: ResolvedBoxGeometry) {
         resolvedBoxGeometry = geometry
@@ -98,15 +103,20 @@ internal class HostNode(context: Context, val element: String) : WhiskerContaine
 
     override fun draw(canvas: Canvas) {
         if (!hasLocalTransform) {
-            drawHardBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
+            drawOuterBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
             super.draw(canvas)
             return
         }
         val save = canvas.save()
         canvas.concat(localTransform)
-        drawHardBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
+        drawOuterBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
         super.draw(canvas)
         canvas.restoreToCount(save)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        drawInsetBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
     }
 
     override fun clipDescendants(

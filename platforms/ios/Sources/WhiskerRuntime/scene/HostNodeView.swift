@@ -116,11 +116,31 @@ final class WhiskerNodeView: UIView {
         guard let shadow = boxShadow else {
             boxShadowLayer.path = nil
             boxShadowLayer.mask = nil
+            boxShadowLayer.shadowPath = nil
+            return
+        }
+        if shadow.inset {
+            guard let shadowPath = boxPainter.hardInsetBoxShadowPath(in: bounds, shadow: shadow) else {
+                boxShadowLayer.path = nil
+                boxShadowLayer.mask = nil
+                boxShadowLayer.shadowPath = nil
+                return
+            }
+            boxShadowLayer.frame = bounds
+            boxShadowLayer.path = shadowPath
+            boxShadowLayer.fillColor = shadow.color.cgColor
+            boxShadowLayer.fillRule = .evenOdd
+            boxShadowLayer.strokeColor = nil
+            boxShadowLayer.mask = nil
+            boxShadowLayer.shadowPath = nil
+            boxShadowLayer.shadowOpacity = 0
+            boxShadowLayer.shadowRadius = 0
             return
         }
         guard let shadowPath = boxPainter.hardBoxShadowPath(in: bounds, shadow: shadow) else {
             boxShadowLayer.path = nil
             boxShadowLayer.mask = nil
+            boxShadowLayer.shadowPath = nil
             return
         }
         let blurExtent = shadow.blurRadius * 1.5
@@ -134,6 +154,7 @@ final class WhiskerNodeView: UIView {
         boxShadowLayer.frame = layerFrame
         boxShadowLayer.path = shadowPath.copy(using: &translation)
         boxShadowLayer.fillColor = shadow.color.cgColor
+        boxShadowLayer.fillRule = .nonZero
         boxShadowLayer.strokeColor = nil
         boxShadowLayer.shadowPath = shadowPath.copy(using: &translation)
         boxShadowLayer.shadowColor = shadow.color.withAlphaComponent(1).cgColor

@@ -816,8 +816,9 @@ impl Driver {
                         .box_shadows
                         .iter()
                         .rev()
+                        .filter(|shadow| !shadow.inset)
                         .filter_map(|shadow| {
-                            crate::paint::box_paint::hard_box_shadow_primitive(
+                            crate::paint::box_paint::box_shadow_primitive(
                                 rect, paint, shadow, opacity,
                             )
                             .map(|primitive| {
@@ -877,6 +878,21 @@ impl Driver {
                         resource,
                     ));
                 }
+                primitives.extend(
+                    visual_effects
+                        .box_shadows
+                        .iter()
+                        .rev()
+                        .filter(|shadow| shadow.inset)
+                        .filter_map(|shadow| {
+                            crate::paint::box_paint::box_shadow_primitive(
+                                rect, paint, shadow, opacity,
+                            )
+                            .map(|primitive| {
+                                (primitive, clip, transform, shape_clips.clone(), None, None)
+                            })
+                        }),
+                );
                 primitives.extend(
                     boxes
                         .into_iter()
