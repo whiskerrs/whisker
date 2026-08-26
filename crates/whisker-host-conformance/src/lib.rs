@@ -634,6 +634,8 @@ pub enum BackgroundBoxFixture {
     Padding,
     /// Content box.
     Content,
+    /// Area painted by the element's border.
+    BorderArea,
 }
 
 const fn default_background_origin() -> BackgroundBoxFixture {

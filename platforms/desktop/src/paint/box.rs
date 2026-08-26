@@ -27,6 +27,7 @@ pub(crate) struct BoxPrimitive {
 pub(crate) enum BoxPrimitiveKind {
     Fill,
     LinearGradient,
+    BackgroundBorderArea,
     Border,
 }
 
@@ -35,6 +36,7 @@ impl BoxPrimitiveKind {
         match self {
             Self::Fill => -1.0,
             Self::LinearGradient => -2.0,
+            Self::BackgroundBorderArea => 2.0,
             Self::Border => 1.0,
         }
     }
@@ -49,30 +51,32 @@ pub(crate) fn background_gradient_primitive(
     clip: PaintBox,
 ) -> BoxPrimitive {
     let geometry = resolve_box_geometry(rect, paint);
-    let geometry = match clip {
-        PaintBox::Border => geometry,
-        PaintBox::Padding => BoxGeometry {
-            outer_rect: geometry.inner_rect,
-            outer_radii: geometry.inner_radii,
-            inner_rect: geometry.inner_rect,
-            inner_radii: geometry.inner_radii,
-            border_widths: [0.0; 4],
-        },
-        PaintBox::Content => BoxGeometry {
-            outer_rect: content_rect,
-            outer_radii: inset_radii(geometry.outer_rect, geometry.outer_radii, content_rect),
-            inner_rect: content_rect,
-            inner_radii: inset_radii(geometry.outer_rect, geometry.outer_radii, content_rect),
-            border_widths: [0.0; 4],
-        },
-        _ => geometry,
+    let (geometry, kind) = match clip {
+        PaintBox::Border => (geometry, BoxPrimitiveKind::LinearGradient),
+        PaintBox::Padding => (
+            BoxGeometry {
+                outer_rect: geometry.inner_rect,
+                outer_radii: geometry.inner_radii,
+                inner_rect: geometry.inner_rect,
+                inner_radii: geometry.inner_radii,
+                border_widths: [0.0; 4],
+            },
+            BoxPrimitiveKind::LinearGradient,
+        ),
+        PaintBox::Content => (
+            BoxGeometry {
+                outer_rect: content_rect,
+                outer_radii: inset_radii(geometry.outer_rect, geometry.outer_radii, content_rect),
+                inner_rect: content_rect,
+                inner_radii: inset_radii(geometry.outer_rect, geometry.outer_radii, content_rect),
+                border_widths: [0.0; 4],
+            },
+            BoxPrimitiveKind::LinearGradient,
+        ),
+        PaintBox::BorderArea => (geometry, BoxPrimitiveKind::BackgroundBorderArea),
+        _ => (geometry, BoxPrimitiveKind::LinearGradient),
     };
-    geometry.primitive(
-        [0.0; 4],
-        [[0.0; 4]; 4],
-        [0.0; 4],
-        BoxPrimitiveKind::LinearGradient,
-    )
+    geometry.primitive([0.0; 4], [[0.0; 4]; 4], [0.0; 4], kind)
 }
 
 fn inset_radii(

@@ -129,6 +129,13 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.background-clip.border-area-background-geometry",
+      "feature": "background-clip-border-area",
+      "fixture": "wpt/css/css-backgrounds/background-clip-border-area-background-geometry.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.background-repeat.repeat-x",
       "feature": "background-repeat-x",
       "fixture": "wpt/css/css-backgrounds/background-repeat/background-repeat-repeat-x.json",

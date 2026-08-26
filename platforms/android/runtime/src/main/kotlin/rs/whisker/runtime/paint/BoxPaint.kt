@@ -202,6 +202,12 @@ private class WhiskerBoxDrawable(
                 border = HostBackgroundPaintBox(backgroundBorderBox, outer),
                 padding = HostBackgroundPaintBox(backgroundPaddingBox, paddingPath),
                 content = HostBackgroundPaintBox(contentBox, contentPath),
+                borderArea = HostBackgroundPaintBox(
+                    backgroundBorderBox,
+                    Path(outer).apply {
+                        if (!paddingPath.isEmpty) op(paddingPath, Path.Op.DIFFERENCE)
+                    },
+                ),
             ),
             backgroundLayers,
             paint,

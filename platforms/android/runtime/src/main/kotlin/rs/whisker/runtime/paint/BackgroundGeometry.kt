@@ -17,6 +17,7 @@ internal enum class HostBackgroundBox {
     Border,
     Padding,
     Content,
+    BorderArea,
 }
 
 internal enum class HostBackgroundSize {
@@ -37,11 +38,13 @@ internal data class HostBackgroundPaintBoxes(
     val border: HostBackgroundPaintBox,
     val padding: HostBackgroundPaintBox,
     val content: HostBackgroundPaintBox,
+    val borderArea: HostBackgroundPaintBox,
 ) {
     fun select(box: HostBackgroundBox): HostBackgroundPaintBox = when (box) {
         HostBackgroundBox.Border -> border
         HostBackgroundBox.Padding -> padding
         HostBackgroundBox.Content -> content
+        HostBackgroundBox.BorderArea -> borderArea
     }
 }
 

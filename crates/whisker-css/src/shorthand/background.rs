@@ -230,7 +230,7 @@ fn background_value(background: &Background) -> Option<whisker_style::StyleValue
                     BackgroundClip::BorderBox => BackgroundBoxValue::Border,
                     BackgroundClip::PaddingBox => BackgroundBoxValue::Padding,
                     BackgroundClip::ContentBox => BackgroundBoxValue::Content,
-                    BackgroundClip::Text => return None,
+                    BackgroundClip::BorderArea => BackgroundBoxValue::BorderArea,
                 },
                 attachment: match layer.attachment.unwrap_or(BackgroundAttachment::Scroll) {
                     BackgroundAttachment::Scroll => BackgroundAttachmentValue::Scroll,

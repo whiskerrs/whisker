@@ -92,6 +92,7 @@ fn apply_background_geometry(
         BackgroundBoxFixture::Border => PaintBox::Border,
         BackgroundBoxFixture::Padding => PaintBox::Padding,
         BackgroundBoxFixture::Content => PaintBox::Content,
+        BackgroundBoxFixture::BorderArea => PaintBox::BorderArea,
     };
     layer.position = PaintPosition {
         x: coordinate(value.position[0]),

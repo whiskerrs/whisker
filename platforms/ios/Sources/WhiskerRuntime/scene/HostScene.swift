@@ -512,7 +512,7 @@ private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> B
          UInt32(WHISKER_BACKGROUND_BOX_CONTENT)]
             .contains(layer.origin) &&
         [UInt32(WHISKER_BACKGROUND_BOX_BORDER), UInt32(WHISKER_BACKGROUND_BOX_PADDING),
-         UInt32(WHISKER_BACKGROUND_BOX_CONTENT)]
+         UInt32(WHISKER_BACKGROUND_BOX_CONTENT), UInt32(WHISKER_BACKGROUND_BOX_BORDER_AREA)]
             .contains(layer.clip)
 }
 
@@ -640,6 +640,7 @@ private func hostBackgroundBox(_ value: UInt32) -> HostBackgroundBox {
     switch value {
     case UInt32(WHISKER_BACKGROUND_BOX_BORDER): .border
     case UInt32(WHISKER_BACKGROUND_BOX_CONTENT): .content
+    case UInt32(WHISKER_BACKGROUND_BOX_BORDER_AREA): .borderArea
     default: .padding
     }
 }

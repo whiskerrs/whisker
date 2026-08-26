@@ -48,7 +48,7 @@ fn supports_layer(layer: &BackgroundLayer) -> bool {
         PaintBox::Border | PaintBox::Padding | PaintBox::Content
     ) && matches!(
         layer.clip,
-        PaintBox::Border | PaintBox::Padding | PaintBox::Content
+        PaintBox::Border | PaintBox::Padding | PaintBox::Content | PaintBox::BorderArea
     );
     supported_image
         && supported_geometry
@@ -291,6 +291,7 @@ fn background_box(value: PaintBox) -> &'static str {
         PaintBox::Border => "border-box",
         PaintBox::Padding => "padding-box",
         PaintBox::Content => "content-box",
+        PaintBox::BorderArea => "border-area",
         _ => unreachable!("unsupported background box passed preflight"),
     }
 }

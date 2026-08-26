@@ -1045,6 +1045,7 @@ impl MobileFrameOwned {
                                 PaintBox::Border => BACKGROUND_BOX_BORDER,
                                 PaintBox::Padding => BACKGROUND_BOX_PADDING,
                                 PaintBox::Content => BACKGROUND_BOX_CONTENT,
+                                PaintBox::BorderArea => BACKGROUND_BOX_BORDER_AREA,
                                 _ => return Err(MobileFrameError),
                             };
                             let image = match &layer.image {

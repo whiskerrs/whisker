@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-clip.border-area-background-geometry",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/background-clip/clip-border-area-background-geometry.html",
+    "reference_path": "css/css-backgrounds/background-clip/clip-border-area-background-geometry-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "The border-area fill respects background image geometry and paints only the border area.",
+    "adaptation": "The upstream stripes resource is replaced by a constant green gradient while preserving its explicit 100 by 100 size, 15 by 20 position, transparent 50-pixel border, and border-area clip. Pixel samples isolate clipping from resource decoding."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 300.0, "height": 200.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 300.0, 200.0],
+            "content_box": [50.0, 50.0, 200.0, 100.0],
+            "background": { "kind": "named", "value": "transparent" },
+            "border": {
+              "widths": [50.0, 50.0, 50.0, 50.0],
+              "colors": [
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" },
+                { "kind": "named", "value": "transparent" }
+              ],
+              "styles": ["solid", "solid", "solid", "solid"],
+              "radii": [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]
+            },
+            "background_layer": {
+              "position": [
+                { "length": 15.0, "fraction": 0.0 },
+                { "length": 20.0, "fraction": 0.0 }
+              ],
+              "size": [
+                { "length": 100.0, "fraction": 0.0 },
+                { "length": 100.0, "fraction": 0.0 }
+              ],
+              "repeat_x": "no_repeat",
+              "repeat_y": "no_repeat",
+              "origin": "border",
+              "clip": "border_area"
+            },
+            "linear_gradient": {
+              "angle_degrees": 180.0,
+              "stops": [
+                { "color": { "kind": "named", "value": "green" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "green" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.clip-border-area",
+        "samples": [
+          { "point": [20.0, 25.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [60.0, 25.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [20.0, 60.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [60.0, 60.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 },
+          { "point": [120.0, 25.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

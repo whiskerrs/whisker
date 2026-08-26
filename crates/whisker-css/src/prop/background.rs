@@ -103,9 +103,7 @@ impl Css {
             BackgroundClip::BorderBox => whisker_style::BackgroundBoxValue::Border,
             BackgroundClip::PaddingBox => whisker_style::BackgroundBoxValue::Padding,
             BackgroundClip::ContentBox => whisker_style::BackgroundBoxValue::Content,
-            BackgroundClip::Text => {
-                return self.push_raw(crate::StyleProperty::BackgroundClip, lynx_value);
-            }
+            BackgroundClip::BorderArea => whisker_style::BackgroundBoxValue::BorderArea,
         };
         self.push_semantic(
             crate::StyleProperty::BackgroundClip,
@@ -541,14 +539,16 @@ mod tests {
     fn background_origin_and_clip() {
         let s = Css::new()
             .background_origin(BackgroundOrigin::ContentBox)
-            .background_clip(BackgroundClip::Text);
+            .background_clip(BackgroundClip::BorderArea);
         assert_eq!(
             s.to_string(),
-            "background-origin: content-box; background-clip: text;"
+            "background-origin: content-box; background-clip: border-area;"
         );
         assert_eq!(
-            s.to_specified_style().unwrap_err().property(),
-            "background-clip"
+            s.to_specified_style().unwrap().resolved()[1].value(),
+            &whisker_style::StyleValue::BackgroundBox(
+                whisker_style::BackgroundBoxValue::BorderArea
+            )
         );
 
         let supported = Css::new()

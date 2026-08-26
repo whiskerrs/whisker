@@ -431,6 +431,7 @@ private final class Driver {
                     name == "paint.background-layers.repeat-round-position" ||
                     name == "paint.background-layers.origin-content-box" ||
                     name == "paint.background-layers.clip-content-box" ||
+                    name == "paint.background-layers.clip-border-area" ||
                     name == "paint.background-layers.stacking" ||
                     name == "paint.background-layers.resource-image" ||
                     name == "paint.background-layers.resource-lifecycle" ||
@@ -1375,6 +1376,7 @@ private func backgroundBox(_ value: String) throws -> UInt32 {
     case "border": UInt32(WHISKER_BACKGROUND_BOX_BORDER)
     case "padding": UInt32(WHISKER_BACKGROUND_BOX_PADDING)
     case "content": UInt32(WHISKER_BACKGROUND_BOX_CONTENT)
+    case "border_area": UInt32(WHISKER_BACKGROUND_BOX_BORDER_AREA)
     default: throw Failure("unsupported background box")
     }
 }

@@ -558,6 +558,7 @@ fn paint_box(value: BackgroundBoxValue) -> PaintBox {
         BackgroundBoxValue::Border => PaintBox::Border,
         BackgroundBoxValue::Padding => PaintBox::Padding,
         BackgroundBoxValue::Content => PaintBox::Content,
+        BackgroundBoxValue::BorderArea => PaintBox::BorderArea,
     }
 }
 

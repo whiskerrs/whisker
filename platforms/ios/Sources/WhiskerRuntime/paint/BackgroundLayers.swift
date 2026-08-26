@@ -43,6 +43,7 @@ enum HostBackgroundBox {
     case border
     case padding
     case content
+    case borderArea
 }
 
 enum HostBackgroundSize: Equatable {
@@ -261,17 +262,25 @@ final class HostBackgroundPainter {
         case .border: borderBox
         case .padding: paddingBox
         case .content: contentBox
+        case .borderArea: borderBox
         }
         let clipPath = switch geometry.clip {
         case .border: borderClip
         case .padding: paddingClip
         case .content: contentClip
+        case .borderArea: borderClip
         }
         let imageBounds = geometry.imageBounds(in: positioningBox)
         guard imageBounds.width > 0, imageBounds.height > 0 else { return }
         context.saveGState()
-        context.addPath(clipPath)
-        context.clip()
+        if geometry.clip == .borderArea {
+            context.addPath(borderClip)
+            context.addPath(paddingClip)
+            context.clip(using: .evenOdd)
+        } else {
+            context.addPath(clipPath)
+            context.clip()
+        }
         defer { context.restoreGState() }
         let deviceScale = max(
             hypot(context.ctm.a, context.ctm.c),

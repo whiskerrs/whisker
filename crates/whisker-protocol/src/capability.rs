@@ -387,7 +387,10 @@ fn has_explicit_background_geometry(layer: &crate::BackgroundLayer) -> bool {
         )
         && matches!(
             layer.clip,
-            crate::PaintBox::Border | crate::PaintBox::Padding | crate::PaintBox::Content
+            crate::PaintBox::Border
+                | crate::PaintBox::Padding
+                | crate::PaintBox::Content
+                | crate::PaintBox::BorderArea
         )
         && layer.attachment == crate::BackgroundAttachment::Scroll
         && layer.blend_mode == crate::BlendMode::Normal
@@ -738,6 +741,7 @@ mod tests {
             (PaintBox::Padding, PaintBox::Padding),
             (PaintBox::Content, PaintBox::Border),
             (PaintBox::Border, PaintBox::Content),
+            (PaintBox::Border, PaintBox::BorderArea),
             (PaintBox::Content, PaintBox::Content),
         ] {
             let mut layer = explicit_no_repeat(basic_linear_layer());
