@@ -457,7 +457,9 @@ impl Driver {
                 }
                 Command::Checkpoint { name, samples, .. } => {
                     if self.expected_scene.is_some() {
-                        let expected_checkpoint = if self.resource_lifecycle {
+                        let expected_checkpoint = if name == "paint.transform.projective-plane" {
+                            "paint.transform.projective-plane"
+                        } else if self.resource_lifecycle {
                             "paint.background-layers.resource-lifecycle"
                         } else {
                             self
@@ -1228,6 +1230,9 @@ fn fixture(path: &str) -> &'static str {
         "core/transform-parent-composition.json" => include_str!(
             "../../../../tests/host-conformance/core/transform-parent-composition.json"
         ),
+        "core/transform-projective-plane.json" => {
+            include_str!("../../../../tests/host-conformance/core/transform-projective-plane.json")
+        }
         "wpt/css/css-color/t32-opacity-basic-0.6-a.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-color/t32-opacity-basic-0.6-a.json"
         ),

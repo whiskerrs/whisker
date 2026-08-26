@@ -682,9 +682,6 @@ fn resolve_transform_functions(
                 },
                 TransformFunctionValue::TranslateZ(z) => {
                     let z = length(z)?;
-                    if z.get() != 0.0 {
-                        return Err(invalid(property));
-                    }
                     ComputedTransformFunction::Translate {
                         x: ComputedLengthPercentage::ZERO,
                         y: ComputedLengthPercentage::ZERO,
@@ -693,9 +690,6 @@ fn resolve_transform_functions(
                 }
                 TransformFunctionValue::Translate3d(x, y, z) => {
                     let z = length(z)?;
-                    if z.get() != 0.0 {
-                        return Err(invalid(property));
-                    }
                     ComputedTransformFunction::Translate {
                         x: length_percentage(x)?,
                         y: length_percentage(y)?,
@@ -706,18 +700,10 @@ fn resolve_transform_functions(
                     ComputedTransformFunction::RotateZ(finite(*angle)?)
                 }
                 TransformFunctionValue::RotateX(angle) => {
-                    let angle = finite(*angle)?;
-                    if angle.get() != 0.0 {
-                        return Err(invalid(property));
-                    }
-                    ComputedTransformFunction::RotateX(angle)
+                    ComputedTransformFunction::RotateX(finite(*angle)?)
                 }
                 TransformFunctionValue::RotateY(angle) => {
-                    let angle = finite(*angle)?;
-                    if angle.get() != 0.0 {
-                        return Err(invalid(property));
-                    }
-                    ComputedTransformFunction::RotateY(angle)
+                    ComputedTransformFunction::RotateY(finite(*angle)?)
                 }
                 TransformFunctionValue::Scale(x, y) => ComputedTransformFunction::Scale {
                     x: finite(*x)?,
@@ -772,20 +758,6 @@ fn resolve_transform_functions(
                 }
                 TransformFunctionValue::Matrix3d(values) => {
                     if !values.iter().all(|value| value.get().is_finite()) {
-                        return Err(invalid(property));
-                    }
-                    let raw = values.map(|value| value.get());
-                    if raw[2] != 0.0
-                        || raw[3] != 0.0
-                        || raw[6] != 0.0
-                        || raw[7] != 0.0
-                        || raw[8] != 0.0
-                        || raw[9] != 0.0
-                        || raw[10] != 1.0
-                        || raw[11] != 0.0
-                        || raw[14] != 0.0
-                        || raw[15] != 1.0
-                    {
                         return Err(invalid(property));
                     }
                     ComputedTransformFunction::Matrix(*values)
@@ -1166,7 +1138,7 @@ mod tests {
     }
 
     #[test]
-    fn transform_retains_box_percentages_and_rejects_non_2d_functions() {
+    fn transform_retains_box_percentages_and_three_dimensional_functions() {
         let transform = StyleValue::Transform(TransformValue(vec![
             TransformFunctionValue::Translate(
                 LengthPercentageValue::Percentage(number(50.0)),
@@ -1205,25 +1177,36 @@ mod tests {
             ]
         );
 
-        assert_eq!(
-            crate::resolve_style(
-                &SpecifiedStyle::new().push(
-                    StyleProperty::Transform,
-                    StyleValue::Transform(TransformValue(vec![TransformFunctionValue::RotateX(
-                        number(30.0)
-                    ),])),
-                ),
-                None,
-                StyleEnvironment::default(),
+        let rotated = crate::resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::Transform,
+                StyleValue::Transform(TransformValue(vec![
+                    TransformFunctionValue::RotateX(number(30.0)),
+                    TransformFunctionValue::TranslateZ(LengthValue::Dimension {
+                        value: number(8.0),
+                        unit: LengthUnit::Px,
+                    }),
+                ])),
             ),
-            Err(StyleResolutionError::InvalidPropertyValue(
-                StyleProperty::Transform
-            ))
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            rotated.computed().paint().transform.functions,
+            [
+                ComputedTransformFunction::RotateX(number(30.0)),
+                ComputedTransformFunction::Translate {
+                    x: ComputedLengthPercentage::ZERO,
+                    y: ComputedLengthPercentage::ZERO,
+                    z: number(8.0),
+                },
+            ]
         );
     }
 
     #[test]
-    fn transform_resolves_every_flat_function_and_rejects_invalid_inputs() {
+    fn transform_resolves_every_function_and_rejects_invalid_inputs() {
         let length = |value| LengthValue::Dimension {
             value: number(value),
             unit: LengthUnit::Px,
@@ -1368,7 +1351,6 @@ mod tests {
             TransformFunctionValue::TranslateX(LengthPercentageValue::Length(length(f32::NAN))),
             TransformFunctionValue::TranslateY(LengthPercentageValue::Length(length(f32::NAN))),
             TransformFunctionValue::TranslateZ(length(f32::NAN)),
-            TransformFunctionValue::TranslateZ(length(1.0)),
             TransformFunctionValue::Translate3d(px_length(0.0), px_length(0.0), length(f32::NAN)),
             TransformFunctionValue::Translate3d(
                 LengthPercentageValue::Length(length(f32::NAN)),
@@ -1380,12 +1362,9 @@ mod tests {
                 LengthPercentageValue::Length(length(f32::NAN)),
                 LengthValue::Zero,
             ),
-            TransformFunctionValue::Translate3d(px_length(0.0), px_length(0.0), length(1.0)),
             TransformFunctionValue::Rotate(number(f32::NAN)),
             TransformFunctionValue::RotateX(number(f32::NAN)),
-            TransformFunctionValue::RotateX(number(1.0)),
             TransformFunctionValue::RotateY(number(f32::NAN)),
-            TransformFunctionValue::RotateY(number(1.0)),
             TransformFunctionValue::Scale(number(f32::NAN), number(1.0)),
             TransformFunctionValue::Scale(number(1.0), number(f32::NAN)),
             TransformFunctionValue::ScaleX(number(f32::INFINITY)),
@@ -1396,7 +1375,6 @@ mod tests {
             TransformFunctionValue::SkewY(number(f32::NAN)),
             TransformFunctionValue::Matrix(non_finite_matrix),
             TransformFunctionValue::Matrix3d(non_finite_matrix_3d),
-            TransformFunctionValue::Matrix3d(spatial_matrix_3d),
         ] {
             assert_eq!(
                 invalid_transform(function),
@@ -1404,6 +1382,15 @@ mod tests {
                     StyleProperty::Transform
                 ))
             );
+        }
+        for function in [
+            TransformFunctionValue::TranslateZ(length(1.0)),
+            TransformFunctionValue::Translate3d(px_length(0.0), px_length(0.0), length(1.0)),
+            TransformFunctionValue::RotateX(number(1.0)),
+            TransformFunctionValue::RotateY(number(1.0)),
+            TransformFunctionValue::Matrix3d(spatial_matrix_3d),
+        ] {
+            assert!(invalid_transform(function).is_ok());
         }
 
         for (property, value) in [

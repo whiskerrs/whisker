@@ -175,7 +175,7 @@ internal class HostScene(
             ) return false
             9 -> if (
                 operation.node !in existing ||
-                !isSupported2dTransform(operation.numbers ?: return false)
+                !isProjectableFlatPlaneTransform(operation.numbers ?: return false)
             ) return false
             10 -> if (
                 operation.node !in existing || !operation.scalar.isFinite() ||

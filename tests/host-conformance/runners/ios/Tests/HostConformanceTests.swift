@@ -449,7 +449,8 @@ private final class Driver {
                     name == "paint.visual-effects.clip-path-ellipse" ||
                     name == "paint.visual-effects.clip-path-path-nonzero" ||
                     name == "paint.visual-effects.clip-path-path-evenodd" ||
-                    name == "paint.visual-effects.backdrop-blur" else {
+                    name == "paint.visual-effects.backdrop-blur" ||
+                    name == "paint.transform.projective-plane" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 if name == "paint.visual-effects.backdrop-blur" {
@@ -458,9 +459,16 @@ private final class Driver {
                         "\(id) must project backdrop blur to UIVisualEffectView"
                     )
                 }
+                if name == "paint.transform.projective-plane" {
+                    XCTAssertTrue(
+                        containsProjectiveTransform(view),
+                        "\(id) must project the 4x4 matrix to CATransform3D"
+                    )
+                }
                 let pixels = try capture()
                 checkpoint = pixels
-                if let samples = command["samples"] as? [[String: Any]] {
+                if name != "paint.transform.projective-plane",
+                   let samples = command["samples"] as? [[String: Any]] {
                     try assertPixelSamples(id: id, pixels: pixels, samples: samples)
                 }
                 if name != "paint.visual-effects.backdrop-blur",
@@ -1849,6 +1857,14 @@ private func containsActiveBackdropBlur(_ view: UIView) -> Bool {
         return true
     }
     return view.subviews.contains(where: containsActiveBackdropBlur)
+}
+
+private func containsProjectiveTransform(_ view: UIView) -> Bool {
+    let transform = view.layer.transform
+    if abs(transform.m14) > 0.000_001 || abs(transform.m24) > 0.000_001 {
+        return true
+    }
+    return view.subviews.contains(where: containsProjectiveTransform)
 }
 
 private func luminance(_ color: [UInt8]) -> UInt32 {

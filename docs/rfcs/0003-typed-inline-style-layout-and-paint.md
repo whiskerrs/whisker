@@ -478,9 +478,11 @@ The surface resolves percentage translations against border-box width or
 height, resolves the origin against that same box, composes the functions in
 CSS matrix order, and emits one `SetTransform` matrix. A Host applies that
 matrix at its local border-box origin and does not repeat CSS resolution. This
-slice currently accepts 2-D transforms, including 2-D-compatible `matrix3d`;
-3-D transforms, perspective, and offset-path motion remain separate planned
-capabilities.
+slice accepts 2-D transforms plus 3-D functions and projective `matrix3d`
+values applied to the node's flat local plane. Hosts flatten at each node;
+Android derives the exact density-adjusted 3-by-3 homography for that `z = 0`
+plane. Parent `perspective`, shared `preserve-3d` descendant spaces, and
+offset-path motion remain separate planned capabilities.
 
 Protocol minor 1 groups those resolved meanings by Host capability rather
 than by CSS spelling. `SetBackgroundLayers` carries resource-backed images,
