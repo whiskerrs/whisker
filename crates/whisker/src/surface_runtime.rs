@@ -16,9 +16,9 @@ use crate::runtime::value::WhiskerValue;
 use crate::runtime::view::{BindType, DynRenderer, Element};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
-    ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior, InputEvent,
-    InputEventError, MeasurementReady, NodeId, ResourceCommand, ResourceEvent, ResourceId,
-    ResourceMessageError, SurfaceId,
+    BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior, InputEvent,
+    InputEventError, MeasurementReady, NodeId, PaintColor, ResourceCommand, ResourceEvent,
+    ResourceId, ResourceMessageError, SurfaceId,
 };
 use whisker_engine::whisker_style::{
     ComputedTransitionProperty, InheritedStyle, MotionEasing, ResolvedNodeStyle, SpecifiedStyle,
@@ -27,6 +27,7 @@ use whisker_engine::whisker_style::{
 use whisker_engine::{
     DeferredMeasurementApply, FrameSink, LayoutError, LayoutOptions, LayoutProgress,
     MeasurementProvider, PlainTextInput, SurfaceEngine, SurfaceError, SurfacePresentError,
+    lower_paint,
 };
 
 /// A mutation emitted by `render!` that could not enter the retained surface.
@@ -433,31 +434,62 @@ impl SurfaceRuntime {
         let mut state = self.state.borrow_mut();
         state.ensure_valid()?;
         let mut samples = Vec::new();
-        for entry in state.elements.values_mut() {
-            let (Some(node), Some(transition)) =
-                (entry.node, entry.opacity_transition.as_deref_mut())
-            else {
+        for (element, entry) in &mut state.elements {
+            let Some(node) = entry.node else {
                 continue;
             };
-            let start_ms = *transition.start_ms.get_or_insert(timestamp_ms);
-            let elapsed_ms = timestamp_ms - start_ms - f64::from(transition.delay_ms);
-            let linear = (elapsed_ms / f64::from(transition.duration_ms)).clamp(0.0, 1.0) as f32;
-            let progress = transition.easing.sample(linear);
-            transition.current =
-                (transition.from + (transition.to - transition.from) * progress).clamp(0.0, 1.0);
-            let complete = elapsed_ms >= f64::from(transition.duration_ms);
-            samples.push((node, transition.current, complete));
-        }
-        for (node, opacity, complete) in samples {
-            state.surface.set_opacity(node, opacity)?;
-            if complete && let Some(element) = state.node_elements.get(&node).copied() {
-                state.element_mut(element)?.opacity_transition = None;
+            let opacity = entry.opacity_transition.as_deref_mut().map(|transition| {
+                let (progress, complete) = transition.sample_progress(timestamp_ms);
+                transition.current = (transition.from
+                    + (transition.to - transition.from) * progress)
+                    .clamp(0.0, 1.0);
+                (transition.current, complete)
+            });
+            let colors = entry
+                .color_transitions
+                .as_deref_mut()
+                .into_iter()
+                .flat_map(|transitions| transitions.0.iter_mut())
+                .map(|(property, transition)| {
+                    let (progress, complete) = transition.sample_progress(timestamp_ms);
+                    transition.current = transition.from.interpolate(transition.to, progress);
+                    (*property, transition.current, complete)
+                })
+                .collect::<Vec<_>>();
+            if opacity.is_some() || !colors.is_empty() {
+                samples.push((*element, node, opacity, colors));
             }
         }
-        Ok(state
-            .elements
-            .values()
-            .any(|entry| entry.opacity_transition.is_some()))
+        for (element, node, opacity, colors) in samples {
+            if let Some((opacity, complete)) = opacity {
+                state.surface.set_opacity(node, opacity)?;
+                if complete {
+                    state.element_mut(element)?.opacity_transition = None;
+                }
+            }
+            if !colors.is_empty() {
+                let mut paint = state
+                    .surface
+                    .node(node)
+                    .and_then(|node| node.box_paint())
+                    .cloned()
+                    .ok_or(RuntimeBindingError::UnknownElement { element })?;
+                for (property, color, complete) in colors {
+                    set_box_color(&mut paint, property, color.into_paint());
+                    if complete {
+                        let entry = state.element_mut(element)?;
+                        if let Some(transitions) = entry.color_transitions.as_deref_mut() {
+                            transitions.0.remove(&property);
+                            if transitions.0.is_empty() {
+                                entry.color_transitions = None;
+                            }
+                        }
+                    }
+                }
+                state.surface.set_box_paint(node, paint)?;
+            }
+        }
+        Ok(state.elements.values().any(has_active_transition))
     }
 
     /// Returns whether this surface has an active Rust-owned transition.
@@ -466,7 +498,7 @@ impl SurfaceRuntime {
             .borrow()
             .elements
             .values()
-            .any(|entry| entry.opacity_transition.is_some())
+            .any(has_active_transition)
     }
 
     /// Re-resolves every retained style against current Host viewport metrics.
@@ -713,18 +745,161 @@ struct BoundElement {
     raw_text: String,
     listeners: HashMap<String, Vec<RuntimeListener>>,
     style_initialized: bool,
-    opacity_transition: Option<Box<ActiveOpacityTransition>>,
+    opacity_transition: Option<Box<ActiveTransition<f32>>>,
+    color_transitions: Option<Box<ActiveColorTransitions>>,
 }
 
 #[derive(Clone, Copy)]
-struct ActiveOpacityTransition {
-    from: f32,
-    to: f32,
-    current: f32,
+struct ActiveTransition<Value> {
+    from: Value,
+    to: Value,
+    current: Value,
     duration_ms: f32,
     delay_ms: f32,
     easing: MotionEasing,
     start_ms: Option<f64>,
+}
+
+#[derive(Clone)]
+struct ActiveColorTransitions(HashMap<StyleProperty, ActiveTransition<RgbaColor>>);
+
+fn has_active_transition(entry: &BoundElement) -> bool {
+    entry.opacity_transition.is_some()
+        || entry
+            .color_transitions
+            .as_deref()
+            .is_some_and(|transitions| !transitions.0.is_empty())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RgbaColor {
+    red: f32,
+    green: f32,
+    blue: f32,
+    alpha: f32,
+}
+
+impl<Value: Copy> ActiveTransition<Value> {
+    fn sample_progress(&mut self, timestamp_ms: f64) -> (f32, bool) {
+        let start_ms = *self.start_ms.get_or_insert(timestamp_ms);
+        let elapsed_ms = timestamp_ms - start_ms - f64::from(self.delay_ms);
+        let linear = (elapsed_ms / f64::from(self.duration_ms)).clamp(0.0, 1.0) as f32;
+        (
+            self.easing.sample(linear),
+            elapsed_ms >= f64::from(self.duration_ms),
+        )
+    }
+}
+
+impl RgbaColor {
+    fn from_paint(value: &PaintColor) -> Option<Self> {
+        match value {
+            PaintColor::Srgba {
+                red,
+                green,
+                blue,
+                alpha,
+            } => Some(Self {
+                red: f32::from(*red) / 255.0,
+                green: f32::from(*green) / 255.0,
+                blue: f32::from(*blue) / 255.0,
+                alpha: *alpha,
+            }),
+            PaintColor::Hsla {
+                hue_degrees,
+                saturation,
+                lightness,
+                alpha,
+            } => {
+                let hue = hue_degrees.rem_euclid(360.0) / 360.0;
+                let saturation = saturation / 100.0;
+                let lightness = lightness / 100.0;
+                let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+                let sector = hue * 6.0;
+                let intermediate = chroma * (1.0 - (sector.rem_euclid(2.0) - 1.0).abs());
+                let (red, green, blue) = match sector.floor() as u8 {
+                    0 => (chroma, intermediate, 0.0),
+                    1 => (intermediate, chroma, 0.0),
+                    2 => (0.0, chroma, intermediate),
+                    3 => (0.0, intermediate, chroma),
+                    4 => (intermediate, 0.0, chroma),
+                    _ => (chroma, 0.0, intermediate),
+                };
+                let offset = lightness - chroma * 0.5;
+                Some(Self {
+                    red: red + offset,
+                    green: green + offset,
+                    blue: blue + offset,
+                    alpha: *alpha,
+                })
+            }
+            PaintColor::Named(name) if name.eq_ignore_ascii_case("transparent") => Some(Self {
+                red: 0.0,
+                green: 0.0,
+                blue: 0.0,
+                alpha: 0.0,
+            }),
+            PaintColor::Named(_) => None,
+        }
+    }
+
+    fn interpolate(self, target: Self, progress: f32) -> Self {
+        let mix = |from: f32, to: f32| from + (to - from) * progress;
+        let alpha = mix(self.alpha, target.alpha).clamp(0.0, 1.0);
+        let channel = |from: f32, to: f32| {
+            if alpha == 0.0 {
+                0.0
+            } else {
+                (mix(from * self.alpha, to * target.alpha) / alpha).clamp(0.0, 1.0)
+            }
+        };
+        Self {
+            red: channel(self.red, target.red),
+            green: channel(self.green, target.green),
+            blue: channel(self.blue, target.blue),
+            alpha,
+        }
+    }
+
+    fn into_paint(self) -> PaintColor {
+        let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+        PaintColor::Srgba {
+            red: channel(self.red),
+            green: channel(self.green),
+            blue: channel(self.blue),
+            alpha: self.alpha.clamp(0.0, 1.0),
+        }
+    }
+}
+
+const BOX_COLOR_PROPERTIES: [StyleProperty; 5] = [
+    StyleProperty::BackgroundColor,
+    StyleProperty::BorderTopColor,
+    StyleProperty::BorderRightColor,
+    StyleProperty::BorderBottomColor,
+    StyleProperty::BorderLeftColor,
+];
+
+fn box_color(paint: &BoxPaint, property: StyleProperty) -> &PaintColor {
+    match property {
+        StyleProperty::BackgroundColor => &paint.background_color,
+        StyleProperty::BorderTopColor => &paint.border_colors.top,
+        StyleProperty::BorderRightColor => &paint.border_colors.right,
+        StyleProperty::BorderBottomColor => &paint.border_colors.bottom,
+        StyleProperty::BorderLeftColor => &paint.border_colors.left,
+        _ => unreachable!("only box color properties enter the transition table"),
+    }
+}
+
+fn set_box_color(paint: &mut BoxPaint, property: StyleProperty, color: PaintColor) {
+    match property {
+        StyleProperty::BackgroundColor => paint.background_color = color,
+        StyleProperty::BorderTopColor => paint.border_colors.top = color,
+        StyleProperty::BorderRightColor => paint.border_colors.right = color,
+        StyleProperty::BorderBottomColor => paint.border_colors.bottom = color,
+        StyleProperty::BorderLeftColor => paint.border_colors.left = color,
+        _ => unreachable!("only box color properties enter the transition table"),
+    }
 }
 
 #[derive(Clone)]
@@ -933,7 +1108,7 @@ impl BindingState {
                 surface.set_plain_text(update.node, text, update.resolved.computed())?;
             }
         }
-        Self::reapply_active_opacity(&self.elements, &mut surface)?;
+        Self::reapply_active_transitions(&self.elements, &mut surface)?;
 
         self.surface = surface;
         self.background_resources = background_resources;
@@ -1042,6 +1217,7 @@ impl BindingState {
                 listeners: HashMap::new(),
                 style_initialized: false,
                 opacity_transition: None,
+                color_transitions: None,
             },
         );
         if let Some(node) = node {
@@ -1155,7 +1331,7 @@ impl BindingState {
             &mut updates,
             &mut resource_commands,
         )?;
-        Self::reapply_active_opacity(&self.elements, &mut surface)?;
+        Self::reapply_active_transitions(&self.elements, &mut surface)?;
 
         self.surface = surface;
         self.background_resources = background_resources;
@@ -1166,15 +1342,27 @@ impl BindingState {
         Ok(())
     }
 
-    fn reapply_active_opacity(
+    fn reapply_active_transitions(
         elements: &HashMap<Element, BoundElement>,
         surface: &mut SurfaceEngine,
     ) -> Result<(), RuntimeBindingError> {
-        for entry in elements.values() {
-            if let (Some(node), Some(transition)) =
-                (entry.node, entry.opacity_transition.as_deref())
-            {
+        for (element, entry) in elements {
+            let Some(node) = entry.node else {
+                continue;
+            };
+            if let Some(transition) = entry.opacity_transition.as_deref() {
                 surface.set_opacity(node, transition.current)?;
+            }
+            if let Some(transitions) = entry.color_transitions.as_deref() {
+                let mut paint = surface
+                    .node(node)
+                    .and_then(|node| node.box_paint())
+                    .cloned()
+                    .ok_or(RuntimeBindingError::UnknownElement { element: *element })?;
+                for (property, transition) in &transitions.0 {
+                    set_box_color(&mut paint, *property, transition.current.into_paint());
+                }
+                surface.set_box_paint(node, paint)?;
             }
         }
         Ok(())
@@ -1218,6 +1406,7 @@ impl BindingState {
         entry.style_initialized = true;
         if !was_initialized {
             entry.opacity_transition = None;
+            self.surface.set_opacity(node, target)?;
             return Ok(());
         }
         if previous_target.to_bits() == target.to_bits() {
@@ -1225,9 +1414,10 @@ impl BindingState {
         }
         let Some(transition) = transition.filter(|value| value.duration.get() > 0.0) else {
             entry.opacity_transition = None;
+            self.surface.set_opacity(node, target)?;
             return Ok(());
         };
-        entry.opacity_transition = Some(Box::new(ActiveOpacityTransition {
+        entry.opacity_transition = Some(Box::new(ActiveTransition {
             from: previous_current,
             to: target,
             current: previous_current,
@@ -1238,6 +1428,100 @@ impl BindingState {
         }));
         self.surface.set_opacity(node, previous_current)?;
         crate::runtime::runtime_wake::wake_runtime();
+        Ok(())
+    }
+
+    fn configure_color_transitions(
+        &mut self,
+        element: Element,
+        previous: &BoxPaint,
+        previous_current: &HashMap<StyleProperty, RgbaColor>,
+        was_initialized: bool,
+    ) -> Result<(), RuntimeBindingError> {
+        let (node, target, transitions) = {
+            let entry = self.element(element)?;
+            let node = entry
+                .node
+                .ok_or(RuntimeBindingError::UnknownElement { element })?;
+            let resolved = entry
+                .resolved
+                .as_ref()
+                .ok_or(RuntimeBindingError::UnknownElement { element })?;
+            let computed = resolved.computed();
+            (
+                node,
+                lower_paint(computed.paint(), computed.layout()).box_paint,
+                computed.motion().transitions.clone(),
+            )
+        };
+
+        let entry = self.element_mut(element)?;
+        if !was_initialized {
+            entry.color_transitions = None;
+            self.surface.set_box_paint(node, target)?;
+            return Ok(());
+        }
+        let mut started = false;
+        for property in BOX_COLOR_PROPERTIES {
+            let previous_target = box_color(previous, property);
+            let target_color = box_color(&target, property);
+            if previous_target == target_color {
+                continue;
+            }
+            if let Some(active) = entry.color_transitions.as_deref_mut() {
+                active.0.remove(&property);
+            }
+            let transition = transitions.iter().rev().find(|transition| {
+                matches!(transition.property, ComputedTransitionProperty::All)
+                    || transition.property == ComputedTransitionProperty::Property(property)
+            });
+            let Some(transition) = transition.filter(|value| value.duration.get() > 0.0) else {
+                continue;
+            };
+            let from = previous_current
+                .get(&property)
+                .copied()
+                .or_else(|| RgbaColor::from_paint(previous_target));
+            let to = RgbaColor::from_paint(target_color);
+            let (Some(from), Some(to)) = (from, to) else {
+                continue;
+            };
+            entry
+                .color_transitions
+                .get_or_insert_with(|| Box::new(ActiveColorTransitions(HashMap::new())))
+                .0
+                .insert(
+                    property,
+                    ActiveTransition {
+                        from,
+                        to,
+                        current: from,
+                        duration_ms: transition.duration.get(),
+                        delay_ms: transition.delay.get(),
+                        easing: transition.easing,
+                        start_ms: None,
+                    },
+                );
+            started = true;
+        }
+
+        let mut current = target;
+        if entry
+            .color_transitions
+            .as_deref()
+            .is_some_and(|transitions| transitions.0.is_empty())
+        {
+            entry.color_transitions = None;
+        }
+        if let Some(transitions) = entry.color_transitions.as_deref() {
+            for (property, transition) in &transitions.0 {
+                set_box_color(&mut current, *property, transition.current.into_paint());
+            }
+        }
+        self.surface.set_box_paint(node, current)?;
+        if started {
+            crate::runtime::runtime_wake::wake_runtime();
+        }
         Ok(())
     }
 
@@ -1757,6 +2041,21 @@ impl DynRenderer for SurfaceRuntime {
                 .opacity_transition
                 .as_deref()
                 .map_or(previous_target, |transition| transition.current);
+            let previous_paint = entry
+                .resolved
+                .as_ref()
+                .map(|resolved| {
+                    let computed = resolved.computed();
+                    lower_paint(computed.paint(), computed.layout()).box_paint
+                })
+                .unwrap_or_default();
+            let previous_current_colors = entry
+                .color_transitions
+                .as_deref()
+                .into_iter()
+                .flat_map(|transitions| transitions.0.iter())
+                .map(|(property, transition)| (*property, transition.current))
+                .collect::<HashMap<_, _>>();
             let was_initialized = entry.style_initialized;
             state.element_mut(handle)?.specified = style.clone();
             if let Err(error) = state.apply_subtree(handle) {
@@ -1767,6 +2066,12 @@ impl DynRenderer for SurfaceRuntime {
                 handle,
                 previous_target,
                 previous_current,
+                was_initialized,
+            )?;
+            state.configure_color_transitions(
+                handle,
+                &previous_paint,
+                &previous_current_colors,
                 was_initialized,
             )?;
             Ok(())
@@ -1868,4 +2173,90 @@ impl DynRenderer for SurfaceRuntime {
     }
 
     fn flush(&self) {}
+}
+
+#[cfg(test)]
+mod motion_color_tests {
+    use super::*;
+
+    fn hsla(hue_degrees: f32) -> PaintColor {
+        PaintColor::Hsla {
+            hue_degrees,
+            saturation: 100.0,
+            lightness: 50.0,
+            alpha: 1.0,
+        }
+    }
+
+    #[test]
+    fn hsl_and_transparent_colors_canonicalize_to_srgb() {
+        for (hue, expected) in [
+            (0.0, (255, 0, 0)),
+            (60.0, (255, 255, 0)),
+            (120.0, (0, 255, 0)),
+            (180.0, (0, 255, 255)),
+            (240.0, (0, 0, 255)),
+            (300.0, (255, 0, 255)),
+            (360.0, (255, 0, 0)),
+        ] {
+            let color = RgbaColor::from_paint(&hsla(hue)).unwrap().into_paint();
+            assert_eq!(
+                color,
+                PaintColor::Srgba {
+                    red: expected.0,
+                    green: expected.1,
+                    blue: expected.2,
+                    alpha: 1.0,
+                }
+            );
+        }
+        assert!(RgbaColor::from_paint(&PaintColor::Named("red".into())).is_none());
+        assert_eq!(
+            RgbaColor::from_paint(&PaintColor::Named("TRANSPARENT".into()))
+                .unwrap()
+                .into_paint(),
+            PaintColor::Srgba {
+                red: 0,
+                green: 0,
+                blue: 0,
+                alpha: 0.0,
+            }
+        );
+    }
+
+    #[test]
+    fn color_interpolation_uses_premultiplied_alpha() {
+        let transparent_red = RgbaColor {
+            red: 1.0,
+            green: 0.0,
+            blue: 0.0,
+            alpha: 0.0,
+        };
+        let opaque_blue = RgbaColor {
+            red: 0.0,
+            green: 0.0,
+            blue: 1.0,
+            alpha: 1.0,
+        };
+        assert_eq!(
+            transparent_red.interpolate(opaque_blue, 0.5).into_paint(),
+            PaintColor::Srgba {
+                red: 0,
+                green: 0,
+                blue: 255,
+                alpha: 0.5,
+            }
+        );
+        assert_eq!(
+            transparent_red
+                .interpolate(transparent_red, 0.5)
+                .into_paint(),
+            PaintColor::Srgba {
+                red: 0,
+                green: 0,
+                blue: 0,
+                alpha: 0.0,
+            }
+        );
+    }
 }

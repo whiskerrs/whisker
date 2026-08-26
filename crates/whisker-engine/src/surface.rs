@@ -4,9 +4,10 @@ use std::{collections::HashMap, error::Error, fmt};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
-    ApplyResult, CommandId, Cursor, CursorKeyword, ElementTypeId, FramePacket, HitTestBehavior,
-    InputPoint, LayoutGeometry, MeasurementMetrics, MeasurementReady, MeasurementResponse,
-    MeasurementSpec, NodeId, PointerId, PropertyId, ResultId, SurfaceId, TextContent, WhiskerValue,
+    ApplyResult, BoxPaint, CommandId, Cursor, CursorKeyword, ElementTypeId, FramePacket,
+    HitTestBehavior, InputPoint, LayoutGeometry, MeasurementMetrics, MeasurementReady,
+    MeasurementResponse, MeasurementSpec, NodeId, PointerId, PropertyId, ResultId, SurfaceId,
+    TextContent, WhiskerValue,
 };
 use whisker_style::{
     ComputedLayoutStyle, ComputedStyle, ComputedTransformStyle, CursorValue, PointerEventsValue,
@@ -337,6 +338,13 @@ impl SurfaceEngine {
     pub fn set_opacity(&mut self, node: NodeId, opacity: f32) -> Result<(), SurfaceError> {
         self.scene
             .set_opacity(node, opacity)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Replaces one node's resolved background, border, and radius paint.
+    pub fn set_box_paint(&mut self, node: NodeId, paint: BoxPaint) -> Result<(), SurfaceError> {
+        self.scene
+            .set_box_paint(node, paint)
             .map_err(SurfaceError::Scene)
     }
 
@@ -1378,7 +1386,7 @@ mod tests {
 
         let mut different_box = lowered.box_paint.clone();
         different_box.background_color = whisker_protocol::PaintColor::Named("changed".into());
-        surface.scene.set_box_paint(root, different_box).unwrap();
+        surface.set_box_paint(root, different_box).unwrap();
         assert!(
             surface
                 .update_computed_style(root, style)
