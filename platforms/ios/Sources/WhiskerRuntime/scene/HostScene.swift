@@ -519,10 +519,13 @@ private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> B
             layer.origin == UInt32(WHISKER_BACKGROUND_BOX_PADDING) &&
             layer.clip == UInt32(WHISKER_BACKGROUND_BOX_BORDER)
     }
+    let supportedRepeats = [
+        UInt32(WHISKER_BACKGROUND_REPEAT),
+        UInt32(WHISKER_BACKGROUND_NO_REPEAT)
+    ]
     return layer.size_kind == UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT) &&
         layer.size_width.isNonNegativeFinite && layer.size_height.isNonNegativeFinite &&
-        layer.repeat_x == UInt32(WHISKER_BACKGROUND_NO_REPEAT) &&
-        layer.repeat_y == UInt32(WHISKER_BACKGROUND_NO_REPEAT) &&
+        supportedRepeats.contains(layer.repeat_x) && supportedRepeats.contains(layer.repeat_y) &&
         [UInt32(WHISKER_BACKGROUND_BOX_BORDER), UInt32(WHISKER_BACKGROUND_BOX_PADDING)]
             .contains(layer.origin) &&
         [UInt32(WHISKER_BACKGROUND_BOX_BORDER), UInt32(WHISKER_BACKGROUND_BOX_PADDING)]

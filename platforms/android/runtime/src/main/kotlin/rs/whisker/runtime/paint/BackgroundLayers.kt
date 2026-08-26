@@ -62,29 +62,42 @@ internal fun drawBackgroundLayers(
     paint: Paint,
 ) {
     val geometry = layers?.geometry ?: return
-    val imageBox = geometry.imageBox(boxes.select(geometry.origin).rect)
-    if (imageBox.isEmpty) return
-    val paintClip = boxes.select(geometry.clip).clip
+    val positioningBox = boxes.select(geometry.origin).rect
+    val painting = boxes.select(geometry.clip)
     val saveCount = canvas.save().also {
-        canvas.clipPath(paintClip)
-        if (geometry.clipsToSingleImage) {
-            canvas.clipRect(imageBox)
-        }
+        canvas.clipPath(painting.clip)
     }
     try {
-        layers.linearGradient?.let { gradient ->
-            drawLinearGradient(canvas, paintClip, imageBox, gradient, paint)
-            return
-        }
-        layers.radialGradient?.let { gradient ->
-            drawRadialGradient(canvas, paintClip, imageBox, gradient, paint)
-            return
-        }
-        layers.conicGradient?.let { gradient ->
-            drawConicGradient(canvas, paintClip, imageBox, gradient, paint)
+        geometry.forEachImageBox(positioningBox, painting.rect) { imageBox ->
+            val tileSaveCount = canvas.save().also { canvas.clipRect(imageBox) }
+            try {
+                drawBackgroundImage(canvas, painting.clip, imageBox, layers, paint)
+            } finally {
+                canvas.restoreToCount(tileSaveCount)
+            }
         }
     } finally {
         canvas.restoreToCount(saveCount)
+    }
+}
+
+private fun drawBackgroundImage(
+    canvas: Canvas,
+    clip: Path,
+    imageBox: RectF,
+    layers: HostBackgroundLayers,
+    paint: Paint,
+) {
+    layers.linearGradient?.let { gradient ->
+        drawLinearGradient(canvas, clip, imageBox, gradient, paint)
+        return
+    }
+    layers.radialGradient?.let { gradient ->
+        drawRadialGradient(canvas, clip, imageBox, gradient, paint)
+        return
+    }
+    layers.conicGradient?.let { gradient ->
+        drawConicGradient(canvas, clip, imageBox, gradient, paint)
     }
 }
 

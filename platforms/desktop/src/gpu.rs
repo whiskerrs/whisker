@@ -367,19 +367,33 @@ fn linear_gradient_color(draw_index: u32, position: vec2<f32>) -> vec4<f32> {
     if gradient.stop_count == 0u {
         return vec4<f32>(0.0);
     }
-    if (gradient.geometry_flags & 1u) != 0u
-        && (any(position < gradient.tile_rect.xy)
-            || any(position >= gradient.tile_rect.xy + gradient.tile_rect.zw)) {
+    let no_repeat_x = (gradient.geometry_flags & 1u) != 0u;
+    let no_repeat_y = (gradient.geometry_flags & 2u) != 0u;
+    let tile_end = gradient.tile_rect.xy + gradient.tile_rect.zw;
+    if (no_repeat_x && (position.x < gradient.tile_rect.x || position.x >= tile_end.x))
+        || (no_repeat_y && (position.y < gradient.tile_rect.y || position.y >= tile_end.y)) {
         return vec4<f32>(0.0);
     }
+    var sample_position = position;
+    if !no_repeat_x {
+        sample_position.x = gradient.tile_rect.x
+            + fract((position.x - gradient.tile_rect.x) / max(gradient.tile_rect.z, 0.0001))
+                * gradient.tile_rect.z;
+    }
+    if !no_repeat_y {
+        sample_position.y = gradient.tile_rect.y
+            + fract((position.y - gradient.tile_rect.y) / max(gradient.tile_rect.w, 0.0001))
+                * gradient.tile_rect.w;
+    }
     let line = gradient.start_end.zw - gradient.start_end.xy;
-    var progress = dot(position - gradient.start_end.xy, line) / max(dot(line, line), 0.0001);
+    var progress = dot(sample_position - gradient.start_end.xy, line)
+        / max(dot(line, line), 0.0001);
     if gradient.kind == 3u {
-        let delta = position - gradient.start_end.xy;
+        let delta = sample_position - gradient.start_end.xy;
         let clockwise_turns = atan2(delta.x, -delta.y) / (2.0 * 3.141592653589793);
         progress = fract(clockwise_turns - gradient.start_end.z);
     } else if gradient.kind == 2u {
-        let normalized = (position - gradient.start_end.xy)
+        let normalized = (sample_position - gradient.start_end.xy)
             / max(gradient.start_end.zw, vec2<f32>(0.0001));
         progress = length(normalized);
     } else if gradient.kind == 1u {
@@ -657,7 +671,7 @@ pub(crate) struct LinearGradientDraw {
     tile_rect: [f32; 4],
     stops: Vec<LinearGradientStopGpu>,
     kind: u32,
-    no_repeat: bool,
+    geometry_flags: u32,
 }
 
 struct BoxGpuPipeline {
@@ -842,7 +856,7 @@ impl BoxGpuPipeline {
                     stop_offset,
                     stop_count: gradient.stops.len() as u32,
                     kind: gradient.kind,
-                    geometry_flags: u32::from(gradient.no_repeat),
+                    geometry_flags: gradient.geometry_flags,
                 }
             })
             .collect::<Vec<_>>();
@@ -961,7 +975,7 @@ pub(crate) fn linear_gradient_draw(
             })
             .collect(),
         kind: u32::from(repeating),
-        no_repeat: false,
+        geometry_flags: 0,
     }
 }
 
@@ -1000,7 +1014,7 @@ pub(crate) fn radial_gradient_draw(
             })
             .collect(),
         kind: 2,
-        no_repeat: false,
+        geometry_flags: 0,
     }
 }
 
@@ -1032,26 +1046,28 @@ pub(crate) fn conic_gradient_draw(
             })
             .collect(),
         kind: 3,
-        no_repeat: false,
+        geometry_flags: 0,
     }
 }
 
 fn background_tile_rect(
     positioning_rect: LayoutRect,
     layer: &whisker_protocol::BackgroundLayer,
-) -> Option<(LayoutRect, bool)> {
+) -> Option<(LayoutRect, u32)> {
     use whisker_protocol::{BackgroundSize, ImageRepeat};
 
     match layer.size {
         BackgroundSize::Auto
             if layer.repeat_x == ImageRepeat::Repeat && layer.repeat_y == ImageRepeat::Repeat =>
         {
-            Some((positioning_rect, false))
+            Some((positioning_rect, 0))
         }
         BackgroundSize::Explicit {
             width: Some(width),
             height: Some(height),
-        } if layer.repeat_x == ImageRepeat::NoRepeat && layer.repeat_y == ImageRepeat::NoRepeat => {
+        } if matches!(layer.repeat_x, ImageRepeat::Repeat | ImageRepeat::NoRepeat)
+            && matches!(layer.repeat_y, ImageRepeat::Repeat | ImageRepeat::NoRepeat) =>
+        {
             let width = width.length + width.fraction * positioning_rect.width;
             let height = height.length + height.fraction * positioning_rect.height;
             if width < 0.0 || height < 0.0 {
@@ -1068,7 +1084,8 @@ fn background_tile_rect(
                     width,
                     height,
                 },
-                true,
+                u32::from(layer.repeat_x == ImageRepeat::NoRepeat)
+                    | (u32::from(layer.repeat_y == ImageRepeat::NoRepeat) << 1),
             ))
         }
         _ => None,
@@ -1080,7 +1097,7 @@ pub(crate) fn background_gradient_draw(
     layer: &whisker_protocol::BackgroundLayer,
     opacity: f32,
 ) -> Option<LinearGradientDraw> {
-    let (tile_rect, no_repeat) = background_tile_rect(positioning_rect, layer)?;
+    let (tile_rect, geometry_flags) = background_tile_rect(positioning_rect, layer)?;
     let mut gradient = match &layer.image {
         PaintImage::LinearGradient {
             angle_degrees,
@@ -1101,7 +1118,7 @@ pub(crate) fn background_gradient_draw(
         } => conic_gradient_draw(tile_rect, *from_degrees, *center, stops, opacity),
         _ => return None,
     };
-    gradient.no_repeat = no_repeat;
+    gradient.geometry_flags = geometry_flags;
     Some(gradient)
 }
 

@@ -147,7 +147,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.background-layers.origin-border-box" ||
                             command.getString("name") ==
-                            "paint.background-layers.clip-padding-box",
+                            "paint.background-layers.clip-padding-box" ||
+                            command.getString("name") == "paint.background-layers.repeat-x" ||
+                            command.getString("name") == "paint.background-layers.repeat-y",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->

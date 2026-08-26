@@ -829,14 +829,14 @@ impl MobileFrameOwned {
                                         width: Some(width),
                                         height: Some(height),
                                     },
-                                    ImageRepeat::NoRepeat,
-                                    ImageRepeat::NoRepeat,
+                                    repeat_x @ (ImageRepeat::Repeat | ImageRepeat::NoRepeat),
+                                    repeat_y @ (ImageRepeat::Repeat | ImageRepeat::NoRepeat),
                                 ) => (
                                     BACKGROUND_SIZE_EXPLICIT,
                                     mobile_length(width),
                                     mobile_length(height),
-                                    BACKGROUND_REPEAT_NO_REPEAT,
-                                    BACKGROUND_REPEAT_NO_REPEAT,
+                                    mobile_background_repeat(repeat_x),
+                                    mobile_background_repeat(repeat_y),
                                 ),
                                 _ => return Err(MobileFrameError),
                             };
@@ -1122,6 +1122,16 @@ fn mobile_length(value: PaintLengthPercentage) -> MobileLengthPercentage {
     MobileLengthPercentage {
         length: value.length,
         fraction: value.fraction,
+    }
+}
+
+fn mobile_background_repeat(value: ImageRepeat) -> u32 {
+    match value {
+        ImageRepeat::Repeat => BACKGROUND_REPEAT_REPEAT,
+        ImageRepeat::NoRepeat => BACKGROUND_REPEAT_NO_REPEAT,
+        ImageRepeat::Space | ImageRepeat::Round => {
+            unreachable!("unsupported repeat modes are rejected before ABI lowering")
+        }
     }
 }
 fn mobile_gradient_stops(

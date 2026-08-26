@@ -1,7 +1,8 @@
 package rs.whisker.runtime.paint
 
-import android.graphics.RectF
 import android.graphics.Path
+import android.graphics.RectF
+import kotlin.math.floor
 
 internal enum class HostBackgroundRepeat {
     Repeat,
@@ -49,6 +50,44 @@ internal data class HostBackgroundGeometry(
         return RectF(left, top, left + width, top + height)
     }
 
-    val clipsToSingleImage: Boolean
-        get() = repeatX == HostBackgroundRepeat.NoRepeat && repeatY == HostBackgroundRepeat.NoRepeat
+    fun forEachImageBox(
+        positioningBox: RectF,
+        paintingBox: RectF,
+        draw: (RectF) -> Unit,
+    ) {
+        val base = imageBox(positioningBox)
+        if (base.isEmpty || paintingBox.isEmpty) return
+        val firstX = firstTileOrigin(base.left, base.width(), paintingBox.left, repeatX)
+        val firstY = firstTileOrigin(base.top, base.height(), paintingBox.top, repeatY)
+        var tileCount = 0
+        var y = firstY
+        do {
+            var x = firstX
+            do {
+                draw(RectF(x, y, x + base.width(), y + base.height()))
+                tileCount += 1
+                // Bound adversarial sub-pixel tiles so paint cannot monopolize
+                // the Host UI thread. Normal viewport-sized CSS tiling remains
+                // well below this ceiling.
+                if (tileCount >= MAX_BACKGROUND_TILES) return
+                x += base.width()
+            } while (repeatX == HostBackgroundRepeat.Repeat && x < paintingBox.right)
+            y += base.height()
+        } while (repeatY == HostBackgroundRepeat.Repeat && y < paintingBox.bottom)
+    }
+
+    private fun firstTileOrigin(
+        base: Float,
+        tileSize: Float,
+        paintStart: Float,
+        repeat: HostBackgroundRepeat,
+    ): Float = if (repeat == HostBackgroundRepeat.Repeat) {
+        base + floor((paintStart - base) / tileSize) * tileSize
+    } else {
+        base
+    }
+
+    private companion object {
+        const val MAX_BACKGROUND_TILES = 16_384
+    }
 }

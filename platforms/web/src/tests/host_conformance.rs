@@ -104,11 +104,33 @@ impl Driver {
                             .and_then(|nodes| {
                                 nodes
                                     .iter()
-                                    .any(|node| {
-                                        node.background_layer.clip
-                                            == BackgroundBoxFixture::Padding
+                                    .find_map(|node| {
+                                        match (
+                                            node.background_layer.repeat_x,
+                                            node.background_layer.repeat_y,
+                                        ) {
+                                            (
+                                                ImageRepeatFixture::Repeat,
+                                                ImageRepeatFixture::NoRepeat,
+                                            ) => Some("paint.background-layers.repeat-x"),
+                                            (
+                                                ImageRepeatFixture::NoRepeat,
+                                                ImageRepeatFixture::Repeat,
+                                            ) => Some("paint.background-layers.repeat-y"),
+                                            _ => None,
+                                        }
                                     })
-                                    .then_some("paint.background-layers.clip-padding-box")
+                                    .or_else(|| {
+                                        nodes
+                                            .iter()
+                                            .any(|node| {
+                                                node.background_layer.clip
+                                                    == BackgroundBoxFixture::Padding
+                                            })
+                                            .then_some(
+                                                "paint.background-layers.clip-padding-box",
+                                            )
+                                    })
                                     .or_else(|| {
                                         nodes
                                             .iter()
@@ -439,6 +461,16 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-backgrounds/clip-padding-box-with-size.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/clip-padding-box-with-size.json"
         ),
+        "wpt/css/css-backgrounds/background-repeat/background-repeat-repeat-x.json" => {
+            include_str!(
+                "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-repeat/background-repeat-repeat-x.json"
+            )
+        }
+        "wpt/css/css-backgrounds/background-repeat/background-repeat-repeat-y.json" => {
+            include_str!(
+                "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-repeat/background-repeat-repeat-y.json"
+            )
+        }
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
         ),
