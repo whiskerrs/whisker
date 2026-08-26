@@ -18,6 +18,7 @@ pub use whisker_value::WhiskerValue;
 
 mod application;
 mod dom;
+mod input;
 mod measure;
 mod module_api;
 mod paint;

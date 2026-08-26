@@ -7,8 +7,11 @@ import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import android.view.Choreographer
+import android.view.MotionEvent
 import android.view.View
 import rs.whisker.runtime.WhiskerValue
+import rs.whisker.runtime.input.HostPointerInput
+import rs.whisker.runtime.input.normalizePointerInput
 import rs.whisker.runtime.measure.HostMeasurementProvider
 import rs.whisker.runtime.module.HostModuleDispatcher
 import rs.whisker.runtime.paint.HostRasterResourceStore
@@ -49,6 +52,7 @@ class WhiskerView(context: Context) :
     private val modules = HostModuleDispatcher(::nativeResolveModule)
     private var backdropCaptureTarget: HostNode? = null
     private var backdropCaptureReached = false
+    private var pointerInputObserver: ((HostPointerInput) -> Unit)? = null
 
     init {
         WhiskerApplication.initialize(context)
@@ -122,6 +126,63 @@ class WhiskerView(context: Context) :
         } else {
             frameScheduled = false
             choreographer.removeFrameCallback(this)
+        }
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val childConsumed = super.dispatchTouchEvent(event)
+        val runtimeConsumed = dispatchPointerInput(event)
+        return childConsumed || runtimeConsumed
+    }
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        val childConsumed = super.dispatchGenericMotionEvent(event)
+        val runtimeConsumed = dispatchPointerInput(event)
+        return childConsumed || runtimeConsumed
+    }
+
+    private fun dispatchPointerInput(event: MotionEvent): Boolean {
+        val density = resources.displayMetrics.density
+        var consumed = false
+        normalizePointerInput(event, density).forEach { pointer ->
+            pointerInputObserver?.invoke(pointer)
+            val handle = nativeHandle
+            if (handle != 0L) {
+                consumed = nativeDispatchPointer(
+                    handle,
+                    pointer.timestampMs,
+                    pointer.event,
+                    pointer.pointerId,
+                    pointer.kind,
+                    pointer.x,
+                    pointer.y,
+                    pointer.buttons,
+                    pointer.changedButton,
+                ) || consumed
+            }
+        }
+        return consumed
+    }
+
+    /** Test-only observer at the production MotionEvent-to-runtime dispatch seam. */
+    fun observePointerInputForTesting(observer: ((LongArray, DoubleArray) -> Unit)?) {
+        pointerInputObserver = observer?.let { callback ->
+            { pointer ->
+                callback(
+                    longArrayOf(
+                        pointer.event.toLong(),
+                        pointer.pointerId,
+                        pointer.kind.toLong(),
+                        pointer.buttons.toLong(),
+                        pointer.changedButton.toLong(),
+                    ),
+                    doubleArrayOf(
+                        pointer.timestampMs,
+                        pointer.x.toDouble(),
+                        pointer.y.toDouble(),
+                    ),
+                )
+            }
         }
     }
 
@@ -407,6 +468,17 @@ class WhiskerView(context: Context) :
         name: String,
         detail: WhiskerValue,
         timestampMs: Double,
+    ): Boolean
+    private external fun nativeDispatchPointer(
+        handle: Long,
+        timestampMs: Double,
+        event: Int,
+        pointerId: Long,
+        pointerKind: Int,
+        x: Float,
+        y: Float,
+        buttons: Int,
+        changedButton: Int,
     ): Boolean
     private external fun nativeResolveModule(
         callbackPtr: Long,

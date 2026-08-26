@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "whisker_bridge.h"
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 24 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 25 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -212,6 +212,14 @@ typedef struct {
   uint32_t status, failure_code; uint64_t resource, generation;
   float width, height, scale; uint32_t dimensions_mask; WhiskerStringRef diagnostic;
 } WhiskerMobileResourceEvent;
+enum {
+  WHISKER_POINTER_DOWN = 0, WHISKER_POINTER_MOVE = 1,
+  WHISKER_POINTER_UP = 2, WHISKER_POINTER_CANCEL = 3
+};
+enum {
+  WHISKER_POINTER_MOUSE = 0, WHISKER_POINTER_TOUCH = 1,
+  WHISKER_POINTER_PEN = 2, WHISKER_POINTER_UNKNOWN = 3
+};
 _Static_assert(sizeof(WhiskerMobileMemberRegistration) == 24, "WhiskerMobileMemberRegistration ABI drift");
 _Static_assert(sizeof(WhiskerMobileElementRegistration) == 72, "WhiskerMobileElementRegistration ABI drift");
 _Static_assert(sizeof(WhiskerMobileBootstrap) == 24, "WhiskerMobileBootstrap ABI drift");

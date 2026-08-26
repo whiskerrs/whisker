@@ -430,6 +430,7 @@
       "required": [
         "type",
         "event",
+        "pointer_kind",
         "pointer_id",
         "timestamp_ms",
         "x",
@@ -440,7 +441,8 @@
       "properties": {
         "type": { "const": "emit_pointer" },
         "event": { "$ref": "#/$defs/pointerEvent" },
-        "pointer_id": { "type": "integer", "minimum": 0 },
+        "pointer_kind": { "$ref": "#/$defs/pointerKind" },
+        "pointer_id": { "type": "integer", "minimum": 1 },
         "timestamp_ms": { "type": "number", "minimum": 0 },
         "x": { "type": "number" },
         "y": { "type": "number" },
@@ -451,16 +453,18 @@
     "checkpointInput": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "event", "pointer_id", "x", "y"],
+      "required": ["type", "event", "pointer_kind", "pointer_id", "x", "y"],
       "properties": {
         "type": { "const": "checkpoint_input" },
         "event": { "$ref": "#/$defs/pointerEvent" },
-        "pointer_id": { "type": "integer", "minimum": 0 },
+        "pointer_kind": { "$ref": "#/$defs/pointerKind" },
+        "pointer_id": { "type": "integer", "minimum": 1 },
         "x": { "type": "number" },
         "y": { "type": "number" }
       }
     },
     "pointerEvent": { "enum": ["down", "move", "up", "cancel"] },
+    "pointerKind": { "enum": ["mouse", "touch", "pen", "unknown"] },
     "border": {
       "type": "object",
       "additionalProperties": false,

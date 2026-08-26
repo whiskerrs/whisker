@@ -264,6 +264,34 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #[cfg(any(target_os = "android", target_os = "ios"))]
         #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn whisker_view_dispatch_pointer(
+            handle: *mut ::std::ffi::c_void,
+            timestamp_ms: f64,
+            event: u32,
+            pointer_id: u64,
+            pointer_kind: u32,
+            x: f32,
+            y: f32,
+            buttons: u32,
+            changed_button: i16,
+        ) -> bool {
+            unsafe {
+                ::whisker::__mobile_runtime::dispatch_pointer(
+                    handle,
+                    timestamp_ms,
+                    event,
+                    pointer_id,
+                    pointer_kind,
+                    x,
+                    y,
+                    buttons,
+                    changed_button,
+                )
+            }
+        }
+
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_dispatch_module_event(
             handle: *mut ::std::ffi::c_void,
             module: *const u8,

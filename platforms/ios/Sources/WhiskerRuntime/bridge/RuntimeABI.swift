@@ -63,6 +63,55 @@ func whiskerViewDispatchEvent(
     _ detail: UnsafePointer<WhiskerValueRaw>?
 ) -> Bool
 
+@_silgen_name("whisker_view_dispatch_pointer")
+func whiskerViewDispatchPointer(
+    _ handle: UnsafeMutableRawPointer?,
+    _ timestampMs: Double,
+    _ event: UInt32,
+    _ pointerID: UInt64,
+    _ pointerKind: UInt32,
+    _ x: Float,
+    _ y: Float,
+    _ buttons: UInt32,
+    _ changedButton: Int16
+) -> Bool
+
+struct WhiskerPointerDispatch: Equatable {
+    let timestampMs: Double
+    let event: UInt32
+    let pointerID: UInt64
+    let pointerKind: UInt32
+    let x: Float
+    let y: Float
+    let buttons: UInt32
+    let changedButton: Int16
+}
+
+#if WHISKER_HOST_CONFORMANCE
+var whiskerPointerDispatchObserver: ((WhiskerPointerDispatch) -> Void)?
+#endif
+
+@discardableResult
+func dispatchWhiskerPointer(
+    handle: UnsafeMutableRawPointer,
+    input: WhiskerPointerDispatch
+) -> Bool {
+#if WHISKER_HOST_CONFORMANCE
+    whiskerPointerDispatchObserver?(input)
+#endif
+    return whiskerViewDispatchPointer(
+        handle,
+        input.timestampMs,
+        input.event,
+        input.pointerID,
+        input.pointerKind,
+        input.x,
+        input.y,
+        input.buttons,
+        input.changedButton
+    )
+}
+
 @_silgen_name("whisker_view_dispatch_module_event")
 func whiskerViewDispatchModuleEvent(
     _ handle: UnsafeMutableRawPointer?,

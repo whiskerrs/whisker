@@ -580,7 +580,7 @@
       "id": "host.input.pointer.basic",
       "feature": "pointer-input",
       "fixture": "core/pointer-input-basic.json",
-      "required_hosts": ["desktop"],
+      "required_hosts": ["desktop", "web", "android", "ios"],
       "checkpoints": ["input"]
     }
   ]
