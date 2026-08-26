@@ -363,6 +363,18 @@ impl SurfaceEngine {
             .map_err(SurfaceError::Scene)
     }
 
+    /// Replaces one node's already-resolved transform matrix without changing
+    /// its computed transform target.
+    pub fn set_transform(
+        &mut self,
+        node: NodeId,
+        transform: whisker_protocol::Transform,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .set_transform(node, transform)
+            .map_err(SurfaceError::Scene)
+    }
+
     /// Creates one unattached node in both retained trees.
     pub fn create_node(
         &mut self,
@@ -1292,9 +1304,14 @@ mod tests {
             None
         );
         empty_surface
-            .scene
             .set_transform(empty, whisker_protocol::Transform::IDENTITY)
             .unwrap();
+        assert_eq!(
+            empty_surface.set_transform(node_id(99), whisker_protocol::Transform::IDENTITY),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: node_id(99)
+            }))
+        );
         assert_eq!(
             empty_surface
                 .resolve_node_transform(empty, &ComputedTransformStyle::default(), 1.0, 1.0)
