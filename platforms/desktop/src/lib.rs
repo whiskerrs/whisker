@@ -129,6 +129,12 @@ impl DesktopRuntime {
         self.surface.resize(physical_size);
     }
 
+    /// Resolves the cursor of the visually topmost hit-testable node at a
+    /// logical window position.
+    pub fn cursor_at(&self, logical_position: [f32; 2]) -> Option<whisker_protocol::CursorKeyword> {
+        self.surface.cursor_at(logical_position)
+    }
+
     /// Registers one already-decoded RGBA8 raster for later `ResourceId`
     /// background-image references. Acquisition and decoding remain Host work
     /// and do not run in the per-frame protocol path.

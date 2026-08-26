@@ -169,9 +169,13 @@
       "id": "interaction.pointer",
       "basis": "lynx-4.0",
       "properties": ["cursor", "pointer-events"],
-      "protocol": ["SetCursor", "SetHitTest", "SetProperty"],
-      "rust": "protocol-only",
-      "hosts": {"desktop": "protocol-only", "web": "protocol-only", "android": "protocol-only", "ios": "protocol-only"}
+      "supported_subset": ["pointer-events-auto-none", "keyword-only-cursors-web-desktop-android", "cursor-none-ios", "resolved-value-inheritance"],
+      "pending_subset": ["ios-keyword-cursor-shape-fidelity"],
+      "unsupported_browser_subset": ["resource-backed-cursors", "cursor-hotspots", "svg-pointer-events-values"],
+      "compatibility_notes": ["Lynx pointer-events accepts auto and none; Whisker resolves the documented inheritance effect before emitting SetHitTest", "UIKit exposes pointer interactions rather than CSS cursor shapes, so iOS preserves every keyword and implements cursor:none while other keywords retain the system pointer"],
+      "protocol": ["SetCursor", "SetHitTest"],
+      "rust": "implemented",
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "partial"}
     },
     {
       "id": "motion.rust",

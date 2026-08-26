@@ -178,6 +178,8 @@ internal class HostScene(
                 operation.names?.size ?: 0 < 5
             ) return false
             8, 12, 15, 16 -> if (operation.node !in existing) return false
+            17 -> if (operation.node !in existing || operation.integer !in 0..3) return false
+            26 -> if (operation.node !in existing || operation.integer !in 0..34) return false
             22 -> if (!validBoxShadows(operation, existing)) return false
             23 -> if (!validClipPath(operation, existing)) return false
             24 -> if (
@@ -267,6 +269,7 @@ internal class HostScene(
                 ?.setProperty(operation.member, requireNotNull(operation.value))
             15 -> (nodes[id] ?: return).mountedElement?.clearProperty(operation.member)
             16 -> (nodes[id] ?: return).mountedElement?.setEventMask(operation.wide)
+            17 -> (nodes[id] ?: return).setHitTestBehavior(operation.integer)
             21 -> applyBackgroundLayers(nodes[id] ?: return, operation)
             22 -> applyBoxShadows(nodes[id] ?: return, operation)
             23 -> applyClipPath(nodes[id] ?: return, operation)
@@ -277,6 +280,7 @@ internal class HostScene(
                 node.pixelatedImages = operation.integer == 1
                 node.paint?.let { applyPaint(node, it) }
             }
+            26 -> (nodes[id] ?: return).setCursorKeyword(operation.integer)
         }
     }
 

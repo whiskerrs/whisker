@@ -523,6 +523,34 @@ pub enum ImageRenderingFixture {
     CrispEdges,
 }
 
+/// Keyword cursor requested by a retained scene fixture.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorFixture {
+    /// Let the Host select its default cursor.
+    #[default]
+    Auto,
+    /// Link or interactive pointing affordance.
+    Pointer,
+    /// Text-selection affordance.
+    Text,
+    /// Grab affordance.
+    Grab,
+    /// Hide the cursor.
+    None,
+}
+
+/// Lynx pointer hit-test participation requested by a scene fixture.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PointerEventsFixture {
+    /// Use normal hit testing.
+    #[default]
+    Auto,
+    /// Disable the node and its descendants.
+    None,
+}
+
 /// One node in a retained Host scene fixture.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -554,6 +582,12 @@ pub struct SceneNodeFixture {
     /// Raster-image scaling algorithm for this element's own image paint.
     #[serde(default)]
     pub image_rendering: ImageRenderingFixture,
+    /// Resolved keyword cursor.
+    #[serde(default)]
+    pub cursor: CursorFixture,
+    /// Resolved pointer hit-test behavior.
+    #[serde(default)]
+    pub pointer_events: PointerEventsFixture,
     /// Optional basic-shape clip applied to the node and its descendants.
     #[serde(default)]
     pub clip_path: Option<ClipPathFixture>,

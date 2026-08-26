@@ -542,6 +542,13 @@
       "checkpoints": ["measurement"]
     },
     {
+      "id": "core.pointer-style-lynx",
+      "feature": "cursor-pointer-events",
+      "fixture": "core/pointer-style-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "host.input.pointer.basic",
       "feature": "pointer-input",
       "fixture": "core/pointer-input-basic.json",

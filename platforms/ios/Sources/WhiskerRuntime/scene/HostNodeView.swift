@@ -22,6 +22,9 @@ final class WhiskerNodeView: UIView {
     private var clipsOverflowHorizontally = false
     private var clipsOverflowVertically = false
     private var backdropBlurView: HostBackdropBlurView?
+    private(set) var hitTestBehavior: Int32 = 0
+    private(set) var cursorKeyword: Int32 = 0
+    private var pointerDelegate: AnyObject?
 
     init(element: String) {
         self.element = element
@@ -35,6 +38,11 @@ final class WhiskerNodeView: UIView {
         defaultChildrenHost.layer.zPosition = 2
         addSubview(paintView)
         addSubview(defaultChildrenHost)
+        if #available(iOS 13.4, *) {
+            let delegate = HostNodePointerDelegate(node: self)
+            addInteraction(UIPointerInteraction(delegate: delegate))
+            pointerDelegate = delegate
+        }
     }
 
     required init?(coder: NSCoder) { nil }
@@ -173,6 +181,30 @@ final class WhiskerNodeView: UIView {
     func setImageRendering(pixelated: Bool) {
         boxPainter.setPixelatedImages(pixelated)
         paintView.setNeedsDisplay()
+    }
+
+    func setHitTestBehavior(_ value: Int32) {
+        precondition((0...3).contains(value))
+        hitTestBehavior = value
+    }
+
+    func setCursorKeyword(_ value: Int32) {
+        precondition((0...34).contains(value))
+        cursorKeyword = value
+    }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        switch hitTestBehavior {
+        case 1:
+            return nil
+        case 2:
+            return self.point(inside: point, with: event) ? self : nil
+        case 3:
+            let result = super.hitTest(point, with: event)
+            return result === self ? nil : result
+        default:
+            return super.hitTest(point, with: event)
+        }
     }
 
     private func updateBackdropBlurGeometry() {
@@ -316,6 +348,22 @@ final class WhiskerNodeView: UIView {
         var host: UIView = self
         while let parent = host.superview { host = parent }
         return convert(host.bounds, from: host)
+    }
+}
+
+@available(iOS 13.4, *)
+private final class HostNodePointerDelegate: NSObject, UIPointerInteractionDelegate {
+    private unowned let node: WhiskerNodeView
+
+    init(node: WhiskerNodeView) {
+        self.node = node
+    }
+
+    func pointerInteraction(
+        _ interaction: UIPointerInteraction,
+        styleFor region: UIPointerRegion
+    ) -> UIPointerStyle? {
+        node.cursorKeyword == 2 ? .hidden() : nil
     }
 }
 

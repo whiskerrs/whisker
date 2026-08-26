@@ -206,6 +206,12 @@ final class HostScene {
                       operation.integer == Int32(WHISKER_IMAGE_RENDERING_PIXELATED) ||
                       operation.integer == Int32(WHISKER_IMAGE_RENDERING_CRISP_EDGES)
                 else { return false }
+            case UInt32(WHISKER_OP_HIT_TEST):
+                guard existing.contains(operation.node), (0...3).contains(operation.integer)
+                else { return false }
+            case UInt32(WHISKER_OP_CURSOR):
+                guard existing.contains(operation.node), (0...34).contains(operation.integer)
+                else { return false }
             case UInt32(WHISKER_OP_OPACITY):
                 guard existing.contains(operation.node), operation.scalar.isFinite,
                       (0...1).contains(operation.scalar) else { return false }
@@ -366,6 +372,10 @@ final class HostScene {
             node.setImageRendering(
                 pixelated: operation.integer == Int32(WHISKER_IMAGE_RENDERING_PIXELATED)
             )
+        case UInt32(WHISKER_OP_HIT_TEST):
+            nodes[id]?.setHitTestBehavior(operation.integer)
+        case UInt32(WHISKER_OP_CURSOR):
+            nodes[id]?.setCursorKeyword(operation.integer)
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):

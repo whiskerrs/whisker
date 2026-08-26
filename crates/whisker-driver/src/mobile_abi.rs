@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 21;
+pub const MOBILE_ABI_MINOR: u16 = 22;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -49,6 +49,7 @@ pub const OP_BOX_SHADOWS: u32 = 22;
 pub const OP_CLIP_PATH: u32 = 23;
 pub const OP_BACKDROP_BLUR: u32 = 24;
 pub const OP_IMAGE_RENDERING: u32 = 25;
+pub const OP_CURSOR: u32 = 26;
 
 pub const IMAGE_RENDERING_AUTO: i32 = 0;
 pub const IMAGE_RENDERING_PIXELATED: i32 = 1;

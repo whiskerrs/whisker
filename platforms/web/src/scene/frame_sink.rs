@@ -40,6 +40,47 @@ pub(crate) struct WebProviderEvent {
     pub(crate) detail: WhiskerValue,
 }
 
+const fn cursor_keyword_css(value: whisker_protocol::CursorKeyword) -> &'static str {
+    use whisker_protocol::CursorKeyword;
+    match value {
+        CursorKeyword::Auto => "auto",
+        CursorKeyword::Default => "default",
+        CursorKeyword::None => "none",
+        CursorKeyword::ContextMenu => "context-menu",
+        CursorKeyword::Help => "help",
+        CursorKeyword::Pointer => "pointer",
+        CursorKeyword::Progress => "progress",
+        CursorKeyword::Wait => "wait",
+        CursorKeyword::Cell => "cell",
+        CursorKeyword::Crosshair => "crosshair",
+        CursorKeyword::Text => "text",
+        CursorKeyword::VerticalText => "vertical-text",
+        CursorKeyword::Alias => "alias",
+        CursorKeyword::Copy => "copy",
+        CursorKeyword::Move => "move",
+        CursorKeyword::NoDrop => "no-drop",
+        CursorKeyword::NotAllowed => "not-allowed",
+        CursorKeyword::Grab => "grab",
+        CursorKeyword::Grabbing => "grabbing",
+        CursorKeyword::ColResize => "col-resize",
+        CursorKeyword::RowResize => "row-resize",
+        CursorKeyword::NResize => "n-resize",
+        CursorKeyword::EResize => "e-resize",
+        CursorKeyword::SResize => "s-resize",
+        CursorKeyword::WResize => "w-resize",
+        CursorKeyword::NeResize => "ne-resize",
+        CursorKeyword::NwResize => "nw-resize",
+        CursorKeyword::SeResize => "se-resize",
+        CursorKeyword::SwResize => "sw-resize",
+        CursorKeyword::EwResize => "ew-resize",
+        CursorKeyword::NsResize => "ns-resize",
+        CursorKeyword::NeswResize => "nesw-resize",
+        CursorKeyword::NwseResize => "nwse-resize",
+        CursorKeyword::ZoomIn => "zoom-in",
+        CursorKeyword::ZoomOut => "zoom-out",
+    }
+}
+
 impl DomFrameSink {
     pub(crate) fn new_with_resources(
         document: web_sys::Document,
@@ -95,7 +136,9 @@ impl DomFrameSink {
                     Some("visual-effects payload")
                 }
                 Operation::SetImage { .. } => Some("image-content"),
-                Operation::SetCursor { .. } => Some("cursor"),
+                Operation::SetCursor { cursor, .. } if !cursor.resources.is_empty() => {
+                    Some("resource-backed cursor")
+                }
                 Operation::SetText { content, .. }
                     if content.paint.decoration.lines.overline
                         || (content.paint.decoration.lines.underline
@@ -345,6 +388,13 @@ impl DomFrameSink {
                     if disabled { "none" } else { "auto" },
                 )?;
             }
+            Operation::SetCursor { node, cursor } => {
+                set_style(
+                    &self.node(*node)?,
+                    "cursor",
+                    cursor_keyword_css(cursor.fallback),
+                )?;
+            }
             Operation::SetProperty {
                 node,
                 property,
@@ -429,7 +479,7 @@ impl DomFrameSink {
                     .map_err(|error| js_error("invoke native DOM command", error))?;
             }
             Operation::SetPointerCapture { .. } | Operation::ReleasePointerCapture { .. } => {}
-            Operation::SetImage { .. } | Operation::SetCursor { .. } => {
+            Operation::SetImage { .. } => {
                 unreachable!("unsupported operations are rejected before DOM mutation")
             }
         }
@@ -605,6 +655,10 @@ impl FrameSink for DomFrameSink {
                 },
                 whisker_protocol::CapabilityEntry {
                     capability: whisker_protocol::RenderCapability::TextTypography,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::Cursor,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_protocol::CapabilityEntry {

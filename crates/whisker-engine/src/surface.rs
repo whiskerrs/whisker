@@ -4,12 +4,13 @@ use std::{collections::HashMap, error::Error, fmt};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
-    ApplyResult, CommandId, ElementTypeId, FramePacket, HitTestBehavior, InputPoint,
-    LayoutGeometry, MeasurementMetrics, MeasurementReady, MeasurementResponse, MeasurementSpec,
-    NodeId, PointerId, PropertyId, ResultId, SurfaceId, TextContent, WhiskerValue,
+    ApplyResult, CommandId, Cursor, CursorKeyword, ElementTypeId, FramePacket, HitTestBehavior,
+    InputPoint, LayoutGeometry, MeasurementMetrics, MeasurementReady, MeasurementResponse,
+    MeasurementSpec, NodeId, PointerId, PropertyId, ResultId, SurfaceId, TextContent, WhiskerValue,
 };
 use whisker_style::{
-    ComputedLayoutStyle, ComputedStyle, ComputedTransformStyle, PropertyImpactSet,
+    ComputedLayoutStyle, ComputedStyle, ComputedTransformStyle, CursorValue, PointerEventsValue,
+    PropertyImpactSet,
 };
 
 use crate::{
@@ -17,6 +18,57 @@ use crate::{
     PlainTextInput, Scene, SceneError, SceneNode, lower_paint, lower_plain_text, lower_transform,
     measurement::MeasurementCoordinator,
 };
+
+const fn lower_hit_test(value: PointerEventsValue) -> HitTestBehavior {
+    match value {
+        PointerEventsValue::Auto => HitTestBehavior::Auto,
+        PointerEventsValue::None => HitTestBehavior::None,
+    }
+}
+
+fn lower_cursor(value: CursorValue) -> Cursor {
+    let fallback = match value {
+        CursorValue::Auto => CursorKeyword::Auto,
+        CursorValue::Default => CursorKeyword::Default,
+        CursorValue::None => CursorKeyword::None,
+        CursorValue::ContextMenu => CursorKeyword::ContextMenu,
+        CursorValue::Help => CursorKeyword::Help,
+        CursorValue::Pointer => CursorKeyword::Pointer,
+        CursorValue::Progress => CursorKeyword::Progress,
+        CursorValue::Wait => CursorKeyword::Wait,
+        CursorValue::Cell => CursorKeyword::Cell,
+        CursorValue::Crosshair => CursorKeyword::Crosshair,
+        CursorValue::Text => CursorKeyword::Text,
+        CursorValue::VerticalText => CursorKeyword::VerticalText,
+        CursorValue::Alias => CursorKeyword::Alias,
+        CursorValue::Copy => CursorKeyword::Copy,
+        CursorValue::Move => CursorKeyword::Move,
+        CursorValue::NoDrop => CursorKeyword::NoDrop,
+        CursorValue::NotAllowed => CursorKeyword::NotAllowed,
+        CursorValue::Grab => CursorKeyword::Grab,
+        CursorValue::Grabbing => CursorKeyword::Grabbing,
+        CursorValue::ColResize => CursorKeyword::ColResize,
+        CursorValue::RowResize => CursorKeyword::RowResize,
+        CursorValue::NResize => CursorKeyword::NResize,
+        CursorValue::EResize => CursorKeyword::EResize,
+        CursorValue::SResize => CursorKeyword::SResize,
+        CursorValue::WResize => CursorKeyword::WResize,
+        CursorValue::NeResize => CursorKeyword::NeResize,
+        CursorValue::NwResize => CursorKeyword::NwResize,
+        CursorValue::SeResize => CursorKeyword::SeResize,
+        CursorValue::SwResize => CursorKeyword::SwResize,
+        CursorValue::EwResize => CursorKeyword::EwResize,
+        CursorValue::NsResize => CursorKeyword::NsResize,
+        CursorValue::NeswResize => CursorKeyword::NeswResize,
+        CursorValue::NwseResize => CursorKeyword::NwseResize,
+        CursorValue::ZoomIn => CursorKeyword::ZoomIn,
+        CursorValue::ZoomOut => CursorKeyword::ZoomOut,
+    };
+    Cursor {
+        resources: Vec::new(),
+        fallback,
+    }
+}
 
 /// Result of requesting one layout pass.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -274,6 +326,13 @@ impl SurfaceEngine {
             .map_err(SurfaceError::Scene)
     }
 
+    /// Replaces one node's resolved pointing-device cursor.
+    pub fn set_cursor(&mut self, node: NodeId, cursor: Cursor) -> Result<(), SurfaceError> {
+        self.scene
+            .set_cursor(node, cursor)
+            .map_err(SurfaceError::Scene)
+    }
+
     /// Creates one unattached node in both retained trees.
     pub fn create_node(
         &mut self,
@@ -401,6 +460,14 @@ impl SurfaceEngine {
                 || current.z_order() != Some(lowered.z_order)
                 || transform_changed
         };
+        let input_changed = {
+            let current = self
+                .scene
+                .node(node)
+                .expect("the retained scene node was validated above");
+            current.hit_test() != Some(lower_hit_test(style.pointer_events()))
+                || current.cursor() != Some(&lower_cursor(style.cursor()))
+        };
         let mut impacts = self.update_layout_style(node, style.layout().clone())?;
         self.scene
             .set_box_paint(node, lowered.box_paint)
@@ -420,6 +487,12 @@ impl SurfaceEngine {
         self.scene
             .set_z_order(node, lowered.z_order)
             .expect("the retained scene node was validated above");
+        self.scene
+            .set_hit_test(node, lower_hit_test(style.pointer_events()))
+            .expect("the retained scene node was validated above");
+        self.scene
+            .set_cursor(node, lower_cursor(style.cursor()))
+            .expect("the retained scene node was validated above");
         self.transforms.insert(node, lowered.transform);
         if let Some(transform) = projected_transform.flatten() {
             self.scene
@@ -428,6 +501,9 @@ impl SurfaceEngine {
         }
         if paint_changed {
             impacts |= PropertyImpactSet::PAINT;
+        }
+        if input_changed {
+            impacts |= PropertyImpactSet::INPUT;
         }
         Ok(impacts)
     }
@@ -1272,6 +1348,11 @@ mod tests {
         assert_eq!(node.opacity(), Some(lowered.opacity));
         assert_eq!(node.visibility(), Some(lowered.visibility));
         assert_eq!(node.z_order(), Some(lowered.z_order));
+        assert_eq!(node.hit_test(), Some(HitTestBehavior::Auto));
+        assert_eq!(
+            node.cursor().map(|cursor| cursor.fallback),
+            Some(whisker_protocol::CursorKeyword::Auto)
+        );
         assert!(
             surface
                 .update_computed_style(root, style)
@@ -1399,6 +1480,18 @@ mod tests {
                 node: missing
             }))
         );
+        let cursor = whisker_protocol::Cursor {
+            resources: Vec::new(),
+            fallback: whisker_protocol::CursorKeyword::Pointer,
+        };
+        surface.set_cursor(root, cursor.clone()).unwrap();
+        assert_eq!(surface.node(root).unwrap().cursor(), Some(&cursor));
+        assert_eq!(
+            surface.set_cursor(missing, cursor),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
         let pointer = PointerId::new(1).unwrap();
         assert_eq!(surface.pointer_capture_target(pointer), None);
         surface.scene.set_pointer_capture(root, pointer).unwrap();
@@ -1419,6 +1512,63 @@ mod tests {
                 UnsupportedLayoutFeature::StickyPosition
             )))
         );
+    }
+
+    #[test]
+    fn pointer_input_lowering_covers_every_retained_keyword() {
+        assert_eq!(
+            lower_hit_test(PointerEventsValue::Auto),
+            HitTestBehavior::Auto
+        );
+        assert_eq!(
+            lower_hit_test(PointerEventsValue::None),
+            HitTestBehavior::None
+        );
+        for (value, expected) in [
+            (CursorValue::Auto, CursorKeyword::Auto),
+            (CursorValue::Default, CursorKeyword::Default),
+            (CursorValue::None, CursorKeyword::None),
+            (CursorValue::ContextMenu, CursorKeyword::ContextMenu),
+            (CursorValue::Help, CursorKeyword::Help),
+            (CursorValue::Pointer, CursorKeyword::Pointer),
+            (CursorValue::Progress, CursorKeyword::Progress),
+            (CursorValue::Wait, CursorKeyword::Wait),
+            (CursorValue::Cell, CursorKeyword::Cell),
+            (CursorValue::Crosshair, CursorKeyword::Crosshair),
+            (CursorValue::Text, CursorKeyword::Text),
+            (CursorValue::VerticalText, CursorKeyword::VerticalText),
+            (CursorValue::Alias, CursorKeyword::Alias),
+            (CursorValue::Copy, CursorKeyword::Copy),
+            (CursorValue::Move, CursorKeyword::Move),
+            (CursorValue::NoDrop, CursorKeyword::NoDrop),
+            (CursorValue::NotAllowed, CursorKeyword::NotAllowed),
+            (CursorValue::Grab, CursorKeyword::Grab),
+            (CursorValue::Grabbing, CursorKeyword::Grabbing),
+            (CursorValue::ColResize, CursorKeyword::ColResize),
+            (CursorValue::RowResize, CursorKeyword::RowResize),
+            (CursorValue::NResize, CursorKeyword::NResize),
+            (CursorValue::EResize, CursorKeyword::EResize),
+            (CursorValue::SResize, CursorKeyword::SResize),
+            (CursorValue::WResize, CursorKeyword::WResize),
+            (CursorValue::NeResize, CursorKeyword::NeResize),
+            (CursorValue::NwResize, CursorKeyword::NwResize),
+            (CursorValue::SeResize, CursorKeyword::SeResize),
+            (CursorValue::SwResize, CursorKeyword::SwResize),
+            (CursorValue::EwResize, CursorKeyword::EwResize),
+            (CursorValue::NsResize, CursorKeyword::NsResize),
+            (CursorValue::NeswResize, CursorKeyword::NeswResize),
+            (CursorValue::NwseResize, CursorKeyword::NwseResize),
+            (CursorValue::ZoomIn, CursorKeyword::ZoomIn),
+            (CursorValue::ZoomOut, CursorKeyword::ZoomOut),
+        ] {
+            assert_eq!(
+                lower_cursor(value),
+                Cursor {
+                    resources: Vec::new(),
+                    fallback: expected,
+                }
+            );
+        }
     }
 
     #[test]
@@ -1987,6 +2137,16 @@ mod tests {
         assert_eq!(
             surface.scene.set_clip(root, lowered.clip),
             Err(SceneError::FramePending)
+        );
+        assert_eq!(
+            surface.set_cursor(
+                root,
+                Cursor {
+                    resources: Vec::new(),
+                    fallback: CursorKeyword::Pointer,
+                },
+            ),
+            Err(SurfaceError::Scene(SceneError::FramePending))
         );
         assert_eq!(
             surface.set_measurable(root, true),

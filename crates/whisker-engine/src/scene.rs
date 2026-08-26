@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt;
 
 use whisker_protocol::{
-    BackgroundLayer, BoxClip, BoxPaint, CommandId, ElementTypeId, FrameHeader, FrameMode,
+    BackgroundLayer, BoxClip, BoxPaint, CommandId, Cursor, ElementTypeId, FrameHeader, FrameMode,
     FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, NodeId, Operation, OverflowClip,
     PointerId, PropertyId, ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError,
     Transform, Visibility, VisualEffects, WhiskerValue,
@@ -30,6 +30,7 @@ pub struct SceneNode {
     properties: BTreeMap<PropertyId, WhiskerValue>,
     event_mask: Option<u64>,
     hit_test: Option<HitTestBehavior>,
+    cursor: Option<Cursor>,
     captured_pointers: BTreeSet<PointerId>,
 }
 
@@ -52,6 +53,7 @@ impl SceneNode {
             properties: BTreeMap::new(),
             event_mask: None,
             hit_test: None,
+            cursor: None,
             captured_pointers: BTreeSet::new(),
         }
     }
@@ -129,6 +131,11 @@ impl SceneNode {
     /// Returns retained Host hit-test behavior.
     pub const fn hit_test(&self) -> Option<HitTestBehavior> {
         self.hit_test
+    }
+
+    /// Returns the retained resolved pointing-device cursor.
+    pub const fn cursor(&self) -> Option<&Cursor> {
+        self.cursor.as_ref()
     }
 }
 
@@ -237,6 +244,7 @@ enum DirtySlot {
     Property(NodeId, PropertyId),
     EventMask(NodeId),
     HitTest(NodeId),
+    Cursor(NodeId),
     Pointer(NodeId, PointerId),
 }
 
@@ -829,6 +837,23 @@ impl Scene {
         Ok(())
     }
 
+    /// Sets a node's resolved pointing-device cursor.
+    pub fn set_cursor(&mut self, node: NodeId, cursor: Cursor) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        if self.require_node(node)?.cursor.as_ref() == Some(&cursor) {
+            return Ok(());
+        }
+        self.nodes
+            .get_mut(&node)
+            .expect("node checked above")
+            .cursor = Some(cursor.clone());
+        self.journal.push_coalesced(
+            DirtySlot::Cursor(node),
+            Operation::SetCursor { node, cursor },
+        );
+        Ok(())
+    }
+
     /// Captures a pointer when it is not already captured by this node.
     pub fn set_pointer_capture(
         &mut self,
@@ -1127,6 +1152,12 @@ impl Scene {
                     behavior,
                 });
             }
+            if let Some(cursor) = &state.cursor {
+                operations.push(Operation::SetCursor {
+                    node: *node,
+                    cursor: cursor.clone(),
+                });
+            }
             for pointer in &state.captured_pointers {
                 operations.push(Operation::SetPointerCapture {
                     node: *node,
@@ -1336,6 +1367,11 @@ mod tests {
         scene
             .set_hit_test(root, HitTestBehavior::BoxOnly)
             .expect("hit test");
+        let cursor = whisker_protocol::Cursor {
+            resources: Vec::new(),
+            fallback: whisker_protocol::CursorKeyword::Grab,
+        };
+        scene.set_cursor(root, cursor.clone()).expect("cursor");
         scene
             .set_pointer_capture(root, pointer(1))
             .expect("pointer capture");
@@ -1363,6 +1399,7 @@ mod tests {
         assert_eq!(root_state.z_order(), Some(-1));
         assert_eq!(root_state.event_mask(), Some(3));
         assert_eq!(root_state.hit_test(), Some(HitTestBehavior::BoxOnly));
+        assert_eq!(root_state.cursor(), Some(&cursor));
         assert_eq!(scene.node(child).expect("child state").parent(), Some(root));
         assert_eq!(scene.node_count(), 2);
 
@@ -1379,6 +1416,13 @@ mod tests {
                 operation,
                 Operation::SetBackgroundLayers { node, layers }
                     if *node == root && layers == std::slice::from_ref(&background)
+            )
+        }));
+        assert!(packet.operations.iter().any(|operation| {
+            matches!(
+                operation,
+                Operation::SetCursor { node, cursor: actual }
+                    if *node == root && actual == &cursor
             )
         }));
         assert!(packet.operations.iter().any(|operation| {

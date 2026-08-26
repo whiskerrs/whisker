@@ -410,7 +410,8 @@ private class Driver(
                             command.getString("name") == "paint.text.align-lynx" ||
                             command.getString("name") == "paint.text.indent-lynx" ||
                             command.getString("name") == "paint.text.wrap-overflow-lynx" ||
-                            command.getString("name") == "paint.text.font-features-lynx",
+                            command.getString("name") == "paint.text.font-features-lynx" ||
+                            command.getString("name") == "interaction.pointer.lynx",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -903,8 +904,23 @@ private class Driver(
                 }
                 check(stage(tag = 25, node = id, integer = value))
             }
+            val cursor = when (node.optString("cursor", "auto")) {
+                "pointer" -> 5
+                "text" -> 10
+                "grab" -> 17
+                "none" -> 2
+                else -> 0
+            }
+            check(stage(tag = 26, node = id, integer = cursor))
+            check(
+                stage(
+                    tag = 17,
+                    node = id,
+                    integer = if (node.optString("pointer_events", "auto") == "none") 1 else 0,
+                ),
+            )
         }
-        check(view.commitFrameFromNative())
+        check(view.commitFrameFromNative()) { "$id: Host rejected the staged scene frame" }
     }
 
     private fun stage(

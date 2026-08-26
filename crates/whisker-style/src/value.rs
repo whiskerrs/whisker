@@ -137,6 +137,92 @@ pub enum FontOpticalSizingValue {
     None,
 }
 
+/// Keyword-only cursor values supported by Lynx and the Whisker Hosts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CursorValue {
+    /// Let the Host choose the cursor for the element.
+    #[default]
+    Auto,
+    /// Platform default arrow or equivalent.
+    Default,
+    /// Hide the pointing-device cursor.
+    None,
+    /// Context-menu affordance.
+    ContextMenu,
+    /// Help affordance.
+    Help,
+    /// Pointing or link affordance.
+    Pointer,
+    /// Progress without blocking interaction.
+    Progress,
+    /// Busy or waiting affordance.
+    Wait,
+    /// Cell selection.
+    Cell,
+    /// Crosshair.
+    Crosshair,
+    /// Horizontal text selection.
+    Text,
+    /// Vertical text selection.
+    VerticalText,
+    /// Alias creation.
+    Alias,
+    /// Copy affordance.
+    Copy,
+    /// Move affordance.
+    Move,
+    /// A drop is prohibited.
+    NoDrop,
+    /// Interaction is prohibited.
+    NotAllowed,
+    /// Grab affordance.
+    Grab,
+    /// Active grab affordance.
+    Grabbing,
+    /// Column resize.
+    ColResize,
+    /// Row resize.
+    RowResize,
+    /// North resize.
+    NResize,
+    /// East resize.
+    EResize,
+    /// South resize.
+    SResize,
+    /// West resize.
+    WResize,
+    /// North-east resize.
+    NeResize,
+    /// North-west resize.
+    NwResize,
+    /// South-east resize.
+    SeResize,
+    /// South-west resize.
+    SwResize,
+    /// Bidirectional east-west resize.
+    EwResize,
+    /// Bidirectional north-south resize.
+    NsResize,
+    /// Bidirectional north-east/south-west resize.
+    NeswResize,
+    /// Bidirectional north-west/south-east resize.
+    NwseResize,
+    /// Zoom in.
+    ZoomIn,
+    /// Zoom out.
+    ZoomOut,
+}
+
+/// Whether a node and its descendants participate in pointer hit testing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PointerEventsValue {
+    /// Use normal Host hit testing.
+    #[default]
+    Auto,
+    /// Neither the node nor its descendants receives pointer input.
+    None,
+}
+
 /// Lynx-supported inline text alignment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TextAlignValue {
@@ -724,6 +810,10 @@ pub enum StyleValue {
     FontVariations(Vec<FontVariationValue>),
     /// Optical sizing behavior.
     FontOpticalSizing(FontOpticalSizingValue),
+    /// Keyword-only pointing-device cursor.
+    Cursor(CursorValue),
+    /// Pointer hit-test participation.
+    PointerEvents(PointerEventsValue),
     /// Font face style.
     FontStyle(FontStyleValue),
     /// Numeric font weight.
