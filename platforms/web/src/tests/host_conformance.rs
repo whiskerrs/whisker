@@ -504,12 +504,15 @@ impl Driver {
                                         }
                                     })
                                     .or_else(|| {
-                                        nodes
-                                            .iter()
-                                            .any(|node| !node.box_shadows.is_empty())
-                                            .then_some(
-                                                "paint.visual-effects.box-shadow-offset",
-                                            )
+                                        nodes.iter().find_map(|node| {
+                                            node.box_shadows.first().map(|shadow| {
+                                                if shadow.spread_radius != 0.0 {
+                                                    "paint.visual-effects.box-shadow-spread"
+                                                } else {
+                                                    "paint.visual-effects.box-shadow-offset"
+                                                }
+                                            })
+                                        })
                                     })
                                     .or_else(|| {
                                         nodes
@@ -628,7 +631,7 @@ impl Driver {
                         };
                         assert_eq!(name, expected_checkpoint);
                         self.assert_scene_is_projected(
-                            if name == "paint.visual-effects.box-shadow-offset" {
+                            if name.starts_with("paint.visual-effects.box-shadow-") {
                                 &[]
                             } else {
                                 samples
@@ -1181,6 +1184,9 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-backgrounds/box-shadow-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-001.json"
+        ),
+        "wpt/css/css-backgrounds/box-shadow-002.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-002.json"
         ),
         "wpt/css/CSS2/borders/border-right-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-right-003.json"

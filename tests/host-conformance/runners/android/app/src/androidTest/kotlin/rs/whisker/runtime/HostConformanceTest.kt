@@ -297,7 +297,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.background-layers.round-auto-aspect-ratio" ||
                             command.getString("name") ==
-                            "paint.visual-effects.box-shadow-offset",
+                            "paint.visual-effects.box-shadow-offset" ||
+                            command.getString("name") ==
+                            "paint.visual-effects.box-shadow-spread",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->

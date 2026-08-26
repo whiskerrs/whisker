@@ -113,6 +113,10 @@ final class HostBoxPainter {
         return roundedPath(in: rect, radii: radii).cgPath
     }
 
+    func borderBoxPath(in bounds: CGRect) -> CGPath {
+        roundedPath(in: bounds, radii: cornerRadii).cgPath
+    }
+
     func overflowClipPath(
         in bounds: CGRect,
         visibleBounds: CGRect,

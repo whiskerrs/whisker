@@ -15,6 +15,7 @@ final class WhiskerNodeView: UIView {
     private let overflowMask = CAShapeLayer()
     private var boxShadow: HostBoxShadow?
     private let boxShadowLayer = CAShapeLayer()
+    private let boxShadowMaskLayer = CAShapeLayer()
     private var clipsOverflowHorizontally = false
     private var clipsOverflowVertically = false
 
@@ -114,12 +115,34 @@ final class WhiskerNodeView: UIView {
     private func updateBoxShadowLayers() {
         guard let shadow = boxShadow else {
             boxShadowLayer.path = nil
+            boxShadowLayer.mask = nil
             return
         }
-        boxShadowLayer.frame = bounds
-        boxShadowLayer.path = boxPainter.hardBoxShadowPath(in: bounds, shadow: shadow)
+        guard let shadowPath = boxPainter.hardBoxShadowPath(in: bounds, shadow: shadow) else {
+            boxShadowLayer.path = nil
+            boxShadowLayer.mask = nil
+            return
+        }
+        let layerFrame = shadowPath.boundingBoxOfPath.union(bounds)
+        var translation = CGAffineTransform(
+            translationX: -layerFrame.minX,
+            y: -layerFrame.minY
+        )
+        boxShadowLayer.frame = layerFrame
+        boxShadowLayer.path = shadowPath.copy(using: &translation)
         boxShadowLayer.fillColor = shadow.color.cgColor
         boxShadowLayer.strokeColor = nil
+
+        let maskPath = CGMutablePath()
+        maskPath.addRect(CGRect(origin: .zero, size: layerFrame.size))
+        if let borderPath = boxPainter.borderBoxPath(in: bounds).copy(using: &translation) {
+            maskPath.addPath(borderPath)
+        }
+        boxShadowMaskLayer.frame = CGRect(origin: .zero, size: layerFrame.size)
+        boxShadowMaskLayer.path = maskPath
+        boxShadowMaskLayer.fillColor = UIColor.white.cgColor
+        boxShadowMaskLayer.fillRule = .evenOdd
+        boxShadowLayer.mask = boxShadowMaskLayer
     }
 
     private func updateOverflowMask() {
