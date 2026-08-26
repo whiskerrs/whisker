@@ -304,6 +304,20 @@
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-color.opacity-offscreen-multiple-boxes-2",
+      "feature": "opacity-group-compositing",
+      "fixture": "wpt/css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-color.opacity-offscreen-with-alpha",
+      "feature": "opacity-group-alpha-compositing",
+      "fixture": "wpt/css/css-color/t32-opacity-offscreen-with-alpha-c.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css2.visibility-004",
       "feature": "visibility",
       "fixture": "wpt/css/CSS2/visufx/visibility-004.json",

@@ -1923,6 +1923,12 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-color/t32-opacity-basic-0.6-a.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-color/t32-opacity-basic-0.6-a.json"
         ),
+        "wpt/css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.json"
+        ),
+        "wpt/css/css-color/t32-opacity-offscreen-with-alpha-c.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-color/t32-opacity-offscreen-with-alpha-c.json"
+        ),
         "wpt/css/CSS2/visufx/visibility-004.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/visufx/visibility-004.json"
         ),
