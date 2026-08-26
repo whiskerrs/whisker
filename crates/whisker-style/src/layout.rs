@@ -2330,6 +2330,15 @@ mod tests {
         let environment = StyleEnvironment::default();
         let scalar = |value| CalcExpression::Number(number(value));
         let affine = || CalcExpression::Value(Box::new(px(2.0)));
+        evaluate_affine_calc(
+            &CalcExpression::Variable(crate::CustomPropertyReference::new(
+                crate::CustomPropertyName::new("--unresolved").unwrap(),
+            )),
+            20.0,
+            environment,
+            StyleProperty::Width,
+        )
+        .unwrap_err();
         for expression in [
             CalcExpression::Add(Box::new(scalar(1.0)), Box::new(scalar(2.0))),
             CalcExpression::Sub(Box::new(scalar(3.0)), Box::new(scalar(1.0))),
