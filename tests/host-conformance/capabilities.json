@@ -181,9 +181,10 @@
       "id": "motion.rust",
       "basis": "lynx-4.0",
       "properties": ["animation", "animation-delay", "animation-direction", "animation-duration", "animation-fill-mode", "animation-iteration-count", "animation-name", "animation-play-state", "animation-timing-function", "transition", "transition-delay", "transition-duration", "transition-property", "transition-timing-function"],
-      "implemented_subset": ["typed-shorthand-longhand-normalization", "time-unit-normalization", "timing-function-validation", "css-list-cycling", "lynx-transition-property-validation", "runtime-opacity-transition-sampling", "host-independent-frame-delta-emission"],
-      "pending_subset": ["runtime-color-layout-transform-transition-sampling", "typed-keyframe-registry", "keyframe-timeline-sampling", "motion-lifecycle-events"],
+      "implemented_subset": ["typed-shorthand-longhand-normalization", "time-unit-normalization", "timing-function-validation", "css-list-cycling", "lynx-transition-property-validation", "runtime-opacity-transition-sampling", "runtime-srgb-hsl-box-color-transition-sampling", "premultiplied-alpha-color-interpolation", "host-independent-frame-delta-emission"],
+      "pending_subset": ["runtime-named-and-text-color-transition-sampling", "runtime-layout-transform-transition-sampling", "typed-keyframe-registry", "keyframe-timeline-sampling", "motion-lifecycle-events"],
       "unsupported_browser_subset": ["transition-filter"],
+      "compatibility_notes": ["Box color transitions are sampled in premultiplied sRGB after canonicalizing rgb/rgba/hsl/hsla; named-color transitions currently snap to the target until the shared named-color table is canonicalized in Rust"],
       "protocol": [],
       "rust": "partial",
       "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}

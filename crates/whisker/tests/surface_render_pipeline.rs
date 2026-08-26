@@ -453,6 +453,151 @@ fn opacity_transition_is_sampled_in_rust_and_emitted_as_ordinary_frame_deltas() 
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
+#[test]
+fn box_color_transitions_are_composited_into_one_set_box_paint_delta() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(19).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let transition = || {
+        Transition::new(TransitionPropertyKind::All)
+            .duration(100.ms())
+            .timing(EasingFunction::Linear)
+    };
+    let painted = |background, border| {
+        Css::new()
+            .width(px(40))
+            .height(px(20))
+            .background_color(background)
+            .border_top_width(px(2))
+            .border_right_width(px(2))
+            .border_bottom_width(px(2))
+            .border_left_width(px(2))
+            .border_top_style(BorderStyle::Solid)
+            .border_right_style(BorderStyle::Solid)
+            .border_bottom_style(BorderStyle::Solid)
+            .border_left_style(BorderStyle::Solid)
+            .border_top_color(border)
+            .border_right_color(border)
+            .border_bottom_color(border)
+            .border_left_color(border)
+            .transition(transition())
+    };
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: painted(Color::rgb(0, 0, 0), Color::rgb(255, 0, 0)))
+            }
+        });
+        set_root(root);
+        root
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            painted(Color::rgb(255, 255, 255), Color::rgb(0, 0, 255)),
+        );
+    });
+    assert!(surface.step_motion(2_000.0).unwrap());
+    assert!(surface.step_motion(2_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let midpoint = renderer.frames()[1]
+        .packet
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::SetBoxPaint { paint, .. } => Some(paint),
+            _ => None,
+        })
+        .expect("transitioned box paint delta");
+    assert_eq!(
+        midpoint.background_color,
+        PaintColor::Srgba {
+            red: 128,
+            green: 128,
+            blue: 128,
+            alpha: 1.0,
+        }
+    );
+    for color in [
+        &midpoint.border_colors.top,
+        &midpoint.border_colors.right,
+        &midpoint.border_colors.bottom,
+        &midpoint.border_colors.left,
+    ] {
+        assert_eq!(
+            color,
+            &PaintColor::Srgba {
+                red: 128,
+                green: 0,
+                blue: 128,
+                alpha: 1.0,
+            }
+        );
+    }
+    assert!(!surface.step_motion(2_100.0).unwrap());
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            painted(NamedColor::Red.into(), NamedColor::Blue.into()),
+        );
+    });
+    assert!(
+        !surface.has_active_motion(),
+        "named colors snap until their canonical sRGB table is added"
+    );
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        renderer.frames()[2]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(
+                    operation,
+                    Operation::SetBoxPaint { paint, .. }
+                        if paint.background_color == PaintColor::Named("red".into())
+                            && paint.border_colors.top == PaintColor::Named("blue".into())
+                )
+            })
+    );
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
 fn painted_box(background: Color) -> Css {
     Css::new()
         .width(px(120))
