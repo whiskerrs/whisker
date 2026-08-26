@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-repeat.space-single",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/background-repeat-space-2.html",
+    "reference_path": "css/css-backgrounds/background-repeat-space-2-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "When only one image fits on a space-repeated axis, the image is not repeated and background-position determines its position.",
+    "adaptation": "The upstream 32 by 32 image is replaced by a constant green gradient of the same resolved size in a 48 by 48 positioning area. Its resolved 5px 5px position is passed directly to the Host so the case isolates the single-tile space rule."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 48.0, "height": 48.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 48.0, 48.0],
+            "background": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 },
+            "background_layer": {
+              "position": [
+                { "length": 5.0, "fraction": 0.0 },
+                { "length": 5.0, "fraction": 0.0 }
+              ],
+              "size": [
+                { "length": 32.0, "fraction": 0.0 },
+                { "length": 32.0, "fraction": 0.0 }
+              ],
+              "repeat_x": "space",
+              "repeat_y": "space"
+            },
+            "linear_gradient": {
+              "angle_degrees": 180.0,
+              "stops": [
+                { "color": { "kind": "named", "value": "green" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "green" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.repeat-space-single",
+        "samples": [
+          { "point": [5.0, 5.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [36.0, 36.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [4.0, 20.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [38.0, 20.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 },
+          { "point": [20.0, 38.0], "color": { "kind": "srgba", "red": 128, "green": 128, "blue": 128, "alpha": 1.0 }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

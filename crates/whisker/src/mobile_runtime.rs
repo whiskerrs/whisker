@@ -829,8 +829,12 @@ impl MobileFrameOwned {
                                         width: Some(width),
                                         height: Some(height),
                                     },
-                                    repeat_x @ (ImageRepeat::Repeat | ImageRepeat::NoRepeat),
-                                    repeat_y @ (ImageRepeat::Repeat | ImageRepeat::NoRepeat),
+                                    repeat_x @ (ImageRepeat::Repeat
+                                    | ImageRepeat::NoRepeat
+                                    | ImageRepeat::Space),
+                                    repeat_y @ (ImageRepeat::Repeat
+                                    | ImageRepeat::NoRepeat
+                                    | ImageRepeat::Space),
                                 ) => (
                                     BACKGROUND_SIZE_EXPLICIT,
                                     mobile_length(width),
@@ -1129,7 +1133,8 @@ fn mobile_background_repeat(value: ImageRepeat) -> u32 {
     match value {
         ImageRepeat::Repeat => BACKGROUND_REPEAT_REPEAT,
         ImageRepeat::NoRepeat => BACKGROUND_REPEAT_NO_REPEAT,
-        ImageRepeat::Space | ImageRepeat::Round => {
+        ImageRepeat::Space => BACKGROUND_REPEAT_SPACE,
+        ImageRepeat::Round => {
             unreachable!("unsupported repeat modes are rejected before ABI lowering")
         }
     }

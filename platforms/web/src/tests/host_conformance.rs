@@ -117,6 +117,18 @@ impl Driver {
                                                 ImageRepeatFixture::NoRepeat,
                                                 ImageRepeatFixture::Repeat,
                                             ) => Some("paint.background-layers.repeat-y"),
+                                            (
+                                                ImageRepeatFixture::Space,
+                                                ImageRepeatFixture::Space,
+                                            ) if node.background_layer.position
+                                                != [LengthPercentageFixture::default(); 2] =>
+                                            {
+                                                Some("paint.background-layers.repeat-space-single")
+                                            }
+                                            (
+                                                ImageRepeatFixture::Space,
+                                                ImageRepeatFixture::Space,
+                                            ) => Some("paint.background-layers.repeat-space"),
                                             _ => None,
                                         }
                                     })
@@ -471,6 +483,12 @@ fn fixture(path: &str) -> &'static str {
                 "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-repeat/background-repeat-repeat-y.json"
             )
         }
+        "wpt/css/css-backgrounds/background-repeat-space.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-repeat-space.json"
+        ),
+        "wpt/css/css-backgrounds/background-repeat-space-single.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-repeat-space-single.json"
+        ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
         ),
@@ -1185,7 +1203,11 @@ fn fixture_background_repeat(layer: BackgroundLayerFixture) -> &'static str {
         (ImageRepeatFixture::NoRepeat, ImageRepeatFixture::NoRepeat) => "no-repeat",
         (ImageRepeatFixture::Repeat, ImageRepeatFixture::NoRepeat) => "repeat no-repeat",
         (ImageRepeatFixture::NoRepeat, ImageRepeatFixture::Repeat) => "no-repeat repeat",
-        (ImageRepeatFixture::Space, _) | (_, ImageRepeatFixture::Space) => "space",
+        (ImageRepeatFixture::Space, ImageRepeatFixture::Space) => "space",
+        (ImageRepeatFixture::Space, ImageRepeatFixture::Repeat) => "space repeat",
+        (ImageRepeatFixture::Space, ImageRepeatFixture::NoRepeat) => "space no-repeat",
+        (ImageRepeatFixture::Repeat, ImageRepeatFixture::Space) => "repeat space",
+        (ImageRepeatFixture::NoRepeat, ImageRepeatFixture::Space) => "no-repeat space",
         (ImageRepeatFixture::Round, _) | (_, ImageRepeatFixture::Round) => "round",
     }
 }

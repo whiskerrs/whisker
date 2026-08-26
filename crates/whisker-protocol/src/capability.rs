@@ -336,11 +336,11 @@ fn has_explicit_background_geometry(layer: &crate::BackgroundLayer) -> bool {
         )
         && matches!(
             layer.repeat_x,
-            crate::ImageRepeat::Repeat | crate::ImageRepeat::NoRepeat
+            crate::ImageRepeat::Repeat | crate::ImageRepeat::NoRepeat | crate::ImageRepeat::Space
         )
         && matches!(
             layer.repeat_y,
-            crate::ImageRepeat::Repeat | crate::ImageRepeat::NoRepeat
+            crate::ImageRepeat::Repeat | crate::ImageRepeat::NoRepeat | crate::ImageRepeat::Space
         )
         && matches!(
             layer.origin,
@@ -645,6 +645,9 @@ mod tests {
             (ImageRepeat::Repeat, ImageRepeat::NoRepeat),
             (ImageRepeat::NoRepeat, ImageRepeat::Repeat),
             (ImageRepeat::Repeat, ImageRepeat::Repeat),
+            (ImageRepeat::Space, ImageRepeat::NoRepeat),
+            (ImageRepeat::NoRepeat, ImageRepeat::Space),
+            (ImageRepeat::Space, ImageRepeat::Space),
         ] {
             let mut layer = explicit_no_repeat(basic_linear_layer());
             layer.repeat_x = repeat_x;
@@ -658,21 +661,19 @@ mod tests {
             );
         }
 
-        for unsupported_repeat in [ImageRepeat::Space, ImageRepeat::Round] {
-            let mut layer = explicit_no_repeat(basic_linear_layer());
-            layer.repeat_x = unsupported_repeat;
-            assert_eq!(
-                packet(vec![operation(layer)]).required_capabilities(),
-                vec![RenderCapability::BackgroundLayers]
-            );
+        let mut layer = explicit_no_repeat(basic_linear_layer());
+        layer.repeat_x = ImageRepeat::Round;
+        assert_eq!(
+            packet(vec![operation(layer)]).required_capabilities(),
+            vec![RenderCapability::BackgroundLayers]
+        );
 
-            let mut layer = explicit_no_repeat(basic_linear_layer());
-            layer.repeat_y = unsupported_repeat;
-            assert_eq!(
-                packet(vec![operation(layer)]).required_capabilities(),
-                vec![RenderCapability::BackgroundLayers]
-            );
-        }
+        let mut layer = explicit_no_repeat(basic_linear_layer());
+        layer.repeat_y = ImageRepeat::Round;
+        assert_eq!(
+            packet(vec![operation(layer)]).required_capabilities(),
+            vec![RenderCapability::BackgroundLayers]
+        );
 
         let mut positioned = explicit_no_repeat(basic_linear_layer());
         positioned.position = PaintPosition {

@@ -73,6 +73,20 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.background-repeat.space",
+      "feature": "background-repeat-space",
+      "fixture": "wpt/css/css-backgrounds/background-repeat-space.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.background-repeat.space-single",
+      "feature": "background-repeat-space",
+      "fixture": "wpt/css/css-backgrounds/background-repeat-space-single.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.test1",
       "feature": "border-radius",
       "fixture": "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json",

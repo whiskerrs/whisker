@@ -2,11 +2,13 @@ package rs.whisker.runtime.paint
 
 import android.graphics.Path
 import android.graphics.RectF
+import kotlin.math.ceil
 import kotlin.math.floor
 
 internal enum class HostBackgroundRepeat {
     Repeat,
     NoRepeat,
+    Space,
 }
 
 internal enum class HostBackgroundBox {
@@ -56,36 +58,85 @@ internal data class HostBackgroundGeometry(
         draw: (RectF) -> Unit,
     ) {
         val base = imageBox(positioningBox)
-        if (base.isEmpty || paintingBox.isEmpty) return
-        val firstX = firstTileOrigin(base.left, base.width(), paintingBox.left, repeatX)
-        val firstY = firstTileOrigin(base.top, base.height(), paintingBox.top, repeatY)
+        if (
+            base.isEmpty || paintingBox.isEmpty ||
+            !base.width().isFinite() || !base.height().isFinite()
+        ) {
+            return
+        }
+        val xAxis = tileAxis(
+            base.left,
+            base.width(),
+            positioningBox.left,
+            positioningBox.width(),
+            paintingBox.left,
+            paintingBox.right,
+            repeatX,
+        )
+        val yAxis = tileAxis(
+            base.top,
+            base.height(),
+            positioningBox.top,
+            positioningBox.height(),
+            paintingBox.top,
+            paintingBox.bottom,
+            repeatY,
+        )
         var tileCount = 0
-        var y = firstY
-        do {
-            var x = firstX
-            do {
+        repeat(yAxis.count) { row ->
+            val y = yAxis.first + row * yAxis.stride
+            repeat(xAxis.count) { column ->
+                val x = xAxis.first + column * xAxis.stride
                 draw(RectF(x, y, x + base.width(), y + base.height()))
                 tileCount += 1
                 // Bound adversarial sub-pixel tiles so paint cannot monopolize
                 // the Host UI thread. Normal viewport-sized CSS tiling remains
                 // well below this ceiling.
                 if (tileCount >= MAX_BACKGROUND_TILES) return
-                x += base.width()
-            } while (repeatX == HostBackgroundRepeat.Repeat && x < paintingBox.right)
-            y += base.height()
-        } while (repeatY == HostBackgroundRepeat.Repeat && y < paintingBox.bottom)
+            }
+        }
     }
 
-    private fun firstTileOrigin(
+    private fun tileAxis(
         base: Float,
         tileSize: Float,
-        paintStart: Float,
+        positioningStart: Float,
+        positioningSize: Float,
+        paintingStart: Float,
+        paintingEnd: Float,
         repeat: HostBackgroundRepeat,
-    ): Float = if (repeat == HostBackgroundRepeat.Repeat) {
-        base + floor((paintStart - base) / tileSize) * tileSize
-    } else {
-        base
+    ): TileAxis = when (repeat) {
+        HostBackgroundRepeat.NoRepeat -> TileAxis(base, tileSize, 1)
+        HostBackgroundRepeat.Repeat -> {
+            val first = base + floor((paintingStart - base) / tileSize) * tileSize
+            val count = ceil((paintingEnd - first) / tileSize)
+                .toInt()
+                .coerceIn(1, MAX_BACKGROUND_TILES)
+            TileAxis(first, tileSize, count)
+        }
+        HostBackgroundRepeat.Space -> {
+            val count = floor(positioningSize / tileSize)
+                .toInt()
+                .coerceIn(0, MAX_BACKGROUND_TILES)
+            if (count >= 2) {
+                TileAxis(
+                    first = positioningStart,
+                    stride = (positioningSize - tileSize) / (count - 1),
+                    count = count,
+                )
+            } else {
+                // CSS falls back to normal background-position when fewer
+                // than two whole images fit on a space-repeated axis.
+                TileAxis(base, tileSize, 1)
+            }
+        }
     }
+
+    private data class TileAxis(
+        val first: Float,
+        val stride: Float,
+        val count: Int,
+    )
 
     private companion object {
         const val MAX_BACKGROUND_TILES = 16_384

@@ -521,7 +521,8 @@ private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> B
     }
     let supportedRepeats = [
         UInt32(WHISKER_BACKGROUND_REPEAT),
-        UInt32(WHISKER_BACKGROUND_NO_REPEAT)
+        UInt32(WHISKER_BACKGROUND_NO_REPEAT),
+        UInt32(WHISKER_BACKGROUND_SPACE)
     ]
     return layer.size_kind == UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT) &&
         layer.size_width.isNonNegativeFinite && layer.size_height.isNonNegativeFinite &&
@@ -542,11 +543,19 @@ private func hostBackgroundGeometry(
         positionY: layer.position_y,
         sizeWidth: explicit ? layer.size_width : nil,
         sizeHeight: explicit ? layer.size_height : nil,
-        repeatX: layer.repeat_x == UInt32(WHISKER_BACKGROUND_NO_REPEAT) ? .noRepeat : .repeat,
-        repeatY: layer.repeat_y == UInt32(WHISKER_BACKGROUND_NO_REPEAT) ? .noRepeat : .repeat,
+        repeatX: hostBackgroundRepeat(layer.repeat_x),
+        repeatY: hostBackgroundRepeat(layer.repeat_y),
         origin: layer.origin == UInt32(WHISKER_BACKGROUND_BOX_BORDER) ? .border : .padding,
         clip: layer.clip == UInt32(WHISKER_BACKGROUND_BOX_BORDER) ? .border : .padding
     )
+}
+
+private func hostBackgroundRepeat(_ value: UInt32) -> HostBackgroundRepeat {
+    switch value {
+    case UInt32(WHISKER_BACKGROUND_NO_REPEAT): .noRepeat
+    case UInt32(WHISKER_BACKGROUND_SPACE): .space
+    default: .repeat
+    }
 }
 
 private extension WhiskerMobileLengthPercentage {

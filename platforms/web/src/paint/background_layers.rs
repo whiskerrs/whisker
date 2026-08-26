@@ -42,15 +42,19 @@ pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
         && layer.size == BackgroundSize::Auto
         && layer.repeat_x == ImageRepeat::Repeat
         && layer.repeat_y == ImageRepeat::Repeat;
-    let explicit_geometry =
-        matches!(
-            layer.size,
-            BackgroundSize::Explicit {
-                width: Some(_),
-                height: Some(_),
-            }
-        ) && matches!(layer.repeat_x, ImageRepeat::Repeat | ImageRepeat::NoRepeat)
-            && matches!(layer.repeat_y, ImageRepeat::Repeat | ImageRepeat::NoRepeat);
+    let explicit_geometry = matches!(
+        layer.size,
+        BackgroundSize::Explicit {
+            width: Some(_),
+            height: Some(_),
+        }
+    ) && matches!(
+        layer.repeat_x,
+        ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space
+    ) && matches!(
+        layer.repeat_y,
+        ImageRepeat::Repeat | ImageRepeat::NoRepeat | ImageRepeat::Space
+    );
     let supported_geometry =
         (initial_geometry && layer.origin == PaintBox::Padding && layer.clip == PaintBox::Border)
             || (explicit_geometry
@@ -68,7 +72,7 @@ pub(crate) fn apply(
 ) -> Result<(), WebError> {
     if !supports(layers) {
         return Err(WebError(
-            "DOM Host only implements one supported gradient with explicit stops, supported border/padding boxes, two-axis auto or explicit size, and repeat/no-repeat"
+            "DOM Host only implements one supported gradient with explicit stops, supported border/padding boxes, two-axis auto or explicit size, and repeat/no-repeat/space"
                 .into(),
         ));
     }
@@ -248,6 +252,11 @@ fn background_repeat(layer: &BackgroundLayer) -> String {
         (ImageRepeat::NoRepeat, ImageRepeat::NoRepeat) => "no-repeat".into(),
         (ImageRepeat::Repeat, ImageRepeat::NoRepeat) => "repeat no-repeat".into(),
         (ImageRepeat::NoRepeat, ImageRepeat::Repeat) => "no-repeat repeat".into(),
+        (ImageRepeat::Space, ImageRepeat::Space) => "space".into(),
+        (ImageRepeat::Space, ImageRepeat::Repeat) => "space repeat".into(),
+        (ImageRepeat::Space, ImageRepeat::NoRepeat) => "space no-repeat".into(),
+        (ImageRepeat::Repeat, ImageRepeat::Space) => "repeat space".into(),
+        (ImageRepeat::NoRepeat, ImageRepeat::Space) => "no-repeat space".into(),
         _ => unreachable!("unsupported background repeat passed preflight"),
     }
 }

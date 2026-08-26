@@ -149,7 +149,10 @@ private class Driver(
                             command.getString("name") ==
                             "paint.background-layers.clip-padding-box" ||
                             command.getString("name") == "paint.background-layers.repeat-x" ||
-                            command.getString("name") == "paint.background-layers.repeat-y",
+                            command.getString("name") == "paint.background-layers.repeat-y" ||
+                            command.getString("name") == "paint.background-layers.repeat-space" ||
+                            command.getString("name") ==
+                            "paint.background-layers.repeat-space-single",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -458,6 +461,7 @@ private class Driver(
     private fun backgroundRepeat(value: String): Int = when (value) {
         "repeat" -> 0
         "no_repeat" -> 1
+        "space" -> 2
         else -> error("unsupported background repeat: $value")
     }
 
@@ -503,8 +507,8 @@ private fun JSONArray.strings(): Array<String> =
 private fun assertPixelSamples(id: String, bitmap: Bitmap, samples: JSONArray, density: Float) {
     samples.objects().forEach { sample ->
         val point = sample.getJSONArray("point")
-        val x = (point.getDouble(0) * density).toInt()
-        val y = (point.getDouble(1) * density).toInt()
+        val x = (point.getDouble(0) * density).roundToInt()
+        val y = (point.getDouble(1) * density).roundToInt()
         check(x in 0 until bitmap.width && y in 0 until bitmap.height)
         val actual = bitmap.getPixel(x, y)
         val expected = fixtureColor(sample.getJSONObject("color"))
@@ -545,8 +549,8 @@ private fun assertPixelRelations(id: String, bitmap: Bitmap, relations: JSONArra
 }
 
 private fun pixelAt(bitmap: Bitmap, point: JSONArray, density: Float): Int {
-    val x = (point.getDouble(0) * density).toInt()
-    val y = (point.getDouble(1) * density).toInt()
+    val x = (point.getDouble(0) * density).roundToInt()
+    val y = (point.getDouble(1) * density).roundToInt()
     check(x in 0 until bitmap.width && y in 0 until bitmap.height)
     return bitmap.getPixel(x, y)
 }
