@@ -564,13 +564,12 @@ fn box_color_transitions_are_composited_into_one_set_box_paint_delta() {
     with_installed_renderer(surface.renderer(), || {
         whisker::apply_style(
             root,
-            painted(NamedColor::Red.into(), NamedColor::Blue.into()),
+            painted(NamedColor::Red.into(), NamedColor::Lime.into()),
         );
     });
-    assert!(
-        !surface.has_active_motion(),
-        "named colors snap until their canonical sRGB table is added"
-    );
+    assert!(surface.has_active_motion());
+    assert!(surface.step_motion(3_000.0).unwrap());
+    assert!(surface.step_motion(3_050.0).unwrap());
     surface
         .render_frame(
             LayoutSize::new(100.0, 100.0),
@@ -590,11 +589,22 @@ fn box_color_transitions_are_composited_into_one_set_box_paint_delta() {
                 matches!(
                     operation,
                     Operation::SetBoxPaint { paint, .. }
-                        if paint.background_color == PaintColor::Named("red".into())
-                            && paint.border_colors.top == PaintColor::Named("blue".into())
+                        if paint.background_color == PaintColor::Srgba {
+                            red: 255,
+                            green: 128,
+                            blue: 128,
+                            alpha: 1.0,
+                        }
+                            && paint.border_colors.top == PaintColor::Srgba {
+                                red: 0,
+                                green: 128,
+                                blue: 128,
+                                alpha: 1.0,
+                            }
                 )
             })
     );
+    assert!(!surface.step_motion(3_100.0).unwrap());
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 

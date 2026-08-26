@@ -12,6 +12,8 @@ use whisker_style::{
     OverflowValue, VisibilityValue,
 };
 
+use crate::color::named_color_srgb;
+
 /// Complete common presentation values derived from one computed node style.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoweredPaint {
@@ -1037,7 +1039,15 @@ fn corner_radius(value: &whisker_style::ComputedCornerRadius) -> PaintCornerRadi
 /// Lowers a renderer-independent computed color into the paint protocol.
 pub fn lower_color(color: &ColorValue) -> PaintColor {
     match color {
-        ColorValue::Named(name) => PaintColor::Named(name.clone()),
+        ColorValue::Named(name) => named_color_srgb(name).map_or_else(
+            || PaintColor::Named(name.clone()),
+            |[red, green, blue]| PaintColor::Srgba {
+                red,
+                green,
+                blue,
+                alpha: 1.0,
+            },
+        ),
         ColorValue::Rgba {
             red,
             green,
