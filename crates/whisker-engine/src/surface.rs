@@ -348,6 +348,21 @@ impl SurfaceEngine {
             .map_err(SurfaceError::Scene)
     }
 
+    /// Replaces one node's already-lowered text presentation.
+    ///
+    /// Runtime-owned paint animation uses this after intrinsic measurement is
+    /// complete; callers must preserve the retained payload and prepared
+    /// content when changing paint-only fields.
+    pub fn set_text_content(
+        &mut self,
+        node: NodeId,
+        content: TextContent,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .set_text(node, content)
+            .map_err(SurfaceError::Scene)
+    }
+
     /// Creates one unattached node in both retained trees.
     pub fn create_node(
         &mut self,
@@ -1392,6 +1407,24 @@ mod tests {
                 .update_computed_style(root, style)
                 .unwrap()
                 .contains(PropertyImpactSet::PAINT)
+        );
+        surface
+            .set_plain_text(root, &PlainTextInput::new("animated"), style)
+            .unwrap();
+        let mut text = surface.node(root).unwrap().text().unwrap().clone();
+        text.paint.foreground = whisker_protocol::PaintColor::Srgba {
+            red: 255,
+            green: 0,
+            blue: 0,
+            alpha: 1.0,
+        };
+        surface.set_text_content(root, text.clone()).unwrap();
+        assert_eq!(surface.node(root).unwrap().text(), Some(&text));
+        assert_eq!(
+            surface.set_text_content(missing, text),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
         );
         surface
             .scene

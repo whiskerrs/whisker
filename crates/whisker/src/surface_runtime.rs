@@ -27,7 +27,7 @@ use whisker_engine::whisker_style::{
 use whisker_engine::{
     DeferredMeasurementApply, FrameSink, LayoutError, LayoutOptions, LayoutProgress,
     MeasurementProvider, PlainTextInput, SurfaceEngine, SurfaceError, SurfacePresentError,
-    lower_paint,
+    lower_color, lower_paint,
 };
 
 /// A mutation emitted by `render!` that could not enter the retained surface.
@@ -456,11 +456,20 @@ impl SurfaceRuntime {
                     (*property, transition.current, complete)
                 })
                 .collect::<Vec<_>>();
-            if opacity.is_some() || !colors.is_empty() {
-                samples.push((*element, node, opacity, colors));
+            let text_color = entry
+                .text_color_transition
+                .as_deref_mut()
+                .map(|transition| {
+                    let (progress, complete) = transition.sample_progress(timestamp_ms);
+                    transition.current = transition.from.interpolate(transition.to, progress);
+                    complete
+                });
+            if opacity.is_some() || !colors.is_empty() || text_color.is_some() {
+                samples.push((*element, node, opacity, colors, text_color));
             }
         }
-        for (element, node, opacity, colors) in samples {
+        let mut completed_text_colors = Vec::new();
+        for (element, node, opacity, colors, text_color) in samples {
             if let Some((opacity, complete)) = opacity {
                 state.surface.set_opacity(node, opacity)?;
                 if complete {
@@ -488,6 +497,14 @@ impl SurfaceRuntime {
                 }
                 state.surface.set_box_paint(node, paint)?;
             }
+            if text_color == Some(true) {
+                completed_text_colors.push(element);
+            }
+        }
+        let text_updates = BindingState::active_text_color_updates(&state.elements);
+        BindingState::apply_text_color_updates(text_updates, &mut state.surface)?;
+        for element in completed_text_colors {
+            state.element_mut(element)?.text_color_transition = None;
         }
         Ok(state.elements.values().any(has_active_transition))
     }
@@ -747,6 +764,7 @@ struct BoundElement {
     style_initialized: bool,
     opacity_transition: Option<Box<ActiveTransition<f32>>>,
     color_transitions: Option<Box<ActiveColorTransitions>>,
+    text_color_transition: Option<Box<ActiveTransition<RgbaColor>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -765,6 +783,7 @@ struct ActiveColorTransitions(HashMap<StyleProperty, ActiveTransition<RgbaColor>
 
 fn has_active_transition(entry: &BoundElement) -> bool {
     entry.opacity_transition.is_some()
+        || entry.text_color_transition.is_some()
         || entry
             .color_transitions
             .as_deref()
@@ -1218,6 +1237,7 @@ impl BindingState {
                 style_initialized: false,
                 opacity_transition: None,
                 color_transitions: None,
+                text_color_transition: None,
             },
         );
         if let Some(node) = node {
@@ -1365,7 +1385,66 @@ impl BindingState {
                 surface.set_box_paint(node, paint)?;
             }
         }
+        Self::reapply_active_text_colors(elements, surface)?;
         Ok(())
+    }
+
+    fn reapply_active_text_colors(
+        elements: &HashMap<Element, BoundElement>,
+        surface: &mut SurfaceEngine,
+    ) -> Result<(), RuntimeBindingError> {
+        Self::apply_text_color_updates(Self::active_text_color_updates(elements), surface)
+    }
+
+    fn active_text_color_updates(
+        elements: &HashMap<Element, BoundElement>,
+    ) -> Vec<(Element, NodeId, RgbaColor)> {
+        elements
+            .iter()
+            .filter_map(|(element, entry)| {
+                let node = entry.node?;
+                entry.text.as_ref()?;
+                Self::active_text_color(*element, elements).map(|color| (*element, node, color))
+            })
+            .collect()
+    }
+
+    fn apply_text_color_updates(
+        updates: Vec<(Element, NodeId, RgbaColor)>,
+        surface: &mut SurfaceEngine,
+    ) -> Result<(), RuntimeBindingError> {
+        for (element, node, color) in updates {
+            let mut content = surface
+                .node(node)
+                .and_then(|node| node.text())
+                .cloned()
+                .ok_or(RuntimeBindingError::UnknownElement { element })?;
+            content.paint.foreground = color.into_paint();
+            surface.set_text_content(node, content)?;
+        }
+        Ok(())
+    }
+
+    fn active_text_color(
+        element: Element,
+        elements: &HashMap<Element, BoundElement>,
+    ) -> Option<RgbaColor> {
+        let mut current = Some(element);
+        while let Some(candidate) = current {
+            let entry = elements.get(&candidate)?;
+            if let Some(transition) = entry.text_color_transition.as_deref() {
+                return Some(transition.current);
+            }
+            if entry
+                .specified
+                .declarations()
+                .any(|declaration| declaration.property() == StyleProperty::Color)
+            {
+                return None;
+            }
+            current = entry.parent;
+        }
+        None
     }
 
     fn configure_opacity_transition(
@@ -1525,6 +1604,59 @@ impl BindingState {
         Ok(())
     }
 
+    fn configure_text_color_transition(
+        &mut self,
+        element: Element,
+        previous_target: RgbaColor,
+        previous_current: RgbaColor,
+        was_initialized: bool,
+    ) -> Result<(), RuntimeBindingError> {
+        let (target, transition) = {
+            let entry = self.element(element)?;
+            let resolved = entry
+                .resolved
+                .as_ref()
+                .ok_or(RuntimeBindingError::UnknownElement { element })?;
+            let target =
+                RgbaColor::from_paint(&lower_color(resolved.computed().inherited_text().color()));
+            let transition = resolved
+                .computed()
+                .motion()
+                .transitions
+                .iter()
+                .rev()
+                .find(|transition| {
+                    matches!(transition.property, ComputedTransitionProperty::All)
+                        || transition.property
+                            == ComputedTransitionProperty::Property(StyleProperty::Color)
+                })
+                .copied();
+            (target, transition)
+        };
+
+        let entry = self.element_mut(element)?;
+        if !was_initialized || Some(previous_target) == target {
+            return Ok(());
+        }
+        let Some((target, transition)) =
+            target.zip(transition.filter(|transition| transition.duration.get() > 0.0))
+        else {
+            entry.text_color_transition = None;
+            return Ok(());
+        };
+        entry.text_color_transition = Some(Box::new(ActiveTransition {
+            from: previous_current,
+            to: target,
+            current: previous_current,
+            duration_ms: transition.duration.get(),
+            delay_ms: transition.delay.get(),
+            easing: transition.easing,
+            start_ms: None,
+        }));
+        crate::runtime::runtime_wake::wake_runtime();
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn prepare_subtree(
         &self,
@@ -1582,6 +1714,20 @@ impl BindingState {
             pending.extend(entry.children().iter().copied());
         }
         nodes
+    }
+
+    fn element_subtree(&self, root: Element) -> Result<Vec<Element>, RuntimeBindingError> {
+        let mut elements = Vec::new();
+        let mut pending = vec![root];
+        while let Some(element) = pending.pop() {
+            let entry = self.element(element)?;
+            if entry.node.is_none() {
+                continue;
+            }
+            elements.push(element);
+            pending.extend(entry.children.iter().rev().copied());
+        }
+        Ok(elements)
     }
 
     fn refresh_text(&mut self, text_element: Element) -> Result<(), RuntimeBindingError> {
@@ -2057,6 +2203,22 @@ impl DynRenderer for SurfaceRuntime {
                 .map(|(property, transition)| (*property, transition.current))
                 .collect::<HashMap<_, _>>();
             let was_initialized = entry.style_initialized;
+            let text_color_snapshots = state
+                .element_subtree(handle)?
+                .into_iter()
+                .filter_map(|element| {
+                    let entry = state.elements.get(&element)?;
+                    let resolved = entry.resolved.as_ref()?;
+                    let target = RgbaColor::from_paint(&lower_color(
+                        resolved.computed().inherited_text().color(),
+                    ))?;
+                    let current = entry
+                        .text_color_transition
+                        .as_deref()
+                        .map_or(target, |transition| transition.current);
+                    Some((element, target, current, entry.style_initialized))
+                })
+                .collect::<Vec<_>>();
             state.element_mut(handle)?.specified = style.clone();
             if let Err(error) = state.apply_subtree(handle) {
                 state.element_mut(handle)?.specified = previous;
@@ -2074,6 +2236,11 @@ impl DynRenderer for SurfaceRuntime {
                 &previous_current_colors,
                 was_initialized,
             )?;
+            for (element, target, current, initialized) in text_color_snapshots {
+                state.configure_text_color_transition(element, target, current, initialized)?;
+            }
+            let text_updates = BindingState::active_text_color_updates(&state.elements);
+            BindingState::apply_text_color_updates(text_updates, &mut state.surface)?;
             Ok(())
         })();
         let accepted = result.is_ok();
