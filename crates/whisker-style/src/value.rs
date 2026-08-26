@@ -67,6 +67,8 @@ pub enum CalcExpression {
     Value(Box<LengthPercentageValue>),
     /// Unitless numeric operand.
     Number(StyleNumber),
+    /// Typed custom-property operand retained until computed-style resolution.
+    Variable(CustomPropertyReference),
     /// Addition.
     Add(Box<Self>, Box<Self>),
     /// Subtraction.

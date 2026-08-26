@@ -1315,6 +1315,7 @@ fn evaluate_affine_calc(
         CalcExpression::Value(value) => resolve_affine(value, font_size, environment, property)
             .map(|value| CalcQuantity::Affine(Affine::new(value.length(), value.fraction()))),
         CalcExpression::Number(value) => finite(*value, property).map(CalcQuantity::Scalar),
+        CalcExpression::Variable(_) => Err(invalid_calc()),
         CalcExpression::Add(left, right) => match (
             evaluate_affine_calc(left, font_size, environment, property)?,
             evaluate_affine_calc(right, font_size, environment, property)?,

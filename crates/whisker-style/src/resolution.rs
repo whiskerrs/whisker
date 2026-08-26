@@ -4,13 +4,13 @@ use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    CalcExpression, ColorValue, ComputedLayoutStyle, ComputedPaintStyle, CursorValue,
-    CustomPropertyName, CustomPropertyReference, DirectionValue, FontFamilyValue, FontFeatureValue,
-    FontOpticalSizingValue, FontStyleValue, FontVariationValue, FontWeightValue,
-    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, PointerEventsValue,
-    SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
-    TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
-    TextShadowValue, WhiteSpaceValue, WordBreakValue,
+    BorderRadiusValue, CalcExpression, ColorValue, ComputedLayoutStyle, ComputedPaintStyle,
+    CursorValue, CustomPropertyName, CustomPropertyReference, DirectionValue, FlexBasisValue,
+    FontFamilyValue, FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue,
+    FontWeightValue, LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue,
+    LineHeightValue, PointerEventsValue, SizeValue, SpecifiedStyle, StyleNumber, StyleProperty,
+    StyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
+    TextDecorationValue, TextOverflowValue, TextShadowValue, WhiteSpaceValue, WordBreakValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -934,12 +934,7 @@ fn materialize_custom_properties(
 
     let mut materialized = SpecifiedStyle::new();
     for declaration in specified.declarations() {
-        let value = match declaration.value() {
-            StyleValue::Variable(reference) => {
-                resolve_reference_from_computed(reference, &computed)
-            }
-            value => Some(value.clone()),
-        };
+        let value = resolve_value_from_computed(declaration.value(), &computed);
         if let Some(value) = value {
             materialized = materialized.push(declaration.property(), value);
         }
@@ -970,11 +965,60 @@ fn collect_custom_references<'a>(
     value: &'a StyleValue,
     references: &mut Vec<&'a CustomPropertyName>,
 ) {
-    if let StyleValue::Variable(reference) = value {
-        references.push(&reference.name);
-        if let Some(fallback) = reference.fallback.as_deref() {
-            collect_custom_references(fallback, references);
+    match value {
+        StyleValue::Variable(reference) => collect_reference(reference, references),
+        StyleValue::LengthPercentage(value) => {
+            collect_length_percentage_references(value, references)
         }
+        StyleValue::Size(SizeValue::LengthPercentage(value))
+        | StyleValue::Size(SizeValue::FitContent(Some(value)))
+        | StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(value))
+        | StyleValue::FlexBasis(FlexBasisValue::LengthPercentage(value))
+        | StyleValue::LineHeight(LineHeightValue::LengthPercentage(value)) => {
+            collect_length_percentage_references(value, references);
+        }
+        StyleValue::BorderRadius(value) => {
+            collect_length_percentage_references(&value.horizontal, references);
+            collect_length_percentage_references(&value.vertical, references);
+        }
+        _ => {}
+    }
+}
+
+fn collect_reference<'a>(
+    reference: &'a CustomPropertyReference,
+    references: &mut Vec<&'a CustomPropertyName>,
+) {
+    references.push(&reference.name);
+    if let Some(fallback) = reference.fallback.as_deref() {
+        collect_custom_references(fallback, references);
+    }
+}
+
+fn collect_length_percentage_references<'a>(
+    value: &'a LengthPercentageValue,
+    references: &mut Vec<&'a CustomPropertyName>,
+) {
+    if let LengthPercentageValue::Calc(expression) = value {
+        collect_calc_references(expression, references);
+    }
+}
+
+fn collect_calc_references<'a>(
+    expression: &'a CalcExpression,
+    references: &mut Vec<&'a CustomPropertyName>,
+) {
+    match expression {
+        CalcExpression::Variable(reference) => collect_reference(reference, references),
+        CalcExpression::Value(value) => collect_length_percentage_references(value, references),
+        CalcExpression::Add(left, right)
+        | CalcExpression::Sub(left, right)
+        | CalcExpression::Mul(left, right)
+        | CalcExpression::Div(left, right) => {
+            collect_calc_references(left, references);
+            collect_calc_references(right, references);
+        }
+        CalcExpression::Number(_) => {}
     }
 }
 
@@ -993,11 +1037,8 @@ fn resolve_custom_name(
         return None;
     }
     visiting.push(name.clone());
-    let resolved = candidates.get(name).and_then(|value| match value {
-        StyleValue::Variable(reference) => {
-            resolve_reference_from_candidates(reference, candidates, cyclic, cache, visiting)
-        }
-        value => Some(value.clone()),
+    let resolved = candidates.get(name).and_then(|value| {
+        resolve_value_from_candidates(value, candidates, cyclic, cache, visiting)
     });
     visiting.pop();
     cache.insert(name.clone(), resolved.clone());
@@ -1012,15 +1053,9 @@ fn resolve_reference_from_candidates(
     visiting: &mut Vec<CustomPropertyName>,
 ) -> Option<StyleValue> {
     resolve_custom_name(&reference.name, candidates, cyclic, cache, visiting).or_else(|| {
-        reference
-            .fallback
-            .as_deref()
-            .and_then(|fallback| match fallback {
-                StyleValue::Variable(reference) => resolve_reference_from_candidates(
-                    reference, candidates, cyclic, cache, visiting,
-                ),
-                value => Some(value.clone()),
-            })
+        reference.fallback.as_deref().and_then(|fallback| {
+            resolve_value_from_candidates(fallback, candidates, cyclic, cache, visiting)
+        })
     })
 }
 
@@ -1032,13 +1067,192 @@ fn resolve_reference_from_computed(
         reference
             .fallback
             .as_deref()
-            .and_then(|fallback| match fallback {
-                StyleValue::Variable(reference) => {
-                    resolve_reference_from_computed(reference, computed)
-                }
-                value => Some(value.clone()),
-            })
+            .and_then(|fallback| resolve_value_from_computed(fallback, computed))
     })
+}
+
+fn resolve_value_from_candidates(
+    value: &StyleValue,
+    candidates: &BTreeMap<CustomPropertyName, StyleValue>,
+    cyclic: &BTreeSet<CustomPropertyName>,
+    cache: &mut BTreeMap<CustomPropertyName, Option<StyleValue>>,
+    visiting: &mut Vec<CustomPropertyName>,
+) -> Option<StyleValue> {
+    match value {
+        StyleValue::Variable(reference) => {
+            resolve_reference_from_candidates(reference, candidates, cyclic, cache, visiting)
+        }
+        value => map_nested_length_percentages(value, |value| {
+            resolve_length_percentage_from_candidates(value, candidates, cyclic, cache, visiting)
+        }),
+    }
+}
+
+fn resolve_value_from_computed(
+    value: &StyleValue,
+    computed: &BTreeMap<CustomPropertyName, StyleValue>,
+) -> Option<StyleValue> {
+    match value {
+        StyleValue::Variable(reference) => resolve_reference_from_computed(reference, computed),
+        value => map_nested_length_percentages(value, |value| {
+            resolve_length_percentage_from_computed(value, computed)
+        }),
+    }
+}
+
+fn map_nested_length_percentages(
+    value: &StyleValue,
+    mut resolve: impl FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+) -> Option<StyleValue> {
+    Some(match value {
+        StyleValue::LengthPercentage(value) => StyleValue::LengthPercentage(resolve(value)?),
+        StyleValue::Size(SizeValue::LengthPercentage(value)) => {
+            StyleValue::Size(SizeValue::LengthPercentage(resolve(value)?))
+        }
+        StyleValue::Size(SizeValue::FitContent(Some(value))) => {
+            StyleValue::Size(SizeValue::FitContent(Some(resolve(value)?)))
+        }
+        StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(value)) => {
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(resolve(
+                value,
+            )?))
+        }
+        StyleValue::FlexBasis(FlexBasisValue::LengthPercentage(value)) => {
+            StyleValue::FlexBasis(FlexBasisValue::LengthPercentage(resolve(value)?))
+        }
+        StyleValue::LineHeight(LineHeightValue::LengthPercentage(value)) => {
+            StyleValue::LineHeight(LineHeightValue::LengthPercentage(resolve(value)?))
+        }
+        StyleValue::BorderRadius(BorderRadiusValue {
+            horizontal,
+            vertical,
+        }) => StyleValue::BorderRadius(BorderRadiusValue {
+            horizontal: resolve(horizontal)?,
+            vertical: resolve(vertical)?,
+        }),
+        value => value.clone(),
+    })
+}
+
+fn resolve_length_percentage_from_candidates(
+    value: &LengthPercentageValue,
+    candidates: &BTreeMap<CustomPropertyName, StyleValue>,
+    cyclic: &BTreeSet<CustomPropertyName>,
+    cache: &mut BTreeMap<CustomPropertyName, Option<StyleValue>>,
+    visiting: &mut Vec<CustomPropertyName>,
+) -> Option<LengthPercentageValue> {
+    match value {
+        LengthPercentageValue::Calc(expression) => Some(LengthPercentageValue::Calc(Box::new(
+            resolve_calc_from_candidates(expression, candidates, cyclic, cache, visiting)?,
+        ))),
+        value => Some(value.clone()),
+    }
+}
+
+fn resolve_calc_from_candidates(
+    expression: &CalcExpression,
+    candidates: &BTreeMap<CustomPropertyName, StyleValue>,
+    cyclic: &BTreeSet<CustomPropertyName>,
+    cache: &mut BTreeMap<CustomPropertyName, Option<StyleValue>>,
+    visiting: &mut Vec<CustomPropertyName>,
+) -> Option<CalcExpression> {
+    match expression {
+        CalcExpression::Variable(reference) => {
+            resolve_reference_from_candidates(reference, candidates, cyclic, cache, visiting)
+                .and_then(style_value_to_calc)
+        }
+        CalcExpression::Value(value) => Some(CalcExpression::Value(Box::new(
+            resolve_length_percentage_from_candidates(value, candidates, cyclic, cache, visiting)?,
+        ))),
+        CalcExpression::Number(value) => Some(CalcExpression::Number(*value)),
+        CalcExpression::Add(left, right) => Some(CalcExpression::Add(
+            Box::new(resolve_calc_from_candidates(
+                left, candidates, cyclic, cache, visiting,
+            )?),
+            Box::new(resolve_calc_from_candidates(
+                right, candidates, cyclic, cache, visiting,
+            )?),
+        )),
+        CalcExpression::Sub(left, right) => Some(CalcExpression::Sub(
+            Box::new(resolve_calc_from_candidates(
+                left, candidates, cyclic, cache, visiting,
+            )?),
+            Box::new(resolve_calc_from_candidates(
+                right, candidates, cyclic, cache, visiting,
+            )?),
+        )),
+        CalcExpression::Mul(left, right) => Some(CalcExpression::Mul(
+            Box::new(resolve_calc_from_candidates(
+                left, candidates, cyclic, cache, visiting,
+            )?),
+            Box::new(resolve_calc_from_candidates(
+                right, candidates, cyclic, cache, visiting,
+            )?),
+        )),
+        CalcExpression::Div(left, right) => Some(CalcExpression::Div(
+            Box::new(resolve_calc_from_candidates(
+                left, candidates, cyclic, cache, visiting,
+            )?),
+            Box::new(resolve_calc_from_candidates(
+                right, candidates, cyclic, cache, visiting,
+            )?),
+        )),
+    }
+}
+
+fn resolve_length_percentage_from_computed(
+    value: &LengthPercentageValue,
+    computed: &BTreeMap<CustomPropertyName, StyleValue>,
+) -> Option<LengthPercentageValue> {
+    match value {
+        LengthPercentageValue::Calc(expression) => Some(LengthPercentageValue::Calc(Box::new(
+            resolve_calc_from_computed(expression, computed)?,
+        ))),
+        value => Some(value.clone()),
+    }
+}
+
+fn resolve_calc_from_computed(
+    expression: &CalcExpression,
+    computed: &BTreeMap<CustomPropertyName, StyleValue>,
+) -> Option<CalcExpression> {
+    match expression {
+        CalcExpression::Variable(reference) => {
+            resolve_reference_from_computed(reference, computed).and_then(style_value_to_calc)
+        }
+        CalcExpression::Value(value) => Some(CalcExpression::Value(Box::new(
+            resolve_length_percentage_from_computed(value, computed)?,
+        ))),
+        CalcExpression::Number(value) => Some(CalcExpression::Number(*value)),
+        CalcExpression::Add(left, right) => Some(CalcExpression::Add(
+            Box::new(resolve_calc_from_computed(left, computed)?),
+            Box::new(resolve_calc_from_computed(right, computed)?),
+        )),
+        CalcExpression::Sub(left, right) => Some(CalcExpression::Sub(
+            Box::new(resolve_calc_from_computed(left, computed)?),
+            Box::new(resolve_calc_from_computed(right, computed)?),
+        )),
+        CalcExpression::Mul(left, right) => Some(CalcExpression::Mul(
+            Box::new(resolve_calc_from_computed(left, computed)?),
+            Box::new(resolve_calc_from_computed(right, computed)?),
+        )),
+        CalcExpression::Div(left, right) => Some(CalcExpression::Div(
+            Box::new(resolve_calc_from_computed(left, computed)?),
+            Box::new(resolve_calc_from_computed(right, computed)?),
+        )),
+    }
+}
+
+fn style_value_to_calc(value: StyleValue) -> Option<CalcExpression> {
+    match value {
+        StyleValue::Number(value) => Some(CalcExpression::Number(value)),
+        StyleValue::Length(value) => Some(CalcExpression::Value(Box::new(
+            LengthPercentageValue::Length(value),
+        ))),
+        StyleValue::LengthPercentage(LengthPercentageValue::Calc(expression)) => Some(*expression),
+        StyleValue::LengthPercentage(value) => Some(CalcExpression::Value(Box::new(value))),
+        _ => None,
+    }
 }
 
 /// Compatibility name for callers that initially consumed only text styles.
@@ -1238,6 +1452,7 @@ fn evaluate_calc(
                 .map(Quantity::Length)
         }
         CalcExpression::Number(value) => finite(*value, property).map(Quantity::Number),
+        CalcExpression::Variable(_) => Err(invalid()),
         CalcExpression::Add(left, right) => {
             match (
                 evaluate_calc(left, percentage_basis, em_basis, environment, property)?,

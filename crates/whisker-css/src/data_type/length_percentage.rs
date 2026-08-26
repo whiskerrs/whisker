@@ -17,6 +17,7 @@
 //! this crate is statically typed.
 
 use core::fmt;
+use whisker_style::CustomPropertyName;
 
 use crate::to_css::{ToCss, write_number};
 
@@ -88,6 +89,13 @@ pub enum CalcExpr {
     Value(LengthPercentage),
     /// Unit-less number leaf (used as a multiplier or divisor).
     Number(f32),
+    /// A typed custom-property reference resolved before numeric evaluation.
+    Variable {
+        /// Referenced case-sensitive custom property.
+        name: CustomPropertyName,
+        /// Optional typed arithmetic fallback.
+        fallback: Option<Box<CalcExpr>>,
+    },
     /// `<lhs> + <rhs>`.
     Add(Box<CalcExpr>, Box<CalcExpr>),
     /// `<lhs> - <rhs>`.
@@ -107,6 +115,22 @@ impl CalcExpr {
     /// Unit-less number leaf.
     pub fn number(v: f32) -> Self {
         Self::Number(v)
+    }
+
+    /// A `var(--name)` operand inside `calc()`.
+    pub fn variable(name: CustomPropertyName) -> Self {
+        Self::Variable {
+            name,
+            fallback: None,
+        }
+    }
+
+    /// A `var(--name, <fallback>)` operand inside `calc()`.
+    pub fn variable_with_fallback(name: CustomPropertyName, fallback: CalcExpr) -> Self {
+        Self::Variable {
+            name,
+            fallback: Some(Box::new(fallback)),
+        }
     }
 
     /// `self + rhs`. Builder method intentionally named the same as
@@ -136,7 +160,7 @@ impl CalcExpr {
 
     fn precedence(&self) -> u8 {
         match self {
-            CalcExpr::Value(_) | CalcExpr::Number(_) => 3,
+            CalcExpr::Value(_) | CalcExpr::Number(_) | CalcExpr::Variable { .. } => 3,
             CalcExpr::Mul(..) | CalcExpr::Div(..) => 2,
             CalcExpr::Add(..) | CalcExpr::Sub(..) => 1,
         }
@@ -158,6 +182,14 @@ impl ToCss for CalcExpr {
         match self {
             CalcExpr::Value(v) => v.to_css(dest),
             CalcExpr::Number(n) => write_number(dest, *n),
+            CalcExpr::Variable { name, fallback } => {
+                write!(dest, "var({}", name.as_str())?;
+                if let Some(fallback) = fallback {
+                    dest.write_str(", ")?;
+                    fallback.to_css(dest)?;
+                }
+                dest.write_char(')')
+            }
             CalcExpr::Add(a, b) => {
                 a.write_child(1, dest)?;
                 dest.write_str(" + ")?;

@@ -409,8 +409,8 @@ impl From<&Css> for String {
 mod tests {
     use super::*;
     use crate::{
-        Color, Display, FlexDirection, FontStyle, FontWeight, Length, LineHeight, NamedColor,
-        Percentage, Size,
+        CalcExpr, Color, Display, FlexDirection, FontStyle, FontWeight, Length, LengthPercentage,
+        LineHeight, NamedColor, Percentage, Size,
     };
 
     #[test]
@@ -591,6 +591,95 @@ mod tests {
             resolved.computed().layout().size.width,
             whisker_style::ComputedSizeValue::Value(whisker_style::ComputedLengthPercentage::new(
                 24.0, 0.0
+            ))
+        );
+    }
+
+    #[test]
+    fn typed_custom_property_composes_inside_calc_without_css_parsing() {
+        let gap = CustomPropertyName::new("--gap").unwrap();
+        let width = LengthPercentage::calc(
+            CalcExpr::variable(gap.clone()).add(CalcExpr::value(Length::Px(8.0))),
+        );
+        let css = Css::new()
+            .custom_property(gap, Length::Px(12.0))
+            .width(width);
+
+        assert_eq!(
+            css.to_css_string(),
+            "--gap: 12px; width: calc(var(--gap) + 8px);"
+        );
+        let resolved = whisker_style::resolve_style(
+            &css.to_specified_style().unwrap(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.computed().layout().size.width,
+            whisker_style::ComputedSizeValue::Value(whisker_style::ComputedLengthPercentage::new(
+                20.0, 0.0,
+            ))
+        );
+    }
+
+    #[test]
+    fn inherited_typed_custom_property_composes_inside_child_calc() {
+        let gap = CustomPropertyName::new("--gap").unwrap();
+        let parent = Css::new().custom_property(gap.clone(), Length::Px(12.0));
+        let parent = whisker_style::resolve_style(
+            &parent.to_specified_style().unwrap(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        let child = Css::new().width(LengthPercentage::calc(
+            CalcExpr::variable(gap).add(CalcExpr::value(Length::Px(8.0))),
+        ));
+        let child = whisker_style::resolve_style(
+            &child.to_specified_style().unwrap(),
+            Some(parent.inherited_for_children()),
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            child.computed().layout().size.width,
+            whisker_style::ComputedSizeValue::Value(whisker_style::ComputedLengthPercentage::new(
+                20.0, 0.0,
+            ))
+        );
+    }
+
+    #[test]
+    fn calc_variable_fallback_survives_a_nested_custom_property_cycle() {
+        let a = CustomPropertyName::new("--a").unwrap();
+        let b = CustomPropertyName::new("--b").unwrap();
+        let a_value = LengthPercentage::calc(
+            CalcExpr::variable(b.clone()).add(CalcExpr::value(Length::Px(1.0))),
+        );
+        let b_value = LengthPercentage::calc(
+            CalcExpr::variable(a.clone()).add(CalcExpr::value(Length::Px(1.0))),
+        );
+        let width = LengthPercentage::calc(
+            CalcExpr::variable_with_fallback(a.clone(), CalcExpr::value(Length::Px(5.0)))
+                .add(CalcExpr::value(Length::Px(3.0))),
+        );
+        let css = Css::new()
+            .custom_property(a, a_value)
+            .custom_property(b, b_value)
+            .width(width);
+
+        let resolved = whisker_style::resolve_style(
+            &css.to_specified_style().unwrap(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.computed().layout().size.width,
+            whisker_style::ComputedSizeValue::Value(whisker_style::ComputedLengthPercentage::new(
+                8.0, 0.0,
             ))
         );
     }
