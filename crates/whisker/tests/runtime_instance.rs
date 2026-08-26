@@ -1491,6 +1491,74 @@ fn pointer_hit_test_routes_capture_target_and_bubble_in_rust() {
 }
 
 #[test]
+fn raw_touch_stream_synthesizes_tap_but_drag_does_not() {
+    let surface = surface(36);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    let taps = Rc::new(Cell::new(0));
+    let tap_count = Rc::clone(&taps);
+
+    runtime
+        .mount(move || {
+            render! {
+                view(
+                    style: css!(width: px(100), height: px(100)),
+                    on_tap: move |_| tap_count.set(tap_count.get() + 1),
+                )
+            }
+        })
+        .unwrap();
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    let pointer = |timestamp_ms, kind, x, y, buttons| InputEvent {
+        surface: surface.surface(),
+        timestamp_ms,
+        kind,
+        pointer: Some(PointerInput {
+            id: PointerId::new(1).unwrap(),
+            kind: PointerKind::Touch,
+            position: InputPoint { x, y },
+            buttons,
+            changed_button: -1,
+        }),
+        target: None,
+        detail: WhiskerValue::Null,
+    };
+
+    runtime
+        .dispatch_input(&pointer(2.0, InputEventKind::PointerDown, 10.0, 10.0, 1))
+        .unwrap();
+    let up = runtime
+        .dispatch_input(&pointer(30.0, InputEventKind::PointerUp, 10.0, 10.0, 0))
+        .unwrap();
+    assert!(up.consumed);
+    assert_eq!(taps.get(), 1);
+
+    runtime
+        .dispatch_input(&pointer(40.0, InputEventKind::PointerDown, 10.0, 10.0, 1))
+        .unwrap();
+    runtime
+        .dispatch_input(&pointer(50.0, InputEventKind::PointerMove, 30.0, 10.0, 1))
+        .unwrap();
+    runtime
+        .dispatch_input(&pointer(60.0, InputEventKind::PointerUp, 30.0, 10.0, 0))
+        .unwrap();
+    assert_eq!(taps.get(), 1);
+}
+
+#[test]
 fn background_completion_parks_while_paused_and_resumes_on_host_drive() {
     let wakes = Arc::new(AtomicUsize::new(0));
     let wake_count = Arc::clone(&wakes);

@@ -659,6 +659,7 @@ struct BoundElement {
     node: Option<NodeId>,
     parent: Option<Element>,
     children: Vec<Element>,
+    base_specified: SpecifiedStyle,
     specified: SpecifiedStyle,
     resolved: Option<ResolvedNodeStyle>,
     text: Option<PlainTextInput>,
@@ -697,6 +698,12 @@ impl BoundElementKind {
             Self::RawText => None,
             Self::Registered { registration } => Some(registration),
         }
+    }
+}
+
+impl BoundElement {
+    fn effective_specified(&self) -> SpecifiedStyle {
+        self.base_specified.clone().merge(self.specified.clone())
     }
 }
 
@@ -894,7 +901,7 @@ impl BindingState {
         let Some(node) = entry.node else {
             return Ok(());
         };
-        let resolved = resolve_style(&entry.specified, parent, environment)?;
+        let resolved = resolve_style(&entry.effective_specified(), parent, environment)?;
         let children = entry.children.clone();
         updates.push(EnvironmentStyleUpdate {
             element,
@@ -947,8 +954,10 @@ impl BindingState {
         }
         let handle = Element::from_raw(self.next_element);
         self.next_element += 1;
-        let (kind, node, resolved, text) = if let Some(registration) = registration {
-            let resolved = resolve_style(&SpecifiedStyle::new(), None, self.environment)?;
+        let (kind, node, base_specified, resolved, text) = if let Some(registration) = registration
+        {
+            let base_specified = self.registry.base_style(&registration).clone();
+            let resolved = resolve_style(&base_specified, None, self.environment)?;
             let node = self.surface.create_node(
                 registration.element_type,
                 resolved.computed().layout().clone(),
@@ -960,11 +969,18 @@ impl BindingState {
             (
                 BoundElementKind::Registered { registration },
                 Some(node),
+                base_specified,
                 Some(resolved),
                 text,
             )
         } else {
-            (BoundElementKind::RawText, None, None, None)
+            (
+                BoundElementKind::RawText,
+                None,
+                SpecifiedStyle::new(),
+                None,
+                None,
+            )
         };
         self.elements.insert(
             handle,
@@ -973,6 +989,7 @@ impl BindingState {
                 node,
                 parent: None,
                 children: Vec::new(),
+                base_specified,
                 specified: SpecifiedStyle::new(),
                 resolved,
                 text,
@@ -1116,7 +1133,7 @@ impl BindingState {
         let Some(node) = entry.node else {
             return Ok(());
         };
-        let resolved = resolve_style(&entry.specified, parent_style, self.environment)?;
+        let resolved = resolve_style(&entry.effective_specified(), parent_style, self.environment)?;
         surface.update_computed_style(node, resolved.computed())?;
         let background = background_resources.reconcile_node(
             node,

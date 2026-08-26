@@ -743,7 +743,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 30,
+        template_version: 32,
     })
 }
 
@@ -787,13 +787,14 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 30,
+            template_version: 32,
         }
     }
 
     #[test]
     fn generated_activity_only_composes_the_sdk_view() {
         assert!(MAIN_ACTIVITY_KT.contains("import rs.whisker.runtime.WhiskerView"));
+        assert!(MAIN_ACTIVITY_KT.contains("WhiskerWindow.enableEdgeToEdge(this)"));
         assert!(MAIN_ACTIVITY_KT.contains("setContentView(WhiskerView(this))"));
     }
 

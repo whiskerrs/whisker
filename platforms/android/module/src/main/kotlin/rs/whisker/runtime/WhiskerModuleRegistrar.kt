@@ -1,6 +1,7 @@
 package rs.whisker.runtime
 
 import android.content.Context
+import android.util.Log
 import android.view.View
 import java.util.concurrent.ConcurrentHashMap
 
@@ -147,6 +148,7 @@ private data class WhiskerBoundElement(
 
 /** Process-wide Host declaration registry and per-surface negotiated table. */
 public object WhiskerElementRegistry {
+    private const val LOG_TAG = "WhiskerElementRegistry"
     private val declarations = ConcurrentHashMap<String, WhiskerDeclaredElement>()
     @Volatile private var boundByType: Map<Int, WhiskerBoundElement> = emptyMap()
     @Volatile private var boundByName: Map<String, WhiskerBoundElement> = emptyMap()
@@ -195,22 +197,40 @@ public object WhiskerElementRegistry {
     /** Match Host strings to Rust registrations and compile compact dispatch tables. */
     @JvmStatic
     public fun bind(registrations: List<WhiskerElementRegistration>): Boolean {
+        fun reject(message: String): Boolean {
+            Log.e(LOG_TAG, "Host element bootstrap rejected: $message")
+            return false
+        }
+
         val byType = LinkedHashMap<Int, WhiskerBoundElement>()
         val byName = LinkedHashMap<String, WhiskerBoundElement>()
         for (registration in registrations) {
-            val declaration = declarations[registration.name] ?: return false
-            if ((registration.childPolicy == WhiskerChildPolicy.PlainText) != (declaration.factory.textUpdater != null)) return false
-            if (registration.measurement != WhiskerMeasurement.None && registration.measurement != WhiskerMeasurement.Text && declaration.factory.measurer == null) return false
+            val declaration = declarations[registration.name]
+                ?: return reject("no Host declaration for `${registration.name}`")
+            if ((registration.childPolicy == WhiskerChildPolicy.PlainText) != (declaration.factory.textUpdater != null)) {
+                return reject("child policy mismatch for `${registration.name}`: Rust=${registration.childPolicy}, Host text updater=${declaration.factory.textUpdater != null}")
+            }
+            if (registration.measurement != WhiskerMeasurement.None && registration.measurement != WhiskerMeasurement.Text && declaration.factory.measurer == null) {
+                return reject("missing Host measurer for `${registration.name}` (${registration.measurement})")
+            }
             val rustProps = registration.properties.associateBy { it.name }
-            if (rustProps.keys != declaration.properties.keys) return false
+            if (rustProps.keys != declaration.properties.keys) {
+                return reject("property mismatch for `${registration.name}`: Rust=${rustProps.keys.sorted()}, Host=${declaration.properties.keys.sorted()}")
+            }
             val rustEvents = registration.events.map { it.name }.toSet()
-            if (rustEvents != declaration.events) return false
+            if (rustEvents != declaration.events) {
+                return reject("event mismatch for `${registration.name}`: Rust=${rustEvents.sorted()}, Host=${declaration.events.sorted()}")
+            }
             val properties = registration.properties.associate { property ->
                 property.id to requireNotNull(declaration.properties[property.name])
             }
             val bound = WhiskerBoundElement(registration, declaration.factory, properties)
-            if (byType.put(registration.elementType, bound) != null) return false
-            if (byName.put(registration.name, bound) != null) return false
+            if (byType.put(registration.elementType, bound) != null) {
+                return reject("duplicate Rust element type ${registration.elementType}")
+            }
+            if (byName.put(registration.name, bound) != null) {
+                return reject("duplicate Rust element name `${registration.name}`")
+            }
         }
         boundByType = byType
         boundByName = byName

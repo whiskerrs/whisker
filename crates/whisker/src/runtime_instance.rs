@@ -1,7 +1,7 @@
 //! Host-driven lifecycle and frame execution for one application surface.
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -16,7 +16,10 @@ use crate::{
     RuntimeResourceError, SurfaceRuntime,
 };
 use whisker_engine::whisker_layout::LayoutSize;
-use whisker_engine::whisker_protocol::{ApplyResult, InputEvent, MeasurementReady, ResourceEvent};
+use whisker_engine::whisker_protocol::{
+    ApplyResult, InputEvent, InputEventKind, InputPoint, MeasurementReady, NodeId, PointerId,
+    PointerKind, ResourceEvent, WhiskerValue,
+};
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{DeferredMeasurementApply, FrameSink, LayoutOptions, MeasurementProvider};
 
@@ -123,8 +126,89 @@ pub struct RuntimeInstance {
     owner: Option<Owner>,
     lifecycle: RuntimeLifecycle,
     pending_input: RefCell<VecDeque<InputEvent>>,
+    activations: RefCell<ActivationRecognizer>,
     wake_enabled: Arc<AtomicBool>,
 }
+
+#[derive(Clone, Copy, Debug)]
+struct ActivationCandidate {
+    target: NodeId,
+    origin: InputPoint,
+    started_at_ms: f64,
+    pointer_kind: PointerKind,
+    cancelled: bool,
+}
+
+#[derive(Default)]
+struct ActivationRecognizer {
+    pointers: HashMap<PointerId, ActivationCandidate>,
+}
+
+impl ActivationRecognizer {
+    fn observe(&mut self, event: &InputEvent, hit_target: Option<NodeId>) -> Option<InputEvent> {
+        let pointer = event.pointer?;
+        match event.kind {
+            InputEventKind::PointerDown => {
+                if let Some(target) = hit_target {
+                    self.pointers.insert(
+                        pointer.id,
+                        ActivationCandidate {
+                            target,
+                            origin: pointer.position,
+                            started_at_ms: event.timestamp_ms,
+                            pointer_kind: pointer.kind,
+                            cancelled: false,
+                        },
+                    );
+                }
+                None
+            }
+            InputEventKind::PointerMove => {
+                let candidate = self.pointers.get_mut(&pointer.id)?;
+                let dx = pointer.position.x - candidate.origin.x;
+                let dy = pointer.position.y - candidate.origin.y;
+                if dx * dx + dy * dy > TAP_SLOP * TAP_SLOP {
+                    candidate.cancelled = true;
+                }
+                None
+            }
+            InputEventKind::PointerCancel => {
+                self.pointers.remove(&pointer.id);
+                None
+            }
+            InputEventKind::PointerUp => {
+                let candidate = self.pointers.remove(&pointer.id)?;
+                let elapsed = event.timestamp_ms - candidate.started_at_ms;
+                if candidate.cancelled
+                    || !(0.0..=TAP_TIMEOUT_MS).contains(&elapsed)
+                    || hit_target != Some(candidate.target)
+                {
+                    return None;
+                }
+                Some(InputEvent {
+                    surface: event.surface,
+                    timestamp_ms: event.timestamp_ms,
+                    kind: if candidate.pointer_kind == PointerKind::Mouse {
+                        InputEventKind::Click
+                    } else {
+                        InputEventKind::Tap
+                    },
+                    pointer: Some(pointer),
+                    target: Some(candidate.target),
+                    detail: WhiskerValue::Null,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.pointers.clear();
+    }
+}
+
+const TAP_SLOP: f32 = 10.0;
+const TAP_TIMEOUT_MS: f64 = 500.0;
 
 impl RuntimeInstance {
     /// Creates an unmounted runtime connected to one Host wake-up endpoint.
@@ -144,6 +228,7 @@ impl RuntimeInstance {
             owner: None,
             lifecycle: RuntimeLifecycle::Created,
             pending_input: RefCell::new(VecDeque::new()),
+            activations: RefCell::new(ActivationRecognizer::default()),
             wake_enabled,
         }
     }
@@ -187,6 +272,7 @@ impl RuntimeInstance {
     pub fn pause(&mut self) -> Result<(), RuntimeLifecycleError> {
         self.require(RuntimeLifecycle::Running, "pause")?;
         self.wake_enabled.store(false, Ordering::Release);
+        self.activations.borrow_mut().clear();
         let owner = self.owner.expect("a running runtime has a root owner");
         let surface = self.surface.clone();
         self.context.enter(|| {
@@ -231,6 +317,7 @@ impl RuntimeInstance {
             view::with_installed_renderer(surface.renderer(), || owner.dispose());
         });
         self.pending_input.borrow_mut().clear();
+        self.activations.borrow_mut().clear();
         self.context.shutdown();
         self.lifecycle = RuntimeLifecycle::Unmounted;
         Ok(())
@@ -409,7 +496,18 @@ impl RuntimeInstance {
         &self,
         event: &InputEvent,
     ) -> Result<InputDispatch, RuntimeInputError> {
-        let dispatch = self.surface.dispatch_input(event)?;
+        let mut dispatch = self.surface.dispatch_input(event)?;
+        let activation = self
+            .activations
+            .borrow_mut()
+            .observe(event, dispatch.target);
+        if let Some(activation) = activation {
+            let synthesized = self.surface.dispatch_input(&activation)?;
+            dispatch.target = synthesized.target.or(dispatch.target);
+            dispatch.consumed |= synthesized.consumed;
+            dispatch.listener_count += synthesized.listener_count;
+            dispatch.queued |= synthesized.queued;
+        }
         reactive::flush();
         reactive::flush_mounts();
         Ok(dispatch)

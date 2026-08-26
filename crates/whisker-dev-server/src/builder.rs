@@ -119,6 +119,11 @@ impl Builder {
                 &toolchain,
                 ABI,
             )?;
+            let modules =
+                whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), &package)
+                    .context("discover Android Whisker modules")?;
+            whisker_build::android::stage_module_kotlin_sources(&gen_android, &modules)
+                .context("stage Android Whisker modules")?;
             whisker_build::android::run_gradle_assemble(
                 &gen_android,
                 whisker_build::Profile::Debug,

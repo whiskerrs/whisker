@@ -106,7 +106,13 @@ internal class HostScene(
     }
 
     fun commit(): Boolean {
-        if (!validateStagedFrame()) return false
+        if (!validateStagedFrame()) {
+            Log.e(
+                "WhiskerView",
+                "Frame validation failed: snapshot=$stagedSnapshot, revision=$stagedTargetRevision, operations=${stagedOperations.size}",
+            )
+            return false
+        }
         return try {
             applyingFrame = true
             if (stagedSnapshot) clear()
