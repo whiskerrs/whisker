@@ -506,7 +506,9 @@ impl Driver {
                                     .or_else(|| {
                                         nodes.iter().find_map(|node| {
                                             node.box_shadows.first().map(|shadow| {
-                                                if shadow.inset {
+                                                if node.box_shadows.len() > 1 {
+                                                    "paint.visual-effects.box-shadow-multiple"
+                                                } else if shadow.inset {
                                                     "paint.visual-effects.box-shadow-inset"
                                                 } else if shadow.blur_radius != 0.0 {
                                                     "paint.visual-effects.box-shadow-blur"
@@ -1204,6 +1206,9 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-backgrounds/box-shadow-inset-blur-definition.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-inset-blur-definition.json"
         ),
+        "wpt/css/css-backgrounds/box-shadow-multiple-001.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-multiple-001.json"
+        ),
         "wpt/css/CSS2/borders/border-right-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-right-003.json"
         ),
@@ -1872,6 +1877,12 @@ fn fixture_px(value: f32) -> String {
 fn fixture_color_css(value: &ColorFixture) -> String {
     match value {
         ColorFixture::Named { value } => value.clone(),
+        ColorFixture::Srgba {
+            red,
+            green,
+            blue,
+            alpha,
+        } if *alpha == 1.0 => format!("rgb({red}, {green}, {blue})"),
         ColorFixture::Srgba {
             red,
             green,

@@ -163,7 +163,7 @@ final class HostScene {
                     guard operation.payload == nil else { return false }
                     continue
                 }
-                guard operation.payload_count == 1,
+                guard (1...4_096).contains(operation.payload_count),
                       let pointer = operation.payload?.assumingMemoryBound(
                           to: WhiskerMobileBoxShadow.self
                       ) else { return false }
