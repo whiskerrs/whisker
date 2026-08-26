@@ -535,6 +535,13 @@
       "checkpoints": ["semantic-projection"]
     },
     {
+      "id": "core.text-basic-style-lynx",
+      "feature": "text-basic-style-lynx",
+      "fixture": "core/text-basic-style-lynx.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection"]
+    },
+    {
       "id": "host.measure.text.basic",
       "feature": "text-measurement",
       "fixture": "core/text-measure-basic.json",

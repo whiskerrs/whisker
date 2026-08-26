@@ -159,7 +159,7 @@
       "id": "paint.text",
       "basis": "lynx-4.0",
       "properties": ["color", "font-family", "font-feature-settings", "font-optical-sizing", "font-size", "font-style", "font-variation-settings", "font-weight", "letter-spacing", "line-height", "text-align", "text-decoration", "text-indent", "text-overflow", "text-shadow", "white-space", "word-break"],
-      "supported_subset": ["basic-font-metrics-and-color", "single-text-shadow", "lynx-single-line-text-decoration", "lynx-text-align", "lynx-text-indent-length-percentage", "lynx-white-space-word-break-text-overflow", "opentype-feature-settings-all-hosts", "variable-font-axes-web-android-ios", "font-weight-axis-desktop", "lynx-optical-sizing-web-android-ios"],
+      "supported_subset": ["basic-font-metrics-and-color", "font-family-fallback-font-style-line-height-letter-spacing-all-hosts", "single-text-shadow", "lynx-single-line-text-decoration", "lynx-text-align", "lynx-text-indent-length-percentage", "lynx-white-space-word-break-text-overflow", "opentype-feature-settings-all-hosts", "variable-font-axes-web-android-ios", "font-weight-axis-desktop", "lynx-optical-sizing-web-android-ios"],
       "pending_subset": ["desktop-arbitrary-variable-font-axes-and-optical-sizing"],
       "protocol": ["SetText"],
       "rust": "implemented",

@@ -25,10 +25,11 @@ use whisker_host_conformance::{
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
     BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat,
-    LayoutGeometry, LayoutRect, MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak,
-    MeasureTextWrap, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
-    PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
-    PathCommand, ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand,
+    LayoutGeometry, LayoutRect, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+    MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, NodeId,
+    Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius,
+    PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand,
+    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand,
     ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
     SurfaceId, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform,
     Visibility,
@@ -474,6 +475,8 @@ impl Driver {
                             "paint.text.wrap-overflow-lynx"
                         } else if name == "paint.text.font-features-lynx" {
                             "paint.text.font-features-lynx"
+                        } else if name == "paint.text.basic-style-lynx" {
+                            "paint.text.basic-style-lynx"
                         } else if name == "interaction.pointer.lynx" {
                             "interaction.pointer.lynx"
                         } else if name == "paint.visual-effects.image-rendering-pixelated" {
@@ -900,6 +903,30 @@ impl Driver {
                     Some(text.value.as_str())
                 );
                 assert_style(&text_style, "font-size", &fixture_px(text.font_size));
+                assert_style(
+                    &text_style,
+                    "font-family",
+                    &fixture_font_families_css(&text.font_families),
+                );
+                assert_style(
+                    &text_style,
+                    "font-style",
+                    match text.font_style {
+                        whisker_host_conformance::FontStyleFixture::Normal => "normal",
+                        whisker_host_conformance::FontStyleFixture::Italic => "italic",
+                        whisker_host_conformance::FontStyleFixture::Oblique => "oblique",
+                    },
+                );
+                assert_style(
+                    &text_style,
+                    "line-height",
+                    &text.line_height.map_or_else(|| "normal".into(), fixture_px),
+                );
+                assert_style(
+                    &text_style,
+                    "letter-spacing",
+                    &fixture_px(text.letter_spacing),
+                );
                 assert_style(
                     &text_style,
                     "font-feature-settings",
@@ -1568,6 +1595,9 @@ fn fixture(path: &str) -> &'static str {
         }
         "core/text-font-features-lynx.json" => {
             include_str!("../../../../tests/host-conformance/core/text-font-features-lynx.json")
+        }
+        "core/text-basic-style-lynx.json" => {
+            include_str!("../../../../tests/host-conformance/core/text-basic-style-lynx.json")
         }
         _ => panic!("manifest fixture is not embedded in the Web test: {path}"),
     }
@@ -2259,8 +2289,30 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
         payload: TextMeasurePayload {
             text: text.value.clone(),
             style: TextMeasureStyle {
+                font_families: text
+                    .font_families
+                    .iter()
+                    .map(|family| {
+                        if family == "system" {
+                            MeasureFontFamily::System
+                        } else {
+                            MeasureFontFamily::Named(family.clone())
+                        }
+                    })
+                    .collect(),
                 font_size: text.font_size,
                 font_weight: text.font_weight,
+                font_style: match text.font_style {
+                    whisker_host_conformance::FontStyleFixture::Normal => MeasureFontStyle::Normal,
+                    whisker_host_conformance::FontStyleFixture::Italic => MeasureFontStyle::Italic,
+                    whisker_host_conformance::FontStyleFixture::Oblique => {
+                        MeasureFontStyle::Oblique
+                    }
+                },
+                line_height: text
+                    .line_height
+                    .map_or(MeasureLineHeight::Normal, MeasureLineHeight::LogicalPixels),
+                letter_spacing: text.letter_spacing,
                 features: text
                     .font_features
                     .iter()
@@ -2368,6 +2420,20 @@ fn fixture_font_tag(value: &str) -> whisker_protocol::FontTag {
         .try_into()
         .expect("fixture schema validates four-byte ASCII tags");
     whisker_protocol::FontTag::new(bytes).expect("fixture schema validates printable tags")
+}
+
+fn fixture_font_families_css(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|family| {
+            if family == "system" {
+                "system-ui".to_owned()
+            } else {
+                format!("{family:?}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn fixture_font_settings<T>(values: &[T], value: impl Fn(&T) -> String) -> String

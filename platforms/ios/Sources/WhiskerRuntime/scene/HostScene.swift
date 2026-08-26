@@ -140,11 +140,24 @@ final class HostScene {
                       text.wrap <= 1,
                       text.word_break <= 2,
                       text.overflow <= 1,
+                      text.font_style <= 2,
                       text.font_optical_sizing <= 1,
+                      text.font_size.isFinite,
+                      text.font_size > 0,
+                      (1...1_000).contains(Int(text.font_weight)),
+                      text.line_height.isFinite,
+                      text.line_height >= 0,
+                      text.letter_spacing.isFinite,
+                      validBorrowedArray(text.font_families, text.font_family_count),
                       validBorrowedArray(text.font_features, text.font_feature_count),
                       validBorrowedArray(text.font_variations, text.font_variation_count),
+                      text.font_family_count > 0,
+                      text.font_family_count <= 4_096,
+                      validBorrowedStrings(text.font_families, text.font_family_count),
                       text.font_feature_count <= 4_096,
                       text.font_variation_count <= 4_096,
+                      text.font_family_count + text.font_feature_count
+                        + text.font_variation_count <= 4_096,
                       text.indent_logical_pixels.isFinite,
                       text.indent_percentage.isFinite else { return false }
             case UInt32(WHISKER_OP_TRANSFORM):
@@ -529,8 +542,19 @@ final class HostScene {
         guard let node, let mounted = node.mountedElement else { return }
         guard mounted.setText(WhiskerTextContent(
             value: hostString(content.text),
+            fontFamilies: hostFontFamilies(content),
             fontSize: CGFloat(content.font_size),
             fontWeight: Int(content.font_weight),
+            fontStyle: {
+                switch content.font_style {
+                case 0: return .normal
+                case 1: return .italic
+                case 2: return .oblique
+                default: preconditionFailure("invalid font style")
+                }
+            }(),
+            lineHeight: content.line_height > 0 ? CGFloat(content.line_height) : nil,
+            letterSpacing: CGFloat(content.letter_spacing),
             fontFeatures: hostFontFeatures(content),
             fontVariations: hostFontVariations(content),
             fontOpticalSizing: content.font_optical_sizing == 0 ? .auto : .none,
@@ -606,11 +630,26 @@ private func validBorrowedArray<T>(_ pointer: UnsafePointer<T>?, _ count: Int) -
     (pointer == nil) == (count == 0)
 }
 
+private func validBorrowedStrings(
+    _ pointer: UnsafePointer<WhiskerStringRef>?,
+    _ count: Int
+) -> Bool {
+    guard let pointer, count > 0 else { return false }
+    return UnsafeBufferPointer(start: pointer, count: count).allSatisfy {
+        $0.len > 0 && $0.ptr != nil
+    }
+}
+
 private func hostFontFeatures(_ content: WhiskerMobileText) -> [WhiskerFontFeature] {
     guard let pointer = content.font_features else { return [] }
     return UnsafeBufferPointer(start: pointer, count: content.font_feature_count).map {
         WhiskerFontFeature(tag: hostFontTag($0.tag), value: $0.value)
     }
+}
+
+private func hostFontFamilies(_ content: WhiskerMobileText) -> [String] {
+    guard let pointer = content.font_families else { return [] }
+    return UnsafeBufferPointer(start: pointer, count: content.font_family_count).map(hostString)
 }
 
 private func hostFontVariations(_ content: WhiskerMobileText) -> [WhiskerFontVariation] {

@@ -633,11 +633,24 @@ pub struct SceneNodeFixture {
 pub struct TextFixture {
     /// UTF-8 text value.
     pub value: String,
+    /// Ordered font-family fallback list. The reserved `system` spelling maps
+    /// to each Host's platform UI font; every other value is a named family.
+    #[serde(default = "default_font_families")]
+    pub font_families: Vec<String>,
     /// Logical-pixel font size.
     pub font_size: f32,
     /// CSS numeric font weight.
     #[serde(default = "default_font_weight")]
     pub font_weight: u16,
+    /// Resolved font posture.
+    #[serde(default)]
+    pub font_style: FontStyleFixture,
+    /// Explicit logical-pixel line height. Omission means `normal`.
+    #[serde(default)]
+    pub line_height: Option<f32>,
+    /// Additional logical pixels between glyph advances.
+    #[serde(default)]
+    pub letter_spacing: f32,
     /// Ordered OpenType feature settings.
     #[serde(default)]
     pub font_features: Vec<FontFeatureFixture>,
@@ -673,6 +686,19 @@ pub struct TextFixture {
     /// Optional single Lynx-compatible shadow.
     #[serde(default)]
     pub shadow: Option<TextShadowFixture>,
+}
+
+/// Font posture used by a retained text fixture.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FontStyleFixture {
+    /// Upright glyphs.
+    #[default]
+    Normal,
+    /// Use the font's italic face when available.
+    Italic,
+    /// Use an oblique face or synthetic slant.
+    Oblique,
 }
 
 /// One OpenType feature selector in a shared fixture.
@@ -820,6 +846,10 @@ pub struct TextShadowFixture {
 
 const fn default_font_weight() -> u16 {
     400
+}
+
+fn default_font_families() -> Vec<String> {
+    vec!["system".to_owned()]
 }
 
 impl SceneNodeFixture {
@@ -1599,6 +1629,12 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                     text.font_size.is_finite()
                         && text.font_size > 0.0
                         && (1..=1000).contains(&text.font_weight)
+                        && !text.font_families.is_empty()
+                        && text.font_families.iter().all(|family| !family.is_empty())
+                        && text
+                            .line_height
+                            .is_none_or(|height| height.is_finite() && height > 0.0)
+                        && text.letter_spacing.is_finite()
                         && valid_color(&text.color)
                         && text
                             .decoration

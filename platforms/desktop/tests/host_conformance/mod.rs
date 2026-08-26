@@ -108,8 +108,32 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
         payload: TextMeasurePayload {
             text: text.value.clone(),
             style: TextMeasureStyle {
+                font_families: text
+                    .font_families
+                    .iter()
+                    .map(|family| {
+                        if family == "system" {
+                            MeasureFontFamily::System
+                        } else {
+                            MeasureFontFamily::Named(family.clone())
+                        }
+                    })
+                    .collect(),
                 font_size: text.font_size,
                 font_weight: text.font_weight,
+                font_style: match text.font_style {
+                    whisker_host_conformance::FontStyleFixture::Normal => MeasureFontStyle::Normal,
+                    whisker_host_conformance::FontStyleFixture::Italic => MeasureFontStyle::Italic,
+                    whisker_host_conformance::FontStyleFixture::Oblique => {
+                        MeasureFontStyle::Oblique
+                    }
+                },
+                line_height: text
+                    .line_height
+                    .map_or(MeasureLineHeight::Normal, |height| {
+                        MeasureLineHeight::LogicalPixels(height)
+                    }),
+                letter_spacing: text.letter_spacing,
                 features: text
                     .font_features
                     .iter()
@@ -636,6 +660,8 @@ impl Driver {
                         self.assert_text_wrap_overflow();
                     } else if name == "paint.text.font-features-lynx" {
                         self.assert_text_font_features();
+                    } else if name == "paint.text.basic-style-lynx" {
+                        self.assert_text_basic_style();
                     }
                     checkpoints.push(Checkpoint {
                         logical_size: [
@@ -1048,6 +1074,46 @@ impl Driver {
         assert_eq!(
             texts[2].payload.style.optical_sizing,
             whisker_protocol::FontOpticalSizing::Auto
+        );
+    }
+
+    fn assert_text_basic_style(&self) {
+        let commands = self
+            .scene
+            .as_ref()
+            .expect("checkpoint follows attach")
+            .paint_commands();
+        let content = commands
+            .iter()
+            .find_map(|command| match command {
+                PaintCommand::Text { content, .. } => Some(content),
+                _ => None,
+            })
+            .expect("basic style fixture creates one text paint command");
+
+        assert_eq!(
+            content.payload.style.font_families,
+            vec![
+                MeasureFontFamily::Named("Whisker Fixture Sans".into()),
+                MeasureFontFamily::System,
+            ]
+        );
+        assert_eq!(content.payload.style.font_size, 20.0);
+        assert_eq!(content.payload.style.font_weight, 650);
+        assert_eq!(content.payload.style.font_style, MeasureFontStyle::Italic);
+        assert_eq!(
+            content.payload.style.line_height,
+            MeasureLineHeight::LogicalPixels(28.0)
+        );
+        assert_eq!(content.payload.style.letter_spacing, 1.5);
+        assert_eq!(
+            content.paint.foreground,
+            PaintColor::Srgba {
+                red: 32,
+                green: 64,
+                blue: 192,
+                alpha: 1.0,
+            }
         );
     }
 

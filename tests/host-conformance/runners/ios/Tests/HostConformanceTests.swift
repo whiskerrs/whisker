@@ -491,6 +491,7 @@ private final class Driver {
                     name == "paint.text.indent-lynx" ||
                     name == "paint.text.wrap-overflow-lynx" ||
                     name == "paint.text.font-features-lynx" ||
+                    name == "paint.text.basic-style-lynx" ||
                     name == "interaction.pointer.lynx" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
@@ -585,6 +586,38 @@ private final class Driver {
                         ]
                     )
                     XCTAssertEqual(labels[2].whiskerFontOpticalSizing, .auto)
+                }
+                if name == "paint.text.basic-style-lynx" {
+                    let labels = findTextLabels(view)
+                    XCTAssertEqual(labels.count, 1)
+                    let label = try XCTUnwrap(labels.first)
+                    XCTAssertEqual(label.whiskerFontFamilies, ["Whisker Fixture Sans", "system"])
+                    XCTAssertEqual(label.whiskerResolvedFontFamily, "system")
+                    XCTAssertEqual(label.font.pointSize, 20, accuracy: 0.001)
+                    XCTAssertEqual(label.whiskerFontWeight, 650)
+                    let traits = try XCTUnwrap(
+                        label.font.fontDescriptor.object(forKey: .traits)
+                            as? [UIFontDescriptor.TraitKey: Any]
+                    )
+                    let appliedWeight = try XCTUnwrap(
+                        traits[.weight] as? NSNumber
+                    )
+                    XCTAssertGreaterThan(appliedWeight.doubleValue, 0)
+                    XCTAssertEqual(label.whiskerFontStyle, .italic)
+                    XCTAssertTrue(label.font.fontDescriptor.symbolicTraits.contains(.traitItalic))
+                    XCTAssertEqual(try XCTUnwrap(label.whiskerLineHeight), 28)
+                    XCTAssertEqual(label.whiskerLetterSpacing, 1.5)
+                    let attributes = try XCTUnwrap(label.attributedText)
+                    let paragraph = try XCTUnwrap(
+                        attributes.attribute(.paragraphStyle, at: 0, effectiveRange: nil)
+                            as? NSParagraphStyle
+                    )
+                    XCTAssertEqual(paragraph.minimumLineHeight, 28)
+                    XCTAssertEqual(paragraph.maximumLineHeight, 28)
+                    let kern = try XCTUnwrap(
+                        attributes.attribute(.kern, at: 0, effectiveRange: nil) as? NSNumber
+                    )
+                    XCTAssertEqual(kern.doubleValue, 1.5)
                 }
                 let pixels = try capture()
                 checkpoint = pixels
@@ -771,6 +804,14 @@ private final class Driver {
             capacity: max(fixtures.count, 1)
         )
         var textStrings = [UnsafeMutablePointer<CChar>?](repeating: nil, count: fixtures.count)
+        var textFamilyRefs = [UnsafeMutablePointer<WhiskerStringRef>?](
+            repeating: nil,
+            count: fixtures.count
+        )
+        var textFamilyStrings = [[UnsafeMutablePointer<CChar>]](
+            repeating: [],
+            count: fixtures.count
+        )
         var textFeatures = [UnsafeMutablePointer<WhiskerMobileFontFeature>?](
             repeating: nil,
             count: fixtures.count
@@ -787,8 +828,31 @@ private final class Driver {
                 storage.initialize(from: bytes, count: bytes.count)
                 textStrings[index] = storage
                 payload.text = WhiskerStringRef(ptr: UnsafePointer(storage), len: bytes.count - 1)
+                if !text.fontFamilies.isEmpty {
+                    let references = UnsafeMutablePointer<WhiskerStringRef>.allocate(
+                        capacity: text.fontFamilies.count
+                    )
+                    for (familyIndex, family) in text.fontFamilies.enumerated() {
+                        let familyBytes = Array(family.utf8CString)
+                        let familyStorage = UnsafeMutablePointer<CChar>.allocate(
+                            capacity: familyBytes.count
+                        )
+                        familyStorage.initialize(from: familyBytes, count: familyBytes.count)
+                        textFamilyStrings[index].append(familyStorage)
+                        references.advanced(by: familyIndex).initialize(to: WhiskerStringRef(
+                            ptr: UnsafePointer(familyStorage),
+                            len: familyBytes.count - 1
+                        ))
+                    }
+                    textFamilyRefs[index] = references
+                    payload.font_families = UnsafePointer(references)
+                    payload.font_family_count = text.fontFamilies.count
+                }
                 payload.font_size = text.fontSize
                 payload.font_weight = text.fontWeight
+                payload.font_style = text.fontStyle
+                payload.line_height = text.lineHeight
+                payload.letter_spacing = text.letterSpacing
                 payload.color = text.color
                 if let offset = text.shadowOffset {
                     payload.shadow_flags = 1
@@ -846,6 +910,13 @@ private final class Driver {
             textPayloads.deallocate()
             for storage in textStrings {
                 storage?.deallocate()
+            }
+            for (index, storage) in textFamilyRefs.enumerated() {
+                storage?.deinitialize(count: fixtures[index].text?.fontFamilies.count ?? 0)
+                storage?.deallocate()
+            }
+            for strings in textFamilyStrings {
+                for storage in strings { storage.deallocate() }
             }
             for (index, storage) in textFeatures.enumerated() {
                 storage?.deinitialize(count: fixtures[index].text?.fontFeatures.count ?? 0)
@@ -1410,8 +1481,12 @@ private struct SceneFixtureNode {
 
 private struct SceneText {
     let value: String
+    let fontFamilies: [String]
     let fontSize: Float
     let fontWeight: UInt16
+    let fontStyle: UInt8
+    let lineHeight: Float
+    let letterSpacing: Float
     let color: WhiskerMobileColor
     let alignment: UInt32
     let indentLogicalPixels: Float
@@ -1636,10 +1711,26 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         case "keep_all": wordBreak = 2
         default: throw Failure("unknown word-break")
         }
+        let fontStyle: UInt8
+        switch raw["font_style"] as? String ?? "normal" {
+        case "normal": fontStyle = 0
+        case "italic": fontStyle = 1
+        case "oblique": fontStyle = 2
+        default: throw Failure("unknown font style")
+        }
         text = SceneText(
             value: try string(raw, "value"),
+            fontFamilies: try (raw["font_families"] as? [Any] ?? ["system"]).map {
+                guard let family = $0 as? String else {
+                    throw Failure("font family must be a string")
+                }
+                return family
+            },
             fontSize: Float(try number(raw, "font_size")),
             fontWeight: UInt16((raw["font_weight"] as? NSNumber)?.intValue ?? 400),
+            fontStyle: fontStyle,
+            lineHeight: (raw["line_height"] as? NSNumber)?.floatValue ?? 0,
+            letterSpacing: (raw["letter_spacing"] as? NSNumber)?.floatValue ?? 0,
             color: try color(object(raw, "color")),
             alignment: alignment,
             indentLogicalPixels: Float(try indent.map { try number($0, "logical_pixels") } ?? 0),

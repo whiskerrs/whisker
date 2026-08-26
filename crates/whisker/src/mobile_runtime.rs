@@ -997,6 +997,7 @@ struct MobileFrameOwned {
     _background_layers: Vec<Box<[MobileBackgroundLayer]>>,
     _background_resource_ids: Vec<Box<u64>>,
     _texts: Vec<Box<MobileText>>,
+    _text_font_families: Vec<Box<[WhiskerStringRef]>>,
     _font_features: Vec<Box<[MobileFontFeature]>>,
     _font_variations: Vec<Box<[MobileFontVariation]>>,
     _transforms: Vec<Box<[f32; 16]>>,
@@ -1081,6 +1082,7 @@ impl MobileFrameOwned {
         let mut background_layers = Vec::<Box<[MobileBackgroundLayer]>>::new();
         let mut background_resource_ids = Vec::<Box<u64>>::new();
         let mut texts = Vec::<Box<MobileText>>::new();
+        let mut text_font_families = Vec::<Box<[WhiskerStringRef]>>::new();
         let mut font_features = Vec::<Box<[MobileFontFeature]>>::new();
         let mut font_variations = Vec::<Box<[MobileFontVariation]>>::new();
         let mut transforms = Vec::<Box<[f32; 16]>>::new();
@@ -1525,8 +1527,24 @@ impl MobileFrameOwned {
                     let features = font_features.last().unwrap();
                     font_variations.push(mobile_font_variations(&content.payload.style.variations));
                     let variations = font_variations.last().unwrap();
+                    text_font_families.push(
+                        content
+                            .payload
+                            .style
+                            .font_families
+                            .iter()
+                            .map(|family| match family {
+                                MeasureFontFamily::System => push_string(&mut strings, "system"),
+                                MeasureFontFamily::Named(value) => push_string(&mut strings, value),
+                            })
+                            .collect::<Vec<_>>()
+                            .into_boxed_slice(),
+                    );
+                    let families = text_font_families.last().unwrap();
                     texts.push(Box::new(MobileText {
                         text: push_string(&mut strings, &content.payload.text),
+                        font_families: nonempty_ptr(families),
+                        font_family_count: families.len(),
                         font_size: content.payload.style.font_size,
                         font_weight: content.payload.style.font_weight,
                         font_style: match content.payload.style.font_style {
@@ -1693,6 +1711,7 @@ impl MobileFrameOwned {
             _background_layers: background_layers,
             _background_resource_ids: background_resource_ids,
             _texts: texts,
+            _text_font_families: text_font_families,
             _font_features: font_features,
             _font_variations: font_variations,
             _transforms: transforms,
@@ -1953,13 +1972,13 @@ mod tests {
                 text: "shadow".into(),
                 style: TextMeasureStyle::default(),
                 locale: None,
-                direction: Default::default(),
+                direction: whisker_engine::whisker_protocol::MeasureTextDirection::Auto,
                 alignment: Default::default(),
                 indent: Default::default(),
                 wrap: MeasureTextWrap::Wrap,
                 word_break: Default::default(),
                 max_lines: None,
-                overflow: Default::default(),
+                overflow: MeasureTextOverflow::Clip,
             },
             paint: TextPaint {
                 foreground: PaintColor::Named("black".into()),
@@ -2221,6 +2240,13 @@ mod tests {
             tag: FontTag::new(*b"wght").unwrap(),
             value: 650.0,
         }];
+        content.payload.style.font_families = vec![
+            MeasureFontFamily::Named("Whisker Fixture Sans".into()),
+            MeasureFontFamily::System,
+        ];
+        content.payload.style.font_style = MeasureFontStyle::Italic;
+        content.payload.style.line_height = MeasureLineHeight::LogicalPixels(28.0);
+        content.payload.style.letter_spacing = 1.5;
         content.payload.style.optical_sizing = FontOpticalSizing::Auto;
         let packet = FramePacket {
             header: FrameHeader {
@@ -2243,6 +2269,20 @@ mod tests {
         let operation = &frame._operations[0];
         assert_eq!(operation.tag, OP_TEXT);
         let text = unsafe { &*operation.payload.cast::<MobileText>() };
+        assert_eq!(text.font_family_count, 2);
+        let families =
+            unsafe { std::slice::from_raw_parts(text.font_families, text.font_family_count) };
+        let family = |value: WhiskerStringRef| unsafe {
+            String::from_utf8(
+                std::slice::from_raw_parts(value.ptr.cast::<u8>(), value.len).to_vec(),
+            )
+            .unwrap()
+        };
+        assert_eq!(family(families[0]), "Whisker Fixture Sans");
+        assert_eq!(family(families[1]), "system");
+        assert_eq!(text.font_style, 1);
+        assert_eq!(text.line_height, 28.0);
+        assert_eq!(text.letter_spacing, 1.5);
         assert_eq!(text.shadow_flags, 1);
         assert_eq!(text.shadow_offset_x, 3.0);
         assert_eq!(text.shadow_offset_y, -2.0);

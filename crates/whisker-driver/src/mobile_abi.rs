@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 22;
+pub const MOBILE_ABI_MINOR: u16 = 23;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -316,6 +316,8 @@ pub struct MobileFontVariation {
 #[derive(Clone, Copy)]
 pub struct MobileText {
     pub text: WhiskerStringRef,
+    pub font_families: *const WhiskerStringRef,
+    pub font_family_count: usize,
     pub font_size: f32,
     pub font_weight: u16,
     pub font_style: u8,
@@ -696,7 +698,7 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileBootstrap>(), 24);
             assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 216);
             assert_eq!(std::mem::size_of::<MobileMeasureResponse>(), 64);
-            assert_eq!(std::mem::size_of::<MobileText>(), 224);
+            assert_eq!(std::mem::size_of::<MobileText>(), 240);
             assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);
             assert_eq!(std::mem::size_of::<MobileBoxShadow>(), 56);
             assert_eq!(std::mem::size_of::<MobileClipInset>(), 96);

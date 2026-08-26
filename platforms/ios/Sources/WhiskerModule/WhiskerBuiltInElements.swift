@@ -45,6 +45,12 @@ public final class WhiskerTextLabel: UILabel {
     public internal(set) var whiskerFontFeatures: [WhiskerFontFeature] = []
     public internal(set) var whiskerFontVariations: [WhiskerFontVariation] = []
     public internal(set) var whiskerFontOpticalSizing: WhiskerFontOpticalSizing = .none
+    public internal(set) var whiskerFontFamilies: [String] = ["system"]
+    public internal(set) var whiskerResolvedFontFamily = ""
+    public internal(set) var whiskerFontWeight = 400
+    public internal(set) var whiskerFontStyle: WhiskerTextFontStyle = .normal
+    public internal(set) var whiskerLineHeight: CGFloat?
+    public internal(set) var whiskerLetterSpacing: CGFloat = 0
 
     public func setWhiskerIndent(_ indent: WhiskerTextIndent) {
         whiskerIndent = indent
@@ -62,7 +68,12 @@ public final class WhiskerTextLabel: UILabel {
         guard appliedIndent != resolved, let attributedText else { return }
         appliedIndent = resolved
         let mutable = NSMutableAttributedString(attributedString: attributedText)
-        let paragraph = NSMutableParagraphStyle()
+        let existingParagraph = attributedText.length > 0
+            ? attributedText.attribute(.paragraphStyle, at: 0, effectiveRange: nil)
+                as? NSParagraphStyle
+            : nil
+        let paragraph = existingParagraph?.mutableCopy() as? NSMutableParagraphStyle
+            ?? NSMutableParagraphStyle()
         paragraph.alignment = textAlignment
         paragraph.lineBreakMode = lineBreakMode
         paragraph.firstLineHeadIndent = resolved
@@ -120,10 +131,14 @@ public enum WhiskerBuiltInElements {
                 guard let label = view as? WhiskerTextLabel else {
                     preconditionFailure("\(textName) factory must create WhiskerTextLabel")
                 }
-                label.font = configuredFont(base: .systemFont(
-                    ofSize: content.fontSize,
-                    weight: content.fontWeight >= 600 ? .bold : .regular
-                ), content: content)
+                let base = resolvedBaseFont(content)
+                label.font = configuredFont(base: base.font, content: content)
+                label.whiskerFontFamilies = content.fontFamilies
+                label.whiskerResolvedFontFamily = base.family
+                label.whiskerFontWeight = content.fontWeight
+                label.whiskerFontStyle = content.fontStyle
+                label.whiskerLineHeight = content.lineHeight
+                label.whiskerLetterSpacing = content.letterSpacing
                 label.whiskerFontFeatures = content.fontFeatures
                 label.whiskerFontVariations = content.fontVariations
                 label.whiskerFontOpticalSizing = content.fontOpticalSizing
@@ -136,9 +151,25 @@ public enum WhiskerBuiltInElements {
                 case .center: .center
                 }
                 label.whiskerDecoration = content.decoration
+                label.numberOfLines = content.wrap
+                    ? (content.maxLines == 0 ? 0 : content.maxLines)
+                    : 1
+                label.lineBreakMode = switch content.overflow {
+                case .ellipsis: .byTruncatingTail
+                case .clip: content.wordBreak == .breakAll ? .byCharWrapping : .byWordWrapping
+                }
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.alignment = label.textAlignment
+                paragraph.lineBreakMode = label.lineBreakMode
+                if let lineHeight = content.lineHeight {
+                    paragraph.minimumLineHeight = lineHeight
+                    paragraph.maximumLineHeight = lineHeight
+                }
                 var attributes: [NSAttributedString.Key: Any] = [
                     .font: label.font as Any,
                     .foregroundColor: content.color,
+                    .kern: content.letterSpacing,
+                    .paragraphStyle: paragraph,
                 ]
                 if let shadow = content.shadow {
                     let nativeShadow = NSShadow()
@@ -170,13 +201,6 @@ public enum WhiskerBuiltInElements {
                     attributes: attributes
                 )
                 label.setWhiskerIndent(content.indent)
-                label.numberOfLines = content.wrap
-                    ? (content.maxLines == 0 ? 0 : content.maxLines)
-                    : 1
-                label.lineBreakMode = switch content.overflow {
-                case .ellipsis: .byTruncatingTail
-                case .clip: content.wordBreak == .breakAll ? .byCharWrapping : .byWordWrapping
-                }
             }
         ) {
             let label = WhiskerTextLabel(frame: .zero)
@@ -200,6 +224,39 @@ public enum WhiskerBuiltInElements {
             WhiskerScrollContainerView(frame: .zero)
         }
     }
+}
+
+private func resolvedBaseFont(_ content: WhiskerTextContent) -> (font: UIFont, family: String) {
+    let weight = UIFont.Weight(rawValue: max(
+        -1,
+        min(1, CGFloat(content.fontWeight - 400) / 500)
+    ))
+    for family in content.fontFamilies {
+        if family == "system" {
+            let font = UIFont.systemFont(ofSize: content.fontSize, weight: weight)
+            return (styledFont(font, style: content.fontStyle, size: content.fontSize), "system")
+        }
+        guard let named = UIFont(name: family, size: content.fontSize) else { continue }
+        let weightedDescriptor = named.fontDescriptor.addingAttributes([
+            .traits: [UIFontDescriptor.TraitKey.weight: weight],
+        ])
+        let weighted = UIFont(descriptor: weightedDescriptor, size: content.fontSize)
+        return (styledFont(weighted, style: content.fontStyle, size: content.fontSize), family)
+    }
+    let font = UIFont.systemFont(ofSize: content.fontSize, weight: weight)
+    return (styledFont(font, style: content.fontStyle, size: content.fontSize), "system")
+}
+
+private func styledFont(
+    _ font: UIFont,
+    style: WhiskerTextFontStyle,
+    size: CGFloat
+) -> UIFont {
+    guard style != .normal,
+          let descriptor = font.fontDescriptor.withSymbolicTraits(
+              font.fontDescriptor.symbolicTraits.union(.traitItalic)
+          ) else { return font }
+    return UIFont(descriptor: descriptor, size: size)
 }
 
 private func configuredFont(base: UIFont, content: WhiskerTextContent) -> UIFont {
