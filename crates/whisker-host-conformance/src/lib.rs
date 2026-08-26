@@ -606,12 +606,32 @@ pub struct TextFixture {
     pub font_weight: u16,
     /// Foreground glyph color.
     pub color: ColorFixture,
+    /// Inline-axis alignment within the text element's layout box.
+    #[serde(default)]
+    pub alignment: TextAlignmentFixture,
     /// Optional single Lynx text decoration.
     #[serde(default)]
     pub decoration: Option<TextDecorationFixture>,
     /// Optional single Lynx-compatible shadow.
     #[serde(default)]
     pub shadow: Option<TextShadowFixture>,
+}
+
+/// Lynx-supported `text-align` values.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAlignmentFixture {
+    /// Align to the logical inline start.
+    #[default]
+    Start,
+    /// Align to the logical inline end.
+    End,
+    /// Align to the physical left edge.
+    Left,
+    /// Align to the physical right edge.
+    Right,
+    /// Center each line.
+    Center,
 }
 
 /// One resolved Lynx text decoration.

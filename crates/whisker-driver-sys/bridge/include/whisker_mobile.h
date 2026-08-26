@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 17 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 18 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -155,6 +155,7 @@ typedef struct {
   WhiskerMobileColor shadow_color;
   uint32_t decoration_flags, decoration_style;
   WhiskerMobileColor decoration_color;
+  uint32_t alignment;
   uint64_t prepared_content;
 } WhiskerMobileText;
 typedef struct {
@@ -256,7 +257,7 @@ _Static_assert(sizeof(WhiskerMobileMeasureRequest) == 160, "WhiskerMobileMeasure
 _Static_assert(sizeof(WhiskerMobileMeasureResponse) == 64, "WhiskerMobileMeasureResponse ABI drift");
 _Static_assert(sizeof(WhiskerMobileResourceCommand) == 64, "WhiskerMobileResourceCommand ABI drift");
 _Static_assert(sizeof(WhiskerMobileResourceEvent) == 56, "WhiskerMobileResourceEvent ABI drift");
-_Static_assert(sizeof(WhiskerMobileText) == 168, "WhiskerMobileText ABI drift");
+_Static_assert(sizeof(WhiskerMobileText) == 176, "WhiskerMobileText ABI drift");
 _Static_assert(sizeof(WhiskerMobileBoxPaint) == 272, "WhiskerMobileBoxPaint ABI drift");
 
 typedef void (*WhiskerMobileRequestFrameCallback)(void*);

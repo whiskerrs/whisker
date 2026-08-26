@@ -131,6 +131,7 @@ macro_rules! define_style_properties {
                         | Self::LineHeight
                         | Self::LetterSpacing
                         | Self::Color
+                        | Self::TextAlign
                         | Self::TextDecoration
                         | Self::TextShadow
                 );
@@ -581,6 +582,7 @@ mod tests {
                 StyleProperty::FontWeight,
                 StyleProperty::LetterSpacing,
                 StyleProperty::LineHeight,
+                StyleProperty::TextAlign,
                 StyleProperty::TextDecoration,
                 StyleProperty::TextShadow,
             ]

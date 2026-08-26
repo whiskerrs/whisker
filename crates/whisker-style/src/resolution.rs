@@ -5,7 +5,7 @@ use core::fmt;
 use crate::{
     CalcExpression, ColorValue, ComputedLayoutStyle, ComputedPaintStyle, FontFamilyValue,
     FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue,
-    LineHeightValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue,
+    LineHeightValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
     TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextShadowValue,
 };
 
@@ -148,6 +148,7 @@ pub struct InheritedStyle {
     line_height: ComputedLineHeight,
     letter_spacing: StyleNumber,
     color: ColorValue,
+    text_align: TextAlignValue,
     text_decoration: ComputedTextDecoration,
     text_shadow: Option<ComputedTextShadow>,
 }
@@ -167,6 +168,7 @@ impl InheritedStyle {
                 blue: 0,
                 alpha: StyleNumber::new(1.0),
             },
+            text_align: TextAlignValue::Start,
             text_decoration: ComputedTextDecoration {
                 line: TextDecorationLineValue::None,
                 style: TextDecorationStyleValue::Solid,
@@ -216,6 +218,11 @@ impl InheritedStyle {
         &self.color
     }
 
+    /// Returns inline text alignment.
+    pub const fn text_align(&self) -> TextAlignValue {
+        self.text_align
+    }
+
     /// Returns the inherited single-line text decoration.
     pub const fn text_decoration(&self) -> &ComputedTextDecoration {
         &self.text_decoration
@@ -257,6 +264,10 @@ impl InheritedStyle {
         if self.color != previous.color {
             properties |= InheritedPropertySet::COLOR;
             impacts |= PropertyImpactSet::PAINT;
+        }
+        if self.text_align != previous.text_align {
+            properties |= InheritedPropertySet::TEXT_ALIGN;
+            impacts |= PropertyImpactSet::TEXT_METRICS;
         }
         if self.text_decoration != previous.text_decoration {
             properties |= InheritedPropertySet::TEXT_DECORATION;
@@ -372,6 +383,8 @@ impl InheritedPropertySet {
     pub const TEXT_SHADOW: Self = Self(1 << 7);
     /// `text-decoration`.
     pub const TEXT_DECORATION: Self = Self(1 << 8);
+    /// `text-align`.
+    pub const TEXT_ALIGN: Self = Self(1 << 9);
 
     /// Returns whether this set contains every bit from `other`.
     pub const fn contains(self, other: Self) -> bool {
@@ -550,6 +563,11 @@ pub fn resolve_style(
         Some(_) => return Err(wrong_type(StyleProperty::Color)),
         None => base.color.clone(),
     };
+    let text_align = match declarations.text_align {
+        Some(StyleValue::TextAlign(value)) => *value,
+        Some(_) => return Err(wrong_type(StyleProperty::TextAlign)),
+        None => base.text_align,
+    };
     let text_decoration = match declarations.text_decoration {
         Some(StyleValue::TextDecoration(TextDecorationValue {
             line,
@@ -617,6 +635,7 @@ pub fn resolve_style(
         line_height,
         letter_spacing,
         color,
+        text_align,
         text_decoration,
         text_shadow,
     };
@@ -659,6 +678,7 @@ struct InheritedDeclarations<'a> {
     line_height: Option<&'a StyleValue>,
     letter_spacing: Option<&'a StyleValue>,
     color: Option<&'a StyleValue>,
+    text_align: Option<&'a StyleValue>,
     text_decoration: Option<&'a StyleValue>,
     text_shadow: Option<&'a StyleValue>,
 }
@@ -675,6 +695,7 @@ impl<'a> InheritedDeclarations<'a> {
                 StyleProperty::LineHeight => &mut values.line_height,
                 StyleProperty::LetterSpacing => &mut values.letter_spacing,
                 StyleProperty::Color => &mut values.color,
+                StyleProperty::TextAlign => &mut values.text_align,
                 StyleProperty::TextDecoration => &mut values.text_decoration,
                 StyleProperty::TextShadow => &mut values.text_shadow,
                 _ => continue,
@@ -1281,6 +1302,7 @@ mod tests {
             StyleProperty::LineHeight,
             StyleProperty::LetterSpacing,
             StyleProperty::Color,
+            StyleProperty::TextAlign,
             StyleProperty::TextDecoration,
             StyleProperty::TextShadow,
         ] {
@@ -1303,6 +1325,33 @@ mod tests {
         assert_eq!(
             StyleResolutionError::InvalidCalculation(StyleProperty::FontSize).to_string(),
             "invalid calculation for `font-size`"
+        );
+    }
+
+    #[test]
+    fn text_alignment_resolves_and_inherits() {
+        let parent = resolve_text_style(
+            &declaration(
+                StyleProperty::TextAlign,
+                StyleValue::TextAlign(TextAlignValue::Center),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            parent.inherited_for_children().text_align(),
+            TextAlignValue::Center
+        );
+        let child = resolve_text_style(
+            &SpecifiedStyle::new(),
+            Some(parent.inherited_for_children()),
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            child.inherited_for_children().text_align(),
+            TextAlignValue::Center
         );
     }
 
@@ -1711,6 +1760,7 @@ mod tests {
             line_height: ComputedLineHeight::LogicalPixels(number(24.0)),
             letter_spacing: number(1.0),
             color: ColorValue::Named("red".into()),
+            text_align: TextAlignValue::Center,
             text_decoration: ComputedTextDecoration {
                 line: TextDecorationLineValue::Underline,
                 style: TextDecorationStyleValue::Dashed,
@@ -1732,6 +1782,7 @@ mod tests {
             InheritedPropertySet::LINE_HEIGHT,
             InheritedPropertySet::LETTER_SPACING,
             InheritedPropertySet::COLOR,
+            InheritedPropertySet::TEXT_ALIGN,
             InheritedPropertySet::TEXT_DECORATION,
             InheritedPropertySet::TEXT_SHADOW,
         ] {

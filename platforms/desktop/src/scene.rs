@@ -1373,6 +1373,7 @@ mod tests {
                 },
                 locale: None,
                 direction: MeasureTextDirection::Auto,
+                alignment: whisker_protocol::MeasureTextAlignment::Start,
                 wrap: MeasureTextWrap::Wrap,
                 max_lines: None,
                 overflow: MeasureTextOverflow::Clip,

@@ -261,6 +261,7 @@ mod tests {
                 },
                 locale: Some("en-US".into()),
                 direction: MeasureTextDirection::LeftToRight,
+                alignment: whisker_protocol::MeasureTextAlignment::Start,
                 wrap: MeasureTextWrap::Wrap,
                 max_lines: Some(2),
                 overflow: MeasureTextOverflow::Ellipsis,

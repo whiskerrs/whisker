@@ -94,6 +94,13 @@ public enum WhiskerBuiltInElements {
                     weight: content.fontWeight >= 600 ? .bold : .regular
                 )
                 label.textColor = content.color
+                label.textAlignment = switch content.alignment {
+                case .start: label.effectiveUserInterfaceLayoutDirection == .rightToLeft ? .right : .left
+                case .end: label.effectiveUserInterfaceLayoutDirection == .rightToLeft ? .left : .right
+                case .left: .left
+                case .right: .right
+                case .center: .center
+                }
                 label.whiskerDecoration = content.decoration
                 var attributes: [NSAttributedString.Key: Any] = [
                     .font: label.font as Any,

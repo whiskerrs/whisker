@@ -8,6 +8,7 @@ use crate::keyword::{
     WhiteSpace, WordBreak, WordWrap,
 };
 use crate::style_value::ToStyleValue;
+use crate::to_css::ToCss;
 
 impl Css {
     /// Sets the Lynx-compatible single `text-shadow` layer.
@@ -122,7 +123,18 @@ impl Css {
     /// Sets `text-align`. **`justify` is not supported by Lynx**.
     /// <https://lynxjs.org/api/css/properties/text-align>
     pub fn text_align(self, v: TextAlign) -> Self {
-        self.push(crate::StyleProperty::TextAlign, v)
+        let value = match v {
+            TextAlign::Left => whisker_style::TextAlignValue::Left,
+            TextAlign::Right => whisker_style::TextAlignValue::Right,
+            TextAlign::Center => whisker_style::TextAlignValue::Center,
+            TextAlign::Start => whisker_style::TextAlignValue::Start,
+            TextAlign::End => whisker_style::TextAlignValue::End,
+        };
+        self.push_semantic(
+            crate::StyleProperty::TextAlign,
+            whisker_style::StyleValue::TextAlign(value),
+            v.to_css_string(),
+        )
     }
 
     /// Sets `text-decoration-line` (single value).
@@ -203,6 +215,10 @@ mod tests {
     fn text_align_keywords() {
         let s = Css::new().text_align(TextAlign::Center);
         assert_eq!(s.to_string(), "text-align: center;");
+        assert_eq!(
+            s.to_specified_style().unwrap().resolved()[0].value(),
+            &whisker_style::StyleValue::TextAlign(whisker_style::TextAlignValue::Center)
+        );
     }
 
     #[test]

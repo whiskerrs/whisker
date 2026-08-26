@@ -176,6 +176,7 @@
         "font_size": { "type": "number", "exclusiveMinimum": 0 },
         "font_weight": { "type": "integer", "minimum": 1, "maximum": 1000 },
         "color": { "$ref": "#/$defs/color" },
+        "alignment": { "enum": ["start", "end", "left", "right", "center"] },
         "decoration": { "$ref": "#/$defs/textDecoration" },
         "shadow": { "$ref": "#/$defs/textShadow" }
       }

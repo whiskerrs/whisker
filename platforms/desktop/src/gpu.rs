@@ -2194,6 +2194,11 @@ impl GpuRenderer {
                     {
                         let thickness = (content.payload.style.font_size / 16.0).max(1.0);
                         for run in prepared.buffer.layout_runs() {
+                            let Some(line_x) =
+                                run.glyphs.iter().map(|glyph| glyph.x).reduce(f32::min)
+                            else {
+                                continue;
+                            };
                             let baseline = rect.y + run.line_y;
                             let y = if decoration.lines.underline {
                                 baseline + thickness * 1.5
@@ -2201,7 +2206,7 @@ impl GpuRenderer {
                                 baseline - content.payload.style.font_size * 0.3
                             };
                             for line in text_decoration_rects(
-                                rect.x,
+                                rect.x + line_x,
                                 run.line_w,
                                 y,
                                 thickness,

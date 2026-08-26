@@ -74,6 +74,19 @@ fn color_protocol(value: &ColorFixture) -> PaintColor {
     }
 }
 
+fn fixture_alignment(
+    value: whisker_host_conformance::TextAlignmentFixture,
+) -> whisker_protocol::MeasureTextAlignment {
+    use whisker_host_conformance::TextAlignmentFixture as Fixture;
+    match value {
+        Fixture::Start => whisker_protocol::MeasureTextAlignment::Start,
+        Fixture::End => whisker_protocol::MeasureTextAlignment::End,
+        Fixture::Left => whisker_protocol::MeasureTextAlignment::Left,
+        Fixture::Right => whisker_protocol::MeasureTextAlignment::Right,
+        Fixture::Center => whisker_protocol::MeasureTextAlignment::Center,
+    }
+}
+
 fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextContent {
     TextContent {
         payload: TextMeasurePayload {
@@ -85,6 +98,7 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
             },
             locale: None,
             direction: MeasureTextDirection::Auto,
+            alignment: fixture_alignment(text.alignment),
             wrap: MeasureTextWrap::Wrap,
             max_lines: None,
             overflow: MeasureTextOverflow::Clip,
@@ -548,6 +562,8 @@ impl Driver {
                         self.assert_text_shadow();
                     } else if name == "paint.text.decoration-lynx" {
                         self.assert_text_decoration();
+                    } else if name == "paint.text.align-lynx" {
+                        self.assert_text_alignment();
                     }
                     checkpoints.push(Checkpoint {
                         logical_size: [
@@ -964,6 +980,31 @@ impl Driver {
         assert_eq!(decorations[0].color, PaintColor::Named("red".into()));
     }
 
+    fn assert_text_alignment(&self) {
+        let commands = self
+            .scene
+            .as_ref()
+            .expect("checkpoint follows attach")
+            .paint_commands();
+        let alignments = commands
+            .iter()
+            .filter_map(|command| match command {
+                PaintCommand::Text { content, .. } => Some(content.payload.alignment),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            alignments,
+            [
+                whisker_protocol::MeasureTextAlignment::Left,
+                whisker_protocol::MeasureTextAlignment::Right,
+                whisker_protocol::MeasureTextAlignment::Center,
+                whisker_protocol::MeasureTextAlignment::Start,
+                whisker_protocol::MeasureTextAlignment::End,
+            ]
+        );
+    }
+
     fn clipped_box_primitives(&self) -> Vec<ClippedBoxPrimitive> {
         let scene = self.scene.as_ref().expect("checkpoint follows attach");
         let mut primitives = Vec::new();
@@ -1159,6 +1200,7 @@ impl Driver {
                 },
                 locale: None,
                 direction: MeasureTextDirection::Auto,
+                alignment: whisker_protocol::MeasureTextAlignment::Start,
                 wrap: MeasureTextWrap::Wrap,
                 max_lines: None,
                 overflow: MeasureTextOverflow::Clip,

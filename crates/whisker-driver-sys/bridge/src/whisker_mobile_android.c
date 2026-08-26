@@ -498,7 +498,8 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 storage[19]=(float)p->decoration_color.red; storage[20]=(float)p->decoration_color.green;
                 storage[21]=(float)p->decoration_color.blue; storage[22]=p->decoration_color.alpha;
                 storage[23]=(float)p->decoration_color.kind;
-                numbers = floats(env, storage, 24);
+                storage[24]=(float)p->alignment;
+                numbers = floats(env, storage, 25);
                 jclass cls = (*env)->FindClass(env, "java/lang/String"); names = (*env)->NewObjectArray(env, 3, cls, NULL);
                 jstring color_name = new_string(env, p->color.name.ptr, p->color.name.len); (*env)->SetObjectArrayElement(env, names, 0, color_name);
                 jstring shadow_name = new_string(env, p->shadow_color.name.ptr, p->shadow_color.name.len); (*env)->SetObjectArrayElement(env, names, 1, shadow_name);

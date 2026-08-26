@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "id": "core.text-align-lynx",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 280, "height": 180, "scale": 1 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          { "id": 1, "parent": null, "rect": [10, 10, 260, 28], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "left", "font_size": 20, "color": { "kind": "named", "value": "black" }, "alignment": "left" } },
+          { "id": 2, "parent": null, "rect": [10, 42, 260, 28], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "right", "font_size": 20, "color": { "kind": "named", "value": "black" }, "alignment": "right" } },
+          { "id": 3, "parent": null, "rect": [10, 74, 260, 28], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "center", "font_size": 20, "color": { "kind": "named", "value": "black" }, "alignment": "center" } },
+          { "id": 4, "parent": null, "rect": [10, 106, 260, 28], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "start", "font_size": 20, "color": { "kind": "named", "value": "black" }, "alignment": "start" } },
+          { "id": 5, "parent": null, "rect": [10, 138, 260, 28], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "end", "font_size": 20, "color": { "kind": "named", "value": "black" }, "alignment": "end" } }
+        ]
+      },
+      { "type": "checkpoint", "name": "paint.text.align-lynx" }
+    ]
+  }
+}
