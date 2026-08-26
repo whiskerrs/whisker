@@ -570,6 +570,10 @@ impl FrameSink for DomFrameSink {
                     capability: whisker_protocol::RenderCapability::BackgroundGeometry,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::BackgroundLayerStacking,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("Web capability profile is unique")

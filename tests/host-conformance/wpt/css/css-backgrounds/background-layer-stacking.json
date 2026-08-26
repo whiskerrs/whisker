@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.background-layer-stacking",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/scroll-positioned-multiple-background-images.html",
+    "reference_path": "css/css-backgrounds/reference/60x60-green-background.html",
+    "license": "BSD-3-Clause",
+    "assertion": "The first declared background image is painted nearest the user and each layer keeps its own position and size.",
+    "adaptation": "Scrolling and external image resources are outside this Host paint slice. The two WPT images are replaced by resolved constant-color gradients: a positioned red foreground tile above a full blue layer. Samples retain the independent positioning and CSS layer-order assertions delivered through one SetBackgroundLayers operation."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 100.0],
+            "background": { "kind": "named", "value": "gray" },
+            "background_layers": [
+              {
+                "geometry": {
+                  "position": [
+                    { "length": 10.0, "fraction": 0.0 },
+                    { "length": 10.0, "fraction": 0.0 }
+                  ],
+                  "size": [
+                    { "length": 40.0, "fraction": 0.0 },
+                    { "length": 40.0, "fraction": 0.0 }
+                  ],
+                  "repeat_x": "no_repeat",
+                  "repeat_y": "no_repeat"
+                },
+                "image": {
+                  "linear_gradient": {
+                    "angle_degrees": 180.0,
+                    "stops": [
+                      { "color": { "kind": "named", "value": "red" }, "position": 0.0 },
+                      { "color": { "kind": "named", "value": "red" }, "position": 1.0 }
+                    ]
+                  }
+                }
+              },
+              {
+                "geometry": {
+                  "size": [
+                    { "length": 100.0, "fraction": 0.0 },
+                    { "length": 100.0, "fraction": 0.0 }
+                  ],
+                  "repeat_x": "no_repeat",
+                  "repeat_y": "no_repeat"
+                },
+                "image": {
+                  "linear_gradient": {
+                    "angle_degrees": 180.0,
+                    "stops": [
+                      { "color": { "kind": "named", "value": "blue" }, "position": 0.0 },
+                      { "color": { "kind": "named", "value": "blue" }, "position": 1.0 }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.stacking",
+        "samples": [
+          { "point": [5.0, 5.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 5 },
+          { "point": [15.0, 15.0], "color": { "kind": "named", "value": "red" }, "tolerance": 5 },
+          { "point": [49.0, 49.0], "color": { "kind": "named", "value": "red" }, "tolerance": 5 },
+          { "point": [50.0, 50.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 5 },
+          { "point": [99.0, 99.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

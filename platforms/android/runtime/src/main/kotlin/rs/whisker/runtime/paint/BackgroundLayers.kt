@@ -47,13 +47,16 @@ internal data class HostConicGradient(
     val stops: List<HostGradientStop>,
 )
 
-/** Retained projection of the currently supported SetBackgroundLayers subset. */
-internal data class HostBackgroundLayers(
+/** One retained projection of the currently supported background-image subset. */
+internal data class HostBackgroundLayer(
     val linearGradient: HostLinearGradient?,
     val radialGradient: HostRadialGradient? = null,
     val conicGradient: HostConicGradient? = null,
     val geometry: HostBackgroundGeometry = HostBackgroundGeometry(),
 )
+
+/** CSS-ordered layers. The first entry is painted nearest the user. */
+internal data class HostBackgroundLayers(val layers: List<HostBackgroundLayer>)
 
 internal fun drawBackgroundLayers(
     canvas: Canvas,
@@ -61,7 +64,18 @@ internal fun drawBackgroundLayers(
     layers: HostBackgroundLayers?,
     paint: Paint,
 ) {
-    val geometry = layers?.geometry ?: return
+    layers?.layers?.asReversed()?.forEach { layer ->
+        drawBackgroundLayer(canvas, boxes, layer, paint)
+    }
+}
+
+private fun drawBackgroundLayer(
+    canvas: Canvas,
+    boxes: HostBackgroundPaintBoxes,
+    layer: HostBackgroundLayer,
+    paint: Paint,
+) {
+    val geometry = layer.geometry
     val positioningBox = boxes.select(geometry.origin).rect
     val painting = boxes.select(geometry.clip)
     val saveCount = canvas.save().also {
@@ -71,7 +85,7 @@ internal fun drawBackgroundLayers(
         geometry.forEachImageBox(positioningBox, painting.rect) { imageBox ->
             val tileSaveCount = canvas.save().also { canvas.clipRect(imageBox) }
             try {
-                drawBackgroundImage(canvas, painting.clip, imageBox, layers, paint)
+                drawBackgroundImage(canvas, painting.clip, imageBox, layer, paint)
             } finally {
                 canvas.restoreToCount(tileSaveCount)
             }
@@ -85,18 +99,18 @@ private fun drawBackgroundImage(
     canvas: Canvas,
     clip: Path,
     imageBox: RectF,
-    layers: HostBackgroundLayers,
+    layer: HostBackgroundLayer,
     paint: Paint,
 ) {
-    layers.linearGradient?.let { gradient ->
+    layer.linearGradient?.let { gradient ->
         drawLinearGradient(canvas, clip, imageBox, gradient, paint)
         return
     }
-    layers.radialGradient?.let { gradient ->
+    layer.radialGradient?.let { gradient ->
         drawRadialGradient(canvas, clip, imageBox, gradient, paint)
         return
     }
-    layers.conicGradient?.let { gradient ->
+    layer.conicGradient?.let { gradient ->
         drawConicGradient(canvas, clip, imageBox, gradient, paint)
     }
 }

@@ -114,36 +114,28 @@ struct HostBackgroundGeometry {
     }
 }
 
-private enum HostBackgroundImage {
+enum HostBackgroundImage {
     case linear(HostLinearGradient)
     case radial(HostRadialGradient)
     case conic(HostConicGradient)
 }
 
+final class HostBackgroundLayer {
+    let image: HostBackgroundImage
+    let geometry: HostBackgroundGeometry
+    var conicCache: (size: CGSize, scale: CGFloat, image: CGImage)?
+
+    init(image: HostBackgroundImage, geometry: HostBackgroundGeometry) {
+        self.image = image
+        self.geometry = geometry
+    }
+}
+
 final class HostBackgroundPainter {
-    private var image: HostBackgroundImage?
-    private var geometry = HostBackgroundGeometry.initial
-    private var conicCache: (size: CGSize, scale: CGFloat, image: CGImage)?
+    private var layers = [HostBackgroundLayer]()
 
-    func update(
-        linearGradient: HostLinearGradient?,
-        geometry: HostBackgroundGeometry = .initial
-    ) {
-        image = linearGradient.map(HostBackgroundImage.linear)
-        self.geometry = geometry
-        conicCache = nil
-    }
-
-    func update(radialGradient: HostRadialGradient, geometry: HostBackgroundGeometry) {
-        image = .radial(radialGradient)
-        self.geometry = geometry
-        conicCache = nil
-    }
-
-    func update(conicGradient: HostConicGradient, geometry: HostBackgroundGeometry) {
-        image = .conic(conicGradient)
-        self.geometry = geometry
-        conicCache = nil
+    func update(_ layers: [HostBackgroundLayer]) {
+        self.layers = layers
     }
 
     func draw(
@@ -154,6 +146,32 @@ final class HostBackgroundPainter {
         paddingClip: CGPath,
         contentClip: CGPath
     ) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        for layer in layers.reversed() {
+            draw(
+                layer,
+                borderBox: borderBox,
+                paddingBox: paddingBox,
+                contentBox: contentBox,
+                borderClip: borderClip,
+                paddingClip: paddingClip,
+                contentClip: contentClip,
+                context: context
+            )
+        }
+    }
+
+    private func draw(
+        _ layer: HostBackgroundLayer,
+        borderBox: CGRect,
+        paddingBox: CGRect,
+        contentBox: CGRect,
+        borderClip: CGPath,
+        paddingClip: CGPath,
+        contentClip: CGPath,
+        context: CGContext
+    ) {
+        let geometry = layer.geometry
         let positioningBox = switch geometry.origin {
         case .border: borderBox
         case .padding: paddingBox
@@ -165,8 +183,7 @@ final class HostBackgroundPainter {
         case .content: contentClip
         }
         let imageBounds = geometry.imageBounds(in: positioningBox)
-        guard let image, imageBounds.width > 0, imageBounds.height > 0,
-              let context = UIGraphicsGetCurrentContext() else { return }
+        guard imageBounds.width > 0, imageBounds.height > 0 else { return }
         context.saveGState()
         context.addPath(clipPath)
         context.clip()
@@ -192,13 +209,13 @@ final class HostBackgroundPainter {
             }
             context.saveGState()
             context.clip(to: tileClip)
-            switch image {
+            switch layer.image {
             case let .linear(gradient):
                 drawLinear(gradient, in: tile, context: context)
             case let .radial(gradient):
                 drawRadial(gradient, in: tile, context: context)
             case let .conic(gradient):
-                drawConic(gradient, in: tile, context: context)
+                drawConic(gradient, in: tile, context: context, layer: layer)
             }
             context.restoreGState()
         }
@@ -292,13 +309,14 @@ final class HostBackgroundPainter {
     private func drawConic(
         _ conicGradient: HostConicGradient,
         in bounds: CGRect,
-        context: CGContext
+        context: CGContext,
+        layer: HostBackgroundLayer
     ) {
         let stops = normalizedConicStops(conicGradient.stops)
         guard stops.count >= 2 else { return }
         let scale = max(hypot(context.ctm.a, context.ctm.c), 1)
         let image: CGImage
-        if let cache = conicCache, cache.size == bounds.size, cache.scale == scale {
+        if let cache = layer.conicCache, cache.size == bounds.size, cache.scale == scale {
             image = cache.image
         } else {
             guard let rendered = rasterizeConic(
@@ -307,7 +325,7 @@ final class HostBackgroundPainter {
                 size: bounds.size,
                 scale: scale
             ) else { return }
-            conicCache = (bounds.size, scale, rendered)
+            layer.conicCache = (bounds.size, scale, rendered)
             image = rendered
         }
 

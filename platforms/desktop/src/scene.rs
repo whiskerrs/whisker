@@ -793,6 +793,10 @@ impl FrameSink for DesktopScene {
                     capability: whisker_protocol::RenderCapability::BackgroundGeometry,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::BackgroundLayerStacking,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("Desktop capability profile is unique")

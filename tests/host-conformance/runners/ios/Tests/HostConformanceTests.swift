@@ -71,6 +71,61 @@ final class HostConformanceTests: XCTestCase {
         )
     }
 
+    func testBackgroundLayerArrayRejectsAnInvalidTrailingLayerTransactionally() {
+        var stops = [WhiskerMobileGradientStop(), WhiskerMobileGradientStop()]
+        for index in stops.indices {
+            stops[index].color.kind = 1
+            stops[index].color.red = 255
+            stops[index].color.alpha = 1
+            stops[index].position.fraction = Float(index)
+        }
+        stops.withUnsafeMutableBufferPointer { stopBuffer in
+            var valid = WhiskerMobileBackgroundLayer()
+            valid.image.kind = UInt32(WHISKER_BACKGROUND_LINEAR)
+            valid.image.payload = UnsafeRawPointer(stopBuffer.baseAddress!)
+            valid.image.payload_count = stopBuffer.count
+            valid.size_kind = UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT)
+            valid.size_width.length = 10
+            valid.size_height.length = 10
+            valid.repeat_x = UInt32(WHISKER_BACKGROUND_NO_REPEAT)
+            valid.repeat_y = UInt32(WHISKER_BACKGROUND_NO_REPEAT)
+            valid.origin = UInt32(WHISKER_BACKGROUND_BOX_BORDER)
+            valid.clip = UInt32(WHISKER_BACKGROUND_BOX_BORDER)
+            var invalid = valid
+            invalid.image.kind = UInt32.max
+            var layers = [valid, invalid]
+            layers.withUnsafeMutableBufferPointer { layerBuffer in
+                var operations = [
+                    operation(tag: UInt32(WHISKER_OP_CREATE), node: 1, member: 1),
+                    operation(
+                        tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
+                        node: 1,
+                        payload: UnsafeRawPointer(layerBuffer.baseAddress!),
+                        count: layerBuffer.count
+                    )
+                ]
+                operations.withUnsafeMutableBufferPointer { operationBuffer in
+                    var frame = WhiskerMobileFrame()
+                    frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                    frame.abi_minor = UInt16(WHISKER_MOBILE_ABI_MINOR)
+                    frame.protocol_major = 1
+                    frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
+                    frame.surface = 1
+                    frame.scene_epoch = 1
+                    frame.viewport_epoch = 1
+                    frame.frame_id = 1
+                    frame.target_revision = 1
+                    frame.operations = UnsafePointer(operationBuffer.baseAddress!)
+                    frame.operation_count = operationBuffer.count
+                    var response = WhiskerMobileApplyResponse()
+                    let view = WhiskerView(frame: .zero)
+                    XCTAssertTrue(view.applyConformanceFrame(frame, response: &response))
+                    XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_REJECTED))
+                }
+            }
+        }
+    }
+
     func testBackgroundTileOriginsRespectEachRepeatAxis() {
         XCTAssertEqual(
             backgroundTileOrigins(
@@ -236,7 +291,8 @@ private final class Driver {
                     name == "paint.background-layers.repeat-round-y" ||
                     name == "paint.background-layers.repeat-round-position" ||
                     name == "paint.background-layers.origin-content-box" ||
-                    name == "paint.background-layers.clip-content-box" else {
+                    name == "paint.background-layers.clip-content-box" ||
+                    name == "paint.background-layers.stacking" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -326,44 +382,46 @@ private final class Driver {
         var transforms = fixtures.flatMap { fixture in
             fixture.transform ?? [Float](repeating: 0, count: 16)
         }
+        let layersByFixture = fixtures.map(\.resolvedBackgroundLayers)
+        var layerRanges = [Range<Int>]()
+        var stagedLayers = [ScenePaintLayer]()
+        for layers in layersByFixture {
+            let start = stagedLayers.count
+            stagedLayers.append(contentsOf: layers)
+            layerRanges.append(start..<stagedLayers.count)
+        }
         var gradientStops = [WhiskerMobileGradientStop]()
-        var gradientOffsets = [Int?]()
-        for fixture in fixtures {
-            if let gradient = fixture.linearGradient {
-                gradientOffsets.append(gradientStops.count)
-                gradientStops.append(contentsOf: gradient.stops)
-            } else if let gradient = fixture.radialGradient {
-                gradientOffsets.append(gradientStops.count)
-                gradientStops.append(contentsOf: gradient.stops)
-            } else if let gradient = fixture.conicGradient {
-                gradientOffsets.append(gradientStops.count)
-                gradientStops.append(contentsOf: gradient.stops)
-            } else {
-                gradientOffsets.append(nil)
+        var gradientOffsets = [Int]()
+        for layer in stagedLayers {
+            gradientOffsets.append(gradientStops.count)
+            switch layer.image {
+            case let .linear(gradient): gradientStops.append(contentsOf: gradient.stops)
+            case let .radial(gradient): gradientStops.append(contentsOf: gradient.stops)
+            case let .conic(gradient): gradientStops.append(contentsOf: gradient.stops)
             }
         }
         var radialPayloads = [WhiskerMobileRadialGradient](
             repeating: WhiskerMobileRadialGradient(),
-            count: fixtures.count
+            count: stagedLayers.count
         )
         var conicPayloads = [WhiskerMobileConicGradient](
             repeating: WhiskerMobileConicGradient(),
-            count: fixtures.count
+            count: stagedLayers.count
         )
         var backgroundPayloads = [WhiskerMobileBackgroundLayer](
             repeating: WhiskerMobileBackgroundLayer(),
-            count: fixtures.count
+            count: stagedLayers.count
         )
         try layouts.withUnsafeMutableBufferPointer { layoutBuffer in
             try paints.withUnsafeMutableBufferPointer { paintBuffer in
                 try transforms.withUnsafeMutableBufferPointer { transformBuffer in
                     try gradientStops.withUnsafeMutableBufferPointer { gradientBuffer in
-                        for (index, fixture) in fixtures.enumerated() {
-                            guard let offset = gradientOffsets[index] else { continue }
+                        for (index, layer) in stagedLayers.enumerated() {
+                            let offset = gradientOffsets[index]
                             let stops = UnsafePointer(
                                 gradientBuffer.baseAddress!.advanced(by: offset)
                             )
-                            if let radial = fixture.radialGradient {
+                            if case let .radial(radial) = layer.image {
                                 radialPayloads[index].center_x = WhiskerMobileLengthPercentage(
                                     length: radial.center[0], fraction: 0
                                 )
@@ -378,7 +436,7 @@ private final class Driver {
                                 )
                                 radialPayloads[index].stops = stops
                                 radialPayloads[index].stop_count = radial.stops.count
-                            } else if let conic = fixture.conicGradient {
+                            } else if case let .conic(conic) = layer.image {
                                 conicPayloads[index].center_x = WhiskerMobileLengthPercentage(
                                     length: conic.center[0], fraction: 0
                                 )
@@ -391,9 +449,9 @@ private final class Driver {
                         }
                         try radialPayloads.withUnsafeMutableBufferPointer { radialBuffer in
                             try conicPayloads.withUnsafeMutableBufferPointer { conicBuffer in
-                            for (index, fixture) in fixtures.enumerated() {
-                                guard let offset = gradientOffsets[index] else { continue }
-                                let geometry = fixture.backgroundLayer
+                            for (index, layer) in stagedLayers.enumerated() {
+                                let offset = gradientOffsets[index]
+                                let geometry = layer.geometry
                                 backgroundPayloads[index].position_x = geometry.position[0]
                                 backgroundPayloads[index].position_y = geometry.position[1]
                                 backgroundPayloads[index].size_kind = geometry.size == nil
@@ -413,7 +471,8 @@ private final class Driver {
                                 backgroundPayloads[index].blend_mode = UInt32(
                                     WHISKER_BACKGROUND_BLEND_NORMAL
                                 )
-                                if let gradient = fixture.linearGradient {
+                                switch layer.image {
+                                case let .linear(gradient):
                                     backgroundPayloads[index].image.kind = UInt32(
                                         WHISKER_BACKGROUND_LINEAR
                                     )
@@ -422,7 +481,7 @@ private final class Driver {
                                         gradientBuffer.baseAddress!.advanced(by: offset)
                                     )
                                     backgroundPayloads[index].image.payload_count = gradient.stops.count
-                                } else if fixture.radialGradient != nil {
+                                case .radial:
                                     backgroundPayloads[index].image.kind = UInt32(
                                         WHISKER_BACKGROUND_RADIAL
                                     )
@@ -430,7 +489,7 @@ private final class Driver {
                                         radialBuffer.baseAddress!.advanced(by: index)
                                     )
                                     backgroundPayloads[index].image.payload_count = 1
-                                } else if let gradient = fixture.conicGradient {
+                                case let .conic(gradient):
                                     backgroundPayloads[index].image.kind = UInt32(
                                         WHISKER_BACKGROUND_CONIC
                                     )
@@ -511,14 +570,17 @@ private final class Driver {
                                         integer: zOrder
                                     ))
                                 }
-                                if gradientOffsets[index] != nil {
+                                let layerRange = layerRanges[index]
+                                if !layerRange.isEmpty {
                                     operations.append(operation(
                                         tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
                                         node: fixture.id,
                                         payload: UnsafeRawPointer(
-                                            backgroundBuffer.baseAddress!.advanced(by: index)
+                                            backgroundBuffer.baseAddress!.advanced(
+                                                by: layerRange.lowerBound
+                                            )
                                         ),
-                                        count: 1
+                                        count: layerRange.count
                                     ))
                                 }
                             }
@@ -604,9 +666,37 @@ private struct SceneFixtureNode {
     let visible: Bool?
     let zOrder: Int32?
     let backgroundLayer: SceneBackgroundLayer
+    let backgroundLayers: [ScenePaintLayer]
     let linearGradient: SceneLinearGradient?
     let radialGradient: SceneRadialGradient?
     let conicGradient: SceneConicGradient?
+}
+
+private struct ScenePaintLayer {
+    let geometry: SceneBackgroundLayer
+    let image: ScenePaintImage
+}
+
+private enum ScenePaintImage {
+    case linear(SceneLinearGradient)
+    case radial(SceneRadialGradient)
+    case conic(SceneConicGradient)
+}
+
+private extension SceneFixtureNode {
+    var resolvedBackgroundLayers: [ScenePaintLayer] {
+        if !backgroundLayers.isEmpty { return backgroundLayers }
+        if let linearGradient {
+            return [ScenePaintLayer(geometry: backgroundLayer, image: .linear(linearGradient))]
+        }
+        if let radialGradient {
+            return [ScenePaintLayer(geometry: backgroundLayer, image: .radial(radialGradient))]
+        }
+        if let conicGradient {
+            return [ScenePaintLayer(geometry: backgroundLayer, image: .conic(conicGradient))]
+        }
+        return []
+    }
 }
 
 private struct SceneBackgroundLayer {
@@ -737,65 +827,36 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     }
     let backgroundLayer = try fixture["background_layer"]
         .map { try sceneBackgroundLayer($0) } ?? .initial
+    let backgroundLayers = try (fixture["background_layers"] as? [[String: Any]] ?? []).map {
+        layer -> ScenePaintLayer in
+        let geometry = try layer["geometry"].map { try sceneBackgroundLayer($0) } ?? .initial
+        let image = try object(layer, "image")
+        if let gradient = image["linear_gradient"] as? [String: Any] {
+            return ScenePaintLayer(geometry: geometry, image: .linear(try sceneLinearGradient(gradient)))
+        }
+        if let gradient = image["radial_gradient"] as? [String: Any] {
+            return ScenePaintLayer(geometry: geometry, image: .radial(try sceneRadialGradient(gradient)))
+        }
+        if let gradient = image["conic_gradient"] as? [String: Any] {
+            return ScenePaintLayer(geometry: geometry, image: .conic(try sceneConicGradient(gradient)))
+        }
+        throw Failure("background layer needs one supported image")
+    }
     let linearGradient: SceneLinearGradient?
     if let gradient = fixture["linear_gradient"] as? [String: Any] {
-        let stops = try objectArray(gradient, "stops").map { stop -> WhiskerMobileGradientStop in
-            var raw = WhiskerMobileGradientStop()
-            raw.color = try color(try object(stop, "color"))
-            raw.position = WhiskerMobileLengthPercentage(
-                length: 0,
-                fraction: Float(try number(stop, "position"))
-            )
-            return raw
-        }
-        guard stops.count >= 2 else { throw Failure("linear gradient needs at least two stops") }
-        linearGradient = SceneLinearGradient(
-            angleDegrees: Float(try number(gradient, "angle_degrees")),
-            stops: stops
-        )
+        linearGradient = try sceneLinearGradient(gradient)
     } else {
         linearGradient = nil
     }
     let radialGradient: SceneRadialGradient?
     if let gradient = fixture["radial_gradient"] as? [String: Any] {
-        let center = try numberArray(gradient, "center").map(Float.init)
-        let radii = try numberArray(gradient, "radii").map(Float.init)
-        let stops = try objectArray(gradient, "stops").map { stop -> WhiskerMobileGradientStop in
-            var raw = WhiskerMobileGradientStop()
-            raw.color = try color(try object(stop, "color"))
-            raw.position = WhiskerMobileLengthPercentage(
-                length: 0,
-                fraction: Float(try number(stop, "position"))
-            )
-            return raw
-        }
-        guard center.count == 2, radii.count == 2, stops.count >= 2 else {
-            throw Failure("radial gradient needs a center, two radii, and at least two stops")
-        }
-        radialGradient = SceneRadialGradient(center: center, radii: radii, stops: stops)
+        radialGradient = try sceneRadialGradient(gradient)
     } else {
         radialGradient = nil
     }
     let conicGradient: SceneConicGradient?
     if let gradient = fixture["conic_gradient"] as? [String: Any] {
-        let center = try numberArray(gradient, "center").map(Float.init)
-        let stops = try objectArray(gradient, "stops").map { stop -> WhiskerMobileGradientStop in
-            var raw = WhiskerMobileGradientStop()
-            raw.color = try color(try object(stop, "color"))
-            raw.position = WhiskerMobileLengthPercentage(
-                length: 0,
-                fraction: Float(try number(stop, "position"))
-            )
-            return raw
-        }
-        guard center.count == 2, stops.count >= 2 else {
-            throw Failure("conic gradient needs a center and at least two stops")
-        }
-        conicGradient = SceneConicGradient(
-            fromDegrees: Float(try number(gradient, "from_degrees")),
-            center: center,
-            stops: stops
-        )
+        conicGradient = try sceneConicGradient(gradient)
     } else {
         conicGradient = nil
     }
@@ -810,9 +871,54 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         visible: visible,
         zOrder: zOrder,
         backgroundLayer: backgroundLayer,
+        backgroundLayers: backgroundLayers,
         linearGradient: linearGradient,
         radialGradient: radialGradient,
         conicGradient: conicGradient
+    )
+}
+
+private func sceneGradientStops(_ gradient: [String: Any]) throws -> [WhiskerMobileGradientStop] {
+    let stops = try objectArray(gradient, "stops").map { stop -> WhiskerMobileGradientStop in
+        var raw = WhiskerMobileGradientStop()
+        raw.color = try color(try object(stop, "color"))
+        raw.position = WhiskerMobileLengthPercentage(
+            length: 0,
+            fraction: Float(try number(stop, "position"))
+        )
+        return raw
+    }
+    guard stops.count >= 2 else { throw Failure("gradient needs at least two stops") }
+    return stops
+}
+
+private func sceneLinearGradient(_ gradient: [String: Any]) throws -> SceneLinearGradient {
+    SceneLinearGradient(
+        angleDegrees: Float(try number(gradient, "angle_degrees")),
+        stops: try sceneGradientStops(gradient)
+    )
+}
+
+private func sceneRadialGradient(_ gradient: [String: Any]) throws -> SceneRadialGradient {
+    let center = try numberArray(gradient, "center").map(Float.init)
+    let radii = try numberArray(gradient, "radii").map(Float.init)
+    guard center.count == 2, radii.count == 2 else {
+        throw Failure("radial gradient needs a center and two radii")
+    }
+    return SceneRadialGradient(
+        center: center,
+        radii: radii,
+        stops: try sceneGradientStops(gradient)
+    )
+}
+
+private func sceneConicGradient(_ gradient: [String: Any]) throws -> SceneConicGradient {
+    let center = try numberArray(gradient, "center").map(Float.init)
+    guard center.count == 2 else { throw Failure("conic gradient needs a center") }
+    return SceneConicGradient(
+        fromDegrees: Float(try number(gradient, "from_degrees")),
+        center: center,
+        stops: try sceneGradientStops(gradient)
     )
 }
 
@@ -908,6 +1014,7 @@ private func color(_ fixture: [String: Any]) throws -> WhiskerMobileColor {
         case "aqua": rgba = (0, 255, 255, 1)
         case "black": rgba = (0, 0, 0, 1)
         case "blue": rgba = (0, 0, 255, 1)
+        case "gray": rgba = (128, 128, 128, 1)
         case "green": rgba = (0, 128, 0, 1)
         case "gold": rgba = (255, 215, 0, 1)
         case "red": rgba = (255, 0, 0, 1)

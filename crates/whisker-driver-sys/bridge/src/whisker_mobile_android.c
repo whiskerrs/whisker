@@ -201,19 +201,6 @@ static jobjectArray color_names(JNIEnv* env, const WhiskerMobileBoxPaint* paint)
     (*env)->DeleteLocalRef(env, cls); return result;
 }
 
-static jobjectArray gradient_stop_names(JNIEnv* env, const WhiskerMobileGradientStop* stops,
-                                        size_t count) {
-    jclass cls = (*env)->FindClass(env, "java/lang/String");
-    jobjectArray result = (*env)->NewObjectArray(env, (jsize)count, cls, NULL);
-    for (size_t i = 0; i < count; ++i) {
-        jstring name = new_string(env, stops[i].color.name.ptr, stops[i].color.name.len);
-        (*env)->SetObjectArrayElement(env, result, (jsize)i, name);
-        if (name) (*env)->DeleteLocalRef(env, name);
-    }
-    (*env)->DeleteLocalRef(env, cls);
-    return result;
-}
-
 static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMobileApplyResponse* response) {
     if (frame == NULL || response == NULL || frame->abi_major != WHISKER_MOBILE_ABI_MAJOR) return false;
     bool attached; JNIEnv* env = whisker_env(&attached); jobject view = env != NULL ? local_view(env, data) : NULL;
@@ -270,82 +257,130 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                     staged_scalar = 0.0f;
                     break;
                 }
-                if (op->payload_count != 1) { ok = false; break; }
-                const WhiskerMobileBackgroundLayer* layer = op->payload;
-                const WhiskerMobileGradientStop* stops = layer->image.payload;
-                const WhiskerMobileRadialGradient* radial = NULL;
-                const WhiskerMobileConicGradient* conic = NULL;
-                size_t stop_count = layer->image.payload_count;
-                size_t image_prefix_count = 0;
-                if (layer->image.kind == WHISKER_BACKGROUND_RADIAL) {
-                    if (layer->image.payload == NULL || layer->image.payload_count != 1) {
-                        ok = false; break;
-                    }
-                    radial = layer->image.payload;
-                    stops = radial->stops;
-                    stop_count = radial->stop_count;
-                    image_prefix_count = 8;
-                } else if (layer->image.kind == WHISKER_BACKGROUND_CONIC) {
-                    if (layer->image.payload == NULL || layer->image.payload_count != 1) {
-                        ok = false; break;
-                    }
-                    conic = layer->image.payload;
-                    stops = conic->stops;
-                    stop_count = conic->stop_count;
-                    image_prefix_count = 4;
-                } else if (layer->image.kind != WHISKER_BACKGROUND_LINEAR) {
-                    ok = false; break;
-                }
+                if (op->payload_count == 0 || op->payload_count > 256) { ok = false; break; }
+                const WhiskerMobileBackgroundLayer* layers = op->payload;
                 const size_t geometry_count = 15;
-                size_t prefix_count = geometry_count + image_prefix_count;
-                if ((stops == NULL && stop_count != 0) || stop_count > (INT32_MAX - prefix_count) / 7) {
-                    ok = false; break;
+                const size_t packed_header_count = 3;
+                const size_t max_exact_float_integer = 1u << 24;
+                size_t total_values = 1;
+                size_t total_stops = 0;
+                for (size_t layer_index = 0; layer_index < op->payload_count; ++layer_index) {
+                    const WhiskerMobileBackgroundLayer* layer = &layers[layer_index];
+                    const WhiskerMobileGradientStop* stops = layer->image.payload;
+                    size_t stop_count = layer->image.payload_count;
+                    size_t image_prefix_count = 0;
+                    if (layer->image.kind == WHISKER_BACKGROUND_RADIAL) {
+                        if (layer->image.payload == NULL || layer->image.payload_count != 1) {
+                            ok = false; break;
+                        }
+                        const WhiskerMobileRadialGradient* radial = layer->image.payload;
+                        stops = radial->stops;
+                        stop_count = radial->stop_count;
+                        image_prefix_count = 8;
+                    } else if (layer->image.kind == WHISKER_BACKGROUND_CONIC) {
+                        if (layer->image.payload == NULL || layer->image.payload_count != 1) {
+                            ok = false; break;
+                        }
+                        const WhiskerMobileConicGradient* conic = layer->image.payload;
+                        stops = conic->stops;
+                        stop_count = conic->stop_count;
+                        image_prefix_count = 4;
+                    } else if (layer->image.kind != WHISKER_BACKGROUND_LINEAR) {
+                        ok = false; break;
+                    }
+                    size_t prefix_count = geometry_count + image_prefix_count;
+                    if ((stops == NULL && stop_count != 0) ||
+                        stop_count > (max_exact_float_integer - prefix_count) / 7) {
+                        ok = false; break;
+                    }
+                    size_t value_count = prefix_count + stop_count * 7;
+                    if (value_count > max_exact_float_integer ||
+                        packed_header_count + value_count > max_exact_float_integer - total_values ||
+                        stop_count > INT32_MAX - total_stops) {
+                        ok = false; break;
+                    }
+                    total_values += packed_header_count + value_count;
+                    total_stops += stop_count;
                 }
-                size_t value_count = prefix_count + stop_count * 7;
-                float* values = malloc((value_count > 0 ? value_count : 1) * sizeof(float));
+                if (!ok) break;
+                float* values = malloc(total_values * sizeof(float));
                 if (values == NULL) { ok = false; break; }
+                jclass string_class = (*env)->FindClass(env, "java/lang/String");
+                names = string_class == NULL ? NULL
+                    : (*env)->NewObjectArray(env, (jsize)total_stops, string_class, NULL);
+                if (string_class) (*env)->DeleteLocalRef(env, string_class);
+                if (names == NULL) { free(values); ok = false; break; }
                 size_t cursor = 0;
-                const WhiskerMobileLengthPercentage* geometry[] = {
-                    &layer->position_x, &layer->position_y,
-                    &layer->size_width, &layer->size_height
-                };
-                for (size_t j = 0; j < 4; ++j) {
-                    values[cursor++] = geometry[j]->length;
-                    values[cursor++] = geometry[j]->fraction;
-                }
-                values[cursor++] = (float)layer->size_kind;
-                values[cursor++] = (float)layer->repeat_x;
-                values[cursor++] = (float)layer->repeat_y;
-                values[cursor++] = (float)layer->origin;
-                values[cursor++] = (float)layer->clip;
-                values[cursor++] = (float)layer->attachment;
-                values[cursor++] = (float)layer->blend_mode;
-                if (radial != NULL) {
-                    const WhiskerMobileLengthPercentage* coordinates[] = {
-                        &radial->center_x, &radial->center_y, &radial->radius_x, &radial->radius_y
+                size_t name_cursor = 0;
+                values[cursor++] = (float)op->payload_count;
+                for (size_t layer_index = 0; layer_index < op->payload_count; ++layer_index) {
+                    const WhiskerMobileBackgroundLayer* layer = &layers[layer_index];
+                    const WhiskerMobileGradientStop* stops = layer->image.payload;
+                    const WhiskerMobileRadialGradient* radial = NULL;
+                    const WhiskerMobileConicGradient* conic = NULL;
+                    size_t stop_count = layer->image.payload_count;
+                    size_t image_prefix_count = 0;
+                    if (layer->image.kind == WHISKER_BACKGROUND_RADIAL) {
+                        radial = layer->image.payload;
+                        stops = radial->stops;
+                        stop_count = radial->stop_count;
+                        image_prefix_count = 8;
+                    } else if (layer->image.kind == WHISKER_BACKGROUND_CONIC) {
+                        conic = layer->image.payload;
+                        stops = conic->stops;
+                        stop_count = conic->stop_count;
+                        image_prefix_count = 4;
+                    }
+                    size_t value_count = geometry_count + image_prefix_count + stop_count * 7;
+                    values[cursor++] = (float)layer->image.kind;
+                    values[cursor++] = layer->image.scalar;
+                    values[cursor++] = (float)value_count;
+                    const WhiskerMobileLengthPercentage* geometry[] = {
+                        &layer->position_x, &layer->position_y,
+                        &layer->size_width, &layer->size_height
                     };
                     for (size_t j = 0; j < 4; ++j) {
-                        values[cursor++] = coordinates[j]->length;
-                        values[cursor++] = coordinates[j]->fraction;
+                        values[cursor++] = geometry[j]->length;
+                        values[cursor++] = geometry[j]->fraction;
                     }
-                } else if (conic != NULL) {
-                    const WhiskerMobileLengthPercentage* coordinates[] = {
-                        &conic->center_x, &conic->center_y
-                    };
-                    for (size_t j = 0; j < 2; ++j) {
-                        values[cursor++] = coordinates[j]->length;
-                        values[cursor++] = coordinates[j]->fraction;
+                    values[cursor++] = (float)layer->size_kind;
+                    values[cursor++] = (float)layer->repeat_x;
+                    values[cursor++] = (float)layer->repeat_y;
+                    values[cursor++] = (float)layer->origin;
+                    values[cursor++] = (float)layer->clip;
+                    values[cursor++] = (float)layer->attachment;
+                    values[cursor++] = (float)layer->blend_mode;
+                    if (radial != NULL) {
+                        const WhiskerMobileLengthPercentage* coordinates[] = {
+                            &radial->center_x, &radial->center_y,
+                            &radial->radius_x, &radial->radius_y
+                        };
+                        for (size_t j = 0; j < 4; ++j) {
+                            values[cursor++] = coordinates[j]->length;
+                            values[cursor++] = coordinates[j]->fraction;
+                        }
+                    } else if (conic != NULL) {
+                        const WhiskerMobileLengthPercentage* coordinates[] = {
+                            &conic->center_x, &conic->center_y
+                        };
+                        for (size_t j = 0; j < 2; ++j) {
+                            values[cursor++] = coordinates[j]->length;
+                            values[cursor++] = coordinates[j]->fraction;
+                        }
+                    }
+                    for (size_t j = 0; j < stop_count; ++j) {
+                        append_color(values, &cursor, &stops[j].color);
+                        values[cursor++] = stops[j].position.length;
+                        values[cursor++] = stops[j].position.fraction;
+                        jstring name = new_string(
+                            env, stops[j].color.name.ptr, stops[j].color.name.len);
+                        (*env)->SetObjectArrayElement(env, names, (jsize)name_cursor++, name);
+                        if (name) (*env)->DeleteLocalRef(env, name);
                     }
                 }
-                for (size_t j = 0; j < stop_count; ++j) {
-                    append_color(values, &cursor, &stops[j].color);
-                    values[cursor++] = stops[j].position.length;
-                    values[cursor++] = stops[j].position.fraction;
-                }
-                numbers = floats(env, values, value_count);
-                names = gradient_stop_names(env, stops, stop_count);
-                staged_flags = layer->image.kind;
-                staged_scalar = layer->image.scalar;
+                numbers = floats(env, values, total_values);
+                staged_flags = 256;
+                staged_scalar = 0.0f;
                 free(values);
                 break;
             }
