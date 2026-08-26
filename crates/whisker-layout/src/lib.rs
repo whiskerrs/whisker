@@ -13,8 +13,8 @@ use taffy::{
     Clear as TaffyClear, Dimension, Direction, Display, FlexDirection, FlexWrap,
     Float as TaffyFloat, GridAutoFlow, GridPlacement, GridTemplateArea, GridTemplateAreas,
     GridTemplateComponent, GridTemplateRepetition, LengthPercentage, LengthPercentageAuto, Line,
-    MaxTrackSizingFunction, MinTrackSizingFunction, Position, Rect, RepetitionCount, Size, Style,
-    TaffyTree, TrackSizingFunction,
+    MaxTrackSizingFunction, MinTrackSizingFunction, Overflow as TaffyOverflow, Point, Position,
+    Rect, RepetitionCount, Size, Style, TaffyTree, TrackSizingFunction,
 };
 pub use whisker_protocol::AvailableSpace;
 use whisker_protocol::{LayoutGeometry, LayoutRect, MeasureConstraints, NodeId};
@@ -25,7 +25,7 @@ use whisker_style::{
     ComputedLayoutStyle, ComputedLengthPercentage, ComputedLengthPercentageAuto, ComputedSizeValue,
     DirectionValue, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, GridAutoFlowValue,
     GridPlacementLineValue, GridPlacementValue, GridRepetitionCountValue, GridTemplateAreasValue,
-    JustifyContentValue, PositionValue, PropertyImpactSet,
+    JustifyContentValue, OverflowValue, PositionValue, PropertyImpactSet,
 };
 
 /// A width and height in logical pixels.
@@ -247,7 +247,7 @@ impl LayoutTree {
         if self.contains(node) {
             return Err(LayoutError::DuplicateNode(node));
         }
-        let converted = convert_style(&style)?;
+        let converted = convert_retained_style(&style, false)?;
         let backend = self
             .backend
             .new_leaf(converted)
@@ -279,7 +279,7 @@ impl LayoutTree {
         if impact.is_empty() {
             return Ok(impact);
         }
-        let converted = convert_style(&style)?;
+        let converted = convert_retained_style(&style, retained.measurable)?;
         let backend_node = retained.backend;
         let parent = retained.parent;
         self.backend
@@ -302,6 +302,11 @@ impl LayoutTree {
             return Ok(false);
         }
         let backend = retained.backend;
+        let converted = convert_retained_style(&retained.style, measurable)
+            .expect("a retained style was validated when it entered layout");
+        self.backend
+            .set_style(backend, converted)
+            .expect("retained backend node");
         self.backend
             .set_node_context(backend, measurable.then_some(node))
             .expect("retained backend node");
@@ -627,6 +632,10 @@ fn convert_style(input: &ComputedLayoutStyle) -> Result<Style, LayoutError> {
             ClearValue::Right => TaffyClear::Right,
             ClearValue::Both => TaffyClear::Both,
         },
+        overflow: Point {
+            x: overflow(input.overflow.width),
+            y: overflow(input.overflow.height),
+        },
         position: match input.position {
             PositionValue::Relative => Position::Relative,
             PositionValue::Absolute => Position::Absolute,
@@ -744,6 +753,23 @@ fn convert_style(input: &ComputedLayoutStyle) -> Result<Style, LayoutError> {
         grid_row: grid_placement_line(&input.grid_row),
         ..Style::default()
     })
+}
+
+fn convert_retained_style(
+    input: &ComputedLayoutStyle,
+    item_is_replaced: bool,
+) -> Result<Style, LayoutError> {
+    convert_style(input).map(|mut style| {
+        style.item_is_replaced = item_is_replaced;
+        style
+    })
+}
+
+fn overflow(value: OverflowValue) -> TaffyOverflow {
+    match value {
+        OverflowValue::Visible => TaffyOverflow::Visible,
+        OverflowValue::Hidden => TaffyOverflow::Hidden,
+    }
 }
 
 fn align_self(value: AlignSelfValue) -> AlignItems {
@@ -972,7 +998,8 @@ mod tests {
         Axes, ClearValue, ComputedGridTemplate, ComputedGridTemplateComponent,
         ComputedGridTemplateRepetition, ComputedGridTrackSizing, Edges, FloatValue,
         GridPlacementLineValue, GridRepetitionCountValue, GridTemplateAreaValue,
-        GridTemplateAreasValue, StyleNumber,
+        GridTemplateAreasValue, OverflowValue, SpecifiedStyle, StyleEnvironment, StyleNumber,
+        StyleProperty, StyleValue, resolve_style,
     };
 
     const MIXED: ComputedLengthPercentage = ComputedLengthPercentage::new(1.0, 0.5);
@@ -993,6 +1020,77 @@ mod tests {
 
     fn zero_measure(_: NodeId, _: MeasureRequest) -> LayoutSize {
         LayoutSize::default()
+    }
+
+    fn resolved_layout(specified: &SpecifiedStyle) -> ComputedLayoutStyle {
+        resolve_style(
+            specified,
+            None,
+            StyleEnvironment::new(100.0, 100.0, 1.0, 16.0),
+        )
+        .unwrap()
+        .computed()
+        .layout()
+        .clone()
+    }
+
+    #[test]
+    fn intrinsic_leaf_uses_replaced_block_sizing() {
+        let root = id(1);
+        let leaf = id(2);
+        let mut tree = LayoutTree::new();
+        tree.create_node(
+            root,
+            ComputedLayoutStyle {
+                display: DisplayValue::Block,
+                size: Axes {
+                    width: ComputedSizeValue::Value(ComputedLengthPercentage::new(200.0, 0.0)),
+                    height: ComputedSizeValue::Auto,
+                },
+                ..ComputedLayoutStyle::default()
+            },
+        )
+        .unwrap();
+        tree.create_node(leaf, ComputedLayoutStyle::default())
+            .unwrap();
+        tree.set_measurable(leaf, true).unwrap();
+        tree.set_children(root, &[leaf]).unwrap();
+
+        let snapshot = tree
+            .compute(root, LayoutSize::new(200.0, 100.0), &mut |_, _| {
+                LayoutSize::new(50.0, 20.0)
+            })
+            .unwrap();
+        assert_eq!(snapshot.get(leaf).unwrap().border_box.width, 50.0);
+    }
+
+    #[test]
+    fn overflow_controls_flex_automatic_minimum_size() {
+        fn child_width(overflow: OverflowValue) -> f32 {
+            let root = id(1);
+            let child = id(2);
+            let mut tree = LayoutTree::new();
+            tree.create_node(root, sized(100.0, 20.0)).unwrap();
+            let child_style = resolved_layout(
+                &SpecifiedStyle::new()
+                    .push(StyleProperty::OverflowX, StyleValue::Overflow(overflow))
+                    .push(StyleProperty::OverflowY, StyleValue::Overflow(overflow)),
+            );
+            tree.create_node(child, child_style).unwrap();
+            tree.set_measurable(child, true).unwrap();
+            tree.set_children(root, &[child]).unwrap();
+            tree.compute(root, LayoutSize::new(100.0, 20.0), &mut |_, _| {
+                LayoutSize::new(200.0, 20.0)
+            })
+            .unwrap()
+            .get(child)
+            .unwrap()
+            .border_box
+            .width
+        }
+
+        assert_eq!(child_width(OverflowValue::Visible), 200.0);
+        assert_eq!(child_width(OverflowValue::Hidden), 100.0);
     }
 
     #[test]
