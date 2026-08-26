@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "id": "wpt.css2.visibility-005",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/CSS2/visufx/visibility-005.xht",
+    "reference_path": "css/CSS2/reference/ref-filled-green-100px-square.xht",
+    "license": "BSD-3-Clause",
+    "assertion": "A descendant of a visibility:hidden element is visible when its own computed visibility is visible.",
+    "adaptation": "A hidden red parent contains one explicitly visible green child and one child whose resolved visibility remains hidden. Pixel samples verify that the parent suppresses only its own paint and does not prevent the visible descendant from painting."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 80.0, "height": 60.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 80.0, 60.0],
+            "background": { "kind": "named", "value": "white" }
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [10.0, 10.0, 60.0, 40.0],
+            "background": { "kind": "named", "value": "red" },
+            "visibility": "hidden"
+          },
+          {
+            "id": 3,
+            "parent": 2,
+            "rect": [5.0, 5.0, 20.0, 20.0],
+            "background": { "kind": "named", "value": "green" },
+            "visibility": "visible"
+          },
+          {
+            "id": 4,
+            "parent": 2,
+            "rect": [35.0, 5.0, 20.0, 20.0],
+            "background": { "kind": "named", "value": "red" },
+            "visibility": "hidden"
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [20.0, 20.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 },
+          { "point": [50.0, 20.0], "color": { "kind": "named", "value": "white" }, "tolerance": 16 },
+          { "point": [12.0, 42.0], "color": { "kind": "named", "value": "white" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}
