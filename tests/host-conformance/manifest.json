@@ -549,6 +549,13 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "core.pointer-cursor-fidelity",
+      "feature": "cursor-keyword-fidelity",
+      "fixture": "core/pointer-cursor-fidelity.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "host.input.pointer.basic",
       "feature": "pointer-input",
       "fixture": "core/pointer-input-basic.json",

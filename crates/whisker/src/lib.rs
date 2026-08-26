@@ -1926,8 +1926,8 @@ pub mod prelude {
     pub use crate::Children;
     pub use crate::css::ext::*;
     pub use crate::css::{
-        AlignItems, Border, Color, Css, Display, Flex, FlexDirection, FlexWrap, JustifyContent,
-        Length, NamedColor, ToCss,
+        AlignItems, Border, Color, Css, CustomPropertyName, Display, Flex, FlexDirection, FlexWrap,
+        JustifyContent, Length, NamedColor, Size, StyleProperty, ToCss,
     };
     pub use crate::{
         ArcReadSignal, ArcRwSignal, ArcWriteSignal, Callback, ReadSignal, Resource, ResourceState,

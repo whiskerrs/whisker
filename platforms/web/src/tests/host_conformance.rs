@@ -1545,6 +1545,9 @@ fn fixture(path: &str) -> &'static str {
         "core/pointer-style-lynx.json" => {
             include_str!("../../../../tests/host-conformance/core/pointer-style-lynx.json")
         }
+        "core/pointer-cursor-fidelity.json" => {
+            include_str!("../../../../tests/host-conformance/core/pointer-cursor-fidelity.json")
+        }
         "core/backdrop-filter-blur.json" => {
             include_str!("../../../../tests/host-conformance/core/backdrop-filter-blur.json")
         }

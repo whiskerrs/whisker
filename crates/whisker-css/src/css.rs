@@ -12,18 +12,21 @@ use core::fmt;
 
 use crate::style_value::ToStyleValue;
 use crate::to_css::ToCss;
-use whisker_style::{SpecifiedStyle, StyleProperty, StylePropertyId, StyleValue};
+use whisker_style::{
+    CustomPropertyName, CustomPropertyReference, SpecifiedStyle, StyleProperty, StylePropertyId,
+    StyleValue,
+};
 
 /// A declaration still requiring the temporary Lynx CSS compatibility path.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UnmigratedStyleValue {
-    property: &'static str,
+    property: String,
 }
 
 impl UnmigratedStyleValue {
     /// Returns the compatibility property that has no semantic value yet.
-    pub const fn property(self) -> &'static str {
-        self.property
+    pub fn property(&self) -> &str {
+        &self.property
     }
 }
 
@@ -39,10 +42,11 @@ impl fmt::Display for UnmigratedStyleValue {
 
 impl std::error::Error for UnmigratedStyleValue {}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum PropertyKey {
     Known(StyleProperty),
     Legacy(&'static str),
+    Custom(CustomPropertyName),
 }
 
 impl PropertyKey {
@@ -50,10 +54,11 @@ impl PropertyKey {
         StyleProperty::from_css_name(name).map_or(Self::Legacy(name), Self::Known)
     }
 
-    const fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         match self {
             Self::Known(property) => property.css_name(),
             Self::Legacy(name) => name,
+            Self::Custom(name) => name.as_str(),
         }
     }
 }
@@ -101,17 +106,25 @@ impl CssProp {
         }
     }
 
+    fn custom(name: CustomPropertyName, value: StyleValue, css_value: String) -> Self {
+        Self {
+            property: PropertyKey::Custom(name),
+            style_value: Some(value),
+            lynx_value: css_value,
+        }
+    }
+
     /// The CSS property name (`"padding-top"`, `"background-color"`).
-    pub fn name(&self) -> &'static str {
+    pub fn name(&self) -> &str {
         self.property.name()
     }
 
     /// The registered property identity, or `None` for an unknown name added
     /// through the temporary [`Css::raw`] migration escape hatch.
     pub fn property(&self) -> Option<StyleProperty> {
-        match self.property {
-            PropertyKey::Known(property) => Some(property),
-            PropertyKey::Legacy(_) => None,
+        match &self.property {
+            PropertyKey::Known(property) => Some(*property),
+            PropertyKey::Legacy(_) | PropertyKey::Custom(_) => None,
         }
     }
 
@@ -221,6 +234,58 @@ impl Css {
         this
     }
 
+    /// Defines an inherited typed CSS custom property.
+    ///
+    /// Custom properties are case-sensitive and use their standard `--name`
+    /// spelling. Whisker retains the semantic value rather than reparsing CSS
+    /// text during rendering.
+    pub fn custom_property<T>(mut self, name: CustomPropertyName, value: T) -> Self
+    where
+        T: CustomPropertyValue,
+    {
+        let css_value = value.to_css_string();
+        self.props.push(CssProp::custom(
+            name,
+            value.to_custom_style_value(),
+            css_value,
+        ));
+        self
+    }
+
+    /// Sets a registered property from `var(--name)`.
+    ///
+    /// Type compatibility is checked by computed-style resolution, matching
+    /// CSS's computed-value-time behavior for custom properties.
+    pub fn property_variable(self, property: StyleProperty, name: CustomPropertyName) -> Self {
+        let css = format!("var({})", name.as_str());
+        self.push_semantic(
+            property,
+            StyleValue::Variable(CustomPropertyReference::new(name)),
+            css,
+        )
+    }
+
+    /// Sets a registered property from `var(--name, <fallback>)`.
+    pub fn property_variable_with_fallback<T>(
+        self,
+        property: StyleProperty,
+        name: CustomPropertyName,
+        fallback: T,
+    ) -> Self
+    where
+        T: CustomPropertyValue,
+    {
+        let css = format!("var({}, {})", name.as_str(), fallback.to_css_string());
+        self.push_semantic(
+            property,
+            StyleValue::Variable(CustomPropertyReference::with_fallback(
+                name,
+                fallback.to_custom_style_value(),
+            )),
+            css,
+        )
+    }
+
     /// True if no declarations have been added.
     pub fn is_empty(&self) -> bool {
         self.props.is_empty()
@@ -247,7 +312,7 @@ impl Css {
         let mut seen: std::collections::HashSet<PropertyKey> = std::collections::HashSet::new();
         let mut out: Vec<&CssProp> = Vec::new();
         for prop in self.props.iter().rev() {
-            if seen.insert(prop.property) {
+            if seen.insert(prop.property.clone()) {
                 out.push(prop);
             }
         }
@@ -272,17 +337,40 @@ impl Css {
         for property in &self.props {
             let Some(value) = property.style_value.clone() else {
                 return Err(UnmigratedStyleValue {
-                    property: property.name(),
+                    property: property.name().to_owned(),
                 });
             };
-            let Some(property_id) = property.property() else {
-                return Err(UnmigratedStyleValue {
-                    property: property.name(),
-                });
-            };
-            style = style.push(property_id, value);
+            match &property.property {
+                PropertyKey::Known(property_id) => {
+                    style = style.push(*property_id, value);
+                }
+                PropertyKey::Custom(name) => {
+                    style = style.push_custom(name.clone(), value);
+                }
+                PropertyKey::Legacy(_) => {
+                    return Err(UnmigratedStyleValue {
+                        property: property.name().to_owned(),
+                    });
+                }
+            }
         }
         Ok(style)
+    }
+}
+
+/// A typed authoring value that can be stored in a CSS custom property.
+pub trait CustomPropertyValue: ToCss {
+    /// Converts to renderer-independent specified style.
+    #[doc(hidden)]
+    fn to_custom_style_value(&self) -> StyleValue;
+}
+
+impl<T> CustomPropertyValue for T
+where
+    T: ToCss + ToStyleValue,
+{
+    fn to_custom_style_value(&self) -> StyleValue {
+        self.to_style_value()
     }
 }
 
@@ -322,7 +410,7 @@ mod tests {
     use super::*;
     use crate::{
         Color, Display, FlexDirection, FontStyle, FontWeight, Length, LineHeight, NamedColor,
-        Percentage,
+        Percentage, Size,
     };
 
     #[test]
@@ -477,6 +565,55 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "style property `future-property` still requires Lynx CSS compatibility"
+        );
+    }
+
+    #[test]
+    fn typed_custom_property_round_trips_and_resolves_without_css_parsing() {
+        let spacing = CustomPropertyName::new("--spacing").unwrap();
+        let css = Css::new()
+            .custom_property(spacing.clone(), Size::from(Length::Px(24.0)))
+            .property_variable(StyleProperty::Width, spacing);
+
+        assert_eq!(
+            css.to_css_string(),
+            "--spacing: 24px; width: var(--spacing);"
+        );
+        let specified = css.to_specified_style().unwrap();
+        assert_eq!(specified.len(), 2);
+        let resolved = whisker_style::resolve_style(
+            &specified,
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.computed().layout().size.width,
+            whisker_style::ComputedSizeValue::Value(whisker_style::ComputedLengthPercentage::new(
+                24.0, 0.0
+            ))
+        );
+    }
+
+    #[test]
+    fn property_variable_fallback_is_semantic_and_serializable() {
+        let missing = CustomPropertyName::new("--missing").unwrap();
+        let css = Css::new().property_variable_with_fallback(
+            StyleProperty::Color,
+            missing,
+            Color::Named(NamedColor::Red),
+        );
+        assert_eq!(css.to_css_string(), "color: var(--missing, red);");
+        let specified = css.to_specified_style().unwrap();
+        let resolved = whisker_style::resolve_style(
+            &specified,
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.inherited_for_children().color(),
+            &whisker_style::ColorValue::Named("red".into())
         );
     }
 

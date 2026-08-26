@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "id": "core.pointer-cursor-fidelity",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 250.0, "height": 50.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 50.0, 50.0],
+            "background": { "kind": "named", "value": "red" },
+            "cursor": "auto"
+          },
+          {
+            "id": 2,
+            "parent": null,
+            "rect": [50.0, 0.0, 50.0, 50.0],
+            "background": { "kind": "named", "value": "green" },
+            "cursor": "pointer"
+          },
+          {
+            "id": 3,
+            "parent": null,
+            "rect": [100.0, 0.0, 50.0, 50.0],
+            "background": { "kind": "named", "value": "blue" },
+            "cursor": "text"
+          },
+          {
+            "id": 4,
+            "parent": null,
+            "rect": [150.0, 0.0, 50.0, 50.0],
+            "background": { "kind": "srgba", "red": 255, "green": 215, "blue": 0, "alpha": 1.0 },
+            "cursor": "grab"
+          },
+          {
+            "id": 5,
+            "parent": null,
+            "rect": [200.0, 0.0, 50.0, 50.0],
+            "background": { "kind": "named", "value": "black" },
+            "cursor": "none"
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "interaction.pointer.lynx",
+        "samples": [
+          { "point": [25.0, 25.0], "color": { "kind": "named", "value": "red" }, "tolerance": 2 },
+          { "point": [75.0, 25.0], "color": { "kind": "named", "value": "green" }, "tolerance": 2 },
+          { "point": [125.0, 25.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 2 },
+          { "point": [175.0, 25.0], "color": { "kind": "srgba", "red": 255, "green": 215, "blue": 0, "alpha": 1.0 }, "tolerance": 2 },
+          { "point": [225.0, 25.0], "color": { "kind": "named", "value": "black" }, "tolerance": 2 }
+        ]
+      }
+    ]
+  }
+}

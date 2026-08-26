@@ -169,10 +169,10 @@
       "id": "interaction.pointer",
       "basis": "lynx-4.0",
       "properties": ["cursor", "pointer-events"],
-      "supported_subset": ["pointer-events-auto-none", "keyword-only-cursors-web-desktop-android", "cursor-none-ios", "resolved-value-inheritance"],
-      "pending_subset": ["ios-keyword-cursor-shape-fidelity"],
+      "supported_subset": ["pointer-events-auto-none", "keyword-only-cursors-web-desktop-android", "ios-hidden-text-vertical-text-crosshair-and-resize-shapes", "resolved-value-inheritance"],
+      "pending_subset": ["ios-semantic-cursors-without-public-uikit-shapes"],
       "unsupported_browser_subset": ["resource-backed-cursors", "cursor-hotspots", "svg-pointer-events-values"],
-      "compatibility_notes": ["Lynx pointer-events accepts auto and none; Whisker resolves the documented inheritance effect before emitting SetHitTest", "UIKit exposes pointer interactions rather than CSS cursor shapes, so iOS preserves every keyword and implements cursor:none while other keywords retain the system pointer"],
+      "compatibility_notes": ["Lynx pointer-events accepts auto and none; Whisker resolves the documented inheritance effect before emitting SetHitTest", "UIKit provides hidden, text beams, and custom geometric pointer shapes, which iOS uses for none, text, vertical-text, crosshair, and resize keywords", "UIKit has no public platform glyphs for link, context-menu, help, progress, wait, cell, alias, copy, move, no-drop, not-allowed, grab, grabbing, or zoom cursors; iOS preserves those keywords and deliberately retains the system pointer instead of conflating distinct semantics"],
       "protocol": ["SetCursor", "SetHitTest"],
       "rust": "implemented",
       "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "partial"}
@@ -190,8 +190,11 @@
       "basis": "lynx-4.0",
       "features": ["custom-properties"],
       "properties": [],
+      "supported_subset": ["case-sensitive-inherited-typed-values", "whole-value-var-references", "typed-fallbacks", "forward-references", "cycle-invalidation"],
+      "pending_subset": ["token-stream-values", "var-substitution-inside-composite-values-and-functions"],
+      "compatibility_notes": ["Whisker resolves typed custom-property values entirely in Rust and sends only the resulting layout or paint value to Hosts", "The first slice deliberately supports whole typed-value substitution; token-level substitution such as calc(var(--gap) + 2px) remains pending rather than reintroducing a runtime CSS parser"],
       "protocol": [],
-      "rust": "planned",
+      "rust": "partial",
       "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
     }
   ]

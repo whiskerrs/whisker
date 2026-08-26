@@ -762,6 +762,8 @@ pub struct TextDecorationValue {
 /// An owned value in a specified inline-style declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StyleValue {
+    /// A reference to an inherited custom property, with an optional fallback.
+    Variable(CustomPropertyReference),
     /// Boolean value.
     Bool(bool),
     /// Signed integer value.
@@ -884,6 +886,65 @@ pub enum StyleValue {
     AspectRatio(crate::AspectRatioValue),
 }
 
+/// A case-sensitive CSS custom-property name such as `--spacing`.
+///
+/// Whisker preserves the spelling because custom properties are not entries in
+/// the fixed [`StyleProperty`](crate::StyleProperty) registry.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CustomPropertyName(String);
+
+impl CustomPropertyName {
+    /// Validates and owns a custom-property name.
+    ///
+    /// The common CSS identifier form is accepted, including non-ASCII
+    /// characters. Whitespace, control characters, and a bare `--` are
+    /// rejected so invalid names cannot enter computed style.
+    pub fn new(name: impl Into<String>) -> Option<Self> {
+        let name = name.into();
+        if name.len() <= 2
+            || !name.starts_with("--")
+            || name
+                .chars()
+                .any(|character| character.is_control() || character.is_whitespace())
+        {
+            return None;
+        }
+        Some(Self(name))
+    }
+
+    /// Returns the exact case-sensitive property name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A whole-value `var()` reference retained until computed-style resolution.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CustomPropertyReference {
+    /// Referenced custom-property name.
+    pub name: CustomPropertyName,
+    /// Value used when the reference is missing, invalid, or cyclic.
+    pub fallback: Option<Box<StyleValue>>,
+}
+
+impl CustomPropertyReference {
+    /// Creates `var(<name>)` without a fallback.
+    pub fn new(name: CustomPropertyName) -> Self {
+        Self {
+            name,
+            fallback: None,
+        }
+    }
+
+    /// Creates `var(<name>, <fallback>)`.
+    pub fn with_fallback(name: CustomPropertyName, fallback: StyleValue) -> Self {
+        Self {
+            name,
+            fallback: Some(Box::new(fallback)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -958,5 +1019,21 @@ mod tests {
             StyleValue::Color(ColorValue::Named("red".into())),
             StyleValue::LineHeight(LineHeightValue::Normal)
         );
+    }
+
+    #[test]
+    fn custom_property_names_require_a_nonempty_whitespace_free_suffix() {
+        assert_eq!(
+            CustomPropertyName::new("--accent").unwrap().as_str(),
+            "--accent"
+        );
+        assert_eq!(
+            CustomPropertyName::new("--Accent").unwrap().as_str(),
+            "--Accent"
+        );
+        assert!(CustomPropertyName::new("--色").is_some());
+        assert!(CustomPropertyName::new("accent").is_none());
+        assert!(CustomPropertyName::new("--").is_none());
+        assert!(CustomPropertyName::new("--bad name").is_none());
     }
 }
