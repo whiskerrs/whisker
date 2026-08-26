@@ -722,6 +722,48 @@ fn valid_offset_path(value: &OffsetPathValue) -> bool {
                 total_length += (to.0 - from.0).hypot(to.1 - from.1);
                 current = Some(to);
             }
+            MotionPathCommandValue::QuadraticTo { control, to } => {
+                let Some(from) = current else {
+                    return false;
+                };
+                if !control.x.get().is_finite()
+                    || !control.y.get().is_finite()
+                    || !to.x.get().is_finite()
+                    || !to.y.get().is_finite()
+                {
+                    return false;
+                }
+                let control = (control.x.get(), control.y.get());
+                let to = (to.x.get(), to.y.get());
+                total_length += (control.0 - from.0).hypot(control.1 - from.1)
+                    + (to.0 - control.0).hypot(to.1 - control.1);
+                current = Some(to);
+            }
+            MotionPathCommandValue::CubicTo {
+                control1,
+                control2,
+                to,
+            } => {
+                let Some(from) = current else {
+                    return false;
+                };
+                if !control1.x.get().is_finite()
+                    || !control1.y.get().is_finite()
+                    || !control2.x.get().is_finite()
+                    || !control2.y.get().is_finite()
+                    || !to.x.get().is_finite()
+                    || !to.y.get().is_finite()
+                {
+                    return false;
+                }
+                let control1 = (control1.x.get(), control1.y.get());
+                let control2 = (control2.x.get(), control2.y.get());
+                let to = (to.x.get(), to.y.get());
+                total_length += (control1.0 - from.0).hypot(control1.1 - from.1)
+                    + (control2.0 - control1.0).hypot(control2.1 - control1.1)
+                    + (to.0 - control2.0).hypot(to.1 - control2.1);
+                current = Some(to);
+            }
             MotionPathCommandValue::Close => {
                 let (Some(from), Some(to)) = (current, subpath_start) else {
                     return false;
@@ -1579,7 +1621,15 @@ mod tests {
         let path = OffsetPathValue::Path(vec![
             MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
             MotionPathCommandValue::LineTo(point(40.0, 0.0)),
-            MotionPathCommandValue::LineTo(point(40.0, 30.0)),
+            MotionPathCommandValue::QuadraticTo {
+                control: point(50.0, 10.0),
+                to: point(60.0, 0.0),
+            },
+            MotionPathCommandValue::CubicTo {
+                control1: point(70.0, -10.0),
+                control2: point(80.0, 10.0),
+                to: point(90.0, 0.0),
+            },
         ]);
         let resolved = crate::resolve_style(
             &SpecifiedStyle::new()
@@ -1648,11 +1698,35 @@ mod tests {
         for commands in [
             Vec::new(),
             vec![MotionPathCommandValue::LineTo(point(1.0, 1.0))],
+            vec![MotionPathCommandValue::QuadraticTo {
+                control: point(1.0, 1.0),
+                to: point(2.0, 2.0),
+            }],
+            vec![MotionPathCommandValue::CubicTo {
+                control1: point(1.0, 1.0),
+                control2: point(2.0, 2.0),
+                to: point(3.0, 3.0),
+            }],
             vec![MotionPathCommandValue::Close],
             vec![MotionPathCommandValue::MoveTo(point(f32::NAN, 0.0))],
             vec![
                 MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
                 MotionPathCommandValue::LineTo(point(f32::NAN, 0.0)),
+            ],
+            vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::QuadraticTo {
+                    control: point(f32::NAN, 0.0),
+                    to: point(1.0, 1.0),
+                },
+            ],
+            vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::CubicTo {
+                    control1: point(f32::NAN, 0.0),
+                    control2: point(1.0, 1.0),
+                    to: point(2.0, 2.0),
+                },
             ],
             vec![
                 MotionPathCommandValue::MoveTo(point(-f32::MAX, 0.0)),

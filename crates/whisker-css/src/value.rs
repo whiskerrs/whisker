@@ -74,6 +74,22 @@ pub enum MotionPathCommand {
     MoveTo(MotionPathPoint),
     /// Add a straight segment.
     LineTo(MotionPathPoint),
+    /// Add a quadratic Bezier segment.
+    QuadraticTo {
+        /// Curve control point.
+        control: MotionPathPoint,
+        /// Segment endpoint.
+        to: MotionPathPoint,
+    },
+    /// Add a cubic Bezier segment.
+    CubicTo {
+        /// First curve control point.
+        control1: MotionPathPoint,
+        /// Second curve control point.
+        control2: MotionPathPoint,
+        /// Segment endpoint.
+        to: MotionPathPoint,
+    },
     /// Close the current subpath.
     Close,
 }
@@ -116,6 +132,34 @@ impl ToCss for OffsetPath {
                     write_number(dest, point.x)?;
                     dest.write_char(' ')?;
                     write_number(dest, point.y)?;
+                }
+                MotionPathCommand::QuadraticTo { control, to } => {
+                    dest.write_str("Q ")?;
+                    write_number(dest, control.x)?;
+                    dest.write_char(' ')?;
+                    write_number(dest, control.y)?;
+                    dest.write_char(' ')?;
+                    write_number(dest, to.x)?;
+                    dest.write_char(' ')?;
+                    write_number(dest, to.y)?;
+                }
+                MotionPathCommand::CubicTo {
+                    control1,
+                    control2,
+                    to,
+                } => {
+                    dest.write_str("C ")?;
+                    write_number(dest, control1.x)?;
+                    dest.write_char(' ')?;
+                    write_number(dest, control1.y)?;
+                    dest.write_char(' ')?;
+                    write_number(dest, control2.x)?;
+                    dest.write_char(' ')?;
+                    write_number(dest, control2.y)?;
+                    dest.write_char(' ')?;
+                    write_number(dest, to.x)?;
+                    dest.write_char(' ')?;
+                    write_number(dest, to.y)?;
                 }
                 MotionPathCommand::Close => dest.write_char('Z')?,
             }

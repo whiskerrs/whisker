@@ -451,7 +451,8 @@ private final class Driver {
                     name == "paint.visual-effects.clip-path-path-evenodd" ||
                     name == "paint.visual-effects.backdrop-blur" ||
                     name == "paint.transform.projective-plane" ||
-                    name == "paint.transform.motion-path-line" else {
+                    name == "paint.transform.motion-path-line" ||
+                    name == "paint.transform.motion-path-curves" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 if name == "paint.visual-effects.backdrop-blur" {
