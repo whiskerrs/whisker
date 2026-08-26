@@ -264,15 +264,22 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
             case WHISKER_OP_BACKGROUND_LAYERS: {
                 const WhiskerMobileGradientStop* stops = op->payload;
                 const WhiskerMobileRadialGradient* radial = NULL;
+                const WhiskerMobileConicGradient* conic = NULL;
                 size_t stop_count = op->payload_count;
                 size_t prefix_count = 0;
-                if (op->flags == 1) {
+                if (op->flags == WHISKER_BACKGROUND_RADIAL) {
                     if (op->payload == NULL || op->payload_count != 1) { ok = false; break; }
                     radial = op->payload;
                     stops = radial->stops;
                     stop_count = radial->stop_count;
                     prefix_count = 8;
-                } else if (op->flags != 0) {
+                } else if (op->flags == WHISKER_BACKGROUND_CONIC) {
+                    if (op->payload == NULL || op->payload_count != 1) { ok = false; break; }
+                    conic = op->payload;
+                    stops = conic->stops;
+                    stop_count = conic->stop_count;
+                    prefix_count = 4;
+                } else if (op->flags != WHISKER_BACKGROUND_LINEAR) {
                     ok = false; break;
                 }
                 if ((stops == NULL && stop_count != 0) || stop_count > (INT32_MAX - prefix_count) / 7) {
@@ -287,6 +294,14 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                         &radial->center_x, &radial->center_y, &radial->radius_x, &radial->radius_y
                     };
                     for (size_t j = 0; j < 4; ++j) {
+                        values[cursor++] = coordinates[j]->length;
+                        values[cursor++] = coordinates[j]->fraction;
+                    }
+                } else if (conic != NULL) {
+                    const WhiskerMobileLengthPercentage* coordinates[] = {
+                        &conic->center_x, &conic->center_y
+                    };
+                    for (size_t j = 0; j < 2; ++j) {
                         values[cursor++] = coordinates[j]->length;
                         values[cursor++] = coordinates[j]->fraction;
                     }

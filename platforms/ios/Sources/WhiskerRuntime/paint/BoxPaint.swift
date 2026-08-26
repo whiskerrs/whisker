@@ -69,6 +69,10 @@ final class HostBoxPainter {
         backgroundPainter.update(radialGradient: radialGradient)
     }
 
+    func updateBackgroundLayers(_ conicGradient: HostConicGradient) {
+        backgroundPainter.update(conicGradient: conicGradient)
+    }
+
     func overflowClipPath(
         in bounds: CGRect,
         visibleBounds: CGRect,

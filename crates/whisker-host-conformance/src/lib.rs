@@ -350,6 +350,9 @@ pub struct SceneNodeFixture {
     /// Optional explicit, non-repeating radial-gradient background image.
     #[serde(default)]
     pub radial_gradient: Option<RadialGradientFixture>,
+    /// Optional explicit, non-repeating conic-gradient background image.
+    #[serde(default)]
+    pub conic_gradient: Option<ConicGradientFixture>,
 }
 
 /// One resolved linear-gradient image used by a retained scene node.
@@ -384,6 +387,18 @@ pub struct RadialGradientFixture {
     /// Horizontal and vertical radii in logical pixels.
     pub radii: [f32; 2],
     /// Ordered, explicitly resolved color stops.
+    pub stops: Vec<GradientStopFixture>,
+}
+
+/// One resolved non-repeating conic-gradient image.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ConicGradientFixture {
+    /// Starting angle in clockwise degrees from the positive vertical axis.
+    pub from_degrees: f32,
+    /// Center x/y in logical pixels relative to the positioning box.
+    pub center: [f32; 2],
+    /// Ordered, explicitly resolved color stops expressed as turns.
     pub stops: Vec<GradientStopFixture>,
 }
 
@@ -857,7 +872,24 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                             .iter()
                             .all(|stop| valid_color(&stop.color) && stop.position.is_finite())
                 })
-                && !(node.linear_gradient.is_some() && node.radial_gradient.is_some())
+                && node.conic_gradient.as_ref().is_none_or(|gradient| {
+                    gradient.from_degrees.is_finite()
+                        && gradient.center.iter().all(|value| value.is_finite())
+                        && gradient.stops.len() >= 2
+                        && gradient
+                            .stops
+                            .iter()
+                            .all(|stop| valid_color(&stop.color) && stop.position.is_finite())
+                })
+                && [
+                    node.linear_gradient.is_some(),
+                    node.radial_gradient.is_some(),
+                    node.conic_gradient.is_some(),
+                ]
+                .into_iter()
+                .filter(|present| *present)
+                .count()
+                    <= 1
         })
         && nodes.iter().all(|node| {
             let mut seen = std::collections::BTreeSet::new();

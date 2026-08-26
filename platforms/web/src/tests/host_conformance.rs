@@ -3,8 +3,8 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use whisker::ElementRegistry;
 use whisker_engine::FrameSink;
 use whisker_host_conformance::{
-    BorderFixture, BorderStyleFixture, ColorFixture, Command, CornerRadiusFixture,
-    LinearGradientFixture, Manifest, OverflowClipFixture, PixelSampleFixture,
+    BorderFixture, BorderStyleFixture, ColorFixture, Command, ConicGradientFixture,
+    CornerRadiusFixture, LinearGradientFixture, Manifest, OverflowClipFixture, PixelSampleFixture,
     RadialGradientFixture, SCHEMA_VERSION, Scenario, ScenarioSide, SceneNodeFixture,
     VisibilityFixture,
 };
@@ -109,6 +109,11 @@ impl Driver {
                                             node.radial_gradient
                                                 .as_ref()
                                                 .map(|_| "paint.background-layers.radial-gradient")
+                                        })
+                                        .or_else(|| {
+                                            node.conic_gradient
+                                                .as_ref()
+                                                .map(|_| "paint.background-layers.conic-gradient")
                                         })
                                 })
                             })
@@ -223,6 +228,13 @@ impl Driver {
                     &fixture_radial_gradient_css(gradient),
                 );
                 assert_initial_background_layer_is_projected(&style);
+            } else if let Some(gradient) = &fixture_node.conic_gradient {
+                assert_style(
+                    &style,
+                    "background-image",
+                    &fixture_conic_gradient_css(gradient),
+                );
+                assert_initial_background_layer_is_projected(&style);
             } else {
                 assert_eq!(style.get_property_value("background-image").unwrap(), "");
             }
@@ -267,6 +279,7 @@ impl Driver {
                     node.id.to_string() == id.as_str()
                         && (node.linear_gradient.is_some()
                             || node.radial_gradient.is_some()
+                            || node.conic_gradient.is_some()
                             || !fixture_color_is_transparent(&node.background))
                 })
             });
@@ -282,7 +295,9 @@ impl Driver {
                         .find(|node| node.opacity.is_some())
                         .or_else(|| {
                             expected.iter().find(|node| {
-                                node.linear_gradient.is_some() || node.radial_gradient.is_some()
+                                node.linear_gradient.is_some()
+                                    || node.radial_gradient.is_some()
+                                    || node.conic_gradient.is_some()
                             })
                         })
                         .expect("sRGBA sample requires an opacity or gradient source node")
@@ -300,7 +315,9 @@ impl Driver {
                         .find(|node| node.background == *expected_color)
                         .or_else(|| {
                             expected.iter().find(|node| {
-                                node.linear_gradient.is_some() || node.radial_gradient.is_some()
+                                node.linear_gradient.is_some()
+                                    || node.radial_gradient.is_some()
+                                    || node.conic_gradient.is_some()
                             })
                         })
                         .unwrap_or_else(|| {
@@ -369,6 +386,9 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-images/radial-gradient-container-relative-units-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-images/radial-gradient-container-relative-units-001.json"
+        ),
+        "wpt/css/css-images/conic-gradient-angle.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-images/conic-gradient-angle.json"
         ),
         "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json"
@@ -563,6 +583,11 @@ fn scene_packet(revision: u64, nodes: &[SceneNodeFixture]) -> FramePacket {
                 node,
                 layers: vec![radial_gradient_layer(gradient)],
             });
+        } else if let Some(gradient) = &fixture_node.conic_gradient {
+            operations.push(Operation::SetBackgroundLayers {
+                node,
+                layers: vec![conic_gradient_layer(gradient)],
+            });
         }
     }
     for (node_index, fixture_node) in nodes.iter().enumerate() {
@@ -657,6 +682,44 @@ fn radial_gradient_layer(gradient: &RadialGradientFixture) -> BackgroundLayer {
                     fraction: 0.0,
                 },
             )),
+            repeating: false,
+            stops: gradient
+                .stops
+                .iter()
+                .map(|stop| GradientStop {
+                    color: color(&stop.color),
+                    position: Some(PaintCoordinate {
+                        length: 0.0,
+                        fraction: stop.position,
+                    }),
+                })
+                .collect(),
+        },
+        position: PaintPosition::default(),
+        size: BackgroundSize::Auto,
+        repeat_x: ImageRepeat::Repeat,
+        repeat_y: ImageRepeat::Repeat,
+        origin: PaintBox::Padding,
+        clip: PaintBox::Border,
+        attachment: BackgroundAttachment::Scroll,
+        blend_mode: BlendMode::Normal,
+    }
+}
+
+fn conic_gradient_layer(gradient: &ConicGradientFixture) -> BackgroundLayer {
+    BackgroundLayer {
+        image: PaintImage::ConicGradient {
+            from_degrees: gradient.from_degrees,
+            center: PaintPosition {
+                x: PaintCoordinate {
+                    length: gradient.center[0],
+                    fraction: 0.0,
+                },
+                y: PaintCoordinate {
+                    length: gradient.center[1],
+                    fraction: 0.0,
+                },
+            },
             repeating: false,
             stops: gradient
                 .stops
@@ -912,6 +975,19 @@ fn fixture_radial_gradient_css(gradient: &RadialGradientFixture) -> String {
     format!(
         "radial-gradient(ellipse {}px {}px at {}px {}px, {stops})",
         gradient.radii[0], gradient.radii[1], gradient.center[0], gradient.center[1]
+    )
+}
+
+fn fixture_conic_gradient_css(gradient: &ConicGradientFixture) -> String {
+    let stops = gradient
+        .stops
+        .iter()
+        .map(|stop| format!("{} {}turn", fixture_color_css(&stop.color), stop.position))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "conic-gradient(from {}deg at {}px {}px, {stops})",
+        gradient.from_degrees, gradient.center[0], gradient.center[1]
     )
 }
 

@@ -11,6 +11,7 @@ import rs.whisker.runtime.WhiskerTextContent
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.paint.HostBoxPaint
 import rs.whisker.runtime.paint.HostBackgroundLayers
+import rs.whisker.runtime.paint.HostConicGradient
 import rs.whisker.runtime.paint.HostGradientStop
 import rs.whisker.runtime.paint.HostLinearGradient
 import rs.whisker.runtime.paint.HostPaintCoordinate
@@ -361,13 +362,17 @@ internal class HostScene(
         } else {
             val density = root.resources.displayMetrics.density
             val names = requireNotNull(operation.names)
-            val stopOffset = if (operation.flags == 1) 8 else 0
+            val stopOffset = when (operation.flags) {
+                1 -> 8
+                2 -> 4
+                else -> 0
+            }
             val stops = decodeGradientStops(numbers, stopOffset, names, density)
+            fun coordinate(offset: Int) = HostPaintCoordinate(
+                length = numbers[offset] * density,
+                fraction = numbers[offset + 1],
+            )
             node.backgroundLayers = if (operation.flags == 1) {
-                fun coordinate(offset: Int) = HostPaintCoordinate(
-                    length = numbers[offset] * density,
-                    fraction = numbers[offset + 1],
-                )
                 HostBackgroundLayers(
                     linearGradient = null,
                     radialGradient = HostRadialGradient(
@@ -375,6 +380,16 @@ internal class HostScene(
                         centerY = coordinate(2),
                         radiusX = coordinate(4),
                         radiusY = coordinate(6),
+                        stops = stops,
+                    ),
+                )
+            } else if (operation.flags == 2) {
+                HostBackgroundLayers(
+                    linearGradient = null,
+                    conicGradient = HostConicGradient(
+                        fromDegrees = operation.scalar,
+                        centerX = coordinate(0),
+                        centerY = coordinate(2),
                         stops = stops,
                     ),
                 )
@@ -415,7 +430,7 @@ internal class HostScene(
         existing: Set<Long>,
     ): Boolean {
         if (
-            operation.node !in existing || operation.flags !in 0..1 ||
+            operation.node !in existing || operation.flags !in 0..2 ||
             !operation.scalar.isFinite()
         ) {
             return false
@@ -423,7 +438,11 @@ internal class HostScene(
         val numbers = operation.numbers ?: FloatArray(0)
         val names = operation.names ?: emptyArray()
         if (numbers.isEmpty()) return operation.flags == 0 && names.isEmpty()
-        val stopOffset = if (operation.flags == 1) 8 else 0
+        val stopOffset = when (operation.flags) {
+            1 -> 8
+            2 -> 4
+            else -> 0
+        }
         if (
             numbers.size < stopOffset + 14 || (numbers.size - stopOffset) % 7 != 0 ||
             names.size != (numbers.size - stopOffset) / 7

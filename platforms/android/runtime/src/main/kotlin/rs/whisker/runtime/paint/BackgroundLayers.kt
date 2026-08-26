@@ -9,6 +9,7 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.RadialGradient
 import android.graphics.Shader
+import android.graphics.SweepGradient
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
@@ -39,10 +40,18 @@ internal data class HostRadialGradient(
     val stops: List<HostGradientStop>,
 )
 
+internal data class HostConicGradient(
+    val fromDegrees: Float,
+    val centerX: HostPaintCoordinate,
+    val centerY: HostPaintCoordinate,
+    val stops: List<HostGradientStop>,
+)
+
 /** Retained projection of the currently supported SetBackgroundLayers subset. */
 internal data class HostBackgroundLayers(
     val linearGradient: HostLinearGradient?,
     val radialGradient: HostRadialGradient? = null,
+    val conicGradient: HostConicGradient? = null,
 )
 
 internal fun drawBackgroundLayers(
@@ -58,6 +67,10 @@ internal fun drawBackgroundLayers(
     }
     layers?.radialGradient?.let { gradient ->
         drawRadialGradient(canvas, clip, box, gradient, paint)
+        return
+    }
+    layers?.conicGradient?.let { gradient ->
+        drawConicGradient(canvas, clip, box, gradient, paint)
     }
 }
 
@@ -147,6 +160,39 @@ private fun drawRadialGradient(
     ).apply {
         setLocalMatrix(Matrix().apply {
             setScale(1f, radiusY / radiusX, centerX, centerY)
+        })
+    }
+    canvas.drawPath(clip, paint)
+    paint.shader = null
+}
+
+private fun drawConicGradient(
+    canvas: Canvas,
+    clip: Path,
+    box: RectF,
+    gradient: HostConicGradient,
+    paint: Paint,
+) {
+    if (gradient.stops.size < 2) return
+    val centerX = box.left + gradient.centerX.resolve(box.width())
+    val centerY = box.top + gradient.centerY.resolve(box.height())
+    var previousPosition = 0f
+    val positions = gradient.stops.mapIndexed { index, stop ->
+        stop.fraction.coerceIn(0f, 1f)
+            .coerceAtLeast(if (index == 0) 0f else previousPosition)
+            .also { previousPosition = it }
+    }.toFloatArray()
+    paint.color = Color.WHITE
+    paint.shader = SweepGradient(
+        centerX,
+        centerY,
+        gradient.stops.map(HostGradientStop::color).toIntArray(),
+        positions,
+    ).apply {
+        // Android starts a sweep at +x. CSS/protocol starts at the positive
+        // vertical axis, with both advancing clockwise in screen space.
+        setLocalMatrix(Matrix().apply {
+            setRotate(gradient.fromDegrees - 90f, centerX, centerY)
         })
     }
     canvas.drawPath(clip, paint)

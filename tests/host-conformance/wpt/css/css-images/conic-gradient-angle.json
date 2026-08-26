@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "id": "wpt.css-images.conic-gradient-angle",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-images/conic-gradient-angle.html",
+    "reference_path": "css/css-images/reference/200x200-blue-black-green-red.html",
+    "license": "BSD-3-Clause",
+    "assertion": "A conic gradient with a 90 degree starting angle paints the four quadrants in the reference order.",
+    "adaptation": "CSS parsing and stop-list expansion remain Rust responsibilities. The Host receives the WPT gradient as an explicit SetBackgroundLayers conic image; the box is reduced to 100 logical pixels and interior quadrant samples avoid antialiased boundaries."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 100.0, "height": 100.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 100.0, 100.0],
+            "background": { "kind": "srgba", "red": 255, "green": 255, "blue": 255, "alpha": 0.0 },
+            "conic_gradient": {
+              "from_degrees": 90.0,
+              "center": [50.0, 50.0],
+              "stops": [
+                { "color": { "kind": "named", "value": "red" }, "position": 0.0 },
+                { "color": { "kind": "named", "value": "red" }, "position": 0.25 },
+                { "color": { "kind": "named", "value": "green" }, "position": 0.25 },
+                { "color": { "kind": "named", "value": "green" }, "position": 0.5 },
+                { "color": { "kind": "named", "value": "blue" }, "position": 0.5 },
+                { "color": { "kind": "named", "value": "blue" }, "position": 0.75 },
+                { "color": { "kind": "named", "value": "black" }, "position": 0.75 },
+                { "color": { "kind": "named", "value": "black" }, "position": 1.0 }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.background-layers.conic-gradient",
+        "samples": [
+          { "point": [25.0, 25.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 5 },
+          { "point": [75.0, 25.0], "color": { "kind": "named", "value": "black" }, "tolerance": 5 },
+          { "point": [25.0, 75.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [75.0, 75.0], "color": { "kind": "named", "value": "red" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

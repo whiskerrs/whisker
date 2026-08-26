@@ -777,6 +777,10 @@ impl FrameSink for DesktopScene {
                     capability: whisker_protocol::RenderCapability::RadialGradients,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::ConicGradients,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("Desktop capability profile is unique")
@@ -858,6 +862,15 @@ fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
             stops,
             ..
         } if stops.iter().all(|stop| stop.position.is_some())
+    ) || matches!(
+        &layer.image,
+        PaintImage::ConicGradient {
+            repeating: false,
+            stops,
+            ..
+        } if stops.iter().all(|stop| {
+            stop.position.is_some_and(|position| position.length == 0.0)
+        })
     )) && layer.position == Default::default()
         && layer.size == BackgroundSize::Auto
         && layer.repeat_x == ImageRepeat::Repeat
