@@ -323,6 +323,9 @@ fn motion_path_state(
             );
             append_ellipse(&mut segments, center, radii, 0.0, std::f32::consts::TAU);
         }
+        OffsetPathValue::Inset(value) => {
+            append_inset_path(&mut segments, value, border_width, border_height)?;
+        }
     }
     for segment in &segments {
         total_length += segment.length;
@@ -473,6 +476,160 @@ fn push_motion_line(segments: &mut Vec<MotionSegment>, from: MotionPoint, to: Mo
 
 fn resolve_motion_length(value: whisker_style::ComputedLengthPercentage, context: f32) -> f32 {
     value.length() + value.fraction() * context
+}
+
+fn append_inset_path(
+    segments: &mut Vec<MotionSegment>,
+    value: &whisker_style::ComputedInsetPathValue,
+    border_width: f32,
+    border_height: f32,
+) -> Option<()> {
+    let mut top = resolve_motion_length(value.offsets.top, border_height);
+    let mut right = resolve_motion_length(value.offsets.right, border_width);
+    let mut bottom = resolve_motion_length(value.offsets.bottom, border_height);
+    let mut left = resolve_motion_length(value.offsets.left, border_width);
+    if ![top, right, bottom, left]
+        .iter()
+        .all(|value| value.is_finite())
+    {
+        return None;
+    }
+
+    let vertical_inset = f64::from(top) + f64::from(bottom);
+    if vertical_inset > f64::from(border_height) {
+        let scale = f64::from(border_height) / vertical_inset;
+        top = (f64::from(top) * scale) as f32;
+        bottom = (f64::from(bottom) * scale) as f32;
+    }
+    let horizontal_inset = f64::from(left) + f64::from(right);
+    if horizontal_inset > f64::from(border_width) {
+        let scale = f64::from(border_width) / horizontal_inset;
+        left = (f64::from(left) * scale) as f32;
+        right = (f64::from(right) * scale) as f32;
+    }
+
+    let width = (border_width - left - right).max(0.0);
+    let height = (border_height - top - bottom).max(0.0);
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let right_edge = left + width;
+    let bottom_edge = top + height;
+    let mut radii = [[0.0_f32; 2]; 4];
+    if let Some(computed) = &value.radii {
+        let corners = [
+            computed.top_left,
+            computed.top_right,
+            computed.bottom_right,
+            computed.bottom_left,
+        ];
+        for (resolved, corner) in radii.iter_mut().zip(corners) {
+            resolved[0] = resolve_motion_length(corner.horizontal, width);
+            resolved[1] = resolve_motion_length(corner.vertical, height);
+            if !resolved[0].is_finite()
+                || !resolved[1].is_finite()
+                || resolved[0] < 0.0
+                || resolved[1] < 0.0
+            {
+                return None;
+            }
+            if resolved[0] <= 0.0 || resolved[1] <= 0.0 {
+                *resolved = [0.0, 0.0];
+            }
+        }
+    }
+
+    let mut radius_scale = 1.0_f64;
+    for (sum, side) in [
+        (
+            f64::from(radii[0][0]) + f64::from(radii[1][0]),
+            f64::from(width),
+        ),
+        (
+            f64::from(radii[3][0]) + f64::from(radii[2][0]),
+            f64::from(width),
+        ),
+        (
+            f64::from(radii[0][1]) + f64::from(radii[3][1]),
+            f64::from(height),
+        ),
+        (
+            f64::from(radii[1][1]) + f64::from(radii[2][1]),
+            f64::from(height),
+        ),
+    ] {
+        if sum > side {
+            radius_scale = radius_scale.min(side / sum);
+        }
+    }
+    if radius_scale < 1.0 {
+        for radius in &mut radii {
+            radius[0] = (f64::from(radius[0]) * radius_scale) as f32;
+            radius[1] = (f64::from(radius[1]) * radius_scale) as f32;
+        }
+    }
+
+    let [top_left, top_right, bottom_right, bottom_left] = radii;
+    let start = (left + top_left[0], top);
+    let mut current = start;
+
+    let next = (right_edge - top_right[0], top);
+    push_motion_line(segments, current, next);
+    current = next;
+    if top_right[0] > 0.0 {
+        append_ellipse(
+            segments,
+            (right_edge - top_right[0], top + top_right[1]),
+            (top_right[0], top_right[1]),
+            -std::f32::consts::FRAC_PI_2,
+            0.0,
+        );
+        current = (right_edge, top + top_right[1]);
+    }
+
+    let next = (right_edge, bottom_edge - bottom_right[1]);
+    push_motion_line(segments, current, next);
+    current = next;
+    if bottom_right[0] > 0.0 {
+        append_ellipse(
+            segments,
+            (right_edge - bottom_right[0], bottom_edge - bottom_right[1]),
+            (bottom_right[0], bottom_right[1]),
+            0.0,
+            std::f32::consts::FRAC_PI_2,
+        );
+        current = (right_edge - bottom_right[0], bottom_edge);
+    }
+
+    let next = (left + bottom_left[0], bottom_edge);
+    push_motion_line(segments, current, next);
+    current = next;
+    if bottom_left[0] > 0.0 {
+        append_ellipse(
+            segments,
+            (left + bottom_left[0], bottom_edge - bottom_left[1]),
+            (bottom_left[0], bottom_left[1]),
+            std::f32::consts::FRAC_PI_2,
+            std::f32::consts::PI,
+        );
+        current = (left, bottom_edge - bottom_left[1]);
+    }
+
+    let next = (left, top + top_left[1]);
+    push_motion_line(segments, current, next);
+    current = next;
+    if top_left[0] > 0.0 {
+        append_ellipse(
+            segments,
+            (left + top_left[0], top + top_left[1]),
+            (top_left[0], top_left[1]),
+            std::f32::consts::PI,
+            std::f32::consts::PI * 1.5,
+        );
+        current = start;
+    }
+    push_motion_line(segments, current, start);
+    Some(())
 }
 
 fn push_motion_segment(
@@ -1195,6 +1352,46 @@ mod tests {
         assert!((x - 20.0).abs() < 0.001, "{x}");
         assert!((y - 15.0).abs() < 0.001, "{y}");
         assert!((angle - 180.0).abs() < 0.001, "{angle}");
+
+        let zero = ComputedLengthPercentage::ZERO;
+        let ten = ComputedLengthPercentage::new(10.0, 0.0);
+        let inset = OffsetPathValue::Inset(Box::new(whisker_style::ComputedInsetPathValue {
+            offsets: whisker_style::Edges {
+                top: ten,
+                right: ten,
+                bottom: ten,
+                left: ten,
+            },
+            radii: None,
+        }));
+        let (x, y, angle) = motion_path_state(&inset, 0.25, 100.0, 60.0).unwrap();
+        assert!((x - 70.0).abs() < 0.001, "{x}");
+        assert!((y - 10.0).abs() < 0.001, "{y}");
+        assert!(angle.abs() < 0.001, "{angle}");
+
+        let radius = whisker_style::ComputedCornerRadius {
+            horizontal: ten,
+            vertical: ComputedLengthPercentage::new(5.0, 0.0),
+        };
+        let rounded = OffsetPathValue::Inset(Box::new(whisker_style::ComputedInsetPathValue {
+            offsets: whisker_style::Edges {
+                top: ten,
+                right: ten,
+                bottom: ten,
+                left: ten,
+            },
+            radii: Some(whisker_style::Corners {
+                top_left: radius,
+                top_right: radius,
+                bottom_right: radius,
+                bottom_left: radius,
+            }),
+        }));
+        let (x, y, angle) = motion_path_state(&rounded, 0.5, 100.0, 60.0).unwrap();
+        assert!((x - 80.0).abs() < 0.001, "{x}");
+        assert!((y - 50.0).abs() < 0.001, "{y}");
+        assert!((angle - 180.0).abs() < 0.001, "{angle}");
+
         assert_eq!(
             motion_path_state(
                 &OffsetPathValue::Ellipse {
@@ -1209,6 +1406,75 @@ mod tests {
             ),
             None
         );
+        let collapsed = OffsetPathValue::Inset(Box::new(whisker_style::ComputedInsetPathValue {
+            offsets: whisker_style::Edges {
+                top: zero,
+                right: ComputedLengthPercentage::new(100.0, 0.0),
+                bottom: zero,
+                left: ComputedLengthPercentage::new(100.0, 0.0),
+            },
+            radii: None,
+        }));
+        assert_eq!(motion_path_state(&collapsed, 0.0, 100.0, 60.0), None);
+
+        let invalid_offset =
+            OffsetPathValue::Inset(Box::new(whisker_style::ComputedInsetPathValue {
+                offsets: whisker_style::Edges {
+                    top: ComputedLengthPercentage::new(f32::MAX, f32::MAX),
+                    right: zero,
+                    bottom: zero,
+                    left: zero,
+                },
+                radii: None,
+            }));
+        assert_eq!(motion_path_state(&invalid_offset, 0.0, 100.0, 60.0), None);
+
+        let vertically_collapsed =
+            OffsetPathValue::Inset(Box::new(whisker_style::ComputedInsetPathValue {
+                offsets: whisker_style::Edges {
+                    top: ComputedLengthPercentage::new(40.0, 0.0),
+                    right: zero,
+                    bottom: ComputedLengthPercentage::new(40.0, 0.0),
+                    left: zero,
+                },
+                radii: None,
+            }));
+        assert_eq!(
+            motion_path_state(&vertically_collapsed, 0.0, 100.0, 60.0),
+            None
+        );
+
+        let corner = |horizontal, vertical| whisker_style::ComputedCornerRadius {
+            horizontal: ComputedLengthPercentage::new(horizontal, 0.0),
+            vertical: ComputedLengthPercentage::new(vertical, 0.0),
+        };
+        let inset_with_radius = |radius| {
+            OffsetPathValue::Inset(Box::new(whisker_style::ComputedInsetPathValue {
+                offsets: whisker_style::Edges {
+                    top: ten,
+                    right: ten,
+                    bottom: ten,
+                    left: ten,
+                },
+                radii: Some(whisker_style::Corners {
+                    top_left: radius,
+                    top_right: radius,
+                    bottom_right: radius,
+                    bottom_left: radius,
+                }),
+            }))
+        };
+        assert_eq!(
+            motion_path_state(&inset_with_radius(corner(f32::NAN, 1.0)), 0.0, 100.0, 60.0,),
+            None
+        );
+        let (x, y, _) =
+            motion_path_state(&inset_with_radius(corner(10.0, 0.0)), 0.0, 100.0, 60.0).unwrap();
+        assert_eq!((x, y), (10.0, 10.0));
+        let (x, y, _) =
+            motion_path_state(&inset_with_radius(corner(100.0, 100.0)), 0.0, 100.0, 60.0).unwrap();
+        assert!((x - 30.0).abs() < 0.001, "{x}");
+        assert!((y - 10.0).abs() < 0.001, "{y}");
 
         assert_eq!(point_line_distance((2.0, 0.0), (1.0, 0.0), (1.0, 0.0)), 1.0);
         let cusp = MotionSegment {

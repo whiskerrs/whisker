@@ -441,6 +441,15 @@ pub enum MotionPathCommandValue {
     Close,
 }
 
+/// A specified `inset()` motion path before border-box resolution.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct InsetPathValue {
+    /// Top, right, bottom, and left offsets from the border box.
+    pub offsets: [LengthPercentageValue; 4],
+    /// Optional top-left, top-right, bottom-right, and bottom-left radii.
+    pub radii: Option<[BorderRadiusValue; 4]>,
+}
+
 /// Typed value of `offset-path`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum OffsetPathValue {
@@ -469,6 +478,8 @@ pub enum OffsetPathValue {
         /// Center position relative to border-box height.
         center_y: LengthPercentageValue,
     },
+    /// Follow a possibly-rounded rectangle inset from the node border box.
+    Inset(Box<InsetPathValue>),
 }
 
 /// Typed value of `offset-rotate`.

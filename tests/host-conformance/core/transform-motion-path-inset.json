@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "id": "core.transform-motion-path-inset",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 400.0, "height": 140.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [5.0, 5.0, 100.0, 60.0],
+            "background": { "kind": "named", "value": "green" },
+            "clip": { "horizontal": "visible", "vertical": "visible" },
+            "transform": [
+              1.0, 0.0, 0.0, 0.0,
+              0.0, 1.0, 0.0, 0.0,
+              0.0, 0.0, 1.0, 0.0,
+              70.0, 10.0, 0.0, 1.0
+            ]
+          },
+          {
+            "id": 2,
+            "parent": null,
+            "rect": [200.0, 5.0, 100.0, 60.0],
+            "background": { "kind": "named", "value": "blue" },
+            "clip": { "horizontal": "visible", "vertical": "visible" },
+            "transform": [
+              -1.0, 0.0, 0.0, 0.0,
+              0.0, -1.0, 0.0, 0.0,
+              0.0, 0.0, 1.0, 0.0,
+              180.0, 110.0, 0.0, 1.0
+            ]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.transform.motion-path-inset",
+        "samples": [
+          { "point": [80.0, 20.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 },
+          { "point": [165.0, 65.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 },
+          { "point": [65.0, 20.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 },
+          { "point": [290.0, 65.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 16 },
+          { "point": [370.0, 105.0], "color": { "kind": "named", "value": "blue" }, "tolerance": 16 },
+          { "point": [270.0, 65.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

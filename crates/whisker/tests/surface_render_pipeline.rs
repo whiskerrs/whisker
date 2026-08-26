@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use whisker::css::{
-    Angle, BorderStyle, Clear, Direction, Float, GridLine, GridTemplate, GridTrack,
+    Angle, BorderRadius, BorderStyle, Clear, Direction, Float, GridLine, GridTemplate, GridTrack,
     MotionPathCommand, MotionPathPoint, OffsetPath, OffsetRotate, Overflow, Position, TransformFn,
 };
 use whisker::prelude::*;
@@ -818,6 +818,60 @@ fn render_circle_motion_path_resolves_against_the_border_box() {
     assert!((transform.0[5] + 1.0).abs() < 0.001);
     assert!((transform.0[12] - 60.0).abs() < 0.001);
     assert!((transform.0[13] - 45.811_39).abs() < 0.001);
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn render_rounded_inset_motion_path_uses_the_standard_clockwise_start() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(30).expect("test surface"),
+        StyleEnvironment::new(250.0, 160.0, 1.0, 14.0),
+    );
+    let style = Css::new()
+        .width(px(100))
+        .height(px(60))
+        .offset_path(OffsetPath::inset_round(
+            px(10),
+            px(10),
+            px(10),
+            px(10),
+            BorderRadius::all(px(10)),
+        ))
+        .offset_distance(percent(50))
+        .offset_rotate(OffsetRotate::Auto);
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| render! { view(style: style) });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(250.0, 160.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("rounded inset motion-path frame");
+    let root = surface.root().expect("surface root");
+    let transform = renderer.frames()[0]
+        .packet
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::SetTransform { node, transform } if *node == root => Some(*transform),
+            _ => None,
+        })
+        .expect("inset emits SetTransform");
+    assert!((transform.0[0] + 1.0).abs() < 0.001);
+    assert!((transform.0[5] + 1.0).abs() < 0.001);
+    assert!((transform.0[12] - 180.0).abs() < 0.001);
+    assert!((transform.0[13] - 110.0).abs() < 0.001);
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 

@@ -7,10 +7,10 @@ use whisker_style::{
     FontWeightValue, GridAutoFlowValue, GridMaxTrackSizingValue, GridMinTrackSizingValue,
     GridPlacementValue, GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue,
     GridTemplateComponentValue, GridTemplateRepetitionValue, GridTemplateValue,
-    GridTrackSizingValue, JustifyContentValue, LengthPercentageAutoValue, LengthPercentageValue,
-    LengthUnit, LengthValue, LineHeightValue, MotionPathCommandValue, MotionPathPointValue,
-    OffsetPathValue, OffsetRotateValue, PositionValue, SizeValue, StyleNumber, StyleValue,
-    TransformFunctionValue, TransformOriginValue, TransformValue,
+    GridTrackSizingValue, InsetPathValue, JustifyContentValue, LengthPercentageAutoValue,
+    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, MotionPathCommandValue,
+    MotionPathPointValue, OffsetPathValue, OffsetRotateValue, PositionValue, SizeValue,
+    StyleNumber, StyleValue, TransformFunctionValue, TransformOriginValue, TransformValue,
 };
 
 use crate::data_type_ext::PositionKeyword;
@@ -109,6 +109,21 @@ impl ToStyleValue for OffsetPath {
                 center_x: to_length_percentage(center_x),
                 center_y: to_length_percentage(center_y),
             },
+            Self::Inset(value) => {
+                let radii = value.radii.as_ref().map(|radii| {
+                    let vertical = radii.vertical.as_ref().unwrap_or(&radii.horizontal);
+                    std::array::from_fn(|index| BorderRadiusValue {
+                        horizontal: to_length_percentage(&radii.horizontal[index]),
+                        vertical: to_length_percentage(&vertical[index]),
+                    })
+                });
+                OffsetPathValue::Inset(Box::new(InsetPathValue {
+                    offsets: std::array::from_fn(|index| {
+                        to_length_percentage(&value.offsets[index])
+                    }),
+                    radii,
+                }))
+            }
         })
     }
 }

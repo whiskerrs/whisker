@@ -74,7 +74,7 @@ pub use crate::to_css::ToCss;
 pub use crate::value::{
     BackdropFilter, BorderRadius, FlexBasis, GridArea, GridLine, GridRepeatCount, GridTemplate,
     GridTemplateAreas, GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, ImageRef,
-    LineHeight, MotionPathCommand, MotionPathPoint, OffsetDistance, OffsetPath, OffsetRotate,
-    Repeated, Size,
+    InsetPath, LineHeight, MotionPathCommand, MotionPathPoint, OffsetDistance, OffsetPath,
+    OffsetRotate, Repeated, Size,
 };
 pub use whisker_style::{PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyId};
