@@ -261,8 +261,7 @@ internal class HostScene(
                 root.resources.displayMetrics.density,
             )
             10 -> (nodes[id] ?: return).alpha = operation.scalar
-            11 -> (nodes[id] ?: return).visibility =
-                if (operation.integer != 0) View.VISIBLE else View.INVISIBLE
+            11 -> (nodes[id] ?: return).setWhiskerVisibility(operation.integer != 0)
             12 -> (nodes[id] ?: return).zOrder = operation.integer
             13 -> applyText(
                 nodes[id] ?: return,

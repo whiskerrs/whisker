@@ -142,7 +142,7 @@
       "id": "paint.compositing",
       "basis": "lynx-4.0",
       "properties": ["opacity", "visibility", "z-index"],
-      "supported_subset": ["element-group-opacity"],
+      "supported_subset": ["element-group-opacity", "visibility-descendant-override"],
       "protocol": ["SetOpacity", "SetVisibility", "SetZOrder"],
       "rust": "implemented",
       "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}

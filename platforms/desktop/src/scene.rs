@@ -366,11 +366,10 @@ impl DesktopScene {
     ) -> Option<whisker_protocol::CursorKeyword> {
         let state = self.nodes.get(&node)?;
         let presentation = &state.presentation;
-        if presentation.visibility == Visibility::Hidden
-            || presentation.hit_test == HitTestBehavior::None
-        {
+        if presentation.hit_test == HitTestBehavior::None {
             return None;
         }
+        let visible = presentation.visibility == Visibility::Visible;
         let rect = presentation.layout.border_box;
         let origin = [parent_origin[0] + rect.x, parent_origin[1] + rect.y];
         let contains_x = point[0] >= origin[0] && point[0] <= origin[0] + rect.width;
@@ -399,7 +398,10 @@ impl DesktopScene {
                 }
             }
         }
-        (contains_x && contains_y && presentation.hit_test != HitTestBehavior::DescendantsOnly)
+        (visible
+            && contains_x
+            && contains_y
+            && presentation.hit_test != HitTestBehavior::DescendantsOnly)
             .then_some(presentation.cursor.fallback)
     }
 
@@ -430,9 +432,7 @@ impl DesktopScene {
     ) {
         let node = self.nodes.get(&id).expect("retained child remains live");
         let presentation = &node.presentation;
-        if presentation.visibility == Visibility::Hidden {
-            return;
-        }
+        let visible = presentation.visibility == Visibility::Visible;
         let opacity_group = presentation.opacity < 1.0;
         if opacity_group {
             commands.push(PaintCommand::BeginOpacityGroup {
@@ -480,10 +480,11 @@ impl DesktopScene {
             });
             node_clip_bounds = transform_rect_aabb(clip_rect, transform);
         }
-        if let Some(radius) = presentation
-            .visual_effects
-            .backdrop_blur
-            .filter(|value| *value > 0.0)
+        if visible
+            && let Some(radius) = presentation
+                .visual_effects
+                .backdrop_blur
+                .filter(|value| *value > 0.0)
             && let Some(rect) = transform_rect_aabb(border, transform)
         {
             commands.push(PaintCommand::BackdropBlur {
@@ -492,9 +493,10 @@ impl DesktopScene {
                 clip: context.clip,
             });
         }
-        if presentation.paint.is_some()
-            || !presentation.background_layers.is_empty()
-            || !presentation.visual_effects.box_shadows.is_empty()
+        if visible
+            && (presentation.paint.is_some()
+                || !presentation.background_layers.is_empty()
+                || !presentation.visual_effects.box_shadows.is_empty())
         {
             commands.push(PaintCommand::Box {
                 rect: border,
@@ -551,7 +553,7 @@ impl DesktopScene {
                 );
             }
         }
-        if let Some(content) = node.content.text() {
+        if visible && let Some(content) = node.content.text() {
             let content_rect = LayoutRect {
                 x: border.x + presentation.layout.content_box.x,
                 y: border.y + presentation.layout.content_box.y,
@@ -1894,6 +1896,84 @@ mod tests {
             Some(whisker_protocol::CursorKeyword::Grab)
         );
         assert_eq!(scene.cursor_at([200.0, 20.0]), None);
+    }
+
+    #[test]
+    fn visible_descendant_paints_and_hit_tests_through_hidden_parent() {
+        let root = id(1);
+        let child = id(2);
+        let element_type = element_type(whisker::VIEW_ELEMENT_NAME);
+        let mut scene = scene(SurfaceId::new(1).unwrap());
+        scene
+            .present(&packet(
+                FrameMode::Snapshot,
+                0,
+                1,
+                vec![
+                    Operation::CreateNode {
+                        node: root,
+                        element_type,
+                    },
+                    Operation::CreateNode {
+                        node: child,
+                        element_type,
+                    },
+                    Operation::InsertChild {
+                        parent: root,
+                        child,
+                        index: 0,
+                    },
+                    Operation::SetLayout {
+                        node: root,
+                        geometry: geometry(10.0, 10.0, 80.0, 80.0),
+                    },
+                    Operation::SetLayout {
+                        node: child,
+                        geometry: geometry(10.0, 10.0, 30.0, 30.0),
+                    },
+                    Operation::SetBoxPaint {
+                        node: root,
+                        paint: paint(PaintColor::Named("red".into())),
+                    },
+                    Operation::SetBoxPaint {
+                        node: child,
+                        paint: paint(PaintColor::Named("green".into())),
+                    },
+                    Operation::SetVisibility {
+                        node: root,
+                        visibility: Visibility::Hidden,
+                    },
+                    Operation::SetVisibility {
+                        node: child,
+                        visibility: Visibility::Visible,
+                    },
+                    Operation::SetCursor {
+                        node: root,
+                        cursor: Cursor {
+                            resources: Vec::new(),
+                            fallback: whisker_protocol::CursorKeyword::Pointer,
+                        },
+                    },
+                    Operation::SetCursor {
+                        node: child,
+                        cursor: Cursor {
+                            resources: Vec::new(),
+                            fallback: whisker_protocol::CursorKeyword::Text,
+                        },
+                    },
+                ],
+            ))
+            .unwrap();
+
+        let commands = scene.paint_commands();
+        assert_eq!(commands.len(), 1);
+        assert!(matches!(&commands[0], PaintCommand::Box { rect, .. }
+            if *rect == LayoutRect { x: 20.0, y: 20.0, width: 30.0, height: 30.0 }));
+        assert_eq!(
+            scene.cursor_at([25.0, 25.0]),
+            Some(whisker_protocol::CursorKeyword::Text)
+        );
+        assert_eq!(scene.cursor_at([70.0, 70.0]), None);
     }
 
     #[test]

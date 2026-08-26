@@ -325,6 +325,13 @@
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css2.visibility-005",
+      "feature": "visibility-descendant-override",
+      "fixture": "wpt/css/CSS2/visufx/visibility-005.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css2.z-index-003",
       "feature": "z-index",
       "fixture": "wpt/css/CSS2/zindex/z-index-003.json",

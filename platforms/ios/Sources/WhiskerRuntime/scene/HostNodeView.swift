@@ -27,6 +27,7 @@ final class WhiskerNodeView: UIView {
     private(set) var cursorKeyword: Int32 = 0
     private var pointerDelegate: AnyObject?
     private var pointerInteraction: AnyObject?
+    private var whiskerVisible = true
 
     init(element: String) {
         self.element = element
@@ -154,6 +155,7 @@ final class WhiskerNodeView: UIView {
         // the first entry remains visually above later entries.
         for index in shadows.indices.reversed() {
             let shadowLayer = boxShadowLayers[index]
+            shadowLayer.isHidden = !whiskerVisible
             if shadows[index].inset {
                 paintView.layer.addSublayer(shadowLayer)
             } else {
@@ -175,6 +177,7 @@ final class WhiskerNodeView: UIView {
         } else {
             blurView = HostBackdropBlurView()
             blurView.layer.zPosition = -0.5
+            blurView.isHidden = !whiskerVisible
             insertSubview(blurView, at: 0)
             backdropBlurView = blurView
         }
@@ -201,11 +204,36 @@ final class WhiskerNodeView: UIView {
         }
     }
 
+    /// Applies computed CSS visibility to this element's own presentation.
+    /// Descendant node views stay mounted so an explicit `visibility: visible`
+    /// can override a hidden ancestor.
+    func setWhiskerVisibility(_ visible: Bool) {
+        guard whiskerVisible != visible else { return }
+        whiskerVisible = visible
+        paintView.isHidden = !visible
+        boxShadowLayers.forEach { $0.isHidden = !visible }
+        backdropBlurView?.isHidden = !visible
+        if let mountedElement, mountedElement.childrenHost() == nil {
+            mountedElement.view.isHidden = !visible
+        }
+    }
+
     var cursorPresentation: HostCursorPresentation {
         hostCursorPresentation(keyword: cursorKeyword)
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if !whiskerVisible {
+            guard hitTestBehavior != 1, hitTestBehavior != 2,
+                  let result = super.hitTest(point, with: event), result !== self
+            else { return nil }
+            var ancestor: UIView? = result
+            while let current = ancestor, current !== self {
+                if current is WhiskerNodeView { return result }
+                ancestor = current.superview
+            }
+            return nil
+        }
         switch hitTestBehavior {
         case 1:
             return nil

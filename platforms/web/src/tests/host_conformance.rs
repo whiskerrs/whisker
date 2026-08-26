@@ -1944,6 +1944,9 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/CSS2/visufx/visibility-004.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/visufx/visibility-004.json"
         ),
+        "wpt/css/CSS2/visufx/visibility-005.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/CSS2/visufx/visibility-005.json"
+        ),
         "wpt/css/CSS2/zindex/z-index-003.json" => {
             include_str!("../../../../tests/host-conformance/wpt/css/CSS2/zindex/z-index-003.json")
         }
