@@ -539,6 +539,9 @@ pub struct SceneNodeFixture {
     pub content_box: Option<[f32; 4]>,
     /// Box background color.
     pub background: ColorFixture,
+    /// Optional native text content and its resolved paint values.
+    #[serde(default)]
+    pub text: Option<TextFixture>,
     /// Optional border semantics.
     #[serde(default)]
     pub border: Option<BorderFixture>,
@@ -588,6 +591,40 @@ pub struct SceneNodeFixture {
     /// Optional explicit, non-repeating conic-gradient background image.
     #[serde(default)]
     pub conic_gradient: Option<ConicGradientFixture>,
+}
+
+/// Native text content used by a retained scene fixture.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TextFixture {
+    /// UTF-8 text value.
+    pub value: String,
+    /// Logical-pixel font size.
+    pub font_size: f32,
+    /// CSS numeric font weight.
+    #[serde(default = "default_font_weight")]
+    pub font_weight: u16,
+    /// Foreground glyph color.
+    pub color: ColorFixture,
+    /// Optional single Lynx-compatible shadow.
+    #[serde(default)]
+    pub shadow: Option<TextShadowFixture>,
+}
+
+/// One resolved native text shadow.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TextShadowFixture {
+    /// Horizontal and vertical logical-pixel offset.
+    pub offset: [f32; 2],
+    /// Non-negative logical-pixel blur radius.
+    pub blur_radius: f32,
+    /// Shadow color.
+    pub color: ColorFixture,
+}
+
+const fn default_font_weight() -> u16 {
+    400
 }
 
 impl SceneNodeFixture {
@@ -1363,6 +1400,18 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                     rect.into_iter().all(f32::is_finite) && rect[2] >= 0.0 && rect[3] >= 0.0
                 })
                 && valid_color(&node.background)
+                && node.text.as_ref().is_none_or(|text| {
+                    text.font_size.is_finite()
+                        && text.font_size > 0.0
+                        && (1..=1000).contains(&text.font_weight)
+                        && valid_color(&text.color)
+                        && text.shadow.as_ref().is_none_or(|shadow| {
+                            shadow.offset.into_iter().all(f32::is_finite)
+                                && shadow.blur_radius.is_finite()
+                                && shadow.blur_radius >= 0.0
+                                && valid_color(&shadow.color)
+                        })
+                })
                 && node.border.as_ref().is_none_or(valid_border)
                 && node.box_shadows.iter().all(|shadow| {
                     shadow.offset.into_iter().all(f32::is_finite)

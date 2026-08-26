@@ -11,6 +11,7 @@ import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerView
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerTextContent
+import rs.whisker.runtime.WhiskerTextShadow
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.paint.HostBackgroundGeometry
 import rs.whisker.runtime.paint.HostBackgroundBox
@@ -185,7 +186,7 @@ internal class HostScene(
             11 -> if (operation.node !in existing || operation.integer !in 0..1) return false
             13 -> if (
                 operation.node !in existing || operation.text == null ||
-                operation.numbers?.size ?: 0 < 8 || operation.names?.isEmpty() != false
+                operation.numbers?.size ?: 0 < 17 || operation.names?.size ?: 0 < 2
             ) return false
             14 -> if (operation.node !in existing || operation.value == null) return false
             21 -> if (!validBackgroundLayers(operation, existing)) return false
@@ -357,7 +358,7 @@ internal class HostScene(
     }
 
     private fun applyText(node: HostNode, text: String, values: FloatArray, names: Array<String>) {
-        require(values.size >= 8)
+        require(values.size >= 17)
         val mounted = requireNotNull(node.mountedElement)
         require(
             mounted.setText(
@@ -370,6 +371,16 @@ internal class HostScene(
                     } else {
                         rgba(values[3], values[4], values[5], values[6])
                     },
+                    shadow = if (values[8] == 0f) null else WhiskerTextShadow(
+                        offsetX = values[9],
+                        offsetY = values[10],
+                        blurRadius = values[11],
+                        color = if (values[16] == 0f) {
+                            parseNamedColor(names[1])
+                        } else {
+                            rgba(values[12], values[13], values[14], values[15])
+                        },
+                    ),
                 ),
             ),
         ) {

@@ -7,8 +7,60 @@ use crate::keyword::{
     TextAlign, TextDecorationLine, TextDecorationStyle, TextOverflow, TextTransform, VerticalAlign,
     WhiteSpace, WordBreak, WordWrap,
 };
+use crate::style_value::ToStyleValue;
 
 impl Css {
+    /// Sets the Lynx-compatible single `text-shadow` layer.
+    /// <https://lynxjs.org/api/css/properties/text-shadow>
+    pub fn text_shadow(
+        self,
+        offset_x: Length,
+        offset_y: Length,
+        blur_radius: Length,
+        color: Color,
+    ) -> Self {
+        use crate::to_css::ToCss;
+        let whisker_style::StyleValue::Length(offset_x_value) = offset_x.to_style_value() else {
+            unreachable!()
+        };
+        let whisker_style::StyleValue::Length(offset_y_value) = offset_y.to_style_value() else {
+            unreachable!()
+        };
+        let whisker_style::StyleValue::Length(blur_radius_value) = blur_radius.to_style_value()
+        else {
+            unreachable!()
+        };
+        let whisker_style::StyleValue::Color(color_value) = color.to_style_value() else {
+            unreachable!()
+        };
+        let mut css = String::new();
+        let _ = offset_x.to_css(&mut css);
+        css.push(' ');
+        let _ = offset_y.to_css(&mut css);
+        css.push(' ');
+        let _ = blur_radius.to_css(&mut css);
+        css.push(' ');
+        let _ = color.to_css(&mut css);
+        self.push_semantic(
+            crate::StyleProperty::TextShadow,
+            whisker_style::StyleValue::TextShadow(whisker_style::TextShadowValue::Shadow {
+                offset_x: offset_x_value,
+                offset_y: offset_y_value,
+                blur_radius: blur_radius_value,
+                color: color_value,
+            }),
+            css,
+        )
+    }
+
+    /// Disables inherited text shadow paint.
+    pub fn text_shadow_none(self) -> Self {
+        self.push_semantic(
+            crate::StyleProperty::TextShadow,
+            whisker_style::StyleValue::TextShadow(whisker_style::TextShadowValue::None),
+            "none",
+        )
+    }
     /// Sets `text-align`. **`justify` is not supported by Lynx**.
     /// <https://lynxjs.org/api/css/properties/text-align>
     pub fn text_align(self, v: TextAlign) -> Self {
@@ -93,6 +145,24 @@ mod tests {
     fn text_align_keywords() {
         let s = Css::new().text_align(TextAlign::Center);
         assert_eq!(s.to_string(), "text-align: center;");
+    }
+
+    #[test]
+    fn single_text_shadow_is_typed_and_uses_lynx_order() {
+        let style = Css::new().text_shadow(1.px(), 2.px(), 3.px(), Color::rgba(255, 0, 0, 0.5));
+        assert_eq!(
+            style.to_string(),
+            "text-shadow: 1px 2px 3px rgba(255, 0, 0, 0.5);"
+        );
+        let specified = style.to_specified_style().unwrap();
+        assert!(matches!(
+            specified.resolved()[0].value(),
+            whisker_style::StyleValue::TextShadow(whisker_style::TextShadowValue::Shadow { .. })
+        ));
+        assert_eq!(
+            Css::new().text_shadow_none().to_string(),
+            "text-shadow: none;"
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use core::fmt;
 use crate::{
     CalcExpression, ColorValue, ComputedLayoutStyle, ComputedPaintStyle, FontFamilyValue,
     FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue,
-    LineHeightValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue,
+    LineHeightValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextShadowValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -86,7 +86,35 @@ pub enum ComputedLineHeight {
     LogicalPixels(StyleNumber),
 }
 
-/// The seven computed text values inherited by descendant nodes.
+/// One resolved inherited text shadow.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedTextShadow {
+    offset_x: StyleNumber,
+    offset_y: StyleNumber,
+    blur_radius: StyleNumber,
+    color: ColorValue,
+}
+
+impl ComputedTextShadow {
+    /// Returns the horizontal offset in logical pixels.
+    pub const fn offset_x(&self) -> f32 {
+        self.offset_x.get()
+    }
+    /// Returns the vertical offset in logical pixels.
+    pub const fn offset_y(&self) -> f32 {
+        self.offset_y.get()
+    }
+    /// Returns the blur radius in logical pixels.
+    pub const fn blur_radius(&self) -> f32 {
+        self.blur_radius.get()
+    }
+    /// Returns the shadow color.
+    pub const fn color(&self) -> &ColorValue {
+        &self.color
+    }
+}
+
+/// The computed text values inherited by descendant nodes.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InheritedStyle {
     font_family: FontFamilyValue,
@@ -96,6 +124,7 @@ pub struct InheritedStyle {
     line_height: ComputedLineHeight,
     letter_spacing: StyleNumber,
     color: ColorValue,
+    text_shadow: Option<ComputedTextShadow>,
 }
 
 impl InheritedStyle {
@@ -113,6 +142,7 @@ impl InheritedStyle {
                 blue: 0,
                 alpha: StyleNumber::new(1.0),
             },
+            text_shadow: None,
         }
     }
 
@@ -151,6 +181,11 @@ impl InheritedStyle {
         &self.color
     }
 
+    /// Returns the optional single inherited text shadow.
+    pub const fn text_shadow(&self) -> Option<&ComputedTextShadow> {
+        self.text_shadow.as_ref()
+    }
+
     /// Classifies inherited changes and their downstream work.
     pub fn changes_from(&self, previous: &Self) -> InheritedStyleChange {
         let mut properties = InheritedPropertySet::EMPTY;
@@ -181,6 +216,10 @@ impl InheritedStyle {
         }
         if self.color != previous.color {
             properties |= InheritedPropertySet::COLOR;
+            impacts |= PropertyImpactSet::PAINT;
+        }
+        if self.text_shadow != previous.text_shadow {
+            properties |= InheritedPropertySet::TEXT_SHADOW;
             impacts |= PropertyImpactSet::PAINT;
         }
         InheritedStyleChange {
@@ -285,6 +324,8 @@ impl InheritedPropertySet {
     pub const LETTER_SPACING: Self = Self(1 << 5);
     /// `color`.
     pub const COLOR: Self = Self(1 << 6);
+    /// `text-shadow`.
+    pub const TEXT_SHADOW: Self = Self(1 << 7);
 
     /// Returns whether this set contains every bit from `other`.
     pub const fn contains(self, other: Self) -> bool {
@@ -463,6 +504,47 @@ pub fn resolve_style(
         Some(_) => return Err(wrong_type(StyleProperty::Color)),
         None => base.color.clone(),
     };
+    let text_shadow = match declarations.text_shadow {
+        Some(StyleValue::TextShadow(TextShadowValue::None)) => None,
+        Some(StyleValue::TextShadow(TextShadowValue::Shadow {
+            offset_x,
+            offset_y,
+            blur_radius,
+            color,
+        })) => {
+            let offset_x = resolve_length(
+                *offset_x,
+                font_size.get(),
+                environment,
+                StyleProperty::TextShadow,
+            )?;
+            let offset_y = resolve_length(
+                *offset_y,
+                font_size.get(),
+                environment,
+                StyleProperty::TextShadow,
+            )?;
+            let blur_radius = resolve_length(
+                *blur_radius,
+                font_size.get(),
+                environment,
+                StyleProperty::TextShadow,
+            )?;
+            if blur_radius < 0.0 {
+                return Err(StyleResolutionError::InvalidPropertyValue(
+                    StyleProperty::TextShadow,
+                ));
+            }
+            Some(ComputedTextShadow {
+                offset_x: StyleNumber::new(offset_x),
+                offset_y: StyleNumber::new(offset_y),
+                blur_radius: StyleNumber::new(blur_radius),
+                color: normalize_color(color)?,
+            })
+        }
+        Some(_) => return Err(wrong_type(StyleProperty::TextShadow)),
+        None => base.text_shadow.clone(),
+    };
 
     let inherited_text = InheritedStyle {
         font_family,
@@ -472,6 +554,7 @@ pub fn resolve_style(
         line_height,
         letter_spacing,
         color,
+        text_shadow,
     };
     let layout =
         crate::layout::resolve_layout_style(specified, inherited_text.font_size(), environment)?;
@@ -512,6 +595,7 @@ struct InheritedDeclarations<'a> {
     line_height: Option<&'a StyleValue>,
     letter_spacing: Option<&'a StyleValue>,
     color: Option<&'a StyleValue>,
+    text_shadow: Option<&'a StyleValue>,
 }
 
 impl<'a> InheritedDeclarations<'a> {
@@ -526,6 +610,7 @@ impl<'a> InheritedDeclarations<'a> {
                 StyleProperty::LineHeight => &mut values.line_height,
                 StyleProperty::LetterSpacing => &mut values.letter_spacing,
                 StyleProperty::Color => &mut values.color,
+                StyleProperty::TextShadow => &mut values.text_shadow,
                 _ => continue,
             };
             *slot = Some(declaration.value());
@@ -1130,6 +1215,7 @@ mod tests {
             StyleProperty::LineHeight,
             StyleProperty::LetterSpacing,
             StyleProperty::Color,
+            StyleProperty::TextShadow,
         ] {
             let error = resolve_text_style(
                 &declaration(property, StyleValue::Bool(true)),
@@ -1150,6 +1236,117 @@ mod tests {
         assert_eq!(
             StyleResolutionError::InvalidCalculation(StyleProperty::FontSize).to_string(),
             "invalid calculation for `font-size`"
+        );
+    }
+
+    #[test]
+    fn text_shadow_resolves_inherits_clears_and_rejects_negative_blur() {
+        let environment = StyleEnvironment::default();
+        let shadow = declaration(
+            StyleProperty::TextShadow,
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: px(1.0),
+                offset_y: LengthValue::Dimension {
+                    value: number(1.0),
+                    unit: LengthUnit::Em,
+                },
+                blur_radius: px(3.0),
+                color: ColorValue::Named("red".into()),
+            }),
+        );
+        let parent = resolve_text_style(&shadow, None, environment).unwrap();
+        let child = resolve_text_style(
+            &SpecifiedStyle::new(),
+            Some(parent.inherited_for_children()),
+            environment,
+        )
+        .unwrap();
+        let value = inherited(&child).text_shadow().unwrap();
+        assert_eq!([value.offset_x(), value.offset_y()], [1.0, 14.0]);
+        assert_eq!(value.blur_radius(), 3.0);
+        assert_eq!(value.color(), &ColorValue::Named("red".into()));
+
+        let cleared = resolve_text_style(
+            &declaration(
+                StyleProperty::TextShadow,
+                StyleValue::TextShadow(TextShadowValue::None),
+            ),
+            Some(parent.inherited_for_children()),
+            environment,
+        )
+        .unwrap();
+        assert!(inherited(&cleared).text_shadow().is_none());
+
+        let invalid = declaration(
+            StyleProperty::TextShadow,
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: LengthValue::Zero,
+                offset_y: LengthValue::Zero,
+                blur_radius: px(-1.0),
+                color: ColorValue::Named("black".into()),
+            }),
+        );
+        assert_eq!(
+            resolve_text_style(&invalid, None, environment).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::TextShadow)
+        );
+
+        let invalid_offset_x = declaration(
+            StyleProperty::TextShadow,
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: px(f32::NAN),
+                offset_y: LengthValue::Zero,
+                blur_radius: LengthValue::Zero,
+                color: ColorValue::Named("black".into()),
+            }),
+        );
+        let invalid_offset_y = declaration(
+            StyleProperty::TextShadow,
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: LengthValue::Zero,
+                offset_y: px(f32::NAN),
+                blur_radius: LengthValue::Zero,
+                color: ColorValue::Named("black".into()),
+            }),
+        );
+        let invalid_blur = declaration(
+            StyleProperty::TextShadow,
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: LengthValue::Zero,
+                offset_y: LengthValue::Zero,
+                blur_radius: px(f32::NAN),
+                color: ColorValue::Named("black".into()),
+            }),
+        );
+        assert_eq!(
+            resolve_text_style(&invalid_offset_x, None, environment).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::TextShadow)
+        );
+        assert_eq!(
+            resolve_text_style(&invalid_offset_y, None, environment).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::TextShadow)
+        );
+        assert_eq!(
+            resolve_text_style(&invalid_blur, None, environment).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::TextShadow)
+        );
+        let invalid_color = declaration(
+            StyleProperty::TextShadow,
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: LengthValue::Zero,
+                offset_y: LengthValue::Zero,
+                blur_radius: LengthValue::Zero,
+                color: ColorValue::Rgba {
+                    red: 0,
+                    green: 0,
+                    blue: 0,
+                    alpha: number(f32::NAN),
+                },
+            }),
+        );
+        assert_eq!(
+            resolve_text_style(&invalid_color, None, environment).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::Color)
         );
     }
 
@@ -1398,6 +1595,12 @@ mod tests {
             line_height: ComputedLineHeight::LogicalPixels(number(24.0)),
             letter_spacing: number(1.0),
             color: ColorValue::Named("red".into()),
+            text_shadow: Some(ComputedTextShadow {
+                offset_x: number(1.0),
+                offset_y: number(2.0),
+                blur_radius: number(3.0),
+                color: ColorValue::Named("blue".into()),
+            }),
         };
         let change = changed.changes_from(initial);
         for property in [
@@ -1408,6 +1611,7 @@ mod tests {
             InheritedPropertySet::LINE_HEIGHT,
             InheritedPropertySet::LETTER_SPACING,
             InheritedPropertySet::COLOR,
+            InheritedPropertySet::TEXT_SHADOW,
         ] {
             assert!(change.properties().contains(property));
         }

@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "id": "core.text-shadow-single",
+  "test": {
+    "commands": [
+      {
+        "type": "attach_surface",
+        "width": 220,
+        "height": 100,
+        "scale": 1
+      },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [20, 20, 180, 60],
+            "background": {
+              "kind": "srgba",
+              "red": 255,
+              "green": 255,
+              "blue": 255,
+              "alpha": 0
+            },
+            "text": {
+              "value": "Whisker",
+              "font_size": 24,
+              "font_weight": 400,
+              "color": {
+                "kind": "srgba",
+                "red": 0,
+                "green": 0,
+                "blue": 0,
+                "alpha": 1
+              },
+              "shadow": {
+                "offset": [3, 4],
+                "blur_radius": 2,
+                "color": {
+                  "kind": "srgba",
+                  "red": 255,
+                  "green": 0,
+                  "blue": 0,
+                  "alpha": 0.75
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.text.shadow-single"
+      }
+    ]
+  }
+}

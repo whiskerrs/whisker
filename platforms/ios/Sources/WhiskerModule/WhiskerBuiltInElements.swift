@@ -56,12 +56,28 @@ public enum WhiskerBuiltInElements {
                 guard let label = view as? UILabel else {
                     preconditionFailure("\(textName) factory must create UILabel")
                 }
-                label.text = content.value
                 label.font = .systemFont(
                     ofSize: content.fontSize,
                     weight: content.fontWeight >= 600 ? .bold : .regular
                 )
                 label.textColor = content.color
+                if let shadow = content.shadow {
+                    let nativeShadow = NSShadow()
+                    nativeShadow.shadowOffset = shadow.offset
+                    nativeShadow.shadowBlurRadius = shadow.blurRadius
+                    nativeShadow.shadowColor = shadow.color
+                    label.attributedText = NSAttributedString(
+                        string: content.value,
+                        attributes: [
+                            .font: label.font as Any,
+                            .foregroundColor: content.color,
+                            .shadow: nativeShadow,
+                        ]
+                    )
+                } else {
+                    label.attributedText = nil
+                    label.text = content.value
+                }
             }
         ) {
             let label = UILabel(frame: .zero)

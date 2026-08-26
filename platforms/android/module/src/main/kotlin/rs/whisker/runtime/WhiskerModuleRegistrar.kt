@@ -20,6 +20,15 @@ public data class WhiskerTextContent(
     public val fontSize: Float,
     public val fontWeight: Int,
     public val color: Int,
+    public val shadow: WhiskerTextShadow?,
+)
+
+/** One resolved shadow painted behind native text glyphs. */
+public data class WhiskerTextShadow(
+    public val offsetX: Float,
+    public val offsetY: Float,
+    public val blurRadius: Float,
+    public val color: Int,
 )
 
 /** One native View mounted for a retained Whisker node. */

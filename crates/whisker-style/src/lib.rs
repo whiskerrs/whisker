@@ -41,9 +41,9 @@ pub use property::{
     PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyDomain, StylePropertyId,
 };
 pub use resolution::{
-    ComputedLineHeight, ComputedStyle, InheritedPropertySet, InheritedStyle, InheritedStyleChange,
-    PropertyImpactSet, ResolvedNodeStyle, StyleEnvironment, StyleResolutionError, resolve_style,
-    resolve_text_style,
+    ComputedLineHeight, ComputedStyle, ComputedTextShadow, InheritedPropertySet, InheritedStyle,
+    InheritedStyleChange, PropertyImpactSet, ResolvedNodeStyle, StyleEnvironment,
+    StyleResolutionError, resolve_style, resolve_text_style,
 };
 pub use value::{
     BackdropFilterValue, BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue,
@@ -52,6 +52,6 @@ pub use value::{
     ColorValue, FontFamilyValue, FontStyleValue, FontWeightValue, GradientStopValue, GradientValue,
     ImageRenderingValue, InsetPathValue, LengthPercentageValue, LengthUnit, LengthValue,
     LineHeightValue, MotionPathCommandValue, MotionPathPointValue, OffsetPathValue,
-    OffsetRotateValue, RadialGradientValue, StyleNumber, StyleValue, TransformFunctionValue,
-    TransformOriginValue, TransformValue,
+    OffsetRotateValue, RadialGradientValue, StyleNumber, StyleValue, TextShadowValue,
+    TransformFunctionValue, TransformOriginValue, TransformValue,
 };

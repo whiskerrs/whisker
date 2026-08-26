@@ -519,6 +519,24 @@ pub enum OffsetRotateValue {
     Angle(StyleNumber),
 }
 
+/// The Lynx-compatible single `text-shadow` value.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TextShadowValue {
+    /// Disable inherited text shadow paint.
+    None,
+    /// Paint one shadow behind the glyphs.
+    Shadow {
+        /// Horizontal offset.
+        offset_x: LengthValue,
+        /// Vertical offset.
+        offset_y: LengthValue,
+        /// Non-negative blur radius.
+        blur_radius: LengthValue,
+        /// Shadow color.
+        color: ColorValue,
+    },
+}
+
 /// An owned value in a specified inline-style declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StyleValue {
@@ -570,6 +588,8 @@ pub enum StyleValue {
     FontWeight(FontWeightValue),
     /// Text color.
     Color(ColorValue),
+    /// Single inherited text shadow.
+    TextShadow(TextShadowValue),
     /// Border line style.
     BorderStyle(crate::BorderStyleValue),
     /// Overflow behavior on one axis.

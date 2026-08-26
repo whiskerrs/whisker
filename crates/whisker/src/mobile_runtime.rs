@@ -848,6 +848,10 @@ impl FrameSink for MobileFrameSink {
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_engine::whisker_protocol::CapabilityEntry {
+                    capability: whisker_engine::whisker_protocol::RenderCapability::TextEffects,
+                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_engine::whisker_protocol::CapabilityEntry {
                     capability: whisker_engine::whisker_protocol::RenderCapability::LinearGradients,
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
@@ -1381,13 +1385,21 @@ impl MobileFrameOwned {
                     raw.integer = *z_order;
                 }
                 Operation::SetText { node, content } => {
-                    if content.paint.uses_extended_features()
+                    if content.paint.decoration.lines.underline
+                        || content.paint.decoration.lines.overline
+                        || content.paint.decoration.lines.line_through
+                        || content.paint.shadows.len() > 1
                         || content.payload.style.uses_extended_typography()
                     {
                         return Err(MobileFrameError);
                     }
                     raw.tag = OP_TEXT;
                     raw.node = node.get();
+                    let shadow = content.paint.shadows.first();
+                    let shadow_color = match shadow {
+                        Some(value) => mobile_color(&value.color, &mut strings),
+                        None => mobile_color(&PaintColor::default(), &mut strings),
+                    };
                     texts.push(Box::new(MobileText {
                         text: push_string(&mut strings, &content.payload.text),
                         font_size: content.payload.style.font_size,
@@ -1405,6 +1417,11 @@ impl MobileFrameOwned {
                         },
                         letter_spacing: content.payload.style.letter_spacing,
                         color: mobile_color(&content.paint.foreground, &mut strings),
+                        shadow_offset_x: shadow.map_or(0.0, |value| value.offset_x),
+                        shadow_offset_y: shadow.map_or(0.0, |value| value.offset_y),
+                        shadow_blur_radius: shadow.map_or(0.0, |value| value.blur_radius),
+                        shadow_flags: u32::from(shadow.is_some()),
+                        shadow_color,
                         prepared_content: content.prepared_content.map_or(0, |value| value.get()),
                     }));
                     raw.payload = texts.last().unwrap().as_ref() as *const _ as *const c_void;
@@ -1726,7 +1743,8 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use whisker_engine::whisker_protocol::{
-        BackgroundLayer, FrameHeader, GradientStop, PaintCoordinate, PaintPosition, ProtocolVersion,
+        BackgroundLayer, FrameHeader, GradientStop, PaintCoordinate, PaintPosition,
+        ProtocolVersion, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow,
     };
 
     fn linear_background(name: &str) -> BackgroundLayer {
@@ -1753,6 +1771,26 @@ mod tests {
             clip: PaintBox::Border,
             attachment: BackgroundAttachment::Scroll,
             blend_mode: BlendMode::Normal,
+        }
+    }
+
+    fn text_with_shadow(shadows: Vec<TextShadow>) -> TextContent {
+        TextContent {
+            payload: TextMeasurePayload {
+                text: "shadow".into(),
+                style: TextMeasureStyle::default(),
+                locale: None,
+                direction: Default::default(),
+                wrap: MeasureTextWrap::Wrap,
+                max_lines: None,
+                overflow: Default::default(),
+            },
+            paint: TextPaint {
+                foreground: PaintColor::Named("black".into()),
+                shadows,
+                ..TextPaint::default()
+            },
+            prepared_content: None,
         }
     }
 
@@ -1935,6 +1973,79 @@ mod tests {
         let raw = mobile_paint(&paint, &mut Vec::new());
         assert_eq!(raw.radii_horizontal[0].length, 40.0);
         assert_eq!(raw.radii_vertical[0].length, 10.0);
+    }
+
+    #[test]
+    fn mobile_frame_encodes_one_text_shadow_without_string_protocols() {
+        let shadow = TextShadow {
+            offset_x: 3.0,
+            offset_y: -2.0,
+            blur_radius: 5.0,
+            color: PaintColor::Srgba {
+                red: 10,
+                green: 20,
+                blue: 30,
+                alpha: 0.4,
+            },
+        };
+        let packet = FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![Operation::SetText {
+                node: NodeId::new(1).unwrap(),
+                content: text_with_shadow(vec![shadow]),
+            }],
+        };
+
+        let frame = MobileFrameOwned::new(&packet).unwrap();
+        let operation = &frame._operations[0];
+        assert_eq!(operation.tag, OP_TEXT);
+        let text = unsafe { &*operation.payload.cast::<MobileText>() };
+        assert_eq!(text.shadow_flags, 1);
+        assert_eq!(text.shadow_offset_x, 3.0);
+        assert_eq!(text.shadow_offset_y, -2.0);
+        assert_eq!(text.shadow_blur_radius, 5.0);
+        assert_eq!(text.shadow_color.kind, 1);
+        assert_eq!(text.shadow_color.red, 10);
+        assert_eq!(text.shadow_color.green, 20);
+        assert_eq!(text.shadow_color.blue, 30);
+        assert_eq!(text.shadow_color.alpha, 0.4);
+    }
+
+    #[test]
+    fn mobile_frame_rejects_multiple_text_shadows() {
+        let shadow = TextShadow {
+            offset_x: 0.0,
+            offset_y: 1.0,
+            blur_radius: 0.0,
+            color: PaintColor::default(),
+        };
+        let packet = FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![Operation::SetText {
+                node: NodeId::new(1).unwrap(),
+                content: text_with_shadow(vec![shadow.clone(), shadow]),
+            }],
+        };
+
+        assert!(MobileFrameOwned::new(&packet).is_err());
     }
 
     #[test]
