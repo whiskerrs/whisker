@@ -81,7 +81,9 @@ private final class Driver {
                 try presentScene(command)
             case "checkpoint":
                 let name = try string(command, "name")
-                guard name == "paint.box" || name == "paint.background-layers.linear-gradient" else {
+                guard name == "paint.box" ||
+                    name == "paint.background-layers.linear-gradient" ||
+                    name == "paint.background-layers.radial-gradient" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -165,115 +167,159 @@ private final class Driver {
         var gradientStops = [WhiskerMobileGradientStop]()
         var gradientOffsets = [Int?]()
         for fixture in fixtures {
-            guard let gradient = fixture.linearGradient else {
+            if let gradient = fixture.linearGradient {
+                gradientOffsets.append(gradientStops.count)
+                gradientStops.append(contentsOf: gradient.stops)
+            } else if let gradient = fixture.radialGradient {
+                gradientOffsets.append(gradientStops.count)
+                gradientStops.append(contentsOf: gradient.stops)
+            } else {
                 gradientOffsets.append(nil)
-                continue
             }
-            gradientOffsets.append(gradientStops.count)
-            gradientStops.append(contentsOf: gradient.stops)
         }
+        var radialPayloads = [WhiskerMobileRadialGradient](
+            repeating: WhiskerMobileRadialGradient(),
+            count: fixtures.count
+        )
         try layouts.withUnsafeMutableBufferPointer { layoutBuffer in
             try paints.withUnsafeMutableBufferPointer { paintBuffer in
                 try transforms.withUnsafeMutableBufferPointer { transformBuffer in
                     try gradientStops.withUnsafeMutableBufferPointer { gradientBuffer in
-                    var operations = fixtures.map {
-                        operation(tag: UInt32(WHISKER_OP_CREATE), node: $0.id, member: 1)
-                    }
-                    var childCounts: [UInt64: UInt32] = [:]
-                    for fixture in fixtures {
-                        guard let parent = fixture.parent else { continue }
-                        let index = childCounts[parent, default: 0]
-                        operations.append(operation(
-                            tag: UInt32(WHISKER_OP_INSERT),
-                            parent: parent,
-                            child: fixture.id,
-                            index: index
-                        ))
-                        childCounts[parent] = index + 1
-                    }
-                    for (index, fixture) in fixtures.enumerated() {
-                        operations.append(operation(
-                            tag: UInt32(WHISKER_OP_LAYOUT),
-                            node: fixture.id,
-                            payload: UnsafeRawPointer(layoutBuffer.baseAddress!.advanced(by: index)),
-                            count: 1
-                        ))
-                        operations.append(operation(
-                            tag: UInt32(WHISKER_OP_PAINT),
-                            node: fixture.id,
-                            payload: UnsafeRawPointer(paintBuffer.baseAddress!.advanced(by: index)),
-                            count: 1
-                        ))
-                        operations.append(operation(
-                            tag: UInt32(WHISKER_OP_CLIP),
-                            node: fixture.id,
-                            flags: fixture.clipFlags
-                        ))
-                        if fixture.transform != nil {
-                            operations.append(operation(
-                                tag: UInt32(WHISKER_OP_TRANSFORM),
-                                node: fixture.id,
-                                payload: UnsafeRawPointer(
-                                    transformBuffer.baseAddress!.advanced(by: index * 16)
-                                ),
-                                count: 16
-                            ))
+                        for (index, fixture) in fixtures.enumerated() {
+                            guard let radial = fixture.radialGradient,
+                                  let offset = gradientOffsets[index] else { continue }
+                            radialPayloads[index].center_x = WhiskerMobileLengthPercentage(
+                                length: radial.center[0], fraction: 0
+                            )
+                            radialPayloads[index].center_y = WhiskerMobileLengthPercentage(
+                                length: radial.center[1], fraction: 0
+                            )
+                            radialPayloads[index].radius_x = WhiskerMobileLengthPercentage(
+                                length: radial.radii[0], fraction: 0
+                            )
+                            radialPayloads[index].radius_y = WhiskerMobileLengthPercentage(
+                                length: radial.radii[1], fraction: 0
+                            )
+                            radialPayloads[index].stops = UnsafePointer(
+                                gradientBuffer.baseAddress!.advanced(by: offset)
+                            )
+                            radialPayloads[index].stop_count = radial.stops.count
                         }
-                        if let opacity = fixture.opacity {
-                            operations.append(operation(
-                                tag: UInt32(WHISKER_OP_OPACITY),
-                                node: fixture.id,
-                                scalar: opacity
-                            ))
+                        try radialPayloads.withUnsafeMutableBufferPointer { radialBuffer in
+                            var operations = fixtures.map {
+                                operation(tag: UInt32(WHISKER_OP_CREATE), node: $0.id, member: 1)
+                            }
+                            var childCounts: [UInt64: UInt32] = [:]
+                            for fixture in fixtures {
+                                guard let parent = fixture.parent else { continue }
+                                let index = childCounts[parent, default: 0]
+                                operations.append(operation(
+                                    tag: UInt32(WHISKER_OP_INSERT),
+                                    parent: parent,
+                                    child: fixture.id,
+                                    index: index
+                                ))
+                                childCounts[parent] = index + 1
+                            }
+                            for (index, fixture) in fixtures.enumerated() {
+                                operations.append(operation(
+                                    tag: UInt32(WHISKER_OP_LAYOUT),
+                                    node: fixture.id,
+                                    payload: UnsafeRawPointer(
+                                        layoutBuffer.baseAddress!.advanced(by: index)
+                                    ),
+                                    count: 1
+                                ))
+                                operations.append(operation(
+                                    tag: UInt32(WHISKER_OP_PAINT),
+                                    node: fixture.id,
+                                    payload: UnsafeRawPointer(
+                                        paintBuffer.baseAddress!.advanced(by: index)
+                                    ),
+                                    count: 1
+                                ))
+                                operations.append(operation(
+                                    tag: UInt32(WHISKER_OP_CLIP),
+                                    node: fixture.id,
+                                    flags: fixture.clipFlags
+                                ))
+                                if fixture.transform != nil {
+                                    operations.append(operation(
+                                        tag: UInt32(WHISKER_OP_TRANSFORM),
+                                        node: fixture.id,
+                                        payload: UnsafeRawPointer(
+                                            transformBuffer.baseAddress!.advanced(by: index * 16)
+                                        ),
+                                        count: 16
+                                    ))
+                                }
+                                if let opacity = fixture.opacity {
+                                    operations.append(operation(
+                                        tag: UInt32(WHISKER_OP_OPACITY),
+                                        node: fixture.id,
+                                        scalar: opacity
+                                    ))
+                                }
+                                if let visible = fixture.visible {
+                                    operations.append(operation(
+                                        tag: UInt32(WHISKER_OP_VISIBILITY),
+                                        node: fixture.id,
+                                        integer: visible ? 1 : 0
+                                    ))
+                                }
+                                if let zOrder = fixture.zOrder {
+                                    operations.append(operation(
+                                        tag: UInt32(WHISKER_OP_Z_ORDER),
+                                        node: fixture.id,
+                                        integer: zOrder
+                                    ))
+                                }
+                                if let gradient = fixture.linearGradient,
+                                   let offset = gradientOffsets[index] {
+                                    operations.append(operation(
+                                        tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
+                                        node: fixture.id,
+                                        flags: UInt32(WHISKER_BACKGROUND_LINEAR),
+                                        scalar: gradient.angleDegrees,
+                                        payload: UnsafeRawPointer(
+                                            gradientBuffer.baseAddress!.advanced(by: offset)
+                                        ),
+                                        count: gradient.stops.count
+                                    ))
+                                } else if fixture.radialGradient != nil {
+                                    operations.append(operation(
+                                        tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
+                                        node: fixture.id,
+                                        flags: UInt32(WHISKER_BACKGROUND_RADIAL),
+                                        payload: UnsafeRawPointer(
+                                            radialBuffer.baseAddress!.advanced(by: index)
+                                        ),
+                                        count: 1
+                                    ))
+                                }
+                            }
+                            try operations.withUnsafeMutableBufferPointer { buffer in
+                                var frame = WhiskerMobileFrame()
+                                frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                                frame.abi_minor = UInt16(WHISKER_MOBILE_ABI_MINOR)
+                                frame.protocol_major = 1
+                                frame.protocol_minor = 0
+                                frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
+                                frame.surface = 1
+                                frame.scene_epoch = 1
+                                frame.viewport_epoch = 1
+                                frame.frame_id = revision
+                                frame.base_revision = 0
+                                frame.target_revision = revision
+                                frame.operations = UnsafePointer(buffer.baseAddress!)
+                                frame.operation_count = buffer.count
+                                var response = WhiskerMobileApplyResponse()
+                                guard view.applyConformanceFrame(frame, response: &response),
+                                      response.status == UInt8(WHISKER_APPLY_ACCEPTED) else {
+                                    throw Failure("UIKit Host rejected scene fixture frame")
+                                }
+                            }
                         }
-                        if let visible = fixture.visible {
-                            operations.append(operation(
-                                tag: UInt32(WHISKER_OP_VISIBILITY),
-                                node: fixture.id,
-                                integer: visible ? 1 : 0
-                            ))
-                        }
-                        if let zOrder = fixture.zOrder {
-                            operations.append(operation(
-                                tag: UInt32(WHISKER_OP_Z_ORDER),
-                                node: fixture.id,
-                                integer: zOrder
-                            ))
-                        }
-                        if let gradient = fixture.linearGradient,
-                           let offset = gradientOffsets[index] {
-                            operations.append(operation(
-                                tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
-                                node: fixture.id,
-                                scalar: gradient.angleDegrees,
-                                payload: UnsafeRawPointer(
-                                    gradientBuffer.baseAddress!.advanced(by: offset)
-                                ),
-                                count: gradient.stops.count
-                            ))
-                        }
-                    }
-                    try operations.withUnsafeMutableBufferPointer { buffer in
-                        var frame = WhiskerMobileFrame()
-                        frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
-                        frame.abi_minor = UInt16(WHISKER_MOBILE_ABI_MINOR)
-                        frame.protocol_major = 1
-                        frame.protocol_minor = 0
-                        frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
-                        frame.surface = 1
-                        frame.scene_epoch = 1
-                        frame.viewport_epoch = 1
-                        frame.frame_id = revision
-                        frame.base_revision = 0
-                        frame.target_revision = revision
-                        frame.operations = UnsafePointer(buffer.baseAddress!)
-                        frame.operation_count = buffer.count
-                        var response = WhiskerMobileApplyResponse()
-                        guard view.applyConformanceFrame(frame, response: &response),
-                              response.status == UInt8(WHISKER_APPLY_ACCEPTED) else {
-                            throw Failure("UIKit Host rejected scene fixture frame")
-                        }
-                    }
                     }
                 }
             }
@@ -324,10 +370,17 @@ private struct SceneFixtureNode {
     let visible: Bool?
     let zOrder: Int32?
     let linearGradient: SceneLinearGradient?
+    let radialGradient: SceneRadialGradient?
 }
 
 private struct SceneLinearGradient {
     let angleDegrees: Float
+    let stops: [WhiskerMobileGradientStop]
+}
+
+private struct SceneRadialGradient {
+    let center: [Float]
+    let radii: [Float]
     let stops: [WhiskerMobileGradientStop]
 }
 
@@ -432,6 +485,26 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     } else {
         linearGradient = nil
     }
+    let radialGradient: SceneRadialGradient?
+    if let gradient = fixture["radial_gradient"] as? [String: Any] {
+        let center = try numberArray(gradient, "center").map(Float.init)
+        let radii = try numberArray(gradient, "radii").map(Float.init)
+        let stops = try objectArray(gradient, "stops").map { stop -> WhiskerMobileGradientStop in
+            var raw = WhiskerMobileGradientStop()
+            raw.color = try color(try object(stop, "color"))
+            raw.position = WhiskerMobileLengthPercentage(
+                length: 0,
+                fraction: Float(try number(stop, "position"))
+            )
+            return raw
+        }
+        guard center.count == 2, radii.count == 2, stops.count >= 2 else {
+            throw Failure("radial gradient needs a center, two radii, and at least two stops")
+        }
+        radialGradient = SceneRadialGradient(center: center, radii: radii, stops: stops)
+    } else {
+        radialGradient = nil
+    }
     return SceneFixtureNode(
         id: id,
         parent: parent,
@@ -442,7 +515,8 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         opacity: opacity,
         visible: visible,
         zOrder: zOrder,
-        linearGradient: linearGradient
+        linearGradient: linearGradient,
+        radialGradient: radialGradient
     )
 }
 

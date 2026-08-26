@@ -12,7 +12,8 @@ use whisker_engine::whisker_protocol::{
     ImageRepeat, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextWrap,
     MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementRequestId,
     MeasurementResponse, NodeId, Operation, PaintBox, PaintColor, PaintImage,
-    PaintLengthPercentage, PreparedContentId, SurfaceId, UnsupportedMeasurementReason,
+    PaintLengthPercentage, PreparedContentId, RadialGradientExtent, RadialGradientShape, SurfaceId,
+    UnsupportedMeasurementReason,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
@@ -655,6 +656,10 @@ impl FrameSink for MobileFrameSink {
                     capability: whisker_engine::whisker_protocol::RenderCapability::LinearGradients,
                     support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_engine::whisker_protocol::CapabilityEntry {
+                    capability: whisker_engine::whisker_protocol::RenderCapability::RadialGradients,
+                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("mobile capability profile is unique")
@@ -691,6 +696,7 @@ struct MobileFrameOwned {
     _layouts: Vec<Box<MobileLayoutGeometry>>,
     _paints: Vec<Box<MobileBoxPaint>>,
     _gradient_stops: Vec<Box<[MobileGradientStop]>>,
+    _radial_gradients: Vec<Box<MobileRadialGradient>>,
     _texts: Vec<Box<MobileText>>,
     _transforms: Vec<Box<[f32; 16]>>,
     _values: Vec<Box<WhiskerValueRaw>>,
@@ -704,6 +710,7 @@ impl MobileFrameOwned {
         let mut layouts = Vec::<Box<MobileLayoutGeometry>>::new();
         let mut paints = Vec::<Box<MobileBoxPaint>>::new();
         let mut gradient_stops = Vec::<Box<[MobileGradientStop]>>::new();
+        let mut radial_gradients = Vec::<Box<MobileRadialGradient>>::new();
         let mut texts = Vec::<Box<MobileText>>::new();
         let mut transforms = Vec::<Box<[f32; 16]>>::new();
         let mut values = Vec::<Box<WhiskerValueRaw>>::new();
@@ -792,32 +799,45 @@ impl MobileFrameOwned {
                         {
                             return Err(MobileFrameError);
                         }
-                        let PaintImage::LinearGradient {
-                            angle_degrees,
-                            repeating: false,
-                            stops,
-                        } = &layer.image
-                        else {
-                            return Err(MobileFrameError);
-                        };
-                        let stops = stops
-                            .iter()
-                            .map(|stop| {
-                                let position = stop.position.ok_or(MobileFrameError)?;
-                                Ok(MobileGradientStop {
-                                    color: mobile_color(&stop.color, &mut strings),
-                                    position: MobileLengthPercentage {
-                                        length: position.length,
-                                        fraction: position.fraction,
-                                    },
-                                })
-                            })
-                            .collect::<Result<Vec<_>, MobileFrameError>>()?
-                            .into_boxed_slice();
-                        raw.scalar = *angle_degrees;
-                        raw.payload_count = stops.len();
-                        gradient_stops.push(stops);
-                        raw.payload = gradient_stops.last().unwrap().as_ptr().cast();
+                        match &layer.image {
+                            PaintImage::LinearGradient {
+                                angle_degrees,
+                                repeating: false,
+                                stops,
+                            } => {
+                                let stops = mobile_gradient_stops(stops, &mut strings)?;
+                                raw.flags = BACKGROUND_LINEAR;
+                                raw.scalar = *angle_degrees;
+                                raw.payload_count = stops.len();
+                                gradient_stops.push(stops);
+                                raw.payload = gradient_stops.last().unwrap().as_ptr().cast();
+                            }
+                            PaintImage::RadialGradient {
+                                shape: RadialGradientShape::Ellipse,
+                                extent: RadialGradientExtent::Explicit,
+                                center,
+                                radii: Some((radius_x, radius_y)),
+                                repeating: false,
+                                stops,
+                            } => {
+                                let stops = mobile_gradient_stops(stops, &mut strings)?;
+                                gradient_stops.push(stops);
+                                let stops = gradient_stops.last().unwrap();
+                                radial_gradients.push(Box::new(MobileRadialGradient {
+                                    center_x: mobile_coordinate(center.x),
+                                    center_y: mobile_coordinate(center.y),
+                                    radius_x: mobile_length(*radius_x),
+                                    radius_y: mobile_length(*radius_y),
+                                    stops: stops.as_ptr(),
+                                    stop_count: stops.len(),
+                                }));
+                                raw.flags = BACKGROUND_RADIAL;
+                                raw.payload_count = 1;
+                                raw.payload = radial_gradients.last().unwrap().as_ref() as *const _
+                                    as *const c_void;
+                            }
+                            _ => return Err(MobileFrameError),
+                        }
                     }
                 }
                 Operation::SetClip { node, clip } => {
@@ -970,6 +990,7 @@ impl MobileFrameOwned {
             _layouts: layouts,
             _paints: paints,
             _gradient_stops: gradient_stops,
+            _radial_gradients: radial_gradients,
             _texts: texts,
             _transforms: transforms,
             _values: values,
@@ -987,11 +1008,38 @@ fn mobile_rect(value: whisker_engine::whisker_protocol::LayoutRect) -> MobileRec
         height: value.height,
     }
 }
+fn mobile_coordinate(
+    value: whisker_engine::whisker_protocol::PaintCoordinate,
+) -> MobileLengthPercentage {
+    MobileLengthPercentage {
+        length: value.length,
+        fraction: value.fraction,
+    }
+}
 fn mobile_length(value: PaintLengthPercentage) -> MobileLengthPercentage {
     MobileLengthPercentage {
         length: value.length,
         fraction: value.fraction,
     }
+}
+fn mobile_gradient_stops(
+    stops: &[whisker_engine::whisker_protocol::GradientStop],
+    strings: &mut Vec<CString>,
+) -> Result<Box<[MobileGradientStop]>, MobileFrameError> {
+    if !(2..=4_096).contains(&stops.len()) {
+        return Err(MobileFrameError);
+    }
+    stops
+        .iter()
+        .map(|stop| {
+            let position = stop.position.ok_or(MobileFrameError)?;
+            Ok(MobileGradientStop {
+                color: mobile_color(&stop.color, strings),
+                position: mobile_coordinate(position),
+            })
+        })
+        .collect::<Result<Vec<_>, MobileFrameError>>()
+        .map(Vec::into_boxed_slice)
 }
 fn mobile_paint(
     value: &whisker_engine::whisker_protocol::BoxPaint,

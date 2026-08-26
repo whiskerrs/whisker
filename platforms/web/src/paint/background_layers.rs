@@ -1,6 +1,7 @@
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, GradientStop, ImageRepeat,
-    PaintBox, PaintCoordinate, PaintImage,
+    PaintBox, PaintCoordinate, PaintImage, PaintLengthPercentage, PaintPosition,
+    RadialGradientExtent, RadialGradientShape,
 };
 
 use super::color::css_color;
@@ -8,23 +9,39 @@ use crate::{WebError, set_style};
 
 /// Whether every layer belongs to the subset currently implemented by the DOM Host.
 pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
-    layers.iter().all(|layer| {
-        matches!(
-            &layer.image,
-            PaintImage::LinearGradient {
-                repeating: false,
-                stops,
-                ..
-            } if stops.iter().all(|stop| stop.position.is_some())
-        ) && layer.position == Default::default()
-            && layer.size == BackgroundSize::Auto
-            && layer.repeat_x == ImageRepeat::Repeat
-            && layer.repeat_y == ImageRepeat::Repeat
-            && layer.origin == PaintBox::Padding
-            && layer.clip == PaintBox::Border
-            && layer.attachment == BackgroundAttachment::Scroll
-            && layer.blend_mode == BlendMode::Normal
-    })
+    if layers.is_empty() {
+        return true;
+    }
+    let [layer] = layers else {
+        return false;
+    };
+    let supported_image = matches!(
+        &layer.image,
+        PaintImage::LinearGradient {
+            repeating: false,
+            stops,
+            ..
+        } if stops.iter().all(|stop| stop.position.is_some())
+    ) || matches!(
+        &layer.image,
+        PaintImage::RadialGradient {
+            shape: RadialGradientShape::Ellipse,
+            extent: RadialGradientExtent::Explicit,
+            radii: Some(_),
+            repeating: false,
+            stops,
+            ..
+        } if stops.iter().all(|stop| stop.position.is_some())
+    );
+    supported_image
+        && layer.position == Default::default()
+        && layer.size == BackgroundSize::Auto
+        && layer.repeat_x == ImageRepeat::Repeat
+        && layer.repeat_y == ImageRepeat::Repeat
+        && layer.origin == PaintBox::Padding
+        && layer.clip == PaintBox::Border
+        && layer.attachment == BackgroundAttachment::Scroll
+        && layer.blend_mode == BlendMode::Normal
 }
 
 pub(crate) fn apply(
@@ -33,7 +50,7 @@ pub(crate) fn apply(
 ) -> Result<(), WebError> {
     if !supports(layers) {
         return Err(WebError(
-            "DOM Host only implements non-repeating linear-gradient background layers with explicit stops and CSS initial layer values"
+            "DOM Host only implements one non-repeating linear or explicit elliptical radial gradient with explicit stops and CSS initial layer values"
                 .into(),
         ));
     }
@@ -43,7 +60,7 @@ pub(crate) fn apply(
     } else {
         layers
             .iter()
-            .map(linear_gradient)
+            .map(background_image)
             .collect::<Result<Vec<_>, _>>()?
             .join(", ")
     };
@@ -86,21 +103,51 @@ pub(crate) fn apply(
     )
 }
 
-fn linear_gradient(layer: &BackgroundLayer) -> Result<String, WebError> {
-    let PaintImage::LinearGradient {
-        angle_degrees,
-        repeating: false,
-        stops,
-    } = &layer.image
-    else {
-        return Err(WebError("unsupported DOM background image".into()));
-    };
+fn background_image(layer: &BackgroundLayer) -> Result<String, WebError> {
+    match &layer.image {
+        PaintImage::LinearGradient {
+            angle_degrees,
+            repeating: false,
+            stops,
+        } => linear_gradient(*angle_degrees, stops),
+        PaintImage::RadialGradient {
+            shape: RadialGradientShape::Ellipse,
+            extent: RadialGradientExtent::Explicit,
+            center,
+            radii: Some(radii),
+            repeating: false,
+            stops,
+        } => radial_gradient(*center, *radii, stops),
+        _ => Err(WebError("unsupported DOM background image".into())),
+    }
+}
+
+fn linear_gradient(angle_degrees: f32, stops: &[GradientStop]) -> Result<String, WebError> {
     let stops = stops
         .iter()
         .map(gradient_stop)
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
     Ok(format!("linear-gradient({angle_degrees}deg, {stops})"))
+}
+
+fn radial_gradient(
+    center: PaintPosition,
+    radii: (PaintLengthPercentage, PaintLengthPercentage),
+    stops: &[GradientStop],
+) -> Result<String, WebError> {
+    let stops = stops
+        .iter()
+        .map(gradient_stop)
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    Ok(format!(
+        "radial-gradient(ellipse {} {} at {} {}, {stops})",
+        length_percentage(radii.0),
+        length_percentage(radii.1),
+        coordinate(center.x),
+        coordinate(center.y),
+    ))
 }
 
 fn gradient_stop(stop: &GradientStop) -> Result<String, WebError> {
@@ -115,6 +162,16 @@ fn gradient_stop(stop: &GradientStop) -> Result<String, WebError> {
 }
 
 fn coordinate(value: PaintCoordinate) -> String {
+    if value.length == 0.0 {
+        format!("{}%", value.fraction * 100.0)
+    } else if value.fraction == 0.0 {
+        format!("{}px", value.length)
+    } else {
+        format!("calc({}px + {}%)", value.length, value.fraction * 100.0)
+    }
+}
+
+fn length_percentage(value: PaintLengthPercentage) -> String {
     if value.length == 0.0 {
         format!("{}%", value.fraction * 100.0)
     } else if value.fraction == 0.0 {

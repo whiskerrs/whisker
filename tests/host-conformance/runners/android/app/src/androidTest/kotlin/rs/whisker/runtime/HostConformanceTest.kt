@@ -137,7 +137,8 @@ private class Driver(
                 "checkpoint" -> {
                     check(
                         command.getString("name") == "paint.box" ||
-                            command.getString("name") == "paint.background-layers.linear-gradient",
+                            command.getString("name") == "paint.background-layers.linear-gradient" ||
+                            command.getString("name") == "paint.background-layers.radial-gradient",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -256,6 +257,18 @@ private class Driver(
                     ),
                 )
             }
+            node.optJSONObject("radial_gradient")?.let { gradient ->
+                val (numbers, names) = radialGradient(gradient)
+                check(
+                    stage(
+                        tag = 21,
+                        flags = 1,
+                        node = id,
+                        numbers = numbers,
+                        names = names,
+                    ),
+                )
+            }
         }
         check(view.commitFrameFromNative())
     }
@@ -357,6 +370,25 @@ private class Driver(
         return numbers.toFloatArray() to names.toTypedArray()
     }
 
+    private fun radialGradient(gradient: JSONObject): Pair<FloatArray, Array<String>> {
+        val numbers = ArrayList<Float>()
+        val names = ArrayList<String>()
+        val center = gradient.getJSONArray("center")
+        val radii = gradient.getJSONArray("radii")
+        numbers += listOf(
+            center.getDouble(0).toFloat(), 0f,
+            center.getDouble(1).toFloat(), 0f,
+            radii.getDouble(0).toFloat(), 0f,
+            radii.getDouble(1).toFloat(), 0f,
+        )
+        gradient.getJSONArray("stops").objects().forEach { stop ->
+            appendColor(stop.getJSONObject("color"), numbers, names)
+            numbers += 0f
+            numbers += stop.getDouble("position").toFloat()
+        }
+        return numbers.toFloatArray() to names.toTypedArray()
+    }
+
     private fun borderStyle(value: String): Int {
         val names = arrayOf(
             "none", "hidden", "solid", "dashed", "dotted",
@@ -448,8 +480,11 @@ private fun luminance(color: Int): Int =
 private fun fixtureColor(value: JSONObject): Int =
     if (value.getString("kind") == "named") {
         val name = value.getString("value")
-        if (name == "transparent") android.graphics.Color.TRANSPARENT
-        else android.graphics.Color.parseColor(name)
+        when (name) {
+            "transparent" -> android.graphics.Color.TRANSPARENT
+            "green" -> android.graphics.Color.rgb(0, 128, 0)
+            else -> android.graphics.Color.parseColor(name)
+        }
     } else {
         android.graphics.Color.argb(
             (value.getDouble("alpha") * 255.0).roundToInt(),

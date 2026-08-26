@@ -262,21 +262,42 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 numbers = floats(env, storage, count); names = color_names(env, p); break;
             }
             case WHISKER_OP_BACKGROUND_LAYERS: {
-                const WhiskerMobileGradientStop* p = op->payload;
-                if ((p == NULL && op->payload_count != 0) || op->payload_count > INT32_MAX / 7) {
+                const WhiskerMobileGradientStop* stops = op->payload;
+                const WhiskerMobileRadialGradient* radial = NULL;
+                size_t stop_count = op->payload_count;
+                size_t prefix_count = 0;
+                if (op->flags == 1) {
+                    if (op->payload == NULL || op->payload_count != 1) { ok = false; break; }
+                    radial = op->payload;
+                    stops = radial->stops;
+                    stop_count = radial->stop_count;
+                    prefix_count = 8;
+                } else if (op->flags != 0) {
                     ok = false; break;
                 }
-                size_t value_count = op->payload_count * 7;
+                if ((stops == NULL && stop_count != 0) || stop_count > (INT32_MAX - prefix_count) / 7) {
+                    ok = false; break;
+                }
+                size_t value_count = prefix_count + stop_count * 7;
                 float* values = malloc((value_count > 0 ? value_count : 1) * sizeof(float));
                 if (values == NULL) { ok = false; break; }
                 size_t cursor = 0;
-                for (size_t j = 0; j < op->payload_count; ++j) {
-                    append_color(values, &cursor, &p[j].color);
-                    values[cursor++] = p[j].position.length;
-                    values[cursor++] = p[j].position.fraction;
+                if (radial != NULL) {
+                    const WhiskerMobileLengthPercentage* coordinates[] = {
+                        &radial->center_x, &radial->center_y, &radial->radius_x, &radial->radius_y
+                    };
+                    for (size_t j = 0; j < 4; ++j) {
+                        values[cursor++] = coordinates[j]->length;
+                        values[cursor++] = coordinates[j]->fraction;
+                    }
+                }
+                for (size_t j = 0; j < stop_count; ++j) {
+                    append_color(values, &cursor, &stops[j].color);
+                    values[cursor++] = stops[j].position.length;
+                    values[cursor++] = stops[j].position.fraction;
                 }
                 numbers = floats(env, values, value_count);
-                names = gradient_stop_names(env, p, op->payload_count);
+                names = gradient_stop_names(env, stops, stop_count);
                 free(values);
                 break;
             }

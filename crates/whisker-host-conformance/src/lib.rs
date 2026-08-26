@@ -347,6 +347,9 @@ pub struct SceneNodeFixture {
     /// values so every Host receives the same protocol operation.
     #[serde(default)]
     pub linear_gradient: Option<LinearGradientFixture>,
+    /// Optional explicit, non-repeating radial-gradient background image.
+    #[serde(default)]
+    pub radial_gradient: Option<RadialGradientFixture>,
 }
 
 /// One resolved linear-gradient image used by a retained scene node.
@@ -370,6 +373,18 @@ pub struct GradientStopFixture {
     pub color: ColorFixture,
     /// Position as a fraction of the gradient line.
     pub position: f32,
+}
+
+/// One resolved explicit elliptical radial-gradient image.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RadialGradientFixture {
+    /// Center x/y in logical pixels relative to the positioning box.
+    pub center: [f32; 2],
+    /// Horizontal and vertical radii in logical pixels.
+    pub radii: [f32; 2],
+    /// Ordered, explicitly resolved color stops.
+    pub stops: Vec<GradientStopFixture>,
 }
 
 /// Paint visibility delivered by `SetVisibility`.
@@ -830,6 +845,19 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                             .iter()
                             .all(|stop| valid_color(&stop.color) && stop.position.is_finite())
                 })
+                && node.radial_gradient.as_ref().is_none_or(|gradient| {
+                    gradient.center.iter().all(|value| value.is_finite())
+                        && gradient
+                            .radii
+                            .iter()
+                            .all(|value| value.is_finite() && *value > 0.0)
+                        && gradient.stops.len() >= 2
+                        && gradient
+                            .stops
+                            .iter()
+                            .all(|stop| valid_color(&stop.color) && stop.position.is_finite())
+                })
+                && !(node.linear_gradient.is_some() && node.radial_gradient.is_some())
         })
         && nodes.iter().all(|node| {
             let mut seen = std::collections::BTreeSet::new();

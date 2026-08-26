@@ -7,8 +7,8 @@ use whisker_engine::FrameSink;
 use whisker_protocol::{
     ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BoxClip,
     BoxPaint, ElementTypeId, FrameMode, FramePacket, ImageRepeat, LayoutGeometry, LayoutRect,
-    NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintImage, SceneProjection, SurfaceId,
-    TextContent, Transform, ValidationError, Visibility, WhiskerValue,
+    NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintImage, RadialGradientExtent,
+    SceneProjection, SurfaceId, TextContent, Transform, ValidationError, Visibility, WhiskerValue,
 };
 
 use crate::element::{DesktopElementContent, DesktopElementError, DesktopElementRegistry};
@@ -509,7 +509,7 @@ impl DesktopScene {
                     }
                 }
                 Operation::SetBackgroundLayers { layers, .. } => {
-                    if !layers.iter().all(supports_linear_gradient_layer) {
+                    if !layers.iter().all(supports_basic_background_layer) {
                         return Err(DesktopPresentError::Unsupported("background-layers"));
                     }
                 }
@@ -773,6 +773,10 @@ impl FrameSink for DesktopScene {
                     capability: whisker_protocol::RenderCapability::LinearGradients,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::RadialGradients,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
             ],
         )
         .expect("Desktop capability profile is unique")
@@ -836,15 +840,25 @@ impl From<DesktopElementError> for DesktopPresentError {
     }
 }
 
-fn supports_linear_gradient_layer(layer: &BackgroundLayer) -> bool {
-    matches!(
+fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
+    (matches!(
         &layer.image,
         PaintImage::LinearGradient {
             repeating: false,
             stops,
             ..
         } if stops.iter().all(|stop| stop.position.is_some())
-    ) && layer.position == Default::default()
+    ) || matches!(
+        &layer.image,
+        PaintImage::RadialGradient {
+            shape: whisker_protocol::RadialGradientShape::Ellipse,
+            extent: RadialGradientExtent::Explicit,
+            radii: Some(_),
+            repeating: false,
+            stops,
+            ..
+        } if stops.iter().all(|stop| stop.position.is_some())
+    )) && layer.position == Default::default()
         && layer.size == BackgroundSize::Auto
         && layer.repeat_x == ImageRepeat::Repeat
         && layer.repeat_y == ImageRepeat::Repeat

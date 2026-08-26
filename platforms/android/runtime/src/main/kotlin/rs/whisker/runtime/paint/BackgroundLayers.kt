@@ -3,9 +3,11 @@ package rs.whisker.runtime.paint
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.RadialGradient
 import android.graphics.Shader
 import kotlin.math.abs
 import kotlin.math.cos
@@ -22,9 +24,25 @@ internal data class HostLinearGradient(
     val stops: List<HostGradientStop>,
 )
 
+internal data class HostPaintCoordinate(
+    val length: Float,
+    val fraction: Float,
+) {
+    fun resolve(axis: Float): Float = length + fraction * axis
+}
+
+internal data class HostRadialGradient(
+    val centerX: HostPaintCoordinate,
+    val centerY: HostPaintCoordinate,
+    val radiusX: HostPaintCoordinate,
+    val radiusY: HostPaintCoordinate,
+    val stops: List<HostGradientStop>,
+)
+
 /** Retained projection of the currently supported SetBackgroundLayers subset. */
 internal data class HostBackgroundLayers(
     val linearGradient: HostLinearGradient?,
+    val radialGradient: HostRadialGradient? = null,
 )
 
 internal fun drawBackgroundLayers(
@@ -34,7 +52,22 @@ internal fun drawBackgroundLayers(
     layers: HostBackgroundLayers?,
     paint: Paint,
 ) {
-    val gradient = layers?.linearGradient ?: return
+    layers?.linearGradient?.let { gradient ->
+        drawLinearGradient(canvas, clip, box, gradient, paint)
+        return
+    }
+    layers?.radialGradient?.let { gradient ->
+        drawRadialGradient(canvas, clip, box, gradient, paint)
+    }
+}
+
+private fun drawLinearGradient(
+    canvas: Canvas,
+    clip: Path,
+    box: RectF,
+    gradient: HostLinearGradient,
+    paint: Paint,
+) {
     if (gradient.stops.size < 2) return
     val radians = Math.toRadians(gradient.angleDegrees.toDouble())
     val directionX = sin(radians).toFloat()
@@ -79,6 +112,43 @@ internal fun drawBackgroundLayers(
         positions,
         Shader.TileMode.CLAMP,
     )
+    canvas.drawPath(clip, paint)
+    paint.shader = null
+}
+
+private fun drawRadialGradient(
+    canvas: Canvas,
+    clip: Path,
+    box: RectF,
+    gradient: HostRadialGradient,
+    paint: Paint,
+) {
+    if (gradient.stops.size < 2) return
+    val centerX = box.left + gradient.centerX.resolve(box.width())
+    val centerY = box.top + gradient.centerY.resolve(box.height())
+    val radiusX = gradient.radiusX.resolve(box.width())
+    val radiusY = gradient.radiusY.resolve(box.height())
+    if (radiusX <= 0f || radiusY <= 0f) return
+    var previousPosition = 0f
+    val positions = gradient.stops.mapIndexed { index, stop ->
+        val resolved = (stop.length / radiusX + stop.fraction).coerceIn(0f, 1f)
+        resolved.coerceAtLeast(if (index == 0) 0f else previousPosition).also {
+            previousPosition = it
+        }
+    }.toFloatArray()
+    paint.color = Color.WHITE
+    paint.shader = RadialGradient(
+        centerX,
+        centerY,
+        radiusX,
+        gradient.stops.map(HostGradientStop::color).toIntArray(),
+        positions,
+        Shader.TileMode.CLAMP,
+    ).apply {
+        setLocalMatrix(Matrix().apply {
+            setScale(1f, radiusY / radiusX, centerX, centerY)
+        })
+    }
     canvas.drawPath(clip, paint)
     paint.shader = null
 }

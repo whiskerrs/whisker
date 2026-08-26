@@ -136,23 +136,37 @@ final class HostScene {
                 )
                 guard values.allSatisfy(\.isFinite) else { return false }
             case UInt32(WHISKER_OP_BACKGROUND_LAYERS):
-                guard existing.contains(operation.node), operation.scalar.isFinite,
-                      operation.flags == 0 else { return false }
-                if operation.payload_count == 0 {
-                    guard operation.payload == nil else { return false }
-                    continue
+                guard existing.contains(operation.node), operation.scalar.isFinite else {
+                    return false
                 }
-                guard operation.payload_count >= 2, operation.payload_count <= 4_096,
-                      let payload = operation.payload else { return false }
-                let stops = UnsafeBufferPointer(
-                    start: payload.assumingMemoryBound(to: WhiskerMobileGradientStop.self),
-                    count: operation.payload_count
-                )
-                guard stops.allSatisfy({ stop in
-                    stop.position.length.isFinite && stop.position.fraction.isFinite &&
-                        stop.color.kind <= 1 && stop.color.alpha.isFinite &&
-                        (0...1).contains(stop.color.alpha)
-                }) else { return false }
+                switch operation.flags {
+                case UInt32(WHISKER_BACKGROUND_LINEAR):
+                    if operation.payload_count == 0 {
+                        guard operation.payload == nil else { return false }
+                        continue
+                    }
+                    guard let payload = operation.payload,
+                          validGradientStops(payload, count: operation.payload_count) else {
+                        return false
+                    }
+                case UInt32(WHISKER_BACKGROUND_RADIAL):
+                    guard operation.payload_count == 1,
+                          let radial = operation.payload?.assumingMemoryBound(
+                              to: WhiskerMobileRadialGradient.self
+                          ).pointee,
+                          radial.center_x.isFinite, radial.center_y.isFinite,
+                          radial.radius_x.isFinite, radial.radius_y.isFinite,
+                          (2...4_096).contains(radial.stop_count),
+                          let stops = radial.stops,
+                          validGradientStops(
+                              UnsafeRawPointer(stops),
+                              count: radial.stop_count
+                          ) else {
+                        return false
+                    }
+                default:
+                    return false
+                }
             case UInt32(WHISKER_OP_OPACITY):
                 guard existing.contains(operation.node), operation.scalar.isFinite,
                       (0...1).contains(operation.scalar) else { return false }
@@ -220,7 +234,7 @@ final class HostScene {
             guard let node = nodes[id] else { return false }
             if operation.payload_count == 0 {
                 node.boxPainter.updateBackgroundLayers(nil)
-            } else {
+            } else if operation.flags == UInt32(WHISKER_BACKGROUND_LINEAR) {
                 guard let payload = operation.payload else { return false }
                 let stops = UnsafeBufferPointer(
                     start: payload.assumingMemoryBound(to: WhiskerMobileGradientStop.self),
@@ -230,6 +244,23 @@ final class HostScene {
                     angleDegrees: CGFloat(operation.scalar),
                     stops: stops
                 ))
+            } else if operation.flags == UInt32(WHISKER_BACKGROUND_RADIAL) {
+                guard let radial = operation.payload?.assumingMemoryBound(
+                    to: WhiskerMobileRadialGradient.self
+                ).pointee, let stopPointer = radial.stops else { return false }
+                let stops = UnsafeBufferPointer(
+                    start: stopPointer,
+                    count: radial.stop_count
+                ).map(HostLinearGradientStop.init)
+                node.boxPainter.updateBackgroundLayers(HostRadialGradient(
+                    centerX: radial.center_x,
+                    centerY: radial.center_y,
+                    radiusX: radial.radius_x,
+                    radiusY: radial.radius_y,
+                    stops: stops
+                ))
+            } else {
+                return false
             }
             node.setNeedsDisplay()
         case UInt32(WHISKER_OP_OPACITY):
@@ -415,4 +446,20 @@ private func hostRect(_ value: WhiskerMobileRect) -> CGRect {
         width: CGFloat(value.width),
         height: CGFloat(value.height)
     )
+}
+
+private func validGradientStops(_ payload: UnsafeRawPointer, count: Int) -> Bool {
+    guard (2...4_096).contains(count) else { return false }
+    let stops = UnsafeBufferPointer(
+        start: payload.assumingMemoryBound(to: WhiskerMobileGradientStop.self),
+        count: count
+    )
+    return stops.allSatisfy { stop in
+        stop.position.isFinite && stop.color.kind <= 1 && stop.color.alpha.isFinite &&
+            (0...1).contains(stop.color.alpha)
+    }
+}
+
+private extension WhiskerMobileLengthPercentage {
+    var isFinite: Bool { length.isFinite && fraction.isFinite }
 }

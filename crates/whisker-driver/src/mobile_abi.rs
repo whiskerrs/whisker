@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 1;
+pub const MOBILE_ABI_MINOR: u16 = 2;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -45,6 +45,9 @@ pub const OP_CAPTURE: u32 = 18;
 pub const OP_RELEASE_CAPTURE: u32 = 19;
 pub const OP_COMMAND: u32 = 20;
 pub const OP_BACKGROUND_LAYERS: u32 = 21;
+
+pub const BACKGROUND_LINEAR: u32 = 0;
+pub const BACKGROUND_RADIAL: u32 = 1;
 
 pub const MEASURE_TEXT: u32 = 1;
 pub const MEASURE_REPLACED_CONTENT: u32 = 2;
@@ -103,12 +106,24 @@ pub struct MobileBoxPaint {
     pub radii_vertical: [MobileLengthPercentage; 4],
 }
 
-/// One explicit color stop in the additive linear-gradient ABI subset.
+/// One explicit color stop shared by the additive gradient ABI subsets.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MobileGradientStop {
     pub color: MobileColor,
     pub position: MobileLengthPercentage,
+}
+
+/// One explicit, non-repeating elliptical radial gradient.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileRadialGradient {
+    pub center_x: MobileLengthPercentage,
+    pub center_y: MobileLengthPercentage,
+    pub radius_x: MobileLengthPercentage,
+    pub radius_y: MobileLengthPercentage,
+    pub stops: *const MobileGradientStop,
+    pub stop_count: usize,
 }
 
 #[repr(C)]
@@ -438,6 +453,7 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileText>(), 80);
             assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);
             assert_eq!(std::mem::size_of::<MobileGradientStop>(), 40);
+            assert_eq!(std::mem::size_of::<MobileRadialGradient>(), 48);
             assert_eq!(std::mem::align_of::<MobileFrame>(), 8);
             assert_eq!(std::mem::align_of::<MobileMeasureRequest>(), 8);
         }
