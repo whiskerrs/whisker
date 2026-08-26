@@ -71,6 +71,7 @@ internal class HostNode(
     private var paintClipPath: Path? = null
     private var resolvedBoxGeometry: ResolvedBoxGeometry? = null
     private var backdropRenderer: HostBackdropBlurRenderer? = null
+    private var whiskerVisible = true
 
     init {
         setWillNotDraw(false)
@@ -116,11 +117,34 @@ internal class HostNode(
         }
     }
 
-    override fun dispatchTouchEvent(event: MotionEvent): Boolean = when (hitTestBehavior) {
-        1 -> false
-        2 -> onTouchEvent(event)
-        else -> super.dispatchTouchEvent(event)
+    /**
+     * Sets this element's computed CSS visibility without hiding its View subtree.
+     *
+     * `View.INVISIBLE` would also suppress a descendant whose own computed
+     * visibility is `visible`, which is not CSS visibility semantics.
+     */
+    fun setWhiskerVisibility(visible: Boolean) {
+        if (whiskerVisible == visible) return
+        whiskerVisible = visible
+        mountedElement?.let { mounted ->
+            if (mounted.childrenHost() == null) {
+                mounted.view.visibility = if (visible) VISIBLE else INVISIBLE
+            }
+        }
+        invalidate()
     }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (!whiskerVisible && hitTestBehavior == 2) return false
+        return when (hitTestBehavior) {
+            1 -> false
+            2 -> onTouchEvent(event)
+            else -> super.dispatchTouchEvent(event)
+        }
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean =
+        whiskerVisible && super.onTouchEvent(event)
 
     fun setOverflowClipGeometry(geometry: ResolvedBoxGeometry) {
         resolvedBoxGeometry = geometry
@@ -195,9 +219,15 @@ internal class HostNode(
     private fun drawClipped(canvas: Canvas) {
         val save = canvas.save()
         paintClipPath?.let(canvas::clipPath)
-        drawOuterBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
-        drawBackdropBlur(canvas)
+        if (whiskerVisible) {
+            drawOuterBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
+            drawBackdropBlur(canvas)
+        }
+        val ownBackground = background
+        val backgroundAlpha = ownBackground?.alpha
+        if (!whiskerVisible) ownBackground?.alpha = 0
         super.draw(canvas)
+        if (backgroundAlpha != null) ownBackground.alpha = backgroundAlpha
         canvas.restoreToCount(save)
     }
 
@@ -222,7 +252,9 @@ internal class HostNode(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        drawInsetBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
+        if (whiskerVisible) {
+            drawInsetBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
+        }
     }
 
     override fun clipDescendants(

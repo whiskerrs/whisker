@@ -28,7 +28,8 @@
             "id": 2,
             "parent": 1,
             "rect": [5.0, 5.0, 30.0, 30.0],
-            "background": { "kind": "named", "value": "red" }
+            "background": { "kind": "named", "value": "red" },
+            "visibility": "hidden"
           }
         ]
       },

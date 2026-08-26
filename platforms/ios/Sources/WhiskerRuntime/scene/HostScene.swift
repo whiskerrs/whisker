@@ -393,7 +393,7 @@ final class HostScene {
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):
-            nodes[id]?.isHidden = operation.integer == 0
+            nodes[id]?.setWhiskerVisibility(operation.integer != 0)
         case UInt32(WHISKER_OP_Z_ORDER):
             zOrders[id] = operation.integer
         case UInt32(WHISKER_OP_TEXT):
