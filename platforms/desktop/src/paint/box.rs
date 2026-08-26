@@ -28,6 +28,7 @@ pub(crate) enum BoxPrimitiveKind {
     Fill,
     BoxShadowBlur,
     InsetShadow,
+    InsetShadowBlur,
     LinearGradient,
     BackgroundBorderArea,
     Border,
@@ -39,6 +40,7 @@ impl BoxPrimitiveKind {
             Self::Fill => -1.0,
             Self::BoxShadowBlur => -3.0,
             Self::InsetShadow => 3.0,
+            Self::InsetShadowBlur => 4.0,
             Self::LinearGradient => -2.0,
             Self::BackgroundBorderArea => 2.0,
             Self::Border => 1.0,
@@ -190,29 +192,46 @@ pub(crate) fn box_shadow_primitive(
     opacity: f32,
 ) -> Option<BoxPrimitive> {
     if shadow.inset {
-        if shadow.blur_radius != 0.0 || shadow.spread_radius != 0.0 {
-            return None;
-        }
         let base = resolve_box_geometry(rect, paint);
         let padding_rect = base.inner_rect;
+        let spread = shadow.spread_radius;
         let hole_rect = LayoutRect {
-            x: padding_rect.x + shadow.offset_x,
-            y: padding_rect.y + shadow.offset_y,
-            ..padding_rect
+            x: padding_rect.x + shadow.offset_x + spread,
+            y: padding_rect.y + shadow.offset_y + spread,
+            width: padding_rect.width - spread * 2.0,
+            height: padding_rect.height - spread * 2.0,
         };
+        let mut hole_radii = ResolvedRadii {
+            horizontal: base
+                .inner_radii
+                .horizontal
+                .map(|value| (value - spread).max(0.0)),
+            vertical: base
+                .inner_radii
+                .vertical
+                .map(|value| (value - spread).max(0.0)),
+        };
+        if hole_rect.width > 0.0 && hole_rect.height > 0.0 {
+            normalize_resolved_radii(&mut hole_radii, hole_rect);
+        }
+        let blurred = shadow.blur_radius > 0.0;
         return Some(
             BoxGeometry {
                 outer_rect: padding_rect,
                 outer_radii: base.inner_radii,
                 inner_rect: hole_rect,
-                inner_radii: base.inner_radii,
-                border_widths: [0.0; 4],
+                inner_radii: hole_radii,
+                border_widths: [shadow.blur_radius, 0.0, 0.0, 0.0],
             }
             .primitive(
                 gpu_color(&shadow.color, opacity),
                 [[0.0; 4]; 4],
                 [0.0; 4],
-                BoxPrimitiveKind::InsetShadow,
+                if blurred {
+                    BoxPrimitiveKind::InsetShadowBlur
+                } else {
+                    BoxPrimitiveKind::InsetShadow
+                },
             ),
         );
     }
@@ -589,6 +608,38 @@ mod tests {
         assert_eq!(primitive.outer_rect.height, 64.0);
         assert_eq!(primitive.inner_rect.x, 38.0);
         assert_eq!(primitive.inner_rect.y, 38.0);
+    }
+
+    #[test]
+    fn inset_spread_contracts_the_hole_and_blur_selects_gaussian_coverage() {
+        let primitive = box_shadow_primitive(
+            LayoutRect {
+                x: 10.0,
+                y: 20.0,
+                width: 100.0,
+                height: 80.0,
+            },
+            &BoxPaint::default(),
+            &BoxShadow {
+                offset_x: 10.0,
+                offset_y: -5.0,
+                blur_radius: 20.0,
+                spread_radius: 15.0,
+                color: PaintColor::Named("black".into()),
+                inset: true,
+            },
+            1.0,
+        )
+        .unwrap();
+
+        assert_eq!(primitive.kind, BoxPrimitiveKind::InsetShadowBlur);
+        assert_eq!(primitive.outer_rect.x, 10.0);
+        assert_eq!(primitive.outer_rect.y, 20.0);
+        assert_eq!(primitive.inner_rect.x, 35.0);
+        assert_eq!(primitive.inner_rect.y, 30.0);
+        assert_eq!(primitive.inner_rect.width, 70.0);
+        assert_eq!(primitive.inner_rect.height, 50.0);
+        assert_eq!(primitive.border_widths[0], 20.0);
     }
 
     #[test]

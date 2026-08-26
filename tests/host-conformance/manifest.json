@@ -304,6 +304,20 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.box-shadow-inset-spread",
+      "feature": "box-shadow-inset-spread",
+      "fixture": "wpt/css/css-backgrounds/box-shadow-inset-spread.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.box-shadow-inset-blur-definition",
+      "feature": "box-shadow-inset-blur",
+      "fixture": "wpt/css/css-backgrounds/box-shadow-inset-blur-definition.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples", "pixel-relations"]
+    },
+    {
       "id": "wpt.css2.borders.border-right-003",
       "feature": "border-right",
       "fixture": "wpt/css/CSS2/borders/border-right-003.json",

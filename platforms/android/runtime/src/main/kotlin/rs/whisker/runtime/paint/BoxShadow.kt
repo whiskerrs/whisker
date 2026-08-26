@@ -5,6 +5,8 @@ import android.graphics.BlurMaskFilter
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import kotlin.math.abs
+import kotlin.math.max
 
 internal data class HostBoxShadow(
     val offsetX: Float,
@@ -80,17 +82,35 @@ internal fun drawInsetBoxShadows(
     val save = canvas.save()
     canvas.clipPath(paddingPath)
     shadows.asReversed().forEach { shadow ->
-        if (!shadow.inset || shadow.blurRadius != 0f || shadow.spreadRadius != 0f) {
-            return@forEach
+        if (!shadow.inset) return@forEach
+        val spread = shadow.spreadRadius
+        val hole = RectF(paddingRect).apply {
+            inset(spread, spread)
+            offset(shadow.offsetX, shadow.offsetY)
         }
-        val hole = RectF(paddingRect).apply { offset(shadow.offsetX, shadow.offsetY) }
+        val extent = max(box.width, box.height) + abs(shadow.offsetX) +
+            abs(shadow.offsetY) + abs(spread) + shadow.blurRadius * 2f
+        val exterior = RectF(paddingRect).apply { inset(-extent, -extent) }
         val ring = Path().apply {
             fillType = Path.FillType.EVEN_ODD
-            addPath(paddingPath)
-            addPath(roundedPath(hole, paddingRadii))
+            addRect(exterior, Path.Direction.CW)
+            if (!hole.isEmpty) {
+                val holeRadii = normalizeRadii(
+                    paddingRadii.map { (it - spread).coerceAtLeast(0f) }.toFloatArray(),
+                    hole.width(),
+                    hole.height(),
+                )
+                addPath(roundedPath(hole, holeRadii))
+            }
         }
         paint.color = shadow.color
+        paint.maskFilter = if (shadow.blurRadius > 0f) {
+            BlurMaskFilter(shadow.blurRadius / 2f, BlurMaskFilter.Blur.NORMAL)
+        } else {
+            null
+        }
         canvas.drawPath(ring, paint)
     }
+    paint.maskFilter = null
     canvas.restoreToCount(save)
 }
