@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.border-radius-horizontal-value-is-zero",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/border-radius-horizontal-value-is-zero.html",
+    "reference_path": "css/css-backgrounds/reference/border-radius-horizontal-value-is-zero-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "If either radius of a corner is zero, that corner is square rather than rounded.",
+    "adaptation": "The WPT's `border-radius: 0 / 5em` box is represented by four [0, 20] elliptical radii. Green samples at every outer corner distinguish the required square corners from an incorrect vertically rounded projection."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 80.0, "height": 60.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [10.0, 10.0, 60.0, 40.0],
+        "background": { "kind": "named", "value": "white" },
+        "border": {
+          "widths": [5.0, 5.0, 5.0, 5.0],
+          "colors": [
+            { "kind": "named", "value": "green" },
+            { "kind": "named", "value": "green" },
+            { "kind": "named", "value": "green" },
+            { "kind": "named", "value": "green" }
+          ],
+          "styles": ["solid", "solid", "solid", "solid"],
+          "radii": [[0.0, 20.0], [0.0, 20.0], [0.0, 20.0], [0.0, 20.0]]
+        }
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [11.0, 11.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 },
+          { "point": [69.0, 11.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 },
+          { "point": [69.0, 49.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 },
+          { "point": [11.0, 49.0], "color": { "kind": "named", "value": "green" }, "tolerance": 16 },
+          { "point": [20.0, 20.0], "color": { "kind": "named", "value": "white" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

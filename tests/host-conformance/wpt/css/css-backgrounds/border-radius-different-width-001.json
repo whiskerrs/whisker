@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.border-radius-different-width-001",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/border-radius-different-width-001.htm",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "Adjoining rounded borders with different thicknesses form a smooth transition between the thicker and thinner sides.",
+    "adaptation": "The first WPT box is reduced to a 100 by 60 logical-pixel box with top/right/bottom/left widths of 5/10/15/20 and a 20px radius. Samples cover the transparent outer corners, each physical border side, the white inner box, and the asymmetric top-left join."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 120.0, "height": 80.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [10.0, 10.0, 100.0, 60.0],
+        "background": { "kind": "named", "value": "white" },
+        "border": {
+          "widths": [5.0, 10.0, 15.0, 20.0],
+          "colors": [
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" }
+          ],
+          "styles": ["solid", "solid", "solid", "solid"],
+          "radii": [20.0, 20.0, 20.0, 20.0]
+        }
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [12.0, 12.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 },
+          { "point": [108.0, 68.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 16 },
+          { "point": [60.0, 12.0], "color": { "kind": "named", "value": "black" }, "tolerance": 16 },
+          { "point": [105.0, 40.0], "color": { "kind": "named", "value": "black" }, "tolerance": 16 },
+          { "point": [60.0, 62.0], "color": { "kind": "named", "value": "black" }, "tolerance": 16 },
+          { "point": [15.0, 40.0], "color": { "kind": "named", "value": "black" }, "tolerance": 16 },
+          { "point": [20.0, 20.0], "color": { "kind": "named", "value": "black" }, "tolerance": 16 },
+          { "point": [35.0, 20.0], "color": { "kind": "named", "value": "white" }, "tolerance": 16 },
+          { "point": [60.0, 40.0], "color": { "kind": "named", "value": "white" }, "tolerance": 16 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}

@@ -140,6 +140,26 @@ final class HostConformanceTests: XCTestCase {
         )
     }
 
+    func testAZeroRadiusAxisMakesTheWholeCornerSquare() {
+        XCTAssertEqual(
+            normalizedRadii(
+                [
+                    CGSize(width: 0, height: 20),
+                    CGSize(width: 20, height: 0),
+                    CGSize(width: 20, height: 10),
+                    CGSize(width: -1, height: 20),
+                ],
+                in: CGRect(x: 0, y: 0, width: 100, height: 100)
+            ),
+            [
+                .zero,
+                .zero,
+                CGSize(width: 20, height: 10),
+                .zero,
+            ]
+        )
+    }
+
     func testBackgroundLayerArrayRejectsAnUnregisteredResourceTransactionally() throws {
         var pixel: [UInt8] = [0, 0, 255, 255]
         let context = try XCTUnwrap(CGContext(
