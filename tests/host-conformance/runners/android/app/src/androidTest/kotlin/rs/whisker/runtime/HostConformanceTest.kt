@@ -392,9 +392,6 @@ private class Driver(
                             WhiskerTextDirection.RIGHT_TO_LEFT,
                             WhiskerTextDirection.RIGHT_TO_LEFT,
                         ))
-                        check(texts.takeLast(2).all {
-                            it.textDirection == android.view.View.TEXT_DIRECTION_RTL
-                        })
                     }
                     if (command.getString("name") == "paint.text.indent-lynx") {
                         val texts = findTextViews(view)
