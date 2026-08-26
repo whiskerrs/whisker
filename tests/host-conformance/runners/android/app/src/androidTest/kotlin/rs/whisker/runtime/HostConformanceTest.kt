@@ -305,7 +305,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.visual-effects.box-shadow-inset" ||
                             command.getString("name") ==
-                            "paint.visual-effects.box-shadow-multiple",
+                            "paint.visual-effects.box-shadow-multiple" ||
+                            command.getString("name") ==
+                            "paint.visual-effects.clip-path-inset",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -640,6 +642,37 @@ private class Driver(
                         names = shadowNames.toTypedArray(),
                     ),
                 )
+            }
+            node.optJSONObject("clip_path")?.let { clip ->
+                val shape = clip.getJSONObject("shape")
+                check(shape.getString("kind") == "inset")
+                val numbers = ArrayList<Float>(26)
+                numbers += backgroundBox(clip.optString("reference_box", "border")).toFloat()
+                numbers += 0f // inset shape
+                shape.getJSONArray("edges").objects().forEach { edge ->
+                    appendLengthPercentage(edge, numbers)
+                }
+                val radii = shape.getJSONArray("radii")
+                repeat(4) { index ->
+                    val radius = radii.get(index)
+                    numbers += when (radius) {
+                        is Number -> radius.toFloat()
+                        is JSONArray -> radius.getDouble(0).toFloat()
+                        else -> error("unsupported clip radius: $radius")
+                    }
+                    numbers += 0f
+                }
+                repeat(4) { index ->
+                    val radius = radii.get(index)
+                    numbers += when (radius) {
+                        is Number -> radius.toFloat()
+                        is JSONArray -> radius.getDouble(1).toFloat()
+                        else -> error("unsupported clip radius: $radius")
+                    }
+                    numbers += 0f
+                }
+                check(numbers.size == 26)
+                check(stage(tag = 23, node = id, numbers = numbers.toFloatArray()))
             }
         }
         check(view.commitFrameFromNative())

@@ -8,17 +8,18 @@ use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
     BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture, BackgroundSizeFixture,
-    BackgroundSizeKeywordFixture, BorderFixture, BorderStyleFixture, ColorFixture, Command,
-    ConicGradientFixture, Host, ImageRepeatFixture, LinearGradientFixture, LoadedCase,
-    OverflowClipFixture, PixelRelationFixture, PixelRelationKind, PixelSampleFixture,
-    PointerEventFixture, RadialGradientFixture, ResourceSourceFixture, ResourceStateFixture,
-    Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture, load_required,
+    BackgroundSizeKeywordFixture, BorderFixture, BorderStyleFixture, ClipPathFixture,
+    ClipReferenceBoxFixture, ClipShapeFixture, ColorFixture, Command, ConicGradientFixture, Host,
+    ImageRepeatFixture, LinearGradientFixture, LoadedCase, OverflowClipFixture,
+    PixelRelationFixture, PixelRelationKind, PixelSampleFixture, PointerEventFixture,
+    RadialGradientFixture, ResourceSourceFixture, ResourceStateFixture, Scenario, ScenarioSide,
+    SceneNodeFixture, VisibilityFixture, load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
-    BorderLineStyle, BoxClip, BoxPaint, ElementTypeId, FrameHeader, FrameMode, FramePacket,
-    GradientStop, ImageRepeat, InputEvent, InputEventKind, InputPoint, LayoutGeometry, LayoutRect,
-    MeasureConstraints, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+    BorderLineStyle, BoxClip, BoxPaint, ClipShape, ElementTypeId, FrameHeader, FrameMode,
+    FramePacket, GradientStop, ImageRepeat, InputEvent, InputEventKind, InputPoint, LayoutGeometry,
+    LayoutRect, MeasureConstraints, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
     MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasurementKey, MeasurementPayload,
     MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
     PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
@@ -693,7 +694,7 @@ impl Driver {
                 node,
                 paint: box_paint(&fixture.background, fixture.border.as_ref()),
             });
-            if !fixture.box_shadows.is_empty() {
+            if !fixture.box_shadows.is_empty() || fixture.clip_path.is_some() {
                 operations.push(Operation::SetVisualEffects {
                     node,
                     effects: whisker_protocol::VisualEffects {
@@ -709,6 +710,7 @@ impl Driver {
                                 inset: shadow.inset,
                             })
                             .collect(),
+                        clip_path: fixture.clip_path.as_ref().map(clip_path_protocol),
                         ..Default::default()
                     },
                 });
@@ -1030,6 +1032,48 @@ fn overflow_clip_protocol(value: OverflowClipFixture) -> OverflowClip {
         OverflowClipFixture::Visible => OverflowClip::Visible,
         OverflowClipFixture::Hidden => OverflowClip::Hidden,
     }
+}
+
+fn clip_path_protocol(value: &ClipPathFixture) -> (PaintBox, ClipShape) {
+    let reference_box = match value.reference_box {
+        ClipReferenceBoxFixture::Border => PaintBox::Border,
+        ClipReferenceBoxFixture::Padding => PaintBox::Padding,
+        ClipReferenceBoxFixture::Content => PaintBox::Content,
+    };
+    let shape = match &value.shape {
+        ClipShapeFixture::Inset { edges, radii } => {
+            let coordinate =
+                |value: whisker_host_conformance::LengthPercentageFixture| PaintCoordinate {
+                    length: value.length,
+                    fraction: value.fraction,
+                };
+            let radius = |value: whisker_host_conformance::CornerRadiusFixture| PaintCornerRadius {
+                horizontal: PaintLengthPercentage {
+                    length: value.horizontal(),
+                    fraction: 0.0,
+                },
+                vertical: PaintLengthPercentage {
+                    length: value.vertical(),
+                    fraction: 0.0,
+                },
+            };
+            ClipShape::Inset {
+                edges: PaintEdges {
+                    top: coordinate(edges[0]),
+                    right: coordinate(edges[1]),
+                    bottom: coordinate(edges[2]),
+                    left: coordinate(edges[3]),
+                },
+                radii: PaintCorners {
+                    top_left: radius(radii[0]),
+                    top_right: radius(radii[1]),
+                    bottom_right: radius(radii[2]),
+                    bottom_left: radius(radii[3]),
+                },
+            }
+        }
+    };
+    (reference_box, shape)
 }
 
 fn box_paint(background: &ColorFixture, border: Option<&BorderFixture>) -> BoxPaint {

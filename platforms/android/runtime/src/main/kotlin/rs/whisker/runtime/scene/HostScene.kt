@@ -20,6 +20,8 @@ import rs.whisker.runtime.paint.HostBackgroundRepeat
 import rs.whisker.runtime.paint.HostBackgroundSize
 import rs.whisker.runtime.paint.HostConicGradient
 import rs.whisker.runtime.paint.HostGradientStop
+import rs.whisker.runtime.paint.HostClipReferenceBox
+import rs.whisker.runtime.paint.HostInsetClipPath
 import rs.whisker.runtime.paint.HostLinearGradient
 import rs.whisker.runtime.paint.HostPaintCoordinate
 import rs.whisker.runtime.paint.HostRadialGradient
@@ -27,6 +29,7 @@ import rs.whisker.runtime.paint.HostRasterResourceStore
 import rs.whisker.runtime.paint.applyBoxPaint
 import rs.whisker.runtime.paint.parseNamedColor
 import rs.whisker.runtime.paint.rgba
+import rs.whisker.runtime.paint.resolveInsetClipPath
 import kotlin.math.min
 
 internal data class HostSceneOperation(
@@ -159,6 +162,7 @@ internal class HostScene(
             ) return false
             8, 12, 15, 16 -> if (operation.node !in existing) return false
             22 -> if (!validBoxShadows(operation, existing)) return false
+            23 -> if (!validClipPath(operation, existing)) return false
             9 -> if (
                 operation.node !in existing ||
                 !isSupported2dTransform(operation.numbers ?: return false)
@@ -234,6 +238,7 @@ internal class HostScene(
             16 -> (nodes[id] ?: return).mountedElement?.setEventMask(operation.wide)
             21 -> applyBackgroundLayers(nodes[id] ?: return, operation)
             22 -> applyBoxShadows(nodes[id] ?: return, operation)
+            23 -> applyClipPath(nodes[id] ?: return, operation)
         }
     }
 
@@ -330,6 +335,7 @@ internal class HostScene(
             }
         }
         node.paint?.let { applyPaint(node, it) }
+        refreshClipPath(node)
     }
 
     private fun applyText(node: HostNode, text: String, values: FloatArray, names: Array<String>) {
@@ -370,6 +376,7 @@ internal class HostScene(
             ),
         )
         node.setOverflowClipGeometry(geometry)
+        refreshClipPath(node)
     }
 
     private fun applyBackgroundLayers(node: HostNode, operation: HostSceneOperation) {
@@ -410,6 +417,67 @@ internal class HostScene(
         }
         node.invalidate()
         (node.parent as? View)?.invalidate()
+    }
+
+    private fun applyClipPath(node: HostNode, operation: HostSceneOperation) {
+        val values = operation.numbers ?: FloatArray(0)
+        node.clipPath = if (values.isEmpty()) {
+            null
+        } else {
+            val density = root.resources.displayMetrics.density
+            fun coordinates(offset: Int) = (0 until 4).map { index ->
+                val cursor = offset + index * 2
+                HostPaintCoordinate(values[cursor] * density, values[cursor + 1])
+            }
+            HostInsetClipPath(
+                referenceBox = when (values[0].toInt()) {
+                    BACKGROUND_BOX_PADDING -> HostClipReferenceBox.Padding
+                    BACKGROUND_BOX_CONTENT -> HostClipReferenceBox.Content
+                    else -> HostClipReferenceBox.Border
+                },
+                edges = coordinates(2),
+                radiiHorizontal = coordinates(10),
+                radiiVertical = coordinates(18),
+            )
+        }
+        refreshClipPath(node)
+    }
+
+    private fun refreshClipPath(node: HostNode) {
+        val clip = node.clipPath
+        if (clip == null) {
+            node.setPaintClipPath(null)
+            return
+        }
+        val density = root.resources.displayMetrics.density
+        node.setPaintClipPath(
+            resolveInsetClipPath(
+                clip,
+                node.geometry.width * density,
+                node.geometry.height * density,
+                node.resolvedBorderWidths(),
+                RectF(
+                    node.geometry.contentX * density,
+                    node.geometry.contentY * density,
+                    (node.geometry.contentX + node.geometry.contentWidth) * density,
+                    (node.geometry.contentY + node.geometry.contentHeight) * density,
+                ),
+            ),
+        )
+    }
+
+    private fun validClipPath(
+        operation: HostSceneOperation,
+        existing: Set<Long>,
+    ): Boolean {
+        if (operation.node !in existing) return false
+        val values = operation.numbers ?: return true
+        return values.size == CLIP_PATH_PACKED_SIZE &&
+            values.all(Float::isFinite) &&
+            values[0].toInt() in BACKGROUND_BOX_BORDER..BACKGROUND_BOX_CONTENT &&
+            values[0] == values[0].toInt().toFloat() &&
+            values[1] == CLIP_SHAPE_INSET.toFloat() &&
+            (10 until CLIP_PATH_PACKED_SIZE).all { values[it] >= 0f }
     }
 
     private fun validBoxShadows(
@@ -711,6 +779,8 @@ internal class HostScene(
     private companion object {
         const val BACKGROUND_GEOMETRY_PACKED_SIZE = 15
         const val BOX_SHADOW_PACKED_SIZE = 10
+        const val CLIP_PATH_PACKED_SIZE = 26
+        const val CLIP_SHAPE_INSET = 0
         const val BACKGROUND_GRADIENT_STOP_PACKED_SIZE = 7
         const val BACKGROUND_PACKED_LAYER_HEADER_SIZE = 3
         const val BACKGROUND_PACKED_LAYERS = 256

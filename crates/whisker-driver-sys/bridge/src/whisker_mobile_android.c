@@ -278,6 +278,35 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 free(values);
                 break;
             }
+            case WHISKER_OP_CLIP_PATH: {
+                if (op->payload == NULL) {
+                    if (op->payload_count != 0) ok = false;
+                    break;
+                }
+                if (op->payload_count != 1) { ok = false; break; }
+                const WhiskerMobileClipPath* clip = op->payload;
+                if (clip->shape_kind != WHISKER_CLIP_SHAPE_INSET ||
+                    clip->payload == NULL || clip->payload_count != 1) {
+                    ok = false; break;
+                }
+                const WhiskerMobileClipInset* inset = clip->payload;
+                storage[count++] = (float)clip->reference_box;
+                storage[count++] = (float)clip->shape_kind;
+                for (int j=0;j<4;++j) {
+                    storage[count++]=inset->edges[j].length;
+                    storage[count++]=inset->edges[j].fraction;
+                }
+                for (int j=0;j<4;++j) {
+                    storage[count++]=inset->radii_horizontal[j].length;
+                    storage[count++]=inset->radii_horizontal[j].fraction;
+                }
+                for (int j=0;j<4;++j) {
+                    storage[count++]=inset->radii_vertical[j].length;
+                    storage[count++]=inset->radii_vertical[j].fraction;
+                }
+                numbers = floats(env, storage, count);
+                break;
+            }
             case WHISKER_OP_BACKGROUND_LAYERS: {
                 if (op->payload == NULL) {
                     if (op->payload_count != 0) ok = false;

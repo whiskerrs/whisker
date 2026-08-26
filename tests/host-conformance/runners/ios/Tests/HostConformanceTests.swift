@@ -443,7 +443,8 @@ private final class Driver {
                     name == "paint.visual-effects.box-shadow-spread" ||
                     name == "paint.visual-effects.box-shadow-blur" ||
                     name == "paint.visual-effects.box-shadow-inset" ||
-                    name == "paint.visual-effects.box-shadow-multiple" else {
+                    name == "paint.visual-effects.box-shadow-multiple" ||
+                    name == "paint.visual-effects.clip-path-inset" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -678,6 +679,32 @@ private final class Driver {
             repeating: WhiskerMobileBackgroundLayer(),
             count: stagedLayers.count
         )
+        let clipStorageCount = max(fixtures.count, 1)
+        let clipInsets = UnsafeMutablePointer<WhiskerMobileClipInset>.allocate(
+            capacity: clipStorageCount
+        )
+        let clipPaths = UnsafeMutablePointer<WhiskerMobileClipPath>.allocate(
+            capacity: clipStorageCount
+        )
+        for (index, fixture) in fixtures.enumerated() {
+            clipInsets.advanced(by: index).initialize(
+                to: fixture.clipPath?.inset ?? WhiskerMobileClipInset()
+            )
+            var path = WhiskerMobileClipPath()
+            if let clip = fixture.clipPath {
+                path.reference_box = clip.referenceBox
+                path.shape_kind = UInt32(WHISKER_CLIP_SHAPE_INSET)
+                path.payload = UnsafeRawPointer(clipInsets.advanced(by: index))
+                path.payload_count = 1
+            }
+            clipPaths.advanced(by: index).initialize(to: path)
+        }
+        defer {
+            clipInsets.deinitialize(count: fixtures.count)
+            clipInsets.deallocate()
+            clipPaths.deinitialize(count: fixtures.count)
+            clipPaths.deallocate()
+        }
         try layouts.withUnsafeMutableBufferPointer { layoutBuffer in
             try paints.withUnsafeMutableBufferPointer { paintBuffer in
                 try transforms.withUnsafeMutableBufferPointer { transformBuffer in
@@ -896,6 +923,16 @@ private final class Driver {
                                         count: shadowRange.count
                                     ))
                                 }
+                                if fixture.clipPath != nil {
+                                    operations.append(operation(
+                                        tag: UInt32(WHISKER_OP_CLIP_PATH),
+                                        node: fixture.id,
+                                        payload: UnsafeRawPointer(
+                                            clipPaths.advanced(by: index)
+                                        ),
+                                        count: 1
+                                    ))
+                                }
                             }
                             try operations.withUnsafeMutableBufferPointer { buffer in
                                 var frame = WhiskerMobileFrame()
@@ -1057,9 +1094,15 @@ private struct SceneFixtureNode {
     let backgroundLayer: SceneBackgroundLayer
     let backgroundLayers: [ScenePaintLayer]
     let boxShadows: [WhiskerMobileBoxShadow]
+    let clipPath: SceneClipPath?
     let linearGradient: SceneLinearGradient?
     let radialGradient: SceneRadialGradient?
     let conicGradient: SceneConicGradient?
+}
+
+private struct SceneClipPath {
+    let referenceBox: UInt32
+    let inset: WhiskerMobileClipInset
 }
 
 private struct ScenePaintLayer {
@@ -1250,6 +1293,7 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     let boxShadows = try (fixture["box_shadows"] as? [[String: Any]] ?? []).map {
         try sceneBoxShadow($0)
     }
+    let clipPath = try (fixture["clip_path"] as? [String: Any]).map(sceneClipPath)
     let linearGradient: SceneLinearGradient?
     if let gradient = fixture["linear_gradient"] as? [String: Any] {
         linearGradient = try sceneLinearGradient(gradient)
@@ -1281,9 +1325,53 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         backgroundLayer: backgroundLayer,
         backgroundLayers: backgroundLayers,
         boxShadows: boxShadows,
+        clipPath: clipPath,
         linearGradient: linearGradient,
         radialGradient: radialGradient,
         conicGradient: conicGradient
+    )
+}
+
+private func sceneClipPath(_ fixture: [String: Any]) throws -> SceneClipPath {
+    let shape = try object(fixture, "shape")
+    guard try string(shape, "kind") == "inset" else {
+        throw Failure("unsupported clip-path shape")
+    }
+    guard let rawEdges = shape["edges"] as? [Any],
+          let rawRadii = shape["radii"] as? [Any] else {
+        throw Failure("inset clip-path needs edge and radius arrays")
+    }
+    let edges = try rawEdges.map(lengthPercentage)
+    guard edges.count == 4, rawRadii.count == 4 else {
+        throw Failure("inset clip-path needs four edges and radii")
+    }
+    let radii = try rawRadii.map { value -> (Float, Float) in
+        if let number = value as? NSNumber {
+            return (number.floatValue, number.floatValue)
+        }
+        guard let pair = value as? [NSNumber] else {
+            throw Failure("clip-path radius must be a number or pair")
+        }
+        guard pair.count == 2 else { throw Failure("clip-path radius pair needs two values") }
+        return (pair[0].floatValue, pair[1].floatValue)
+    }
+    var inset = WhiskerMobileClipInset()
+    inset.edges = (edges[0], edges[1], edges[2], edges[3])
+    inset.radii_horizontal = (
+        WhiskerMobileLengthPercentage(length: radii[0].0, fraction: 0),
+        WhiskerMobileLengthPercentage(length: radii[1].0, fraction: 0),
+        WhiskerMobileLengthPercentage(length: radii[2].0, fraction: 0),
+        WhiskerMobileLengthPercentage(length: radii[3].0, fraction: 0)
+    )
+    inset.radii_vertical = (
+        WhiskerMobileLengthPercentage(length: radii[0].1, fraction: 0),
+        WhiskerMobileLengthPercentage(length: radii[1].1, fraction: 0),
+        WhiskerMobileLengthPercentage(length: radii[2].1, fraction: 0),
+        WhiskerMobileLengthPercentage(length: radii[3].1, fraction: 0)
+    )
+    return SceneClipPath(
+        referenceBox: try backgroundBox(fixture["reference_box"] as? String ?? "border"),
+        inset: inset
     )
 }
 

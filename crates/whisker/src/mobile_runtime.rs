@@ -8,10 +8,10 @@ use whisker_driver::module::{
 };
 use whisker_engine::whisker_protocol::{
     ApplyResult, AvailableSpace, BackgroundAttachment, BackgroundSize, BlendMode, BorderLineStyle,
-    ChildPolicy, ElementMeasurement, ElementRegistration, ElementValueKind, FrameMode, FramePacket,
-    ImageRepeat, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextWrap,
-    MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementRequestId,
-    MeasurementResponse, NodeId, Operation, PaintBox, PaintColor, PaintImage,
+    ChildPolicy, ClipShape, ElementMeasurement, ElementRegistration, ElementValueKind, FrameMode,
+    FramePacket, ImageRepeat, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+    MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
+    MeasurementRequestId, MeasurementResponse, NodeId, Operation, PaintBox, PaintColor, PaintImage,
     PaintLengthPercentage, PreparedContentId, RadialGradientExtent, RadialGradientShape,
     ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode, ResourceId,
     ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason, VisualEffects,
@@ -909,6 +909,8 @@ struct MobileFrameOwned {
     _layouts: Vec<Box<MobileLayoutGeometry>>,
     _paints: Vec<Box<MobileBoxPaint>>,
     _box_shadows: Vec<Box<[MobileBoxShadow]>>,
+    _clip_insets: Vec<Box<MobileClipInset>>,
+    _clip_paths: Vec<Box<MobileClipPath>>,
     _gradient_stops: Vec<Box<[MobileGradientStop]>>,
     _radial_gradients: Vec<Box<MobileRadialGradient>>,
     _conic_gradients: Vec<Box<MobileConicGradient>>,
@@ -921,12 +923,31 @@ struct MobileFrameOwned {
     _operations: Vec<MobileOperation>,
 }
 
+fn empty_mobile_operation() -> MobileOperation {
+    MobileOperation {
+        tag: 0,
+        flags: 0,
+        node: 0,
+        parent: 0,
+        child: 0,
+        index: 0,
+        member: 0,
+        integer: 0,
+        scalar: 0.0,
+        wide: 0,
+        payload: std::ptr::null(),
+        payload_count: 0,
+    }
+}
+
 impl MobileFrameOwned {
     fn new(packet: &FramePacket) -> Result<Self, MobileFrameError> {
         let mut arena = RawValueArena::default();
         let mut layouts = Vec::<Box<MobileLayoutGeometry>>::new();
         let mut paints = Vec::<Box<MobileBoxPaint>>::new();
         let mut box_shadows = Vec::<Box<[MobileBoxShadow]>>::new();
+        let mut clip_insets = Vec::<Box<MobileClipInset>>::new();
+        let mut clip_paths = Vec::<Box<MobileClipPath>>::new();
         let mut gradient_stops = Vec::<Box<[MobileGradientStop]>>::new();
         let mut radial_gradients = Vec::<Box<MobileRadialGradient>>::new();
         let mut conic_gradients = Vec::<Box<MobileConicGradient>>::new();
@@ -936,22 +957,9 @@ impl MobileFrameOwned {
         let mut transforms = Vec::<Box<[f32; 16]>>::new();
         let mut values = Vec::<Box<WhiskerValueRaw>>::new();
         let mut strings = Vec::new();
-        let mut operations = Vec::with_capacity(packet.operations.len());
+        let mut operations = Vec::with_capacity(packet.operations.len() * 2);
         for operation in &packet.operations {
-            let mut raw = MobileOperation {
-                tag: 0,
-                flags: 0,
-                node: 0,
-                parent: 0,
-                child: 0,
-                index: 0,
-                member: 0,
-                integer: 0,
-                scalar: 0.0,
-                wide: 0,
-                payload: std::ptr::null(),
-                payload_count: 0,
-            };
+            let mut raw = empty_mobile_operation();
             match operation {
                 Operation::CreateNode { node, element_type } => {
                     raw.tag = OP_CREATE;
@@ -1162,6 +1170,7 @@ impl MobileFrameOwned {
                 Operation::SetVisualEffects { node, effects } => {
                     let mut remainder = effects.clone();
                     remainder.box_shadows.clear();
+                    remainder.clip_path = None;
                     if remainder != VisualEffects::default() {
                         return Err(MobileFrameError);
                     }
@@ -1190,6 +1199,52 @@ impl MobileFrameOwned {
                         shadows.as_ptr().cast()
                     };
                     raw.payload_count = shadows.len();
+                    operations.push(raw);
+
+                    raw = empty_mobile_operation();
+                    raw.tag = OP_CLIP_PATH;
+                    raw.node = node.get();
+                    if let Some((reference_box, shape)) = effects.clip_path.as_ref() {
+                        let reference_box = match reference_box {
+                            PaintBox::Border => BACKGROUND_BOX_BORDER,
+                            PaintBox::Padding => BACKGROUND_BOX_PADDING,
+                            PaintBox::Content => BACKGROUND_BOX_CONTENT,
+                            _ => return Err(MobileFrameError),
+                        };
+                        let ClipShape::Inset { edges, radii } = shape else {
+                            return Err(MobileFrameError);
+                        };
+                        clip_insets.push(Box::new(MobileClipInset {
+                            edges: [
+                                mobile_coordinate(edges.top),
+                                mobile_coordinate(edges.right),
+                                mobile_coordinate(edges.bottom),
+                                mobile_coordinate(edges.left),
+                            ],
+                            radii_horizontal: [
+                                mobile_length(radii.top_left.horizontal),
+                                mobile_length(radii.top_right.horizontal),
+                                mobile_length(radii.bottom_right.horizontal),
+                                mobile_length(radii.bottom_left.horizontal),
+                            ],
+                            radii_vertical: [
+                                mobile_length(radii.top_left.vertical),
+                                mobile_length(radii.top_right.vertical),
+                                mobile_length(radii.bottom_right.vertical),
+                                mobile_length(radii.bottom_left.vertical),
+                            ],
+                        }));
+                        clip_paths.push(Box::new(MobileClipPath {
+                            reference_box,
+                            shape_kind: CLIP_SHAPE_INSET,
+                            payload: clip_insets.last().unwrap().as_ref() as *const _
+                                as *const c_void,
+                            payload_count: 1,
+                        }));
+                        raw.payload =
+                            clip_paths.last().unwrap().as_ref() as *const _ as *const c_void;
+                        raw.payload_count = 1;
+                    }
                 }
                 Operation::SetClip { node, clip } => {
                     raw.tag = OP_CLIP;
@@ -1341,6 +1396,8 @@ impl MobileFrameOwned {
             _layouts: layouts,
             _paints: paints,
             _box_shadows: box_shadows,
+            _clip_insets: clip_insets,
+            _clip_paths: clip_paths,
             _gradient_stops: gradient_stops,
             _radial_gradients: radial_gradients,
             _conic_gradients: conic_gradients,
@@ -1853,9 +1910,81 @@ mod tests {
         assert_eq!(shadows[1].inset, 1);
         assert_eq!(shadows[1].color.kind, 1);
         assert_eq!(shadows[1].color.alpha, 0.5);
-        assert_eq!(frame._operations[1].tag, OP_BOX_SHADOWS);
+        assert_eq!(frame._operations[1].tag, OP_CLIP_PATH);
         assert_eq!(frame._operations[1].payload_count, 0);
         assert!(frame._operations[1].payload.is_null());
+        assert_eq!(frame._operations[2].tag, OP_BOX_SHADOWS);
+        assert_eq!(frame._operations[2].payload_count, 0);
+        assert!(frame._operations[2].payload.is_null());
+        assert_eq!(frame._operations[3].tag, OP_CLIP_PATH);
+        assert_eq!(frame._operations[3].payload_count, 0);
+        assert!(frame._operations[3].payload.is_null());
+    }
+
+    #[test]
+    fn mobile_frame_exposes_rounded_inset_clip_path_as_typed_payload() {
+        use whisker_engine::whisker_protocol::{PaintCornerRadius, PaintCorners, PaintEdges};
+
+        let node = NodeId::new(1).unwrap();
+        let coordinate = PaintCoordinate {
+            length: 2.0,
+            fraction: 0.1,
+        };
+        let radius = PaintCornerRadius::circular(PaintLengthPercentage {
+            length: 4.0,
+            fraction: 0.2,
+        });
+        let packet = FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![Operation::SetVisualEffects {
+                node,
+                effects: VisualEffects {
+                    clip_path: Some((
+                        PaintBox::Padding,
+                        ClipShape::Inset {
+                            edges: PaintEdges {
+                                top: coordinate,
+                                right: coordinate,
+                                bottom: coordinate,
+                                left: coordinate,
+                            },
+                            radii: PaintCorners {
+                                top_left: radius,
+                                top_right: radius,
+                                bottom_right: radius,
+                                bottom_left: radius,
+                            },
+                        },
+                    )),
+                    ..Default::default()
+                },
+            }],
+        };
+
+        let frame = MobileFrameOwned::new(&packet).unwrap();
+        assert_eq!(frame._operations.len(), 2);
+        assert_eq!(frame._operations[0].tag, OP_BOX_SHADOWS);
+        let operation = &frame._operations[1];
+        assert_eq!(operation.tag, OP_CLIP_PATH);
+        assert_eq!(operation.payload_count, 1);
+        let clip = unsafe { &*operation.payload.cast::<MobileClipPath>() };
+        assert_eq!(clip.reference_box, BACKGROUND_BOX_PADDING);
+        assert_eq!(clip.shape_kind, CLIP_SHAPE_INSET);
+        assert_eq!(clip.payload_count, 1);
+        let inset = unsafe { &*clip.payload.cast::<MobileClipInset>() };
+        assert_eq!(inset.edges[0].length, 2.0);
+        assert_eq!(inset.edges[0].fraction, 0.1);
+        assert_eq!(inset.radii_horizontal[0].length, 4.0);
+        assert_eq!(inset.radii_vertical[0].fraction, 0.2);
     }
 
     #[test]
