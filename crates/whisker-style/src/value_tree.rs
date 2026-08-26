@@ -10,7 +10,7 @@ use crate::{
 /// Visits every length-percentage leaf nested in a specified value.
 pub(crate) fn visit_length_percentages<'a>(
     value: &'a StyleValue,
-    visit: &mut impl FnMut(&'a LengthPercentageValue),
+    visit: &mut dyn FnMut(&'a LengthPercentageValue),
 ) {
     match value {
         StyleValue::LengthPercentage(value) => visit(value),
@@ -75,16 +75,16 @@ pub(crate) fn visit_length_percentages<'a>(
 /// Clones a specified value while fallibly replacing every length-percentage leaf.
 pub(crate) fn try_map_length_percentages(
     value: &StyleValue,
-    mut map: impl FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
 ) -> Option<StyleValue> {
     let mut mapped = value.clone();
-    try_visit_length_percentages_mut(&mut mapped, &mut map)?;
+    try_visit_length_percentages_mut(&mut mapped, map)?;
     Some(mapped)
 }
 
 fn visit_background_image<'a>(
     image: &'a BackgroundImageValue,
-    visit: &mut impl FnMut(&'a LengthPercentageValue),
+    visit: &mut dyn FnMut(&'a LengthPercentageValue),
 ) {
     let BackgroundImageValue::Gradient(gradient) = image else {
         return;
@@ -112,7 +112,7 @@ fn visit_background_image<'a>(
 
 fn visit_stops<'a>(
     stops: &'a [crate::GradientStopValue],
-    visit: &mut impl FnMut(&'a LengthPercentageValue),
+    visit: &mut dyn FnMut(&'a LengthPercentageValue),
 ) {
     for stop in stops {
         if let Some(position) = &stop.position {
@@ -123,7 +123,7 @@ fn visit_stops<'a>(
 
 fn visit_background_size<'a>(
     size: &'a BackgroundSizeValue,
-    visit: &mut impl FnMut(&'a LengthPercentageValue),
+    visit: &mut dyn FnMut(&'a LengthPercentageValue),
 ) {
     if let BackgroundSizeValue::Explicit { width, height } = size {
         if let Some(width) = width {
@@ -137,7 +137,7 @@ fn visit_background_size<'a>(
 
 fn visit_transform<'a>(
     function: &'a TransformFunctionValue,
-    visit: &mut impl FnMut(&'a LengthPercentageValue),
+    visit: &mut dyn FnMut(&'a LengthPercentageValue),
 ) {
     match function {
         TransformFunctionValue::Translate(horizontal, vertical)
@@ -154,7 +154,7 @@ fn visit_transform<'a>(
 
 fn visit_offset_path<'a>(
     path: &'a OffsetPathValue,
-    visit: &mut impl FnMut(&'a LengthPercentageValue),
+    visit: &mut dyn FnMut(&'a LengthPercentageValue),
 ) {
     match path {
         OffsetPathValue::Circle {
@@ -194,7 +194,7 @@ fn visit_offset_path<'a>(
 
 fn visit_grid_track<'a>(
     track: &'a crate::GridTrackSizingValue,
-    visit: &mut impl FnMut(&'a LengthPercentageValue),
+    visit: &mut dyn FnMut(&'a LengthPercentageValue),
 ) {
     if let GridMinTrackSizingValue::Fixed(value) = &track.min {
         visit(value);
@@ -209,7 +209,7 @@ fn visit_grid_track<'a>(
 
 fn try_visit_length_percentages_mut(
     value: &mut StyleValue,
-    map: &mut impl FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
 ) -> Option<()> {
     match value {
         StyleValue::LengthPercentage(value) => map_one(value, map)?,
@@ -276,7 +276,7 @@ fn try_visit_length_percentages_mut(
 
 fn map_one(
     value: &mut LengthPercentageValue,
-    map: &mut impl FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
 ) -> Option<()> {
     *value = map(value)?;
     Some(())
@@ -284,7 +284,7 @@ fn map_one(
 
 fn map_background_image(
     image: &mut BackgroundImageValue,
-    map: &mut impl FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
 ) -> Option<()> {
     let BackgroundImageValue::Gradient(gradient) = image else {
         return Some(());
@@ -313,7 +313,7 @@ fn map_background_image(
 
 fn map_stops(
     stops: &mut [crate::GradientStopValue],
-    map: &mut impl FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
 ) -> Option<()> {
     for stop in stops {
         if let Some(position) = &mut stop.position {
@@ -325,7 +325,7 @@ fn map_stops(
 
 fn map_background_size(
     size: &mut BackgroundSizeValue,
-    map: &mut impl FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
 ) -> Option<()> {
     if let BackgroundSizeValue::Explicit { width, height } = size {
         if let Some(width) = width {
@@ -340,7 +340,7 @@ fn map_background_size(
 
 fn map_transform(
     function: &mut TransformFunctionValue,
-    map: &mut impl FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
 ) -> Option<()> {
     match function {
         TransformFunctionValue::Translate(horizontal, vertical)
@@ -358,7 +358,7 @@ fn map_transform(
 
 fn map_offset_path(
     path: &mut OffsetPathValue,
-    map: &mut impl FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
 ) -> Option<()> {
     match path {
         OffsetPathValue::Circle {
@@ -399,7 +399,7 @@ fn map_offset_path(
 
 fn map_grid_track(
     track: &mut crate::GridTrackSizingValue,
-    map: &mut impl FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
 ) -> Option<()> {
     if let GridMinTrackSizingValue::Fixed(value) = &mut track.min {
         map_one(value, map)?;
@@ -448,13 +448,25 @@ mod tests {
         assert_eq!(visited, expected);
 
         let replacement = lp(99.0);
-        let mapped = try_map_length_percentages(&value, |_| Some(replacement.clone())).unwrap();
+        let mut replace = |_: &LengthPercentageValue| Some(replacement.clone());
+        let mapped = try_map_length_percentages(&value, &mut replace).unwrap();
         let mut mapped_count = 0;
         visit_length_percentages(&mapped, &mut |value| {
             mapped_count += 1;
             assert_eq!(value, &replacement);
         });
         assert_eq!(mapped_count, expected);
+
+        for failure_index in 0..expected {
+            let mut index = 0;
+            let mut fail_once = |value: &LengthPercentageValue| {
+                let should_fail = index == failure_index;
+                index += 1;
+                (!should_fail).then(|| value.clone())
+            };
+            let failed = try_map_length_percentages(&value, &mut fail_once);
+            assert!(failed.is_none());
+        }
     }
 
     #[test]
@@ -601,5 +613,87 @@ mod tests {
             4,
         );
         assert_maps_every_leaf(StyleValue::GridTracks(vec![track()]), 2);
+        assert_maps_every_leaf(
+            StyleValue::GridTracks(vec![GridTrackSizingValue {
+                min: GridMinTrackSizingValue::Auto,
+                max: GridMaxTrackSizingValue::Fixed(lp(1.0)),
+            }]),
+            1,
+        );
+        assert_maps_every_leaf(
+            StyleValue::GridTracks(vec![GridTrackSizingValue {
+                min: GridMinTrackSizingValue::Auto,
+                max: GridMaxTrackSizingValue::Fraction(StyleNumber::new(1.0)),
+            }]),
+            0,
+        );
+    }
+
+    #[test]
+    fn walk_covers_direct_wrappers_and_leafless_composite_variants() {
+        for value in [
+            StyleValue::LengthPercentage(lp(1.0)),
+            StyleValue::Size(SizeValue::LengthPercentage(lp(1.0))),
+            StyleValue::Size(SizeValue::FitContent(Some(lp(1.0)))),
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(lp(1.0))),
+            StyleValue::FlexBasis(crate::FlexBasisValue::LengthPercentage(lp(1.0))),
+            StyleValue::LineHeight(crate::LineHeightValue::LengthPercentage(lp(1.0))),
+        ] {
+            assert_maps_every_leaf(value, 1);
+        }
+        assert_maps_every_leaf(
+            StyleValue::BorderRadius(BorderRadiusValue {
+                horizontal: lp(1.0),
+                vertical: lp(1.0),
+            }),
+            2,
+        );
+        for value in [
+            StyleValue::Color(ColorValue::Named("red".into())),
+            StyleValue::BackgroundImages(vec![BackgroundImageValue::None]),
+            StyleValue::BackgroundImages(vec![BackgroundImageValue::Url("image.png".into())]),
+            StyleValue::BackgroundImages(vec![BackgroundImageValue::Gradient(
+                GradientValue::Radial {
+                    shape: RadialGradientValue::Circle,
+                    stops: Vec::new(),
+                },
+            )]),
+            StyleValue::BackgroundImages(vec![BackgroundImageValue::Gradient(
+                GradientValue::Radial {
+                    shape: RadialGradientValue::Ellipse,
+                    stops: Vec::new(),
+                },
+            )]),
+            StyleValue::BackgroundImages(vec![BackgroundImageValue::Gradient(
+                GradientValue::Linear {
+                    angle_degrees: StyleNumber::new(0.0),
+                    stops: vec![GradientStopValue {
+                        color: ColorValue::Named("red".into()),
+                        position: None,
+                    }],
+                },
+            )]),
+            StyleValue::BackgroundSize(BackgroundSizeValue::Auto),
+            StyleValue::BackgroundSize(BackgroundSizeValue::Explicit {
+                width: None,
+                height: None,
+            }),
+            StyleValue::Transform(TransformValue(vec![TransformFunctionValue::Rotate(
+                StyleNumber::new(45.0),
+            )])),
+            StyleValue::OffsetPath(OffsetPathValue::None),
+            StyleValue::OffsetPath(OffsetPathValue::Path(Vec::new())),
+            StyleValue::OffsetPath(OffsetPathValue::Inset(Box::new(InsetPathValue {
+                offsets: [lp(1.0), lp(1.0), lp(1.0), lp(1.0)],
+                radii: None,
+            }))),
+        ] {
+            let expected = if matches!(&value, StyleValue::OffsetPath(OffsetPathValue::Inset(_))) {
+                4
+            } else {
+                0
+            };
+            assert_maps_every_leaf(value, expected);
+        }
     }
 }

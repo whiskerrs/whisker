@@ -2922,13 +2922,13 @@ mod tests {
                 1,
             ),
             (
-                StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(
-                    length_percentage(),
-                )),
+                StyleValue::LengthPercentageAuto(
+                    crate::LengthPercentageAutoValue::LengthPercentage(length_percentage()),
+                ),
                 1,
             ),
             (
-                StyleValue::FlexBasis(FlexBasisValue::LengthPercentage(length_percentage())),
+                StyleValue::FlexBasis(crate::FlexBasisValue::LengthPercentage(length_percentage())),
                 1,
             ),
             (
@@ -2936,7 +2936,7 @@ mod tests {
                 1,
             ),
             (
-                StyleValue::BorderRadius(BorderRadiusValue {
+                StyleValue::BorderRadius(crate::BorderRadiusValue {
                     horizontal: length_percentage(),
                     vertical: length_percentage(),
                 }),
@@ -3024,13 +3024,24 @@ mod tests {
 
         let resolved = resolve_style(&specified, None, StyleEnvironment::default()).unwrap();
         let expected = crate::ComputedLengthPercentage::new(15.0, 0.0);
-        let crate::ComputedBackgroundImage::Gradient(crate::ComputedGradient::Linear {
-            stops, ..
-        }) = &resolved.computed().paint().background_images[0]
-        else {
-            panic!("expected a computed linear gradient")
-        };
-        assert_eq!(stops[0].position, Some(expected));
+        assert_eq!(
+            resolved.computed().paint().background_images,
+            vec![crate::ComputedBackgroundImage::Gradient(
+                crate::ComputedGradient::Linear {
+                    angle_degrees: number(180.0),
+                    stops: vec![
+                        crate::ComputedGradientStop {
+                            color: ColorValue::Named("red".into()),
+                            position: Some(expected),
+                        },
+                        crate::ComputedGradientStop {
+                            color: ColorValue::Named("blue".into()),
+                            position: Some(crate::ComputedLengthPercentage::new(0.0, 1.0)),
+                        },
+                    ],
+                }
+            )]
+        );
         assert_eq!(
             resolved.computed().paint().transform.functions,
             vec![crate::ComputedTransformFunction::Translate {
