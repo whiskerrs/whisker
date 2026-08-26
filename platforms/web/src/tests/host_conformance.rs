@@ -369,6 +369,16 @@ struct ExpectedBox {
     border: Option<BorderFixture>,
 }
 
+struct ExpectedMeasurementStyle<'a> {
+    font_features: &'a [whisker_host_conformance::FontFeatureFixture],
+    font_variations: &'a [whisker_host_conformance::FontVariationFixture],
+    font_optical_sizing: whisker_host_conformance::FontOpticalSizingFixture,
+    white_space: whisker_host_conformance::WhiteSpaceFixture,
+    word_break: whisker_host_conformance::WordBreakFixture,
+    max_lines: u32,
+    overflow: whisker_host_conformance::TextOverflowFixture,
+}
+
 impl Driver {
     fn new() -> Self {
         let document = web_sys::window().unwrap().document().unwrap();
@@ -759,6 +769,10 @@ impl Driver {
                     font_features,
                     font_variations,
                     font_optical_sizing,
+                    white_space,
+                    word_break,
+                    max_lines,
+                    overflow,
                     available_width,
                 } => self.measure_text(
                     *key,
@@ -772,6 +786,10 @@ impl Driver {
                     font_features,
                     font_variations,
                     *font_optical_sizing,
+                    *white_space,
+                    *word_break,
+                    *max_lines,
+                    *overflow,
                     *available_width,
                 ),
                 Command::CheckpointMeasurement {
@@ -880,6 +898,10 @@ impl Driver {
         font_features: &[whisker_host_conformance::FontFeatureFixture],
         font_variations: &[whisker_host_conformance::FontVariationFixture],
         font_optical_sizing: whisker_host_conformance::FontOpticalSizingFixture,
+        white_space: whisker_host_conformance::WhiteSpaceFixture,
+        word_break: whisker_host_conformance::WordBreakFixture,
+        max_lines: u32,
+        overflow: whisker_host_conformance::TextOverflowFixture,
         available_width: f32,
     ) {
         let key_id = MeasurementKey::new(key).expect("fixture measurement key is non-zero");
@@ -937,17 +959,23 @@ impl Driver {
                 direction: MeasureTextDirection::Auto,
                 alignment: whisker_protocol::MeasureTextAlignment::Start,
                 indent: Default::default(),
-                wrap: MeasureTextWrap::Wrap,
-                word_break: MeasureTextWordBreak::Normal,
-                max_lines: None,
-                overflow: MeasureTextOverflow::Clip,
+                wrap: fixture_measure_wrap(white_space),
+                word_break: fixture_measure_word_break(word_break),
+                max_lines: (max_lines > 0).then_some(max_lines),
+                overflow: fixture_measure_overflow(overflow),
             }),
         };
         self.assert_measurement_style(
             &request,
-            font_features,
-            font_variations,
-            font_optical_sizing,
+            ExpectedMeasurementStyle {
+                font_features,
+                font_variations,
+                font_optical_sizing,
+                white_space,
+                word_break,
+                max_lines,
+                overflow,
+            },
         );
         let mut responses = Vec::new();
         self.measurements
@@ -974,9 +1002,7 @@ impl Driver {
     fn assert_measurement_style(
         &self,
         request: &MeasurementRequest,
-        font_features: &[whisker_host_conformance::FontFeatureFixture],
-        font_variations: &[whisker_host_conformance::FontVariationFixture],
-        font_optical_sizing: whisker_host_conformance::FontOpticalSizingFixture,
+        expected: ExpectedMeasurementStyle<'_>,
     ) {
         let MeasurementPayload::Text(text) = &request.payload else {
             panic!("Web text measurement fixture produced a non-text request")
@@ -994,21 +1020,52 @@ impl Driver {
         assert_style(
             &style,
             "font-feature-settings",
-            &fixture_font_settings(font_features, |value| value.value.to_string()),
+            &fixture_font_settings(expected.font_features, |value| value.value.to_string()),
         );
         assert_style(
             &style,
             "font-variation-settings",
-            &fixture_font_settings(font_variations, |value| value.value.to_string()),
+            &fixture_font_settings(expected.font_variations, |value| value.value.to_string()),
         );
         assert_style(
             &style,
             "font-optical-sizing",
-            match font_optical_sizing {
+            match expected.font_optical_sizing {
                 whisker_host_conformance::FontOpticalSizingFixture::Auto => "auto",
                 whisker_host_conformance::FontOpticalSizingFixture::None => "none",
             },
         );
+        assert_style(
+            &style,
+            "white-space",
+            match expected.white_space {
+                whisker_host_conformance::WhiteSpaceFixture::Normal => "normal",
+                whisker_host_conformance::WhiteSpaceFixture::NoWrap => "nowrap",
+            },
+        );
+        assert_style(
+            &style,
+            "word-break",
+            match expected.word_break {
+                whisker_host_conformance::WordBreakFixture::Normal => "normal",
+                whisker_host_conformance::WordBreakFixture::BreakAll => "break-all",
+                whisker_host_conformance::WordBreakFixture::KeepAll => "keep-all",
+            },
+        );
+        assert_style(
+            &style,
+            "text-overflow",
+            match expected.overflow {
+                whisker_host_conformance::TextOverflowFixture::Clip => "clip",
+                whisker_host_conformance::TextOverflowFixture::Ellipsis => "ellipsis",
+            },
+        );
+        let line_clamp = if expected.max_lines == 0 {
+            "initial".to_owned()
+        } else {
+            expected.max_lines.to_string()
+        };
+        assert_style(&style, "-webkit-line-clamp", &line_clamp);
     }
 
     fn assert_measurement(
@@ -1891,6 +1948,9 @@ fn fixture(path: &str) -> &'static str {
         "core/text-measure-font-features.json" => {
             include_str!("../../../../tests/host-conformance/core/text-measure-font-features.json")
         }
+        "core/text-measure-flow.json" => {
+            include_str!("../../../../tests/host-conformance/core/text-measure-flow.json")
+        }
         "core/pointer-input-basic.json" => {
             include_str!("../../../../tests/host-conformance/core/pointer-input-basic.json")
         }
@@ -2618,6 +2678,32 @@ fn fixture_measure_font_style(
         whisker_host_conformance::FontStyleFixture::Normal => MeasureFontStyle::Normal,
         whisker_host_conformance::FontStyleFixture::Italic => MeasureFontStyle::Italic,
         whisker_host_conformance::FontStyleFixture::Oblique => MeasureFontStyle::Oblique,
+    }
+}
+
+fn fixture_measure_wrap(value: whisker_host_conformance::WhiteSpaceFixture) -> MeasureTextWrap {
+    match value {
+        whisker_host_conformance::WhiteSpaceFixture::Normal => MeasureTextWrap::Wrap,
+        whisker_host_conformance::WhiteSpaceFixture::NoWrap => MeasureTextWrap::NoWrap,
+    }
+}
+
+fn fixture_measure_word_break(
+    value: whisker_host_conformance::WordBreakFixture,
+) -> MeasureTextWordBreak {
+    match value {
+        whisker_host_conformance::WordBreakFixture::Normal => MeasureTextWordBreak::Normal,
+        whisker_host_conformance::WordBreakFixture::BreakAll => MeasureTextWordBreak::BreakAll,
+        whisker_host_conformance::WordBreakFixture::KeepAll => MeasureTextWordBreak::KeepAll,
+    }
+}
+
+fn fixture_measure_overflow(
+    value: whisker_host_conformance::TextOverflowFixture,
+) -> MeasureTextOverflow {
+    match value {
+        whisker_host_conformance::TextOverflowFixture::Clip => MeasureTextOverflow::Clip,
+        whisker_host_conformance::TextOverflowFixture::Ellipsis => MeasureTextOverflow::Ellipsis,
     }
 }
 

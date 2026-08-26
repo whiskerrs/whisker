@@ -9,6 +9,9 @@ let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses i
         let request = requests.advanced(by: index).pointee
         guard request.kind == UInt32(WHISKER_MEASURE_TEXT) else { continue }
         guard request.font_style <= 2,
+              request.wrap <= 1,
+              request.word_break <= 2,
+              request.overflow <= 1,
               request.font_size.isFinite,
               request.font_size > 0,
               request.line_height.isFinite,

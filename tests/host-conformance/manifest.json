@@ -563,6 +563,13 @@
       "checkpoints": ["measurement", "semantic-projection"]
     },
     {
+      "id": "host.measure.text.flow",
+      "feature": "text-measurement-flow",
+      "fixture": "core/text-measure-flow.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["measurement", "semantic-projection"]
+    },
+    {
       "id": "core.pointer-style-lynx",
       "feature": "cursor-pointer-events",
       "fixture": "core/pointer-style-lynx.json",

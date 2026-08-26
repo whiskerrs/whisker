@@ -638,7 +638,7 @@ private class Driver(
     }
 
     private fun measureText(command: JSONObject) {
-        val families = command.getJSONArray("font_families").strings()
+        val families = command.optJSONArray("font_families")?.strings() ?: arrayOf("system")
         check(families.isNotEmpty())
         val featureSettings = command.optJSONArray("font_features")?.objects()?.map { setting ->
             "${setting.getString("tag")}=${setting.getLong("value")}"
@@ -648,8 +648,27 @@ private class Driver(
         }?.toList().orEmpty()
         val opticalSizing = when (command.optString("font_optical_sizing", "none")) {
             "auto" -> 0
-            else -> 1
+            "none" -> 1
+            else -> error("unsupported font_optical_sizing: $command")
         }
+        val wrap = when (command.optString("white_space", "normal")) {
+            "normal" -> 1
+            "no_wrap" -> 0
+            else -> error("unsupported white_space: $command")
+        }
+        val wordBreak = when (command.optString("word_break", "normal")) {
+            "normal" -> 0
+            "break_all" -> 1
+            "keep_all" -> 2
+            else -> error("unsupported word_break: $command")
+        }
+        val overflow = when (command.optString("overflow", "clip")) {
+            "clip" -> 0
+            "ellipsis" -> 1
+            else -> error("unsupported overflow: $command")
+        }
+        val maxLines = command.optInt("max_lines", 0)
+        check(maxLines >= 0)
         val result = view.measureFromNative(
             elementType = 2,
             kind = 1,
@@ -663,20 +682,21 @@ private class Driver(
             text = command.getString("text"),
             fontFamilies = families,
             fontSize = command.getDouble("font_size").toFloat(),
-            fontWeight = command.getInt("font_weight"),
-            fontStyle = when (command.getString("font_style")) {
+            fontWeight = command.optInt("font_weight", 400),
+            fontStyle = when (command.optString("font_style", "normal")) {
                 "italic" -> 1
                 "oblique" -> 2
-                else -> 0
+                "normal" -> 0
+                else -> error("unsupported font_style: $command")
             },
-            wrap = 1,
-            wordBreak = 0,
-            overflow = 0,
-            letterSpacing = command.getDouble("letter_spacing").toFloat(),
+            wrap = wrap,
+            wordBreak = wordBreak,
+            overflow = overflow,
+            letterSpacing = command.optDouble("letter_spacing", 0.0).toFloat(),
             lineHeight = command.getDouble("line_height").toFloat(),
             indentLogicalPixels = 0f,
             indentPercentage = 0f,
-            maxLines = 0,
+            maxLines = maxLines,
             fontSettings = (featureSettings + variationSettings).toTypedArray(),
             fontFeatureCount = featureSettings.size,
             fontOpticalSizing = opticalSizing,

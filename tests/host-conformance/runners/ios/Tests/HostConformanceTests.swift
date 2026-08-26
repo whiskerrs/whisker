@@ -738,6 +738,26 @@ private final class Driver {
         case "none": fontOpticalSizing = 1
         default: throw Failure("unknown measurement optical sizing")
         }
+        let wrap: UInt8
+        switch command["white_space"] as? String ?? "normal" {
+        case "normal": wrap = 1
+        case "no_wrap": wrap = 0
+        default: throw Failure("unknown measurement white-space")
+        }
+        let wordBreak: UInt8
+        switch command["word_break"] as? String ?? "normal" {
+        case "normal": wordBreak = 0
+        case "break_all": wordBreak = 1
+        case "keep_all": wordBreak = 2
+        default: throw Failure("unknown measurement word-break")
+        }
+        let maxLines = UInt32((command["max_lines"] as? NSNumber)?.uintValue ?? 0)
+        let overflow: UInt8
+        switch command["overflow"] as? String ?? "clip" {
+        case "clip": overflow = 0
+        case "ellipsis": overflow = 1
+        default: throw Failure("unknown measurement overflow")
+        }
 
         let textBytes = Array(value.utf8CString)
         let textStorage = UnsafeMutablePointer<CChar>.allocate(capacity: textBytes.count)
@@ -802,7 +822,10 @@ private final class Driver {
         request.available_width_kind = 0
         request.available_height_kind = 2
         request.font_style = fontStyle
-        request.wrap = 1
+        request.wrap = wrap
+        request.word_break = wordBreak
+        request.max_lines = maxLines
+        request.overflow = overflow
         request.text = WhiskerStringRef(
             ptr: UnsafePointer(textStorage),
             len: textBytes.count - 1
@@ -818,6 +841,11 @@ private final class Driver {
         request.font_variations = variationStorage.map { UnsafePointer($0) }
         request.font_variation_count = fontVariations.count
         request.font_optical_sizing = fontOpticalSizing
+
+        XCTAssertEqual(request.wrap, wrap)
+        XCTAssertEqual(request.word_break, wordBreak)
+        XCTAssertEqual(request.max_lines, maxLines)
+        XCTAssertEqual(request.overflow, overflow)
 
         if !fontFeatures.isEmpty || !fontVariations.isEmpty {
             XCTAssertEqual(request.font_feature_count, 2)

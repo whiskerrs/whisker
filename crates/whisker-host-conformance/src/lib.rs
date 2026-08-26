@@ -243,6 +243,18 @@ pub enum Command {
         /// Lynx optical-sizing behavior.
         #[serde(default)]
         font_optical_sizing: FontOpticalSizingFixture,
+        /// Lynx `white-space` value projected to the Host wrapping policy.
+        #[serde(default)]
+        white_space: WhiteSpaceFixture,
+        /// Lynx `word-break` value used when wrapping is enabled.
+        #[serde(default)]
+        word_break: WordBreakFixture,
+        /// Maximum visible line count; zero means unlimited.
+        #[serde(default)]
+        max_lines: u32,
+        /// Lynx `text-overflow` value applied at the line limit.
+        #[serde(default)]
+        overflow: TextOverflowFixture,
         /// Definite available width.
         available_width: f32,
     },

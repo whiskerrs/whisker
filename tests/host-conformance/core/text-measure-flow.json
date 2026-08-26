@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "id": "host.measure.text.flow",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 320.0, "height": 240.0, "scale": 1.0 },
+      {
+        "type": "measure_text",
+        "key": 10,
+        "text": "one two three four five six seven eight",
+        "font_families": ["system"],
+        "font_size": 18.0,
+        "line_height": 24.0,
+        "white_space": "normal",
+        "word_break": "normal",
+        "available_width": 96.0
+      },
+      {
+        "type": "checkpoint_measurement",
+        "key": 10,
+        "min_width": 40.0,
+        "max_width": 96.0,
+        "min_height": 48.0,
+        "max_height": 192.0
+      },
+      {
+        "type": "measure_text",
+        "key": 11,
+        "text": "one two three four five six seven eight",
+        "font_families": ["system"],
+        "font_size": 18.0,
+        "line_height": 24.0,
+        "white_space": "no_wrap",
+        "word_break": "normal",
+        "available_width": 96.0
+      },
+      {
+        "type": "checkpoint_measurement",
+        "key": 11,
+        "min_width": 96.0,
+        "max_width": 400.0,
+        "min_height": 18.0,
+        "max_height": 30.0
+      },
+      {
+        "type": "measure_text",
+        "key": 12,
+        "text": "abcdefghijklmnopqrstuvwx",
+        "font_families": ["system"],
+        "font_size": 18.0,
+        "line_height": 24.0,
+        "white_space": "normal",
+        "word_break": "break_all",
+        "available_width": 72.0
+      },
+      {
+        "type": "checkpoint_measurement",
+        "key": 12,
+        "min_width": 40.0,
+        "max_width": 72.0,
+        "min_height": 48.0,
+        "max_height": 120.0
+      },
+      {
+        "type": "measure_text",
+        "key": 13,
+        "text": "this line is deliberately too long",
+        "font_families": ["system"],
+        "font_size": 18.0,
+        "line_height": 24.0,
+        "white_space": "normal",
+        "word_break": "normal",
+        "max_lines": 1,
+        "overflow": "ellipsis",
+        "available_width": 110.0
+      },
+      {
+        "type": "checkpoint_measurement",
+        "key": 13,
+        "min_width": 60.0,
+        "max_width": 110.0,
+        "min_height": 18.0,
+        "max_height": 30.0
+      }
+    ]
+  }
+}
