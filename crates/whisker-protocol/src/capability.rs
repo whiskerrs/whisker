@@ -319,7 +319,14 @@ fn has_initial_background_geometry(layer: &crate::BackgroundLayer) -> bool {
 }
 
 fn has_explicit_no_repeat_geometry(layer: &crate::BackgroundLayer) -> bool {
-    layer.position == Default::default()
+    [
+        layer.position.x.length,
+        layer.position.x.fraction,
+        layer.position.y.length,
+        layer.position.y.fraction,
+    ]
+    .into_iter()
+    .all(f32::is_finite)
         && matches!(
             layer.size,
             crate::BackgroundSize::Explicit {
@@ -617,6 +624,32 @@ mod tests {
                 RenderCapability::ConicGradients,
                 RenderCapability::BackgroundGeometry,
             ]
+        );
+
+        let mut positioned = explicit_no_repeat(basic_linear_layer());
+        positioned.position = PaintPosition {
+            x: PaintCoordinate {
+                length: 50.0,
+                fraction: 0.0,
+            },
+            y: PaintCoordinate {
+                length: 0.0,
+                fraction: 0.5,
+            },
+        };
+        assert_eq!(
+            packet(vec![operation(positioned)]).required_capabilities(),
+            vec![
+                RenderCapability::LinearGradients,
+                RenderCapability::BackgroundGeometry,
+            ]
+        );
+
+        let mut non_finite_position = explicit_no_repeat(basic_linear_layer());
+        non_finite_position.position.x.fraction = f32::NAN;
+        assert_eq!(
+            packet(vec![operation(non_finite_position)]).required_capabilities(),
+            vec![RenderCapability::BackgroundLayers]
         );
 
         let mut incomplete_size = explicit_no_repeat(basic_linear_layer());

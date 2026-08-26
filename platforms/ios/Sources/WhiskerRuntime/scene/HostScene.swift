@@ -506,7 +506,7 @@ private func validGradientStops(
 }
 
 private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> Bool {
-    guard layer.position_x.isZero, layer.position_y.isZero,
+    guard layer.position_x.isFinite, layer.position_y.isFinite,
           layer.origin == UInt32(WHISKER_BACKGROUND_BOX_PADDING),
           layer.clip == UInt32(WHISKER_BACKGROUND_BOX_BORDER),
           layer.attachment == UInt32(WHISKER_BACKGROUND_ATTACHMENT_SCROLL),
@@ -514,7 +514,8 @@ private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> B
         return false
     }
     if layer.size_kind == UInt32(WHISKER_BACKGROUND_SIZE_AUTO) {
-        return layer.size_width.isZero && layer.size_height.isZero &&
+        return layer.position_x.isZero && layer.position_y.isZero &&
+            layer.size_width.isZero && layer.size_height.isZero &&
             layer.repeat_x == UInt32(WHISKER_BACKGROUND_REPEAT) &&
             layer.repeat_y == UInt32(WHISKER_BACKGROUND_REPEAT)
     }

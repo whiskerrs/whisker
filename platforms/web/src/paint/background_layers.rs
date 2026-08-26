@@ -38,7 +38,8 @@ pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
             .all(|stop| stop.position.is_some_and(|position| position.length == 0.0)),
         _ => false,
     };
-    let initial_geometry = layer.size == BackgroundSize::Auto
+    let initial_geometry = layer.position == Default::default()
+        && layer.size == BackgroundSize::Auto
         && layer.repeat_x == ImageRepeat::Repeat
         && layer.repeat_y == ImageRepeat::Repeat;
     let explicit_no_repeat_geometry = matches!(
@@ -50,7 +51,6 @@ pub(crate) fn supports(layers: &[BackgroundLayer]) -> bool {
     ) && layer.repeat_x == ImageRepeat::NoRepeat
         && layer.repeat_y == ImageRepeat::NoRepeat;
     supported_image
-        && layer.position == Default::default()
         && (initial_geometry || explicit_no_repeat_geometry)
         && layer.origin == PaintBox::Padding
         && layer.clip == PaintBox::Border

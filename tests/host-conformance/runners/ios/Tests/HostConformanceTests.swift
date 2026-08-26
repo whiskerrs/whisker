@@ -45,6 +45,12 @@ final class HostConformanceTests: XCTestCase {
         }
         XCTAssertGreaterThan(count, 0)
     }
+
+    func testNoRepeatLeadingEdgeUsesHalfADevicePixel() {
+        XCTAssertEqual(backgroundLeadingEdgeInset(deviceScale: 1), 0.5)
+        XCTAssertEqual(backgroundLeadingEdgeInset(deviceScale: 2), 0.25)
+        XCTAssertEqual(backgroundLeadingEdgeInset(deviceScale: 3), 1.0 / 6.0, accuracy: 0.000_001)
+    }
 }
 
 @MainActor
@@ -85,7 +91,8 @@ private final class Driver {
                     name == "paint.background-layers.linear-gradient" ||
                     name == "paint.background-layers.radial-gradient" ||
                     name == "paint.background-layers.conic-gradient" ||
-                    name == "paint.background-layers.explicit-size-no-repeat" else {
+                    name == "paint.background-layers.explicit-size-no-repeat" ||
+                    name == "paint.background-layers.position-length-percentage" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()

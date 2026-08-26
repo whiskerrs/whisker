@@ -19,8 +19,10 @@ internal data class HostBackgroundGeometry(
     fun imageBox(positioningBox: RectF): RectF {
         val width = sizeWidth?.resolve(positioningBox.width()) ?: positioningBox.width()
         val height = sizeHeight?.resolve(positioningBox.height()) ?: positioningBox.height()
-        val left = positioningBox.left + positionX.resolve(positioningBox.width())
-        val top = positioningBox.top + positionY.resolve(positioningBox.height())
+        val left = positioningBox.left +
+            positionX.length + positionX.fraction * (positioningBox.width() - width)
+        val top = positioningBox.top +
+            positionY.length + positionY.fraction * (positioningBox.height() - height)
         return RectF(left, top, left + width, top + height)
     }
 

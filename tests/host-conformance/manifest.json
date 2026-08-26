@@ -38,6 +38,13 @@
       "checkpoints": ["semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.background-position-three-four-values.test1",
+      "feature": "background-position",
+      "fixture": "wpt/css/css-backgrounds/background-position-three-four-values.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.border-radius-sum-of-radii-001.test1",
       "feature": "border-radius",
       "fixture": "wpt/css/css-backgrounds/border-radius-sum-of-radii-001.json",
