@@ -136,22 +136,27 @@ final class HostScene {
                 )
                 guard values.allSatisfy(\.isFinite) else { return false }
             case UInt32(WHISKER_OP_BACKGROUND_LAYERS):
-                guard existing.contains(operation.node), operation.scalar.isFinite else {
+                guard existing.contains(operation.node) else { return false }
+                if operation.payload_count == 0 {
+                    guard operation.payload == nil else { return false }
+                    continue
+                }
+                guard operation.payload_count == 1,
+                      let layer = operation.payload?.assumingMemoryBound(
+                          to: WhiskerMobileBackgroundLayer.self
+                      ).pointee,
+                      validBackgroundGeometry(layer), layer.image.scalar.isFinite else {
                     return false
                 }
-                switch operation.flags {
+                switch layer.image.kind {
                 case UInt32(WHISKER_BACKGROUND_LINEAR):
-                    if operation.payload_count == 0 {
-                        guard operation.payload == nil else { return false }
-                        continue
-                    }
-                    guard let payload = operation.payload,
-                          validGradientStops(payload, count: operation.payload_count) else {
+                    guard let payload = layer.image.payload,
+                          validGradientStops(payload, count: layer.image.payload_count) else {
                         return false
                     }
                 case UInt32(WHISKER_BACKGROUND_RADIAL):
-                    guard operation.payload_count == 1,
-                          let radial = operation.payload?.assumingMemoryBound(
+                    guard layer.image.payload_count == 1,
+                          let radial = layer.image.payload?.assumingMemoryBound(
                               to: WhiskerMobileRadialGradient.self
                           ).pointee,
                           radial.center_x.isFinite, radial.center_y.isFinite,
@@ -165,8 +170,8 @@ final class HostScene {
                         return false
                     }
                 case UInt32(WHISKER_BACKGROUND_CONIC):
-                    guard operation.payload_count == 1,
-                          let conic = operation.payload?.assumingMemoryBound(
+                    guard layer.image.payload_count == 1,
+                          let conic = layer.image.payload?.assumingMemoryBound(
                               to: WhiskerMobileConicGradient.self
                           ).pointee,
                           conic.center_x.isFinite, conic.center_y.isFinite,
@@ -249,18 +254,24 @@ final class HostScene {
             guard let node = nodes[id] else { return false }
             if operation.payload_count == 0 {
                 node.boxPainter.updateBackgroundLayers(nil)
-            } else if operation.flags == UInt32(WHISKER_BACKGROUND_LINEAR) {
-                guard let payload = operation.payload else { return false }
+                node.setNeedsDisplay()
+                return true
+            }
+            guard let layer = operation.payload?.assumingMemoryBound(
+                to: WhiskerMobileBackgroundLayer.self
+            ).pointee, let geometry = hostBackgroundGeometry(layer) else { return false }
+            if layer.image.kind == UInt32(WHISKER_BACKGROUND_LINEAR) {
+                guard let payload = layer.image.payload else { return false }
                 let stops = UnsafeBufferPointer(
                     start: payload.assumingMemoryBound(to: WhiskerMobileGradientStop.self),
-                    count: operation.payload_count
+                    count: layer.image.payload_count
                 ).map(HostLinearGradientStop.init)
                 node.boxPainter.updateBackgroundLayers(HostLinearGradient(
-                    angleDegrees: CGFloat(operation.scalar),
+                    angleDegrees: CGFloat(layer.image.scalar),
                     stops: stops
-                ))
-            } else if operation.flags == UInt32(WHISKER_BACKGROUND_RADIAL) {
-                guard let radial = operation.payload?.assumingMemoryBound(
+                ), geometry: geometry)
+            } else if layer.image.kind == UInt32(WHISKER_BACKGROUND_RADIAL) {
+                guard let radial = layer.image.payload?.assumingMemoryBound(
                     to: WhiskerMobileRadialGradient.self
                 ).pointee, let stopPointer = radial.stops else { return false }
                 let stops = UnsafeBufferPointer(
@@ -273,9 +284,9 @@ final class HostScene {
                     radiusX: radial.radius_x,
                     radiusY: radial.radius_y,
                     stops: stops
-                ))
-            } else if operation.flags == UInt32(WHISKER_BACKGROUND_CONIC) {
-                guard let conic = operation.payload?.assumingMemoryBound(
+                ), geometry: geometry)
+            } else if layer.image.kind == UInt32(WHISKER_BACKGROUND_CONIC) {
+                guard let conic = layer.image.payload?.assumingMemoryBound(
                     to: WhiskerMobileConicGradient.self
                 ).pointee, let stopPointer = conic.stops else { return false }
                 let stops = UnsafeBufferPointer(
@@ -283,11 +294,11 @@ final class HostScene {
                     count: conic.stop_count
                 ).map(HostLinearGradientStop.init)
                 node.boxPainter.updateBackgroundLayers(HostConicGradient(
-                    fromDegrees: CGFloat(operation.scalar),
+                    fromDegrees: CGFloat(layer.image.scalar),
                     centerX: conic.center_x,
                     centerY: conic.center_y,
                     stops: stops
-                ))
+                ), geometry: geometry)
             } else {
                 return false
             }
@@ -494,6 +505,44 @@ private func validGradientStops(
     }
 }
 
+private func validBackgroundGeometry(_ layer: WhiskerMobileBackgroundLayer) -> Bool {
+    guard layer.position_x.isZero, layer.position_y.isZero,
+          layer.origin == UInt32(WHISKER_BACKGROUND_BOX_PADDING),
+          layer.clip == UInt32(WHISKER_BACKGROUND_BOX_BORDER),
+          layer.attachment == UInt32(WHISKER_BACKGROUND_ATTACHMENT_SCROLL),
+          layer.blend_mode == UInt32(WHISKER_BACKGROUND_BLEND_NORMAL) else {
+        return false
+    }
+    if layer.size_kind == UInt32(WHISKER_BACKGROUND_SIZE_AUTO) {
+        return layer.size_width.isZero && layer.size_height.isZero &&
+            layer.repeat_x == UInt32(WHISKER_BACKGROUND_REPEAT) &&
+            layer.repeat_y == UInt32(WHISKER_BACKGROUND_REPEAT)
+    }
+    return layer.size_kind == UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT) &&
+        layer.size_width.isNonNegativeFinite && layer.size_height.isNonNegativeFinite &&
+        layer.repeat_x == UInt32(WHISKER_BACKGROUND_NO_REPEAT) &&
+        layer.repeat_y == UInt32(WHISKER_BACKGROUND_NO_REPEAT)
+}
+
+private func hostBackgroundGeometry(
+    _ layer: WhiskerMobileBackgroundLayer
+) -> HostBackgroundGeometry? {
+    guard validBackgroundGeometry(layer) else { return nil }
+    let explicit = layer.size_kind == UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT)
+    return HostBackgroundGeometry(
+        positionX: layer.position_x,
+        positionY: layer.position_y,
+        sizeWidth: explicit ? layer.size_width : nil,
+        sizeHeight: explicit ? layer.size_height : nil,
+        repeatX: layer.repeat_x == UInt32(WHISKER_BACKGROUND_NO_REPEAT) ? .noRepeat : .repeat,
+        repeatY: layer.repeat_y == UInt32(WHISKER_BACKGROUND_NO_REPEAT) ? .noRepeat : .repeat
+    )
+}
+
 private extension WhiskerMobileLengthPercentage {
     var isFinite: Bool { length.isFinite && fraction.isFinite }
+    var isZero: Bool { length == 0 && fraction == 0 }
+    var isNonNegativeFinite: Bool {
+        isFinite && length >= 0 && fraction >= 0
+    }
 }

@@ -31,11 +31,14 @@ pub enum RenderCapability {
     /// One resolved, non-repeating conic-gradient background image using the
     /// initial layer geometry and explicit fractional color-stop positions.
     ConicGradients,
+    /// Explicit two-axis background image sizing and no-repeat geometry for a
+    /// single otherwise supported background image.
+    BackgroundGeometry,
 }
 
 impl RenderCapability {
     /// Every optional capability in stable declaration order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::EllipticalBorderRadius,
         Self::BackgroundLayers,
         Self::VisualEffects,
@@ -47,6 +50,7 @@ impl RenderCapability {
         Self::LinearGradients,
         Self::RadialGradients,
         Self::ConicGradients,
+        Self::BackgroundGeometry,
     ];
 
     /// Stable diagnostic spelling shared by Host errors and checklists.
@@ -63,6 +67,7 @@ impl RenderCapability {
             Self::LinearGradients => "linear-gradients",
             Self::RadialGradients => "radial-gradients",
             Self::ConicGradients => "conic-gradients",
+            Self::BackgroundGeometry => "background-geometry",
         }
     }
 
@@ -212,6 +217,9 @@ impl FramePacket {
 }
 
 fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 2] {
+    if let Operation::SetBackgroundLayers { layers, .. } = operation {
+        return background_capabilities(layers);
+    }
     let first = match operation {
         Operation::SetBoxPaint { paint, .. }
             if [
@@ -225,17 +233,6 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 2
         {
             Some(RenderCapability::EllipticalBorderRadius)
         }
-        Operation::SetBackgroundLayers { layers, .. } if layers.is_empty() => None,
-        Operation::SetBackgroundLayers { layers, .. } if is_basic_linear_gradient(layers) => {
-            Some(RenderCapability::LinearGradients)
-        }
-        Operation::SetBackgroundLayers { layers, .. } if is_basic_radial_gradient(layers) => {
-            Some(RenderCapability::RadialGradients)
-        }
-        Operation::SetBackgroundLayers { layers, .. } if is_basic_conic_gradient(layers) => {
-            Some(RenderCapability::ConicGradients)
-        }
-        Operation::SetBackgroundLayers { .. } => Some(RenderCapability::BackgroundLayers),
         Operation::SetVisualEffects { .. } => Some(RenderCapability::VisualEffects),
         Operation::SetText { content, .. } if content.paint.uses_extended_features() => {
             Some(RenderCapability::TextEffects)
@@ -253,30 +250,37 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 2
     [first, second]
 }
 
-fn is_basic_linear_gradient(layers: &[crate::BackgroundLayer]) -> bool {
-    let [layer] = layers else { return false };
-    matches!(
+fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderCapability>; 2] {
+    let [] = layers else {
+        let [layer] = layers else {
+            return [Some(RenderCapability::BackgroundLayers), None];
+        };
+        let Some(image) = gradient_image_capability(layer) else {
+            return [Some(RenderCapability::BackgroundLayers), None];
+        };
+        if has_initial_background_geometry(layer) {
+            return [Some(image), None];
+        }
+        if has_explicit_no_repeat_geometry(layer) {
+            return [Some(image), Some(RenderCapability::BackgroundGeometry)];
+        }
+        return [Some(RenderCapability::BackgroundLayers), None];
+    };
+    [None, None]
+}
+
+fn gradient_image_capability(layer: &crate::BackgroundLayer) -> Option<RenderCapability> {
+    if matches!(
         &layer.image,
         crate::PaintImage::LinearGradient {
             repeating: false,
             stops,
             ..
         } if stops.iter().all(|stop| stop.position.is_some())
-    ) && layer.position == Default::default()
-        && layer.size == crate::BackgroundSize::Auto
-        && layer.repeat_x == crate::ImageRepeat::Repeat
-        && layer.repeat_y == crate::ImageRepeat::Repeat
-        && layer.origin == crate::PaintBox::Padding
-        && layer.clip == crate::PaintBox::Border
-        && layer.attachment == crate::BackgroundAttachment::Scroll
-        && layer.blend_mode == crate::BlendMode::Normal
-}
-
-fn is_basic_radial_gradient(layers: &[crate::BackgroundLayer]) -> bool {
-    let [layer] = layers else {
-        return false;
-    };
-    matches!(
+    ) {
+        return Some(RenderCapability::LinearGradients);
+    }
+    if matches!(
         &layer.image,
         crate::PaintImage::RadialGradient {
             shape: crate::RadialGradientShape::Ellipse,
@@ -288,21 +292,10 @@ fn is_basic_radial_gradient(layers: &[crate::BackgroundLayer]) -> bool {
         } if stops.iter().all(|stop| {
             stop.position.is_some_and(|position| position.length == 0.0)
         })
-    ) && layer.position == Default::default()
-        && layer.size == crate::BackgroundSize::Auto
-        && layer.repeat_x == crate::ImageRepeat::Repeat
-        && layer.repeat_y == crate::ImageRepeat::Repeat
-        && layer.origin == crate::PaintBox::Padding
-        && layer.clip == crate::PaintBox::Border
-        && layer.attachment == crate::BackgroundAttachment::Scroll
-        && layer.blend_mode == crate::BlendMode::Normal
-}
-
-fn is_basic_conic_gradient(layers: &[crate::BackgroundLayer]) -> bool {
-    let [layer] = layers else {
-        return false;
-    };
-    matches!(
+    ) {
+        return Some(RenderCapability::RadialGradients);
+    }
+    if matches!(
         &layer.image,
         crate::PaintImage::ConicGradient {
             repeating: false,
@@ -311,11 +304,36 @@ fn is_basic_conic_gradient(layers: &[crate::BackgroundLayer]) -> bool {
         } if stops.iter().all(|stop| {
             stop.position.is_some_and(|position| position.length == 0.0)
         })
-    ) && layer.position == Default::default()
+    ) {
+        return Some(RenderCapability::ConicGradients);
+    }
+    None
+}
+
+fn has_initial_background_geometry(layer: &crate::BackgroundLayer) -> bool {
+    layer.position == Default::default()
         && layer.size == crate::BackgroundSize::Auto
         && layer.repeat_x == crate::ImageRepeat::Repeat
         && layer.repeat_y == crate::ImageRepeat::Repeat
-        && layer.origin == crate::PaintBox::Padding
+        && has_initial_background_environment(layer)
+}
+
+fn has_explicit_no_repeat_geometry(layer: &crate::BackgroundLayer) -> bool {
+    layer.position == Default::default()
+        && matches!(
+            layer.size,
+            crate::BackgroundSize::Explicit {
+                width: Some(width),
+                height: Some(height)
+            } if width.is_valid() && height.is_valid()
+        )
+        && layer.repeat_x == crate::ImageRepeat::NoRepeat
+        && layer.repeat_y == crate::ImageRepeat::NoRepeat
+        && has_initial_background_environment(layer)
+}
+
+fn has_initial_background_environment(layer: &crate::BackgroundLayer) -> bool {
+    layer.origin == crate::PaintBox::Padding
         && layer.clip == crate::PaintBox::Border
         && layer.attachment == crate::BackgroundAttachment::Scroll
         && layer.blend_mode == crate::BlendMode::Normal
@@ -421,6 +439,22 @@ mod tests {
 
     fn basic_conic_layer() -> BackgroundLayer {
         conic_layer(false, 0.0)
+    }
+
+    fn explicit_no_repeat(mut layer: BackgroundLayer) -> BackgroundLayer {
+        layer.size = BackgroundSize::Explicit {
+            width: Some(PaintLengthPercentage {
+                length: 45.0,
+                fraction: 0.0,
+            }),
+            height: Some(PaintLengthPercentage {
+                length: 45.0,
+                fraction: 0.0,
+            }),
+        };
+        layer.repeat_x = ImageRepeat::NoRepeat;
+        layer.repeat_y = ImageRepeat::NoRepeat;
+        layer
     }
 
     #[test]
@@ -554,6 +588,76 @@ mod tests {
     }
 
     #[test]
+    fn background_geometry_is_additive_to_the_supported_image_capability() {
+        let node = NodeId::new(1).unwrap();
+        let operation = |layer| Operation::SetBackgroundLayers {
+            node,
+            layers: vec![layer],
+        };
+        assert_eq!(
+            packet(vec![operation(explicit_no_repeat(basic_linear_layer()))])
+                .required_capabilities(),
+            vec![
+                RenderCapability::LinearGradients,
+                RenderCapability::BackgroundGeometry,
+            ]
+        );
+        assert_eq!(
+            packet(vec![operation(explicit_no_repeat(basic_radial_layer()))])
+                .required_capabilities(),
+            vec![
+                RenderCapability::RadialGradients,
+                RenderCapability::BackgroundGeometry,
+            ]
+        );
+        assert_eq!(
+            packet(vec![operation(explicit_no_repeat(basic_conic_layer()))])
+                .required_capabilities(),
+            vec![
+                RenderCapability::ConicGradients,
+                RenderCapability::BackgroundGeometry,
+            ]
+        );
+
+        let mut incomplete_size = explicit_no_repeat(basic_linear_layer());
+        incomplete_size.size = BackgroundSize::Explicit {
+            width: Some(PaintLengthPercentage::default()),
+            height: None,
+        };
+        assert_eq!(
+            packet(vec![operation(incomplete_size)]).required_capabilities(),
+            vec![RenderCapability::BackgroundLayers]
+        );
+
+        let mut negative_size = explicit_no_repeat(basic_linear_layer());
+        negative_size.size = BackgroundSize::Explicit {
+            width: Some(PaintLengthPercentage {
+                length: -1.0,
+                fraction: 0.0,
+            }),
+            height: Some(PaintLengthPercentage::default()),
+        };
+        assert_eq!(
+            packet(vec![operation(negative_size)]).required_capabilities(),
+            vec![RenderCapability::BackgroundLayers]
+        );
+
+        let image_only = RenderCapabilities::new(
+            ProtocolVersion::CURRENT,
+            vec![CapabilityEntry {
+                capability: RenderCapability::LinearGradients,
+                support: CapabilitySupport::Native,
+            }],
+        )
+        .unwrap();
+        let packet = packet(vec![operation(explicit_no_repeat(basic_linear_layer()))]);
+        assert_eq!(
+            image_only.first_unsupported(&packet),
+            Some(RenderCapability::BackgroundGeometry)
+        );
+    }
+
+    #[test]
     fn profiles_and_packets_cover_every_optional_capability() {
         assert_eq!(
             RenderCapability::ALL.map(RenderCapability::as_str),
@@ -569,6 +673,7 @@ mod tests {
                 "linear-gradients",
                 "radial-gradients",
                 "conic-gradients",
+                "background-geometry",
             ]
         );
 
@@ -645,6 +750,10 @@ mod tests {
                 node,
                 layers: vec![basic_conic_layer()],
             },
+            Operation::SetBackgroundLayers {
+                node,
+                layers: vec![explicit_no_repeat(basic_linear_layer())],
+            },
             Operation::SetVisualEffects {
                 node,
                 effects: VisualEffects::default(),
@@ -691,6 +800,7 @@ mod tests {
                 RenderCapability::EllipticalBorderRadius,
                 RenderCapability::LinearGradients,
                 RenderCapability::ConicGradients,
+                RenderCapability::BackgroundGeometry,
                 RenderCapability::VisualEffects,
                 RenderCapability::TextEffects,
                 RenderCapability::TextTypography,

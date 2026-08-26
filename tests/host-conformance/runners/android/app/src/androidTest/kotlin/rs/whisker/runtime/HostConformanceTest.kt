@@ -139,7 +139,9 @@ private class Driver(
                         command.getString("name") == "paint.box" ||
                             command.getString("name") == "paint.background-layers.linear-gradient" ||
                             command.getString("name") == "paint.background-layers.radial-gradient" ||
-                            command.getString("name") == "paint.background-layers.conic-gradient",
+                            command.getString("name") == "paint.background-layers.conic-gradient" ||
+                            command.getString("name") ==
+                            "paint.background-layers.explicit-size-no-repeat",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -246,11 +248,11 @@ private class Driver(
                 check(stage(tag = 12, node = id, integer = node.getInt("z_order")))
             }
             node.optJSONObject("linear_gradient")?.let { gradient ->
-                val (numbers, names) = linearGradient(gradient)
+                val (numbers, names) = linearGradient(node, gradient)
                 check(
                     stage(
                         tag = 21,
-                        flags = if (gradient.optBoolean("repeating", false)) 1 else 0,
+                        flags = 0,
                         node = id,
                         scalar = gradient.getDouble("angle_degrees").toFloat(),
                         numbers = numbers,
@@ -259,7 +261,7 @@ private class Driver(
                 )
             }
             node.optJSONObject("radial_gradient")?.let { gradient ->
-                val (numbers, names) = radialGradient(gradient)
+                val (numbers, names) = radialGradient(node, gradient)
                 check(
                     stage(
                         tag = 21,
@@ -271,7 +273,7 @@ private class Driver(
                 )
             }
             node.optJSONObject("conic_gradient")?.let { gradient ->
-                val (numbers, names) = conicGradient(gradient)
+                val (numbers, names) = conicGradient(node, gradient)
                 check(
                     stage(
                         tag = 21,
@@ -373,8 +375,9 @@ private class Driver(
         }
     }
 
-    private fun linearGradient(gradient: JSONObject): Pair<FloatArray, Array<String>> {
-        val numbers = ArrayList<Float>()
+    private fun linearGradient(node: JSONObject, gradient: JSONObject): Pair<FloatArray, Array<String>> {
+        check(!gradient.optBoolean("repeating", false))
+        val numbers = backgroundGeometry(node)
         val names = ArrayList<String>()
         gradient.getJSONArray("stops").objects().forEach { stop ->
             appendColor(stop.getJSONObject("color"), numbers, names)
@@ -384,8 +387,8 @@ private class Driver(
         return numbers.toFloatArray() to names.toTypedArray()
     }
 
-    private fun radialGradient(gradient: JSONObject): Pair<FloatArray, Array<String>> {
-        val numbers = ArrayList<Float>()
+    private fun radialGradient(node: JSONObject, gradient: JSONObject): Pair<FloatArray, Array<String>> {
+        val numbers = backgroundGeometry(node)
         val names = ArrayList<String>()
         val center = gradient.getJSONArray("center")
         val radii = gradient.getJSONArray("radii")
@@ -403,8 +406,8 @@ private class Driver(
         return numbers.toFloatArray() to names.toTypedArray()
     }
 
-    private fun conicGradient(gradient: JSONObject): Pair<FloatArray, Array<String>> {
-        val numbers = ArrayList<Float>()
+    private fun conicGradient(node: JSONObject, gradient: JSONObject): Pair<FloatArray, Array<String>> {
+        val numbers = backgroundGeometry(node)
         val names = ArrayList<String>()
         val center = gradient.getJSONArray("center")
         numbers += listOf(
@@ -417,6 +420,44 @@ private class Driver(
             numbers += stop.getDouble("position").toFloat()
         }
         return numbers.toFloatArray() to names.toTypedArray()
+    }
+
+    private fun backgroundGeometry(node: JSONObject): ArrayList<Float> {
+        val layer = node.optJSONObject("background_layer")
+        val position = layer?.optJSONArray("position")
+        val size = layer?.optJSONArray("size")
+        val numbers = ArrayList<Float>()
+        appendLengthPercentage(position?.optJSONObject(0), numbers)
+        appendLengthPercentage(position?.optJSONObject(1), numbers)
+        appendLengthPercentage(size?.optJSONObject(0), numbers)
+        appendLengthPercentage(size?.optJSONObject(1), numbers)
+        numbers += if (size == null) 0f else 1f
+        numbers += backgroundRepeat(layer?.optString("repeat_x", "repeat") ?: "repeat").toFloat()
+        numbers += backgroundRepeat(layer?.optString("repeat_y", "repeat") ?: "repeat").toFloat()
+        numbers += backgroundBox(layer?.optString("origin", "padding") ?: "padding").toFloat()
+        numbers += backgroundBox(layer?.optString("clip", "border") ?: "border").toFloat()
+        numbers += 0f // scroll attachment
+        numbers += 0f // normal blend mode
+        check(numbers.size == 15)
+        return numbers
+    }
+
+    private fun appendLengthPercentage(value: JSONObject?, numbers: MutableList<Float>) {
+        numbers += value?.optDouble("length", 0.0)?.toFloat() ?: 0f
+        numbers += value?.optDouble("fraction", 0.0)?.toFloat() ?: 0f
+    }
+
+    private fun backgroundRepeat(value: String): Int = when (value) {
+        "repeat" -> 0
+        "no_repeat" -> 1
+        else -> error("unsupported background repeat: $value")
+    }
+
+    private fun backgroundBox(value: String): Int = when (value) {
+        "border" -> 0
+        "padding" -> 1
+        "content" -> 2
+        else -> error("unsupported background box: $value")
     }
 
     private fun borderStyle(value: String): Int {

@@ -61,16 +61,25 @@ final class HostBoxPainter {
         drawBorders(in: bounds, clippedBy: path)
     }
 
-    func updateBackgroundLayers(_ linearGradient: HostLinearGradient?) {
-        backgroundPainter.update(linearGradient: linearGradient)
+    func updateBackgroundLayers(
+        _ linearGradient: HostLinearGradient?,
+        geometry: HostBackgroundGeometry = .initial
+    ) {
+        backgroundPainter.update(linearGradient: linearGradient, geometry: geometry)
     }
 
-    func updateBackgroundLayers(_ radialGradient: HostRadialGradient) {
-        backgroundPainter.update(radialGradient: radialGradient)
+    func updateBackgroundLayers(
+        _ radialGradient: HostRadialGradient,
+        geometry: HostBackgroundGeometry = .initial
+    ) {
+        backgroundPainter.update(radialGradient: radialGradient, geometry: geometry)
     }
 
-    func updateBackgroundLayers(_ conicGradient: HostConicGradient) {
-        backgroundPainter.update(conicGradient: conicGradient)
+    func updateBackgroundLayers(
+        _ conicGradient: HostConicGradient,
+        geometry: HostBackgroundGeometry = .initial
+    ) {
+        backgroundPainter.update(conicGradient: conicGradient, geometry: geometry)
     }
 
     func overflowClipPath(

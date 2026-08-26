@@ -342,6 +342,9 @@ pub struct SceneNodeFixture {
     /// Optional resolved sibling stacking order.
     #[serde(default)]
     pub z_order: Option<i32>,
+    /// Resolved geometry shared by the optional background image below.
+    #[serde(default)]
+    pub background_layer: BackgroundLayerFixture,
     /// Optional resolved linear-gradient background image. The fixture DSL
     /// supplies the remaining `BackgroundLayer` fields as their CSS initial
     /// values so every Host receives the same protocol operation.
@@ -400,6 +403,88 @@ pub struct ConicGradientFixture {
     pub center: [f32; 2],
     /// Ordered, explicitly resolved color stops expressed as turns.
     pub stops: Vec<GradientStopFixture>,
+}
+
+/// Resolved geometry for the one background image supported by the fixture DSL.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BackgroundLayerFixture {
+    /// X/y position as a length plus a fraction of the positioning area.
+    #[serde(default)]
+    pub position: [LengthPercentageFixture; 2],
+    /// Explicit width/height, or `None` for the CSS `auto` initial value.
+    #[serde(default)]
+    pub size: Option<[LengthPercentageFixture; 2]>,
+    /// Horizontal image repetition.
+    #[serde(default)]
+    pub repeat_x: ImageRepeatFixture,
+    /// Vertical image repetition.
+    #[serde(default)]
+    pub repeat_y: ImageRepeatFixture,
+    /// Background positioning box.
+    #[serde(default = "default_background_origin")]
+    pub origin: BackgroundBoxFixture,
+    /// Background painting clip box.
+    #[serde(default = "default_background_clip")]
+    pub clip: BackgroundBoxFixture,
+}
+
+impl Default for BackgroundLayerFixture {
+    fn default() -> Self {
+        Self {
+            position: Default::default(),
+            size: None,
+            repeat_x: ImageRepeatFixture::Repeat,
+            repeat_y: ImageRepeatFixture::Repeat,
+            origin: default_background_origin(),
+            clip: default_background_clip(),
+        }
+    }
+}
+
+/// One resolved CSS length-percentage pair.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LengthPercentageFixture {
+    /// Absolute logical-pixel component.
+    pub length: f32,
+    /// Fractional component where `1` is 100 percent.
+    pub fraction: f32,
+}
+
+/// Background tiling rule on one axis.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageRepeatFixture {
+    /// Tile and crop the final tile.
+    #[default]
+    Repeat,
+    /// Paint one image only.
+    NoRepeat,
+    /// Distribute whole tiles with spacing.
+    Space,
+    /// Resize tiles so a whole number fits.
+    Round,
+}
+
+/// CSS boxes currently meaningful for background geometry fixtures.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundBoxFixture {
+    /// Border box.
+    Border,
+    /// Padding box.
+    Padding,
+    /// Content box.
+    Content,
+}
+
+const fn default_background_origin() -> BackgroundBoxFixture {
+    BackgroundBoxFixture::Padding
+}
+
+const fn default_background_clip() -> BackgroundBoxFixture {
+    BackgroundBoxFixture::Border
 }
 
 /// Paint visibility delivered by `SetVisibility`.
@@ -852,6 +937,15 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                 && node
                     .opacity
                     .is_none_or(|opacity| opacity.is_finite() && (0.0..=1.0).contains(&opacity))
+                && node
+                    .background_layer
+                    .position
+                    .iter()
+                    .all(LengthPercentageFixture::is_finite)
+                && node
+                    .background_layer
+                    .size
+                    .is_none_or(|size| size.iter().all(LengthPercentageFixture::is_finite))
                 && node.linear_gradient.as_ref().is_none_or(|gradient| {
                     gradient.angle_degrees.is_finite()
                         && gradient.stops.len() >= 2
@@ -905,6 +999,12 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
             }
             true
         })
+}
+
+impl LengthPercentageFixture {
+    fn is_finite(&self) -> bool {
+        self.length.is_finite() && self.fraction.is_finite()
+    }
 }
 
 #[cfg(test)]

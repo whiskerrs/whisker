@@ -84,7 +84,8 @@ private final class Driver {
                 guard name == "paint.box" ||
                     name == "paint.background-layers.linear-gradient" ||
                     name == "paint.background-layers.radial-gradient" ||
-                    name == "paint.background-layers.conic-gradient" else {
+                    name == "paint.background-layers.conic-gradient" ||
+                    name == "paint.background-layers.explicit-size-no-repeat" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 let pixels = try capture()
@@ -189,6 +190,10 @@ private final class Driver {
             repeating: WhiskerMobileConicGradient(),
             count: fixtures.count
         )
+        var backgroundPayloads = [WhiskerMobileBackgroundLayer](
+            repeating: WhiskerMobileBackgroundLayer(),
+            count: fixtures.count
+        )
         try layouts.withUnsafeMutableBufferPointer { layoutBuffer in
             try paints.withUnsafeMutableBufferPointer { paintBuffer in
                 try transforms.withUnsafeMutableBufferPointer { transformBuffer in
@@ -226,6 +231,58 @@ private final class Driver {
                         }
                         try radialPayloads.withUnsafeMutableBufferPointer { radialBuffer in
                             try conicPayloads.withUnsafeMutableBufferPointer { conicBuffer in
+                            for (index, fixture) in fixtures.enumerated() {
+                                guard let offset = gradientOffsets[index] else { continue }
+                                let geometry = fixture.backgroundLayer
+                                backgroundPayloads[index].position_x = geometry.position[0]
+                                backgroundPayloads[index].position_y = geometry.position[1]
+                                backgroundPayloads[index].size_kind = geometry.size == nil
+                                    ? UInt32(WHISKER_BACKGROUND_SIZE_AUTO)
+                                    : UInt32(WHISKER_BACKGROUND_SIZE_EXPLICIT)
+                                if let size = geometry.size {
+                                    backgroundPayloads[index].size_width = size[0]
+                                    backgroundPayloads[index].size_height = size[1]
+                                }
+                                backgroundPayloads[index].repeat_x = geometry.repeatX
+                                backgroundPayloads[index].repeat_y = geometry.repeatY
+                                backgroundPayloads[index].origin = geometry.origin
+                                backgroundPayloads[index].clip = geometry.clip
+                                backgroundPayloads[index].attachment = UInt32(
+                                    WHISKER_BACKGROUND_ATTACHMENT_SCROLL
+                                )
+                                backgroundPayloads[index].blend_mode = UInt32(
+                                    WHISKER_BACKGROUND_BLEND_NORMAL
+                                )
+                                if let gradient = fixture.linearGradient {
+                                    backgroundPayloads[index].image.kind = UInt32(
+                                        WHISKER_BACKGROUND_LINEAR
+                                    )
+                                    backgroundPayloads[index].image.scalar = gradient.angleDegrees
+                                    backgroundPayloads[index].image.payload = UnsafeRawPointer(
+                                        gradientBuffer.baseAddress!.advanced(by: offset)
+                                    )
+                                    backgroundPayloads[index].image.payload_count = gradient.stops.count
+                                } else if fixture.radialGradient != nil {
+                                    backgroundPayloads[index].image.kind = UInt32(
+                                        WHISKER_BACKGROUND_RADIAL
+                                    )
+                                    backgroundPayloads[index].image.payload = UnsafeRawPointer(
+                                        radialBuffer.baseAddress!.advanced(by: index)
+                                    )
+                                    backgroundPayloads[index].image.payload_count = 1
+                                } else if let gradient = fixture.conicGradient {
+                                    backgroundPayloads[index].image.kind = UInt32(
+                                        WHISKER_BACKGROUND_CONIC
+                                    )
+                                    backgroundPayloads[index].image.scalar = gradient.fromDegrees
+                                    backgroundPayloads[index].image.payload = UnsafeRawPointer(
+                                        conicBuffer.baseAddress!.advanced(by: index)
+                                    )
+                                    backgroundPayloads[index].image.payload_count = 1
+                                }
+                            }
+                            try backgroundPayloads.withUnsafeMutableBufferPointer {
+                                backgroundBuffer in
                             var operations = fixtures.map {
                                 operation(tag: UInt32(WHISKER_OP_CREATE), node: $0.id, member: 1)
                             }
@@ -294,36 +351,12 @@ private final class Driver {
                                         integer: zOrder
                                     ))
                                 }
-                                if let gradient = fixture.linearGradient,
-                                   let offset = gradientOffsets[index] {
+                                if gradientOffsets[index] != nil {
                                     operations.append(operation(
                                         tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
                                         node: fixture.id,
-                                        flags: UInt32(WHISKER_BACKGROUND_LINEAR),
-                                        scalar: gradient.angleDegrees,
                                         payload: UnsafeRawPointer(
-                                            gradientBuffer.baseAddress!.advanced(by: offset)
-                                        ),
-                                        count: gradient.stops.count
-                                    ))
-                                } else if fixture.radialGradient != nil {
-                                    operations.append(operation(
-                                        tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
-                                        node: fixture.id,
-                                        flags: UInt32(WHISKER_BACKGROUND_RADIAL),
-                                        payload: UnsafeRawPointer(
-                                            radialBuffer.baseAddress!.advanced(by: index)
-                                        ),
-                                        count: 1
-                                    ))
-                                } else if let conic = fixture.conicGradient {
-                                    operations.append(operation(
-                                        tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS),
-                                        node: fixture.id,
-                                        flags: UInt32(WHISKER_BACKGROUND_CONIC),
-                                        scalar: conic.fromDegrees,
-                                        payload: UnsafeRawPointer(
-                                            conicBuffer.baseAddress!.advanced(by: index)
+                                            backgroundBuffer.baseAddress!.advanced(by: index)
                                         ),
                                         count: 1
                                     ))
@@ -349,6 +382,7 @@ private final class Driver {
                                       response.status == UInt8(WHISKER_APPLY_ACCEPTED) else {
                                     throw Failure("UIKit Host rejected scene fixture frame")
                                 }
+                            }
                             }
                             }
                         }
@@ -401,9 +435,28 @@ private struct SceneFixtureNode {
     let opacity: Float?
     let visible: Bool?
     let zOrder: Int32?
+    let backgroundLayer: SceneBackgroundLayer
     let linearGradient: SceneLinearGradient?
     let radialGradient: SceneRadialGradient?
     let conicGradient: SceneConicGradient?
+}
+
+private struct SceneBackgroundLayer {
+    let position: [WhiskerMobileLengthPercentage]
+    let size: [WhiskerMobileLengthPercentage]?
+    let repeatX: UInt32
+    let repeatY: UInt32
+    let origin: UInt32
+    let clip: UInt32
+
+    static let initial = SceneBackgroundLayer(
+        position: [WhiskerMobileLengthPercentage(), WhiskerMobileLengthPercentage()],
+        size: nil,
+        repeatX: UInt32(WHISKER_BACKGROUND_REPEAT),
+        repeatY: UInt32(WHISKER_BACKGROUND_REPEAT),
+        origin: UInt32(WHISKER_BACKGROUND_BOX_PADDING),
+        clip: UInt32(WHISKER_BACKGROUND_BOX_BORDER)
+    )
 }
 
 private struct SceneLinearGradient {
@@ -505,6 +558,8 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     } else {
         zOrder = nil
     }
+    let backgroundLayer = try fixture["background_layer"]
+        .map { try sceneBackgroundLayer($0) } ?? .initial
     let linearGradient: SceneLinearGradient?
     if let gradient = fixture["linear_gradient"] as? [String: Any] {
         let stops = try objectArray(gradient, "stops").map { stop -> WhiskerMobileGradientStop in
@@ -577,10 +632,58 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         opacity: opacity,
         visible: visible,
         zOrder: zOrder,
+        backgroundLayer: backgroundLayer,
         linearGradient: linearGradient,
         radialGradient: radialGradient,
         conicGradient: conicGradient
     )
+}
+
+private func sceneBackgroundLayer(_ value: Any) throws -> SceneBackgroundLayer {
+    guard let object = value as? [String: Any] else {
+        throw Failure("background_layer must be an object")
+    }
+    let position = try (object["position"] as? [Any])?
+        .map(lengthPercentage) ?? SceneBackgroundLayer.initial.position
+    let size = try (object["size"] as? [Any])?.map(lengthPercentage)
+    guard position.count == 2, size?.count ?? 2 == 2 else {
+        throw Failure("background layer position and size need two axes")
+    }
+    return SceneBackgroundLayer(
+        position: position,
+        size: size,
+        repeatX: try backgroundRepeat(object["repeat_x"] as? String ?? "repeat"),
+        repeatY: try backgroundRepeat(object["repeat_y"] as? String ?? "repeat"),
+        origin: try backgroundBox(object["origin"] as? String ?? "padding"),
+        clip: try backgroundBox(object["clip"] as? String ?? "border")
+    )
+}
+
+private func lengthPercentage(_ value: Any) throws -> WhiskerMobileLengthPercentage {
+    guard let object = value as? [String: Any] else {
+        throw Failure("length-percentage must be an object")
+    }
+    return WhiskerMobileLengthPercentage(
+        length: Float(try number(object, "length")),
+        fraction: Float(try number(object, "fraction"))
+    )
+}
+
+private func backgroundRepeat(_ value: String) throws -> UInt32 {
+    switch value {
+    case "repeat": UInt32(WHISKER_BACKGROUND_REPEAT)
+    case "no_repeat": UInt32(WHISKER_BACKGROUND_NO_REPEAT)
+    default: throw Failure("unsupported background repeat")
+    }
+}
+
+private func backgroundBox(_ value: String) throws -> UInt32 {
+    switch value {
+    case "border": UInt32(WHISKER_BACKGROUND_BOX_BORDER)
+    case "padding": UInt32(WHISKER_BACKGROUND_BOX_PADDING)
+    case "content": UInt32(WHISKER_BACKGROUND_BOX_CONTENT)
+    default: throw Failure("unsupported background box")
+    }
 }
 
 private func boxPaint(_ command: [String: Any]) throws -> WhiskerMobileBoxPaint {

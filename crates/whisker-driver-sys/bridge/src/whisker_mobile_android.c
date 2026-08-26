@@ -243,6 +243,8 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
     for (size_t i = 0; i < frame->operation_count && ok; ++i) {
         const WhiskerMobileOperation* op = &frame->operations[i];
         jfloatArray numbers = NULL; jstring text = NULL; jobjectArray names = NULL; jobject value = NULL;
+        uint32_t staged_flags = op->flags;
+        float staged_scalar = op->scalar;
         float storage[64]; size_t count = 0;
         switch (op->tag) {
             case WHISKER_OP_LAYOUT: {
@@ -262,26 +264,40 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 numbers = floats(env, storage, count); names = color_names(env, p); break;
             }
             case WHISKER_OP_BACKGROUND_LAYERS: {
-                const WhiskerMobileGradientStop* stops = op->payload;
+                if (op->payload == NULL) {
+                    if (op->payload_count != 0) ok = false;
+                    staged_flags = WHISKER_BACKGROUND_LINEAR;
+                    staged_scalar = 0.0f;
+                    break;
+                }
+                if (op->payload_count != 1) { ok = false; break; }
+                const WhiskerMobileBackgroundLayer* layer = op->payload;
+                const WhiskerMobileGradientStop* stops = layer->image.payload;
                 const WhiskerMobileRadialGradient* radial = NULL;
                 const WhiskerMobileConicGradient* conic = NULL;
-                size_t stop_count = op->payload_count;
-                size_t prefix_count = 0;
-                if (op->flags == WHISKER_BACKGROUND_RADIAL) {
-                    if (op->payload == NULL || op->payload_count != 1) { ok = false; break; }
-                    radial = op->payload;
+                size_t stop_count = layer->image.payload_count;
+                size_t image_prefix_count = 0;
+                if (layer->image.kind == WHISKER_BACKGROUND_RADIAL) {
+                    if (layer->image.payload == NULL || layer->image.payload_count != 1) {
+                        ok = false; break;
+                    }
+                    radial = layer->image.payload;
                     stops = radial->stops;
                     stop_count = radial->stop_count;
-                    prefix_count = 8;
-                } else if (op->flags == WHISKER_BACKGROUND_CONIC) {
-                    if (op->payload == NULL || op->payload_count != 1) { ok = false; break; }
-                    conic = op->payload;
+                    image_prefix_count = 8;
+                } else if (layer->image.kind == WHISKER_BACKGROUND_CONIC) {
+                    if (layer->image.payload == NULL || layer->image.payload_count != 1) {
+                        ok = false; break;
+                    }
+                    conic = layer->image.payload;
                     stops = conic->stops;
                     stop_count = conic->stop_count;
-                    prefix_count = 4;
-                } else if (op->flags != WHISKER_BACKGROUND_LINEAR) {
+                    image_prefix_count = 4;
+                } else if (layer->image.kind != WHISKER_BACKGROUND_LINEAR) {
                     ok = false; break;
                 }
+                const size_t geometry_count = 15;
+                size_t prefix_count = geometry_count + image_prefix_count;
                 if ((stops == NULL && stop_count != 0) || stop_count > (INT32_MAX - prefix_count) / 7) {
                     ok = false; break;
                 }
@@ -289,6 +305,21 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 float* values = malloc((value_count > 0 ? value_count : 1) * sizeof(float));
                 if (values == NULL) { ok = false; break; }
                 size_t cursor = 0;
+                const WhiskerMobileLengthPercentage* geometry[] = {
+                    &layer->position_x, &layer->position_y,
+                    &layer->size_width, &layer->size_height
+                };
+                for (size_t j = 0; j < 4; ++j) {
+                    values[cursor++] = geometry[j]->length;
+                    values[cursor++] = geometry[j]->fraction;
+                }
+                values[cursor++] = (float)layer->size_kind;
+                values[cursor++] = (float)layer->repeat_x;
+                values[cursor++] = (float)layer->repeat_y;
+                values[cursor++] = (float)layer->origin;
+                values[cursor++] = (float)layer->clip;
+                values[cursor++] = (float)layer->attachment;
+                values[cursor++] = (float)layer->blend_mode;
                 if (radial != NULL) {
                     const WhiskerMobileLengthPercentage* coordinates[] = {
                         &radial->center_x, &radial->center_y, &radial->radius_x, &radial->radius_y
@@ -313,6 +344,8 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 }
                 numbers = floats(env, values, value_count);
                 names = gradient_stop_names(env, stops, stop_count);
+                staged_flags = layer->image.kind;
+                staged_scalar = layer->image.scalar;
                 free(values);
                 break;
             }
@@ -332,8 +365,8 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
         }
         if (!ok) break;
         ok = (*env)->CallBooleanMethod(env, view, g_stage_operation,
-            (jint)op->tag,(jint)op->flags,(jlong)op->node,(jlong)op->parent,(jlong)op->child,
-            (jint)op->index,(jint)op->member,(jint)op->integer,(jfloat)op->scalar,(jlong)op->wide,
+            (jint)op->tag,(jint)staged_flags,(jlong)op->node,(jlong)op->parent,(jlong)op->child,
+            (jint)op->index,(jint)op->member,(jint)op->integer,(jfloat)staged_scalar,(jlong)op->wide,
             numbers,text,names,value) == JNI_TRUE && !clear_exception(env);
         if (numbers) (*env)->DeleteLocalRef(env, numbers); if (text) (*env)->DeleteLocalRef(env, text);
         if (names) (*env)->DeleteLocalRef(env, names); if (value) (*env)->DeleteLocalRef(env, value);

@@ -56,10 +56,11 @@ var<storage, read> shape_clip_spans: array<ShapeClipSpan>;
 
 struct LinearGradientDraw {
     start_end: vec4<f32>,
+    tile_rect: vec4<f32>,
     stop_offset: u32,
     stop_count: u32,
     kind: u32,
-    _padding: u32,
+    geometry_flags: u32,
 };
 
 struct LinearGradientStop {
@@ -366,6 +367,11 @@ fn linear_gradient_color(draw_index: u32, position: vec2<f32>) -> vec4<f32> {
     if gradient.stop_count == 0u {
         return vec4<f32>(0.0);
     }
+    if (gradient.geometry_flags & 1u) != 0u
+        && (any(position < gradient.tile_rect.xy)
+            || any(position >= gradient.tile_rect.xy + gradient.tile_rect.zw)) {
+        return vec4<f32>(0.0);
+    }
     let line = gradient.start_end.zw - gradient.start_end.xy;
     var progress = dot(position - gradient.start_end.xy, line) / max(dot(line, line), 0.0001);
     if gradient.kind == 3u {
@@ -630,10 +636,11 @@ struct ShapeClipSpanGpu {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct LinearGradientDrawGpu {
     start_end: [f32; 4],
+    tile_rect: [f32; 4],
     stop_offset: u32,
     stop_count: u32,
     kind: u32,
-    padding: u32,
+    geometry_flags: u32,
 }
 
 #[repr(C)]
@@ -647,8 +654,10 @@ struct LinearGradientStopGpu {
 #[derive(Clone)]
 pub(crate) struct LinearGradientDraw {
     start_end: [f32; 4],
+    tile_rect: [f32; 4],
     stops: Vec<LinearGradientStopGpu>,
     kind: u32,
+    no_repeat: bool,
 }
 
 struct BoxGpuPipeline {
@@ -829,10 +838,11 @@ impl BoxGpuPipeline {
                 gradient_stops.extend_from_slice(&gradient.stops);
                 LinearGradientDrawGpu {
                     start_end: gradient.start_end,
+                    tile_rect: gradient.tile_rect,
                     stop_offset,
                     stop_count: gradient.stops.len() as u32,
                     kind: gradient.kind,
-                    padding: 0,
+                    geometry_flags: u32::from(gradient.no_repeat),
                 }
             })
             .collect::<Vec<_>>();
@@ -934,6 +944,12 @@ pub(crate) fn linear_gradient_draw(
             center[0] + direction[0] * half_length,
             center[1] + direction[1] * half_length,
         ],
+        tile_rect: [
+            positioning_rect.x,
+            positioning_rect.y,
+            positioning_rect.width,
+            positioning_rect.height,
+        ],
         stops: stops
             .iter()
             .map(|stop| LinearGradientStopGpu {
@@ -945,6 +961,7 @@ pub(crate) fn linear_gradient_draw(
             })
             .collect(),
         kind: u32::from(repeating),
+        no_repeat: false,
     }
 }
 
@@ -968,6 +985,12 @@ pub(crate) fn radial_gradient_draw(
     ];
     LinearGradientDraw {
         start_end: [center[0], center[1], radii[0], radii[1]],
+        tile_rect: [
+            positioning_rect.x,
+            positioning_rect.y,
+            positioning_rect.width,
+            positioning_rect.height,
+        ],
         stops: stops
             .iter()
             .map(|stop| LinearGradientStopGpu {
@@ -977,6 +1000,7 @@ pub(crate) fn radial_gradient_draw(
             })
             .collect(),
         kind: 2,
+        no_repeat: false,
     }
 }
 
@@ -993,6 +1017,12 @@ pub(crate) fn conic_gradient_draw(
     ];
     LinearGradientDraw {
         start_end: [center[0], center[1], from_degrees / 360.0, 0.0],
+        tile_rect: [
+            positioning_rect.x,
+            positioning_rect.y,
+            positioning_rect.width,
+            positioning_rect.height,
+        ],
         stops: stops
             .iter()
             .map(|stop| LinearGradientStopGpu {
@@ -1002,7 +1032,77 @@ pub(crate) fn conic_gradient_draw(
             })
             .collect(),
         kind: 3,
+        no_repeat: false,
     }
+}
+
+fn background_tile_rect(
+    positioning_rect: LayoutRect,
+    layer: &whisker_protocol::BackgroundLayer,
+) -> Option<(LayoutRect, bool)> {
+    use whisker_protocol::{BackgroundSize, ImageRepeat};
+
+    match layer.size {
+        BackgroundSize::Auto
+            if layer.repeat_x == ImageRepeat::Repeat && layer.repeat_y == ImageRepeat::Repeat =>
+        {
+            Some((positioning_rect, false))
+        }
+        BackgroundSize::Explicit {
+            width: Some(width),
+            height: Some(height),
+        } if layer.repeat_x == ImageRepeat::NoRepeat && layer.repeat_y == ImageRepeat::NoRepeat => {
+            let width = width.length + width.fraction * positioning_rect.width;
+            let height = height.length + height.fraction * positioning_rect.height;
+            if width < 0.0 || height < 0.0 {
+                return None;
+            }
+            Some((
+                LayoutRect {
+                    x: positioning_rect.x
+                        + layer.position.x.length
+                        + layer.position.x.fraction * (positioning_rect.width - width),
+                    y: positioning_rect.y
+                        + layer.position.y.length
+                        + layer.position.y.fraction * (positioning_rect.height - height),
+                    width,
+                    height,
+                },
+                true,
+            ))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn background_gradient_draw(
+    positioning_rect: LayoutRect,
+    layer: &whisker_protocol::BackgroundLayer,
+    opacity: f32,
+) -> Option<LinearGradientDraw> {
+    let (tile_rect, no_repeat) = background_tile_rect(positioning_rect, layer)?;
+    let mut gradient = match &layer.image {
+        PaintImage::LinearGradient {
+            angle_degrees,
+            repeating,
+            stops,
+        } => linear_gradient_draw(tile_rect, *angle_degrees, *repeating, stops, opacity),
+        PaintImage::RadialGradient {
+            center,
+            radii: Some(radii),
+            stops,
+            ..
+        } => radial_gradient_draw(tile_rect, *center, *radii, stops, opacity),
+        PaintImage::ConicGradient {
+            from_degrees,
+            center,
+            repeating: false,
+            stops,
+        } => conic_gradient_draw(tile_rect, *from_degrees, *center, stops, opacity),
+        _ => return None,
+    };
+    gradient.no_repeat = no_repeat;
+    Some(gradient)
 }
 
 fn push_quad_draw(
@@ -1169,43 +1269,10 @@ impl GpuRenderer {
                     }
                     let positioning_rect = resolve_box_geometry(*rect, paint).inner_rect;
                     for layer in background_layers.iter().rev() {
-                        let gradient = match &layer.image {
-                            PaintImage::LinearGradient {
-                                angle_degrees,
-                                repeating,
-                                stops,
-                            } => linear_gradient_draw(
-                                positioning_rect,
-                                *angle_degrees,
-                                *repeating,
-                                stops,
-                                *opacity,
-                            ),
-                            PaintImage::RadialGradient {
-                                center,
-                                radii: Some(radii),
-                                stops,
-                                ..
-                            } => radial_gradient_draw(
-                                positioning_rect,
-                                *center,
-                                *radii,
-                                stops,
-                                *opacity,
-                            ),
-                            PaintImage::ConicGradient {
-                                from_degrees,
-                                center,
-                                repeating: false,
-                                stops,
-                            } => conic_gradient_draw(
-                                positioning_rect,
-                                *from_degrees,
-                                *center,
-                                stops,
-                                *opacity,
-                            ),
-                            _ => continue,
+                        let Some(gradient) =
+                            background_gradient_draw(positioning_rect, layer, *opacity)
+                        else {
+                            continue;
                         };
                         push_quad_draw(
                             &mut vertices,

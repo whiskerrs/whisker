@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 3;
+pub const MOBILE_ABI_MINOR: u16 = 4;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -49,6 +49,19 @@ pub const OP_BACKGROUND_LAYERS: u32 = 21;
 pub const BACKGROUND_LINEAR: u32 = 0;
 pub const BACKGROUND_RADIAL: u32 = 1;
 pub const BACKGROUND_CONIC: u32 = 2;
+
+pub const BACKGROUND_SIZE_AUTO: u32 = 0;
+pub const BACKGROUND_SIZE_EXPLICIT: u32 = 1;
+
+pub const BACKGROUND_REPEAT_REPEAT: u32 = 0;
+pub const BACKGROUND_REPEAT_NO_REPEAT: u32 = 1;
+
+pub const BACKGROUND_BOX_BORDER: u32 = 0;
+pub const BACKGROUND_BOX_PADDING: u32 = 1;
+pub const BACKGROUND_BOX_CONTENT: u32 = 2;
+
+pub const BACKGROUND_ATTACHMENT_SCROLL: u32 = 0;
+pub const BACKGROUND_BLEND_NORMAL: u32 = 0;
 
 pub const MEASURE_TEXT: u32 = 1;
 pub const MEASURE_REPLACED_CONTENT: u32 = 2;
@@ -135,6 +148,34 @@ pub struct MobileConicGradient {
     pub center_y: MobileLengthPercentage,
     pub stops: *const MobileGradientStop,
     pub stop_count: usize,
+}
+
+/// One typed gradient image nested in [`MobileBackgroundLayer`].
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileBackgroundImage {
+    pub kind: u32,
+    pub scalar: f32,
+    pub payload: *const c_void,
+    pub payload_count: usize,
+}
+
+/// One retained background layer with explicit geometry and a typed image.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileBackgroundLayer {
+    pub image: MobileBackgroundImage,
+    pub position_x: MobileLengthPercentage,
+    pub position_y: MobileLengthPercentage,
+    pub size_width: MobileLengthPercentage,
+    pub size_height: MobileLengthPercentage,
+    pub size_kind: u32,
+    pub repeat_x: u32,
+    pub repeat_y: u32,
+    pub origin: u32,
+    pub clip: u32,
+    pub attachment: u32,
+    pub blend_mode: u32,
 }
 
 #[repr(C)]
@@ -466,6 +507,8 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileGradientStop>(), 40);
             assert_eq!(std::mem::size_of::<MobileRadialGradient>(), 48);
             assert_eq!(std::mem::size_of::<MobileConicGradient>(), 32);
+            assert_eq!(std::mem::size_of::<MobileBackgroundImage>(), 24);
+            assert_eq!(std::mem::size_of::<MobileBackgroundLayer>(), 88);
             assert_eq!(std::mem::align_of::<MobileFrame>(), 8);
             assert_eq!(std::mem::align_of::<MobileMeasureRequest>(), 8);
         }
