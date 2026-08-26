@@ -222,12 +222,13 @@ internal class HostNode(
         if (whiskerVisible) {
             drawOuterBoxShadows(canvas, resolvedBoxGeometry, boxShadows)
             drawBackdropBlur(canvas)
+            super.draw(canvas)
+        } else {
+            // View.draw() paints this node's background before dispatching
+            // children. Dispatch only the child phase so a visible descendant
+            // can override this node's hidden computed visibility.
+            dispatchDraw(canvas)
         }
-        val ownBackground = background
-        val backgroundAlpha = ownBackground?.alpha
-        if (!whiskerVisible) ownBackground?.alpha = 0
-        super.draw(canvas)
-        if (backgroundAlpha != null) ownBackground.alpha = backgroundAlpha
         canvas.restoreToCount(save)
     }
 
