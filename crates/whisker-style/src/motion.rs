@@ -482,12 +482,314 @@ mod tests {
         }
     }
 
+    fn animation(name: Option<&str>) -> AnimationValue {
+        AnimationValue {
+            name: name.map(str::to_owned),
+            duration: MotionTime::milliseconds(200.0),
+            easing: MotionEasing::Linear,
+            delay: MotionTime::milliseconds(10.0),
+            iteration_count: MotionIterationCount::Infinite,
+            direction: MotionDirection::AlternateReverse,
+            fill_mode: MotionFillMode::Both,
+            play_state: MotionPlayState::Paused,
+        }
+    }
+
     #[test]
     fn defaults_do_not_allocate_inactive_timeline_layers() {
         assert_eq!(
             resolve_motion_style(&SpecifiedStyle::new()).unwrap(),
             ComputedMotionStyle::default()
         );
+        let resolved = crate::resolve_style(
+            &SpecifiedStyle::new(),
+            None,
+            crate::StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.computed().motion(),
+            &ComputedMotionStyle::default()
+        );
+    }
+
+    #[test]
+    fn easing_and_transition_property_validation_cover_every_branch() {
+        let number = StyleNumber::new;
+        assert!(valid_easing(MotionEasing::Linear));
+        assert!(valid_easing(MotionEasing::CubicBezier([
+            number(0.0),
+            number(-2.0),
+            number(1.0),
+            number(3.0),
+        ])));
+        assert!(!valid_easing(MotionEasing::CubicBezier([
+            number(f32::NAN),
+            number(0.0),
+            number(1.0),
+            number(1.0),
+        ])));
+        assert!(!valid_easing(MotionEasing::CubicBezier([
+            number(-0.1),
+            number(0.0),
+            number(1.0),
+            number(1.0),
+        ])));
+        assert!(!valid_easing(MotionEasing::CubicBezier([
+            number(0.0),
+            number(0.0),
+            number(1.1),
+            number(1.0),
+        ])));
+        assert!(valid_easing(MotionEasing::Steps {
+            count: 1,
+            position: MotionStepPosition::JumpEnd,
+        }));
+        assert!(!valid_easing(MotionEasing::Steps {
+            count: 0,
+            position: MotionStepPosition::JumpEnd,
+        }));
+        assert!(!valid_easing(MotionEasing::Steps {
+            count: 1,
+            position: MotionStepPosition::JumpNone,
+        }));
+        assert!(valid_easing(MotionEasing::Steps {
+            count: 2,
+            position: MotionStepPosition::JumpNone,
+        }));
+
+        assert_eq!(
+            resolve_transition_property(&TransitionPropertyValue::All),
+            Ok(ComputedTransitionProperty::All)
+        );
+        assert_eq!(
+            resolve_transition_property(&TransitionPropertyValue::None),
+            Ok(ComputedTransitionProperty::None)
+        );
+        for property in [
+            StyleProperty::Left,
+            StyleProperty::Right,
+            StyleProperty::Top,
+            StyleProperty::Bottom,
+            StyleProperty::Width,
+            StyleProperty::Height,
+            StyleProperty::Opacity,
+            StyleProperty::BackgroundColor,
+            StyleProperty::Color,
+            StyleProperty::Transform,
+            StyleProperty::TransformOrigin,
+            StyleProperty::MaxWidth,
+            StyleProperty::MinWidth,
+            StyleProperty::MaxHeight,
+            StyleProperty::MinHeight,
+            StyleProperty::PaddingLeft,
+            StyleProperty::PaddingRight,
+            StyleProperty::PaddingTop,
+            StyleProperty::PaddingBottom,
+            StyleProperty::MarginLeft,
+            StyleProperty::MarginRight,
+            StyleProperty::MarginTop,
+            StyleProperty::MarginBottom,
+            StyleProperty::BorderLeftWidth,
+            StyleProperty::BorderRightWidth,
+            StyleProperty::BorderTopWidth,
+            StyleProperty::BorderBottomWidth,
+            StyleProperty::BorderLeftColor,
+            StyleProperty::BorderRightColor,
+            StyleProperty::BorderTopColor,
+            StyleProperty::BorderBottomColor,
+            StyleProperty::FlexBasis,
+            StyleProperty::FlexGrow,
+        ] {
+            assert!(transitionable(property));
+        }
+        assert!(!transitionable(StyleProperty::Display));
+    }
+
+    #[test]
+    fn empty_and_mismatched_motion_declarations_are_rejected() {
+        for (property, value) in [
+            (StyleProperty::Transition, StyleValue::Transitions(vec![])),
+            (
+                StyleProperty::TransitionProperty,
+                StyleValue::TransitionProperties(vec![]),
+            ),
+            (
+                StyleProperty::TransitionDuration,
+                StyleValue::TransitionDurations(vec![]),
+            ),
+            (
+                StyleProperty::TransitionTimingFunction,
+                StyleValue::TransitionEasings(vec![]),
+            ),
+            (
+                StyleProperty::TransitionDelay,
+                StyleValue::TransitionDelays(vec![]),
+            ),
+            (StyleProperty::Animation, StyleValue::Animations(vec![])),
+            (
+                StyleProperty::AnimationName,
+                StyleValue::AnimationNames(vec![]),
+            ),
+            (
+                StyleProperty::AnimationDuration,
+                StyleValue::AnimationDurations(vec![]),
+            ),
+            (
+                StyleProperty::AnimationTimingFunction,
+                StyleValue::AnimationEasings(vec![]),
+            ),
+            (
+                StyleProperty::AnimationDelay,
+                StyleValue::AnimationDelays(vec![]),
+            ),
+            (
+                StyleProperty::AnimationIterationCount,
+                StyleValue::AnimationIterationCounts(vec![]),
+            ),
+            (
+                StyleProperty::AnimationDirection,
+                StyleValue::AnimationDirections(vec![]),
+            ),
+            (
+                StyleProperty::AnimationFillMode,
+                StyleValue::AnimationFillModes(vec![]),
+            ),
+            (
+                StyleProperty::AnimationPlayState,
+                StyleValue::AnimationPlayStates(vec![]),
+            ),
+        ] {
+            assert_eq!(
+                resolve_motion_style(&SpecifiedStyle::new().push(property, value)),
+                Err(invalid(property))
+            );
+        }
+        assert_eq!(
+            resolve_motion_style(&SpecifiedStyle::new().push(
+                StyleProperty::AnimationName,
+                StyleValue::AnimationDurations(vec![MotionTime::milliseconds(1.0)]),
+            )),
+            Err(invalid(StyleProperty::AnimationName))
+        );
+        assert_eq!(
+            crate::resolve_style(
+                &SpecifiedStyle::new().push(
+                    StyleProperty::AnimationName,
+                    StyleValue::AnimationDurations(vec![MotionTime::milliseconds(1.0)]),
+                ),
+                None,
+                crate::StyleEnvironment::default(),
+            ),
+            Err(invalid(StyleProperty::AnimationName))
+        );
+    }
+
+    #[test]
+    fn animation_shorthand_and_every_longhand_resolve() {
+        let shorthand = resolve_motion_style(&SpecifiedStyle::new().push(
+            StyleProperty::Animation,
+            StyleValue::Animations(vec![animation(Some("pulse")), animation(None)]),
+        ))
+        .unwrap();
+        assert_eq!(shorthand.animations, vec![animation(Some("pulse"))]);
+
+        let longhands = resolve_motion_style(
+            &SpecifiedStyle::new()
+                .push(
+                    StyleProperty::AnimationName,
+                    StyleValue::AnimationNames(vec![Some("spin".into())]),
+                )
+                .push(
+                    StyleProperty::AnimationDuration,
+                    StyleValue::AnimationDurations(vec![MotionTime::milliseconds(300.0)]),
+                )
+                .push(
+                    StyleProperty::AnimationTimingFunction,
+                    StyleValue::AnimationEasings(vec![MotionEasing::EaseOut]),
+                )
+                .push(
+                    StyleProperty::AnimationDelay,
+                    StyleValue::AnimationDelays(vec![MotionTime::milliseconds(-10.0)]),
+                )
+                .push(
+                    StyleProperty::AnimationIterationCount,
+                    StyleValue::AnimationIterationCounts(vec![MotionIterationCount::Infinite]),
+                )
+                .push(
+                    StyleProperty::AnimationDirection,
+                    StyleValue::AnimationDirections(vec![MotionDirection::Reverse]),
+                )
+                .push(
+                    StyleProperty::AnimationFillMode,
+                    StyleValue::AnimationFillModes(vec![MotionFillMode::Forwards]),
+                )
+                .push(
+                    StyleProperty::AnimationPlayState,
+                    StyleValue::AnimationPlayStates(vec![MotionPlayState::Running]),
+                ),
+        )
+        .unwrap();
+        assert_eq!(longhands.animations.len(), 1);
+        assert_eq!(longhands.animations[0].name.as_deref(), Some("spin"));
+        assert_eq!(longhands.animations[0].duration.get(), 300.0);
+    }
+
+    #[test]
+    fn invalid_motion_numbers_report_their_own_longhand() {
+        for (property, value) in [
+            (
+                StyleProperty::TransitionDuration,
+                StyleValue::TransitionDurations(vec![MotionTime::milliseconds(f32::NAN)]),
+            ),
+            (
+                StyleProperty::TransitionDelay,
+                StyleValue::TransitionDelays(vec![MotionTime::milliseconds(f32::NAN)]),
+            ),
+            (
+                StyleProperty::TransitionTimingFunction,
+                StyleValue::TransitionEasings(vec![MotionEasing::Steps {
+                    count: 0,
+                    position: MotionStepPosition::JumpStart,
+                }]),
+            ),
+            (
+                StyleProperty::AnimationDuration,
+                StyleValue::AnimationDurations(vec![MotionTime::milliseconds(-1.0)]),
+            ),
+            (
+                StyleProperty::AnimationDuration,
+                StyleValue::AnimationDurations(vec![MotionTime::milliseconds(f32::NAN)]),
+            ),
+            (
+                StyleProperty::AnimationDelay,
+                StyleValue::AnimationDelays(vec![MotionTime::milliseconds(f32::NAN)]),
+            ),
+            (
+                StyleProperty::AnimationTimingFunction,
+                StyleValue::AnimationEasings(vec![MotionEasing::Steps {
+                    count: 0,
+                    position: MotionStepPosition::JumpBoth,
+                }]),
+            ),
+            (
+                StyleProperty::AnimationIterationCount,
+                StyleValue::AnimationIterationCounts(vec![MotionIterationCount::Count(
+                    StyleNumber::new(-1.0),
+                )]),
+            ),
+            (
+                StyleProperty::AnimationIterationCount,
+                StyleValue::AnimationIterationCounts(vec![MotionIterationCount::Count(
+                    StyleNumber::new(f32::NAN),
+                )]),
+            ),
+        ] {
+            assert_eq!(
+                resolve_motion_style(&SpecifiedStyle::new().push(property, value)),
+                Err(invalid(property))
+            );
+        }
     }
 
     #[test]
