@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "whisker_bridge.h"
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 12 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 13 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -39,7 +39,9 @@ enum {
 };
 enum { WHISKER_BACKGROUND_ATTACHMENT_SCROLL = 0 };
 enum { WHISKER_BACKGROUND_BLEND_NORMAL = 0 };
-enum { WHISKER_CLIP_SHAPE_INSET = 0, WHISKER_CLIP_SHAPE_CIRCLE = 1, WHISKER_CLIP_SHAPE_ELLIPSE = 2 };
+enum { WHISKER_CLIP_SHAPE_INSET = 0, WHISKER_CLIP_SHAPE_CIRCLE = 1, WHISKER_CLIP_SHAPE_ELLIPSE = 2, WHISKER_CLIP_SHAPE_PATH = 3 };
+enum { WHISKER_FILL_RULE_NON_ZERO = 0, WHISKER_FILL_RULE_EVEN_ODD = 1 };
+enum { WHISKER_PATH_MOVE_TO = 0, WHISKER_PATH_LINE_TO = 1, WHISKER_PATH_QUADRATIC_TO = 2, WHISKER_PATH_CUBIC_TO = 3, WHISKER_PATH_CLOSE = 4 };
 enum {
   WHISKER_MEASURE_TEXT = 1, WHISKER_MEASURE_REPLACED_CONTENT,
   WHISKER_MEASURE_NATIVE_CONTROL, WHISKER_MEASURE_EMBEDDED_SURFACE,
@@ -90,6 +92,8 @@ typedef struct {
 } WhiskerMobileClipInset;
 typedef struct { WhiskerMobileLengthPercentage radius, center_x, center_y; } WhiskerMobileClipCircle;
 typedef struct { WhiskerMobileLengthPercentage radius_x, radius_y, center_x, center_y; } WhiskerMobileClipEllipse;
+typedef struct { uint32_t kind, _reserved; WhiskerMobileLengthPercentage points[6]; } WhiskerMobilePathCommand;
+typedef struct { uint32_t fill_rule, _reserved; const WhiskerMobilePathCommand *commands; size_t command_count; } WhiskerMobileClipPathCommands;
 typedef struct {
   uint32_t reference_box, shape_kind; const void *payload; size_t payload_count;
 } WhiskerMobileClipPath;
@@ -144,6 +148,8 @@ _Static_assert(sizeof(WhiskerMobileBoxShadow) == 56, "WhiskerMobileBoxShadow ABI
 _Static_assert(sizeof(WhiskerMobileClipInset) == 96, "WhiskerMobileClipInset ABI drift");
 _Static_assert(sizeof(WhiskerMobileClipCircle) == 24, "WhiskerMobileClipCircle ABI drift");
 _Static_assert(sizeof(WhiskerMobileClipEllipse) == 32, "WhiskerMobileClipEllipse ABI drift");
+_Static_assert(sizeof(WhiskerMobilePathCommand) == 56, "WhiskerMobilePathCommand ABI drift");
+_Static_assert(sizeof(WhiskerMobileClipPathCommands) == 24, "WhiskerMobileClipPathCommands ABI drift");
 _Static_assert(sizeof(WhiskerMobileClipPath) == 24, "WhiskerMobileClipPath ABI drift");
 typedef struct {
   uint32_t id; uint8_t value_kind, optional_kind, _pad[2]; WhiskerStringRef name;

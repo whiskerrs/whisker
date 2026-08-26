@@ -8,13 +8,14 @@ use whisker_driver::module::{
 };
 use whisker_engine::whisker_protocol::{
     ApplyResult, AvailableSpace, BackgroundAttachment, BackgroundSize, BlendMode, BorderLineStyle,
-    ChildPolicy, ClipShape, ElementMeasurement, ElementRegistration, ElementValueKind, FrameMode,
-    FramePacket, ImageRepeat, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+    ChildPolicy, ClipShape, ElementMeasurement, ElementRegistration, ElementValueKind, FillRule,
+    FrameMode, FramePacket, ImageRepeat, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
     MeasureTextWrap, MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
     MeasurementRequestId, MeasurementResponse, NodeId, Operation, PaintBox, PaintColor, PaintImage,
-    PaintLengthPercentage, PreparedContentId, RadialGradientExtent, RadialGradientShape,
-    ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode, ResourceId,
-    ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason, VisualEffects,
+    PaintLengthPercentage, PaintPosition, PathCommand, PreparedContentId, RadialGradientExtent,
+    RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode,
+    ResourceId, ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason,
+    VisualEffects,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
@@ -912,6 +913,8 @@ struct MobileFrameOwned {
     _clip_insets: Vec<Box<MobileClipInset>>,
     _clip_circles: Vec<Box<MobileClipCircle>>,
     _clip_ellipses: Vec<Box<MobileClipEllipse>>,
+    _path_commands: Vec<Box<[MobilePathCommand]>>,
+    _clip_path_commands: Vec<Box<MobileClipPathCommands>>,
     _clip_paths: Vec<Box<MobileClipPath>>,
     _gradient_stops: Vec<Box<[MobileGradientStop]>>,
     _radial_gradients: Vec<Box<MobileRadialGradient>>,
@@ -951,6 +954,8 @@ impl MobileFrameOwned {
         let mut clip_insets = Vec::<Box<MobileClipInset>>::new();
         let mut clip_circles = Vec::<Box<MobileClipCircle>>::new();
         let mut clip_ellipses = Vec::<Box<MobileClipEllipse>>::new();
+        let mut path_commands = Vec::<Box<[MobilePathCommand]>>::new();
+        let mut clip_path_commands = Vec::<Box<MobileClipPathCommands>>::new();
         let mut clip_paths = Vec::<Box<MobileClipPath>>::new();
         let mut gradient_stops = Vec::<Box<[MobileGradientStop]>>::new();
         let mut radial_gradients = Vec::<Box<MobileRadialGradient>>::new();
@@ -1272,6 +1277,33 @@ impl MobileFrameOwned {
                                         as *const c_void,
                                 )
                             }
+                            ClipShape::Path {
+                                fill_rule,
+                                commands,
+                            } => {
+                                path_commands.push(
+                                    commands
+                                        .iter()
+                                        .map(mobile_path_command)
+                                        .collect::<Vec<_>>()
+                                        .into_boxed_slice(),
+                                );
+                                let commands = path_commands.last().unwrap();
+                                clip_path_commands.push(Box::new(MobileClipPathCommands {
+                                    fill_rule: match fill_rule {
+                                        FillRule::NonZero => FILL_RULE_NON_ZERO,
+                                        FillRule::EvenOdd => FILL_RULE_EVEN_ODD,
+                                    },
+                                    _reserved: 0,
+                                    commands: commands.as_ptr(),
+                                    command_count: commands.len(),
+                                }));
+                                (
+                                    CLIP_SHAPE_PATH,
+                                    clip_path_commands.last().unwrap().as_ref() as *const _
+                                        as *const c_void,
+                                )
+                            }
                             _ => return Err(MobileFrameError),
                         };
                         clip_paths.push(Box::new(MobileClipPath {
@@ -1438,6 +1470,8 @@ impl MobileFrameOwned {
             _clip_insets: clip_insets,
             _clip_circles: clip_circles,
             _clip_ellipses: clip_ellipses,
+            _path_commands: path_commands,
+            _clip_path_commands: clip_path_commands,
             _clip_paths: clip_paths,
             _gradient_stops: gradient_stops,
             _radial_gradients: radial_gradients,
@@ -1474,6 +1508,46 @@ fn mobile_length(value: PaintLengthPercentage) -> MobileLengthPercentage {
         length: value.length,
         fraction: value.fraction,
     }
+}
+
+fn mobile_path_point(
+    points: &mut [MobileLengthPercentage; 6],
+    offset: usize,
+    value: PaintPosition,
+) {
+    points[offset] = mobile_coordinate(value.x);
+    points[offset + 1] = mobile_coordinate(value.y);
+}
+
+fn mobile_path_command(value: &PathCommand) -> MobilePathCommand {
+    let mut result = MobilePathCommand::default();
+    match value {
+        PathCommand::MoveTo(point) => {
+            result.kind = PATH_MOVE_TO;
+            mobile_path_point(&mut result.points, 0, *point);
+        }
+        PathCommand::LineTo(point) => {
+            result.kind = PATH_LINE_TO;
+            mobile_path_point(&mut result.points, 0, *point);
+        }
+        PathCommand::QuadraticTo { control, end } => {
+            result.kind = PATH_QUADRATIC_TO;
+            mobile_path_point(&mut result.points, 0, *control);
+            mobile_path_point(&mut result.points, 2, *end);
+        }
+        PathCommand::CubicTo {
+            control_1,
+            control_2,
+            end,
+        } => {
+            result.kind = PATH_CUBIC_TO;
+            mobile_path_point(&mut result.points, 0, *control_1);
+            mobile_path_point(&mut result.points, 2, *control_2);
+            mobile_path_point(&mut result.points, 4, *end);
+        }
+        PathCommand::Close => result.kind = PATH_CLOSE,
+    }
+    result
 }
 
 fn mobile_background_repeat(value: ImageRepeat) -> u32 {
@@ -2026,6 +2100,73 @@ mod tests {
         assert_eq!(inset.edges[0].fraction, 0.1);
         assert_eq!(inset.radii_horizontal[0].length, 4.0);
         assert_eq!(inset.radii_vertical[0].fraction, 0.2);
+    }
+
+    #[test]
+    fn mobile_frame_exposes_path_commands_and_fill_rule_as_typed_payload() {
+        let position = |x, y| PaintPosition {
+            x: PaintCoordinate {
+                length: x,
+                fraction: 0.0,
+            },
+            y: PaintCoordinate {
+                length: y,
+                fraction: 0.0,
+            },
+        };
+        let packet = FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![Operation::SetVisualEffects {
+                node: NodeId::new(1).unwrap(),
+                effects: VisualEffects {
+                    clip_path: Some((
+                        PaintBox::Border,
+                        ClipShape::Path {
+                            fill_rule: FillRule::EvenOdd,
+                            commands: vec![
+                                PathCommand::MoveTo(position(1.0, 2.0)),
+                                PathCommand::QuadraticTo {
+                                    control: position(3.0, 4.0),
+                                    end: position(5.0, 6.0),
+                                },
+                                PathCommand::CubicTo {
+                                    control_1: position(7.0, 8.0),
+                                    control_2: position(9.0, 10.0),
+                                    end: position(11.0, 12.0),
+                                },
+                                PathCommand::Close,
+                            ],
+                        },
+                    )),
+                    ..Default::default()
+                },
+            }],
+        };
+
+        let frame = MobileFrameOwned::new(&packet).unwrap();
+        let operation = &frame._operations[1];
+        let clip = unsafe { &*operation.payload.cast::<MobileClipPath>() };
+        assert_eq!(clip.shape_kind, CLIP_SHAPE_PATH);
+        let path = unsafe { &*clip.payload.cast::<MobileClipPathCommands>() };
+        assert_eq!(path.fill_rule, FILL_RULE_EVEN_ODD);
+        let commands = unsafe { std::slice::from_raw_parts(path.commands, path.command_count) };
+        assert_eq!(commands.len(), 4);
+        assert_eq!(commands[0].kind, PATH_MOVE_TO);
+        assert_eq!(commands[0].points[0].length, 1.0);
+        assert_eq!(commands[1].kind, PATH_QUADRATIC_TO);
+        assert_eq!(commands[1].points[2].length, 5.0);
+        assert_eq!(commands[2].kind, PATH_CUBIC_TO);
+        assert_eq!(commands[2].points[5].length, 12.0);
+        assert_eq!(commands[3].kind, PATH_CLOSE);
     }
 
     #[test]

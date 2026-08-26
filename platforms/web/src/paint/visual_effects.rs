@@ -1,5 +1,6 @@
 use whisker_protocol::{
-    ClipShape, PaintBox, PaintCoordinate, PaintLengthPercentage, VisualEffects,
+    ClipShape, FillRule, PaintBox, PaintCoordinate, PaintLengthPercentage, PaintPosition,
+    PathCommand, VisualEffects,
 };
 
 use super::color::css_color;
@@ -14,10 +15,10 @@ pub(crate) fn supports(effects: &VisualEffects) -> bool {
             matches!(
                 reference,
                 PaintBox::Border | PaintBox::Padding | PaintBox::Content
-            ) && matches!(
+            ) && (matches!(
                 shape,
                 ClipShape::Inset { .. } | ClipShape::Circle { .. } | ClipShape::Ellipse { .. }
-            )
+            ) || matches!(shape, ClipShape::Path { commands, .. } if path_is_absolute(commands)))
         })
 }
 
@@ -97,9 +98,60 @@ fn clip_path_css(value: &(PaintBox, ClipShape)) -> Result<String, WebError> {
             coordinate(center.x),
             coordinate(center.y),
         ),
+        ClipShape::Path {
+            fill_rule,
+            commands,
+        } => format!(
+            "path({}, \"{}\")",
+            match fill_rule {
+                FillRule::NonZero => "nonzero",
+                FillRule::EvenOdd => "evenodd",
+            },
+            path_data(commands)?,
+        ),
         _ => return Err(WebError("unsupported DOM clip-path shape".into())),
     };
     Ok(format!("{shape} {reference_box}"))
+}
+
+fn path_is_absolute(commands: &[PathCommand]) -> bool {
+    let position = |point: &PaintPosition| point.x.fraction == 0.0 && point.y.fraction == 0.0;
+    commands.iter().all(|command| match command {
+        PathCommand::MoveTo(point) | PathCommand::LineTo(point) => position(point),
+        PathCommand::QuadraticTo { control, end } => position(control) && position(end),
+        PathCommand::CubicTo {
+            control_1,
+            control_2,
+            end,
+        } => position(control_1) && position(control_2) && position(end),
+        PathCommand::Close => true,
+    })
+}
+
+fn path_data(commands: &[PathCommand]) -> Result<String, WebError> {
+    if !path_is_absolute(commands) {
+        return Err(WebError(
+            "CSS path() coordinates cannot contain percentages".into(),
+        ));
+    }
+    let point = |value: &PaintPosition| format!("{} {}", value.x.length, value.y.length);
+    Ok(commands
+        .iter()
+        .map(|command| match command {
+            PathCommand::MoveTo(value) => format!("M {}", point(value)),
+            PathCommand::LineTo(value) => format!("L {}", point(value)),
+            PathCommand::QuadraticTo { control, end } => {
+                format!("Q {} {}", point(control), point(end))
+            }
+            PathCommand::CubicTo {
+                control_1,
+                control_2,
+                end,
+            } => format!("C {} {} {}", point(control_1), point(control_2), point(end)),
+            PathCommand::Close => "Z".into(),
+        })
+        .collect::<Vec<_>>()
+        .join(" "))
 }
 
 fn coordinate(value: PaintCoordinate) -> String {

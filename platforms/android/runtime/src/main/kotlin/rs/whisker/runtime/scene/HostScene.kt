@@ -24,6 +24,8 @@ import rs.whisker.runtime.paint.HostClipReferenceBox
 import rs.whisker.runtime.paint.HostCircleClipPath
 import rs.whisker.runtime.paint.HostEllipseClipPath
 import rs.whisker.runtime.paint.HostInsetClipPath
+import rs.whisker.runtime.paint.HostPathClipPath
+import rs.whisker.runtime.paint.HostPathCommand
 import rs.whisker.runtime.paint.HostLinearGradient
 import rs.whisker.runtime.paint.HostPaintCoordinate
 import rs.whisker.runtime.paint.HostRadialGradient
@@ -445,6 +447,22 @@ internal class HostScene(
                     referenceBox, coordinate(values, 2, density), coordinate(values, 4, density),
                     coordinate(values, 6, density), coordinate(values, 8, density),
                 )
+                CLIP_SHAPE_PATH -> {
+                    val commandCount = values[3].toInt()
+                    HostPathClipPath(
+                        referenceBox = referenceBox,
+                        evenOdd = values[2].toInt() == FILL_RULE_EVEN_ODD,
+                        commands = (0 until commandCount).map { commandIndex ->
+                            val offset = CLIP_PATH_HEADER_SIZE + commandIndex * PATH_COMMAND_PACKED_SIZE
+                            HostPathCommand(
+                                kind = values[offset].toInt(),
+                                points = (0 until 6).map { pointIndex ->
+                                    coordinate(values, offset + 1 + pointIndex * 2, density)
+                                },
+                            )
+                        },
+                    )
+                }
                 else -> HostInsetClipPath(
                     referenceBox = referenceBox,
                     edges = coordinates(2),
@@ -493,6 +511,13 @@ internal class HostScene(
             CLIP_SHAPE_INSET -> CLIP_PATH_INSET_PACKED_SIZE
             CLIP_SHAPE_CIRCLE -> CLIP_PATH_CIRCLE_PACKED_SIZE
             CLIP_SHAPE_ELLIPSE -> CLIP_PATH_ELLIPSE_PACKED_SIZE
+            CLIP_SHAPE_PATH -> {
+                val commandCount = values.getOrNull(3)?.toInt() ?: return false
+                if (commandCount <= 0 || commandCount > MAX_PATH_COMMANDS ||
+                    values[3] != commandCount.toFloat()
+                ) return false
+                CLIP_PATH_HEADER_SIZE + commandCount * PATH_COMMAND_PACKED_SIZE
+            }
             else -> return false
         }
         return values.size == expectedSize &&
@@ -503,7 +528,15 @@ internal class HostScene(
             when (shape) {
                 CLIP_SHAPE_INSET -> (10 until expectedSize).all { values[it] >= 0f }
                 CLIP_SHAPE_CIRCLE -> values[2] >= 0f && values[3] >= 0f
-                else -> values[2] >= 0f && values[3] >= 0f && values[4] >= 0f && values[5] >= 0f
+                CLIP_SHAPE_ELLIPSE -> values[2] >= 0f && values[3] >= 0f && values[4] >= 0f && values[5] >= 0f
+                else -> {
+                    values[2].toInt() in FILL_RULE_NON_ZERO..FILL_RULE_EVEN_ODD &&
+                        values[2] == values[2].toInt().toFloat() &&
+                        (CLIP_PATH_HEADER_SIZE until expectedSize step PATH_COMMAND_PACKED_SIZE).all { offset ->
+                            values[offset].toInt() in PATH_MOVE_TO..PATH_CLOSE &&
+                                values[offset] == values[offset].toInt().toFloat()
+                        }
+                }
             }
     }
 
@@ -809,9 +842,17 @@ internal class HostScene(
         const val CLIP_PATH_INSET_PACKED_SIZE = 26
         const val CLIP_PATH_CIRCLE_PACKED_SIZE = 8
         const val CLIP_PATH_ELLIPSE_PACKED_SIZE = 10
+        const val CLIP_PATH_HEADER_SIZE = 4
+        const val PATH_COMMAND_PACKED_SIZE = 13
+        const val MAX_PATH_COMMANDS = 4096
         const val CLIP_SHAPE_INSET = 0
         const val CLIP_SHAPE_CIRCLE = 1
         const val CLIP_SHAPE_ELLIPSE = 2
+        const val CLIP_SHAPE_PATH = 3
+        const val FILL_RULE_NON_ZERO = 0
+        const val FILL_RULE_EVEN_ODD = 1
+        const val PATH_MOVE_TO = 0
+        const val PATH_CLOSE = 4
         const val BACKGROUND_GRADIENT_STOP_PACKED_SIZE = 7
         const val BACKGROUND_PACKED_LAYER_HEADER_SIZE = 3
         const val BACKGROUND_PACKED_LAYERS = 256

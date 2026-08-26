@@ -311,7 +311,11 @@ private class Driver(
                             command.getString("name") ==
                             "paint.visual-effects.clip-path-circle" ||
                             command.getString("name") ==
-                            "paint.visual-effects.clip-path-ellipse",
+                            "paint.visual-effects.clip-path-ellipse" ||
+                            command.getString("name") ==
+                            "paint.visual-effects.clip-path-path-nonzero" ||
+                            command.getString("name") ==
+                            "paint.visual-effects.clip-path-path-evenodd",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -666,6 +670,31 @@ private class Driver(
                         }
                         shape.getJSONArray("center").objects().forEach {
                             appendLengthPercentage(it, numbers)
+                        }
+                    }
+                    "path" -> {
+                        numbers += 3f
+                        numbers += if (shape.optString("fill_rule", "non_zero") == "even_odd") 1f else 0f
+                        val commands = shape.getJSONArray("commands")
+                        numbers += commands.length().toFloat()
+                        commands.objects().forEach { command ->
+                            val pointNames = when (command.getString("command")) {
+                                "move_to" -> 0 to listOf("point")
+                                "line_to" -> 1 to listOf("point")
+                                "quadratic_to" -> 2 to listOf("control", "end")
+                                "cubic_to" -> 3 to listOf("control_1", "control_2", "end")
+                                "close" -> 4 to emptyList()
+                                else -> error("unsupported path command")
+                            }
+                            numbers += pointNames.first.toFloat()
+                            pointNames.second.forEach { name ->
+                                command.getJSONArray(name).objects().forEach {
+                                    appendLengthPercentage(it, numbers)
+                                }
+                            }
+                            repeat(6 - pointNames.second.size * 2) {
+                                appendLengthPercentage(JSONObject().put("length", 0), numbers)
+                            }
                         }
                     }
                     else -> {

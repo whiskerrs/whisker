@@ -462,6 +462,10 @@ func tupleArray<T>(_ value: (T, T, T, T)) -> [T] {
     [value.0, value.1, value.2, value.3]
 }
 
+func tupleArray<T>(_ value: (T, T, T, T, T, T)) -> [T] {
+    [value.0, value.1, value.2, value.3, value.4, value.5]
+}
+
 private func resolve(_ value: WhiskerMobileLengthPercentage, axis: CGFloat) -> CGFloat {
     CGFloat(value.length) + CGFloat(value.fraction) * axis
 }

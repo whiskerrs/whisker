@@ -9,24 +9,25 @@ use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
     BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture, BackgroundSizeFixture,
     BackgroundSizeKeywordFixture, BorderFixture, BorderStyleFixture, ClipPathFixture,
-    ClipReferenceBoxFixture, ClipShapeFixture, ColorFixture, Command, ConicGradientFixture, Host,
-    ImageRepeatFixture, LinearGradientFixture, LoadedCase, OverflowClipFixture,
-    PixelRelationFixture, PixelRelationKind, PixelSampleFixture, PointerEventFixture,
-    RadialGradientFixture, ResourceSourceFixture, ResourceStateFixture, Scenario, ScenarioSide,
-    SceneNodeFixture, VisibilityFixture, load_required,
+    ClipReferenceBoxFixture, ClipShapeFixture, ColorFixture, Command, ConicGradientFixture,
+    FillRuleFixture, Host, ImageRepeatFixture, LinearGradientFixture, LoadedCase,
+    OverflowClipFixture, PathCommandFixture, PixelRelationFixture, PixelRelationKind,
+    PixelSampleFixture, PointerEventFixture, RadialGradientFixture, ResourceSourceFixture,
+    ResourceStateFixture, Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
+    load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
-    BorderLineStyle, BoxClip, BoxPaint, ClipShape, ElementTypeId, FrameHeader, FrameMode,
+    BorderLineStyle, BoxClip, BoxPaint, ClipShape, ElementTypeId, FillRule, FrameHeader, FrameMode,
     FramePacket, GradientStop, ImageRepeat, InputEvent, InputEventKind, InputPoint, LayoutGeometry,
     LayoutRect, MeasureConstraints, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
     MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasurementKey, MeasurementPayload,
     MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
     PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
-    PaintLengthPercentage, PaintPosition, PointerId, PointerInput, PointerKind, ProtocolVersion,
-    RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceId, ResourceKind,
-    ResourceRequest, ResourceSource, SurfaceId, TextMeasurePayload, TextMeasureStyle, Transform,
-    Visibility, WhiskerValue,
+    PaintLengthPercentage, PaintPosition, PathCommand, PointerId, PointerInput, PointerKind,
+    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceId,
+    ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextMeasurePayload, TextMeasureStyle,
+    Transform, Visibility, WhiskerValue,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
@@ -1108,8 +1109,49 @@ fn clip_path_protocol(value: &ClipPathFixture) -> (PaintBox, ClipShape) {
                 },
             },
         },
+        ClipShapeFixture::Path {
+            fill_rule,
+            commands,
+        } => ClipShape::Path {
+            fill_rule: match fill_rule {
+                FillRuleFixture::NonZero => FillRule::NonZero,
+                FillRuleFixture::EvenOdd => FillRule::EvenOdd,
+            },
+            commands: commands.iter().map(path_command_protocol).collect(),
+        },
     };
     (reference_box, shape)
+}
+
+fn path_command_protocol(value: &PathCommandFixture) -> PathCommand {
+    let position = |point: &[whisker_host_conformance::LengthPercentageFixture; 2]| PaintPosition {
+        x: PaintCoordinate {
+            length: point[0].length,
+            fraction: point[0].fraction,
+        },
+        y: PaintCoordinate {
+            length: point[1].length,
+            fraction: point[1].fraction,
+        },
+    };
+    match value {
+        PathCommandFixture::MoveTo { point } => PathCommand::MoveTo(position(point)),
+        PathCommandFixture::LineTo { point } => PathCommand::LineTo(position(point)),
+        PathCommandFixture::QuadraticTo { control, end } => PathCommand::QuadraticTo {
+            control: position(control),
+            end: position(end),
+        },
+        PathCommandFixture::CubicTo {
+            control_1,
+            control_2,
+            end,
+        } => PathCommand::CubicTo {
+            control_1: position(control_1),
+            control_2: position(control_2),
+            end: position(end),
+        },
+        PathCommandFixture::Close => PathCommand::Close,
+    }
 }
 
 fn box_paint(background: &ColorFixture, border: Option<&BorderFixture>) -> BoxPaint {

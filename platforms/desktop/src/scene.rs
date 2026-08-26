@@ -6,10 +6,11 @@ use std::sync::Arc;
 use whisker_engine::FrameSink;
 use whisker_protocol::{
     ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BoxClip,
-    BoxPaint, ClipShape, ElementTypeId, FrameMode, FramePacket, ImageRepeat, LayoutGeometry,
-    LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintImage,
-    RadialGradientExtent, ResourceId, SceneProjection, SurfaceId, TextContent, Transform,
-    ValidationError, Visibility, VisualEffects, WhiskerValue,
+    BoxPaint, ClipShape, ElementTypeId, FillRule, FrameMode, FramePacket, ImageRepeat,
+    LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
+    PaintCoordinate, PaintImage, PaintPosition, PathCommand, RadialGradientExtent, ResourceId,
+    SceneProjection, SurfaceId, TextContent, Transform, ValidationError, Visibility, VisualEffects,
+    WhiskerValue,
 };
 
 use crate::element::{DesktopElementContent, DesktopElementError, DesktopElementRegistry};
@@ -101,12 +102,20 @@ impl LogicalClip {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub(crate) struct PathSegment {
+    pub(crate) from: [f32; 2],
+    pub(crate) to: [f32; 2],
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct ShapeClip {
     pub(crate) rect: LayoutRect,
     pub(crate) radii: ResolvedRadii,
     pub(crate) inverse_transform: Transform,
     pub(crate) horizontal: bool,
     pub(crate) vertical: bool,
+    pub(crate) path: Option<Arc<[PathSegment]>>,
+    pub(crate) fill_rule: FillRule,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -128,7 +137,7 @@ impl ShapeClipStack {
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = ShapeClip> + '_ {
         std::iter::successors(self.0.as_deref(), |node| node.parent.0.as_deref())
-            .map(|node| node.clip)
+            .map(|node| node.clip.clone())
     }
 }
 
@@ -374,13 +383,15 @@ impl DesktopScene {
                 PaintBox::Content => content,
                 _ => unreachable!("unsupported clip-path reference box passed validation"),
             };
-            let (clip_rect, clip_radii) = clip_shape_geometry(reference, shape);
+            let (clip_rect, clip_radii, path, fill_rule) = clip_shape_geometry(reference, shape);
             node_shape_clips = node_shape_clips.push(ShapeClip {
                 rect: clip_rect,
                 radii: clip_radii,
                 inverse_transform: inverse_transform(transform).unwrap_or(Transform::IDENTITY),
                 horizontal: true,
                 vertical: true,
+                path,
+                fill_rule,
             });
             node_clip_bounds = transform_rect_aabb(clip_rect, transform);
         }
@@ -431,6 +442,8 @@ impl DesktopScene {
                 inverse_transform: inverse_transform(transform).unwrap_or(Transform::IDENTITY),
                 horizontal: clip_horizontal,
                 vertical: clip_vertical,
+                path: None,
+                fill_rule: FillRule::NonZero,
             });
             if let Some(bounds) = transform_rect_aabb(geometry.inner_rect, transform) {
                 let axis_aligned = preserves_screen_axes(transform);
@@ -985,17 +998,32 @@ fn supports_visual_effects(effects: &VisualEffects) -> bool {
                 PaintBox::Border | PaintBox::Padding | PaintBox::Content
             ) && matches!(
                 shape,
-                ClipShape::Inset { .. } | ClipShape::Circle { .. } | ClipShape::Ellipse { .. }
+                ClipShape::Inset { .. }
+                    | ClipShape::Circle { .. }
+                    | ClipShape::Ellipse { .. }
+                    | ClipShape::Path { .. }
             )
         })
 }
 
-fn clip_shape_geometry(reference: LayoutRect, shape: &ClipShape) -> (LayoutRect, ResolvedRadii) {
+fn clip_shape_geometry(
+    reference: LayoutRect,
+    shape: &ClipShape,
+) -> (
+    LayoutRect,
+    ResolvedRadii,
+    Option<Arc<[PathSegment]>>,
+    FillRule,
+) {
+    let zero_radii = || ResolvedRadii {
+        horizontal: [0.0; 4],
+        vertical: [0.0; 4],
+    };
     match shape {
         ClipShape::Inset { edges, radii } => {
             let rect = inset_clip_rect(reference, edges);
             let radii = resolve_radii(radii, rect);
-            (rect, radii)
+            (rect, radii, None, FillRule::NonZero)
         }
         ClipShape::Circle { radius, center } => {
             let center_x = reference.x + resolve_coordinate(center.x, reference.width);
@@ -1014,6 +1042,8 @@ fn clip_shape_geometry(reference: LayoutRect, shape: &ClipShape) -> (LayoutRect,
                     horizontal: [radius; 4],
                     vertical: [radius; 4],
                 },
+                None,
+                FillRule::NonZero,
             )
         }
         ClipShape::Ellipse {
@@ -1036,10 +1066,140 @@ fn clip_shape_geometry(reference: LayoutRect, shape: &ClipShape) -> (LayoutRect,
                     horizontal: [radius_x; 4],
                     vertical: [radius_y; 4],
                 },
+                None,
+                FillRule::NonZero,
             )
+        }
+        ClipShape::Path {
+            fill_rule,
+            commands,
+        } => {
+            let segments = flatten_path(reference, commands);
+            let bounds = path_bounds(&segments).unwrap_or(reference);
+            (bounds, zero_radii(), Some(segments.into()), *fill_rule)
         }
         _ => unreachable!("unsupported clip-path shape passed validation"),
     }
+}
+
+fn resolve_path_position(reference: LayoutRect, position: PaintPosition) -> [f32; 2] {
+    [
+        reference.x + resolve_coordinate(position.x, reference.width),
+        reference.y + resolve_coordinate(position.y, reference.height),
+    ]
+}
+
+fn add_path_segment(segments: &mut Vec<PathSegment>, from: [f32; 2], to: [f32; 2]) {
+    if from != to {
+        segments.push(PathSegment { from, to });
+    }
+}
+
+fn close_path_subpath(
+    segments: &mut Vec<PathSegment>,
+    current: &mut Option<[f32; 2]>,
+    start: Option<[f32; 2]>,
+) {
+    if let (Some(from), Some(to)) = (*current, start) {
+        add_path_segment(segments, from, to);
+        *current = Some(to);
+    }
+}
+
+fn flatten_path(reference: LayoutRect, commands: &[PathCommand]) -> Vec<PathSegment> {
+    const CURVE_STEPS: usize = 16;
+    let mut segments = Vec::new();
+    let mut current = None;
+    let mut start = None;
+    for command in commands {
+        match command {
+            PathCommand::MoveTo(point) => {
+                close_path_subpath(&mut segments, &mut current, start);
+                let point = resolve_path_position(reference, *point);
+                current = Some(point);
+                start = Some(point);
+            }
+            PathCommand::LineTo(point) => {
+                let to = resolve_path_position(reference, *point);
+                if let Some(from) = current {
+                    add_path_segment(&mut segments, from, to);
+                }
+                current = Some(to);
+            }
+            PathCommand::QuadraticTo { control, end } => {
+                let Some(from) = current else { continue };
+                let control = resolve_path_position(reference, *control);
+                let end = resolve_path_position(reference, *end);
+                let mut previous = from;
+                for step in 1..=CURVE_STEPS {
+                    let t = step as f32 / CURVE_STEPS as f32;
+                    let inverse = 1.0 - t;
+                    let to = [
+                        inverse * inverse * from[0]
+                            + 2.0 * inverse * t * control[0]
+                            + t * t * end[0],
+                        inverse * inverse * from[1]
+                            + 2.0 * inverse * t * control[1]
+                            + t * t * end[1],
+                    ];
+                    add_path_segment(&mut segments, previous, to);
+                    previous = to;
+                }
+                current = Some(end);
+            }
+            PathCommand::CubicTo {
+                control_1,
+                control_2,
+                end,
+            } => {
+                let Some(from) = current else { continue };
+                let control_1 = resolve_path_position(reference, *control_1);
+                let control_2 = resolve_path_position(reference, *control_2);
+                let end = resolve_path_position(reference, *end);
+                let mut previous = from;
+                for step in 1..=CURVE_STEPS {
+                    let t = step as f32 / CURVE_STEPS as f32;
+                    let inverse = 1.0 - t;
+                    let to = [
+                        inverse.powi(3) * from[0]
+                            + 3.0 * inverse * inverse * t * control_1[0]
+                            + 3.0 * inverse * t * t * control_2[0]
+                            + t.powi(3) * end[0],
+                        inverse.powi(3) * from[1]
+                            + 3.0 * inverse * inverse * t * control_1[1]
+                            + 3.0 * inverse * t * t * control_2[1]
+                            + t.powi(3) * end[1],
+                    ];
+                    add_path_segment(&mut segments, previous, to);
+                    previous = to;
+                }
+                current = Some(end);
+            }
+            PathCommand::Close => close_path_subpath(&mut segments, &mut current, start),
+        }
+    }
+    close_path_subpath(&mut segments, &mut current, start);
+    segments
+}
+
+fn path_bounds(segments: &[PathSegment]) -> Option<LayoutRect> {
+    let first = segments.first()?;
+    let mut left = first.from[0].min(first.to[0]);
+    let mut top = first.from[1].min(first.to[1]);
+    let mut right = first.from[0].max(first.to[0]);
+    let mut bottom = first.from[1].max(first.to[1]);
+    for segment in &segments[1..] {
+        left = left.min(segment.from[0]).min(segment.to[0]);
+        top = top.min(segment.from[1]).min(segment.to[1]);
+        right = right.max(segment.from[0]).max(segment.to[0]);
+        bottom = bottom.max(segment.from[1]).max(segment.to[1]);
+    }
+    Some(LayoutRect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
 }
 
 fn inset_clip_rect(

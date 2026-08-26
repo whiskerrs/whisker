@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 12;
+pub const MOBILE_ABI_MINOR: u16 = 13;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -76,6 +76,14 @@ pub const BACKGROUND_BLEND_NORMAL: u32 = 0;
 pub const CLIP_SHAPE_INSET: u32 = 0;
 pub const CLIP_SHAPE_CIRCLE: u32 = 1;
 pub const CLIP_SHAPE_ELLIPSE: u32 = 2;
+pub const CLIP_SHAPE_PATH: u32 = 3;
+pub const FILL_RULE_NON_ZERO: u32 = 0;
+pub const FILL_RULE_EVEN_ODD: u32 = 1;
+pub const PATH_MOVE_TO: u32 = 0;
+pub const PATH_LINE_TO: u32 = 1;
+pub const PATH_QUADRATIC_TO: u32 = 2;
+pub const PATH_CUBIC_TO: u32 = 3;
+pub const PATH_CLOSE: u32 = 4;
 
 pub const MEASURE_TEXT: u32 = 1;
 pub const MEASURE_REPLACED_CONTENT: u32 = 2;
@@ -194,6 +202,25 @@ pub struct MobileClipEllipse {
     pub radius_y: MobileLengthPercentage,
     pub center_x: MobileLengthPercentage,
     pub center_y: MobileLengthPercentage,
+}
+
+/// One fixed-width absolute path command. Point slots are x/y pairs: one for
+/// move/line, two for quadratic, and three for cubic commands.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct MobilePathCommand {
+    pub kind: u32,
+    pub _reserved: u32,
+    pub points: [MobileLengthPercentage; 6],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileClipPathCommands {
+    pub fill_rule: u32,
+    pub _reserved: u32,
+    pub commands: *const MobilePathCommand,
+    pub command_count: usize,
 }
 
 /// One typed clip path. `payload` points to the shape selected by `shape_kind`.
@@ -625,6 +652,8 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileClipInset>(), 96);
             assert_eq!(std::mem::size_of::<MobileClipCircle>(), 24);
             assert_eq!(std::mem::size_of::<MobileClipEllipse>(), 32);
+            assert_eq!(std::mem::size_of::<MobilePathCommand>(), 56);
+            assert_eq!(std::mem::size_of::<MobileClipPathCommands>(), 24);
             assert_eq!(std::mem::size_of::<MobileClipPath>(), 24);
             assert_eq!(std::mem::size_of::<MobileGradientStop>(), 40);
             assert_eq!(std::mem::size_of::<MobileRadialGradient>(), 48);

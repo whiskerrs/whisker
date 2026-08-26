@@ -11,13 +11,59 @@ enum HostClipPath {
     case inset(HostInsetClipPath)
     case circle(HostCircleClipPath)
     case ellipse(HostEllipseClipPath)
+    case path(HostPathClipPath)
+
+    var fillRule: CAShapeLayerFillRule {
+        if case let .path(shape) = self, shape.evenOdd { return .evenOdd }
+        return .nonZero
+    }
 
     func path(in bounds: CGRect, contentBox: CGRect, painter: HostBoxPainter) -> CGPath {
         switch self {
         case let .inset(shape): shape.path(in: bounds, contentBox: contentBox, painter: painter)
         case let .circle(shape): shape.path(in: bounds, contentBox: contentBox, painter: painter)
         case let .ellipse(shape): shape.path(in: bounds, contentBox: contentBox, painter: painter)
+        case let .path(shape): shape.path(in: bounds, contentBox: contentBox, painter: painter)
         }
+    }
+}
+
+struct HostPathCommand {
+    let kind: UInt32
+    let points: [WhiskerMobileLengthPercentage]
+}
+
+struct HostPathClipPath {
+    let referenceBox: HostClipReferenceBox
+    let evenOdd: Bool
+    let commands: [HostPathCommand]
+
+    func path(in bounds: CGRect, contentBox: CGRect, painter: HostBoxPainter) -> CGPath {
+        let reference = clipReferenceBox(referenceBox, bounds, contentBox, painter)
+        func point(_ command: HostPathCommand, _ offset: Int) -> CGPoint {
+            CGPoint(
+                x: reference.minX + resolve(command.points[offset], axis: reference.width),
+                y: reference.minY + resolve(command.points[offset + 1], axis: reference.height)
+            )
+        }
+        let path = CGMutablePath()
+        for command in commands {
+            switch command.kind {
+            case UInt32(WHISKER_PATH_MOVE_TO): path.move(to: point(command, 0))
+            case UInt32(WHISKER_PATH_LINE_TO): path.addLine(to: point(command, 0))
+            case UInt32(WHISKER_PATH_QUADRATIC_TO):
+                path.addQuadCurve(to: point(command, 2), control: point(command, 0))
+            case UInt32(WHISKER_PATH_CUBIC_TO):
+                path.addCurve(
+                    to: point(command, 4),
+                    control1: point(command, 0),
+                    control2: point(command, 2)
+                )
+            case UInt32(WHISKER_PATH_CLOSE): path.closeSubpath()
+            default: break
+            }
+        }
+        return path
     }
 }
 

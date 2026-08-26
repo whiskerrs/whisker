@@ -30,6 +30,17 @@ internal data class HostEllipseClipPath(
     val centerY: HostPaintCoordinate,
 ) : HostClipPath
 
+internal data class HostPathCommand(
+    val kind: Int,
+    val points: List<HostPaintCoordinate>,
+)
+
+internal data class HostPathClipPath(
+    override val referenceBox: HostClipReferenceBox,
+    val evenOdd: Boolean,
+    val commands: List<HostPathCommand>,
+) : HostClipPath
+
 internal fun resolveClipPath(
     clip: HostClipPath,
     width: Float,
@@ -46,6 +57,33 @@ internal fun resolveClipPath(
             height - borderWidths[2].coerceIn(0f, height),
         )
         HostClipReferenceBox.Content -> RectF(contentBox)
+    }
+    if (clip is HostPathClipPath) {
+        fun point(command: HostPathCommand, offset: Int) = android.graphics.PointF(
+            reference.left + command.points[offset].resolve(reference.width()),
+            reference.top + command.points[offset + 1].resolve(reference.height()),
+        )
+        return Path().apply {
+            fillType = if (clip.evenOdd) Path.FillType.EVEN_ODD else Path.FillType.WINDING
+            clip.commands.forEach { command ->
+                when (command.kind) {
+                    PATH_MOVE_TO -> point(command, 0).also { moveTo(it.x, it.y) }
+                    PATH_LINE_TO -> point(command, 0).also { lineTo(it.x, it.y) }
+                    PATH_QUADRATIC_TO -> {
+                        val control = point(command, 0)
+                        val end = point(command, 2)
+                        quadTo(control.x, control.y, end.x, end.y)
+                    }
+                    PATH_CUBIC_TO -> {
+                        val control1 = point(command, 0)
+                        val control2 = point(command, 2)
+                        val end = point(command, 4)
+                        cubicTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y)
+                    }
+                    PATH_CLOSE -> close()
+                }
+            }
+        }
     }
     if (clip is HostCircleClipPath) {
         val centerX = reference.left + clip.centerX.resolve(reference.width())
@@ -91,3 +129,9 @@ internal fun resolveClipPath(
     )
     return Path().apply { addRoundRect(inset, radii, Path.Direction.CW) }
 }
+
+internal const val PATH_MOVE_TO = 0
+internal const val PATH_LINE_TO = 1
+internal const val PATH_QUADRATIC_TO = 2
+internal const val PATH_CUBIC_TO = 3
+internal const val PATH_CLOSE = 4

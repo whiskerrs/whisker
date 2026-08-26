@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "id": "wpt.css-masking.clip-path-path-001",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-masking/clip-path/clip-path-path-001.html",
+    "license": "BSD-3-Clause",
+    "assertion": "The non-zero fill rule keeps two same-winding path subregions filled.",
+    "adaptation": "The upstream nested squares are retained and a red child in the inner square verifies that path clipping applies to descendants."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 140.0, "height": 140.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 140.0, 140.0],
+            "background": { "kind": "named", "value": "white" }
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [20.0, 20.0, 100.0, 100.0],
+            "background": { "kind": "named", "value": "green" },
+            "clip_path": {
+              "reference_box": "border",
+              "shape": {
+                "kind": "path",
+                "fill_rule": "non_zero",
+                "commands": [
+                  { "command": "move_to", "point": [{ "length": 10.0 }, { "length": 10.0 }] },
+                  { "command": "line_to", "point": [{ "length": 90.0 }, { "length": 10.0 }] },
+                  { "command": "line_to", "point": [{ "length": 90.0 }, { "length": 90.0 }] },
+                  { "command": "line_to", "point": [{ "length": 10.0 }, { "length": 90.0 }] },
+                  { "command": "close" },
+                  { "command": "move_to", "point": [{ "length": 25.0 }, { "length": 25.0 }] },
+                  { "command": "line_to", "point": [{ "length": 75.0 }, { "length": 25.0 }] },
+                  { "command": "line_to", "point": [{ "length": 75.0 }, { "length": 75.0 }] },
+                  { "command": "line_to", "point": [{ "length": 25.0 }, { "length": 75.0 }] },
+                  { "command": "close" }
+                ]
+              }
+            }
+          },
+          {
+            "id": 3,
+            "parent": 2,
+            "rect": [40.0, 40.0, 20.0, 20.0],
+            "background": { "kind": "named", "value": "red" }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.visual-effects.clip-path-path-nonzero",
+        "samples": [
+          { "point": [25.0, 70.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 },
+          { "point": [35.0, 70.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [70.0, 70.0], "color": { "kind": "named", "value": "red" }, "tolerance": 5 },
+          { "point": [105.0, 70.0], "color": { "kind": "named", "value": "green" }, "tolerance": 5 },
+          { "point": [125.0, 70.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 }
+        ]
+      }
+    ]
+  }
+}

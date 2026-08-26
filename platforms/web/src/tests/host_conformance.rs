@@ -16,17 +16,18 @@ use whisker_host_conformance::{
     BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture,
     BackgroundPaintLayerFixture, BackgroundSizeFixture, BackgroundSizeKeywordFixture,
     BorderFixture, BorderStyleFixture, ClipPathFixture, ClipReferenceBoxFixture, ClipShapeFixture,
-    ColorFixture, Command, ConicGradientFixture, CornerRadiusFixture, ImageRepeatFixture,
-    LengthPercentageFixture, LinearGradientFixture, Manifest, OverflowClipFixture,
-    PixelSampleFixture, RadialGradientFixture, ResourceSourceFixture, ResourceStateFixture,
-    SCHEMA_VERSION, Scenario, ScenarioSide, SceneNodeFixture, VisibilityFixture,
+    ColorFixture, Command, ConicGradientFixture, CornerRadiusFixture, FillRuleFixture,
+    ImageRepeatFixture, LengthPercentageFixture, LinearGradientFixture, Manifest,
+    OverflowClipFixture, PathCommandFixture, PixelSampleFixture, RadialGradientFixture,
+    ResourceSourceFixture, ResourceStateFixture, SCHEMA_VERSION, Scenario, ScenarioSide,
+    SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
-    BoxPaint, ClipShape, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat,
+    BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat,
     LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
     PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
-    PaintLengthPercentage, PaintPosition, ProtocolVersion, RadialGradientExtent,
+    PaintLengthPercentage, PaintPosition, PathCommand, ProtocolVersion, RadialGradientExtent,
     RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceId,
     ResourceKind, ResourceRequest, ResourceSource, SurfaceId, Transform, Visibility,
 };
@@ -516,6 +517,12 @@ impl Driver {
                                                     }
                                                     ClipShapeFixture::Ellipse { .. } => {
                                                         "paint.visual-effects.clip-path-ellipse"
+                                                    }
+                                                    ClipShapeFixture::Path { fill_rule, .. } => {
+                                                        match fill_rule {
+                                                            FillRuleFixture::NonZero => "paint.visual-effects.clip-path-path-nonzero",
+                                                            FillRuleFixture::EvenOdd => "paint.visual-effects.clip-path-path-evenodd",
+                                                        }
                                                     }
                                                 })
                                         })
@@ -1250,6 +1257,12 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-masking/clip-path-ellipse-002.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-masking/clip-path-ellipse-002.json"
         ),
+        "wpt/css/css-masking/clip-path-path-001.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-masking/clip-path-path-001.json"
+        ),
+        "wpt/css/css-masking/clip-path-path-002.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-masking/clip-path-path-002.json"
+        ),
         "wpt/css/CSS2/borders/border-right-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-right-003.json"
         ),
@@ -1759,8 +1772,43 @@ fn clip_path_protocol(value: &ClipPathFixture) -> (PaintBox, ClipShape) {
                 y: paint_coordinate(center[1]),
             },
         },
+        ClipShapeFixture::Path {
+            fill_rule,
+            commands,
+        } => ClipShape::Path {
+            fill_rule: match fill_rule {
+                FillRuleFixture::NonZero => FillRule::NonZero,
+                FillRuleFixture::EvenOdd => FillRule::EvenOdd,
+            },
+            commands: commands.iter().map(path_command_protocol).collect(),
+        },
     };
     (reference_box, shape)
+}
+
+fn path_command_protocol(value: &PathCommandFixture) -> PathCommand {
+    let position = |point: &[LengthPercentageFixture; 2]| PaintPosition {
+        x: paint_coordinate(point[0]),
+        y: paint_coordinate(point[1]),
+    };
+    match value {
+        PathCommandFixture::MoveTo { point } => PathCommand::MoveTo(position(point)),
+        PathCommandFixture::LineTo { point } => PathCommand::LineTo(position(point)),
+        PathCommandFixture::QuadraticTo { control, end } => PathCommand::QuadraticTo {
+            control: position(control),
+            end: position(end),
+        },
+        PathCommandFixture::CubicTo {
+            control_1,
+            control_2,
+            end,
+        } => PathCommand::CubicTo {
+            control_1: position(control_1),
+            control_2: position(control_2),
+            end: position(end),
+        },
+        PathCommandFixture::Close => PathCommand::Close,
+    }
 }
 
 fn paint_length_percentage(value: LengthPercentageFixture) -> PaintLengthPercentage {
@@ -2013,6 +2061,35 @@ fn fixture_clip_path_css(value: &ClipPathFixture) -> String {
             coordinate(center[0]),
             coordinate(center[1])
         ),
+        ClipShapeFixture::Path {
+            fill_rule,
+            commands,
+        } => {
+            let point = |value: &[LengthPercentageFixture; 2]| {
+                format!("{} {}", value[0].length, value[1].length)
+            };
+            let commands = commands
+                .iter()
+                .map(|command| match command {
+                    PathCommandFixture::MoveTo { point: value } => format!("M {}", point(value)),
+                    PathCommandFixture::LineTo { point: value } => format!("L {}", point(value)),
+                    PathCommandFixture::QuadraticTo { control, end } => {
+                        format!("Q {} {}", point(control), point(end))
+                    }
+                    PathCommandFixture::CubicTo {
+                        control_1,
+                        control_2,
+                        end,
+                    } => format!("C {} {} {}", point(control_1), point(control_2), point(end)),
+                    PathCommandFixture::Close => "Z".into(),
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            match fill_rule {
+                FillRuleFixture::NonZero => format!("path(\"{commands}\")"),
+                FillRuleFixture::EvenOdd => format!("path(evenodd, \"{commands}\")"),
+            }
+        }
     };
     let suffix = (!reference_box.is_empty())
         .then(|| format!(" {reference_box}"))
