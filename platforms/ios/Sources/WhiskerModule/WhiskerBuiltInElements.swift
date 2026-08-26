@@ -131,7 +131,12 @@ public enum WhiskerBuiltInElements {
                 guard let label = view as? WhiskerTextLabel else {
                     preconditionFailure("\(textName) factory must create WhiskerTextLabel")
                 }
-                let base = resolvedBaseFont(content)
+                let base = resolveWhiskerBaseFont(
+                    fontFamilies: content.fontFamilies,
+                    fontSize: content.fontSize,
+                    fontWeight: content.fontWeight,
+                    fontStyle: content.fontStyle
+                )
                 label.font = configuredFont(base: base.font, content: content)
                 label.whiskerFontFamilies = content.fontFamilies
                 label.whiskerResolvedFontFamily = base.family
@@ -226,25 +231,37 @@ public enum WhiskerBuiltInElements {
     }
 }
 
-private func resolvedBaseFont(_ content: WhiskerTextContent) -> (font: UIFont, family: String) {
+public func resolveWhiskerBaseFont(
+    fontFamilies: [String],
+    fontSize: CGFloat,
+    fontWeight: Int,
+    fontStyle: WhiskerTextFontStyle
+) -> (font: UIFont, family: String) {
     let weight = UIFont.Weight(rawValue: max(
         -1,
-        min(1, CGFloat(content.fontWeight - 400) / 500)
+        min(1, CGFloat(fontWeight - 400) / 500)
     ))
-    for family in content.fontFamilies {
+    for family in fontFamilies {
         if family == "system" {
-            let font = UIFont.systemFont(ofSize: content.fontSize, weight: weight)
-            return (styledFont(font, style: content.fontStyle, size: content.fontSize), "system")
+            let font = UIFont.systemFont(ofSize: fontSize, weight: weight)
+            return (styledFont(font, style: fontStyle, size: fontSize), "system")
         }
-        guard let named = UIFont(name: family, size: content.fontSize) else { continue }
+        guard let named = namedFont(family: family, size: fontSize) else { continue }
         let weightedDescriptor = named.fontDescriptor.addingAttributes([
             .traits: [UIFontDescriptor.TraitKey.weight: weight],
         ])
-        let weighted = UIFont(descriptor: weightedDescriptor, size: content.fontSize)
-        return (styledFont(weighted, style: content.fontStyle, size: content.fontSize), family)
+        let weighted = UIFont(descriptor: weightedDescriptor, size: fontSize)
+        return (styledFont(weighted, style: fontStyle, size: fontSize), family)
     }
-    let font = UIFont.systemFont(ofSize: content.fontSize, weight: weight)
-    return (styledFont(font, style: content.fontStyle, size: content.fontSize), "system")
+    let font = UIFont.systemFont(ofSize: fontSize, weight: weight)
+    return (styledFont(font, style: fontStyle, size: fontSize), "system")
+}
+
+private func namedFont(family: String, size: CGFloat) -> UIFont? {
+    if let exact = UIFont(name: family, size: size) { return exact }
+    return UIFont.fontNames(forFamilyName: family).lazy.compactMap {
+        UIFont(name: $0, size: size)
+    }.first
 }
 
 private func styledFont(

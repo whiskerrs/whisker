@@ -72,6 +72,27 @@ class HostConformanceTest {
     }
 
     @Test
+    fun everySharedMeasurementScenarioUsesTheProductionAndroidProvider() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val manifest = JSONObject(asset("manifest.json"))
+                var count = 0
+                manifest.getJSONArray("cases").objects().forEach { entry ->
+                    val scenario = JSONObject(asset(entry.getString("fixture")))
+                    val testSide = scenario.getJSONObject("test")
+                    if (testSide.getJSONArray("commands").objects().none {
+                            it.getString("type") == "measure_text"
+                        }) return@forEach
+                    Driver(context, scenario.getString("id")).executeMeasurements(testSide)
+                    count += 1
+                }
+                assertTrue("at least one shared measurement scenario", count > 0)
+            }
+    }
+
+    @Test
     fun projectsAThreeDimensionalTransformOntoTheNodePlane() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
@@ -225,6 +246,7 @@ private class Driver(
     private var logicalWidth = 0f
     private var logicalHeight = 0f
     private var checkpoint: Bitmap? = null
+    private val measurements = HashMap<Long, FloatArray>()
 
     init {
         view.beginBootstrapFromNative()
@@ -458,6 +480,76 @@ private class Driver(
             }
         }
         return checkNotNull(checkpoint)
+    }
+
+    fun executeMeasurements(side: JSONObject) {
+        side.getJSONArray("commands").objects().forEach { command ->
+            when (command.getString("type")) {
+                "attach_surface" -> {
+                    logicalWidth = command.getDouble("width").toFloat()
+                    logicalHeight = command.getDouble("height").toFloat()
+                }
+                "measure_text" -> measureText(command)
+                "checkpoint_measurement" -> checkpointMeasurement(command)
+                else -> error("unsupported Android measurement command: ${command.getString("type")}")
+            }
+        }
+    }
+
+    private fun measureText(command: JSONObject) {
+        val families = command.getJSONArray("font_families").strings()
+        check(families.isNotEmpty())
+        val result = view.measureFromNative(
+            elementType = 2,
+            kind = 1,
+            knownWidth = 0f,
+            knownHeight = 0f,
+            knownMask = 0,
+            availableWidth = command.getDouble("available_width").toFloat(),
+            availableHeight = Float.POSITIVE_INFINITY,
+            availableWidthKind = 0,
+            availableHeightKind = 2,
+            text = command.getString("text"),
+            fontFamilies = families,
+            fontSize = command.getDouble("font_size").toFloat(),
+            fontWeight = command.getInt("font_weight"),
+            fontStyle = when (command.getString("font_style")) {
+                "italic" -> 1
+                "oblique" -> 2
+                else -> 0
+            },
+            wrap = 1,
+            wordBreak = 0,
+            overflow = 0,
+            letterSpacing = command.getDouble("letter_spacing").toFloat(),
+            lineHeight = command.getDouble("line_height").toFloat(),
+            indentLogicalPixels = 0f,
+            indentPercentage = 0f,
+            maxLines = 0,
+            fontSettings = emptyArray(),
+            fontFeatureCount = 0,
+            fontOpticalSizing = 1,
+            payloadVersion = 0,
+            payload = byteArrayOf(),
+            intrinsicWidth = 0f,
+            intrinsicHeight = 0f,
+            intrinsicMask = 0,
+        )
+        check(result.size >= 7 && result[0] == 1f) { "$id text measurement was not ready" }
+        measurements[command.getLong("key")] = result
+    }
+
+    private fun checkpointMeasurement(command: JSONObject) {
+        val result = checkNotNull(measurements[command.getLong("key")])
+        val width = result[2]
+        val height = result[3]
+        check(width.isFinite() && width >= command.getDouble("min_width").toFloat())
+        check(width <= command.getDouble("max_width").toFloat())
+        check(height.isFinite() && height >= command.getDouble("min_height").toFloat())
+        check(height <= command.getDouble("max_height").toFloat())
+        // MobileMeasureResponse has a prepared-content ID, but the current Android
+        // TextView measurer does not create reusable prepared content. The shared
+        // fixture therefore leaves that optional optimization unconstrained.
     }
 
     fun commitTransform(transform: FloatArray): Boolean {

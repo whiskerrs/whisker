@@ -26,7 +26,7 @@ public object WhiskerBuiltInElements {
                 val density = view.resources.displayMetrics.density
                 view.setTextSize(TypedValue.COMPLEX_UNIT_PX, content.fontSize * density)
                 view.setTextColor(content.color)
-                val baseTypeface = resolveTypeface(content.fontFamilies)
+                val baseTypeface = resolveWhiskerTypeface(content.fontFamilies)
                 view.typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     Typeface.create(
                         baseTypeface,
@@ -99,7 +99,8 @@ public class BuiltInElementModule : Module() {
     }
 }
 
-private fun resolveTypeface(families: List<String>): Typeface {
+/** Resolves Whisker's ordered CSS font-family fallback list for Android text Hosts. */
+public fun resolveWhiskerTypeface(families: List<String>): Typeface {
     for (family in families) {
         if (family == "system") return Typeface.DEFAULT
         val candidate = Typeface.create(family, Typeface.NORMAL)

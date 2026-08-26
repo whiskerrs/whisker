@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 23 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 24 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -229,7 +229,8 @@ typedef struct {
   float available_width, available_height;
   uint8_t available_width_kind, available_height_kind, font_style, wrap;
   uint8_t word_break, overflow, _text_pad[2];
-  WhiskerStringRef text, locale, font_family;
+  WhiskerStringRef text, locale;
+  const WhiskerStringRef* font_families; size_t font_family_count;
   float font_size;
   uint16_t font_weight, payload_version;
   float line_height, letter_spacing;

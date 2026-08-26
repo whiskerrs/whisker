@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 23;
+pub const MOBILE_ABI_MINOR: u16 = 24;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -449,7 +449,8 @@ pub struct MobileMeasureRequest {
     pub overflow: u8,
     pub text: WhiskerStringRef,
     pub locale: WhiskerStringRef,
-    pub font_family: WhiskerStringRef,
+    pub font_families: *const WhiskerStringRef,
+    pub font_family_count: usize,
     pub font_size: f32,
     pub font_weight: u16,
     pub payload_version: u16,

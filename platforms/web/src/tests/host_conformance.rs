@@ -11,7 +11,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use whisker::prelude::*;
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::{ElementRegistry, RuntimeInstance, SurfaceRuntime};
-use whisker_engine::FrameSink;
+use whisker_engine::{FrameSink, MeasurementProvider};
 use whisker_host_conformance::{
     BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture,
     BackgroundPaintLayerFixture, BackgroundSizeFixture, BackgroundSizeKeywordFixture,
@@ -23,19 +23,21 @@ use whisker_host_conformance::{
     SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
-    BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
-    BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat,
-    LayoutGeometry, LayoutRect, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
-    MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, NodeId,
-    Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius,
-    PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand,
-    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand,
-    ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
-    SurfaceId, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform,
-    Visibility,
+    AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
+    BorderLineStyle, BoxClip, BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket,
+    GradientStop, ImageRepeat, LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily,
+    MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
+    MeasureTextWordBreak, MeasureTextWrap, MeasurementKey, MeasurementMetrics, MeasurementPayload,
+    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
+    PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
+    PaintLengthPercentage, PaintPosition, PathCommand, ProtocolVersion, RadialGradientExtent,
+    RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceId,
+    ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent, TextMeasurePayload,
+    TextMeasureStyle, TextPaint, TextShadow, Transform, Visibility,
 };
 use whisker_style::StyleEnvironment;
 
+use crate::measure::text::DomMeasurementProvider;
 use crate::module_api::built_in_element_factories;
 use crate::scene::frame_sink::DomFrameSink;
 use crate::{WebResourceService, WebResourceState, WebResourceStore};
@@ -333,6 +335,8 @@ struct Driver {
     resource_urls: HashMap<u64, String>,
     resource_dimensions: HashMap<u64, [f32; 2]>,
     resource_lifecycle: bool,
+    measurements: DomMeasurementProvider,
+    measurement_results: HashMap<u64, MeasurementMetrics>,
     expected_box: Option<ExpectedBox>,
     expected_scene: Option<Vec<SceneNodeFixture>>,
 }
@@ -355,6 +359,7 @@ impl Driver {
         let elements = ElementRegistry::standard();
         let resources = WebResourceStore::new();
         let resource_service = WebResourceService::new(resources.clone());
+        let measurements = DomMeasurementProvider::new(document.clone());
         let sink = DomFrameSink::new_with_resources(
             document,
             root.clone(),
@@ -372,6 +377,8 @@ impl Driver {
             resource_urls: HashMap::new(),
             resource_dimensions: HashMap::new(),
             resource_lifecycle: false,
+            measurements,
+            measurement_results: HashMap::new(),
             expected_box: None,
             expected_scene: None,
         }
@@ -713,13 +720,152 @@ impl Driver {
                         self.assert_box_is_projected();
                     }
                 }
-                Command::MeasureText { .. }
-                | Command::CheckpointMeasurement { .. }
-                | Command::EmitPointer { .. }
-                | Command::CheckpointInput { .. } => {
+                Command::MeasureText {
+                    key,
+                    text,
+                    font_families,
+                    font_size,
+                    font_weight,
+                    font_style,
+                    line_height,
+                    letter_spacing,
+                    available_width,
+                } => self.measure_text(
+                    *key,
+                    text,
+                    font_families,
+                    *font_size,
+                    *font_weight,
+                    *font_style,
+                    *line_height,
+                    *letter_spacing,
+                    *available_width,
+                ),
+                Command::CheckpointMeasurement {
+                    key,
+                    min_width,
+                    max_width,
+                    min_height,
+                    max_height,
+                    prepared_content,
+                } => self.assert_measurement(
+                    *key,
+                    [*min_width, *max_width],
+                    [*min_height, *max_height],
+                    *prepared_content,
+                ),
+                Command::EmitPointer { .. } | Command::CheckpointInput { .. } => {
                     panic!("non-paint command reached the Web paint runner")
                 }
             }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn measure_text(
+        &mut self,
+        key: u64,
+        text: &str,
+        font_families: &[String],
+        font_size: f32,
+        font_weight: u16,
+        font_style: whisker_host_conformance::FontStyleFixture,
+        line_height: f32,
+        letter_spacing: f32,
+        available_width: f32,
+    ) {
+        let key_id = MeasurementKey::new(key).expect("fixture measurement key is non-zero");
+        let element_type = ElementRegistry::standard()
+            .registration_for_builtin(whisker::ElementTag::Text)
+            .expect("standard Text registration")
+            .element_type;
+        let request = MeasurementRequest {
+            key: key_id,
+            node: NodeId::new(key).expect("fixture measurement node is non-zero"),
+            element_type,
+            environment_epoch: 1,
+            constraints: MeasureConstraints {
+                known_dimensions: [None, None],
+                available_space: [
+                    AvailableSpace::Definite(available_width),
+                    AvailableSpace::MaxContent,
+                ],
+            },
+            payload: MeasurementPayload::Text(TextMeasurePayload {
+                text: text.to_owned(),
+                style: TextMeasureStyle {
+                    font_families: font_families
+                        .iter()
+                        .map(|family| {
+                            if family == "system" {
+                                MeasureFontFamily::System
+                            } else {
+                                MeasureFontFamily::Named(family.clone())
+                            }
+                        })
+                        .collect(),
+                    font_size,
+                    font_weight,
+                    font_style: fixture_measure_font_style(font_style),
+                    line_height: MeasureLineHeight::LogicalPixels(line_height),
+                    letter_spacing,
+                    ..TextMeasureStyle::default()
+                },
+                locale: None,
+                direction: MeasureTextDirection::Auto,
+                alignment: whisker_protocol::MeasureTextAlignment::Start,
+                indent: Default::default(),
+                wrap: MeasureTextWrap::Wrap,
+                word_break: MeasureTextWordBreak::Normal,
+                max_lines: None,
+                overflow: MeasureTextOverflow::Clip,
+            }),
+        };
+        let mut responses = Vec::new();
+        self.measurements
+            .measure_batch(SurfaceId::new(1).unwrap(), &[request], &mut responses)
+            .unwrap();
+        let response = responses
+            .pop()
+            .expect("DOM measurement provider returned one response");
+        assert!(responses.is_empty());
+        let MeasurementResponse::Ready {
+            key: response_key,
+            environment_epoch,
+            metrics,
+        } = response
+        else {
+            panic!("DOM text measurement must complete synchronously")
+        };
+        assert_eq!(response_key, key_id);
+        assert_eq!(environment_epoch, 1);
+        assert!(metrics.is_valid());
+        self.measurement_results.insert(key, metrics);
+    }
+
+    fn assert_measurement(
+        &self,
+        key: u64,
+        width_range: [f32; 2],
+        height_range: [f32; 2],
+        prepared_content: Option<bool>,
+    ) {
+        let metrics = self
+            .measurement_results
+            .get(&key)
+            .unwrap_or_else(|| panic!("missing DOM measurement result for key {key}"));
+        assert!(
+            (width_range[0]..=width_range[1]).contains(&metrics.size.width),
+            "measured width {} is outside {width_range:?}",
+            metrics.size.width
+        );
+        assert!(
+            (height_range[0]..=height_range[1]).contains(&metrics.size.height),
+            "measured height {} is outside {height_range:?}",
+            metrics.size.height
+        );
+        if let Some(expected) = prepared_content {
+            assert_eq!(metrics.prepared_content.is_some(), expected);
         }
     }
 
@@ -1332,7 +1478,9 @@ async fn every_shared_paint_fixture_reaches_the_production_dom_sink() {
         if !scenario.test.commands.iter().any(|command| {
             matches!(
                 command,
-                Command::PresentBox { .. } | Command::PresentScene { .. }
+                Command::PresentBox { .. }
+                    | Command::PresentScene { .. }
+                    | Command::MeasureText { .. }
             )
         }) {
             continue;
@@ -2283,6 +2431,16 @@ fn fixture_alignment(
     }
 }
 
+fn fixture_measure_font_style(
+    value: whisker_host_conformance::FontStyleFixture,
+) -> MeasureFontStyle {
+    match value {
+        whisker_host_conformance::FontStyleFixture::Normal => MeasureFontStyle::Normal,
+        whisker_host_conformance::FontStyleFixture::Italic => MeasureFontStyle::Italic,
+        whisker_host_conformance::FontStyleFixture::Oblique => MeasureFontStyle::Oblique,
+    }
+}
+
 fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextContent {
     use whisker_host_conformance::{TextOverflowFixture, WhiteSpaceFixture, WordBreakFixture};
     TextContent {
@@ -2302,13 +2460,7 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
                     .collect(),
                 font_size: text.font_size,
                 font_weight: text.font_weight,
-                font_style: match text.font_style {
-                    whisker_host_conformance::FontStyleFixture::Normal => MeasureFontStyle::Normal,
-                    whisker_host_conformance::FontStyleFixture::Italic => MeasureFontStyle::Italic,
-                    whisker_host_conformance::FontStyleFixture::Oblique => {
-                        MeasureFontStyle::Oblique
-                    }
-                },
+                font_style: fixture_measure_font_style(text.font_style),
                 line_height: text
                     .line_height
                     .map_or(MeasureLineHeight::Normal, MeasureLineHeight::LogicalPixels),

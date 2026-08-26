@@ -678,10 +678,24 @@ impl Driver {
                 Command::MeasureText {
                     key,
                     text,
+                    font_families,
                     font_size,
+                    font_weight,
+                    font_style,
                     line_height,
+                    letter_spacing,
                     available_width,
-                } => self.measure_text(*key, text, *font_size, *line_height, *available_width),
+                } => self.measure_text(
+                    *key,
+                    text,
+                    font_families,
+                    *font_size,
+                    *font_weight,
+                    *font_style,
+                    *line_height,
+                    *letter_spacing,
+                    *available_width,
+                ),
                 Command::CheckpointMeasurement {
                     key,
                     min_width,
@@ -1393,8 +1407,12 @@ impl Driver {
         &mut self,
         key: u64,
         value: &str,
+        font_families: &[String],
         font_size: f32,
+        font_weight: u16,
+        font_style: whisker_host_conformance::FontStyleFixture,
         line_height: f32,
+        letter_spacing: f32,
         available_width: f32,
     ) {
         let surface = self.surface.expect("attach_surface precedes measure_text");
@@ -1413,12 +1431,31 @@ impl Driver {
             payload: MeasurementPayload::Text(TextMeasurePayload {
                 text: value.into(),
                 style: TextMeasureStyle {
-                    font_families: vec![MeasureFontFamily::System],
+                    font_families: font_families
+                        .iter()
+                        .map(|family| {
+                            if family == "system" {
+                                MeasureFontFamily::System
+                            } else {
+                                MeasureFontFamily::Named(family.clone())
+                            }
+                        })
+                        .collect(),
                     font_size,
-                    font_weight: 400,
-                    font_style: MeasureFontStyle::Normal,
+                    font_weight,
+                    font_style: match font_style {
+                        whisker_host_conformance::FontStyleFixture::Normal => {
+                            MeasureFontStyle::Normal
+                        }
+                        whisker_host_conformance::FontStyleFixture::Italic => {
+                            MeasureFontStyle::Italic
+                        }
+                        whisker_host_conformance::FontStyleFixture::Oblique => {
+                            MeasureFontStyle::Oblique
+                        }
+                    },
                     line_height: MeasureLineHeight::LogicalPixels(line_height),
-                    letter_spacing: 0.0,
+                    letter_spacing,
                     ..TextMeasureStyle::default()
                 },
                 locale: None,
@@ -1441,7 +1478,7 @@ impl Driver {
         key: u64,
         width: [f32; 2],
         height: [f32; 2],
-        expects_prepared_content: bool,
+        expects_prepared_content: Option<bool>,
     ) {
         let response = self
             .measurement_responses
@@ -1451,9 +1488,19 @@ impl Driver {
         let MeasurementResponse::Ready { metrics, .. } = response else {
             panic!("Desktop text measurement is synchronously ready");
         };
-        assert!((width[0]..=width[1]).contains(&metrics.size.width));
-        assert!((height[0]..=height[1]).contains(&metrics.size.height));
-        assert_eq!(metrics.prepared_content.is_some(), expects_prepared_content);
+        assert!(
+            (width[0]..=width[1]).contains(&metrics.size.width),
+            "measured width {} is outside {width:?}",
+            metrics.size.width
+        );
+        assert!(
+            (height[0]..=height[1]).contains(&metrics.size.height),
+            "measured height {} is outside {height:?}",
+            metrics.size.height
+        );
+        if let Some(expected) = expects_prepared_content {
+            assert_eq!(metrics.prepared_content.is_some(), expected);
+        }
     }
 
     fn emit_pointer(
