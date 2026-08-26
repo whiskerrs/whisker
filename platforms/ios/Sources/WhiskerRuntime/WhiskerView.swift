@@ -192,6 +192,7 @@ public final class WhiskerView: UIView {
                 timestampMs: touch.timestamp * 1_000,
                 event: event,
                 pointerID: pointerID,
+                pointerKind: hostPointerKind(for: touch.type),
                 x: Float(logicalPosition.x),
                 y: Float(logicalPosition.y)
             )
@@ -203,6 +204,7 @@ public final class WhiskerView: UIView {
         timestampMs: Double,
         event: HostPointerEvent,
         pointerID: UInt64,
+        pointerKind: HostPointerKind,
         x: Float,
         y: Float,
         handle overrideHandle: UnsafeMutableRawPointer? = nil
@@ -215,11 +217,11 @@ public final class WhiskerView: UIView {
                 timestampMs: timestampMs,
                 event: event.rawValue,
                 pointerID: pointerID,
-                pointerKind: UInt32(WHISKER_POINTER_TOUCH),
+                pointerKind: pointerKind.rawValue,
                 x: x,
                 y: y,
                 buttons: event.buttons,
-                changedButton: -1
+                changedButton: pointerKind.changedButton(for: event)
             )
         )
     }
@@ -229,6 +231,7 @@ public final class WhiskerView: UIView {
         timestampMs: Double,
         event: HostPointerEvent,
         pointerID: UInt64,
+        pointerKind: HostPointerKind,
         x: Float,
         y: Float
     ) {
@@ -236,6 +239,7 @@ public final class WhiskerView: UIView {
             timestampMs: timestampMs,
             event: event,
             pointerID: pointerID,
+            pointerKind: pointerKind,
             x: x,
             y: y,
             handle: UnsafeMutableRawPointer(bitPattern: 1)

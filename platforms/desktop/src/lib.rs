@@ -25,6 +25,7 @@ pub use whisker_value::WhiskerValue;
 
 mod element;
 mod gpu;
+mod input;
 mod paint;
 mod resource;
 mod scene;
@@ -39,6 +40,9 @@ use element::DesktopElementRegistry;
 pub use element::{
     BuiltInElementModule, DesktopElementFactory, DesktopModuleDefinition, DesktopNativeElement,
     DesktopNativeEvent, DesktopViewDefinition, DesktopViewImplementation,
+};
+pub use input::{
+    DesktopMouseButton, DesktopPointerAdapter, DesktopPointerEvent, DesktopPointerPhase,
 };
 /// Desktop Host module declaration, named consistently with native Hosts.
 pub type ModuleDefinition = DesktopModuleDefinition;

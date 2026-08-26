@@ -18,6 +18,31 @@ enum HostPointerEvent: UInt32, Equatable {
     }
 }
 
+enum HostPointerKind: UInt32, Equatable {
+    case mouse = 0
+    case touch = 1
+    case pen = 2
+    case unknown = 3
+
+    func changedButton(for event: HostPointerEvent) -> Int16 {
+        guard self == .mouse || self == .pen else { return -1 }
+        switch event {
+        case .down, .up: return 0
+        case .move, .cancel: return -1
+        }
+    }
+}
+
+func hostPointerKind(for type: UITouch.TouchType) -> HostPointerKind {
+    if #available(iOS 13.4, *), type == .indirectPointer { return .mouse }
+    switch type {
+    case .direct: return .touch
+    case .pencil: return .pen
+    case .indirect: return .unknown
+    default: return .unknown
+    }
+}
+
 struct HostTouchIdentityMap {
     private var pointerIDs = [ObjectIdentifier: UInt64]()
     private var nextPointerID: UInt64 = 1

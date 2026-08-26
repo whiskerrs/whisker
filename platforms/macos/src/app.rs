@@ -7,13 +7,13 @@ use whisker::runtime::RuntimeWakeHandle;
 use whisker::{Element, ElementModuleDefinition, ElementRegistry, RuntimeInstance, SurfaceRuntime};
 use whisker_desktop::{
     BuiltInElementModule, DesktopElementFactory, DesktopFrameContext, DesktopModuleDefinition,
-    DesktopRuntime, WhiskerModule,
+    DesktopMouseButton, DesktopPointerAdapter, DesktopPointerPhase, DesktopRuntime, WhiskerModule,
 };
-use whisker_protocol::{CursorKeyword, SurfaceId};
+use whisker_protocol::{CursorKeyword, InputEvent, SurfaceId};
 use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::window::{CursorIcon, Window, WindowAttributes, WindowId};
 
@@ -52,6 +52,26 @@ fn cursor_icon(value: CursorKeyword) -> CursorIcon {
         CursorKeyword::NwseResize => CursorIcon::NwseResize,
         CursorKeyword::ZoomIn => CursorIcon::ZoomIn,
         CursorKeyword::ZoomOut => CursorIcon::ZoomOut,
+    }
+}
+
+fn mouse_button(value: MouseButton) -> DesktopMouseButton {
+    match value {
+        MouseButton::Left => DesktopMouseButton::Primary,
+        MouseButton::Middle => DesktopMouseButton::Auxiliary,
+        MouseButton::Right => DesktopMouseButton::Secondary,
+        MouseButton::Back => DesktopMouseButton::Back,
+        MouseButton::Forward => DesktopMouseButton::Forward,
+        MouseButton::Other(_) => DesktopMouseButton::Other,
+    }
+}
+
+fn touch_phase(value: TouchPhase) -> DesktopPointerPhase {
+    match value {
+        TouchPhase::Started => DesktopPointerPhase::Down,
+        TouchPhase::Moved => DesktopPointerPhase::Move,
+        TouchPhase::Ended => DesktopPointerPhase::Up,
+        TouchPhase::Cancelled => DesktopPointerPhase::Cancel,
     }
 }
 
@@ -151,6 +171,7 @@ struct MacosApplication {
     environment_epoch: u64,
     started_at: Instant,
     frame_failed: bool,
+    pointer: DesktopPointerAdapter,
 }
 
 impl MacosApplication {
@@ -173,6 +194,7 @@ impl MacosApplication {
             environment_epoch: 1,
             started_at: Instant::now(),
             frame_failed: false,
+            pointer: DesktopPointerAdapter::new(SurfaceId::new(1).unwrap()),
         }
     }
 
@@ -274,6 +296,18 @@ impl MacosApplication {
         self.frame_failed = false;
         self.request_frame();
     }
+
+    fn dispatch_input(&mut self, event: InputEvent) {
+        let Some(runtime) = &self.runtime else {
+            return;
+        };
+        if let Err(error) = runtime.dispatch_input(&event) {
+            self.frame_failed = true;
+            eprintln!("dispatch macOS input failed: {error}");
+        } else {
+            self.request_frame();
+        }
+    }
 }
 
 impl ApplicationHandler<HostEvent> for MacosApplication {
@@ -314,14 +348,43 @@ impl ApplicationHandler<HostEvent> for MacosApplication {
             }
             WindowEvent::RedrawRequested => self.drive_frame(),
             WindowEvent::CursorMoved { position, .. } => {
-                if let (Some(window), Some(host)) = (&self.window, &self.host) {
+                if let Some(window) = &self.window {
                     let logical = position.to_logical::<f32>(window.scale_factor());
-                    let cursor = host
-                        .cursor_at([logical.x, logical.y])
-                        .unwrap_or(CursorKeyword::Default);
-                    window.set_cursor_visible(cursor != CursorKeyword::None);
-                    if cursor != CursorKeyword::None {
-                        window.set_cursor(cursor_icon(cursor));
+                    let input = self.pointer.cursor_moved(
+                        self.started_at.elapsed().as_secs_f64() * 1000.0,
+                        [logical.x, logical.y],
+                    );
+                    self.dispatch_input(input);
+                    if let (Some(window), Some(host)) = (&self.window, &self.host) {
+                        let cursor = host
+                            .cursor_at([logical.x, logical.y])
+                            .unwrap_or(CursorKeyword::Default);
+                        window.set_cursor_visible(cursor != CursorKeyword::None);
+                        if cursor != CursorKeyword::None {
+                            window.set_cursor(cursor_icon(cursor));
+                        }
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if let Some(input) = self.pointer.mouse_button(
+                    self.started_at.elapsed().as_secs_f64() * 1000.0,
+                    mouse_button(button),
+                    state == ElementState::Pressed,
+                ) {
+                    self.dispatch_input(input);
+                }
+            }
+            WindowEvent::Touch(touch) => {
+                if let Some(window) = &self.window {
+                    let logical = touch.location.to_logical::<f32>(window.scale_factor());
+                    if let Some(input) = self.pointer.touch(
+                        self.started_at.elapsed().as_secs_f64() * 1000.0,
+                        touch.id,
+                        touch_phase(touch.phase),
+                        [logical.x, logical.y],
+                    ) {
+                        self.dispatch_input(input);
                     }
                 }
             }
