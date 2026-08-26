@@ -1890,6 +1890,12 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-backgrounds/border-radius-004.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-004.json"
         ),
+        "wpt/css/css-backgrounds/border-radius-different-width-001.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-different-width-001.json"
+        ),
+        "wpt/css/css-backgrounds/border-radius-horizontal-value-is-zero.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-horizontal-value-is-zero.json"
+        ),
         "wpt/css/css-backgrounds/border-radius-overflow-hidden.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/border-radius-overflow-hidden.json"
         ),

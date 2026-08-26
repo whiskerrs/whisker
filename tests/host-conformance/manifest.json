@@ -213,6 +213,20 @@
       "checkpoints": ["rust-layout-protocol", "semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.border-radius-different-width-001",
+      "feature": "border-radius-asymmetric-widths",
+      "fixture": "wpt/css/css-backgrounds/border-radius-different-width-001.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
+      "id": "wpt.css-backgrounds.border-radius-horizontal-value-is-zero",
+      "feature": "border-radius-zero-axis",
+      "fixture": "wpt/css/css-backgrounds/border-radius-horizontal-value-is-zero.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-overflow.clip-002.horizontal",
       "feature": "overflow-x",
       "fixture": "wpt/css/css-overflow/clip-002.json",
