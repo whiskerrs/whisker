@@ -86,6 +86,57 @@ pub enum FontFamilyValue {
     Named(String),
 }
 
+/// A validated four-byte printable ASCII OpenType tag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OpenTypeTagValue([u8; 4]);
+
+impl OpenTypeTagValue {
+    /// Creates a tag from exactly four printable ASCII bytes.
+    pub const fn new(value: [u8; 4]) -> Option<Self> {
+        let mut index = 0;
+        while index < value.len() {
+            if value[index] < 0x20 || value[index] > 0x7e {
+                return None;
+            }
+            index += 1;
+        }
+        Some(Self(value))
+    }
+
+    /// Returns the exact OpenType bytes.
+    pub const fn get(self) -> [u8; 4] {
+        self.0
+    }
+}
+
+/// One CSS `font-feature-settings` entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FontFeatureValue {
+    /// OpenType feature tag.
+    pub tag: OpenTypeTagValue,
+    /// Non-negative selector; `0` and `1` represent `off` and `on`.
+    pub value: u32,
+}
+
+/// One CSS `font-variation-settings` entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FontVariationValue {
+    /// OpenType variation-axis tag.
+    pub tag: OpenTypeTagValue,
+    /// Axis value preserved for computed-style validation.
+    pub value: StyleNumber,
+}
+
+/// Lynx `font-optical-sizing` behavior.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FontOpticalSizingValue {
+    /// Enable the font's optical-size axis using the computed font size.
+    Auto,
+    /// Do not synthesize an optical-size axis. This is Lynx's initial value.
+    #[default]
+    None,
+}
+
 /// Lynx-supported inline text alignment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TextAlignValue {
@@ -667,6 +718,12 @@ pub enum StyleValue {
     OffsetRotate(OffsetRotateValue),
     /// Font family.
     FontFamily(FontFamilyValue),
+    /// OpenType feature settings. An empty vector is CSS `normal`.
+    FontFeatures(Vec<FontFeatureValue>),
+    /// Variable-font axis settings. An empty vector is CSS `normal`.
+    FontVariations(Vec<FontVariationValue>),
+    /// Optical sizing behavior.
+    FontOpticalSizing(FontOpticalSizingValue),
     /// Font face style.
     FontStyle(FontStyleValue),
     /// Numeric font weight.
@@ -795,6 +852,10 @@ mod tests {
 
     #[test]
     fn typography_variants_are_semantically_distinct() {
+        let tag = OpenTypeTagValue::new(*b"kern").unwrap();
+        assert_eq!(tag.get(), *b"kern");
+        assert_eq!(OpenTypeTagValue::new([0x1f, b'e', b'r', b'n']), None);
+        assert_eq!(OpenTypeTagValue::new([b'k', b'e', b'r', 0x7f]), None);
         assert_ne!(
             StyleValue::FontFamily(FontFamilyValue::System),
             StyleValue::Text("system-ui".into())

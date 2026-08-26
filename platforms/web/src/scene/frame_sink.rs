@@ -108,11 +108,6 @@ impl DomFrameSink {
                 {
                     Some("text-effects")
                 }
-                Operation::SetText { content, .. }
-                    if content.payload.style.uses_extended_typography() =>
-                {
-                    Some("text-typography")
-                }
                 _ => None,
             })
         {
@@ -606,6 +601,10 @@ impl FrameSink for DomFrameSink {
                 },
                 whisker_protocol::CapabilityEntry {
                     capability: whisker_protocol::RenderCapability::TextEffects,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::TextTypography,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_protocol::CapabilityEntry {

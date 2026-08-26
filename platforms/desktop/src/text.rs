@@ -4,7 +4,7 @@ use std::convert::Infallible;
 
 use glyphon::{
     Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight, Wrap,
-    cosmic_text::Align,
+    cosmic_text::{Align, FeatureTag, FontFeatures},
 };
 use whisker_engine::MeasurementProvider;
 use whisker_protocol::{
@@ -83,11 +83,25 @@ impl NativeTextHost {
             MeasureFontStyle::Italic => Style::Italic,
             MeasureFontStyle::Oblique => Style::Oblique,
         };
+        let mut font_features = FontFeatures::new();
+        for feature in &payload.style.features {
+            font_features.set(FeatureTag::new(&feature.tag.get()), feature.value);
+        }
+        let variation_weight = payload
+            .style
+            .variations
+            .iter()
+            .rev()
+            .find(|variation| variation.tag.get() == *b"wght")
+            .map_or(payload.style.font_weight, |variation| {
+                variation.value.clamp(1.0, 1000.0) as u16
+            });
         let attrs = Attrs::new()
             .family(family)
             .style(style)
-            .weight(Weight(payload.style.font_weight))
-            .letter_spacing(payload.style.letter_spacing);
+            .weight(Weight(variation_weight))
+            .letter_spacing(payload.style.letter_spacing)
+            .font_features(font_features);
         let indent = payload.indent.resolve(width.unwrap_or(0.0));
         if indent == 0.0 {
             buffer.set_text(&mut self.font_system, text, &attrs, Shaping::Advanced);
@@ -255,14 +269,6 @@ impl MeasurementProvider for NativeTextHost {
                 &request.payload,
             ) {
                 (Ok(ElementMeasurement::Text), MeasurementPayload::Text(payload)) => {
-                    if payload.style.uses_extended_typography() {
-                        responses.push(MeasurementResponse::Unsupported {
-                            key: request.key,
-                            environment_epoch: request.environment_epoch,
-                            reason: UnsupportedMeasurementReason::Feature,
-                        });
-                        continue;
-                    }
                     let (prepared, mut metrics) = self.prepare_text(payload, request);
                     let id = PreparedContentId::new(request.key.get())
                         .expect("measurement keys are always non-zero");

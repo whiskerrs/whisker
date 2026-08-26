@@ -318,6 +318,15 @@ private class Driver(
                         check(texts[4].maxLines == 1)
                         check(texts[4].ellipsize == android.text.TextUtils.TruncateAt.END)
                     }
+                    if (command.getString("name") == "paint.text.font-features-lynx") {
+                        val texts = findTextViews(view)
+                        check(texts.size == 3)
+                        check(texts[0].whiskerFontFeatures.map { it.tag to it.value } ==
+                            listOf("kern" to 0L, "liga" to 1L))
+                        check(texts[1].whiskerFontVariations.map { it.tag to it.value } ==
+                            listOf("wdth" to 90f, "wght" to 650f))
+                        check(texts[2].whiskerFontOpticalSizing == WhiskerFontOpticalSizing.AUTO)
+                    }
                     check(
                         command.getString("name") == "paint.box" ||
                             command.getString("name") == "paint.background-layers.linear-gradient" ||
@@ -400,7 +409,8 @@ private class Driver(
                             command.getString("name") == "paint.text.decoration-lynx" ||
                             command.getString("name") == "paint.text.align-lynx" ||
                             command.getString("name") == "paint.text.indent-lynx" ||
-                            command.getString("name") == "paint.text.wrap-overflow-lynx",
+                            command.getString("name") == "paint.text.wrap-overflow-lynx" ||
+                            command.getString("name") == "paint.text.font-features-lynx",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -598,7 +608,7 @@ private class Driver(
             val (numbers, names) = paint(node)
             check(stage(tag = 7, node = id, numbers = numbers, names = names))
             node.optJSONObject("text")?.let { text ->
-                val textNumbers = ArrayList<Float>(31)
+                val textNumbers = ArrayList<Float>(33)
                 val textNames = ArrayList<String>(3)
                 textNumbers += text.getDouble("font_size").toFloat()
                 textNumbers += text.optInt("font_weight", 400).toFloat()
@@ -653,6 +663,15 @@ private class Driver(
                 }
                 textNumbers += text.optInt("max_lines", 0).toFloat()
                 textNumbers += if (text.optString("overflow", "clip") == "ellipsis") 1f else 0f
+                textNumbers += if (text.optString("font_optical_sizing", "none") == "auto") 0f else 1f
+                val features = text.optJSONArray("font_features")
+                textNumbers += (features?.length() ?: 0).toFloat()
+                features?.objects()?.forEach { setting ->
+                    textNames += "${setting.getString("tag")}=${setting.getLong("value")}"
+                }
+                text.optJSONArray("font_variations")?.objects()?.forEach { setting ->
+                    textNames += "${setting.getString("tag")}=${setting.getDouble("value")}"
+                }
                 check(stage(
                     tag = 13,
                     node = id,

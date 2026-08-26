@@ -467,7 +467,8 @@ private final class Driver {
                     name == "paint.text.decoration-lynx" ||
                     name == "paint.text.align-lynx" ||
                     name == "paint.text.indent-lynx" ||
-                    name == "paint.text.wrap-overflow-lynx" else {
+                    name == "paint.text.wrap-overflow-lynx" ||
+                    name == "paint.text.font-features-lynx" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 if name == "paint.visual-effects.backdrop-blur" {
@@ -528,6 +529,25 @@ private final class Driver {
                     XCTAssertTrue(labels[3].attributedText?.string.contains("\u{2060}") == true)
                     XCTAssertEqual(labels[4].numberOfLines, 1)
                     XCTAssertEqual(labels[4].lineBreakMode, .byTruncatingTail)
+                }
+                if name == "paint.text.font-features-lynx" {
+                    let labels = findTextLabels(view)
+                    XCTAssertEqual(labels.count, 3)
+                    XCTAssertEqual(
+                        labels[0].whiskerFontFeatures,
+                        [
+                            WhiskerFontFeature(tag: "kern", value: 0),
+                            WhiskerFontFeature(tag: "liga", value: 1),
+                        ]
+                    )
+                    XCTAssertEqual(
+                        labels[1].whiskerFontVariations,
+                        [
+                            WhiskerFontVariation(tag: "wdth", value: 90),
+                            WhiskerFontVariation(tag: "wght", value: 650),
+                        ]
+                    )
+                    XCTAssertEqual(labels[2].whiskerFontOpticalSizing, .auto)
                 }
                 let pixels = try capture()
                 checkpoint = pixels
@@ -714,6 +734,14 @@ private final class Driver {
             capacity: max(fixtures.count, 1)
         )
         var textStrings = [UnsafeMutablePointer<CChar>?](repeating: nil, count: fixtures.count)
+        var textFeatures = [UnsafeMutablePointer<WhiskerMobileFontFeature>?](
+            repeating: nil,
+            count: fixtures.count
+        )
+        var textVariations = [UnsafeMutablePointer<WhiskerMobileFontVariation>?](
+            repeating: nil,
+            count: fixtures.count
+        )
         for (index, fixture) in fixtures.enumerated() {
             var payload = WhiskerMobileText()
             if let text = fixture.text {
@@ -742,6 +770,37 @@ private final class Driver {
                 payload.word_break = text.wordBreak
                 payload.max_lines = text.maxLines
                 payload.overflow = text.overflow
+                if !text.fontFeatures.isEmpty {
+                    let storage = UnsafeMutablePointer<WhiskerMobileFontFeature>.allocate(
+                        capacity: text.fontFeatures.count
+                    )
+                    for (settingIndex, setting) in text.fontFeatures.enumerated() {
+                        var native = WhiskerMobileFontFeature()
+                        let tag = try fontTag(setting.tag)
+                        native.tag = (tag[0], tag[1], tag[2], tag[3])
+                        native.value = setting.value
+                        storage.advanced(by: settingIndex).initialize(to: native)
+                    }
+                    textFeatures[index] = storage
+                    payload.font_features = UnsafePointer(storage)
+                    payload.font_feature_count = text.fontFeatures.count
+                }
+                if !text.fontVariations.isEmpty {
+                    let storage = UnsafeMutablePointer<WhiskerMobileFontVariation>.allocate(
+                        capacity: text.fontVariations.count
+                    )
+                    for (settingIndex, setting) in text.fontVariations.enumerated() {
+                        var native = WhiskerMobileFontVariation()
+                        let tag = try fontTag(setting.tag)
+                        native.tag = (tag[0], tag[1], tag[2], tag[3])
+                        native.value = setting.value
+                        storage.advanced(by: settingIndex).initialize(to: native)
+                    }
+                    textVariations[index] = storage
+                    payload.font_variations = UnsafePointer(storage)
+                    payload.font_variation_count = text.fontVariations.count
+                }
+                payload.font_optical_sizing = text.fontOpticalSizing
             }
             textPayloads.advanced(by: index).initialize(to: payload)
         }
@@ -749,6 +808,14 @@ private final class Driver {
             textPayloads.deinitialize(count: fixtures.count)
             textPayloads.deallocate()
             for storage in textStrings {
+                storage?.deallocate()
+            }
+            for (index, storage) in textFeatures.enumerated() {
+                storage?.deinitialize(count: fixtures[index].text?.fontFeatures.count ?? 0)
+                storage?.deallocate()
+            }
+            for (index, storage) in textVariations.enumerated() {
+                storage?.deinitialize(count: fixtures[index].text?.fontVariations.count ?? 0)
                 storage?.deallocate()
             }
         }
@@ -1304,12 +1371,25 @@ private struct SceneText {
     let wordBreak: UInt8
     let maxLines: UInt32
     let overflow: UInt8
+    let fontFeatures: [SceneFontFeature]
+    let fontVariations: [SceneFontVariation]
+    let fontOpticalSizing: UInt8
     let decorationFlags: UInt32
     let decorationStyle: UInt32
     let decorationColor: WhiskerMobileColor
     let shadowOffset: CGSize?
     let shadowBlurRadius: Float
     let shadowColor: WhiskerMobileColor
+}
+
+private struct SceneFontFeature {
+    let tag: String
+    let value: UInt32
+}
+
+private struct SceneFontVariation {
+    let tag: String
+    let value: Float
 }
 
 private struct SceneClipPath {
@@ -1519,6 +1599,19 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
             wordBreak: wordBreak,
             maxLines: UInt32((raw["max_lines"] as? NSNumber)?.uintValue ?? 0),
             overflow: (raw["overflow"] as? String ?? "clip") == "ellipsis" ? 1 : 0,
+            fontFeatures: try (raw["font_features"] as? [[String: Any]] ?? []).map {
+                SceneFontFeature(
+                    tag: try string($0, "tag"),
+                    value: UInt32(try number($0, "value"))
+                )
+            },
+            fontVariations: try (raw["font_variations"] as? [[String: Any]] ?? []).map {
+                SceneFontVariation(
+                    tag: try string($0, "tag"),
+                    value: Float(try number($0, "value"))
+                )
+            },
+            fontOpticalSizing: (raw["font_optical_sizing"] as? String ?? "none") == "auto" ? 0 : 1,
             decorationFlags: try decoration.map {
                 switch try string($0, "line") {
                 case "underline": 1
@@ -1617,6 +1710,14 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
         radialGradient: radialGradient,
         conicGradient: conicGradient
     )
+}
+
+private func fontTag(_ value: String) throws -> [UInt8] {
+    let bytes = Array(value.utf8)
+    guard bytes.count == 4, bytes.allSatisfy({ (0x20...0x7e).contains($0) }) else {
+        throw Failure("OpenType tag must contain four printable ASCII bytes")
+    }
+    return bytes
 }
 
 private func sceneClipPath(_ fixture: [String: Any]) throws -> SceneClipPath {

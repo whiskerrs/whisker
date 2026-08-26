@@ -1,6 +1,7 @@
 use whisker_protocol::{
-    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
-    MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, TextContent, TextMeasurePayload,
+    FontOpticalSizing, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+    MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, TextContent,
+    TextMeasurePayload,
 };
 
 use super::color::css_color;
@@ -102,6 +103,28 @@ pub(crate) fn apply_metrics_style(
     set_style(element, "letter-spacing", &px(text.style.letter_spacing))?;
     set_style(
         element,
+        "font-feature-settings",
+        &settings_css(&text.style.features, |setting| {
+            (setting.tag.get(), setting.value.to_string())
+        }),
+    )?;
+    set_style(
+        element,
+        "font-variation-settings",
+        &settings_css(&text.style.variations, |setting| {
+            (setting.tag.get(), setting.value.to_string())
+        }),
+    )?;
+    set_style(
+        element,
+        "font-optical-sizing",
+        match text.style.optical_sizing {
+            FontOpticalSizing::Auto => "auto",
+            FontOpticalSizing::None => "none",
+        },
+    )?;
+    set_style(
+        element,
         "text-indent",
         &format!(
             "calc({} + {}%)",
@@ -155,4 +178,21 @@ pub(crate) fn apply_metrics_style(
         },
     )?;
     set_style(element, "overflow-wrap", "normal")
+}
+
+fn settings_css<T>(values: &[T], map: impl Fn(&T) -> ([u8; 4], String)) -> String {
+    if values.is_empty() {
+        return "normal".to_string();
+    }
+    values
+        .iter()
+        .map(|value| {
+            let (tag, value) = map(value);
+            format!(
+                "'{}' {value}",
+                String::from_utf8(tag.to_vec()).expect("protocol validates OpenType tags")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }

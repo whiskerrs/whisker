@@ -378,7 +378,8 @@ class WhiskerView(context: Context) :
         text: String, fontFamily: String, fontSize: Float, fontWeight: Int,
         fontStyle: Int, wrap: Int, wordBreak: Int, overflow: Int, letterSpacing: Float,
         lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float,
-        maxLines: Int, payloadVersion: Int, payload: ByteArray,
+        maxLines: Int, fontSettings: Array<String>, fontFeatureCount: Int,
+        fontOpticalSizing: Int, payloadVersion: Int, payload: ByteArray,
         intrinsicWidth: Float, intrinsicHeight: Float, intrinsicMask: Int,
     ): FloatArray = measurements.measure(
         elementType, kind,
@@ -387,7 +388,7 @@ class WhiskerView(context: Context) :
         text, fontFamily, fontSize, fontWeight,
         fontStyle, wrap, wordBreak, overflow, letterSpacing,
         lineHeight, indentLogicalPixels, indentPercentage,
-        maxLines, payloadVersion, payload,
+        maxLines, fontSettings, fontFeatureCount, fontOpticalSizing, payloadVersion, payload,
         intrinsicWidth, intrinsicHeight, intrinsicMask,
     )
 

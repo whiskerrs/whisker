@@ -140,6 +140,11 @@ final class HostScene {
                       text.wrap <= 1,
                       text.word_break <= 2,
                       text.overflow <= 1,
+                      text.font_optical_sizing <= 1,
+                      validBorrowedArray(text.font_features, text.font_feature_count),
+                      validBorrowedArray(text.font_variations, text.font_variation_count),
+                      text.font_feature_count <= 4_096,
+                      text.font_variation_count <= 4_096,
                       text.indent_logical_pixels.isFinite,
                       text.indent_percentage.isFinite else { return false }
             case UInt32(WHISKER_OP_TRANSFORM):
@@ -516,6 +521,9 @@ final class HostScene {
             value: hostString(content.text),
             fontSize: CGFloat(content.font_size),
             fontWeight: Int(content.font_weight),
+            fontFeatures: hostFontFeatures(content),
+            fontVariations: hostFontVariations(content),
+            fontOpticalSizing: content.font_optical_sizing == 0 ? .auto : .none,
             color: parsePaintColor(content.color),
             alignment: {
                 switch content.alignment {
@@ -582,6 +590,28 @@ final class HostScene {
         node.boxPaintDidChange()
         node.setNeedsLayout()
     }
+}
+
+private func validBorrowedArray<T>(_ pointer: UnsafePointer<T>?, _ count: Int) -> Bool {
+    (pointer == nil) == (count == 0)
+}
+
+private func hostFontFeatures(_ content: WhiskerMobileText) -> [WhiskerFontFeature] {
+    guard let pointer = content.font_features else { return [] }
+    return UnsafeBufferPointer(start: pointer, count: content.font_feature_count).map {
+        WhiskerFontFeature(tag: hostFontTag($0.tag), value: $0.value)
+    }
+}
+
+private func hostFontVariations(_ content: WhiskerMobileText) -> [WhiskerFontVariation] {
+    guard let pointer = content.font_variations else { return [] }
+    return UnsafeBufferPointer(start: pointer, count: content.font_variation_count).map {
+        WhiskerFontVariation(tag: hostFontTag($0.tag), value: CGFloat($0.value))
+    }
+}
+
+private func hostFontTag<T>(_ value: T) -> String {
+    withUnsafeBytes(of: value) { String(decoding: $0, as: UTF8.self) }
 }
 
 private func hostRect(_ value: WhiskerMobileRect) -> CGRect {

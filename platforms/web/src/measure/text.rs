@@ -1,7 +1,7 @@
 use whisker_engine::MeasurementProvider;
 use whisker_protocol::{
     AvailableSpace, MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
-    MeasurementResponse, PreparedContentId, SurfaceId, UnsupportedMeasurementReason,
+    MeasurementResponse, PreparedContentId, SurfaceId,
 };
 
 use crate::{WebError, js_error, paint, px, set_style};
@@ -44,14 +44,6 @@ impl MeasurementProvider for DomMeasurementProvider {
                 });
                 continue;
             };
-            if text.style.uses_extended_typography() {
-                responses.push(MeasurementResponse::Unsupported {
-                    key: request.key,
-                    environment_epoch: request.environment_epoch,
-                    reason: UnsupportedMeasurementReason::Feature,
-                });
-                continue;
-            }
             let probe = self
                 .document
                 .create_element("div")

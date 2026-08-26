@@ -175,6 +175,9 @@
         "value": { "type": "string" },
         "font_size": { "type": "number", "exclusiveMinimum": 0 },
         "font_weight": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "font_features": { "type": "array", "items": { "$ref": "#/$defs/fontFeature" } },
+        "font_variations": { "type": "array", "items": { "$ref": "#/$defs/fontVariation" } },
+        "font_optical_sizing": { "enum": ["auto", "none"] },
         "color": { "$ref": "#/$defs/color" },
         "alignment": { "enum": ["start", "end", "left", "right", "center"] },
         "indent": { "$ref": "#/$defs/textIndent" },
@@ -184,6 +187,24 @@
         "overflow": { "enum": ["clip", "ellipsis"] },
         "decoration": { "$ref": "#/$defs/textDecoration" },
         "shadow": { "$ref": "#/$defs/textShadow" }
+      }
+    },
+    "fontFeature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "value"],
+      "properties": {
+        "tag": { "type": "string", "pattern": "^[ -~]{4}$" },
+        "value": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+      }
+    },
+    "fontVariation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "value"],
+      "properties": {
+        "tag": { "type": "string", "pattern": "^[ -~]{4}$" },
+        "value": { "type": "number" }
       }
     },
     "textIndent": {

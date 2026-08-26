@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 20;
+pub const MOBILE_ABI_MINOR: u16 = 21;
 
 pub const APPLY_ACCEPTED: u8 = 0;
 pub const APPLY_NEED_SNAPSHOT: u8 = 1;
@@ -299,6 +299,20 @@ pub struct MobileBackgroundLayer {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct MobileFontFeature {
+    pub tag: [u8; 4],
+    pub value: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MobileFontVariation {
+    pub tag: [u8; 4],
+    pub value: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct MobileText {
     pub text: WhiskerStringRef,
     pub font_size: f32,
@@ -310,6 +324,12 @@ pub struct MobileText {
     pub max_lines: u32,
     pub line_height: f32,
     pub letter_spacing: f32,
+    pub font_features: *const MobileFontFeature,
+    pub font_feature_count: usize,
+    pub font_variations: *const MobileFontVariation,
+    pub font_variation_count: usize,
+    pub font_optical_sizing: u8,
+    pub _font_pad: [u8; 7],
     pub color: MobileColor,
     pub shadow_offset_x: f32,
     pub shadow_offset_y: f32,
@@ -432,6 +452,12 @@ pub struct MobileMeasureRequest {
     pub payload_version: u16,
     pub line_height: f32,
     pub letter_spacing: f32,
+    pub font_features: *const MobileFontFeature,
+    pub font_feature_count: usize,
+    pub font_variations: *const MobileFontVariation,
+    pub font_variation_count: usize,
+    pub font_optical_sizing: u8,
+    pub _font_pad: [u8; 7],
     pub indent_logical_pixels: f32,
     pub indent_percentage: f32,
     pub max_lines: u32,
@@ -667,9 +693,9 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileMemberRegistration>(), 24);
             assert_eq!(std::mem::size_of::<MobileElementRegistration>(), 72);
             assert_eq!(std::mem::size_of::<MobileBootstrap>(), 24);
-            assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 176);
+            assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 216);
             assert_eq!(std::mem::size_of::<MobileMeasureResponse>(), 64);
-            assert_eq!(std::mem::size_of::<MobileText>(), 184);
+            assert_eq!(std::mem::size_of::<MobileText>(), 224);
             assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);
             assert_eq!(std::mem::size_of::<MobileBoxShadow>(), 56);
             assert_eq!(std::mem::size_of::<MobileClipInset>(), 96);

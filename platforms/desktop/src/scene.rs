@@ -555,9 +555,6 @@ impl DesktopScene {
                     {
                         return Err(DesktopPresentError::Unsupported("text-decoration"));
                     }
-                    if content.payload.style.uses_extended_typography() {
-                        return Err(DesktopPresentError::Unsupported("text-typography"));
-                    }
                     if let Some(element_type) = types.get(node).copied() {
                         self.elements
                             .create(element_type)?
@@ -877,6 +874,10 @@ impl FrameSink for DesktopScene {
                 },
                 whisker_protocol::CapabilityEntry {
                     capability: whisker_protocol::RenderCapability::TextEffects,
+                    support: whisker_protocol::CapabilitySupport::Native,
+                },
+                whisker_protocol::CapabilityEntry {
+                    capability: whisker_protocol::RenderCapability::TextTypography,
                     support: whisker_protocol::CapabilitySupport::Native,
                 },
                 whisker_protocol::CapabilityEntry {

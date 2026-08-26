@@ -472,6 +472,8 @@ impl Driver {
                             "paint.text.indent-lynx"
                         } else if name == "paint.text.wrap-overflow-lynx" {
                             "paint.text.wrap-overflow-lynx"
+                        } else if name == "paint.text.font-features-lynx" {
+                            "paint.text.font-features-lynx"
                         } else if name == "paint.visual-effects.image-rendering-pixelated" {
                             "paint.visual-effects.image-rendering-pixelated"
                         } else if self.resource_lifecycle {
@@ -877,6 +879,24 @@ impl Driver {
                     Some(text.value.as_str())
                 );
                 assert_style(&text_style, "font-size", &fixture_px(text.font_size));
+                assert_style(
+                    &text_style,
+                    "font-feature-settings",
+                    &fixture_font_settings(&text.font_features, |value| value.value.to_string()),
+                );
+                assert_style(
+                    &text_style,
+                    "font-variation-settings",
+                    &fixture_font_settings(&text.font_variations, |value| value.value.to_string()),
+                );
+                assert_style(
+                    &text_style,
+                    "font-optical-sizing",
+                    match text.font_optical_sizing {
+                        whisker_host_conformance::FontOpticalSizingFixture::Auto => "auto",
+                        whisker_host_conformance::FontOpticalSizingFixture::None => "none",
+                    },
+                );
                 assert_style(
                     &text_style,
                     "text-align",
@@ -1509,6 +1529,9 @@ fn fixture(path: &str) -> &'static str {
         }
         "core/text-wrap-overflow-lynx.json" => {
             include_str!("../../../../tests/host-conformance/core/text-wrap-overflow-lynx.json")
+        }
+        "core/text-font-features-lynx.json" => {
+            include_str!("../../../../tests/host-conformance/core/text-font-features-lynx.json")
         }
         _ => panic!("manifest fixture is not embedded in the Web test: {path}"),
     }
@@ -2168,6 +2191,30 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
             style: TextMeasureStyle {
                 font_size: text.font_size,
                 font_weight: text.font_weight,
+                features: text
+                    .font_features
+                    .iter()
+                    .map(|feature| whisker_protocol::FontFeature {
+                        tag: fixture_font_tag(&feature.tag),
+                        value: feature.value,
+                    })
+                    .collect(),
+                variations: text
+                    .font_variations
+                    .iter()
+                    .map(|variation| whisker_protocol::FontVariation {
+                        tag: fixture_font_tag(&variation.tag),
+                        value: variation.value,
+                    })
+                    .collect(),
+                optical_sizing: match text.font_optical_sizing {
+                    whisker_host_conformance::FontOpticalSizingFixture::Auto => {
+                        whisker_protocol::FontOpticalSizing::Auto
+                    }
+                    whisker_host_conformance::FontOpticalSizingFixture::None => {
+                        whisker_protocol::FontOpticalSizing::None
+                    }
+                },
                 ..TextMeasureStyle::default()
             },
             locale: None,
@@ -2242,6 +2289,44 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
             ..TextPaint::default()
         },
         prepared_content: None,
+    }
+}
+
+fn fixture_font_tag(value: &str) -> whisker_protocol::FontTag {
+    let bytes: [u8; 4] = value
+        .as_bytes()
+        .try_into()
+        .expect("fixture schema validates four-byte ASCII tags");
+    whisker_protocol::FontTag::new(bytes).expect("fixture schema validates printable tags")
+}
+
+fn fixture_font_settings<T>(values: &[T], value: impl Fn(&T) -> String) -> String
+where
+    T: FixtureFontSetting,
+{
+    if values.is_empty() {
+        return "normal".into();
+    }
+    values
+        .iter()
+        .map(|setting| format!("'{}' {}", setting.tag(), value(setting)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+trait FixtureFontSetting {
+    fn tag(&self) -> &str;
+}
+
+impl FixtureFontSetting for whisker_host_conformance::FontFeatureFixture {
+    fn tag(&self) -> &str {
+        &self.tag
+    }
+}
+
+impl FixtureFontSetting for whisker_host_conformance::FontVariationFixture {
+    fn tag(&self) -> &str {
+        &self.tag
     }
 }
 

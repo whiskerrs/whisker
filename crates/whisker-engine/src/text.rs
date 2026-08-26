@@ -6,15 +6,16 @@ use std::{
 };
 
 use whisker_protocol::{
-    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextAlignment,
-    MeasureTextDirection, MeasureTextIndent, MeasureTextOverflow, MeasureTextWordBreak,
-    MeasureTextWrap, MeasurementPayload, MeasurementSpec, PaintColor, PendingMeasurePolicy,
-    TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow,
+    FontFeature, FontOpticalSizing, FontTag, FontVariation, MeasureFontFamily, MeasureFontStyle,
+    MeasureLineHeight, MeasureTextAlignment, MeasureTextDirection, MeasureTextIndent,
+    MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasurementPayload,
+    MeasurementSpec, PaintColor, PendingMeasurePolicy, TextContent, TextMeasurePayload,
+    TextMeasureStyle, TextPaint, TextShadow,
 };
 use whisker_style::{
     ColorValue, ComputedLineHeight, ComputedStyle, ComputedTextIndent, FontFamilyValue,
-    FontStyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
-    TextOverflowValue, WhiteSpaceValue, WordBreakValue,
+    FontOpticalSizingValue, FontStyleValue, TextAlignValue, TextDecorationLineValue,
+    TextDecorationStyleValue, TextOverflowValue, WhiteSpaceValue, WordBreakValue,
 };
 
 /// Plain UTF-8 text and the shaping behavior not supplied by inherited style.
@@ -92,7 +93,26 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &ComputedStyle) -> Lowere
                 }
             },
             letter_spacing: inherited.letter_spacing(),
-            ..TextMeasureStyle::default()
+            features: inherited
+                .font_features()
+                .iter()
+                .map(|feature| FontFeature {
+                    tag: FontTag::new(feature.tag.get()).expect("style tags are validated"),
+                    value: feature.value,
+                })
+                .collect(),
+            variations: inherited
+                .font_variations()
+                .iter()
+                .map(|variation| FontVariation {
+                    tag: FontTag::new(variation.tag.get()).expect("style tags are validated"),
+                    value: variation.value.get(),
+                })
+                .collect(),
+            optical_sizing: match inherited.font_optical_sizing() {
+                FontOpticalSizingValue::Auto => FontOpticalSizing::Auto,
+                FontOpticalSizingValue::None => FontOpticalSizing::None,
+            },
         },
         locale: input.locale.clone(),
         direction: input.direction,
@@ -226,6 +246,9 @@ fn metric_style_hash(input: &PlainTextInput, style: &ComputedStyle) -> u64 {
     let mut hasher = DefaultHasher::new();
     let inherited = style.inherited_text();
     inherited.font_family().hash(&mut hasher);
+    inherited.font_features().hash(&mut hasher);
+    inherited.font_variations().hash(&mut hasher);
+    inherited.font_optical_sizing().hash(&mut hasher);
     inherited.font_size().to_bits().hash(&mut hasher);
     inherited.font_weight().hash(&mut hasher);
     inherited.font_style().hash(&mut hasher);
@@ -246,7 +269,8 @@ fn metric_style_hash(input: &PlainTextInput, style: &ComputedStyle) -> u64 {
 mod tests {
     use super::*;
     use whisker_style::{
-        FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
+        FontFeatureValue, FontOpticalSizingValue, FontVariationValue, FontWeightValue,
+        LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, OpenTypeTagValue,
         SpecifiedStyle, StyleDeclaration, StyleEnvironment, StyleNumber, StyleProperty, StyleValue,
         TextDecorationValue, TextShadowValue, resolve_style,
     };
@@ -365,6 +389,60 @@ mod tests {
         assert_eq!(payload.word_break, MeasureTextWordBreak::Normal);
         assert_eq!(payload.max_lines, Some(1));
         assert_eq!(payload.overflow, MeasureTextOverflow::Ellipsis);
+    }
+
+    #[test]
+    fn extended_font_settings_reach_measurement_presentation_and_metric_key() {
+        let tag = |value| OpenTypeTagValue::new(value).unwrap();
+        let style = resolved(vec![
+            StyleDeclaration::new(
+                StyleProperty::FontFeatureSettings,
+                StyleValue::FontFeatures(vec![FontFeatureValue {
+                    tag: tag(*b"kern"),
+                    value: 0,
+                }]),
+            ),
+            StyleDeclaration::new(
+                StyleProperty::FontVariationSettings,
+                StyleValue::FontVariations(vec![FontVariationValue {
+                    tag: tag(*b"wght"),
+                    value: StyleNumber::new(650.0),
+                }]),
+            ),
+            StyleDeclaration::new(
+                StyleProperty::FontOpticalSizing,
+                StyleValue::FontOpticalSizing(FontOpticalSizingValue::Auto),
+            ),
+        ]);
+        let input = PlainTextInput::new("typography");
+        let lowered = lower_plain_text(&input, style.computed());
+        assert_eq!(
+            lowered.content().payload.style.features,
+            [FontFeature {
+                tag: FontTag::new(*b"kern").unwrap(),
+                value: 0,
+            }]
+        );
+        assert_eq!(
+            lowered.content().payload.style.variations,
+            [FontVariation {
+                tag: FontTag::new(*b"wght").unwrap(),
+                value: 650.0,
+            }]
+        );
+        assert_eq!(
+            lowered.content().payload.style.optical_sizing,
+            FontOpticalSizing::Auto
+        );
+        assert_eq!(
+            lowered.measurement().payload,
+            MeasurementPayload::Text(lowered.content().payload.clone())
+        );
+        let initial = lower_plain_text(&input, resolved(Vec::new()).computed());
+        assert_ne!(
+            lowered.measurement().style_hash,
+            initial.measurement().style_hash
+        );
     }
 
     #[test]

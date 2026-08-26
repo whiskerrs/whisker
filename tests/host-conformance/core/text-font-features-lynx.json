@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "core.text-font-features-lynx",
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 420, "height": 150, "scale": 1 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          { "id": 1, "parent": null, "rect": [10, 10, 400, 36], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "feature settings", "font_size": 24, "color": { "kind": "named", "value": "black" }, "font_features": [{ "tag": "kern", "value": 0 }, { "tag": "liga", "value": 1 }] } },
+          { "id": 2, "parent": null, "rect": [10, 56, 400, 36], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "variation settings", "font_size": 24, "color": { "kind": "named", "value": "black" }, "font_variations": [{ "tag": "wdth", "value": 90 }, { "tag": "wght", "value": 650 }] } },
+          { "id": 3, "parent": null, "rect": [10, 102, 400, 36], "background": { "kind": "named", "value": "transparent" }, "text": { "value": "optical sizing", "font_size": 24, "color": { "kind": "named", "value": "black" }, "font_optical_sizing": "auto" } }
+        ]
+      },
+      { "type": "checkpoint", "name": "paint.text.font-features-lynx" }
+    ]
+  }
+}
