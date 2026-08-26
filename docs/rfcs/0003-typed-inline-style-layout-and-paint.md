@@ -487,8 +487,9 @@ pixel for rendering, prepends the projection, and emits the same canonical
 flat-plane matrix. Browser-style parent perspective, `perspective-origin`, and
 shared `preserve-3d` descendant spaces are outside the current subset. Lynx
 motion-path positioning is lowered through that same matrix operation: Rust
-adaptively measures absolute `path()` lines and Bezier curves (`M`, `L`, `Q`,
-`C`, and `Z`) and border-box-relative `circle()`/`ellipse()`/`inset()`, clamps
+adaptively measures absolute `path()` lines, Bezier curves, and SVG elliptical
+arcs (`M`, `L`, `Q`, `C`, `A`, and `Z`) and border-box-relative
+`circle()`/`ellipse()`/`inset()`, clamps
 normalized `offset-distance`, derives the analytic tangent for
 `offset-rotate: auto` or uses a fixed angle, composes rotation before the
 ordinary transform list, and applies path translation after transform-origin.
@@ -497,8 +498,11 @@ resolve against their corresponding width or height axis. Rust applies those
 semantics on every Host, including iOS where Lynx omits `ellipse()`. Rounded
 inset paths use CSS overlap normalization and the standard top-edge clockwise
 starting point, avoiding the different defaults of the native path libraries
-used by Lynx Android and iOS. SVG arcs remain an explicit pending subset rather
-than a Host-specific interpretation.
+used by Lynx Android and iOS. SVG arcs use the standard endpoint-to-center
+conversion in Rust, including radii correction, absolute negative radii,
+zero-radius line fallback, and omission of a segment whose endpoints coincide.
+Rotated arcs use adaptive length measurement and an analytic tangent; Hosts do
+not interpret their flags or geometry.
 
 Protocol minor 1 groups those resolved meanings by Host capability rather
 than by CSS spelling. `SetBackgroundLayers` carries resource-backed images,

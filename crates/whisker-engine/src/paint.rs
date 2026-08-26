@@ -275,6 +275,27 @@ fn motion_path_state(
                         flatten_cubic(&mut segments, from, control1, control2, to, 0);
                         to
                     }
+                    MotionPathCommandValue::ArcTo {
+                        radius_x,
+                        radius_y,
+                        x_axis_rotation,
+                        large_arc,
+                        sweep,
+                        to,
+                    } => {
+                        let from = current?;
+                        let to = finite_motion_point(to)?;
+                        append_svg_arc(
+                            &mut segments,
+                            from,
+                            to,
+                            (radius_x.get(), radius_y.get()),
+                            x_axis_rotation.get(),
+                            large_arc,
+                            sweep,
+                        )?;
+                        to
+                    }
                     MotionPathCommandValue::Close => {
                         let next = subpath_start?;
                         push_motion_line(
@@ -371,6 +392,7 @@ enum MotionCurve {
     Ellipse {
         center: MotionPoint,
         radii: MotionPoint,
+        rotation: f32,
         start_angle: f32,
         end_angle: f32,
     },
@@ -445,13 +467,19 @@ impl MotionSegment {
             MotionCurve::Ellipse {
                 center,
                 radii,
+                rotation,
                 start_angle,
                 end_angle,
             } => {
                 let angle = start_angle + (end_angle - start_angle) * local;
+                let local_tangent = (-radii.0 * angle.sin(), radii.1 * angle.cos());
+                let (sin, cos) = rotation.sin_cos();
                 (
-                    ellipse_point(center, radii, angle),
-                    (-radii.0 * angle.sin(), radii.1 * angle.cos()),
+                    ellipse_point(center, radii, angle, rotation),
+                    (
+                        cos * local_tangent.0 - sin * local_tangent.1,
+                        sin * local_tangent.0 + cos * local_tangent.1,
+                    ),
                 )
             }
         };
@@ -713,6 +741,116 @@ fn flatten_cubic(
     flatten_cubic(segments, middle, p123, p23, end, depth + 1);
 }
 
+fn append_svg_arc(
+    segments: &mut Vec<MotionSegment>,
+    from: MotionPoint,
+    to: MotionPoint,
+    radii: MotionPoint,
+    rotation_degrees: f32,
+    large_arc: bool,
+    sweep: bool,
+) -> Option<()> {
+    if !radii.0.is_finite() || !radii.1.is_finite() || !rotation_degrees.is_finite() {
+        return None;
+    }
+    if from == to {
+        return Some(());
+    }
+    let mut radius_x = f64::from(radii.0.abs());
+    let mut radius_y = f64::from(radii.1.abs());
+    if radius_x == 0.0 || radius_y == 0.0 {
+        push_motion_line(segments, from, to);
+        return Some(());
+    }
+
+    let rotation = f64::from(rotation_degrees.rem_euclid(360.0)).to_radians();
+    let (sin_rotation, cos_rotation) = rotation.sin_cos();
+    let half_delta = (
+        (f64::from(from.0) - f64::from(to.0)) * 0.5,
+        (f64::from(from.1) - f64::from(to.1)) * 0.5,
+    );
+    let transformed = (
+        cos_rotation * half_delta.0 + sin_rotation * half_delta.1,
+        -sin_rotation * half_delta.0 + cos_rotation * half_delta.1,
+    );
+
+    let mut radius_x_squared = radius_x * radius_x;
+    let mut radius_y_squared = radius_y * radius_y;
+    let transformed_x_squared = transformed.0 * transformed.0;
+    let transformed_y_squared = transformed.1 * transformed.1;
+    let size_ratio =
+        transformed_x_squared / radius_x_squared + transformed_y_squared / radius_y_squared;
+    if size_ratio > 1.0 {
+        let scale = size_ratio.sqrt();
+        radius_x *= scale;
+        radius_y *= scale;
+        radius_x_squared = radius_x * radius_x;
+        radius_y_squared = radius_y * radius_y;
+    }
+
+    let numerator = (radius_x_squared * radius_y_squared
+        - radius_x_squared * transformed_y_squared
+        - radius_y_squared * transformed_x_squared)
+        .max(0.0);
+    // Distinct endpoints and non-zero finite f32 radii make this denominator
+    // strictly positive and finite in f64.
+    let denominator =
+        radius_x_squared * transformed_y_squared + radius_y_squared * transformed_x_squared;
+    let sign = if large_arc == sweep { -1.0 } else { 1.0 };
+    let factor = sign * (numerator / denominator).sqrt();
+    let transformed_center = (
+        factor * radius_x * transformed.1 / radius_y,
+        factor * -radius_y * transformed.0 / radius_x,
+    );
+    let midpoint = (
+        (f64::from(from.0) + f64::from(to.0)) * 0.5,
+        (f64::from(from.1) + f64::from(to.1)) * 0.5,
+    );
+    let center = (
+        cos_rotation * transformed_center.0 - sin_rotation * transformed_center.1 + midpoint.0,
+        sin_rotation * transformed_center.0 + cos_rotation * transformed_center.1 + midpoint.1,
+    );
+
+    let start_vector = (
+        (transformed.0 - transformed_center.0) / radius_x,
+        (transformed.1 - transformed_center.1) / radius_y,
+    );
+    let end_vector = (
+        (-transformed.0 - transformed_center.0) / radius_x,
+        (-transformed.1 - transformed_center.1) / radius_y,
+    );
+    let start_angle = start_vector.1.atan2(start_vector.0);
+    let mut sweep_angle = (start_vector.0 * end_vector.1 - start_vector.1 * end_vector.0)
+        .atan2(start_vector.0 * end_vector.0 + start_vector.1 * end_vector.1);
+    if !sweep && sweep_angle > 0.0 {
+        sweep_angle -= std::f64::consts::TAU;
+    } else if sweep && sweep_angle < 0.0 {
+        sweep_angle += std::f64::consts::TAU;
+    }
+
+    let resolved = [
+        center.0 as f32,
+        center.1 as f32,
+        radius_x as f32,
+        radius_y as f32,
+        rotation as f32,
+        start_angle as f32,
+        (start_angle + sweep_angle) as f32,
+    ];
+    if !resolved.iter().all(|value| value.is_finite()) {
+        return None;
+    }
+    append_rotated_ellipse(
+        segments,
+        (resolved[0], resolved[1]),
+        (resolved[2], resolved[3]),
+        resolved[4],
+        resolved[5],
+        resolved[6],
+    );
+    Some(())
+}
+
 fn append_ellipse(
     segments: &mut Vec<MotionSegment>,
     center: MotionPoint,
@@ -720,30 +858,43 @@ fn append_ellipse(
     start_angle: f32,
     end_angle: f32,
 ) {
+    append_rotated_ellipse(segments, center, radii, 0.0, start_angle, end_angle);
+}
+
+fn append_rotated_ellipse(
+    segments: &mut Vec<MotionSegment>,
+    center: MotionPoint,
+    radii: MotionPoint,
+    rotation: f32,
+    start_angle: f32,
+    end_angle: f32,
+) {
     if !center.0.is_finite()
         || !center.1.is_finite()
         || !radii.0.is_finite()
         || !radii.1.is_finite()
+        || !rotation.is_finite()
         || radii.0 <= 0.0
         || radii.1 <= 0.0
     {
         return;
     }
-    flatten_ellipse(segments, center, radii, start_angle, end_angle, 0);
+    flatten_ellipse(segments, center, radii, rotation, start_angle, end_angle, 0);
 }
 
 fn flatten_ellipse(
     segments: &mut Vec<MotionSegment>,
     center: MotionPoint,
     radii: MotionPoint,
+    rotation: f32,
     start_angle: f32,
     end_angle: f32,
     depth: u8,
 ) {
-    let start = ellipse_point(center, radii, start_angle);
-    let end = ellipse_point(center, radii, end_angle);
+    let start = ellipse_point(center, radii, start_angle, rotation);
+    let end = ellipse_point(center, radii, end_angle, rotation);
     let middle_angle = (start_angle + end_angle) * 0.5;
-    let middle = ellipse_point(center, radii, middle_angle);
+    let middle = ellipse_point(center, radii, middle_angle, rotation);
     if depth == MOTION_CURVE_MAX_DEPTH
         || point_line_distance(middle, start, end) <= MOTION_CURVE_FLATNESS
     {
@@ -754,6 +905,7 @@ fn flatten_ellipse(
             MotionCurve::Ellipse {
                 center,
                 radii,
+                rotation,
                 start_angle,
                 end_angle,
             },
@@ -764,17 +916,33 @@ fn flatten_ellipse(
         segments,
         center,
         radii,
+        rotation,
         start_angle,
         middle_angle,
         depth + 1,
     );
-    flatten_ellipse(segments, center, radii, middle_angle, end_angle, depth + 1);
+    flatten_ellipse(
+        segments,
+        center,
+        radii,
+        rotation,
+        middle_angle,
+        end_angle,
+        depth + 1,
+    );
 }
 
-fn ellipse_point(center: MotionPoint, radii: MotionPoint, angle: f32) -> MotionPoint {
+fn ellipse_point(
+    center: MotionPoint,
+    radii: MotionPoint,
+    angle: f32,
+    rotation: f32,
+) -> MotionPoint {
+    let local = (radii.0 * angle.cos(), radii.1 * angle.sin());
+    let (sin, cos) = rotation.sin_cos();
     (
-        center.0 + radii.0 * angle.cos(),
-        center.1 + radii.1 * angle.sin(),
+        center.0 + cos * local.0 - sin * local.1,
+        center.1 + sin * local.0 + cos * local.1,
     )
 }
 
@@ -1331,6 +1499,207 @@ mod tests {
         assert!((x - 5.0).abs() < 0.001, "{x}");
         assert!((y - 10.0).abs() < 0.001, "{y}");
         assert!((angle - 90.0).abs() < 0.001, "{angle}");
+
+        let arc = |from, to, radius_x, radius_y, rotation, large_arc, sweep| {
+            OffsetPathValue::Path(vec![
+                MotionPathCommandValue::MoveTo(from),
+                MotionPathCommandValue::ArcTo {
+                    radius_x: StyleNumber::new(radius_x),
+                    radius_y: StyleNumber::new(radius_y),
+                    x_axis_rotation: StyleNumber::new(rotation),
+                    large_arc,
+                    sweep,
+                    to,
+                },
+            ])
+        };
+        let upper_arc = arc(
+            point(0.0, 0.0),
+            point(100.0, 0.0),
+            50.0,
+            50.0,
+            0.0,
+            false,
+            true,
+        );
+        let (x, y, angle) = motion_path_state(&upper_arc, 0.5, 1.0, 1.0).unwrap();
+        assert!((x - 50.0).abs() < 0.001, "{x}");
+        assert!((y + 50.0).abs() < 0.001, "{y}");
+        assert!(angle.abs() < 0.001, "{angle}");
+
+        let lower_arc = arc(
+            point(0.0, 0.0),
+            point(100.0, 0.0),
+            50.0,
+            50.0,
+            0.0,
+            false,
+            false,
+        );
+        let (x, y, angle) = motion_path_state(&lower_arc, 0.5, 1.0, 1.0).unwrap();
+        assert!((x - 50.0).abs() < 0.001, "{x}");
+        assert!((y - 50.0).abs() < 0.001, "{y}");
+        assert!((angle - 180.0).abs() < 0.001, "{angle}");
+
+        let rotated_arc = arc(
+            point(0.0, -50.0),
+            point(0.0, 50.0),
+            50.0,
+            20.0,
+            90.0,
+            false,
+            true,
+        );
+        let (x, y, angle) = motion_path_state(&rotated_arc, 0.5, 1.0, 1.0).unwrap();
+        assert!((x - 20.0).abs() < 0.001, "{x}");
+        assert!(y.abs() < 0.001, "{y}");
+        assert!((angle - 90.0).abs() < 0.001, "{angle}");
+
+        let corrected_arc = arc(
+            point(0.0, 0.0),
+            point(100.0, 0.0),
+            -10.0,
+            -10.0,
+            0.0,
+            false,
+            true,
+        );
+        let (x, y, _) = motion_path_state(&corrected_arc, 0.5, 1.0, 1.0).unwrap();
+        assert!((x - 50.0).abs() < 0.001, "{x}");
+        assert!((y + 50.0).abs() < 0.001, "{y}");
+
+        let large_arc = arc(
+            point(0.0, 0.0),
+            point(80.0, 0.0),
+            50.0,
+            50.0,
+            0.0,
+            true,
+            true,
+        );
+        let (x, y, angle) = motion_path_state(&large_arc, 0.5, 1.0, 1.0).unwrap();
+        assert!((x - 40.0).abs() < 0.001, "{x}");
+        assert!((y + 80.0).abs() < 0.001, "{y}");
+        assert!(angle.abs().min((angle - 360.0).abs()) < 0.001, "{angle}");
+
+        let reverse_large_arc = arc(
+            point(0.0, 0.0),
+            point(80.0, 0.0),
+            50.0,
+            50.0,
+            0.0,
+            true,
+            false,
+        );
+        assert!(motion_path_state(&reverse_large_arc, 0.5, 1.0, 1.0).is_some());
+
+        let line_arc = arc(
+            point(0.0, 0.0),
+            point(100.0, 0.0),
+            0.0,
+            20.0,
+            0.0,
+            false,
+            true,
+        );
+        let (x, y, angle) = motion_path_state(&line_arc, 0.5, 1.0, 1.0).unwrap();
+        assert_eq!((x, y, angle), (50.0, 0.0, 0.0));
+
+        let other_line_arc = arc(
+            point(0.0, 0.0),
+            point(100.0, 0.0),
+            20.0,
+            0.0,
+            0.0,
+            false,
+            true,
+        );
+        let (x, y, angle) = motion_path_state(&other_line_arc, 0.5, 1.0, 1.0).unwrap();
+        assert_eq!((x, y, angle), (50.0, 0.0, 0.0));
+
+        let omitted_arc = OffsetPathValue::Path(vec![
+            MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+            MotionPathCommandValue::ArcTo {
+                radius_x: StyleNumber::new(10.0),
+                radius_y: StyleNumber::new(10.0),
+                x_axis_rotation: StyleNumber::new(0.0),
+                large_arc: true,
+                sweep: true,
+                to: point(0.0, 0.0),
+            },
+            MotionPathCommandValue::LineTo(point(100.0, 0.0)),
+        ]);
+        let (x, y, angle) = motion_path_state(&omitted_arc, 0.5, 1.0, 1.0).unwrap();
+        assert_eq!((x, y, angle), (50.0, 0.0, 0.0));
+
+        for invalid_arc in [
+            OffsetPathValue::Path(vec![MotionPathCommandValue::ArcTo {
+                radius_x: StyleNumber::new(1.0),
+                radius_y: StyleNumber::new(1.0),
+                x_axis_rotation: StyleNumber::new(0.0),
+                large_arc: false,
+                sweep: true,
+                to: point(1.0, 0.0),
+            }]),
+            arc(
+                point(0.0, 0.0),
+                point(f32::NAN, 0.0),
+                1.0,
+                1.0,
+                0.0,
+                false,
+                true,
+            ),
+            arc(
+                point(0.0, 0.0),
+                point(1.0, 0.0),
+                f32::NAN,
+                1.0,
+                0.0,
+                false,
+                true,
+            ),
+            arc(
+                point(0.0, 0.0),
+                point(1.0, 0.0),
+                1.0,
+                f32::NAN,
+                0.0,
+                false,
+                true,
+            ),
+            arc(
+                point(0.0, 0.0),
+                point(1.0, 0.0),
+                1.0,
+                1.0,
+                f32::NAN,
+                false,
+                true,
+            ),
+            arc(
+                point(f32::MAX, -1.0),
+                point(f32::MAX, 1.0),
+                f32::MAX,
+                f32::MAX,
+                0.0,
+                true,
+                true,
+            ),
+        ] {
+            assert_eq!(motion_path_state(&invalid_arc, 0.5, 1.0, 1.0), None);
+        }
+
+        let mut invalid_rotated_segments = Vec::new();
+        append_rotated_ellipse(
+            &mut invalid_rotated_segments,
+            (0.0, 0.0),
+            (10.0, 5.0),
+            f32::NAN,
+            0.0,
+            std::f32::consts::TAU,
+        );
+        assert!(invalid_rotated_segments.is_empty());
 
         let circle = OffsetPathValue::Circle {
             radius: ComputedLengthPercentage::new(0.0, 0.5),

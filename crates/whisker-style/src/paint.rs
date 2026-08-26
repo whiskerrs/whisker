@@ -800,6 +800,28 @@ fn valid_offset_path(commands: &[MotionPathCommandValue]) -> bool {
                     + (to.0 - control2.0).hypot(to.1 - control2.1);
                 current = Some(to);
             }
+            MotionPathCommandValue::ArcTo {
+                radius_x,
+                radius_y,
+                x_axis_rotation,
+                to,
+                ..
+            } => {
+                let Some(from) = current else {
+                    return false;
+                };
+                if !radius_x.get().is_finite()
+                    || !radius_y.get().is_finite()
+                    || !x_axis_rotation.get().is_finite()
+                    || !to.x.get().is_finite()
+                    || !to.y.get().is_finite()
+                {
+                    return false;
+                }
+                let to = (to.x.get(), to.y.get());
+                total_length += (to.0 - from.0).hypot(to.1 - from.1);
+                current = Some(to);
+            }
             MotionPathCommandValue::Close => {
                 let (Some(from), Some(to)) = (current, subpath_start) else {
                     return false;
@@ -1765,6 +1787,14 @@ mod tests {
                 control2: point(80.0, 10.0),
                 to: point(90.0, 0.0),
             },
+            MotionPathCommandValue::ArcTo {
+                radius_x: number(25.0),
+                radius_y: number(10.0),
+                x_axis_rotation: number(30.0),
+                large_arc: true,
+                sweep: false,
+                to: point(100.0, 20.0),
+            },
         ];
         let path = OffsetPathValue::Path(commands.clone());
         let resolved = crate::resolve_style(
@@ -1948,6 +1978,14 @@ mod tests {
                 control2: point(2.0, 2.0),
                 to: point(3.0, 3.0),
             }],
+            vec![MotionPathCommandValue::ArcTo {
+                radius_x: number(1.0),
+                radius_y: number(1.0),
+                x_axis_rotation: number(0.0),
+                large_arc: false,
+                sweep: true,
+                to: point(3.0, 3.0),
+            }],
             vec![MotionPathCommandValue::Close],
             vec![MotionPathCommandValue::MoveTo(point(f32::NAN, 0.0))],
             vec![
@@ -1967,6 +2005,61 @@ mod tests {
                     control1: point(f32::NAN, 0.0),
                     control2: point(1.0, 1.0),
                     to: point(2.0, 2.0),
+                },
+            ],
+            vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::ArcTo {
+                    radius_x: number(f32::NAN),
+                    radius_y: number(1.0),
+                    x_axis_rotation: number(0.0),
+                    large_arc: false,
+                    sweep: true,
+                    to: point(2.0, 2.0),
+                },
+            ],
+            vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::ArcTo {
+                    radius_x: number(1.0),
+                    radius_y: number(f32::NAN),
+                    x_axis_rotation: number(0.0),
+                    large_arc: false,
+                    sweep: true,
+                    to: point(2.0, 2.0),
+                },
+            ],
+            vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::ArcTo {
+                    radius_x: number(1.0),
+                    radius_y: number(1.0),
+                    x_axis_rotation: number(f32::NAN),
+                    large_arc: false,
+                    sweep: true,
+                    to: point(2.0, 2.0),
+                },
+            ],
+            vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::ArcTo {
+                    radius_x: number(1.0),
+                    radius_y: number(1.0),
+                    x_axis_rotation: number(0.0),
+                    large_arc: false,
+                    sweep: true,
+                    to: point(f32::NAN, 2.0),
+                },
+            ],
+            vec![
+                MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+                MotionPathCommandValue::ArcTo {
+                    radius_x: number(1.0),
+                    radius_y: number(1.0),
+                    x_axis_rotation: number(0.0),
+                    large_arc: false,
+                    sweep: true,
+                    to: point(2.0, f32::NAN),
                 },
             ],
             vec![

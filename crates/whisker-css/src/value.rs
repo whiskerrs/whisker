@@ -51,7 +51,7 @@ impl ToCss for BackdropFilter {
 
 // ---------- Motion path ----------
 
-/// One absolute point in an `offset-path: path()` polyline.
+/// One absolute point in an `offset-path: path()` value.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MotionPathPoint {
     /// Horizontal logical-pixel coordinate.
@@ -67,7 +67,7 @@ impl MotionPathPoint {
     }
 }
 
-/// One command in a polyline `offset-path: path()` value.
+/// One command in an absolute SVG `offset-path: path()` value.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MotionPathCommand {
     /// Start a new subpath.
@@ -90,6 +90,21 @@ pub enum MotionPathCommand {
         /// Segment endpoint.
         to: MotionPathPoint,
     },
+    /// Add an absolute SVG elliptical arc segment.
+    ArcTo {
+        /// Horizontal ellipse radius.
+        radius_x: f32,
+        /// Vertical ellipse radius.
+        radius_y: f32,
+        /// Clockwise rotation of the ellipse x axis, in degrees.
+        x_axis_rotation: f32,
+        /// Select the arc spanning at least 180 degrees.
+        large_arc: bool,
+        /// Sweep through increasing angles.
+        sweep: bool,
+        /// Segment endpoint.
+        to: MotionPathPoint,
+    },
     /// Close the current subpath.
     Close,
 }
@@ -108,7 +123,7 @@ pub struct InsetPath {
 pub enum OffsetPath {
     /// Disable motion-path positioning.
     None,
-    /// Follow an absolute polyline path.
+    /// Follow an absolute SVG path.
     Path(Vec<MotionPathCommand>),
     /// Follow a circle resolved against the node border box.
     Circle {
@@ -135,7 +150,7 @@ pub enum OffsetPath {
 }
 
 impl OffsetPath {
-    /// Creates a polyline `path()` from absolute commands.
+    /// Creates a `path()` from absolute SVG commands.
     pub fn path(commands: impl Into<Vec<MotionPathCommand>>) -> Self {
         Self::Path(commands.into())
     }
@@ -260,6 +275,29 @@ impl ToCss for OffsetPath {
                             write_number(dest, control2.x)?;
                             dest.write_char(' ')?;
                             write_number(dest, control2.y)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, to.y)?;
+                        }
+                        MotionPathCommand::ArcTo {
+                            radius_x,
+                            radius_y,
+                            x_axis_rotation,
+                            large_arc,
+                            sweep,
+                            to,
+                        } => {
+                            dest.write_str("A ")?;
+                            write_number(dest, *radius_x)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, *radius_y)?;
+                            dest.write_char(' ')?;
+                            write_number(dest, *x_axis_rotation)?;
+                            dest.write_char(' ')?;
+                            dest.write_char(if *large_arc { '1' } else { '0' })?;
+                            dest.write_char(' ')?;
+                            dest.write_char(if *sweep { '1' } else { '0' })?;
                             dest.write_char(' ')?;
                             write_number(dest, to.x)?;
                             dest.write_char(' ')?;

@@ -85,6 +85,21 @@ impl ToStyleValue for OffsetPath {
                             control2: point(control2),
                             to: point(to),
                         },
+                        MotionPathCommand::ArcTo {
+                            radius_x,
+                            radius_y,
+                            x_axis_rotation,
+                            large_arc,
+                            sweep,
+                            to,
+                        } => MotionPathCommandValue::ArcTo {
+                            radius_x: StyleNumber::new(*radius_x),
+                            radius_y: StyleNumber::new(*radius_y),
+                            x_axis_rotation: StyleNumber::new(*x_axis_rotation),
+                            large_arc: *large_arc,
+                            sweep: *sweep,
+                            to: point(to),
+                        },
                         MotionPathCommand::Close => MotionPathCommandValue::Close,
                     })
                     .collect(),

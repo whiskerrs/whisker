@@ -832,8 +832,9 @@ children; Rust prepends its projection to the node transform before this same
 flat-plane normalization. Browser-style parent perspective,
 `perspective-origin`, and shared `preserve-3d` descendant spaces are outside
 this subset rather than silently changing semantics on any Host. The initial
-Lynx motion-path slice supports absolute `path()` lines and Bezier curves (`M`,
-`L`, `Q`, `C`, `Z`) plus border-box-relative `circle()`, `ellipse()`, and
+Lynx motion-path slice supports absolute `path()` lines, Bezier curves, and SVG
+elliptical arcs (`M`, `L`, `Q`, `C`, `A`, `Z`) plus border-box-relative
+`circle()`, `ellipse()`, and
 possibly-rounded `inset()`, number/percentage `offset-distance`, and
 `offset-rotate: auto` or a fixed angle. Rust adaptively measures curves,
 resolves their point and analytic tangent, preserves Lynx's post-transform path
@@ -846,8 +847,11 @@ preserving its Host divergence. `inset()` proportionally reduces opposing
 insets that exceed the box, applies CSS corner-radius overlap normalization,
 and starts after the top-left radius before proceeding clockwise. This common
 starting point deliberately avoids the different defaults of Lynx Android's
-Skia path and Lynx iOS's Core Graphics path. SVG arcs remain a pending
-follow-up slice.
+Skia path and Lynx iOS's Core Graphics path. SVG arcs are converted from
+endpoint to center form in Rust. Negative radii become absolute, undersized
+radii are scaled to fit the endpoints, a zero radius becomes a line, and equal
+endpoints omit the segment. Rotated arcs use adaptive length measurement and
+an analytic tangent before the existing `SetTransform` is emitted.
 
 The final opcode set may combine common operations for compactness. The
 semantic separation matters because it enables dirty classification,
