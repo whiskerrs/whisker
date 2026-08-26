@@ -464,9 +464,13 @@ impl ComputedLayoutStyle {
 pub(crate) fn resolve_layout_style(
     specified: &SpecifiedStyle,
     font_size: f32,
+    inherited_direction: DirectionValue,
     environment: StyleEnvironment,
 ) -> Result<ComputedLayoutStyle, StyleResolutionError> {
-    let mut style = ComputedLayoutStyle::default();
+    let mut style = ComputedLayoutStyle {
+        direction: inherited_direction,
+        ..ComputedLayoutStyle::default()
+    };
     let declarations = LayoutDeclarations::from_specified(specified);
 
     style.display = copied(
@@ -1520,6 +1524,7 @@ mod tests {
         resolve_layout_style(
             specified,
             20.0,
+            DirectionValue::Ltr,
             StyleEnvironment::new(750.0, 400.0, 2.0, 10.0),
         )
     }
@@ -2557,6 +2562,7 @@ mod tests {
                 ))),
             ),
             f32::MAX,
+            DirectionValue::Ltr,
             StyleEnvironment::default(),
         )
         .unwrap_err();
