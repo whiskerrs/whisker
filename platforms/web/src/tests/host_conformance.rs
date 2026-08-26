@@ -1666,7 +1666,19 @@ impl Driver {
                                 )
                             })
                         })
-                        .or_else(|| expected.iter().rev().find(|node| node.opacity.is_some()))
+                        .or_else(|| {
+                            let painted = opaque_hit.and_then(|id| {
+                                expected.iter().find(|node| node.id.to_string() == *id)
+                            })?;
+                            hit_nodes
+                                .iter()
+                                .any(|id| {
+                                    expected.iter().any(|node| {
+                                        node.id.to_string() == *id && node.opacity.is_some()
+                                    })
+                                })
+                                .then_some(painted)
+                        })
                         .or_else(|| {
                             expected.iter().find(|node| {
                                 !node.background_layers.is_empty()
@@ -1922,6 +1934,12 @@ fn fixture(path: &str) -> &'static str {
         }
         "wpt/css/css-color/t32-opacity-basic-0.6-a.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-color/t32-opacity-basic-0.6-a.json"
+        ),
+        "wpt/css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.json"
+        ),
+        "wpt/css/css-color/t32-opacity-offscreen-with-alpha-c.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-color/t32-opacity-offscreen-with-alpha-c.json"
         ),
         "wpt/css/CSS2/visufx/visibility-004.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/visufx/visibility-004.json"

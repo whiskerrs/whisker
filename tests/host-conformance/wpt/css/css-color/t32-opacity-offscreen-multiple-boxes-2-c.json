@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "id": "wpt.css-color.opacity-offscreen-multiple-boxes-2",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-color/t32-opacity-offscreen-multiple-boxes-2-c.xht",
+    "reference_path": "css/css-color/t32-opacity-offscreen-multiple-boxes-2-c-ref.html",
+    "license": "BSD-3-Clause",
+    "assertion": "Opacity is group opacity over elements rather than independent opacity over each painted child box.",
+    "adaptation": "Two opaque blue children overlap inside a parent with opacity 0.4 over white. Both the single-child and overlapping regions must remain rgb(153, 153, 255); applying 0.4 independently to each child would make the overlap darker."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 70.0, "height": 60.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 70.0, 60.0],
+            "background": { "kind": "named", "value": "white" }
+          },
+          {
+            "id": 2,
+            "parent": null,
+            "rect": [10.0, 10.0, 50.0, 40.0],
+            "background": { "kind": "named", "value": "transparent" },
+            "opacity": 0.4
+          },
+          {
+            "id": 3,
+            "parent": 2,
+            "rect": [0.0, 0.0, 30.0, 30.0],
+            "background": { "kind": "named", "value": "blue" }
+          },
+          {
+            "id": 4,
+            "parent": 2,
+            "rect": [10.0, 10.0, 30.0, 30.0],
+            "background": { "kind": "named", "value": "blue" }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          {
+            "point": [15.0, 15.0],
+            "color": { "kind": "srgba", "red": 153, "green": 153, "blue": 255, "alpha": 1.0 },
+            "tolerance": 18
+          },
+          {
+            "point": [25.0, 25.0],
+            "color": { "kind": "srgba", "red": 153, "green": 153, "blue": 255, "alpha": 1.0 },
+            "tolerance": 18
+          }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}
