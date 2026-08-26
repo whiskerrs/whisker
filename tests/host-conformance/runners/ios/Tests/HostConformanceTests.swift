@@ -107,6 +107,20 @@ final class HostConformanceTests: XCTestCase {
         )
     }
 
+    func testUIKitTouchTypesMapToProtocolPointerKinds() {
+        XCTAssertEqual(hostPointerKind(for: .direct), .touch)
+        XCTAssertEqual(hostPointerKind(for: .pencil), .pen)
+        XCTAssertEqual(hostPointerKind(for: .indirect), .unknown)
+        if #available(iOS 13.4, *) {
+            XCTAssertEqual(hostPointerKind(for: .indirectPointer), .mouse)
+        }
+        XCTAssertEqual(HostPointerKind.touch.changedButton(for: .down), -1)
+        XCTAssertEqual(HostPointerKind.mouse.changedButton(for: .down), 0)
+        XCTAssertEqual(HostPointerKind.mouse.changedButton(for: .up), 0)
+        XCTAssertEqual(HostPointerKind.pen.changedButton(for: .down), 0)
+        XCTAssertEqual(HostPointerKind.pen.changedButton(for: .cancel), -1)
+    }
+
     func testContentBoxRadiiUseTheCompleteInsetFromTheBorderBox() {
         XCTAssertEqual(
             insetCornerRadii(
@@ -886,9 +900,7 @@ private final class Driver {
         case "cancel": .cancel
         default: throw Failure("unknown pointer event")
         }
-        guard try string(command, "pointer_kind") == "touch" else {
-            throw Failure("iOS touch fixture requires pointer_kind=touch")
-        }
+        let pointerKind = try fixturePointerKind(command)
         var observed: WhiskerPointerDispatch?
         whiskerPointerDispatchObserver = { observed = $0 }
         defer { whiskerPointerDispatchObserver = nil }
@@ -896,6 +908,7 @@ private final class Driver {
             timestampMs: try number(command, "timestamp_ms"),
             event: event,
             pointerID: UInt64(try number(command, "pointer_id")),
+            pointerKind: pointerKind,
             x: Float(try number(command, "x")),
             y: Float(try number(command, "y"))
         )
@@ -903,7 +916,7 @@ private final class Driver {
         XCTAssertEqual(input.timestampMs, try number(command, "timestamp_ms"))
         XCTAssertEqual(input.event, event.rawValue)
         XCTAssertNotEqual(input.pointerID, 0)
-        XCTAssertEqual(input.pointerKind, UInt32(WHISKER_POINTER_TOUCH))
+        XCTAssertEqual(input.pointerKind, pointerKind.rawValue)
         XCTAssertEqual(input.buttons, UInt32(try number(command, "buttons")))
         XCTAssertEqual(input.changedButton, Int16(try number(command, "changed_button")))
         pointerInput = input
@@ -918,15 +931,23 @@ private final class Driver {
         case "cancel": .cancel
         default: throw Failure("unknown checkpoint pointer event")
         }
-        guard try string(command, "pointer_kind") == "touch" else {
-            throw Failure("iOS touch checkpoint requires pointer_kind=touch")
-        }
+        let pointerKind = try fixturePointerKind(command)
         XCTAssertEqual(input.event, event.rawValue)
         XCTAssertEqual(input.pointerID, UInt64(try number(command, "pointer_id")))
-        XCTAssertEqual(input.pointerKind, UInt32(WHISKER_POINTER_TOUCH))
+        XCTAssertEqual(input.pointerKind, pointerKind.rawValue)
         XCTAssertEqual(input.x, Float(try number(command, "x")))
         XCTAssertEqual(input.y, Float(try number(command, "y")))
         checkpoint = Pixels(width: 0, height: 0, bytes: [])
+    }
+
+    private func fixturePointerKind(_ command: [String: Any]) throws -> HostPointerKind {
+        switch try string(command, "pointer_kind") {
+        case "mouse": .mouse
+        case "touch": .touch
+        case "pen": .pen
+        case "unknown": .unknown
+        default: throw Failure("unknown pointer kind")
+        }
     }
 
     private func registerRasterResource(_ command: [String: Any]) throws {

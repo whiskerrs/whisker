@@ -26,11 +26,10 @@ use whisker_protocol::{
     MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap,
     MeasurementKey, MeasurementPayload, MeasurementRequest, MeasurementResponse, NodeId, Operation,
     OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius, PaintCorners,
-    PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand, PointerId,
-    PointerInput, PointerKind, ProtocolVersion, RadialGradientExtent, RadialGradientShape,
-    ResourceCommand, ResourceId, ResourceKind, ResourceRequest, ResourceSource, SurfaceId,
-    TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform,
-    Visibility, WhiskerValue,
+    PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand, PointerKind,
+    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceId,
+    ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent, TextMeasurePayload,
+    TextMeasureStyle, TextPaint, TextShadow, Transform, Visibility,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
@@ -41,6 +40,7 @@ use crate::gpu::{
     render_clipped_box_primitives_offscreen,
     render_clipped_box_primitives_with_backdrops_offscreen,
 };
+use crate::input::{DesktopPointerAdapter, DesktopPointerEvent, DesktopPointerPhase};
 use crate::paint::box_paint::{
     BoxPrimitiveKind, background_gradient_primitive, lower_box, resolve_box_geometry,
 };
@@ -493,6 +493,7 @@ struct Driver {
     scale: f32,
     text: NativeTextHost,
     measurement_responses: Vec<MeasurementResponse>,
+    pointer: Option<DesktopPointerAdapter>,
     input: RecordingInputSink,
     raster_resources: std::collections::HashMap<ResourceId, RasterResource>,
     resource_service: DesktopResourceService,
@@ -555,6 +556,7 @@ impl Driver {
                 .unwrap(),
             ),
             measurement_responses: Vec::new(),
+            pointer: None,
             input: RecordingInputSink::default(),
             raster_resources: std::collections::HashMap::new(),
             resource_service: DesktopResourceService::new(std::path::PathBuf::new(), || {}),
@@ -573,6 +575,7 @@ impl Driver {
                     assert!(*width > 0.0 && *height > 0.0 && *scale > 0.0);
                     let surface = SurfaceId::new(1).unwrap();
                     self.surface = Some(surface);
+                    self.pointer = Some(DesktopPointerAdapter::new(surface));
                     self.scene = Some(desktop_scene(surface));
                     self.logical_size = [*width, *height];
                     self.scale = *scale;
@@ -1603,24 +1606,31 @@ impl Driver {
         buttons: u32,
         changed_button: i16,
     ) {
-        let surface = self.surface.expect("attach_surface precedes emit_pointer");
-        self.input.dispatch(InputEvent {
-            surface,
-            timestamp_ms,
-            kind: pointer_event_protocol(kind),
-            pointer: Some(PointerInput {
-                id: PointerId::new(pointer_id).expect("scenario pointer id is non-zero"),
-                kind: pointer_kind_protocol(pointer_kind),
-                position: InputPoint {
-                    x: position[0],
-                    y: position[1],
-                },
-                buttons,
-                changed_button,
-            }),
-            target: None,
-            detail: WhiskerValue::Null,
-        });
+        let adapter = self
+            .pointer
+            .as_ref()
+            .expect("attach_surface precedes emit_pointer");
+        self.input.dispatch(
+            adapter
+                .pointer_event(DesktopPointerEvent {
+                    timestamp_ms,
+                    phase: match kind {
+                        PointerEventFixture::Down => DesktopPointerPhase::Down,
+                        PointerEventFixture::Move => DesktopPointerPhase::Move,
+                        PointerEventFixture::Up => DesktopPointerPhase::Up,
+                        PointerEventFixture::Cancel => DesktopPointerPhase::Cancel,
+                    },
+                    pointer_id,
+                    pointer_kind: pointer_kind_protocol(pointer_kind),
+                    position: InputPoint {
+                        x: position[0],
+                        y: position[1],
+                    },
+                    buttons,
+                    changed_button,
+                })
+                .expect("scenario pointer event passes the production Desktop adapter"),
+        );
     }
 
     fn check_input(

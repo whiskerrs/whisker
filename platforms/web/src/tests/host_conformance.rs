@@ -38,7 +38,9 @@ use whisker_protocol::{
 };
 use whisker_style::StyleEnvironment;
 
-use crate::input::{WebPointerEvent, WebPointerPhase, dispatch_pointer};
+use crate::input::{
+    WebPointerEvent, WebPointerPhase, dispatch_pointer, pointer_kind, stable_pointer_id,
+};
 use crate::measure::text::DomMeasurementProvider;
 use crate::module_api::built_in_element_factories;
 use crate::scene::frame_sink::DomFrameSink;
@@ -48,6 +50,20 @@ const MANIFEST: &str = include_str!("../../../../tests/host-conformance/manifest
 const RASTER_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAF0lEQVR4nAXBAQEAAACCIKb33EBkQpUOQdYIeRyCeLsAAAAASUVORK5CYII=";
 
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+#[wasm_bindgen_test]
+fn browser_pointer_metadata_maps_to_protocol_values() {
+    assert_eq!(pointer_kind("mouse"), PointerKind::Mouse);
+    assert_eq!(pointer_kind("touch"), PointerKind::Touch);
+    assert_eq!(pointer_kind("pen"), PointerKind::Pen);
+    assert_eq!(pointer_kind("future-pointer"), PointerKind::Unknown);
+
+    assert_eq!(stable_pointer_id(10), 10);
+    assert_ne!(stable_pointer_id(0), 0);
+    assert_ne!(stable_pointer_id(-1), 0);
+    assert_ne!(stable_pointer_id(0), stable_pointer_id(-1));
+    assert_eq!(stable_pointer_id(-1), stable_pointer_id(-1));
+}
 
 #[wasm_bindgen_test]
 fn padded_parent_preserves_child_border_box_coordinates() {
@@ -780,15 +796,15 @@ impl Driver {
                     y,
                     buttons,
                     changed_button,
-                } => self.emit_pointer(
-                    *event,
-                    *pointer_kind,
-                    *pointer_id,
-                    *timestamp_ms,
-                    [*x, *y],
-                    *buttons,
-                    *changed_button,
-                ),
+                } => self.emit_pointer(WebPointerEvent {
+                    phase: fixture_pointer_phase(*event),
+                    timestamp_ms: *timestamp_ms,
+                    pointer_id: *pointer_id,
+                    pointer_kind: fixture_pointer_kind_source(*pointer_kind),
+                    client_position: whisker_protocol::InputPoint { x: *x, y: *y },
+                    buttons: *buttons,
+                    changed_button: *changed_button,
+                }),
                 Command::CheckpointInput {
                     event,
                     pointer_kind,
@@ -800,16 +816,7 @@ impl Driver {
         }
     }
 
-    fn emit_pointer(
-        &mut self,
-        phase: whisker_host_conformance::PointerEventFixture,
-        pointer_kind: whisker_host_conformance::PointerKindFixture,
-        pointer_id: u64,
-        timestamp_ms: f64,
-        position: [f32; 2],
-        buttons: u32,
-        changed_button: i16,
-    ) {
+    fn emit_pointer(&mut self, mut input: WebPointerEvent) {
         if self.input_runtime.is_none() {
             let (width, height, scale) = self
                 .attached_surface
@@ -824,23 +831,16 @@ impl Driver {
             self.input_runtime = Some(runtime);
         }
         let root_origin = whisker_protocol::InputPoint { x: 13.0, y: 7.0 };
-        let event = dispatch_pointer(
-            self.input_runtime.as_ref().unwrap(),
-            root_origin,
-            WebPointerEvent {
-                phase: fixture_pointer_phase(phase),
-                timestamp_ms,
-                pointer_id,
-                pointer_kind: fixture_pointer_kind_source(pointer_kind),
-                client_position: whisker_protocol::InputPoint {
-                    x: root_origin.x + position[0],
-                    y: root_origin.y + position[1],
-                },
-                buttons,
-                changed_button,
-            },
-        )
-        .expect("fixture pointer dispatch succeeds through the production Web path");
+        let local_position = input.client_position;
+        input.client_position.x += root_origin.x;
+        input.client_position.y += root_origin.y;
+        let event = dispatch_pointer(self.input_runtime.as_ref().unwrap(), root_origin, input)
+            .expect("fixture pointer dispatch succeeds through the production Web path");
+        let pointer = event.pointer.expect("pointer fixture has pointer payload");
+        assert_eq!(event.timestamp_ms, input.timestamp_ms);
+        assert_eq!(pointer.position, local_position);
+        assert_eq!(pointer.buttons, input.buttons);
+        assert_eq!(pointer.changed_button, input.changed_button);
         self.last_input = Some(event);
     }
 
@@ -932,7 +932,6 @@ impl Driver {
                         })
                         .collect(),
                     optical_sizing: fixture_font_optical_sizing(font_optical_sizing),
-                    ..TextMeasureStyle::default()
                 },
                 locale: None,
                 direction: MeasureTextDirection::Auto,
@@ -1895,6 +1894,9 @@ fn fixture(path: &str) -> &'static str {
         "core/pointer-input-basic.json" => {
             include_str!("../../../../tests/host-conformance/core/pointer-input-basic.json")
         }
+        "core/pointer-input-kinds.json" => {
+            include_str!("../../../../tests/host-conformance/core/pointer-input-kinds.json")
+        }
         "core/pointer-style-lynx.json" => {
             include_str!("../../../../tests/host-conformance/core/pointer-style-lynx.json")
         }
@@ -2717,7 +2719,6 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
                         whisker_protocol::FontOpticalSizing::None
                     }
                 },
-                ..TextMeasureStyle::default()
             },
             locale: None,
             direction: MeasureTextDirection::Auto,
@@ -2788,7 +2789,6 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
                     color: color(&shadow.color),
                 })
                 .collect(),
-            ..TextPaint::default()
         },
         prepared_content: None,
     }

@@ -582,6 +582,13 @@
       "fixture": "core/pointer-input-basic.json",
       "required_hosts": ["desktop", "web", "android", "ios"],
       "checkpoints": ["input"]
+    },
+    {
+      "id": "host.input.pointer.kinds",
+      "feature": "pointer-input-kinds",
+      "fixture": "core/pointer-input-kinds.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["input"]
     }
   ]
 }
