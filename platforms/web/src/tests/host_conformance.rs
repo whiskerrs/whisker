@@ -506,7 +506,9 @@ impl Driver {
                                     .or_else(|| {
                                         nodes.iter().find_map(|node| {
                                             node.box_shadows.first().map(|shadow| {
-                                                if shadow.spread_radius != 0.0 {
+                                                if shadow.blur_radius != 0.0 {
+                                                    "paint.visual-effects.box-shadow-blur"
+                                                } else if shadow.spread_radius != 0.0 {
                                                     "paint.visual-effects.box-shadow-spread"
                                                 } else {
                                                     "paint.visual-effects.box-shadow-offset"
@@ -1187,6 +1189,9 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-backgrounds/box-shadow-002.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-002.json"
+        ),
+        "wpt/css/css-backgrounds/box-shadow-blur-definition-001.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/box-shadow-blur-definition-001.json"
         ),
         "wpt/css/CSS2/borders/border-right-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-right-003.json"

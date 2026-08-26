@@ -218,6 +218,15 @@ fn rounded_rect_distance(
     return distance;
 }
 
+fn erf_approx(value: f32) -> f32 {
+    let sign = select(-1.0, 1.0, value >= 0.0);
+    let x = abs(value);
+    let t = 1.0 / (1.0 + 0.3275911 * x);
+    let polynomial = (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+        - 0.284496736) * t + 0.254829592) * t;
+    return sign * (1.0 - polynomial * exp(-x * x));
+}
+
 fn shape_coverage(distance: f32) -> f32 {
     let smoothing = max(fwidth(distance), 0.0001);
     return clamp(0.5 - distance / smoothing, 0.0, 1.0);
@@ -506,6 +515,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         input.outer_radii_x,
         input.outer_radii_y,
     );
+    if input.mode < -2.5 {
+        let distance = rounded_rect_distance(
+            input.logical_position,
+            input.inner_rect,
+            input.inner_radii_x,
+            input.inner_radii_y,
+        );
+        let sigma = input.border_widths.x * 0.5;
+        let coverage = 0.5 * (1.0 - erf_approx(distance / (1.41421356237 * sigma)));
+        return vec4<f32>(input.color.rgb, input.color.a * coverage * clip_coverage);
+    }
     let outer_coverage = shape_coverage(outer_distance);
     if input.mode < -1.5 {
         let color = linear_gradient_color(input.draw_index, input.logical_position);

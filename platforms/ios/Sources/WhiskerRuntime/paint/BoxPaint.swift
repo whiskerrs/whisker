@@ -98,7 +98,7 @@ final class HostBoxPainter {
     }
 
     func hardBoxShadowPath(in bounds: CGRect, shadow: HostBoxShadow) -> CGPath? {
-        guard !shadow.inset, shadow.blurRadius == 0 else { return nil }
+        guard !shadow.inset else { return nil }
         let spread = shadow.spreadRadius
         let rect = bounds
             .insetBy(dx: -spread, dy: -spread)

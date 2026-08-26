@@ -1,6 +1,7 @@
 package rs.whisker.runtime.paint
 
 import android.graphics.Canvas
+import android.graphics.BlurMaskFilter
 import android.graphics.Paint
 import android.graphics.RectF
 
@@ -21,7 +22,7 @@ internal fun drawHardBoxShadows(
     val box = geometry ?: return
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     shadows.asReversed().forEach { shadow ->
-        if (shadow.inset || shadow.blurRadius != 0f) return@forEach
+        if (shadow.inset) return@forEach
         val spread = shadow.spreadRadius
         val rect = RectF(
             shadow.offsetX - spread,
@@ -36,6 +37,12 @@ internal fun drawHardBoxShadows(
             rect.height(),
         )
         paint.color = shadow.color
+        paint.maskFilter = if (shadow.blurRadius > 0f) {
+            BlurMaskFilter(shadow.blurRadius / 2f, BlurMaskFilter.Blur.NORMAL)
+        } else {
+            null
+        }
         canvas.drawPath(roundedPath(rect, radii), paint)
     }
+    paint.maskFilter = null
 }

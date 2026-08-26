@@ -123,7 +123,10 @@ final class WhiskerNodeView: UIView {
             boxShadowLayer.mask = nil
             return
         }
-        let layerFrame = shadowPath.boundingBoxOfPath.union(bounds)
+        let blurExtent = shadow.blurRadius * 1.5
+        let layerFrame = shadowPath.boundingBoxOfPath
+            .insetBy(dx: -blurExtent, dy: -blurExtent)
+            .union(bounds)
         var translation = CGAffineTransform(
             translationX: -layerFrame.minX,
             y: -layerFrame.minY
@@ -132,6 +135,11 @@ final class WhiskerNodeView: UIView {
         boxShadowLayer.path = shadowPath.copy(using: &translation)
         boxShadowLayer.fillColor = shadow.color.cgColor
         boxShadowLayer.strokeColor = nil
+        boxShadowLayer.shadowPath = shadowPath.copy(using: &translation)
+        boxShadowLayer.shadowColor = shadow.color.withAlphaComponent(1).cgColor
+        boxShadowLayer.shadowOpacity = Float(shadow.color.cgColor.alpha)
+        boxShadowLayer.shadowOffset = .zero
+        boxShadowLayer.shadowRadius = shadow.blurRadius / 2
 
         let maskPath = CGMutablePath()
         maskPath.addRect(CGRect(origin: .zero, size: layerFrame.size))

@@ -423,7 +423,7 @@ internal class HostScene(
             names.size == values.size / BOX_SHADOW_PACKED_SIZE &&
             values.all(Float::isFinite) &&
             values.indices.step(BOX_SHADOW_PACKED_SIZE).all { offset ->
-                values[offset + 2] == 0f && values[offset + 4] == 0f &&
+                values[offset + 2] >= 0f && values[offset + 4] == 0f &&
                     (values[offset + 5] == 0f || values[offset + 5] == 1f)
             }
     }

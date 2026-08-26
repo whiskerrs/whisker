@@ -26,6 +26,7 @@ pub(crate) struct BoxPrimitive {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BoxPrimitiveKind {
     Fill,
+    BoxShadowBlur,
     LinearGradient,
     BackgroundBorderArea,
     Border,
@@ -35,6 +36,7 @@ impl BoxPrimitiveKind {
     pub(crate) const fn shader_mode(self) -> f32 {
         match self {
             Self::Fill => -1.0,
+            Self::BoxShadowBlur => -3.0,
             Self::LinearGradient => -2.0,
             Self::BackgroundBorderArea => 2.0,
             Self::Border => 1.0,
@@ -185,7 +187,7 @@ pub(crate) fn hard_box_shadow_primitive(
     shadow: &BoxShadow,
     opacity: f32,
 ) -> Option<BoxPrimitive> {
-    if shadow.inset || shadow.blur_radius != 0.0 {
+    if shadow.inset {
         return None;
     }
     let base = resolve_box_geometry(rect, paint);
@@ -210,19 +212,31 @@ pub(crate) fn hard_box_shadow_primitive(
             .map(|value| (value + spread).max(0.0)),
     };
     normalize_resolved_radii(&mut outer_radii, outer_rect);
+    let blur_extent = shadow.blur_radius * 1.5;
+    let draw_rect = LayoutRect {
+        x: outer_rect.x - blur_extent,
+        y: outer_rect.y - blur_extent,
+        width: outer_rect.width + blur_extent * 2.0,
+        height: outer_rect.height + blur_extent * 2.0,
+    };
+    let blurred = shadow.blur_radius > 0.0;
     Some(
         BoxGeometry {
-            outer_rect,
+            outer_rect: if blurred { draw_rect } else { outer_rect },
             outer_radii,
             inner_rect: outer_rect,
             inner_radii: outer_radii,
-            border_widths: [0.0; 4],
+            border_widths: [shadow.blur_radius, 0.0, 0.0, 0.0],
         }
         .primitive(
             gpu_color(&shadow.color, opacity),
             [[0.0; 4]; 4],
             [0.0; 4],
-            BoxPrimitiveKind::Fill,
+            if blurred {
+                BoxPrimitiveKind::BoxShadowBlur
+            } else {
+                BoxPrimitiveKind::Fill
+            },
         ),
     )
 }

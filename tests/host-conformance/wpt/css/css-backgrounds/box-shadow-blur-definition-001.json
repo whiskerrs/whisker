@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.box-shadow-blur-definition-001",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/box-shadow/box-shadow-blur-definition-001.xht",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "Box-shadow blur approximates a Gaussian blur whose standard deviation is half the blur radius.",
+    "adaptation": "A 20px blur is composited over a white parent. Relative luminance samples across a straight edge replace the upstream generated light/dark bound images while preserving the monotonic Gaussian falloff requirement."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 200.0, "height": 200.0, "scale": 1.0 },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [0.0, 0.0, 200.0, 200.0],
+            "background": { "kind": "named", "value": "white" }
+          },
+          {
+            "id": 2,
+            "parent": 1,
+            "rect": [50.0, 50.0, 100.0, 100.0],
+            "background": { "kind": "named", "value": "white" },
+            "box_shadows": [
+              {
+                "offset": [0.0, 0.0],
+                "blur_radius": 20.0,
+                "spread_radius": 0.0,
+                "color": { "kind": "named", "value": "black" }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.visual-effects.box-shadow-blur",
+        "samples": [
+          { "point": [100.0, 100.0], "color": { "kind": "named", "value": "white" }, "tolerance": 5 },
+          { "point": [25.0, 100.0], "color": { "kind": "named", "value": "white" }, "tolerance": 12 }
+        ],
+        "relations": [
+          { "first": [40.0, 100.0], "second": [49.0, 100.0], "relation": "lighter", "minimum_difference": 30 },
+          { "first": [25.0, 100.0], "second": [40.0, 100.0], "relation": "lighter", "minimum_difference": 10 }
+        ]
+      }
+    ]
+  }
+}
