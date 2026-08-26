@@ -13,22 +13,20 @@ use whisker_protocol::{
     TextPaint, TextShadow,
 };
 use whisker_style::{
-    ComputedLineHeight, ComputedStyle, ComputedTextIndent, FontFamilyValue, FontOpticalSizingValue,
-    FontStyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
-    TextOverflowValue, WhiteSpaceValue, WordBreakValue,
+    ComputedLineHeight, ComputedStyle, ComputedTextIndent, DirectionValue, FontFamilyValue,
+    FontOpticalSizingValue, FontStyleValue, TextAlignValue, TextDecorationLineValue,
+    TextDecorationStyleValue, TextOverflowValue, WhiteSpaceValue, WordBreakValue,
 };
 
 use crate::paint::lower_color;
 
-/// Plain UTF-8 text and the shaping behavior not supplied by inherited style.
+/// Plain UTF-8 text and element inputs not supplied by computed style.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlainTextInput {
     /// UTF-8 text after application-level transformations.
     pub text: String,
     /// Optional BCP-47 locale hint.
     pub locale: Option<String>,
-    /// Base shaping direction.
-    pub direction: MeasureTextDirection,
     /// Maximum visible line count.
     pub max_lines: Option<u32>,
     /// Layout behavior if the Host cannot answer synchronously.
@@ -41,7 +39,6 @@ impl PlainTextInput {
         Self {
             text: text.into(),
             locale: None,
-            direction: MeasureTextDirection::Auto,
             max_lines: None,
             pending_policy: PendingMeasurePolicy::Block,
         }
@@ -117,7 +114,10 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &ComputedStyle) -> Lowere
             },
         },
         locale: input.locale.clone(),
-        direction: input.direction,
+        direction: match style.layout().direction {
+            DirectionValue::Ltr => MeasureTextDirection::LeftToRight,
+            DirectionValue::Rtl => MeasureTextDirection::RightToLeft,
+        },
         alignment: match inherited.text_align() {
             TextAlignValue::Start => MeasureTextAlignment::Start,
             TextAlignValue::End => MeasureTextAlignment::End,
@@ -231,7 +231,7 @@ fn metric_style_hash(input: &PlainTextInput, style: &ComputedStyle) -> u64 {
     inherited.text_align().hash(&mut hasher);
     style.text_indent().hash(&mut hasher);
     input.locale.hash(&mut hasher);
-    input.direction.hash(&mut hasher);
+    style.layout().direction.hash(&mut hasher);
     style.white_space().hash(&mut hasher);
     style.word_break().hash(&mut hasher);
     input.max_lines.hash(&mut hasher);
@@ -335,11 +335,14 @@ mod tests {
                 StyleProperty::TextOverflow,
                 StyleValue::TextOverflow(TextOverflowValue::Ellipsis),
             ),
+            StyleDeclaration::new(
+                StyleProperty::Direction,
+                StyleValue::Direction(DirectionValue::Rtl),
+            ),
         ]);
         let input = PlainTextInput {
             text: "مرحبا".into(),
             locale: Some("ar".into()),
-            direction: MeasureTextDirection::RightToLeft,
             max_lines: Some(1),
             pending_policy: PendingMeasurePolicy::RetainPrevious,
         };
@@ -505,12 +508,17 @@ mod tests {
 
     #[test]
     fn oblique_and_left_to_right_variants_are_lowered() {
-        let style = resolved(vec![StyleDeclaration::new(
-            StyleProperty::FontStyle,
-            StyleValue::FontStyle(FontStyleValue::Oblique),
-        )]);
-        let mut input = PlainTextInput::new("variants");
-        input.direction = MeasureTextDirection::LeftToRight;
+        let style = resolved(vec![
+            StyleDeclaration::new(
+                StyleProperty::FontStyle,
+                StyleValue::FontStyle(FontStyleValue::Oblique),
+            ),
+            StyleDeclaration::new(
+                StyleProperty::Direction,
+                StyleValue::Direction(DirectionValue::Ltr),
+            ),
+        ]);
+        let input = PlainTextInput::new("variants");
         let lowered = lower_plain_text(&input, style.computed());
 
         assert_eq!(

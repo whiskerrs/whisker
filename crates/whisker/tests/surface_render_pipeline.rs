@@ -20,9 +20,9 @@ use whisker_engine::RecordingRenderer;
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     CommandId, ElementCommandSchema, ElementEventSchema, ElementMeasurement, ElementPropertySchema,
-    ElementSchema, ElementValueKind, EventId, MeasuredSize, MeasurementMetrics, MeasurementPayload,
-    MeasurementRequest, MeasurementResponse, Operation, PaintColor, PreparedContentId, PropertyId,
-    SurfaceId, WhiskerValue,
+    ElementSchema, ElementValueKind, EventId, MeasureTextDirection, MeasuredSize,
+    MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse, Operation,
+    PaintColor, PreparedContentId, PropertyId, SurfaceId, WhiskerValue,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{LayoutOptions, MeasurementProvider};
@@ -357,6 +357,68 @@ fn render_text_reaches_measured_frame_and_paint_only_delta() {
     ));
     with_installed_renderer(surface.renderer(), || owner.dispose());
     assert_eq!(surface.binding_error(), None);
+}
+
+#[test]
+fn computed_css_direction_reaches_text_measurement_and_paint() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(22).unwrap(),
+        StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: css!(direction: Direction::Rtl)) {
+                    text(
+                        value: "مرحبا Whisker",
+                        style: css!(font_size: px(20)),
+                    )
+                }
+            }
+        });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(200.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    let measured_direction =
+        host.calls
+            .iter()
+            .flatten()
+            .find_map(|request| match &request.payload {
+                MeasurementPayload::Text(payload) => Some(payload.direction),
+                _ => None,
+            });
+    assert_eq!(measured_direction, Some(MeasureTextDirection::RightToLeft));
+    assert!(
+        renderer.frames()[0]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(
+                    operation,
+                    Operation::SetText { content, .. }
+                        if content.payload.direction == MeasureTextDirection::RightToLeft
+                )
+            })
+    );
+
+    with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
 #[test]

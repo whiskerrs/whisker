@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     CalcExpression, ColorValue, ComputedLayoutStyle, ComputedMotionStyle, ComputedPaintStyle,
-    CursorValue, CustomPropertyName, CustomPropertyReference, FontFamilyValue, FontFeatureValue,
-    FontOpticalSizingValue, FontStyleValue, FontVariationValue, FontWeightValue,
+    CursorValue, CustomPropertyName, CustomPropertyReference, DirectionValue, FontFamilyValue,
+    FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue, FontWeightValue,
     LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, PointerEventsValue,
     SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
     TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
@@ -165,6 +165,7 @@ pub struct InheritedStyle {
     custom_properties: BTreeMap<CustomPropertyName, StyleValue>,
     cursor: CursorValue,
     pointer_events: PointerEventsValue,
+    direction: DirectionValue,
     font_family: FontFamilyValue,
     font_features: Vec<FontFeatureValue>,
     font_variations: Vec<FontVariationValue>,
@@ -186,6 +187,7 @@ impl InheritedStyle {
             custom_properties: BTreeMap::new(),
             cursor: CursorValue::Auto,
             pointer_events: PointerEventsValue::Auto,
+            direction: DirectionValue::Ltr,
             font_family: FontFamilyValue::System,
             font_features: Vec::new(),
             font_variations: Vec::new(),
@@ -224,6 +226,11 @@ impl InheritedStyle {
     /// Returns the inherited pointer hit-test participation.
     pub const fn pointer_events(&self) -> PointerEventsValue {
         self.pointer_events
+    }
+
+    /// Returns the inherited inline writing direction.
+    pub const fn direction(&self) -> DirectionValue {
+        self.direction
     }
 
     /// Returns one resolved inherited custom property.
@@ -312,6 +319,10 @@ impl InheritedStyle {
         if self.pointer_events != previous.pointer_events {
             properties |= InheritedPropertySet::POINTER_EVENTS;
             impacts |= PropertyImpactSet::INPUT;
+        }
+        if self.direction != previous.direction {
+            properties |= InheritedPropertySet::DIRECTION;
+            impacts |= PropertyImpactSet::TEXT_METRICS;
         }
         if self.custom_properties != previous.custom_properties {
             properties |= InheritedPropertySet::CUSTOM_PROPERTIES;
@@ -492,7 +503,7 @@ impl std::error::Error for StyleResolutionError {}
 
 /// Bit set identifying which inherited values changed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct InheritedPropertySet(u16);
+pub struct InheritedPropertySet(u32);
 
 impl InheritedPropertySet {
     /// No inherited property.
@@ -529,6 +540,8 @@ impl InheritedPropertySet {
     pub const POINTER_EVENTS: Self = Self(1 << 14);
     /// Inherited CSS custom-property environment.
     pub const CUSTOM_PROPERTIES: Self = Self(1 << 15);
+    /// `direction`.
+    pub const DIRECTION: Self = Self(1 << 16);
 
     /// Returns whether this set contains every bit from `other`.
     pub const fn contains(self, other: Self) -> bool {
@@ -853,10 +866,17 @@ pub fn resolve_style(
         None => TextOverflowValue::default(),
     };
 
+    let layout = crate::layout::resolve_layout_style(
+        specified,
+        font_size.get(),
+        base.direction,
+        environment,
+    )?;
     let inherited_text = InheritedStyle {
         custom_properties,
         cursor,
         pointer_events,
+        direction: layout.direction,
         font_family,
         font_features,
         font_variations,
@@ -871,8 +891,6 @@ pub fn resolve_style(
         text_decoration,
         text_shadow,
     };
-    let layout =
-        crate::layout::resolve_layout_style(specified, inherited_text.font_size(), environment)?;
     let paint = crate::paint::resolve_paint_style(
         specified,
         &inherited_text,
@@ -1916,6 +1934,36 @@ mod tests {
     }
 
     #[test]
+    fn direction_resolves_and_inherits_into_layout_and_text_context() {
+        let parent = resolve_text_style(
+            &declaration(
+                StyleProperty::Direction,
+                StyleValue::Direction(DirectionValue::Rtl),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(parent.computed().layout().direction, DirectionValue::Rtl);
+        assert_eq!(
+            parent.inherited_for_children().direction(),
+            DirectionValue::Rtl
+        );
+
+        let child = resolve_text_style(
+            &SpecifiedStyle::new(),
+            Some(parent.inherited_for_children()),
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(child.computed().layout().direction, DirectionValue::Rtl);
+        assert_eq!(
+            child.inherited_for_children().direction(),
+            DirectionValue::Rtl
+        );
+    }
+
+    #[test]
     fn text_indent_resolves_length_and_percentage_without_inheriting() {
         let environment = StyleEnvironment::default();
         let length = resolve_text_style(
@@ -2422,6 +2470,7 @@ mod tests {
             )]),
             cursor: CursorValue::Grab,
             pointer_events: PointerEventsValue::None,
+            direction: DirectionValue::Rtl,
             font_family: FontFamilyValue::Named("Inter".into()),
             font_size: number(20.0),
             font_weight: FontWeightValue::BOLD,
@@ -2463,6 +2512,7 @@ mod tests {
             InheritedPropertySet::CURSOR,
             InheritedPropertySet::POINTER_EVENTS,
             InheritedPropertySet::CUSTOM_PROPERTIES,
+            InheritedPropertySet::DIRECTION,
             InheritedPropertySet::LINE_HEIGHT,
             InheritedPropertySet::LETTER_SPACING,
             InheritedPropertySet::COLOR,
