@@ -1,9 +1,10 @@
 use std::convert::Infallible;
 
 use whisker::css::{
-    Angle, BorderRadius, BorderStyle, Clear, CustomPropertyName, Direction, Float, GridLine,
-    GridTemplate, GridTrack, ImageRendering, MotionPathCommand, MotionPathPoint, OffsetPath,
-    OffsetRotate, Overflow, Position, Size, StyleProperty, TransformFn,
+    Angle, BorderRadius, BorderStyle, Clear, CustomPropertyName, Direction, EasingFunction, Float,
+    GridLine, GridTemplate, GridTrack, ImageRendering, MotionPathCommand, MotionPathPoint,
+    OffsetPath, OffsetRotate, Overflow, Position, Size, StyleProperty, TransformFn, Transition,
+    TransitionPropertyKind,
 };
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -363,7 +364,7 @@ fn computed_css_direction_reaches_text_measurement_and_paint() {
     __reset_for_tests();
     let owner = Owner::new(None);
     let surface = SurfaceRuntime::new(
-        SurfaceId::new(18).unwrap(),
+        SurfaceId::new(22).unwrap(),
         StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
     );
 
@@ -417,6 +418,425 @@ fn computed_css_direction_reaches_text_measurement_and_paint() {
             })
     );
 
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn opacity_transition_is_sampled_in_rust_and_emitted_as_ordinary_frame_deltas() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(18).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let transition = || {
+        Transition::new(TransitionPropertyKind::name("opacity"))
+            .duration(100.ms())
+            .timing(EasingFunction::Linear)
+    };
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(40))
+                    .height(px(20))
+                    .opacity(0.2)
+                    .transition(transition()))
+            }
+        });
+        set_root(root);
+        root
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("initial frame");
+    assert!(
+        !surface.has_active_motion(),
+        "initial style must not animate"
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            Css::new()
+                .width(px(40))
+                .height(px(20))
+                .opacity(1.0)
+                .transition(transition()),
+        );
+    });
+    assert!(surface.has_active_motion());
+    assert!(surface.step_motion(1_000.0).expect("start transition"));
+    assert!(surface.step_motion(1_050.0).expect("sample midpoint"));
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("midpoint frame");
+    assert!(renderer.frames()[1]
+        .packet
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, Operation::SetOpacity { opacity, .. } if (*opacity - 0.6).abs() < 0.0001)));
+
+    assert!(!surface.step_motion(1_100.0).expect("finish transition"));
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("final frame");
+    assert!(renderer.frames()[2].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetOpacity { opacity, .. } if *opacity == 1.0)
+    ));
+    assert!(!surface.has_active_motion());
+    assert_eq!(
+        surface.step_motion(f64::NAN),
+        Err(RuntimeBindingError::InvalidMotionTimestamp)
+    );
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn box_color_transitions_are_composited_into_one_set_box_paint_delta() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(19).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let transition = || {
+        Transition::new(TransitionPropertyKind::All)
+            .duration(100.ms())
+            .timing(EasingFunction::Linear)
+    };
+    let painted = |background, border| {
+        Css::new()
+            .width(px(40))
+            .height(px(20))
+            .background_color(background)
+            .border_top_width(px(2))
+            .border_right_width(px(2))
+            .border_bottom_width(px(2))
+            .border_left_width(px(2))
+            .border_top_style(BorderStyle::Solid)
+            .border_right_style(BorderStyle::Solid)
+            .border_bottom_style(BorderStyle::Solid)
+            .border_left_style(BorderStyle::Solid)
+            .border_top_color(border)
+            .border_right_color(border)
+            .border_bottom_color(border)
+            .border_left_color(border)
+            .transition(transition())
+    };
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: painted(Color::rgb(0, 0, 0), Color::rgb(255, 0, 0)))
+            }
+        });
+        set_root(root);
+        root
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            painted(Color::rgb(255, 255, 255), Color::rgb(0, 0, 255)),
+        );
+    });
+    assert!(surface.step_motion(2_000.0).unwrap());
+    assert!(surface.step_motion(2_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let midpoint = renderer.frames()[1]
+        .packet
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::SetBoxPaint { paint, .. } => Some(paint),
+            _ => None,
+        })
+        .expect("transitioned box paint delta");
+    assert_eq!(
+        midpoint.background_color,
+        PaintColor::Srgba {
+            red: 128,
+            green: 128,
+            blue: 128,
+            alpha: 1.0,
+        }
+    );
+    for color in [
+        &midpoint.border_colors.top,
+        &midpoint.border_colors.right,
+        &midpoint.border_colors.bottom,
+        &midpoint.border_colors.left,
+    ] {
+        assert_eq!(
+            color,
+            &PaintColor::Srgba {
+                red: 128,
+                green: 0,
+                blue: 128,
+                alpha: 1.0,
+            }
+        );
+    }
+    assert!(!surface.step_motion(2_100.0).unwrap());
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            painted(NamedColor::Red.into(), NamedColor::Lime.into()),
+        );
+    });
+    assert!(surface.has_active_motion());
+    assert!(surface.step_motion(3_000.0).unwrap());
+    assert!(surface.step_motion(3_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        renderer.frames()[2]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(
+                    operation,
+                    Operation::SetBoxPaint { paint, .. }
+                        if paint.background_color == PaintColor::Srgba {
+                            red: 255,
+                            green: 128,
+                            blue: 128,
+                            alpha: 1.0,
+                        }
+                            && paint.border_colors.top == PaintColor::Srgba {
+                                red: 0,
+                                green: 128,
+                                blue: 128,
+                                alpha: 1.0,
+                            }
+                )
+            })
+    );
+    assert!(!surface.step_motion(3_100.0).unwrap());
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn inherited_text_color_transition_is_sampled_on_its_parent() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(20).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let colored = |color| {
+        Css::new()
+            .width(px(100))
+            .height(px(40))
+            .color(color)
+            .transition(
+                Transition::new(TransitionPropertyKind::name("color"))
+                    .duration(100.ms())
+                    .timing(EasingFunction::Linear),
+            )
+    };
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: colored(NamedColor::Black.into())) {
+                    text(style: css!(font_size: px(20))) { "inherited" }
+                    view(style: css!(color: Color::Named(NamedColor::Red))) {
+                        text(style: css!(font_size: px(20))) { "blocked" }
+                    }
+                }
+            }
+        });
+        set_root(root);
+        root
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(root, colored(NamedColor::White.into()));
+    });
+    assert!(surface.step_motion(4_000.0).unwrap());
+    assert!(surface.step_motion(4_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        renderer.frames()[1]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(
+                    operation,
+                    Operation::SetText { content, .. }
+                        if content.payload.text == "inherited"
+                            && content.paint.foreground == PaintColor::Srgba {
+                                red: 128,
+                                green: 128,
+                                blue: 128,
+                                alpha: 1.0,
+                            }
+                )
+            })
+    );
+    assert!(
+        !renderer.frames()[1]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(operation, Operation::SetText { content, .. } if content.payload.text == "blocked")
+            })
+    );
+    assert!(!surface.step_motion(4_100.0).unwrap());
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn compatible_transform_transition_resolves_percentages_after_layout() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(21).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let transformed = |translate, scale: Option<f32>| {
+        let mut functions = vec![TransformFn::TranslateX(percent(translate).into())];
+        if let Some(scale) = scale {
+            functions.push(TransformFn::Scale(scale, scale));
+        }
+        Css::new()
+            .width(px(40))
+            .height(px(20))
+            .transform(functions)
+            .transform_origin(Position::Coords(px(0).into(), px(0).into()))
+            .transition(
+                Transition::new(TransitionPropertyKind::name("transform"))
+                    .duration(100.ms())
+                    .timing(EasingFunction::Linear),
+            )
+    };
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| render! { view(style: transformed(0, None)) });
+        set_root(root);
+        root
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(root, transformed(100, Some(2.0)));
+    });
+    assert!(surface.step_motion(5_000.0).unwrap());
+    assert!(surface.step_motion(5_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        renderer.frames()[1]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(
+                    operation,
+                    Operation::SetTransform { transform, .. }
+                        if (transform.0[0] - 1.5).abs() < 0.0001
+                            && (transform.0[5] - 1.5).abs() < 0.0001
+                            && (transform.0[12] - 20.0).abs() < 0.0001
+                )
+            })
+    );
+    assert!(!surface.step_motion(5_100.0).unwrap());
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 

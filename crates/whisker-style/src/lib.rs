@@ -10,6 +10,7 @@
 mod declaration;
 mod layout;
 mod layout_value;
+mod motion;
 mod paint;
 mod property;
 mod resolution;
@@ -31,6 +32,11 @@ pub use layout_value::{
     FloatValue, GridMaxTrackSizingValue, GridMinTrackSizingValue, GridTemplateComponentValue,
     GridTemplateRepetitionValue, GridTemplateValue, GridTrackSizingValue, JustifyContentValue,
     LengthPercentageAutoValue, PositionValue, SizeValue,
+};
+pub use motion::{
+    AnimationValue, ComputedMotionStyle, ComputedTransition, ComputedTransitionProperty,
+    MotionDirection, MotionEasing, MotionFillMode, MotionIterationCount, MotionPlayState,
+    MotionStepPosition, MotionTime, TransitionPropertyValue, TransitionValue,
 };
 pub use paint::{
     BorderStyleValue, ComputedBackgroundImage, ComputedBackgroundLayerStyle,
