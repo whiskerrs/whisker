@@ -507,7 +507,17 @@ impl Driver {
                                         nodes.iter().find_map(|node| {
                                             node.clip_path
                                                 .as_ref()
-                                                .map(|_| "paint.visual-effects.clip-path-inset")
+                                                .map(|clip| match &clip.shape {
+                                                    ClipShapeFixture::Inset { .. } => {
+                                                        "paint.visual-effects.clip-path-inset"
+                                                    }
+                                                    ClipShapeFixture::Circle { .. } => {
+                                                        "paint.visual-effects.clip-path-circle"
+                                                    }
+                                                    ClipShapeFixture::Ellipse { .. } => {
+                                                        "paint.visual-effects.clip-path-ellipse"
+                                                    }
+                                                })
                                         })
                                     })
                                     .or_else(|| {
@@ -1234,6 +1244,12 @@ fn fixture(path: &str) -> &'static str {
         "wpt/css/css-masking/clip-path-inset-round-rendering.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-masking/clip-path-inset-round-rendering.json"
         ),
+        "wpt/css/css-masking/clip-path-circle-002.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-masking/clip-path-circle-002.json"
+        ),
+        "wpt/css/css-masking/clip-path-ellipse-002.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-masking/clip-path-ellipse-002.json"
+        ),
         "wpt/css/CSS2/borders/border-right-003.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/borders/border-right-003.json"
         ),
@@ -1728,6 +1744,21 @@ fn clip_path_protocol(value: &ClipPathFixture) -> (PaintBox, ClipShape) {
                 },
             }
         }
+        ClipShapeFixture::Circle { radius, center } => ClipShape::Circle {
+            radius: paint_length_percentage(*radius),
+            center: whisker_protocol::PaintPosition {
+                x: paint_coordinate(center[0]),
+                y: paint_coordinate(center[1]),
+            },
+        },
+        ClipShapeFixture::Ellipse { radii, center } => ClipShape::Ellipse {
+            radius_x: paint_length_percentage(radii[0]),
+            radius_y: paint_length_percentage(radii[1]),
+            center: whisker_protocol::PaintPosition {
+                x: paint_coordinate(center[0]),
+                y: paint_coordinate(center[1]),
+            },
+        },
     };
     (reference_box, shape)
 }
@@ -1943,31 +1974,50 @@ fn fixture_clip_path_css(value: &ClipPathFixture) -> String {
         ClipReferenceBoxFixture::Padding => "padding-box",
         ClipReferenceBoxFixture::Content => "content-box",
     };
-    let ClipShapeFixture::Inset { edges, radii } = &value.shape;
     let coordinate = |value: LengthPercentageFixture| {
         if value.fraction == 0.0 {
             format!("{}px", value.length)
         } else if value.length == 0.0 {
-            format!("{}%", value.fraction * 100.0)
+            let percentage = (value.fraction * 1_000_000.0).round() / 10_000.0;
+            format!("{percentage}%")
         } else {
             format!("calc({}px + {}%)", value.length, value.fraction * 100.0)
         }
     };
-    let edges = edges.map(coordinate);
-    let horizontal = radii.map(|radius| format!("{}px", radius.horizontal()));
-    let vertical = radii.map(|radius| format!("{}px", radius.vertical()));
-    let edges = css_four_value_shorthand(&edges);
-    let horizontal = css_four_value_shorthand(&horizontal);
-    let vertical = css_four_value_shorthand(&vertical);
-    let radii = if horizontal == vertical {
-        horizontal
-    } else {
-        format!("{horizontal} / {vertical}")
+    let inset = |edges: &[LengthPercentageFixture; 4], radii: &[CornerRadiusFixture; 4]| {
+        let edges = edges.map(coordinate);
+        let horizontal = radii.map(|radius| format!("{}px", radius.horizontal()));
+        let vertical = radii.map(|radius| format!("{}px", radius.vertical()));
+        let edges = css_four_value_shorthand(&edges);
+        let horizontal = css_four_value_shorthand(&horizontal);
+        let vertical = css_four_value_shorthand(&vertical);
+        let radii = if horizontal == vertical {
+            horizontal
+        } else {
+            format!("{horizontal} / {vertical}")
+        };
+        format!("inset({edges} round {radii})")
+    };
+    let shape = match &value.shape {
+        ClipShapeFixture::Inset { edges, radii } => inset(edges, radii),
+        ClipShapeFixture::Circle { radius, center } => format!(
+            "circle({} at {} {})",
+            coordinate(*radius),
+            coordinate(center[0]),
+            coordinate(center[1])
+        ),
+        ClipShapeFixture::Ellipse { radii, center } => format!(
+            "ellipse({} {} at {} {})",
+            coordinate(radii[0]),
+            coordinate(radii[1]),
+            coordinate(center[0]),
+            coordinate(center[1])
+        ),
     };
     let suffix = (!reference_box.is_empty())
         .then(|| format!(" {reference_box}"))
         .unwrap_or_default();
-    format!("inset({edges} round {radii}){suffix}")
+    format!("{shape}{suffix}")
 }
 
 fn css_four_value_shorthand(values: &[String; 4]) -> String {

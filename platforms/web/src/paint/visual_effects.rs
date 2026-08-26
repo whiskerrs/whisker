@@ -14,7 +14,10 @@ pub(crate) fn supports(effects: &VisualEffects) -> bool {
             matches!(
                 reference,
                 PaintBox::Border | PaintBox::Padding | PaintBox::Content
-            ) && matches!(shape, ClipShape::Inset { .. })
+            ) && matches!(
+                shape,
+                ClipShape::Inset { .. } | ClipShape::Circle { .. } | ClipShape::Ellipse { .. }
+            )
         })
 }
 
@@ -61,24 +64,42 @@ fn clip_path_css(value: &(PaintBox, ClipShape)) -> Result<String, WebError> {
         PaintBox::Content => "content-box",
         _ => return Err(WebError("unsupported DOM clip-path reference box".into())),
     };
-    let ClipShape::Inset { edges, radii } = &value.1 else {
-        return Err(WebError("unsupported DOM clip-path shape".into()));
+    let shape = match &value.1 {
+        ClipShape::Inset { edges, radii } => format!(
+            "inset({} {} {} {} round {} {} {} {} / {} {} {} {})",
+            coordinate(edges.top),
+            coordinate(edges.right),
+            coordinate(edges.bottom),
+            coordinate(edges.left),
+            length(radii.top_left.horizontal),
+            length(radii.top_right.horizontal),
+            length(radii.bottom_right.horizontal),
+            length(radii.bottom_left.horizontal),
+            length(radii.top_left.vertical),
+            length(radii.top_right.vertical),
+            length(radii.bottom_right.vertical),
+            length(radii.bottom_left.vertical),
+        ),
+        ClipShape::Circle { radius, center } => format!(
+            "circle({} at {} {})",
+            length(*radius),
+            coordinate(center.x),
+            coordinate(center.y),
+        ),
+        ClipShape::Ellipse {
+            radius_x,
+            radius_y,
+            center,
+        } => format!(
+            "ellipse({} {} at {} {})",
+            length(*radius_x),
+            length(*radius_y),
+            coordinate(center.x),
+            coordinate(center.y),
+        ),
+        _ => return Err(WebError("unsupported DOM clip-path shape".into())),
     };
-    Ok(format!(
-        "inset({} {} {} {} round {} {} {} {} / {} {} {} {}) {reference_box}",
-        coordinate(edges.top),
-        coordinate(edges.right),
-        coordinate(edges.bottom),
-        coordinate(edges.left),
-        length(radii.top_left.horizontal),
-        length(radii.top_right.horizontal),
-        length(radii.bottom_right.horizontal),
-        length(radii.bottom_left.horizontal),
-        length(radii.top_left.vertical),
-        length(radii.top_right.vertical),
-        length(radii.bottom_right.vertical),
-        length(radii.bottom_left.vertical),
-    ))
+    Ok(format!("{shape} {reference_box}"))
 }
 
 fn coordinate(value: PaintCoordinate) -> String {

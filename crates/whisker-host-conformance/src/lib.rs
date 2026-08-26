@@ -428,6 +428,20 @@ pub enum ClipShapeFixture {
         /// Top-left, top-right, bottom-right, and bottom-left radii.
         radii: [CornerRadiusFixture; 4],
     },
+    /// Circle with an explicit radius and center.
+    Circle {
+        /// Radius length-percentage.
+        radius: LengthPercentageFixture,
+        /// Center x/y coordinates.
+        center: [LengthPercentageFixture; 2],
+    },
+    /// Ellipse with explicit horizontal/vertical radii and center.
+    Ellipse {
+        /// Horizontal and vertical radii.
+        radii: [LengthPercentageFixture; 2],
+        /// Center x/y coordinates.
+        center: [LengthPercentageFixture; 2],
+    },
 }
 
 /// CSS geometry boxes accepted as clip-path reference boxes.
@@ -1292,6 +1306,14 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
                             edges.iter().all(LengthPercentageFixture::is_finite)
                                 && radii.iter().copied().all(CornerRadiusFixture::is_valid)
                         }
+                        ClipShapeFixture::Circle { radius, center } => {
+                            radius.is_non_negative()
+                                && center.iter().all(LengthPercentageFixture::is_finite)
+                        }
+                        ClipShapeFixture::Ellipse { radii, center } => {
+                            radii.iter().all(LengthPercentageFixture::is_non_negative)
+                                && center.iter().all(LengthPercentageFixture::is_finite)
+                        }
                     })
                 && node
                     .transform
@@ -1349,6 +1371,10 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
 impl LengthPercentageFixture {
     fn is_finite(&self) -> bool {
         self.length.is_finite() && self.fraction.is_finite()
+    }
+
+    fn is_non_negative(&self) -> bool {
+        self.is_finite() && self.length >= 0.0 && self.fraction >= 0.0
     }
 }
 

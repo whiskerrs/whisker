@@ -365,9 +365,7 @@ impl DesktopScene {
         );
         let mut node_shape_clips = context.shape_clips.clone();
         let mut node_clip_bounds = None;
-        if let Some((reference_box, ClipShape::Inset { edges, radii })) =
-            presentation.visual_effects.clip_path.as_ref()
-        {
+        if let Some((reference_box, shape)) = presentation.visual_effects.clip_path.as_ref() {
             let reference = match reference_box {
                 PaintBox::Border => border,
                 PaintBox::Padding => presentation.paint.as_ref().map_or(border, |paint| {
@@ -376,10 +374,10 @@ impl DesktopScene {
                 PaintBox::Content => content,
                 _ => unreachable!("unsupported clip-path reference box passed validation"),
             };
-            let clip_rect = inset_clip_rect(reference, edges);
+            let (clip_rect, clip_radii) = clip_shape_geometry(reference, shape);
             node_shape_clips = node_shape_clips.push(ShapeClip {
                 rect: clip_rect,
-                radii: resolve_radii(radii, clip_rect),
+                radii: clip_radii,
                 inverse_transform: inverse_transform(transform).unwrap_or(Transform::IDENTITY),
                 horizontal: true,
                 vertical: true,
@@ -985,8 +983,63 @@ fn supports_visual_effects(effects: &VisualEffects) -> bool {
             matches!(
                 reference,
                 PaintBox::Border | PaintBox::Padding | PaintBox::Content
-            ) && matches!(shape, ClipShape::Inset { .. })
+            ) && matches!(
+                shape,
+                ClipShape::Inset { .. } | ClipShape::Circle { .. } | ClipShape::Ellipse { .. }
+            )
         })
+}
+
+fn clip_shape_geometry(reference: LayoutRect, shape: &ClipShape) -> (LayoutRect, ResolvedRadii) {
+    match shape {
+        ClipShape::Inset { edges, radii } => {
+            let rect = inset_clip_rect(reference, edges);
+            let radii = resolve_radii(radii, rect);
+            (rect, radii)
+        }
+        ClipShape::Circle { radius, center } => {
+            let center_x = reference.x + resolve_coordinate(center.x, reference.width);
+            let center_y = reference.y + resolve_coordinate(center.y, reference.height);
+            let normalized_diagonal = reference.width.hypot(reference.height) / 2.0_f32.sqrt();
+            let radius = resolve_length_percentage(*radius, normalized_diagonal);
+            let rect = LayoutRect {
+                x: center_x - radius,
+                y: center_y - radius,
+                width: radius * 2.0,
+                height: radius * 2.0,
+            };
+            (
+                rect,
+                ResolvedRadii {
+                    horizontal: [radius; 4],
+                    vertical: [radius; 4],
+                },
+            )
+        }
+        ClipShape::Ellipse {
+            radius_x,
+            radius_y,
+            center,
+        } => {
+            let center_x = reference.x + resolve_coordinate(center.x, reference.width);
+            let center_y = reference.y + resolve_coordinate(center.y, reference.height);
+            let radius_x = resolve_length_percentage(*radius_x, reference.width);
+            let radius_y = resolve_length_percentage(*radius_y, reference.height);
+            (
+                LayoutRect {
+                    x: center_x - radius_x,
+                    y: center_y - radius_y,
+                    width: radius_x * 2.0,
+                    height: radius_y * 2.0,
+                },
+                ResolvedRadii {
+                    horizontal: [radius_x; 4],
+                    vertical: [radius_y; 4],
+                },
+            )
+        }
+        _ => unreachable!("unsupported clip-path shape passed validation"),
+    }
 }
 
 fn inset_clip_rect(
@@ -1006,6 +1059,13 @@ fn inset_clip_rect(
 }
 
 fn resolve_coordinate(value: PaintCoordinate, available: f32) -> f32 {
+    value.length + value.fraction * available
+}
+
+fn resolve_length_percentage(
+    value: whisker_protocol::PaintLengthPercentage,
+    available: f32,
+) -> f32 {
     value.length + value.fraction * available
 }
 

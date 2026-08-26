@@ -1072,6 +1072,42 @@ fn clip_path_protocol(value: &ClipPathFixture) -> (PaintBox, ClipShape) {
                 },
             }
         }
+        ClipShapeFixture::Circle { radius, center } => ClipShape::Circle {
+            radius: PaintLengthPercentage {
+                length: radius.length,
+                fraction: radius.fraction,
+            },
+            center: PaintPosition {
+                x: PaintCoordinate {
+                    length: center[0].length,
+                    fraction: center[0].fraction,
+                },
+                y: PaintCoordinate {
+                    length: center[1].length,
+                    fraction: center[1].fraction,
+                },
+            },
+        },
+        ClipShapeFixture::Ellipse { radii, center } => ClipShape::Ellipse {
+            radius_x: PaintLengthPercentage {
+                length: radii[0].length,
+                fraction: radii[0].fraction,
+            },
+            radius_y: PaintLengthPercentage {
+                length: radii[1].length,
+                fraction: radii[1].fraction,
+            },
+            center: PaintPosition {
+                x: PaintCoordinate {
+                    length: center[0].length,
+                    fraction: center[0].fraction,
+                },
+                y: PaintCoordinate {
+                    length: center[1].length,
+                    fraction: center[1].fraction,
+                },
+            },
+        },
     };
     (reference_box, shape)
 }
