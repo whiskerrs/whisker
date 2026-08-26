@@ -333,6 +333,13 @@ impl SurfaceEngine {
             .map_err(SurfaceError::Scene)
     }
 
+    /// Replaces one node's already-resolved group opacity.
+    pub fn set_opacity(&mut self, node: NodeId, opacity: f32) -> Result<(), SurfaceError> {
+        self.scene
+            .set_opacity(node, opacity)
+            .map_err(SurfaceError::Scene)
+    }
+
     /// Creates one unattached node in both retained trees.
     pub fn create_node(
         &mut self,
@@ -1353,6 +1360,15 @@ mod tests {
             node.cursor().map(|cursor| cursor.fallback),
             Some(whisker_protocol::CursorKeyword::Auto)
         );
+        surface.set_opacity(root, 0.5).unwrap();
+        assert_eq!(surface.node(root).unwrap().opacity(), Some(0.5));
+        assert_eq!(
+            surface.set_opacity(missing, 0.5),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        surface.set_opacity(root, lowered.opacity).unwrap();
         assert!(
             surface
                 .update_computed_style(root, style)

@@ -93,6 +93,8 @@ pub enum RuntimeDriveError<MeasurementError, SinkError> {
     Input(RuntimeInputError),
     /// Host viewport values could not be applied to the retained style environment.
     Environment(crate::RuntimeBindingError),
+    /// Rust-owned transition sampling could not update the retained scene.
+    Motion(crate::RuntimeBindingError),
 }
 
 impl<MeasurementError: fmt::Debug, SinkError: fmt::Debug> fmt::Display
@@ -378,6 +380,9 @@ impl RuntimeInstance {
                 crate::runtime::tasks::run_until_stalled();
                 reactive::flush();
                 reactive::flush_mounts();
+                surface
+                    .step_motion(timestamp_ms)
+                    .map_err(RuntimeDriveError::Motion)?;
 
                 let frame = surface
                     .render_frame(
@@ -399,6 +404,7 @@ impl RuntimeInstance {
                     frame,
                     needs_frame: recovery
                         || reactive::has_pending_work()
+                        || surface.has_active_motion()
                         || !self.pending_input.borrow().is_empty(),
                 })
             })
