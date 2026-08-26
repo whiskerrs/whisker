@@ -5,10 +5,10 @@ use std::error::Error;
 use std::fmt;
 
 use whisker_protocol::{
-    BoxClip, BoxPaint, CommandId, ElementTypeId, FrameHeader, FrameMode, FramePacket,
-    HitTestBehavior, InputPoint, LayoutGeometry, NodeId, Operation, OverflowClip, PointerId,
-    PropertyId, ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError, Transform,
-    Visibility, WhiskerValue,
+    BackgroundLayer, BoxClip, BoxPaint, CommandId, ElementTypeId, FrameHeader, FrameMode,
+    FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, NodeId, Operation, OverflowClip,
+    PointerId, PropertyId, ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError,
+    Transform, Visibility, WhiskerValue,
 };
 
 /// A retained logical node owned by a [`Scene`].
@@ -19,6 +19,7 @@ pub struct SceneNode {
     children: Vec<NodeId>,
     layout: Option<LayoutGeometry>,
     box_paint: Option<BoxPaint>,
+    background_layers: Vec<BackgroundLayer>,
     clip: Option<BoxClip>,
     transform: Option<Transform>,
     opacity: Option<f32>,
@@ -39,6 +40,7 @@ impl SceneNode {
             children: Vec::new(),
             layout: None,
             box_paint: None,
+            background_layers: Vec::new(),
             clip: None,
             transform: None,
             opacity: None,
@@ -80,6 +82,11 @@ impl SceneNode {
     /// Returns retained background and border paint.
     pub const fn box_paint(&self) -> Option<&BoxPaint> {
         self.box_paint.as_ref()
+    }
+
+    /// Returns retained background image layers in front-to-back order.
+    pub fn background_layers(&self) -> &[BackgroundLayer] {
+        &self.background_layers
     }
 
     /// Returns retained descendant overflow clipping.
@@ -176,6 +183,8 @@ pub enum SceneError {
     },
     /// Background or border paint contained an invalid value.
     InvalidBoxPaint,
+    /// One or more retained background image layers were invalid.
+    InvalidBackgroundLayers,
     /// A pending command result identifier was reused.
     DuplicateResultId {
         /// Duplicate result identifier.
@@ -203,6 +212,7 @@ impl Error for SceneError {}
 enum DirtySlot {
     Layout(NodeId),
     BoxPaint(NodeId),
+    BackgroundLayers(NodeId),
     Clip(NodeId),
     Transform(NodeId),
     Opacity(NodeId),
@@ -561,6 +571,31 @@ impl Scene {
         self.journal.push_coalesced(
             DirtySlot::BoxPaint(node),
             Operation::SetBoxPaint { node, paint },
+        );
+        Ok(())
+    }
+
+    /// Sets the ordered background image layers when they differ from retained
+    /// state. An empty list clears every image while preserving box color.
+    pub fn set_background_layers(
+        &mut self,
+        node: NodeId,
+        layers: Vec<BackgroundLayer>,
+    ) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        if !layers.iter().all(BackgroundLayer::validate) {
+            return Err(SceneError::InvalidBackgroundLayers);
+        }
+        if self.require_node(node)?.background_layers == layers {
+            return Ok(());
+        }
+        self.nodes
+            .get_mut(&node)
+            .expect("node checked above")
+            .background_layers = layers.clone();
+        self.journal.push_coalesced(
+            DirtySlot::BackgroundLayers(node),
+            Operation::SetBackgroundLayers { node, layers },
         );
         Ok(())
     }
@@ -989,6 +1024,12 @@ impl Scene {
                     paint: paint.clone(),
                 });
             }
+            if !state.background_layers.is_empty() {
+                operations.push(Operation::SetBackgroundLayers {
+                    node: *node,
+                    layers: state.background_layers.clone(),
+                });
+            }
             if let Some(clip) = state.clip {
                 operations.push(Operation::SetClip { node: *node, clip });
             }
@@ -1063,10 +1104,11 @@ mod tests {
     use super::*;
     use crate::{FrameSink, RecordingRenderer};
     use whisker_protocol::{
-        ApplyResult, BorderLineStyle, LayoutRect, MeasureFontFamily, MeasureFontStyle,
-        MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, PaintColor,
-        PaintCorners, PaintEdges, PaintLengthPercentage, TextContentError, TextMeasurePayload,
-        TextMeasureStyle, ValidationError,
+        ApplyResult, BackgroundAttachment, BackgroundSize, BlendMode, BorderLineStyle, ImageRepeat,
+        LayoutRect, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
+        MeasureTextOverflow, MeasureTextWrap, PaintBox, PaintColor, PaintCorners, PaintEdges,
+        PaintImage, PaintLengthPercentage, PaintPosition, ResourceId, TextContentError,
+        TextMeasurePayload, TextMeasureStyle, ValidationError,
     };
 
     fn surface() -> SurfaceId {
@@ -1152,6 +1194,20 @@ mod tests {
         }
     }
 
+    fn resource_background(resource: u64) -> BackgroundLayer {
+        BackgroundLayer {
+            image: PaintImage::Resource(ResourceId::new(resource).unwrap()),
+            position: PaintPosition::default(),
+            size: BackgroundSize::Auto,
+            repeat_x: ImageRepeat::Repeat,
+            repeat_y: ImageRepeat::Repeat,
+            origin: PaintBox::Padding,
+            clip: PaintBox::Border,
+            attachment: BackgroundAttachment::Scroll,
+            blend_mode: BlendMode::Normal,
+        }
+    }
+
     fn prepared(scene: &mut Scene) -> FramePacket {
         scene
             .prepare_frame(7)
@@ -1199,6 +1255,10 @@ mod tests {
         scene.set_layout(root, rect).expect("layout");
         let paint = box_paint("navy");
         scene.set_box_paint(root, paint.clone()).expect("box paint");
+        let background = resource_background(9);
+        scene
+            .set_background_layers(root, vec![background.clone()])
+            .expect("background layers");
         let clip = BoxClip {
             horizontal: OverflowClip::Hidden,
             vertical: OverflowClip::Visible,
@@ -1257,6 +1317,13 @@ mod tests {
         assert_eq!(packet.header.viewport_epoch, 7);
         assert_eq!(renderer.projection().node_count(), 2);
         assert_eq!(scene.accepted_revision(), 1);
+        assert!(packet.operations.iter().any(|operation| {
+            matches!(
+                operation,
+                Operation::SetBackgroundLayers { node, layers }
+                    if *node == root && layers == std::slice::from_ref(&background)
+            )
+        }));
         assert!(!scene.has_pending_work());
         assert_eq!(scene.prepare_frame(8).expect("idle frame"), None);
     }
@@ -1288,6 +1355,15 @@ mod tests {
         scene
             .set_box_paint(root, second_paint)
             .expect("equal box paint");
+        scene
+            .set_background_layers(root, vec![resource_background(1)])
+            .expect("first background");
+        scene
+            .set_background_layers(root, vec![resource_background(2)])
+            .expect("coalesced background");
+        scene
+            .set_background_layers(root, vec![resource_background(2)])
+            .expect("equal background");
         let clip = BoxClip {
             horizontal: OverflowClip::Visible,
             vertical: OverflowClip::Hidden,

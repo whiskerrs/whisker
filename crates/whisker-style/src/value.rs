@@ -179,6 +179,15 @@ pub struct BorderRadiusValue {
     pub vertical: LengthPercentageValue,
 }
 
+/// One specified background image that does not contain Host resource IDs.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BackgroundImageValue {
+    /// An explicit `none` layer retained for future list alignment.
+    None,
+    /// URL text resolved under Host resource policy.
+    Url(String),
+}
+
 /// An owned value in a specified inline-style declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StyleValue {
@@ -196,6 +205,8 @@ pub enum StyleValue {
     LengthPercentage(LengthPercentageValue),
     /// One border corner's horizontal and vertical radii.
     BorderRadius(BorderRadiusValue),
+    /// Ordered background images, front to back.
+    BackgroundImages(Vec<BackgroundImageValue>),
     /// Font family.
     FontFamily(FontFamilyValue),
     /// Font face style.

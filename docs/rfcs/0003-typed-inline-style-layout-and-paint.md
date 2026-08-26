@@ -501,6 +501,29 @@ retains current completion state, ignores replaced or released generations,
 and wakes a running runtime only for a current Ready or Failed event. JSON and
 encoded resource bytes never enter the frame transaction path.
 
+Style lowering owns resource identity rather than assigning an ID to each
+element slot. Equal `(ResourceKind, ResourceSource)` values share one
+`ResourceId` across the surface, so repeated uses of the same URL issue one
+load and one Host decode. A pending or failed generation is omitted from paint
+operations; only a current `Ready` generation may be projected as
+`PaintImage::Resource`. Removing the last reference first emits and commits the
+frame that clears that resource from retained paint. Only after the Host
+accepts that frame may Rust enqueue `ResourceCommand::Release`. A sink error or
+`NeedSnapshot` therefore cannot release an object that the Host may still
+reference. Reacquiring the source before that acceptance cancels retirement;
+reacquiring it after release allocates a fresh ID. Automatic style lowering
+never changes the content behind an ID that an accepted frame may reference,
+because frame paint references intentionally contain only `ResourceId`, not a
+generation. Generations remain available to the lower-level resource channel
+for cancellation and stale-completion rejection before publication.
+
+The first typed style slice applies this lifecycle to URL-backed
+`background-image`. URL text remains unresolved in Rust and is passed as
+`ResourceSource::Url`, leaving relative-URL bases, network policy, caching, and
+decoding to the Host resource service. Background resources do not influence
+Taffy layout; intrinsic dimensions returned by the Host are retained for
+future replaced-content consumers but do not resize a CSS background.
+
 Adding the semantic value does not declare a Host implementation complete.
 Until a Host advertises and implements the corresponding capability, its
 receiver rejects the operation before mutating retained state. It must not

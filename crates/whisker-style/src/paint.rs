@@ -1,8 +1,9 @@
 //! Computed paint values that remain independent of every Host renderer.
 
 use crate::{
-    ColorValue, ComputedLengthPercentage, Edges, InheritedStyle, SpecifiedStyle, StyleEnvironment,
-    StyleNumber, StyleProperty, StyleResolutionError, StyleValue, layout::resolve_affine,
+    BackgroundImageValue, ColorValue, ComputedLengthPercentage, Edges, InheritedStyle,
+    SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty, StyleResolutionError, StyleValue,
+    layout::resolve_affine,
 };
 
 /// Four physical corners in top-left, top-right, bottom-right, bottom-left order.
@@ -96,6 +97,8 @@ pub enum VisibilityValue {
 pub struct ComputedPaintStyle {
     /// Resolved background color. Transparent is represented explicitly.
     pub background_color: ColorValue,
+    /// Ordered Host-independent background image sources, front to back.
+    pub background_images: Vec<BackgroundImageValue>,
     /// Resolved border colors in physical edge order.
     pub border_colors: Edges<ColorValue>,
     /// Border line styles in physical edge order.
@@ -124,6 +127,7 @@ impl ComputedPaintStyle {
         };
         Self {
             background_color: transparent,
+            background_images: Vec::new(),
             border_colors: Edges {
                 top: current_color.clone(),
                 right: current_color.clone(),
@@ -167,6 +171,12 @@ pub(crate) fn resolve_paint_style(
         match property {
             StyleProperty::BackgroundColor => {
                 paint.background_color = color(value, property)?;
+            }
+            StyleProperty::BackgroundImage => {
+                let StyleValue::BackgroundImages(images) = value else {
+                    return Err(invalid(property));
+                };
+                paint.background_images = images.clone();
             }
             StyleProperty::BorderTopColor => paint.border_colors.top = color(value, property)?,
             StyleProperty::BorderRightColor => paint.border_colors.right = color(value, property)?,
@@ -322,6 +332,12 @@ mod tests {
                 }),
             )
             .push(
+                StyleProperty::BackgroundImage,
+                StyleValue::BackgroundImages(vec![BackgroundImageValue::Url(
+                    "https://example.com/image.png".into(),
+                )]),
+            )
+            .push(
                 StyleProperty::BorderTopStyle,
                 StyleValue::BorderStyle(BorderStyleValue::Solid),
             )
@@ -388,6 +404,12 @@ mod tests {
                 alpha: number(0.5),
             }
         );
+        assert_eq!(
+            paint.background_images,
+            vec![BackgroundImageValue::Url(
+                "https://example.com/image.png".into()
+            )]
+        );
         assert_eq!(paint.border_colors.top, ColorValue::Named("top".into()));
         assert_eq!(paint.border_colors.right, ColorValue::Named("right".into()));
         assert_eq!(
@@ -421,6 +443,7 @@ mod tests {
     fn invalid_paint_values_are_diagnostic() {
         for property in [
             StyleProperty::BackgroundColor,
+            StyleProperty::BackgroundImage,
             StyleProperty::BorderTopColor,
             StyleProperty::BorderRightColor,
             StyleProperty::BorderBottomColor,

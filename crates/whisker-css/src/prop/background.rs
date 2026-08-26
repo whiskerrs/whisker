@@ -1,5 +1,6 @@
 //! Background longhand properties.
 
+use crate::ToCss;
 use crate::css::Css;
 use crate::data_type::{Color, LengthPercentage};
 use crate::data_type_ext::Position;
@@ -19,7 +20,27 @@ impl Css {
     /// `none` clears any existing image.
     /// <https://lynxjs.org/api/css/properties/background-image>
     pub fn background_image(self, v: impl Into<ImageRef>) -> Self {
-        self.push(crate::StyleProperty::BackgroundImage, v.into())
+        let image = v.into();
+        let lynx_value = image.to_css_string();
+        match image {
+            ImageRef::None => self.push_semantic(
+                crate::StyleProperty::BackgroundImage,
+                whisker_style::StyleValue::BackgroundImages(vec![
+                    whisker_style::BackgroundImageValue::None,
+                ]),
+                lynx_value,
+            ),
+            ImageRef::Url(value) => self.push_semantic(
+                crate::StyleProperty::BackgroundImage,
+                whisker_style::StyleValue::BackgroundImages(vec![
+                    whisker_style::BackgroundImageValue::Url(value.0),
+                ]),
+                lynx_value,
+            ),
+            ImageRef::Gradient(_) => {
+                self.push_raw(crate::StyleProperty::BackgroundImage, lynx_value)
+            }
+        }
     }
 
     /// Sets `background-repeat`.
@@ -103,6 +124,12 @@ mod tests {
     fn background_image_url() {
         let s = Css::new().background_image(ImageRef::Url(CssString::new("a.png")));
         assert_eq!(s.to_string(), "background-image: url(\"a.png\");");
+        assert_eq!(
+            s.to_specified_style().unwrap().resolved()[0].value(),
+            &whisker_style::StyleValue::BackgroundImages(vec![
+                whisker_style::BackgroundImageValue::Url("a.png".into()),
+            ])
+        );
     }
 
     #[test]
@@ -115,6 +142,10 @@ mod tests {
         assert_eq!(
             s.to_string(),
             "background-image: linear-gradient(to bottom, red, blue);"
+        );
+        assert_eq!(
+            s.to_specified_style().unwrap_err().property(),
+            "background-image"
         );
     }
 
