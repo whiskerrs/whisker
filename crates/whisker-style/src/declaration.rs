@@ -226,12 +226,16 @@ mod tests {
     fn custom_declarations_are_case_sensitive_and_last_write_wins() {
         let lower = CustomPropertyName::new("--accent").unwrap();
         let upper = CustomPropertyName::new("--Accent").unwrap();
+        let declaration = CustomPropertyDeclaration::new(lower.clone(), StyleValue::Integer(0));
+        assert_eq!(declaration.name(), &lower);
+        assert_eq!(declaration.value(), &StyleValue::Integer(0));
         let style = SpecifiedStyle::new()
             .push_custom(lower.clone(), StyleValue::Integer(1))
             .push_custom(upper, StyleValue::Integer(2))
             .push_custom(lower, StyleValue::Integer(3));
 
         assert_eq!(style.len(), 3);
+        assert_eq!(style.custom_declarations().count(), 3);
         let resolved = style.resolved_custom();
         assert_eq!(resolved.len(), 2);
         assert_eq!(resolved[0].name().as_str(), "--Accent");

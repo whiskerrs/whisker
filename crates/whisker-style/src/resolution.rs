@@ -2606,4 +2606,101 @@ mod tests {
             &ColorValue::Named("blue".into())
         );
     }
+
+    #[test]
+    fn custom_property_fallback_graph_covers_missing_nested_and_shared_references() {
+        let missing = CustomPropertyName::new("--missing").unwrap();
+        let base = CustomPropertyName::new("--base").unwrap();
+        let left = CustomPropertyName::new("--left").unwrap();
+        let right = CustomPropertyName::new("--right").unwrap();
+        let diamond = CustomPropertyName::new("--diamond").unwrap();
+        let value_fallback = CustomPropertyName::new("--value-fallback").unwrap();
+        let nested_fallback = CustomPropertyName::new("--nested-fallback").unwrap();
+        let purple = StyleValue::Color(ColorValue::Named("purple".into()));
+        let orange = StyleValue::Color(ColorValue::Named("orange".into()));
+        let variable = |name| StyleValue::Variable(CustomPropertyReference::new(name));
+
+        let parent = resolve_style(
+            &SpecifiedStyle::new()
+                .push_custom(base.clone(), purple.clone())
+                .push_custom(left.clone(), variable(base.clone()))
+                .push_custom(right.clone(), variable(base.clone()))
+                .push_custom(
+                    diamond.clone(),
+                    StyleValue::Variable(CustomPropertyReference::with_fallback(
+                        left,
+                        variable(right),
+                    )),
+                )
+                .push_custom(
+                    value_fallback.clone(),
+                    StyleValue::Variable(CustomPropertyReference::with_fallback(
+                        missing.clone(),
+                        orange.clone(),
+                    )),
+                )
+                .push_custom(
+                    nested_fallback.clone(),
+                    StyleValue::Variable(CustomPropertyReference::with_fallback(
+                        missing.clone(),
+                        variable(base.clone()),
+                    )),
+                ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            parent.inherited_for_children().custom_property(&diamond),
+            Some(&purple)
+        );
+        assert_eq!(
+            parent
+                .inherited_for_children()
+                .custom_property(&value_fallback),
+            Some(&orange)
+        );
+        assert_eq!(
+            parent
+                .inherited_for_children()
+                .custom_property(&nested_fallback),
+            Some(&purple)
+        );
+
+        let child = resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::Color,
+                StyleValue::Variable(CustomPropertyReference::with_fallback(
+                    missing,
+                    variable(base),
+                )),
+            ),
+            Some(parent.inherited_for_children()),
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            child.inherited_for_children().color(),
+            &ColorValue::Named("purple".into())
+        );
+
+        let invalid_at_computed_value_time = resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::Width,
+                variable(CustomPropertyName::new("--absent").unwrap()),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            invalid_at_computed_value_time
+                .computed()
+                .layout()
+                .size
+                .width,
+            crate::ComputedSizeValue::Auto
+        );
+    }
 }
