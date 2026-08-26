@@ -5959,11 +5959,14 @@ dependencies = [
 name = "whisker-desktop"
 version = "0.12.0"
 dependencies = [
+ "base64 0.22.1",
  "bytemuck",
  "csscolorparser",
  "glyphon",
+ "image",
  "pollster",
  "serde_json",
+ "ureq",
  "wgpu",
  "whisker",
  "whisker-engine",
@@ -6380,8 +6383,11 @@ dependencies = [
 name = "whisker-web"
 version = "0.12.0"
 dependencies = [
+ "base64 0.22.1",
+ "js-sys",
  "serde_json",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
  "whisker",

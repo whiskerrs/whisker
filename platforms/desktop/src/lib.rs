@@ -13,6 +13,7 @@ use std::error::Error;
 use std::fmt;
 
 use whisker::RuntimeInstance;
+use whisker::runtime::RuntimeWakeHandle;
 use whisker_engine::LayoutOptions;
 use whisker_protocol::{ElementRegistration, InputEvent, InputEventKind, ResourceId, SurfaceId};
 use whisker_style::StyleEnvironment;
@@ -25,6 +26,7 @@ pub use whisker_value::WhiskerValue;
 mod element;
 mod gpu;
 mod paint;
+mod resource;
 mod scene;
 mod surface;
 mod text;
@@ -41,6 +43,7 @@ pub use element::{
 /// Desktop Host module declaration, named consistently with native Hosts.
 pub type ModuleDefinition = DesktopModuleDefinition;
 use gpu::RasterResource;
+use resource::{DesktopResourceService, DesktopResourceUpdate};
 use surface::DesktopSurface;
 use text::NativeTextHost;
 
@@ -88,6 +91,8 @@ impl Error for DesktopError {}
 pub struct DesktopRuntime {
     measurements: NativeTextHost,
     surface: DesktopSurface,
+    resources: DesktopResourceService,
+    resource_events: Vec<whisker_protocol::ResourceEvent>,
 }
 
 impl DesktopRuntime {
@@ -102,6 +107,7 @@ impl DesktopRuntime {
         surface: SurfaceId,
         elements: &[ElementRegistration],
         element_factories: &[DesktopElementFactory],
+        resource_wake: RuntimeWakeHandle,
     ) -> Result<Self, DesktopError> {
         let elements = DesktopElementRegistry::bind(elements, element_factories)
             .map_err(|error| DesktopError(format!("bind Desktop elements: {error}")))?;
@@ -111,6 +117,10 @@ impl DesktopRuntime {
         Ok(Self {
             measurements: NativeTextHost::new(elements),
             surface,
+            resources: DesktopResourceService::new(std::path::PathBuf::new(), move || {
+                resource_wake.wake();
+            }),
+            resource_events: Vec::new(),
         })
     }
 
@@ -135,6 +145,27 @@ impl DesktopRuntime {
         Ok(())
     }
 
+    /// Starts or releases one Host-owned resource acquisition. Completion is
+    /// applied on a later UI-thread frame and exposed through
+    /// [`Self::take_resource_events`].
+    pub fn resource_command(
+        &mut self,
+        command: whisker_protocol::ResourceCommand,
+    ) -> Result<(), DesktopError> {
+        let updates = self
+            .resources
+            .command(command)
+            .map_err(|error| DesktopError(error.to_string()))?;
+        self.apply_resource_updates(updates);
+        Ok(())
+    }
+
+    /// Drains ready/failed resource events for forwarding to the Rust runtime.
+    pub fn take_resource_events(&mut self) -> Vec<whisker_protocol::ResourceEvent> {
+        self.apply_pending_resource_updates();
+        std::mem::take(&mut self.resource_events)
+    }
+
     /// Runs measurement, layout, frame presentation, and native painting once.
     pub fn drive_frame(
         &mut self,
@@ -142,6 +173,7 @@ impl DesktopRuntime {
         context: DesktopFrameContext,
     ) -> Result<DesktopFrameResult, DesktopError> {
         validate_context(context)?;
+        self.apply_pending_resource_updates();
         let environment = StyleEnvironment::new(
             context.logical_width,
             context.logical_height,
@@ -185,6 +217,33 @@ impl DesktopRuntime {
         Ok(DesktopFrameResult {
             needs_frame: drive.needs_frame || dispatched_provider_event,
         })
+    }
+
+    fn apply_pending_resource_updates(&mut self) {
+        let updates = self.resources.drain();
+        self.apply_resource_updates(updates);
+    }
+
+    fn apply_resource_updates(&mut self, updates: Vec<DesktopResourceUpdate>) {
+        for update in updates {
+            match update {
+                DesktopResourceUpdate::Ready { event, raster } => {
+                    let whisker_protocol::ResourceEvent::Ready { resource, .. } = event else {
+                        unreachable!()
+                    };
+                    self.surface.register_raster_resource(resource, &raster);
+                    self.resource_events.push(event);
+                }
+                DesktopResourceUpdate::Failed(event) => self.resource_events.push(event),
+                DesktopResourceUpdate::Released {
+                    resource, evict, ..
+                } => {
+                    if evict {
+                        self.surface.release_raster_resource(resource);
+                    }
+                }
+            }
+        }
     }
 }
 

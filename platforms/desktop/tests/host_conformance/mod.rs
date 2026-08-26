@@ -1,3 +1,4 @@
+use base64::Engine;
 use whisker::css::BorderStyle;
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -9,8 +10,9 @@ use whisker_host_conformance::{
     BackgroundBoxFixture, BackgroundImageFixture, BackgroundLayerFixture, BorderFixture,
     BorderStyleFixture, ColorFixture, Command, ConicGradientFixture, Host, ImageRepeatFixture,
     LinearGradientFixture, LoadedCase, OverflowClipFixture, PixelRelationFixture,
-    PixelRelationKind, PixelSampleFixture, PointerEventFixture, RadialGradientFixture, Scenario,
-    ScenarioSide, SceneNodeFixture, VisibilityFixture, load_required,
+    PixelRelationKind, PixelSampleFixture, PointerEventFixture, RadialGradientFixture,
+    ResourceSourceFixture, ResourceStateFixture, Scenario, ScenarioSide, SceneNodeFixture,
+    VisibilityFixture, load_required,
 };
 use whisker_protocol::{
     AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
@@ -21,8 +23,9 @@ use whisker_protocol::{
     MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
     PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
     PaintLengthPercentage, PaintPosition, PointerId, PointerInput, PointerKind, ProtocolVersion,
-    RadialGradientExtent, RadialGradientShape, ResourceId, SurfaceId, TextMeasurePayload,
-    TextMeasureStyle, Transform, Visibility, WhiskerValue,
+    RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceId, ResourceKind,
+    ResourceRequest, ResourceSource, SurfaceId, TextMeasurePayload, TextMeasureStyle, Transform,
+    Visibility, WhiskerValue,
 };
 use whisker_style::{PropertyOrigin, StyleEnvironment, StyleProperty};
 
@@ -35,6 +38,7 @@ use crate::paint::box_paint::{
     BoxPrimitiveKind, background_gradient_primitive, lower_box, resolve_box_geometry,
 };
 use crate::paint::color::srgba;
+use crate::resource::{DesktopResourceService, DesktopResourceState, DesktopResourceUpdate};
 use crate::scene::{DesktopScene, PaintCommand};
 use crate::text::NativeTextHost;
 
@@ -296,6 +300,7 @@ struct Driver {
     measurement_responses: Vec<MeasurementResponse>,
     input: RecordingInputSink,
     raster_resources: std::collections::HashMap<ResourceId, RasterResource>,
+    resource_service: DesktopResourceService,
 }
 
 #[derive(Default)]
@@ -356,6 +361,7 @@ impl Driver {
             measurement_responses: Vec::new(),
             input: RecordingInputSink::default(),
             raster_resources: std::collections::HashMap::new(),
+            resource_service: DesktopResourceService::new(std::path::PathBuf::new(), || {}),
         }
     }
 
@@ -398,6 +404,48 @@ impl Driver {
                         .register_raster_resource(resource);
                     self.raster_resources.insert(resource, raster);
                 }
+                Command::LoadRasterResource {
+                    id,
+                    generation,
+                    source,
+                } => {
+                    let source = match source {
+                        ResourceSourceFixture::Url { value } => ResourceSource::Url(value.clone()),
+                        ResourceSourceFixture::Bytes { media_type, base64 } => {
+                            ResourceSource::Bytes {
+                                media_type: media_type.clone(),
+                                data: base64::engine::general_purpose::STANDARD
+                                    .decode(base64)
+                                    .expect("validated fixture base64"),
+                            }
+                        }
+                    };
+                    self.resource_service
+                        .command(ResourceCommand::Load(ResourceRequest {
+                            resource: ResourceId::new(*id).unwrap(),
+                            generation: *generation,
+                            kind: ResourceKind::RasterImage,
+                            source,
+                        }))
+                        .expect("valid Desktop resource load");
+                }
+                Command::ReleaseRasterResource { id, generation } => {
+                    let updates = self
+                        .resource_service
+                        .command(ResourceCommand::Release {
+                            resource: ResourceId::new(*id).unwrap(),
+                            generation: *generation,
+                        })
+                        .expect("valid Desktop resource release");
+                    self.apply_resource_updates(updates);
+                }
+                Command::CheckpointResource {
+                    id,
+                    generation,
+                    state,
+                    width,
+                    height,
+                } => self.check_resource(*id, *generation, *state, *width, *height),
                 Command::PresentBox {
                     revision,
                     rect,
@@ -528,6 +576,74 @@ impl Driver {
                 assert_eq!(*actual_paint, Some(&expected_paint));
             }
             _ => panic!("one projected Desktop box command"),
+        }
+    }
+
+    fn apply_resource_updates(&mut self, updates: Vec<DesktopResourceUpdate>) {
+        for update in updates {
+            match update {
+                DesktopResourceUpdate::Ready { event, raster } => {
+                    let whisker_protocol::ResourceEvent::Ready { resource, .. } = event else {
+                        unreachable!()
+                    };
+                    self.scene
+                        .as_mut()
+                        .expect("resource load follows surface attach")
+                        .register_raster_resource(resource);
+                    self.raster_resources.insert(resource, raster);
+                }
+                DesktopResourceUpdate::Failed(_) => {}
+                DesktopResourceUpdate::Released {
+                    resource, evict, ..
+                } => {
+                    if evict {
+                        self.scene
+                            .as_mut()
+                            .expect("resource release follows surface attach")
+                            .release_raster_resource(resource);
+                        self.raster_resources.remove(&resource);
+                    }
+                }
+            }
+        }
+    }
+
+    fn check_resource(
+        &mut self,
+        id: u64,
+        generation: u64,
+        expected: ResourceStateFixture,
+        width: Option<u32>,
+        height: Option<u32>,
+    ) {
+        let resource = ResourceId::new(id).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while self.resource_service.state(resource, generation)
+            == Some(DesktopResourceState::Loading)
+        {
+            let updates = self.resource_service.drain();
+            self.apply_resource_updates(updates);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Desktop resource checkpoint timed out"
+            );
+            std::thread::yield_now();
+        }
+        let actual = self.resource_service.state(resource, generation);
+        match expected {
+            ResourceStateFixture::Ready => assert_eq!(
+                actual,
+                Some(DesktopResourceState::Ready {
+                    width: width.unwrap(),
+                    height: height.unwrap(),
+                })
+            ),
+            ResourceStateFixture::Failed => {
+                assert!(matches!(actual, Some(DesktopResourceState::Failed(_))))
+            }
+            ResourceStateFixture::Released => {
+                assert_eq!(actual, Some(DesktopResourceState::Released))
+            }
         }
     }
 

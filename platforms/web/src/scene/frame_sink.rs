@@ -41,23 +41,6 @@ pub(crate) struct WebProviderEvent {
 }
 
 impl DomFrameSink {
-    pub(crate) fn new(
-        document: web_sys::Document,
-        root: web_sys::Element,
-        surface: SurfaceId,
-        registrations: &[ElementRegistration],
-        factories: &[WebElementFactory],
-    ) -> Result<Self, WebError> {
-        Self::new_with_resources(
-            document,
-            root,
-            surface,
-            registrations,
-            factories,
-            WebResourceStore::new(),
-        )
-    }
-
     pub(crate) fn new_with_resources(
         document: web_sys::Document,
         root: web_sys::Element,

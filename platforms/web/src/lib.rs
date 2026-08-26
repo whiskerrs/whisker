@@ -23,11 +23,12 @@ mod module_api;
 mod paint;
 mod scene;
 
-pub use application::{register_resource_url, run};
+pub use application::{handle_resource_command, register_resource_url, run};
 pub use dom::WebError;
 pub(crate) use dom::{js_error, px, set_style};
 pub(crate) use module_api::WebElementFactoryKind;
 pub use module_api::*;
+pub use scene::resource_service::{WebResourceService, WebResourceState};
 pub use scene::resource_store::WebResourceStore;
 
 #[cfg(all(test, target_arch = "wasm32"))]

@@ -9,6 +9,7 @@ public final class WhiskerView: UIView {
     private var isApplicationActive = true
     private let modules = HostModuleDispatcher()
     private let resources = HostResourceStore()
+    private lazy var resourceService = HostResourceService(store: resources)
     private lazy var scene = HostScene(
         root: self,
         resources: resources,
@@ -44,6 +45,37 @@ public final class WhiskerView: UIView {
     @discardableResult
     public func registerRasterResource(id: UInt64, image: CGImage) -> Bool {
         resources.registerRasterImage(image, id: id)
+    }
+
+    /// Starts native acquisition and decode for one monotonically newer generation.
+    @discardableResult
+    public func loadRasterResource(
+        id: UInt64,
+        generation: UInt64,
+        source: WhiskerRasterResourceSource
+    ) -> Bool {
+        resourceService.load(id: id, generation: generation, source: source)
+    }
+
+    /// Releases exactly one generation without evicting a newer replacement.
+    @discardableResult
+    public func releaseRasterResource(id: UInt64, generation: UInt64) -> Bool {
+        resourceService.release(id: id, generation: generation)
+    }
+
+    /// Returns the retained lifecycle state for one exact generation.
+    public func rasterResourceState(
+        id: UInt64,
+        generation: UInt64
+    ) -> WhiskerRasterResourceState? {
+        resourceService.state(id: id, generation: generation)
+    }
+
+    /// Installs the Host-to-runtime notification boundary for lifecycle events.
+    public func observeRasterResourceEvents(
+        _ handler: ((WhiskerRasterResourceEvent) -> Void)?
+    ) {
+        resourceService.eventHandler = handler
     }
 
     deinit {

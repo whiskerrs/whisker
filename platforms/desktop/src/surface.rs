@@ -40,6 +40,11 @@ impl DesktopSurface {
         self.scene.register_raster_resource(resource);
     }
 
+    pub(crate) fn release_raster_resource(&mut self, resource: ResourceId) {
+        self.gpu.release_raster_resource(resource);
+        self.scene.release_raster_resource(resource);
+    }
+
     pub(crate) fn paint(
         &mut self,
         text: &mut NativeTextHost,

@@ -14,4 +14,8 @@ final class HostResourceStore {
     func rasterImage(id: UInt64) -> CGImage? {
         rasterImages[id]
     }
+
+    func removeRasterImage(id: UInt64) {
+        rasterImages.removeValue(forKey: id)
+    }
 }

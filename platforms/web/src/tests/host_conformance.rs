@@ -1,5 +1,8 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::task::Poll;
 
+use base64::Engine as _;
 use wasm_bindgen::Clamped;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -10,23 +13,25 @@ use whisker_host_conformance::{
     BackgroundPaintLayerFixture, BorderFixture, BorderStyleFixture, ColorFixture, Command,
     ConicGradientFixture, CornerRadiusFixture, ImageRepeatFixture, LengthPercentageFixture,
     LinearGradientFixture, Manifest, OverflowClipFixture, PixelSampleFixture,
-    RadialGradientFixture, SCHEMA_VERSION, Scenario, ScenarioSide, SceneNodeFixture,
-    VisibilityFixture,
+    RadialGradientFixture, ResourceSourceFixture, ResourceStateFixture, SCHEMA_VERSION, Scenario,
+    ScenarioSide, SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
     BoxPaint, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat, LayoutGeometry,
     LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
     PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
-    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceId, SurfaceId, Transform,
-    Visibility,
+    ProtocolVersion, RadialGradientExtent, RadialGradientShape, ResourceCommand,
+    ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest, ResourceSource,
+    SurfaceId, Transform, Visibility,
 };
 
-use crate::WebResourceStore;
 use crate::module_api::built_in_element_factories;
 use crate::scene::frame_sink::DomFrameSink;
+use crate::{WebResourceService, WebResourceState, WebResourceStore};
 
 const MANIFEST: &str = include_str!("../../../../tests/host-conformance/manifest.json");
+const RASTER_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAF0lEQVR4nAXBAQEAAACCIKb33EBkQpUOQdYIeRyCeLsAAAAASUVORK5CYII=";
 
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -203,11 +208,69 @@ fn missing_background_resource_rejects_before_dom_mutation() {
     assert_eq!(driver.root.inner_html(), before);
 }
 
+#[wasm_bindgen_test]
+async fn stale_resource_completion_cannot_replace_or_release_current_generation() {
+    let store = WebResourceStore::new();
+    let service = WebResourceService::new(store.clone());
+    let resource = ResourceId::new(1).unwrap();
+    let mut first = Box::pin(
+        service.handle(ResourceCommand::Load(ResourceRequest {
+            resource,
+            generation: 1,
+            kind: ResourceKind::RasterImage,
+            source: ResourceSource::Bytes {
+                media_type: "image/png".into(),
+                data: base64::engine::general_purpose::STANDARD
+                    .decode(RASTER_PNG_BASE64)
+                    .unwrap(),
+            },
+        })),
+    );
+    std::future::poll_fn(|context| match first.as_mut().poll(context) {
+        Poll::Pending => Poll::Ready(()),
+        Poll::Ready(result) => panic!("first browser decode completed synchronously: {result:?}"),
+    })
+    .await;
+
+    let current = service
+        .handle(ResourceCommand::Load(ResourceRequest {
+            resource,
+            generation: 2,
+            kind: ResourceKind::RasterImage,
+            source: ResourceSource::Url(format!("data:image/png;base64,{RASTER_PNG_BASE64}")),
+        }))
+        .await
+        .unwrap();
+    assert!(matches!(
+        current,
+        Some(ResourceEvent::Ready { generation: 2, .. })
+    ));
+    let current_url = store.url(resource).unwrap();
+
+    assert_eq!(first.await.unwrap(), None);
+    assert_eq!(service.event(resource, 1), None);
+    assert_eq!(store.url(resource).as_deref(), Some(current_url.as_str()));
+    service
+        .handle(ResourceCommand::Release {
+            resource,
+            generation: 1,
+        })
+        .await
+        .unwrap();
+    assert_eq!(store.url(resource).as_deref(), Some(current_url.as_str()));
+    assert!(matches!(
+        service.state(resource, 2),
+        Some(WebResourceState::Ready { .. })
+    ));
+}
+
 struct Driver {
     root: web_sys::Element,
     sink: DomFrameSink,
     resources: WebResourceStore,
+    resource_service: WebResourceService,
     resource_urls: HashMap<u64, String>,
+    resource_lifecycle: bool,
     expected_box: Option<ExpectedBox>,
     expected_scene: Option<Vec<SceneNodeFixture>>,
 }
@@ -229,6 +292,7 @@ impl Driver {
         let surface = SurfaceId::new(1).unwrap();
         let elements = ElementRegistry::standard();
         let resources = WebResourceStore::new();
+        let resource_service = WebResourceService::new(resources.clone());
         let sink = DomFrameSink::new_with_resources(
             document,
             root.clone(),
@@ -242,13 +306,15 @@ impl Driver {
             root,
             sink,
             resources,
+            resource_service,
             resource_urls: HashMap::new(),
+            resource_lifecycle: false,
             expected_box: None,
             expected_scene: None,
         }
     }
 
-    fn execute(&mut self, side: &ScenarioSide) {
+    async fn execute(&mut self, side: &ScenarioSide) {
         for command in &side.commands {
             match command {
                 Command::AttachSurface {
@@ -267,6 +333,49 @@ impl Driver {
                     height,
                     pixels,
                 } => self.register_raster_resource(*id, *width, *height, pixels),
+                Command::LoadRasterResource {
+                    id,
+                    generation,
+                    source,
+                } => {
+                    self.resource_lifecycle = true;
+                    let source = match source {
+                        ResourceSourceFixture::Url { value } => ResourceSource::Url(value.clone()),
+                        ResourceSourceFixture::Bytes { media_type, base64 } => {
+                            ResourceSource::Bytes {
+                                media_type: media_type.clone(),
+                                data: base64::engine::general_purpose::STANDARD
+                                    .decode(base64)
+                                    .unwrap(),
+                            }
+                        }
+                    };
+                    self.resource_service
+                        .handle(ResourceCommand::Load(ResourceRequest {
+                            resource: ResourceId::new(*id).unwrap(),
+                            generation: *generation,
+                            kind: ResourceKind::RasterImage,
+                            source,
+                        }))
+                        .await
+                        .unwrap();
+                }
+                Command::ReleaseRasterResource { id, generation } => {
+                    self.resource_service
+                        .handle(ResourceCommand::Release {
+                            resource: ResourceId::new(*id).unwrap(),
+                            generation: *generation,
+                        })
+                        .await
+                        .unwrap();
+                }
+                Command::CheckpointResource {
+                    id,
+                    generation,
+                    state,
+                    width,
+                    height,
+                } => self.assert_resource_state(*id, *generation, *state, *width, *height),
                 Command::PresentBox {
                     revision,
                     rect,
@@ -289,7 +398,10 @@ impl Driver {
                 }
                 Command::Checkpoint { name, samples, .. } => {
                     if self.expected_scene.is_some() {
-                        let expected_checkpoint = self
+                        let expected_checkpoint = if self.resource_lifecycle {
+                            "paint.background-layers.resource-lifecycle"
+                        } else {
+                            self
                             .expected_scene
                             .as_ref()
                             .and_then(|nodes| {
@@ -390,7 +502,8 @@ impl Driver {
                                         })
                                     })
                             })
-                            .unwrap_or("paint.box");
+                            .unwrap_or("paint.box")
+                        };
                         assert_eq!(name, expected_checkpoint);
                         self.assert_scene_is_projected(samples);
                     } else {
@@ -445,6 +558,59 @@ impl Driver {
             .register_url(ResourceId::new(id).unwrap(), url.clone())
             .unwrap();
         self.resource_urls.insert(id, url);
+    }
+
+    fn assert_resource_state(
+        &mut self,
+        id: u64,
+        generation: u64,
+        expected: ResourceStateFixture,
+        width: Option<u32>,
+        height: Option<u32>,
+    ) {
+        let resource = ResourceId::new(id).unwrap();
+        let state = self
+            .resource_service
+            .state(resource, generation)
+            .unwrap_or_else(|| panic!("missing Web resource state {id}:{generation}"));
+        match expected {
+            ResourceStateFixture::Ready => {
+                let dimensions = ResourceDimensions {
+                    width: width.unwrap() as f32,
+                    height: height.unwrap() as f32,
+                    scale: 1.0,
+                };
+                assert_eq!(state, WebResourceState::Ready { dimensions });
+                assert_eq!(
+                    self.resource_service.event(resource, generation),
+                    Some(ResourceEvent::Ready {
+                        resource,
+                        generation,
+                        dimensions: Some(dimensions),
+                    })
+                );
+                self.resource_urls
+                    .insert(id, self.resources.url(resource).unwrap());
+            }
+            ResourceStateFixture::Failed => {
+                let WebResourceState::Failed { code, diagnostic } = state else {
+                    panic!("resource {id}:{generation} was not failed: {state:?}");
+                };
+                assert!(diagnostic.is_some());
+                assert_eq!(
+                    self.resource_service.event(resource, generation),
+                    Some(ResourceEvent::Failed {
+                        resource,
+                        generation,
+                        code,
+                        diagnostic,
+                    })
+                );
+            }
+            ResourceStateFixture::Released => {
+                assert_eq!(state, WebResourceState::Released);
+            }
+        }
     }
 
     fn assert_box_is_projected(&self) {
@@ -673,7 +839,7 @@ impl Drop for Driver {
 }
 
 #[wasm_bindgen_test]
-fn every_shared_paint_fixture_reaches_the_production_dom_sink() {
+async fn every_shared_paint_fixture_reaches_the_production_dom_sink() {
     let manifest: Manifest = serde_json::from_str(MANIFEST).unwrap();
     assert_eq!(manifest.schema, SCHEMA_VERSION);
     let mut count = 0;
@@ -690,9 +856,11 @@ fn every_shared_paint_fixture_reaches_the_production_dom_sink() {
         }) {
             continue;
         }
-        Driver::new().execute(&scenario.test);
+        let mut driver = Driver::new();
+        driver.execute(&scenario.test).await;
         if let Some(reference) = &scenario.reference {
-            Driver::new().execute(reference);
+            let mut driver = Driver::new();
+            driver.execute(reference).await;
         }
         count += 1;
     }
@@ -701,6 +869,9 @@ fn every_shared_paint_fixture_reaches_the_production_dom_sink() {
 
 fn fixture(path: &str) -> &'static str {
     match path {
+        "core/resource-raster-lifecycle.json" => {
+            include_str!("../../../../tests/host-conformance/core/resource-raster-lifecycle.json")
+        }
         "wpt/css/CSS2/backgrounds/background-color-129.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/CSS2/backgrounds/background-color-129.json"
         ),
