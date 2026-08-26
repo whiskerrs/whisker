@@ -645,34 +645,7 @@ pub(crate) fn resolve_layout_style(
         StyleProperty::PaddingLeft,
     )?;
 
-    style.border.top = resolve_non_negative_length_percentage(
-        declarations.border_top_width,
-        style.border.top,
-        font_size,
-        environment,
-        StyleProperty::BorderTopWidth,
-    )?;
-    style.border.right = resolve_non_negative_length_percentage(
-        declarations.border_right_width,
-        style.border.right,
-        font_size,
-        environment,
-        StyleProperty::BorderRightWidth,
-    )?;
-    style.border.bottom = resolve_non_negative_length_percentage(
-        declarations.border_bottom_width,
-        style.border.bottom,
-        font_size,
-        environment,
-        StyleProperty::BorderBottomWidth,
-    )?;
-    style.border.left = resolve_non_negative_length_percentage(
-        declarations.border_left_width,
-        style.border.left,
-        font_size,
-        environment,
-        StyleProperty::BorderLeftWidth,
-    )?;
+    style.border = resolve_borders(specified, style.direction, font_size, environment)?;
 
     style.inset = resolve_insets(specified, style.direction, font_size, environment)?;
 
@@ -1165,6 +1138,46 @@ fn resolve_insets(
     Ok(inset)
 }
 
+fn resolve_borders(
+    specified: &SpecifiedStyle,
+    direction: DirectionValue,
+    font_size: f32,
+    environment: StyleEnvironment,
+) -> Result<Edges<ComputedLengthPercentage>, StyleResolutionError> {
+    let mut border = Edges::all(ComputedLengthPercentage::ZERO);
+    for declaration in specified.resolved() {
+        let (edge, property) = match declaration.property() {
+            StyleProperty::BorderTopWidth => (&mut border.top, StyleProperty::BorderTopWidth),
+            StyleProperty::BorderRightWidth => (&mut border.right, StyleProperty::BorderRightWidth),
+            StyleProperty::BorderBottomWidth => {
+                (&mut border.bottom, StyleProperty::BorderBottomWidth)
+            }
+            StyleProperty::BorderLeftWidth => (&mut border.left, StyleProperty::BorderLeftWidth),
+            StyleProperty::BorderInlineStartWidth if direction == DirectionValue::Ltr => {
+                (&mut border.left, StyleProperty::BorderInlineStartWidth)
+            }
+            StyleProperty::BorderInlineStartWidth => {
+                (&mut border.right, StyleProperty::BorderInlineStartWidth)
+            }
+            StyleProperty::BorderInlineEndWidth if direction == DirectionValue::Ltr => {
+                (&mut border.right, StyleProperty::BorderInlineEndWidth)
+            }
+            StyleProperty::BorderInlineEndWidth => {
+                (&mut border.left, StyleProperty::BorderInlineEndWidth)
+            }
+            _ => continue,
+        };
+        *edge = resolve_non_negative_length_percentage(
+            Some(declaration.value()),
+            *edge,
+            font_size,
+            environment,
+            property,
+        )?;
+    }
+    Ok(border)
+}
+
 fn resolve_non_negative_number(
     value: Option<&StyleValue>,
     initial: StyleNumber,
@@ -1388,10 +1401,6 @@ struct LayoutDeclarations<'a> {
     padding_right: Option<&'a StyleValue>,
     padding_bottom: Option<&'a StyleValue>,
     padding_left: Option<&'a StyleValue>,
-    border_top_width: Option<&'a StyleValue>,
-    border_right_width: Option<&'a StyleValue>,
-    border_bottom_width: Option<&'a StyleValue>,
-    border_left_width: Option<&'a StyleValue>,
     flex_direction: Option<&'a StyleValue>,
     flex_wrap: Option<&'a StyleValue>,
     flex_grow: Option<&'a StyleValue>,
@@ -1446,10 +1455,6 @@ impl<'a> LayoutDeclarations<'a> {
                 StyleProperty::PaddingRight => &mut values.padding_right,
                 StyleProperty::PaddingBottom => &mut values.padding_bottom,
                 StyleProperty::PaddingLeft => &mut values.padding_left,
-                StyleProperty::BorderTopWidth => &mut values.border_top_width,
-                StyleProperty::BorderRightWidth => &mut values.border_right_width,
-                StyleProperty::BorderBottomWidth => &mut values.border_bottom_width,
-                StyleProperty::BorderLeftWidth => &mut values.border_left_width,
                 StyleProperty::FlexDirection => &mut values.flex_direction,
                 StyleProperty::FlexWrap => &mut values.flex_wrap,
                 StyleProperty::FlexGrow => &mut values.flex_grow,
@@ -2374,6 +2379,8 @@ mod tests {
             StyleProperty::BorderRightWidth,
             StyleProperty::BorderBottomWidth,
             StyleProperty::BorderLeftWidth,
+            StyleProperty::BorderInlineStartWidth,
+            StyleProperty::BorderInlineEndWidth,
             StyleProperty::Top,
             StyleProperty::Right,
             StyleProperty::Bottom,
