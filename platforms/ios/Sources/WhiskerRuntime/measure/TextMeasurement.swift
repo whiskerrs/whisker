@@ -12,6 +12,8 @@ let whiskerIOSMeasure: WhiskerMeasureHost = { data, requests, count, responses i
               request.wrap <= 1,
               request.word_break <= 2,
               request.overflow <= 1,
+              request.direction <= 2,
+              request.alignment <= 4,
               request.font_size.isFinite,
               request.font_size > 0,
               request.line_height.isFinite,
@@ -70,7 +72,6 @@ private func measureText(
         fontStyle: style
     ).font
     baseFont = configuredMeasureFont(baseFont, request)
-    let paragraph = NSMutableParagraphStyle()
     let widthBasis: CGFloat
     if request.known_mask & 1 != 0 {
         widthBasis = CGFloat(request.known_width)
@@ -79,15 +80,7 @@ private func measureText(
     } else {
         widthBasis = 0
     }
-    paragraph.firstLineHeadIndent = CGFloat(request.indent_logical_pixels)
-        + widthBasis * CGFloat(request.indent_percentage) / 100
-    paragraph.lineBreakMode = request.overflow != 0
-        ? .byTruncatingTail
-        : (request.word_break == 1 ? .byCharWrapping : .byWordWrapping)
-    if request.line_height > 0 {
-        paragraph.minimumLineHeight = CGFloat(request.line_height)
-        paragraph.maximumLineHeight = CGFloat(request.line_height)
-    }
+    let paragraph = whiskerTextParagraphStyle(request, widthBasis: widthBasis)
     let attributes: [NSAttributedString.Key: Any] = [
         .font: baseFont,
         .kern: CGFloat(request.letter_spacing),
@@ -119,6 +112,35 @@ private func measureText(
         response.height - Float(abs(baseFont.descender))
     )
     response.metrics_mask = 3
+}
+
+func whiskerTextParagraphStyle(
+    _ request: WhiskerMobileMeasureRequest,
+    widthBasis: CGFloat
+) -> NSMutableParagraphStyle {
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.firstLineHeadIndent = CGFloat(request.indent_logical_pixels)
+        + widthBasis * CGFloat(request.indent_percentage) / 100
+    paragraph.baseWritingDirection = switch request.direction {
+    case 0: .natural
+    case 1: .leftToRight
+    default: .rightToLeft
+    }
+    paragraph.alignment = switch request.alignment {
+    case 0: request.direction == 2 ? .right : .left
+    case 1: request.direction == 2 ? .left : .right
+    case 2: .left
+    case 3: .right
+    default: .center
+    }
+    paragraph.lineBreakMode = request.overflow != 0
+        ? .byTruncatingTail
+        : (request.word_break == 1 ? .byCharWrapping : .byWordWrapping)
+    if request.line_height > 0 {
+        paragraph.minimumLineHeight = CGFloat(request.line_height)
+        paragraph.maximumLineHeight = CGFloat(request.line_height)
+    }
+    return paragraph
 }
 
 private func validatedFontFamilies(_ request: WhiskerMobileMeasureRequest) -> [String]? {

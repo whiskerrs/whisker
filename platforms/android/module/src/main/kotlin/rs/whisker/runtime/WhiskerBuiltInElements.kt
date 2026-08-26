@@ -4,6 +4,7 @@ import android.graphics.Typeface
 import android.os.Build
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 
 /** Hand-written Android implementations matched to Rust registrations by name. */
 public object WhiskerBuiltInElements {
@@ -48,6 +49,11 @@ public object WhiskerBuiltInElements {
                     view.setLineSpacing((lineHeight * density - fontHeight).coerceAtLeast(0f), 1f)
                 } ?: view.setLineSpacing(0f, 1f)
                 view.setWhiskerText(content)
+                view.textDirection = when (content.direction) {
+                    WhiskerTextDirection.AUTO -> View.TEXT_DIRECTION_FIRST_STRONG
+                    WhiskerTextDirection.LEFT_TO_RIGHT -> View.TEXT_DIRECTION_LTR
+                    WhiskerTextDirection.RIGHT_TO_LEFT -> View.TEXT_DIRECTION_RTL
+                }
                 view.gravity = Gravity.TOP or when (content.alignment) {
                     WhiskerTextAlignment.START -> Gravity.START
                     WhiskerTextAlignment.END -> Gravity.END

@@ -19,6 +19,7 @@ import rs.whisker.runtime.WhiskerTextDecoration
 import rs.whisker.runtime.WhiskerTextDecorationLine
 import rs.whisker.runtime.WhiskerTextDecorationStyle
 import rs.whisker.runtime.WhiskerTextAlignment
+import rs.whisker.runtime.WhiskerTextDirection
 import rs.whisker.runtime.WhiskerTextIndent
 import rs.whisker.runtime.WhiskerTextOverflow
 import rs.whisker.runtime.WhiskerTextShadow
@@ -202,13 +203,15 @@ internal class HostScene(
                 val values = operation.numbers ?: return false
                 if (
                     operation.node !in existing || operation.text == null ||
-                    values.size < 27 || operation.names?.size ?: 0 < 3 ||
+                    values.size < 37 || operation.names?.size ?: 0 < 3 ||
                     !values.all { it.isFinite() } || values[17].toInt() !in 0..2 ||
                     values[17] != values[17].toInt().toFloat() ||
                     values[18].toInt() !in 0..4 ||
                     values[18] != values[18].toInt().toFloat() ||
                     values[24].toInt() !in 0..4 ||
-                    values[24] != values[24].toInt().toFloat()
+                    values[24] != values[24].toInt().toFloat() ||
+                    values[36].toInt() !in 0..2 ||
+                    values[36] != values[36].toInt().toFloat()
                 ) return false
             }
             14 -> if (operation.node !in existing || operation.value == null) return false
@@ -383,7 +386,7 @@ internal class HostScene(
     }
 
     private fun applyText(node: HostNode, text: String, values: FloatArray, names: Array<String>) {
-        require(values.size >= 36)
+        require(values.size >= 37)
         require(values[0].isFinite() && values[0] > 0f)
         require(values[1] in 1f..1000f && values[1] == values[1].toInt().toFloat())
         require(values[2] in 0f..2f && values[2] == values[2].toInt().toFloat())
@@ -431,6 +434,7 @@ internal class HostScene(
                     } else {
                         rgba(values[3], values[4], values[5], values[6])
                     },
+                    direction = WhiskerTextDirection.entries[values[36].toInt()],
                     alignment = WhiskerTextAlignment.entries[values[24].toInt()],
                     indent = WhiskerTextIndent(
                         logicalPixels = values[25],

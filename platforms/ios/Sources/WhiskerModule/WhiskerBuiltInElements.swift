@@ -51,6 +51,7 @@ public final class WhiskerTextLabel: UILabel {
     public internal(set) var whiskerFontStyle: WhiskerTextFontStyle = .normal
     public internal(set) var whiskerLineHeight: CGFloat?
     public internal(set) var whiskerLetterSpacing: CGFloat = 0
+    public internal(set) var whiskerDirection: WhiskerTextDirection = .auto
 
     public func setWhiskerIndent(_ indent: WhiskerTextIndent) {
         whiskerIndent = indent
@@ -148,9 +149,29 @@ public enum WhiskerBuiltInElements {
                 label.whiskerFontVariations = content.fontVariations
                 label.whiskerFontOpticalSizing = content.fontOpticalSizing
                 label.textColor = content.color
+                label.whiskerDirection = content.direction
+                label.semanticContentAttribute = switch content.direction {
+                case .auto: .unspecified
+                case .leftToRight: .forceLeftToRight
+                case .rightToLeft: .forceRightToLeft
+                }
                 label.textAlignment = switch content.alignment {
-                case .start: label.effectiveUserInterfaceLayoutDirection == .rightToLeft ? .right : .left
-                case .end: label.effectiveUserInterfaceLayoutDirection == .rightToLeft ? .left : .right
+                case .start:
+                    switch content.direction {
+                    case .auto:
+                        label.effectiveUserInterfaceLayoutDirection == .rightToLeft
+                            ? .right : .left
+                    case .leftToRight: .left
+                    case .rightToLeft: .right
+                    }
+                case .end:
+                    switch content.direction {
+                    case .auto:
+                        label.effectiveUserInterfaceLayoutDirection == .rightToLeft
+                            ? .left : .right
+                    case .leftToRight: .right
+                    case .rightToLeft: .left
+                    }
                 case .left: .left
                 case .right: .right
                 case .center: .center
@@ -165,6 +186,11 @@ public enum WhiskerBuiltInElements {
                 }
                 let paragraph = NSMutableParagraphStyle()
                 paragraph.alignment = label.textAlignment
+                paragraph.baseWritingDirection = switch content.direction {
+                case .auto: .natural
+                case .leftToRight: .leftToRight
+                case .rightToLeft: .rightToLeft
+                }
                 paragraph.lineBreakMode = label.lineBreakMode
                 if let lineHeight = content.lineHeight {
                     paragraph.minimumLineHeight = lineHeight

@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 25;
+pub const MOBILE_ABI_MINOR: u16 = 26;
 
 pub const POINTER_DOWN: u32 = 0;
 pub const POINTER_MOVE: u32 = 1;
@@ -355,6 +355,8 @@ pub struct MobileText {
     pub indent_logical_pixels: f32,
     pub indent_percentage: f32,
     pub prepared_content: u64,
+    pub direction: u32,
+    pub _direction_pad: u32,
 }
 
 /// Flat operation envelope. `payload` points to the type selected by `tag`.
@@ -478,6 +480,9 @@ pub struct MobileMeasureRequest {
     pub intrinsic_width: f32,
     pub intrinsic_height: f32,
     pub intrinsic_mask: u32,
+    pub direction: u8,
+    pub alignment: u8,
+    pub _flow_pad: [u8; 6],
 }
 
 #[repr(C)]
@@ -706,9 +711,9 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileMemberRegistration>(), 24);
             assert_eq!(std::mem::size_of::<MobileElementRegistration>(), 72);
             assert_eq!(std::mem::size_of::<MobileBootstrap>(), 24);
-            assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 216);
+            assert_eq!(std::mem::size_of::<MobileMeasureRequest>(), 224);
             assert_eq!(std::mem::size_of::<MobileMeasureResponse>(), 64);
-            assert_eq!(std::mem::size_of::<MobileText>(), 240);
+            assert_eq!(std::mem::size_of::<MobileText>(), 248);
             assert_eq!(std::mem::size_of::<MobileBoxPaint>(), 272);
             assert_eq!(std::mem::size_of::<MobileBoxShadow>(), 56);
             assert_eq!(std::mem::size_of::<MobileClipInset>(), 96);

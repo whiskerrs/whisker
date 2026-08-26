@@ -8,14 +8,20 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.TextDirectionHeuristic
+import android.text.TextDirectionHeuristics
 import android.text.TextUtils
 import android.text.style.LeadingMarginSpan
+import android.view.View
+import java.text.Bidi
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerMeasureRequest
 import rs.whisker.runtime.resolveWhiskerTypeface
 
 /** Intrinsic measurement implementation shared by all Android Host frames. */
 internal class HostMeasurementProvider(private val context: Context) {
+    var textInspectionObserver: ((IntArray, FloatArray) -> Unit)? = null
+
     @Suppress("LongParameterList")
     fun measure(
         elementType: Int, kind: Int,
@@ -28,6 +34,7 @@ internal class HostMeasurementProvider(private val context: Context) {
         maxLines: Int, fontSettings: Array<String>, fontFeatureCount: Int,
         fontOpticalSizing: Int, payloadVersion: Int, payload: ByteArray,
         intrinsicWidth: Float, intrinsicHeight: Float, intrinsicMask: Int,
+        direction: Int, alignment: Int,
     ): FloatArray {
         if (kind == MEASURE_TEXT) {
             return measureText(
@@ -35,7 +42,7 @@ internal class HostMeasurementProvider(private val context: Context) {
                 availableWidth, availableWidthKind,
                 text, fontFamilies, fontSize, fontWeight, fontStyle, wrap, wordBreak, overflow,
                 letterSpacing, lineHeight, indentLogicalPixels, indentPercentage, maxLines,
-                fontSettings, fontFeatureCount, fontOpticalSizing,
+                fontSettings, fontFeatureCount, fontOpticalSizing, direction, alignment,
             )
         }
         if ((kind == MEASURE_REPLACED_CONTENT || kind == MEASURE_EMBEDDED_SURFACE) &&
@@ -71,6 +78,7 @@ internal class HostMeasurementProvider(private val context: Context) {
         fontStyle: Int, wrap: Int, wordBreak: Int, overflow: Int, letterSpacing: Float,
         lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float, maxLines: Int,
         fontSettings: Array<String>, fontFeatureCount: Int, fontOpticalSizing: Int,
+        direction: Int, alignment: Int,
     ): FloatArray {
         val density = context.resources.displayMetrics.density
         val paint = TextPaint().apply {
@@ -109,6 +117,8 @@ internal class HostMeasurementProvider(private val context: Context) {
         val indentPixels = indentLogicalPixels * density +
             widthBasis * density * indentPercentage / 100f
         val displayText = if (wordBreak == WORD_BREAK_KEEP_ALL) protectCjkBreaks(text) else text
+        val localeRtl = context.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        val resolvedRtl = resolvesRightToLeft(displayText, direction, localeRtl)
         val layoutText: CharSequence = if (displayText.isEmpty() || indentPixels == 0f) {
             displayText
         } else {
@@ -129,7 +139,8 @@ internal class HostMeasurementProvider(private val context: Context) {
         val builder = StaticLayout.Builder.obtain(
             layoutText, 0, layoutText.length, paint, maxWidthPx,
         )
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setAlignment(resolveAlignment(alignment, resolvedRtl))
+            .setTextDirection(resolveDirectionHeuristic(direction, localeRtl))
             .setIncludePad(false)
             .setMaxLines(if (maxLines == 0) Int.MAX_VALUE else maxLines)
             .setBreakStrategy(
@@ -144,6 +155,15 @@ internal class HostMeasurementProvider(private val context: Context) {
             builder.setLineSpacing((lineHeight * density - fontHeight).coerceAtLeast(0f), 1f)
         }
         val layout = builder.build()
+        textInspectionObserver?.invoke(
+            intArrayOf(
+                direction,
+                alignment,
+                if (layout.lineCount > 0) layout.getParagraphDirection(0) else if (resolvedRtl) -1 else 1,
+                layout.alignment.ordinal,
+            ),
+            floatArrayOf(indentPixels / density),
+        )
         val width = if (knownMask and WIDTH != 0) knownWidth else layout.width / density
         val height = if (knownMask and HEIGHT != 0) knownHeight else layout.height / density
         val first = if (layout.lineCount > 0) layout.getLineBaseline(0) / density else 0f
@@ -158,6 +178,55 @@ internal class HostMeasurementProvider(private val context: Context) {
     private fun ready(width: Float, height: Float): FloatArray =
         floatArrayOf(READY, 0f, width, height, 0f, 0f, 0f)
 }
+
+private fun resolveDirectionHeuristic(
+    direction: Int,
+    localeRtl: Boolean,
+): TextDirectionHeuristic = when (direction) {
+    TEXT_DIRECTION_AUTO -> if (localeRtl) {
+        TextDirectionHeuristics.FIRSTSTRONG_RTL
+    } else {
+        TextDirectionHeuristics.FIRSTSTRONG_LTR
+    }
+    TEXT_DIRECTION_LEFT_TO_RIGHT -> TextDirectionHeuristics.LTR
+    TEXT_DIRECTION_RIGHT_TO_LEFT -> TextDirectionHeuristics.RTL
+    else -> error("unsupported text direction: $direction")
+}
+
+private fun resolvesRightToLeft(text: String, direction: Int, localeRtl: Boolean): Boolean =
+    when (direction) {
+        TEXT_DIRECTION_LEFT_TO_RIGHT -> false
+        TEXT_DIRECTION_RIGHT_TO_LEFT -> true
+        TEXT_DIRECTION_AUTO -> if (text.isEmpty()) {
+            localeRtl
+        } else {
+            val fallback = if (localeRtl) {
+                Bidi.DIRECTION_DEFAULT_RIGHT_TO_LEFT
+            } else {
+                Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT
+            }
+            !Bidi(text, fallback).baseIsLeftToRight()
+        }
+        else -> error("unsupported text direction: $direction")
+    }
+
+private fun resolveAlignment(alignment: Int, rightToLeft: Boolean): Layout.Alignment =
+    when (alignment) {
+        TEXT_ALIGNMENT_START -> Layout.Alignment.ALIGN_NORMAL
+        TEXT_ALIGNMENT_END -> Layout.Alignment.ALIGN_OPPOSITE
+        TEXT_ALIGNMENT_LEFT -> if (rightToLeft) {
+            Layout.Alignment.ALIGN_OPPOSITE
+        } else {
+            Layout.Alignment.ALIGN_NORMAL
+        }
+        TEXT_ALIGNMENT_RIGHT -> if (rightToLeft) {
+            Layout.Alignment.ALIGN_NORMAL
+        } else {
+            Layout.Alignment.ALIGN_OPPOSITE
+        }
+        TEXT_ALIGNMENT_CENTER -> Layout.Alignment.ALIGN_CENTER
+        else -> error("unsupported text alignment: $alignment")
+    }
 
 private fun parseFontSetting(value: String): Pair<String, Double> {
     val separator = value.indexOf('=')
@@ -190,6 +259,14 @@ private const val READY = 1f
 private const val WORD_BREAK_BREAK_ALL = 1
 private const val WORD_BREAK_KEEP_ALL = 2
 private const val TEXT_OVERFLOW_ELLIPSIS = 1
+private const val TEXT_DIRECTION_AUTO = 0
+private const val TEXT_DIRECTION_LEFT_TO_RIGHT = 1
+private const val TEXT_DIRECTION_RIGHT_TO_LEFT = 2
+private const val TEXT_ALIGNMENT_START = 0
+private const val TEXT_ALIGNMENT_END = 1
+private const val TEXT_ALIGNMENT_LEFT = 2
+private const val TEXT_ALIGNMENT_RIGHT = 3
+private const val TEXT_ALIGNMENT_CENTER = 4
 private const val UNSUPPORTED = 3f
 private const val UNSUPPORTED_FEATURE = 1f
 private const val BASELINES = 3f

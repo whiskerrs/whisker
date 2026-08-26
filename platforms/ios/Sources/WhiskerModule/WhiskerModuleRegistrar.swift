@@ -50,6 +50,7 @@ public struct WhiskerTextContent {
     public let fontVariations: [WhiskerFontVariation]
     public let fontOpticalSizing: WhiskerFontOpticalSizing
     public let color: UIColor
+    public let direction: WhiskerTextDirection
     public let alignment: WhiskerTextAlignment
     public let indent: WhiskerTextIndent
     public let wrap: Bool
@@ -71,6 +72,7 @@ public struct WhiskerTextContent {
         fontVariations: [WhiskerFontVariation] = [],
         fontOpticalSizing: WhiskerFontOpticalSizing = .none,
         color: UIColor,
+        direction: WhiskerTextDirection = .auto,
         alignment: WhiskerTextAlignment = .start,
         indent: WhiskerTextIndent = WhiskerTextIndent(),
         wrap: Bool = true,
@@ -91,6 +93,7 @@ public struct WhiskerTextContent {
         self.fontVariations = fontVariations
         self.fontOpticalSizing = fontOpticalSizing
         self.color = color
+        self.direction = direction
         self.alignment = alignment
         self.indent = indent
         self.wrap = wrap
@@ -130,6 +133,7 @@ public struct WhiskerFontVariation: Equatable {
 
 public enum WhiskerFontOpticalSizing: Equatable { case auto, none }
 
+public enum WhiskerTextDirection: Equatable { case auto, leftToRight, rightToLeft }
 public enum WhiskerTextAlignment: Equatable { case start, end, left, right, center }
 public enum WhiskerTextWordBreak: Equatable { case normal, breakAll, keepAll }
 public enum WhiskerTextOverflow: Equatable { case clip, ellipsis }

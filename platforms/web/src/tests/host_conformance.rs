@@ -377,6 +377,9 @@ struct ExpectedMeasurementStyle<'a> {
     word_break: whisker_host_conformance::WordBreakFixture,
     max_lines: u32,
     overflow: whisker_host_conformance::TextOverflowFixture,
+    direction: whisker_host_conformance::TextDirectionFixture,
+    alignment: whisker_host_conformance::TextAlignmentFixture,
+    indent: whisker_host_conformance::TextIndentFixture,
 }
 
 impl Driver {
@@ -773,6 +776,9 @@ impl Driver {
                     word_break,
                     max_lines,
                     overflow,
+                    direction,
+                    alignment,
+                    indent,
                     available_width,
                 } => self.measure_text(
                     *key,
@@ -790,6 +796,9 @@ impl Driver {
                     *word_break,
                     *max_lines,
                     *overflow,
+                    *direction,
+                    *alignment,
+                    *indent,
                     *available_width,
                 ),
                 Command::CheckpointMeasurement {
@@ -902,6 +911,9 @@ impl Driver {
         word_break: whisker_host_conformance::WordBreakFixture,
         max_lines: u32,
         overflow: whisker_host_conformance::TextOverflowFixture,
+        direction: whisker_host_conformance::TextDirectionFixture,
+        alignment: whisker_host_conformance::TextAlignmentFixture,
+        indent: whisker_host_conformance::TextIndentFixture,
         available_width: f32,
     ) {
         let key_id = MeasurementKey::new(key).expect("fixture measurement key is non-zero");
@@ -956,9 +968,12 @@ impl Driver {
                     optical_sizing: fixture_font_optical_sizing(font_optical_sizing),
                 },
                 locale: None,
-                direction: MeasureTextDirection::Auto,
-                alignment: whisker_protocol::MeasureTextAlignment::Start,
-                indent: Default::default(),
+                direction: fixture_measure_direction(direction),
+                alignment: fixture_alignment(alignment),
+                indent: whisker_protocol::MeasureTextIndent {
+                    logical_pixels: indent.logical_pixels,
+                    percentage: indent.percentage,
+                },
                 wrap: fixture_measure_wrap(white_space),
                 word_break: fixture_measure_word_break(word_break),
                 max_lines: (max_lines > 0).then_some(max_lines),
@@ -975,6 +990,9 @@ impl Driver {
                 word_break,
                 max_lines,
                 overflow,
+                direction,
+                alignment,
+                indent,
             },
         );
         let mut responses = Vec::new();
@@ -1066,6 +1084,35 @@ impl Driver {
             expected.max_lines.to_string()
         };
         assert_style(&style, "-webkit-line-clamp", &line_clamp);
+        assert_style(
+            &style,
+            "direction",
+            match expected.direction {
+                whisker_host_conformance::TextDirectionFixture::Auto => "initial",
+                whisker_host_conformance::TextDirectionFixture::LeftToRight => "ltr",
+                whisker_host_conformance::TextDirectionFixture::RightToLeft => "rtl",
+            },
+        );
+        assert_style(
+            &style,
+            "text-align",
+            match expected.alignment {
+                whisker_host_conformance::TextAlignmentFixture::Start => "start",
+                whisker_host_conformance::TextAlignmentFixture::End => "end",
+                whisker_host_conformance::TextAlignmentFixture::Left => "left",
+                whisker_host_conformance::TextAlignmentFixture::Right => "right",
+                whisker_host_conformance::TextAlignmentFixture::Center => "center",
+            },
+        );
+        assert_style(
+            &style,
+            "text-indent",
+            &format!(
+                "calc({} + {}%)",
+                fixture_px(expected.indent.logical_pixels),
+                expected.indent.percentage,
+            ),
+        );
     }
 
     fn assert_measurement(
@@ -1314,6 +1361,15 @@ impl Driver {
                     match text.font_optical_sizing {
                         whisker_host_conformance::FontOpticalSizingFixture::Auto => "auto",
                         whisker_host_conformance::FontOpticalSizingFixture::None => "none",
+                    },
+                );
+                assert_style(
+                    &text_style,
+                    "direction",
+                    match text.direction {
+                        whisker_host_conformance::TextDirectionFixture::Auto => "initial",
+                        whisker_host_conformance::TextDirectionFixture::LeftToRight => "ltr",
+                        whisker_host_conformance::TextDirectionFixture::RightToLeft => "rtl",
                     },
                 );
                 assert_style(
@@ -1950,6 +2006,9 @@ fn fixture(path: &str) -> &'static str {
         }
         "core/text-measure-flow.json" => {
             include_str!("../../../../tests/host-conformance/core/text-measure-flow.json")
+        }
+        "core/text-measure-direction.json" => {
+            include_str!("../../../../tests/host-conformance/core/text-measure-direction.json")
         }
         "core/pointer-input-basic.json" => {
             include_str!("../../../../tests/host-conformance/core/pointer-input-basic.json")
@@ -2681,6 +2740,20 @@ fn fixture_measure_font_style(
     }
 }
 
+fn fixture_measure_direction(
+    value: whisker_host_conformance::TextDirectionFixture,
+) -> MeasureTextDirection {
+    match value {
+        whisker_host_conformance::TextDirectionFixture::Auto => MeasureTextDirection::Auto,
+        whisker_host_conformance::TextDirectionFixture::LeftToRight => {
+            MeasureTextDirection::LeftToRight
+        }
+        whisker_host_conformance::TextDirectionFixture::RightToLeft => {
+            MeasureTextDirection::RightToLeft
+        }
+    }
+}
+
 fn fixture_measure_wrap(value: whisker_host_conformance::WhiteSpaceFixture) -> MeasureTextWrap {
     match value {
         whisker_host_conformance::WhiteSpaceFixture::Normal => MeasureTextWrap::Wrap,
@@ -2807,7 +2880,7 @@ fn fixture_text_content(text: &whisker_host_conformance::TextFixture) -> TextCon
                 },
             },
             locale: None,
-            direction: MeasureTextDirection::Auto,
+            direction: fixture_measure_direction(text.direction),
             alignment: fixture_alignment(text.alignment),
             indent: whisker_protocol::MeasureTextIndent {
                 logical_pixels: text.indent.logical_pixels,

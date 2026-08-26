@@ -137,6 +137,7 @@ final class HostScene {
                       text.decoration_flags <= 2,
                       text.decoration_style <= 4,
                       text.alignment <= 4,
+                      text.direction <= 2,
                       text.wrap <= 1,
                       text.word_break <= 2,
                       text.overflow <= 1,
@@ -559,6 +560,14 @@ final class HostScene {
             fontVariations: hostFontVariations(content),
             fontOpticalSizing: content.font_optical_sizing == 0 ? .auto : .none,
             color: parsePaintColor(content.color),
+            direction: {
+                switch content.direction {
+                case 0: return .auto
+                case 1: return .leftToRight
+                case 2: return .rightToLeft
+                default: preconditionFailure("invalid text direction")
+                }
+            }(),
             alignment: {
                 switch content.alignment {
                 case 0: return .start
