@@ -463,7 +463,8 @@ private final class Driver {
                     name == "paint.transform.motion-path-ellipses" ||
                     name == "paint.transform.motion-path-inset" ||
                     name == "paint.transform.motion-path-arcs" ||
-                    name == "paint.text.shadow-single" else {
+                    name == "paint.text.shadow-single" ||
+                    name == "paint.text.decoration-lynx" else {
                     throw Failure("unsupported UIKit checkpoint")
                 }
                 if name == "paint.visual-effects.backdrop-blur" {
@@ -487,6 +488,17 @@ private final class Driver {
                     )
                     XCTAssertEqual(shadow.shadowOffset, CGSize(width: 3, height: 4))
                     XCTAssertEqual(shadow.shadowBlurRadius, 2)
+                }
+                if name == "paint.text.decoration-lynx" {
+                    let labels = findTextLabels(view)
+                    XCTAssertEqual(labels.count, 5)
+                    XCTAssertEqual(labels[0].whiskerDecoration?.style, .solid)
+                    XCTAssertEqual(labels[1].whiskerDecoration?.style, .double)
+                    XCTAssertEqual(labels[2].whiskerDecoration?.style, .dotted)
+                    XCTAssertEqual(labels[3].whiskerDecoration?.style, .dashed)
+                    XCTAssertEqual(labels[4].whiskerDecoration?.style, .wavy)
+                    XCTAssertEqual(labels[0].whiskerDecoration?.line, .underline)
+                    XCTAssertEqual(labels[4].whiskerDecoration?.line, .lineThrough)
                 }
                 let pixels = try capture()
                 checkpoint = pixels
@@ -691,6 +703,9 @@ private final class Driver {
                     payload.shadow_blur_radius = text.shadowBlurRadius
                     payload.shadow_color = text.shadowColor
                 }
+                payload.decoration_flags = text.decorationFlags
+                payload.decoration_style = text.decorationStyle
+                payload.decoration_color = text.decorationColor
             }
             textPayloads.advanced(by: index).initialize(to: payload)
         }
@@ -1246,6 +1261,9 @@ private struct SceneText {
     let fontSize: Float
     let fontWeight: UInt16
     let color: WhiskerMobileColor
+    let decorationFlags: UInt32
+    let decorationStyle: UInt32
+    let decorationColor: WhiskerMobileColor
     let shadowOffset: CGSize?
     let shadowBlurRadius: Float
     let shadowColor: WhiskerMobileColor
@@ -1427,12 +1445,32 @@ private func sceneNode(_ fixture: [String: Any]) throws -> SceneFixtureNode {
     let text: SceneText?
     if let raw = fixture["text"] as? [String: Any] {
         let shadow = raw["shadow"] as? [String: Any]
+        let decoration = raw["decoration"] as? [String: Any]
         let offset = try shadow.map { try numberArray($0, "offset") }
         text = SceneText(
             value: try string(raw, "value"),
             fontSize: Float(try number(raw, "font_size")),
             fontWeight: UInt16((raw["font_weight"] as? NSNumber)?.intValue ?? 400),
             color: try color(object(raw, "color")),
+            decorationFlags: try decoration.map {
+                switch try string($0, "line") {
+                case "underline": 1
+                case "line_through": 2
+                default: throw Failure("unknown text decoration line")
+                }
+            } ?? 0,
+            decorationStyle: try decoration.map {
+                switch try string($0, "style") {
+                case "solid": 0
+                case "double": 1
+                case "dotted": 2
+                case "dashed": 3
+                case "wavy": 4
+                default: throw Failure("unknown text decoration style")
+                }
+            } ?? 0,
+            decorationColor: try decoration.map { try color(object($0, "color")) }
+                ?? WhiskerMobileColor(),
             shadowOffset: offset.map { CGSize(width: $0[0], height: $0[1]) },
             shadowBlurRadius: Float(try shadow.map { try number($0, "blur_radius") } ?? 0),
             shadowColor: try shadow.map { try color(object($0, "color")) }
@@ -1970,6 +2008,12 @@ private func containsActiveBackdropBlur(_ view: UIView) -> Bool {
 private func findLabel(_ view: UIView) -> UILabel? {
     if let label = view as? UILabel { return label }
     return view.subviews.lazy.compactMap(findLabel).first
+}
+
+private func findTextLabels(_ view: UIView) -> [WhiskerTextLabel] {
+    var result = view.subviews.flatMap(findTextLabels)
+    if let label = view as? WhiskerTextLabel { result.insert(label, at: 0) }
+    return result
 }
 
 private func containsProjectiveTransform(_ view: UIView) -> Bool {

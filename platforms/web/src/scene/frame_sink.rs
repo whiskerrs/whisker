@@ -97,9 +97,13 @@ impl DomFrameSink {
                 Operation::SetImage { .. } => Some("image-content"),
                 Operation::SetCursor { .. } => Some("cursor"),
                 Operation::SetText { content, .. }
-                    if content.paint.decoration.lines.underline
-                        || content.paint.decoration.lines.overline
-                        || content.paint.decoration.lines.line_through
+                    if content.paint.decoration.lines.overline
+                        || (content.paint.decoration.lines.underline
+                            && content.paint.decoration.lines.line_through)
+                        || !matches!(
+                            content.paint.decoration.thickness,
+                            whisker_protocol::TextDecorationThickness::Auto
+                        )
                         || content.paint.shadows.len() > 1 =>
                 {
                     Some("text-effects")

@@ -43,6 +43,7 @@ public struct WhiskerTextContent {
     public let fontSize: CGFloat
     public let fontWeight: Int
     public let color: UIColor
+    public let decoration: WhiskerTextDecoration?
     public let shadow: WhiskerTextShadow?
 
     public init(
@@ -50,15 +51,36 @@ public struct WhiskerTextContent {
         fontSize: CGFloat,
         fontWeight: Int,
         color: UIColor,
+        decoration: WhiskerTextDecoration? = nil,
         shadow: WhiskerTextShadow? = nil
     ) {
         self.value = value
         self.fontSize = fontSize
         self.fontWeight = fontWeight
         self.color = color
+        self.decoration = decoration
         self.shadow = shadow
     }
 }
+
+public struct WhiskerTextDecoration {
+    public let line: WhiskerTextDecorationLine
+    public let style: WhiskerTextDecorationStyle
+    public let color: UIColor
+
+    public init(
+        line: WhiskerTextDecorationLine,
+        style: WhiskerTextDecorationStyle,
+        color: UIColor
+    ) {
+        self.line = line
+        self.style = style
+        self.color = color
+    }
+}
+
+public enum WhiskerTextDecorationLine: Equatable { case underline, lineThrough }
+public enum WhiskerTextDecorationStyle: Equatable { case solid, double, dotted, dashed, wavy }
 
 public struct WhiskerTextShadow {
     public let offset: CGSize

@@ -5,7 +5,8 @@ use core::fmt;
 use crate::{
     CalcExpression, ColorValue, ComputedLayoutStyle, ComputedPaintStyle, FontFamilyValue,
     FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue,
-    LineHeightValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextShadowValue,
+    LineHeightValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue,
+    TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextShadowValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -114,6 +115,29 @@ impl ComputedTextShadow {
     }
 }
 
+/// One resolved inherited Lynx text decoration.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedTextDecoration {
+    line: TextDecorationLineValue,
+    style: TextDecorationStyleValue,
+    color: ColorValue,
+}
+
+impl ComputedTextDecoration {
+    /// Returns the selected line kind.
+    pub const fn line(&self) -> TextDecorationLineValue {
+        self.line
+    }
+    /// Returns the selected stroke style.
+    pub const fn style(&self) -> TextDecorationStyleValue {
+        self.style
+    }
+    /// Returns the resolved decoration color.
+    pub const fn color(&self) -> &ColorValue {
+        &self.color
+    }
+}
+
 /// The computed text values inherited by descendant nodes.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InheritedStyle {
@@ -124,6 +148,7 @@ pub struct InheritedStyle {
     line_height: ComputedLineHeight,
     letter_spacing: StyleNumber,
     color: ColorValue,
+    text_decoration: ComputedTextDecoration,
     text_shadow: Option<ComputedTextShadow>,
 }
 
@@ -141,6 +166,16 @@ impl InheritedStyle {
                 green: 0,
                 blue: 0,
                 alpha: StyleNumber::new(1.0),
+            },
+            text_decoration: ComputedTextDecoration {
+                line: TextDecorationLineValue::None,
+                style: TextDecorationStyleValue::Solid,
+                color: ColorValue::Rgba {
+                    red: 0,
+                    green: 0,
+                    blue: 0,
+                    alpha: StyleNumber::new(1.0),
+                },
             },
             text_shadow: None,
         }
@@ -181,6 +216,11 @@ impl InheritedStyle {
         &self.color
     }
 
+    /// Returns the inherited single-line text decoration.
+    pub const fn text_decoration(&self) -> &ComputedTextDecoration {
+        &self.text_decoration
+    }
+
     /// Returns the optional single inherited text shadow.
     pub const fn text_shadow(&self) -> Option<&ComputedTextShadow> {
         self.text_shadow.as_ref()
@@ -216,6 +256,10 @@ impl InheritedStyle {
         }
         if self.color != previous.color {
             properties |= InheritedPropertySet::COLOR;
+            impacts |= PropertyImpactSet::PAINT;
+        }
+        if self.text_decoration != previous.text_decoration {
+            properties |= InheritedPropertySet::TEXT_DECORATION;
             impacts |= PropertyImpactSet::PAINT;
         }
         if self.text_shadow != previous.text_shadow {
@@ -305,7 +349,7 @@ impl std::error::Error for StyleResolutionError {}
 
 /// Bit set identifying which inherited values changed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct InheritedPropertySet(u8);
+pub struct InheritedPropertySet(u16);
 
 impl InheritedPropertySet {
     /// No inherited property.
@@ -326,6 +370,8 @@ impl InheritedPropertySet {
     pub const COLOR: Self = Self(1 << 6);
     /// `text-shadow`.
     pub const TEXT_SHADOW: Self = Self(1 << 7);
+    /// `text-decoration`.
+    pub const TEXT_DECORATION: Self = Self(1 << 8);
 
     /// Returns whether this set contains every bit from `other`.
     pub const fn contains(self, other: Self) -> bool {
@@ -504,6 +550,23 @@ pub fn resolve_style(
         Some(_) => return Err(wrong_type(StyleProperty::Color)),
         None => base.color.clone(),
     };
+    let text_decoration = match declarations.text_decoration {
+        Some(StyleValue::TextDecoration(TextDecorationValue {
+            line,
+            style,
+            color: decoration_color,
+        })) => ComputedTextDecoration {
+            line: *line,
+            style: *style,
+            color: decoration_color
+                .as_ref()
+                .map(normalize_color)
+                .transpose()?
+                .unwrap_or_else(|| color.clone()),
+        },
+        Some(_) => return Err(wrong_type(StyleProperty::TextDecoration)),
+        None => base.text_decoration.clone(),
+    };
     let text_shadow = match declarations.text_shadow {
         Some(StyleValue::TextShadow(TextShadowValue::None)) => None,
         Some(StyleValue::TextShadow(TextShadowValue::Shadow {
@@ -554,6 +617,7 @@ pub fn resolve_style(
         line_height,
         letter_spacing,
         color,
+        text_decoration,
         text_shadow,
     };
     let layout =
@@ -595,6 +659,7 @@ struct InheritedDeclarations<'a> {
     line_height: Option<&'a StyleValue>,
     letter_spacing: Option<&'a StyleValue>,
     color: Option<&'a StyleValue>,
+    text_decoration: Option<&'a StyleValue>,
     text_shadow: Option<&'a StyleValue>,
 }
 
@@ -610,6 +675,7 @@ impl<'a> InheritedDeclarations<'a> {
                 StyleProperty::LineHeight => &mut values.line_height,
                 StyleProperty::LetterSpacing => &mut values.letter_spacing,
                 StyleProperty::Color => &mut values.color,
+                StyleProperty::TextDecoration => &mut values.text_decoration,
                 StyleProperty::TextShadow => &mut values.text_shadow,
                 _ => continue,
             };
@@ -1215,6 +1281,7 @@ mod tests {
             StyleProperty::LineHeight,
             StyleProperty::LetterSpacing,
             StyleProperty::Color,
+            StyleProperty::TextDecoration,
             StyleProperty::TextShadow,
         ] {
             let error = resolve_text_style(
@@ -1342,6 +1409,55 @@ mod tests {
                     blue: 0,
                     alpha: number(f32::NAN),
                 },
+            }),
+        );
+        assert_eq!(
+            resolve_text_style(&invalid_color, None, environment).unwrap_err(),
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::Color)
+        );
+    }
+
+    #[test]
+    fn text_decoration_resolves_current_color_and_inherits() {
+        let environment = StyleEnvironment::default();
+        let specified = SpecifiedStyle::new()
+            .push(
+                StyleProperty::Color,
+                StyleValue::Color(ColorValue::Named("blue".into())),
+            )
+            .push(
+                StyleProperty::TextDecoration,
+                StyleValue::TextDecoration(TextDecorationValue {
+                    line: TextDecorationLineValue::Underline,
+                    style: TextDecorationStyleValue::Wavy,
+                    color: None,
+                }),
+            );
+        let parent = resolve_text_style(&specified, None, environment).unwrap();
+        let decoration = inherited(&parent).text_decoration();
+        assert_eq!(decoration.line(), TextDecorationLineValue::Underline);
+        assert_eq!(decoration.style(), TextDecorationStyleValue::Wavy);
+        assert_eq!(decoration.color(), &ColorValue::Named("blue".into()));
+
+        let child = resolve_text_style(
+            &SpecifiedStyle::new(),
+            Some(parent.inherited_for_children()),
+            environment,
+        )
+        .unwrap();
+        assert_eq!(inherited(&child).text_decoration(), decoration);
+
+        let invalid_color = declaration(
+            StyleProperty::TextDecoration,
+            StyleValue::TextDecoration(TextDecorationValue {
+                line: TextDecorationLineValue::Underline,
+                style: TextDecorationStyleValue::Solid,
+                color: Some(ColorValue::Rgba {
+                    red: 0,
+                    green: 0,
+                    blue: 0,
+                    alpha: number(f32::NAN),
+                }),
             }),
         );
         assert_eq!(
@@ -1595,6 +1711,11 @@ mod tests {
             line_height: ComputedLineHeight::LogicalPixels(number(24.0)),
             letter_spacing: number(1.0),
             color: ColorValue::Named("red".into()),
+            text_decoration: ComputedTextDecoration {
+                line: TextDecorationLineValue::Underline,
+                style: TextDecorationStyleValue::Dashed,
+                color: ColorValue::Named("green".into()),
+            },
             text_shadow: Some(ComputedTextShadow {
                 offset_x: number(1.0),
                 offset_y: number(2.0),
@@ -1611,6 +1732,7 @@ mod tests {
             InheritedPropertySet::LINE_HEIGHT,
             InheritedPropertySet::LETTER_SPACING,
             InheritedPropertySet::COLOR,
+            InheritedPropertySet::TEXT_DECORATION,
             InheritedPropertySet::TEXT_SHADOW,
         ] {
             assert!(change.properties().contains(property));

@@ -1385,9 +1385,13 @@ impl MobileFrameOwned {
                     raw.integer = *z_order;
                 }
                 Operation::SetText { node, content } => {
-                    if content.paint.decoration.lines.underline
-                        || content.paint.decoration.lines.overline
-                        || content.paint.decoration.lines.line_through
+                    if content.paint.decoration.lines.overline
+                        || (content.paint.decoration.lines.underline
+                            && content.paint.decoration.lines.line_through)
+                        || !matches!(
+                            content.paint.decoration.thickness,
+                            whisker_engine::whisker_protocol::TextDecorationThickness::Auto
+                        )
                         || content.paint.shadows.len() > 1
                         || content.payload.style.uses_extended_typography()
                     {
@@ -1400,6 +1404,8 @@ impl MobileFrameOwned {
                         Some(value) => mobile_color(&value.color, &mut strings),
                         None => mobile_color(&PaintColor::default(), &mut strings),
                     };
+                    let decoration_color =
+                        mobile_color(&content.paint.decoration.color, &mut strings);
                     texts.push(Box::new(MobileText {
                         text: push_string(&mut strings, &content.payload.text),
                         font_size: content.payload.style.font_size,
@@ -1422,6 +1428,16 @@ impl MobileFrameOwned {
                         shadow_blur_radius: shadow.map_or(0.0, |value| value.blur_radius),
                         shadow_flags: u32::from(shadow.is_some()),
                         shadow_color,
+                        decoration_flags: u32::from(content.paint.decoration.lines.underline)
+                            | (u32::from(content.paint.decoration.lines.line_through) << 1),
+                        decoration_style: match content.paint.decoration.style {
+                            whisker_engine::whisker_protocol::TextDecorationStyle::Solid => 0,
+                            whisker_engine::whisker_protocol::TextDecorationStyle::Double => 1,
+                            whisker_engine::whisker_protocol::TextDecorationStyle::Dotted => 2,
+                            whisker_engine::whisker_protocol::TextDecorationStyle::Dashed => 3,
+                            whisker_engine::whisker_protocol::TextDecorationStyle::Wavy => 4,
+                        },
+                        decoration_color,
                         prepared_content: content.prepared_content.map_or(0, |value| value.get()),
                     }));
                     raw.payload = texts.last().unwrap().as_ref() as *const _ as *const c_void;

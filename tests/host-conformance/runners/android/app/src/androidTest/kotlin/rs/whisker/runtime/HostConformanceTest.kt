@@ -272,6 +272,17 @@ private class Driver(
                         check(text.shadowDy == 4f * context.resources.displayMetrics.density)
                         check(text.shadowRadius == 2f * context.resources.displayMetrics.density)
                     }
+                    if (command.getString("name") == "paint.text.decoration-lynx") {
+                        val texts = findTextViews(view)
+                        check(texts.size == 5)
+                        check(texts[0].whiskerDecoration?.style == WhiskerTextDecorationStyle.SOLID)
+                        check(texts[1].whiskerDecoration?.style == WhiskerTextDecorationStyle.DOUBLE)
+                        check(texts[2].whiskerDecoration?.style == WhiskerTextDecorationStyle.DOTTED)
+                        check(texts[3].whiskerDecoration?.style == WhiskerTextDecorationStyle.DASHED)
+                        check(texts[4].whiskerDecoration?.style == WhiskerTextDecorationStyle.WAVY)
+                        check(texts[0].whiskerDecoration?.line == WhiskerTextDecorationLine.UNDERLINE)
+                        check(texts[4].whiskerDecoration?.line == WhiskerTextDecorationLine.LINE_THROUGH)
+                    }
                     check(
                         command.getString("name") == "paint.box" ||
                             command.getString("name") == "paint.background-layers.linear-gradient" ||
@@ -350,7 +361,8 @@ private class Driver(
                             "paint.transform.motion-path-inset" ||
                             command.getString("name") ==
                             "paint.transform.motion-path-arcs" ||
-                            command.getString("name") == "paint.text.shadow-single",
+                            command.getString("name") == "paint.text.shadow-single" ||
+                            command.getString("name") == "paint.text.decoration-lynx",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
@@ -548,8 +560,8 @@ private class Driver(
             val (numbers, names) = paint(node)
             check(stage(tag = 7, node = id, numbers = numbers, names = names))
             node.optJSONObject("text")?.let { text ->
-                val textNumbers = ArrayList<Float>(17)
-                val textNames = ArrayList<String>(2)
+                val textNumbers = ArrayList<Float>(24)
+                val textNames = ArrayList<String>(3)
                 textNumbers += text.getDouble("font_size").toFloat()
                 textNumbers += text.optInt("font_weight", 400).toFloat()
                 textNumbers += 0f
@@ -562,6 +574,25 @@ private class Driver(
                 textNumbers += shadow?.getDouble("blur_radius")?.toFloat() ?: 0f
                 appendColor(
                     shadow?.getJSONObject("color")
+                        ?: JSONObject("{\"kind\":\"srgba\",\"red\":0,\"green\":0,\"blue\":0,\"alpha\":0}"),
+                    textNumbers,
+                    textNames,
+                )
+                val decoration = text.optJSONObject("decoration")
+                textNumbers += when (decoration?.getString("line")) {
+                    "underline" -> 1f
+                    "line_through" -> 2f
+                    else -> 0f
+                }
+                textNumbers += when (decoration?.getString("style")) {
+                    "double" -> 1f
+                    "dotted" -> 2f
+                    "dashed" -> 3f
+                    "wavy" -> 4f
+                    else -> 0f
+                }
+                appendColor(
+                    decoration?.getJSONObject("color")
                         ?: JSONObject("{\"kind\":\"srgba\",\"red\":0,\"green\":0,\"blue\":0,\"alpha\":0}"),
                     textNumbers,
                     textNames,
@@ -1049,6 +1080,18 @@ private fun findTextView(view: android.view.View): TextView? {
         }
     }
     return null
+}
+
+private fun findTextViews(view: android.view.View): List<WhiskerTextView> {
+    val result = ArrayList<WhiskerTextView>()
+    fun visit(candidate: android.view.View) {
+        if (candidate is WhiskerTextView) result += candidate
+        if (candidate is ViewGroup) {
+            for (index in 0 until candidate.childCount) visit(candidate.getChildAt(index))
+        }
+    }
+    visit(view)
+    return result
 }
 
 private fun JSONArray.objects(): Sequence<JSONObject> =

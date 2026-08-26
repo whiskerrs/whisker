@@ -1,7 +1,6 @@
 package rs.whisker.runtime
 
 import android.view.Gravity
-import android.widget.TextView
 
 /** Hand-written Android implementations matched to Rust registrations by name. */
 public object WhiskerBuiltInElements {
@@ -20,11 +19,12 @@ public object WhiskerBuiltInElements {
         WhiskerElementFactory(
             name = TEXT,
             textUpdater = { view, content ->
-                require(view is TextView) { "$TEXT factory must create TextView" }
+                require(view is WhiskerTextView) { "$TEXT factory must create WhiskerTextView" }
                 view.text = content.value
                 view.textSize = content.fontSize
                 view.setTextColor(content.color)
                 view.setTypeface(view.typeface, if (content.fontWeight >= 600) 1 else 0)
+                view.whiskerDecoration = content.decoration
                 content.shadow?.let { shadow ->
                     val density = view.resources.displayMetrics.density
                     view.setShadowLayer(
@@ -36,7 +36,7 @@ public object WhiskerBuiltInElements {
                 } ?: view.setShadowLayer(0f, 0f, 0f, 0)
             },
         ) { context ->
-            TextView(context).apply {
+            WhiskerTextView(context).apply {
                 includeFontPadding = false
                 gravity = Gravity.TOP or Gravity.START
             }

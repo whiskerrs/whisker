@@ -128,8 +128,14 @@ final class HostScene {
             case UInt32(WHISKER_OP_MOVE):
                 guard stagedParents[operation.child] == operation.parent else { return false }
             case UInt32(WHISKER_OP_LAYOUT), UInt32(WHISKER_OP_PAINT),
-                 UInt32(WHISKER_OP_TEXT), UInt32(WHISKER_OP_PROPERTY):
+                 UInt32(WHISKER_OP_PROPERTY):
                 guard existing.contains(operation.node), operation.payload != nil else { return false }
+            case UInt32(WHISKER_OP_TEXT):
+                guard existing.contains(operation.node),
+                      let text = operation.payload?
+                        .assumingMemoryBound(to: WhiskerMobileText.self).pointee,
+                      text.decoration_flags <= 2,
+                      text.decoration_style <= 4 else { return false }
             case UInt32(WHISKER_OP_TRANSFORM):
                 guard existing.contains(operation.node), operation.payload != nil,
                       operation.payload_count == 16 else { return false }
@@ -505,6 +511,20 @@ final class HostScene {
             fontSize: CGFloat(content.font_size),
             fontWeight: Int(content.font_weight),
             color: parsePaintColor(content.color),
+            decoration: content.decoration_flags == 0 ? nil : WhiskerTextDecoration(
+                line: content.decoration_flags & 1 != 0 ? .underline : .lineThrough,
+                style: {
+                    switch content.decoration_style {
+                    case 0: return .solid
+                    case 1: return .double
+                    case 2: return .dotted
+                    case 3: return .dashed
+                    case 4: return .wavy
+                    default: preconditionFailure("invalid text decoration style")
+                    }
+                }(),
+                color: parsePaintColor(content.decoration_color)
+            ),
             shadow: content.shadow_flags == 0 ? nil : WhiskerTextShadow(
                 offset: CGSize(
                     width: CGFloat(content.shadow_offset_x),

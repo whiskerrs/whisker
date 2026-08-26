@@ -61,6 +61,64 @@ impl Css {
             "none",
         )
     }
+
+    /// Sets Lynx's inherited, single-line `text-decoration` shorthand.
+    ///
+    /// Lynx supports `underline` or `line-through`, one stroke style, and one
+    /// color. Multiple lines and explicit thickness remain outside the core.
+    /// <https://lynxjs.org/api/css/properties/text-decoration>
+    pub fn text_decoration(
+        self,
+        line: TextDecorationLine,
+        style: TextDecorationStyle,
+        color: Color,
+    ) -> Self {
+        use crate::to_css::ToCss;
+        let line_value = match line {
+            TextDecorationLine::None => whisker_style::TextDecorationLineValue::None,
+            TextDecorationLine::Underline => whisker_style::TextDecorationLineValue::Underline,
+            TextDecorationLine::LineThrough => whisker_style::TextDecorationLineValue::LineThrough,
+        };
+        let style_value = match style {
+            TextDecorationStyle::Solid => whisker_style::TextDecorationStyleValue::Solid,
+            TextDecorationStyle::Double => whisker_style::TextDecorationStyleValue::Double,
+            TextDecorationStyle::Dotted => whisker_style::TextDecorationStyleValue::Dotted,
+            TextDecorationStyle::Dashed => whisker_style::TextDecorationStyleValue::Dashed,
+            TextDecorationStyle::Wavy => whisker_style::TextDecorationStyleValue::Wavy,
+        };
+        let whisker_style::StyleValue::Color(color_value) = color.to_style_value() else {
+            unreachable!()
+        };
+        let mut css = String::new();
+        let _ = line.to_css(&mut css);
+        css.push(' ');
+        let _ = style.to_css(&mut css);
+        css.push(' ');
+        let _ = color.to_css(&mut css);
+        self.push_semantic(
+            crate::StyleProperty::TextDecoration,
+            whisker_style::StyleValue::TextDecoration(whisker_style::TextDecorationValue {
+                line: line_value,
+                style: style_value,
+                color: Some(color_value),
+            }),
+            css,
+        )
+    }
+
+    /// Disables inherited text decoration.
+    pub fn text_decoration_none(self) -> Self {
+        self.push_semantic(
+            crate::StyleProperty::TextDecoration,
+            whisker_style::StyleValue::TextDecoration(whisker_style::TextDecorationValue {
+                line: whisker_style::TextDecorationLineValue::None,
+                style: whisker_style::TextDecorationStyleValue::Solid,
+                color: None,
+            }),
+            "none",
+        )
+    }
+
     /// Sets `text-align`. **`justify` is not supported by Lynx**.
     /// <https://lynxjs.org/api/css/properties/text-align>
     pub fn text_align(self, v: TextAlign) -> Self {
@@ -162,6 +220,31 @@ mod tests {
         assert_eq!(
             Css::new().text_shadow_none().to_string(),
             "text-shadow: none;"
+        );
+    }
+
+    #[test]
+    fn lynx_text_decoration_shorthand_is_typed() {
+        let style = Css::new().text_decoration(
+            TextDecorationLine::LineThrough,
+            TextDecorationStyle::Dashed,
+            Color::Named(NamedColor::Red),
+        );
+        assert_eq!(
+            style.to_string(),
+            "text-decoration: line-through dashed red;"
+        );
+        assert!(matches!(
+            style.to_specified_style().unwrap().resolved()[0].value(),
+            whisker_style::StyleValue::TextDecoration(whisker_style::TextDecorationValue {
+                line: whisker_style::TextDecorationLineValue::LineThrough,
+                style: whisker_style::TextDecorationStyleValue::Dashed,
+                ..
+            })
+        ));
+        assert_eq!(
+            Css::new().text_decoration_none().to_string(),
+            "text-decoration: none;"
         );
     }
 

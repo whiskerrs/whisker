@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "id": "core.text-decoration-lynx",
+  "test": {
+    "commands": [
+      {
+        "type": "attach_surface",
+        "width": 260,
+        "height": 180,
+        "scale": 1
+      },
+      {
+        "type": "present_scene",
+        "revision": 1,
+        "nodes": [
+          {
+            "id": 1,
+            "parent": null,
+            "rect": [10, 10, 240, 28],
+            "background": { "kind": "named", "value": "transparent" },
+            "text": {
+              "value": "solid underline",
+              "font_size": 20,
+              "color": { "kind": "named", "value": "black" },
+              "decoration": {
+                "line": "underline",
+                "style": "solid",
+                "color": { "kind": "named", "value": "red" }
+              }
+            }
+          },
+          {
+            "id": 2,
+            "parent": null,
+            "rect": [10, 42, 240, 28],
+            "background": { "kind": "named", "value": "transparent" },
+            "text": {
+              "value": "double underline",
+              "font_size": 20,
+              "color": { "kind": "named", "value": "black" },
+              "decoration": {
+                "line": "underline",
+                "style": "double",
+                "color": { "kind": "named", "value": "green" }
+              }
+            }
+          },
+          {
+            "id": 3,
+            "parent": null,
+            "rect": [10, 74, 240, 28],
+            "background": { "kind": "named", "value": "transparent" },
+            "text": {
+              "value": "dotted underline",
+              "font_size": 20,
+              "color": { "kind": "named", "value": "black" },
+              "decoration": {
+                "line": "underline",
+                "style": "dotted",
+                "color": { "kind": "named", "value": "blue" }
+              }
+            }
+          },
+          {
+            "id": 4,
+            "parent": null,
+            "rect": [10, 106, 240, 28],
+            "background": { "kind": "named", "value": "transparent" },
+            "text": {
+              "value": "dashed strike",
+              "font_size": 20,
+              "color": { "kind": "named", "value": "black" },
+              "decoration": {
+                "line": "line_through",
+                "style": "dashed",
+                "color": { "kind": "named", "value": "gold" }
+              }
+            }
+          },
+          {
+            "id": 5,
+            "parent": null,
+            "rect": [10, 138, 240, 28],
+            "background": { "kind": "named", "value": "transparent" },
+            "text": {
+              "value": "wavy strike",
+              "font_size": 20,
+              "color": { "kind": "named", "value": "black" },
+              "decoration": {
+                "line": "line_through",
+                "style": "wavy",
+                "color": { "kind": "named", "value": "aqua" }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.text.decoration-lynx"
+      }
+    ]
+  }
+}

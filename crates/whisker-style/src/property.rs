@@ -131,6 +131,7 @@ macro_rules! define_style_properties {
                         | Self::LineHeight
                         | Self::LetterSpacing
                         | Self::Color
+                        | Self::TextDecoration
                         | Self::TextShadow
                 );
                 let domain = self.domain();
@@ -580,6 +581,7 @@ mod tests {
                 StyleProperty::FontWeight,
                 StyleProperty::LetterSpacing,
                 StyleProperty::LineHeight,
+                StyleProperty::TextDecoration,
                 StyleProperty::TextShadow,
             ]
         );
