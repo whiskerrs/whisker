@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "wpt.css-backgrounds.border-radius-style-004",
+  "upstream": {
+    "repository": "https://github.com/web-platform-tests/wpt",
+    "revision": "db80bd24a77f1b5f8ba40a5b320dec3720a37c8d",
+    "path": "css/css-backgrounds/border-radius-style-004.htm",
+    "reference_path": null,
+    "license": "BSD-3-Clause",
+    "assertion": "A solid border follows the rounded border curve.",
+    "adaptation": "The WPT box is reduced to a 120 logical-pixel square with a 12px solid border and 40px radii. Samples cover the solid edge, rounded transparent corner, and unpainted content."
+  },
+  "test": {
+    "commands": [
+      { "type": "attach_surface", "width": 140.0, "height": 140.0, "scale": 1.0 },
+      {
+        "type": "present_box",
+        "revision": 1,
+        "rect": [10.0, 10.0, 120.0, 120.0],
+        "background": { "kind": "named", "value": "transparent" },
+        "border": {
+          "widths": [12.0, 12.0, 12.0, 12.0],
+          "colors": [
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" },
+            { "kind": "named", "value": "black" }
+          ],
+          "styles": ["solid", "solid", "solid", "solid"],
+          "radii": [40.0, 40.0, 40.0, 40.0]
+        }
+      },
+      {
+        "type": "checkpoint",
+        "name": "paint.box",
+        "samples": [
+          { "point": [70.0, 16.0], "color": { "kind": "named", "value": "black" }, "tolerance": 24 },
+          { "point": [11.0, 11.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 24 },
+          { "point": [70.0, 70.0], "color": { "kind": "named", "value": "transparent" }, "tolerance": 24 }
+        ]
+      }
+    ]
+  },
+  "reference": null
+}
