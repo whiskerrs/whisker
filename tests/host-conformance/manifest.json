@@ -73,6 +73,13 @@
       "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
     },
     {
+      "id": "wpt.css-backgrounds.background-size-auto-round-aspect-ratio",
+      "feature": "background-size-auto-round-aspect-ratio",
+      "fixture": "wpt/css/css-backgrounds/background-size-auto-round-aspect-ratio.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["resource-registration", "semantic-projection", "pixel-samples"]
+    },
+    {
       "id": "wpt.css-backgrounds.background-size-contain-001-intrinsic",
       "feature": "background-size-contain",
       "fixture": "wpt/css/css-backgrounds/background-size-contain-001-intrinsic.json",

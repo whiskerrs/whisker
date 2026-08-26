@@ -85,6 +85,8 @@ internal fun applyBoxPaint(
             borderColors,
             borderStyles,
             normalizedRadii,
+            physicalWidth,
+            physicalHeight,
             backgroundLayers,
             RectF(
                 logicalContentBox.left * density,
@@ -112,6 +114,8 @@ private class WhiskerBoxDrawable(
     private val borderColors: IntArray,
     private val borderStyles: IntArray,
     private val cornerRadii: FloatArray,
+    private val backgroundBoxWidth: Float,
+    private val backgroundBoxHeight: Float,
     private val backgroundLayers: HostBackgroundLayers?,
     private val localContentBox: RectF,
 ) : Drawable() {
@@ -131,6 +135,18 @@ private class WhiskerBoxDrawable(
             box.top + top,
             box.right - right,
             box.bottom - bottom,
+        )
+        val backgroundBorderBox = RectF(
+            box.left,
+            box.top,
+            box.left + backgroundBoxWidth,
+            box.top + backgroundBoxHeight,
+        )
+        val backgroundPaddingBox = RectF(
+            backgroundBorderBox.left + left,
+            backgroundBorderBox.top + top,
+            backgroundBorderBox.right - right,
+            backgroundBorderBox.bottom - bottom,
         )
         val paddingPath = if (paddingBox.width() > 0f && paddingBox.height() > 0f) {
             roundedPath(
@@ -183,8 +199,8 @@ private class WhiskerBoxDrawable(
         drawBackgroundLayers(
             canvas,
             HostBackgroundPaintBoxes(
-                border = HostBackgroundPaintBox(box, outer),
-                padding = HostBackgroundPaintBox(paddingBox, paddingPath),
+                border = HostBackgroundPaintBox(backgroundBorderBox, outer),
+                padding = HostBackgroundPaintBox(backgroundPaddingBox, paddingPath),
                 content = HostBackgroundPaintBox(contentBox, contentPath),
             ),
             backgroundLayers,

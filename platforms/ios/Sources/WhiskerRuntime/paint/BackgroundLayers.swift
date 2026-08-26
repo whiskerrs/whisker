@@ -101,16 +101,23 @@ struct HostBackgroundGeometry {
 
     func imageBounds(in positioningBox: CGRect) -> CGRect {
         let originalSize = resolvedImageSize(in: positioningBox)
-        let width = backgroundRoundTileSize(
+        var width = backgroundRoundTileSize(
             originalTileSize: originalSize.width,
             positioningSize: positioningBox.width,
             repeatMode: repeatX
         )
-        let height = backgroundRoundTileSize(
+        var height = backgroundRoundTileSize(
             originalTileSize: originalSize.height,
             positioningSize: positioningBox.height,
             repeatMode: repeatY
         )
+        if sizeKind == .explicit, sizeWidth != nil, sizeHeight == nil,
+           repeatX == .round, repeatY != .round, originalSize.width > 0 {
+            height = originalSize.height * width / originalSize.width
+        } else if sizeKind == .explicit, sizeWidth == nil, sizeHeight != nil,
+                  repeatY == .round, repeatX != .round, originalSize.height > 0 {
+            width = originalSize.width * height / originalSize.height
+        }
         return CGRect(
             x: positioningBox.minX + CGFloat(positionX.length) +
                 CGFloat(positionX.fraction) * (positioningBox.width - width),

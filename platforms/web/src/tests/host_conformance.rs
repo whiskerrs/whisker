@@ -466,20 +466,42 @@ impl Driver {
                                 nodes
                                     .iter()
                                     .flat_map(|node| &node.background_layers)
-                                    .find_map(|layer| match layer.geometry.size {
-                                        BackgroundSizeFixture::Keyword(
-                                            BackgroundSizeKeywordFixture::Cover,
-                                        ) => Some("paint.background-layers.size-cover"),
-                                        BackgroundSizeFixture::Keyword(
-                                            BackgroundSizeKeywordFixture::Contain,
-                                        ) => Some("paint.background-layers.size-contain"),
-                                        BackgroundSizeFixture::Keyword(
-                                            BackgroundSizeKeywordFixture::Auto,
-                                        )
-                                        | BackgroundSizeFixture::ExplicitAxes { .. } => {
-                                            Some("paint.background-layers.intrinsic-auto")
+                                    .find_map(|layer| {
+                                        let round_auto_axis = matches!(
+                                            layer.geometry.size,
+                                            BackgroundSizeFixture::ExplicitAxes {
+                                                width: Some(_),
+                                                height: None,
+                                            } if layer.geometry.repeat_x == ImageRepeatFixture::Round
+                                                && layer.geometry.repeat_y != ImageRepeatFixture::Round
+                                        ) || matches!(
+                                            layer.geometry.size,
+                                            BackgroundSizeFixture::ExplicitAxes {
+                                                width: None,
+                                                height: Some(_),
+                                            } if layer.geometry.repeat_y == ImageRepeatFixture::Round
+                                                && layer.geometry.repeat_x != ImageRepeatFixture::Round
+                                        );
+                                        if round_auto_axis {
+                                            return Some(
+                                                "paint.background-layers.round-auto-aspect-ratio",
+                                            );
                                         }
-                                        BackgroundSizeFixture::ExplicitPair(_) => None,
+                                        match layer.geometry.size {
+                                            BackgroundSizeFixture::Keyword(
+                                                BackgroundSizeKeywordFixture::Cover,
+                                            ) => Some("paint.background-layers.size-cover"),
+                                            BackgroundSizeFixture::Keyword(
+                                                BackgroundSizeKeywordFixture::Contain,
+                                            ) => Some("paint.background-layers.size-contain"),
+                                            BackgroundSizeFixture::Keyword(
+                                                BackgroundSizeKeywordFixture::Auto,
+                                            )
+                                            | BackgroundSizeFixture::ExplicitAxes { .. } => {
+                                                Some("paint.background-layers.intrinsic-auto")
+                                            }
+                                            BackgroundSizeFixture::ExplicitPair(_) => None,
+                                        }
                                     })
                                     .or_else(|| {
                                         nodes
@@ -910,6 +932,18 @@ impl Driver {
                         .find(|node| node.background == *expected_color)
                         .or_else(|| {
                             expected.iter().find(|node| {
+                                node.background_layers.iter().any(|layer| {
+                                    matches!(layer.image, BackgroundImageFixture::Resource(_))
+                                }) && fixture_node_paints_at(
+                                    node,
+                                    sample.point,
+                                    &sample.color,
+                                    &self.resource_dimensions,
+                                )
+                            })
+                        })
+                        .or_else(|| {
+                            expected.iter().find(|node| {
                                 !node.background_layers.is_empty()
                                     || node.linear_gradient.is_some()
                                     || node.radial_gradient.is_some()
@@ -924,7 +958,8 @@ impl Driver {
                     assert_eq!(
                         opaque_hit.map(String::as_str),
                         Some(expected_node.as_str()),
-                        "paint sample did not hit the expected transformed scene node"
+                        "paint sample at {:?} did not hit its expected scene node",
+                        sample.point
                     );
                 }
             }
@@ -999,6 +1034,9 @@ fn fixture(path: &str) -> &'static str {
         ),
         "wpt/css/css-backgrounds/background-size-intrinsic-auto.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-size-intrinsic-auto.json"
+        ),
+        "wpt/css/css-backgrounds/background-size-auto-round-aspect-ratio.json" => include_str!(
+            "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-size-auto-round-aspect-ratio.json"
         ),
         "wpt/css/css-backgrounds/background-size-contain-001-intrinsic.json" => include_str!(
             "../../../../tests/host-conformance/wpt/css/css-backgrounds/background-size-contain-001-intrinsic.json"
@@ -2050,7 +2088,34 @@ fn fixture_background_layer_paints_at(
     if !fixture_rect_contains(clip_area, point) {
         return false;
     }
-    let size = fixture_background_image_size(layer.size, positioning_area, intrinsic_size);
+    let mut size = fixture_background_image_size(layer.size, positioning_area, intrinsic_size);
+    if intrinsic_size.is_some() {
+        match layer.size {
+            BackgroundSizeFixture::ExplicitAxes {
+                width: Some(_),
+                height: None,
+            } if layer.repeat_x == ImageRepeatFixture::Round
+                && layer.repeat_y != ImageRepeatFixture::Round
+                && size[0] > 0.0 =>
+            {
+                let rounded_width = fixture_round_tile_length(positioning_area[2], size[0]);
+                size[1] *= rounded_width / size[0];
+                size[0] = rounded_width;
+            }
+            BackgroundSizeFixture::ExplicitAxes {
+                width: None,
+                height: Some(_),
+            } if layer.repeat_y == ImageRepeatFixture::Round
+                && layer.repeat_x != ImageRepeatFixture::Round
+                && size[1] > 0.0 =>
+            {
+                let rounded_height = fixture_round_tile_length(positioning_area[3], size[1]);
+                size[0] *= rounded_height / size[1];
+                size[1] = rounded_height;
+            }
+            _ => {}
+        }
+    }
     let position = [
         positioning_area[0]
             + layer.position[0].length
@@ -2076,6 +2141,11 @@ fn fixture_background_layer_paints_at(
         point[1],
     );
     paints_x && paints_y
+}
+
+fn fixture_round_tile_length(area_length: f32, tile_length: f32) -> f32 {
+    let tile_count = (area_length / tile_length).round().max(1.0);
+    area_length / tile_count
 }
 
 fn fixture_background_image_size(

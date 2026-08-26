@@ -291,7 +291,9 @@ private class Driver(
                             command.getString("name") ==
                             "paint.background-layers.size-contain" ||
                             command.getString("name") ==
-                            "paint.background-layers.size-cover",
+                            "paint.background-layers.size-cover" ||
+                            command.getString("name") ==
+                            "paint.background-layers.round-auto-aspect-ratio",
                     )
                     checkpoint = capture()
                     command.optJSONArray("samples")?.let { samples ->
