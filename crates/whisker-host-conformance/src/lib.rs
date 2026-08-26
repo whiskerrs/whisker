@@ -1778,7 +1778,7 @@ fn valid_scene_nodes(nodes: &[SceneNodeFixture]) -> bool {
 }
 
 fn valid_font_tag(tag: &str) -> bool {
-    tag.as_bytes().len() == 4 && tag.bytes().all(|byte| (b' '..=b'~').contains(&byte))
+    tag.len() == 4 && tag.bytes().all(|byte| (b' '..=b'~').contains(&byte))
 }
 
 impl LengthPercentageFixture {
