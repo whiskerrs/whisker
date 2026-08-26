@@ -608,6 +608,99 @@ fn box_color_transitions_are_composited_into_one_set_box_paint_delta() {
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
+#[test]
+fn inherited_text_color_transition_is_sampled_on_its_parent() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(20).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let colored = |color| {
+        Css::new()
+            .width(px(100))
+            .height(px(40))
+            .color(color)
+            .transition(
+                Transition::new(TransitionPropertyKind::name("color"))
+                    .duration(100.ms())
+                    .timing(EasingFunction::Linear),
+            )
+    };
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: colored(NamedColor::Black.into())) {
+                    text(style: css!(font_size: px(20))) { "inherited" }
+                    view(style: css!(color: Color::Named(NamedColor::Red))) {
+                        text(style: css!(font_size: px(20))) { "blocked" }
+                    }
+                }
+            }
+        });
+        set_root(root);
+        root
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(root, colored(NamedColor::White.into()));
+    });
+    assert!(surface.step_motion(4_000.0).unwrap());
+    assert!(surface.step_motion(4_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        renderer.frames()[1]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(
+                    operation,
+                    Operation::SetText { content, .. }
+                        if content.payload.text == "inherited"
+                            && content.paint.foreground == PaintColor::Srgba {
+                                red: 128,
+                                green: 128,
+                                blue: 128,
+                                alpha: 1.0,
+                            }
+                )
+            })
+    );
+    assert!(
+        !renderer.frames()[1]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(operation, Operation::SetText { content, .. } if content.payload.text == "blocked")
+            })
+    );
+    assert!(!surface.step_motion(4_100.0).unwrap());
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
 fn painted_box(background: Color) -> Css {
     Css::new()
         .width(px(120))
