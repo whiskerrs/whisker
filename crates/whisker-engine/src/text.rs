@@ -9,15 +9,16 @@ use whisker_protocol::{
     FontFeature, FontOpticalSizing, FontTag, FontVariation, MeasureFontFamily, MeasureFontStyle,
     MeasureLineHeight, MeasureTextAlignment, MeasureTextDirection, MeasureTextIndent,
     MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasurementPayload,
-    MeasurementSpec, PaintColor, PendingMeasurePolicy, TextContent, TextMeasurePayload,
-    TextMeasureStyle, TextPaint, TextShadow,
+    MeasurementSpec, PendingMeasurePolicy, TextContent, TextMeasurePayload, TextMeasureStyle,
+    TextPaint, TextShadow,
 };
 use whisker_style::{
-    ColorValue, ComputedLineHeight, ComputedStyle, ComputedTextIndent, DirectionValue,
-    FontFamilyValue, FontOpticalSizingValue, FontStyleValue, TextAlignValue,
-    TextDecorationLineValue, TextDecorationStyleValue, TextOverflowValue, WhiteSpaceValue,
-    WordBreakValue,
+    ComputedLineHeight, ComputedStyle, ComputedTextIndent, DirectionValue, FontFamilyValue,
+    FontOpticalSizingValue, FontStyleValue, TextAlignValue, TextDecorationLineValue,
+    TextDecorationStyleValue, TextOverflowValue, WhiteSpaceValue, WordBreakValue,
 };
+
+use crate::paint::lower_color;
 
 /// Plain UTF-8 text and element inputs not supplied by computed style.
 #[derive(Clone, Debug, PartialEq)]
@@ -209,34 +210,6 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &ComputedStyle) -> Lowere
     }
 }
 
-fn lower_color(color: &ColorValue) -> PaintColor {
-    match color {
-        ColorValue::Named(name) => PaintColor::Named(name.clone()),
-        ColorValue::Rgba {
-            red,
-            green,
-            blue,
-            alpha,
-        } => PaintColor::Srgba {
-            red: *red,
-            green: *green,
-            blue: *blue,
-            alpha: alpha.get(),
-        },
-        ColorValue::Hsla {
-            hue_degrees,
-            saturation,
-            lightness,
-            alpha,
-        } => PaintColor::Hsla {
-            hue_degrees: hue_degrees.get(),
-            saturation: saturation.get(),
-            lightness: lightness.get(),
-            alpha: alpha.get(),
-        },
-    }
-}
-
 fn content_hash(text: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
@@ -269,8 +242,9 @@ fn metric_style_hash(input: &PlainTextInput, style: &ComputedStyle) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use whisker_protocol::PaintColor;
     use whisker_style::{
-        FontFeatureValue, FontOpticalSizingValue, FontVariationValue, FontWeightValue,
+        ColorValue, FontFeatureValue, FontOpticalSizingValue, FontVariationValue, FontWeightValue,
         LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, OpenTypeTagValue,
         SpecifiedStyle, StyleDeclaration, StyleEnvironment, StyleNumber, StyleProperty, StyleValue,
         TextDecorationValue, TextShadowValue, resolve_style,
@@ -567,7 +541,12 @@ mod tests {
         let named = lower_plain_text(&input, named.computed());
         assert_eq!(
             named.content().paint.foreground,
-            PaintColor::Named("rebeccapurple".into())
+            PaintColor::Srgba {
+                red: 102,
+                green: 51,
+                blue: 153,
+                alpha: 1.0,
+            }
         );
 
         let hsla = resolved(vec![StyleDeclaration::new(
@@ -623,7 +602,12 @@ mod tests {
                 offset_x: 14.0,
                 offset_y: 2.0,
                 blur_radius: 3.0,
-                color: PaintColor::Named("red".into()),
+                color: PaintColor::Srgba {
+                    red: 255,
+                    green: 0,
+                    blue: 0,
+                    alpha: 1.0,
+                },
             }]
         );
     }
@@ -650,7 +634,12 @@ mod tests {
         );
         assert_eq!(
             decorated.content().paint.decoration.color,
-            PaintColor::Named("red".into())
+            PaintColor::Srgba {
+                red: 255,
+                green: 0,
+                blue: 0,
+                alpha: 1.0,
+            }
         );
         for (style, expected) in [
             (

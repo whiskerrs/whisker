@@ -6,6 +6,8 @@ use crate::data_type_ext::EasingFunction;
 use crate::keyword::{
     AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
 };
+use crate::style_value::{to_motion_easing, to_motion_time};
+use crate::to_css::ToCss;
 
 impl Css {
     /// Sets `animation-name` — references a `@keyframes` block.
@@ -13,9 +15,10 @@ impl Css {
     pub fn animation_name(self, name: impl Into<String>) -> Self {
         // Names are CSS identifiers, written bare.
         let name = name.into();
+        let semantic = (name != "none").then_some(name.clone());
         self.push_semantic(
             crate::StyleProperty::AnimationName,
-            whisker_style::StyleValue::Text(name.clone()),
+            whisker_style::StyleValue::AnimationNames(vec![semantic]),
             name,
         )
     }
@@ -23,43 +26,55 @@ impl Css {
     /// Sets `animation-duration`.
     /// <https://lynxjs.org/api/css/properties/animation-duration>
     pub fn animation_duration(self, v: Time) -> Self {
-        self.push(crate::StyleProperty::AnimationDuration, v)
+        self.push_semantic(
+            crate::StyleProperty::AnimationDuration,
+            whisker_style::StyleValue::AnimationDurations(vec![to_motion_time(v)]),
+            v.to_css_string(),
+        )
     }
 
     /// Sets `animation-timing-function`.
     /// <https://lynxjs.org/api/css/properties/animation-timing-function>
     pub fn animation_timing_function(self, v: EasingFunction) -> Self {
-        self.push(crate::StyleProperty::AnimationTimingFunction, v)
+        self.push_semantic(
+            crate::StyleProperty::AnimationTimingFunction,
+            whisker_style::StyleValue::AnimationEasings(vec![to_motion_easing(v)]),
+            v.to_css_string(),
+        )
     }
 
     /// Sets `animation-delay`.
     /// <https://lynxjs.org/api/css/properties/animation-delay>
     pub fn animation_delay(self, v: Time) -> Self {
-        self.push(crate::StyleProperty::AnimationDelay, v)
+        self.push_semantic(
+            crate::StyleProperty::AnimationDelay,
+            whisker_style::StyleValue::AnimationDelays(vec![to_motion_time(v)]),
+            v.to_css_string(),
+        )
     }
 
     /// Sets `animation-iteration-count`.
     /// <https://lynxjs.org/api/css/properties/animation-iteration-count>
     pub fn animation_iteration_count(self, v: AnimationIterationCount) -> Self {
-        self.push(crate::StyleProperty::AnimationIterationCount, v)
+        self.push_typed(crate::StyleProperty::AnimationIterationCount, v)
     }
 
     /// Sets `animation-direction`.
     /// <https://lynxjs.org/api/css/properties/animation-direction>
     pub fn animation_direction(self, v: AnimationDirection) -> Self {
-        self.push(crate::StyleProperty::AnimationDirection, v)
+        self.push_typed(crate::StyleProperty::AnimationDirection, v)
     }
 
     /// Sets `animation-fill-mode`.
     /// <https://lynxjs.org/api/css/properties/animation-fill-mode>
     pub fn animation_fill_mode(self, v: AnimationFillMode) -> Self {
-        self.push(crate::StyleProperty::AnimationFillMode, v)
+        self.push_typed(crate::StyleProperty::AnimationFillMode, v)
     }
 
     /// Sets `animation-play-state`.
     /// <https://lynxjs.org/api/css/properties/animation-play-state>
     pub fn animation_play_state(self, v: AnimationPlayState) -> Self {
-        self.push(crate::StyleProperty::AnimationPlayState, v)
+        self.push_typed(crate::StyleProperty::AnimationPlayState, v)
     }
 }
 
