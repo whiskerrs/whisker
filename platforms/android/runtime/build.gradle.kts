@@ -7,13 +7,24 @@ plugins {
 group = "rs.whisker"
 version = "0.0.0-dev"
 
+val hostConformanceAssets = layout.buildDirectory.dir("generated/hostConformanceAssets")
+val stageHostConformanceAssets by tasks.registering(Sync::class) {
+    from(file("../../../tests/host-conformance")) {
+        include("manifest.json", "core/**", "wpt/**")
+    }
+    into(hostConformanceAssets)
+}
+
 android {
     namespace = "rs.whisker.runtime.host"
     compileSdk = 34
 
     defaultConfig {
         minSdk = 24
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+
+    sourceSets.getByName("androidTest").assets.srcDir(hostConformanceAssets)
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -32,9 +43,18 @@ android {
     }
 }
 
+tasks.configureEach {
+    if (name == "mergeDebugAndroidTestAssets") {
+        dependsOn(stageHostConformanceAssets)
+    }
+}
+
 dependencies {
     val moduleProject = if (rootProject.findProject(":module") != null) ":module" else ":whisker-module"
     api(project(moduleProject))
+    androidTestImplementation("androidx.test:core-ktx:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit-ktx:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }
 
 publishing {

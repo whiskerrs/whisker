@@ -29,11 +29,11 @@ Every runner injects commands at the Host boundary and uses production Host
 code. Desktop creates real protocol packets and performs offscreen wgpu pixel
 comparison. Web creates protocol packets and drives the real `DomFrameSink` in
 headless Chrome; its current checkpoint is semantic DOM projection because the
-DOM has no synchronous texture readback API. Android stages the generated
-production `WhiskerView.kt`, injects ABI-equivalent operations, and compares
-bitmaps on an emulator. iOS compiles the generated production
-`WhiskerView.swift`, injects the mobile C ABI frame, and compares UIKit layer
-captures in a Simulator.
+DOM has no synchronous texture readback API. Android's instrumentation tests
+live with `platforms/android/runtime`, inject ABI-equivalent operations, and
+compare bitmaps on an emulator. iOS's SwiftPM tests live with
+`platforms/ios`, inject the mobile C ABI frame, and compare UIKit layer captures
+in a Simulator. All four runners consume the fixtures in this directory.
 
 Manual visual WPT adaptations may attach logical-pixel `samples` to a paint
 checkpoint instead of inventing an exact reference image for behavior whose

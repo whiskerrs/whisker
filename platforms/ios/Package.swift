@@ -38,7 +38,22 @@ let package = Package(
         .target(
             name: "WhiskerRuntime",
             dependencies: ["WhiskerModule"],
-            path: "Sources/WhiskerRuntime"
+            path: "Sources/WhiskerRuntime",
+            swiftSettings: [.define("WHISKER_HOST_CONFORMANCE")]
+        ),
+        .target(
+            name: "WhiskerHostConformanceStubs",
+            path: "Tests/WhiskerHostConformanceStubs"
+        ),
+        .testTarget(
+            name: "WhiskerHostConformanceTests",
+            dependencies: [
+                "WhiskerRuntime",
+                "WhiskerModule",
+                "WhiskerCBridge",
+                "WhiskerHostConformanceStubs",
+            ],
+            path: "Tests/WhiskerHostConformance"
         ),
         .executableTarget(
             name: "WhiskerModuleCodegen",
