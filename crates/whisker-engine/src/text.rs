@@ -581,16 +581,19 @@ mod tests {
                 offset_x: LengthValue::Dimension {
                     value: StyleNumber::new(1.0),
                     unit: LengthUnit::Em,
-                },
+                }
+                .into(),
                 offset_y: LengthValue::Dimension {
                     value: StyleNumber::new(2.0),
                     unit: LengthUnit::Px,
-                },
+                }
+                .into(),
                 blur_radius: LengthValue::Dimension {
                     value: StyleNumber::new(3.0),
                     unit: LengthUnit::Px,
-                },
-                color: ColorValue::Named("red".into()),
+                }
+                .into(),
+                color: ColorValue::Named("red".into()).into(),
             }),
         )]);
         let plain = lower_plain_text(&input, plain.computed());
@@ -621,7 +624,7 @@ mod tests {
             StyleValue::TextDecoration(TextDecorationValue {
                 line: TextDecorationLineValue::LineThrough,
                 style: TextDecorationStyleValue::Wavy,
-                color: Some(ColorValue::Named("red".into())),
+                color: Some(ColorValue::Named("red".into()).into()),
             }),
         )]);
         let decorated = lower_plain_text(&input, decorated.computed());

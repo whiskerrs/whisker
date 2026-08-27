@@ -62,7 +62,7 @@ fn debug_and_clone_pass_through() {
         stop.clone(),
         easing,
         stop_pos,
-        lin,
+        lin.clone(),
         radial.clone(),
     );
 
@@ -177,7 +177,7 @@ fn position_keyword_each_variant() {
 fn image_ref_url_then_gradient_then_none() {
     let url = ImageRef::Url(CssString::new("a.png"));
     let gradient: ImageRef =
-        Gradient::linear_to_bottom([ColorStop::new(NamedColor::Red.into())]).into();
+        Gradient::linear_to_bottom([ColorStop::new(Color::Named(NamedColor::Red))]).into();
     let none = ImageRef::None;
     assert!(url.to_css_string().contains("url"));
     assert!(gradient.to_css_string().contains("linear-gradient"));
@@ -326,7 +326,7 @@ fn linear_direction_keyword_directions_in_gradient() {
         assert!(g.to_css_string().contains("linear-gradient"));
     }
     let g = Gradient::Linear {
-        direction: LinearDirection::Angle(45.deg()),
+        direction: LinearDirection::Angle(45.deg().into()),
         stops: vec![ColorStop::new(Color::Named(NamedColor::Red))],
     };
     assert!(g.to_css_string().contains("45deg"));

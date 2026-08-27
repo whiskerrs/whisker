@@ -52,6 +52,7 @@ pub mod shorthand;
 mod style_value;
 mod to_css;
 pub mod value;
+mod variable;
 
 // `css!` lives in `whisker-macros` because the partial-input recovery
 // that drives rust-analyzer completion needs a proc macro. Re-exported
@@ -78,6 +79,7 @@ pub use crate::value::{
     InsetPath, LineHeight, MotionPathCommand, MotionPathPoint, OffsetDistance, OffsetPath,
     OffsetRotate, Repeated, Size,
 };
+pub use crate::variable::{ValueOrVariable, custom_var, custom_var_with_fallback};
 pub use whisker_style::{
     CustomPropertyName, CustomPropertyReference, PropertyMetadata, PropertyOrigin, StyleProperty,
     StylePropertyId,

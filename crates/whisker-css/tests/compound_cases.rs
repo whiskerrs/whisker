@@ -17,8 +17,8 @@ use whisker_css::keyword::{AlignItems, Overflow};
 use whisker_css::{
     Animation, Background, BackgroundLayer, Border, BorderRadius, Color, ColorStop, Css, CssString,
     EasingFunction, Flex, FlexBasis, FlexDirection, Gradient, GridLine, GridTemplate, GridTrack,
-    ImageRef, JustifyContent, LengthPercentage, NamedColor, PositionKind, Size, ToCss, TransformFn,
-    Transition, TransitionPropertyKind, Visibility,
+    ImageRef, JustifyContent, LengthPercentage, NamedColor, Number, PositionKind, Size, ToCss,
+    TransformFn, Transition, TransitionPropertyKind, Visibility,
 };
 
 #[test]
@@ -202,8 +202,8 @@ fn complete_animation_chain() {
 fn transform_layered() {
     let s = Css::new().transform([
         TransformFn::TranslateX(px(10).into()),
-        TransformFn::Scale(1.5, 1.5),
-        TransformFn::Rotate(45.deg()),
+        TransformFn::Scale(Number::new(1.5).into(), Number::new(1.5).into()),
+        TransformFn::Rotate(45.deg().into()),
     ]);
     assert_eq!(
         s.to_string(),
@@ -232,8 +232,8 @@ fn background_full_shorthand() {
     let s = Css::new().background(
         Background::new()
             .layer(BackgroundLayer::new(Gradient::linear_to_bottom([
-                ColorStop::new(NamedColor::Red.into()),
-                ColorStop::new(NamedColor::Blue.into()),
+                ColorStop::new(Color::Named(NamedColor::Red)),
+                ColorStop::new(Color::Named(NamedColor::Blue)),
             ])))
             .color(Color::Named(NamedColor::White)),
     );
@@ -398,7 +398,7 @@ fn color_conversion_named_to_hex_round_trip_shape() {
 fn transform_then_secondary_transform_replaces() {
     let s = Css::new()
         .transform([TransformFn::TranslateX(px(10).into())])
-        .transform([TransformFn::Rotate(45.deg())]);
+        .transform([TransformFn::Rotate(45.deg().into())]);
     assert_eq!(s.to_string(), "transform: rotate(45deg);");
 }
 

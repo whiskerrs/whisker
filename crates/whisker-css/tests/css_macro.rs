@@ -109,7 +109,7 @@ fn array_value_for_transform() {
     let s = css!(
         transform: [
             TransformFn::TranslateX(px(10).into()),
-            TransformFn::Rotate(45.deg()),
+            TransformFn::Rotate(45.deg().into()),
         ],
     );
     assert_eq!(

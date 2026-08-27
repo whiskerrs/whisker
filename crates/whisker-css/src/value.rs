@@ -21,18 +21,18 @@ use crate::to_css::{ToCss, write_number};
 ///
 /// Whisker deliberately exposes only the app-oriented blur subset rather than
 /// the complete CSS filter-function list.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum BackdropFilter {
     /// `none` — do not alter pixels behind the element.
     None,
     /// `blur(<length>)` — blur pixels already painted behind the element.
-    Blur(Length),
+    Blur(crate::ValueOrVariable<Length>),
 }
 
 impl BackdropFilter {
     /// Creates `blur(<radius>)`.
-    pub const fn blur(radius: Length) -> Self {
-        Self::Blur(radius)
+    pub fn blur(radius: impl Into<crate::ValueOrVariable<Length>>) -> Self {
+        Self::Blur(radius.into())
     }
 }
 
@@ -1242,7 +1242,7 @@ mod tests {
             ImageRef::Url(CssString::new("a.png")).to_css_string(),
             "url(\"a.png\")"
         );
-        let g = Gradient::linear_to_bottom([ColorStop::new(NamedColor::Red.into())]);
+        let g = Gradient::linear_to_bottom([ColorStop::new(crate::Color::Named(NamedColor::Red))]);
         let r: ImageRef = g.into();
         assert_eq!(r.to_css_string(), "linear-gradient(to bottom, red)");
     }

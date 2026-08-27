@@ -409,8 +409,9 @@ impl From<&Css> for String {
 mod tests {
     use super::*;
     use crate::{
-        CalcExpr, Color, Display, FlexDirection, FontStyle, FontWeight, Length, LengthPercentage,
-        LineHeight, NamedColor, Percentage, Size,
+        Angle, BackdropFilter, CalcExpr, Color, ColorStop, Display, FlexDirection, FontStyle,
+        FontWeight, Gradient, Length, LengthPercentage, LineHeight, LinearDirection, NamedColor,
+        Number, Percentage, Size, TransformFn, custom_var, custom_var_with_fallback,
     };
 
     #[test]
@@ -703,6 +704,115 @@ mod tests {
         assert_eq!(
             resolved.inherited_for_children().color(),
             &whisker_style::ColorValue::Named("red".into())
+        );
+    }
+
+    #[test]
+    fn typed_variables_resolve_inside_composite_values_and_functions() {
+        let accent = CustomPropertyName::new("--accent").unwrap();
+        let angle = CustomPropertyName::new("--angle").unwrap();
+        let scale = CustomPropertyName::new("--scale").unwrap();
+        let depth = CustomPropertyName::new("--depth").unwrap();
+        let css = Css::new()
+            .custom_property(accent.clone(), Color::Named(NamedColor::Red))
+            .custom_property(angle.clone(), Angle::Deg(45.0))
+            .custom_property(scale.clone(), Number::new(1.5))
+            .custom_property(depth.clone(), Length::Px(3.0))
+            .background_image(Gradient::Linear {
+                direction: LinearDirection::Angle(custom_var(angle.clone())),
+                stops: vec![
+                    ColorStop::new(custom_var(accent.clone())),
+                    ColorStop::new(Color::Transparent),
+                ],
+            })
+            .transform([
+                TransformFn::Rotate(custom_var(angle)),
+                TransformFn::Scale(custom_var(scale), Number::new(2.0).into()),
+                TransformFn::TranslateZ(custom_var(depth.clone())),
+            ])
+            .text_shadow(
+                custom_var(depth.clone()),
+                Length::Zero,
+                Length::Zero,
+                custom_var(accent),
+            )
+            .backdrop_filter(BackdropFilter::blur(custom_var(depth)));
+
+        assert!(css.to_css_string().contains("linear-gradient(var(--angle)"));
+        assert!(css.to_css_string().contains("rotate(var(--angle))"));
+        let resolved = whisker_style::resolve_style(
+            &css.to_specified_style().unwrap(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        let paint = resolved.computed().paint();
+        assert_eq!(
+            paint.backdrop_blur,
+            Some(whisker_style::StyleNumber::new(3.0))
+        );
+        assert!(matches!(
+            &paint.background_images[0],
+            whisker_style::ComputedBackgroundImage::Gradient(
+                whisker_style::ComputedGradient::Linear { angle_degrees, stops }
+            ) if angle_degrees.get() == 45.0
+                && stops[0].color == whisker_style::ColorValue::Named("red".into())
+        ));
+        assert!(matches!(
+            paint.transform.functions.as_slice(),
+            [
+                whisker_style::ComputedTransformFunction::RotateZ(angle),
+                whisker_style::ComputedTransformFunction::Scale { x, y, .. },
+                whisker_style::ComputedTransformFunction::Translate { z, .. },
+            ] if angle.get() == 45.0 && x.get() == 1.5 && y.get() == 2.0 && z.get() == 3.0
+        ));
+        let shadow = resolved.inherited_for_children().text_shadow().unwrap();
+        assert_eq!(shadow.offset_x(), 3.0);
+        assert_eq!(
+            shadow.color(),
+            &whisker_style::ColorValue::Named("red".into())
+        );
+    }
+
+    #[test]
+    fn component_variable_fallback_handles_cycles_and_wrong_types_locally() {
+        let a = CustomPropertyName::new("--a").unwrap();
+        let b = CustomPropertyName::new("--b").unwrap();
+        let wrong = CustomPropertyName::new("--wrong").unwrap();
+        let css = Css::new()
+            .custom_property(a.clone(), custom_var::<Color>(b.clone()))
+            .custom_property(b, custom_var::<Color>(a.clone()))
+            .custom_property(wrong.clone(), Length::Px(4.0))
+            .background_image(Gradient::linear_to_bottom([
+                ColorStop::new(custom_var_with_fallback(a, Color::Named(NamedColor::Blue))),
+                ColorStop::new(Color::Transparent),
+            ]))
+            .text_shadow(
+                Length::Zero,
+                Length::Zero,
+                Length::Zero,
+                custom_var::<Color>(wrong),
+            )
+            .width(Length::Px(20.0));
+
+        let resolved = whisker_style::resolve_style(
+            &css.to_specified_style().unwrap(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            &resolved.computed().paint().background_images[0],
+            whisker_style::ComputedBackgroundImage::Gradient(
+                whisker_style::ComputedGradient::Linear { stops, .. }
+            ) if stops[0].color == whisker_style::ColorValue::Named("blue".into())
+        ));
+        assert!(resolved.inherited_for_children().text_shadow().is_none());
+        assert_eq!(
+            resolved.computed().layout().size.width,
+            whisker_style::ComputedSizeValue::Value(whisker_style::ComputedLengthPercentage::new(
+                20.0, 0.0
+            ))
         );
     }
 

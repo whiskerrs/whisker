@@ -4,11 +4,11 @@ use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    CalcExpression, ColorValue, ComputedLayoutStyle, ComputedMotionStyle, ComputedPaintStyle,
-    CursorValue, CustomPropertyName, CustomPropertyReference, DirectionValue, FontFamilyValue,
-    FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue, FontWeightValue,
-    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, PointerEventsValue,
-    SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
+    CalcExpression, ColorValue, ComponentValue, ComputedLayoutStyle, ComputedMotionStyle,
+    ComputedPaintStyle, CursorValue, CustomPropertyName, CustomPropertyReference, DirectionValue,
+    FontFamilyValue, FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue,
+    FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
+    PointerEventsValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
     TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
     TextShadowValue, WhiteSpaceValue, WordBreakValue,
 };
@@ -628,6 +628,49 @@ pub fn resolve_style(
     parent: Option<&InheritedStyle>,
     environment: StyleEnvironment,
 ) -> Result<ResolvedNodeStyle, StyleResolutionError> {
+    let mut variable_properties = specified
+        .resolved()
+        .into_iter()
+        .filter_map(|declaration| {
+            let mut references = Vec::new();
+            collect_custom_references(declaration.value(), &mut references);
+            (!references.is_empty()).then_some(declaration.property())
+        })
+        .collect::<BTreeSet<_>>();
+    let mut effective = specified.clone();
+    loop {
+        match resolve_style_once(&effective, parent, environment) {
+            Err(StyleResolutionError::InvalidPropertyValue(property))
+                if variable_properties.remove(&property) =>
+            {
+                effective = without_registered_property(&effective, property);
+            }
+            result => return result,
+        }
+    }
+}
+
+fn without_registered_property(
+    specified: &SpecifiedStyle,
+    rejected: StyleProperty,
+) -> SpecifiedStyle {
+    let mut filtered = SpecifiedStyle::new();
+    for declaration in specified.declarations() {
+        if declaration.property() != rejected {
+            filtered = filtered.push(declaration.property(), declaration.value().clone());
+        }
+    }
+    for declaration in specified.custom_declarations() {
+        filtered = filtered.push_custom(declaration.name().clone(), declaration.value().clone());
+    }
+    filtered
+}
+
+fn resolve_style_once(
+    specified: &SpecifiedStyle,
+    parent: Option<&InheritedStyle>,
+    environment: StyleEnvironment,
+) -> Result<ResolvedNodeStyle, StyleResolutionError> {
     environment.validate()?;
     let initial = InheritedStyle::initial(environment);
     let base = parent.unwrap_or(&initial);
@@ -768,7 +811,7 @@ pub fn resolve_style(
             style: *style,
             color: decoration_color
                 .as_ref()
-                .map(normalize_color)
+                .map(|color| normalize_color(resolved_component(color)))
                 .transpose()?
                 .unwrap_or_else(|| color.clone()),
         },
@@ -784,19 +827,19 @@ pub fn resolve_style(
             color,
         })) => {
             let offset_x = resolve_length(
-                *offset_x,
+                *resolved_component(offset_x),
                 font_size.get(),
                 environment,
                 StyleProperty::TextShadow,
             )?;
             let offset_y = resolve_length(
-                *offset_y,
+                *resolved_component(offset_y),
                 font_size.get(),
                 environment,
                 StyleProperty::TextShadow,
             )?;
             let blur_radius = resolve_length(
-                *blur_radius,
+                *resolved_component(blur_radius),
                 font_size.get(),
                 environment,
                 StyleProperty::TextShadow,
@@ -810,7 +853,7 @@ pub fn resolve_style(
                 offset_x: StyleNumber::new(offset_x),
                 offset_y: StyleNumber::new(offset_y),
                 blur_radius: StyleNumber::new(blur_radius),
-                color: normalize_color(color)?,
+                color: normalize_color(resolved_component(color))?,
             })
         }
         Some(_) => return Err(wrong_type(StyleProperty::TextShadow)),
@@ -980,6 +1023,9 @@ fn collect_custom_references<'a>(
     crate::value_tree::visit_length_percentages(value, &mut |value| {
         collect_length_percentage_references(value, references);
     });
+    crate::value_tree::visit_component_variables(value, &mut |reference| {
+        collect_reference(reference, references);
+    });
 }
 
 fn collect_reference<'a>(
@@ -1080,12 +1126,18 @@ fn resolve_value_from_candidates(
             resolve_reference_from_candidates(reference, candidates, cyclic, cache, visiting)
         }
         value => {
+            let value =
+                crate::value_tree::try_map_component_variables(value, &mut |reference, _kind| {
+                    resolve_reference_from_candidates(
+                        reference, candidates, cyclic, cache, visiting,
+                    )
+                })?;
             let mut resolve = |value: &LengthPercentageValue| {
                 resolve_length_percentage_from_candidates(
                     value, candidates, cyclic, cache, visiting,
                 )
             };
-            map_nested_length_percentages(value, &mut resolve)
+            map_nested_length_percentages(&value, &mut resolve)
         }
     }
 }
@@ -1097,10 +1149,14 @@ fn resolve_value_from_computed(
     match value {
         StyleValue::Variable(reference) => resolve_reference_from_computed(reference, computed),
         value => {
+            let value =
+                crate::value_tree::try_map_component_variables(value, &mut |reference, _kind| {
+                    resolve_reference_from_computed(reference, computed)
+                })?;
             let mut resolve = |value: &LengthPercentageValue| {
                 resolve_length_percentage_from_computed(value, computed)
             };
-            map_nested_length_percentages(value, &mut resolve)
+            map_nested_length_percentages(&value, &mut resolve)
         }
     }
 }
@@ -1289,6 +1345,12 @@ fn expect_length_percentage(
 
 fn wrong_type(property: StyleProperty) -> StyleResolutionError {
     StyleResolutionError::InvalidPropertyValue(property)
+}
+
+fn resolved_component<T>(value: &ComponentValue<T>) -> &T {
+    value
+        .value()
+        .expect("custom-property components are materialized before computed-style resolution")
 }
 
 fn finite(value: StyleNumber, property: StyleProperty) -> Result<f32, StyleResolutionError> {
@@ -1528,6 +1590,10 @@ mod tests {
 
     fn declaration(property: StyleProperty, value: StyleValue) -> SpecifiedStyle {
         SpecifiedStyle::new().push(property, value)
+    }
+
+    fn component_variable<T>(name: &CustomPropertyName) -> ComponentValue<T> {
+        ComponentValue::Variable(CustomPropertyReference::new(name.clone()))
     }
 
     fn inherited(style: &ResolvedNodeStyle) -> &InheritedStyle {
@@ -2212,13 +2278,14 @@ mod tests {
         let shadow = declaration(
             StyleProperty::TextShadow,
             StyleValue::TextShadow(TextShadowValue::Shadow {
-                offset_x: px(1.0),
+                offset_x: px(1.0).into(),
                 offset_y: LengthValue::Dimension {
                     value: number(1.0),
                     unit: LengthUnit::Em,
-                },
-                blur_radius: px(3.0),
-                color: ColorValue::Named("red".into()),
+                }
+                .into(),
+                blur_radius: px(3.0).into(),
+                color: ColorValue::Named("red".into()).into(),
             }),
         );
         let parent = resolve_text_style(&shadow, None, environment).unwrap();
@@ -2247,10 +2314,10 @@ mod tests {
         let invalid = declaration(
             StyleProperty::TextShadow,
             StyleValue::TextShadow(TextShadowValue::Shadow {
-                offset_x: LengthValue::Zero,
-                offset_y: LengthValue::Zero,
-                blur_radius: px(-1.0),
-                color: ColorValue::Named("black".into()),
+                offset_x: LengthValue::Zero.into(),
+                offset_y: LengthValue::Zero.into(),
+                blur_radius: px(-1.0).into(),
+                color: ColorValue::Named("black".into()).into(),
             }),
         );
         assert_eq!(
@@ -2261,28 +2328,28 @@ mod tests {
         let invalid_offset_x = declaration(
             StyleProperty::TextShadow,
             StyleValue::TextShadow(TextShadowValue::Shadow {
-                offset_x: px(f32::NAN),
-                offset_y: LengthValue::Zero,
-                blur_radius: LengthValue::Zero,
-                color: ColorValue::Named("black".into()),
+                offset_x: px(f32::NAN).into(),
+                offset_y: LengthValue::Zero.into(),
+                blur_radius: LengthValue::Zero.into(),
+                color: ColorValue::Named("black".into()).into(),
             }),
         );
         let invalid_offset_y = declaration(
             StyleProperty::TextShadow,
             StyleValue::TextShadow(TextShadowValue::Shadow {
-                offset_x: LengthValue::Zero,
-                offset_y: px(f32::NAN),
-                blur_radius: LengthValue::Zero,
-                color: ColorValue::Named("black".into()),
+                offset_x: LengthValue::Zero.into(),
+                offset_y: px(f32::NAN).into(),
+                blur_radius: LengthValue::Zero.into(),
+                color: ColorValue::Named("black".into()).into(),
             }),
         );
         let invalid_blur = declaration(
             StyleProperty::TextShadow,
             StyleValue::TextShadow(TextShadowValue::Shadow {
-                offset_x: LengthValue::Zero,
-                offset_y: LengthValue::Zero,
-                blur_radius: px(f32::NAN),
-                color: ColorValue::Named("black".into()),
+                offset_x: LengthValue::Zero.into(),
+                offset_y: LengthValue::Zero.into(),
+                blur_radius: px(f32::NAN).into(),
+                color: ColorValue::Named("black".into()).into(),
             }),
         );
         assert_eq!(
@@ -2300,15 +2367,16 @@ mod tests {
         let invalid_color = declaration(
             StyleProperty::TextShadow,
             StyleValue::TextShadow(TextShadowValue::Shadow {
-                offset_x: LengthValue::Zero,
-                offset_y: LengthValue::Zero,
-                blur_radius: LengthValue::Zero,
+                offset_x: LengthValue::Zero.into(),
+                offset_y: LengthValue::Zero.into(),
+                blur_radius: LengthValue::Zero.into(),
                 color: ColorValue::Rgba {
                     red: 0,
                     green: 0,
                     blue: 0,
                     alpha: number(f32::NAN),
-                },
+                }
+                .into(),
             }),
         );
         assert_eq!(
@@ -2352,12 +2420,15 @@ mod tests {
             StyleValue::TextDecoration(TextDecorationValue {
                 line: TextDecorationLineValue::Underline,
                 style: TextDecorationStyleValue::Solid,
-                color: Some(ColorValue::Rgba {
-                    red: 0,
-                    green: 0,
-                    blue: 0,
-                    alpha: number(f32::NAN),
-                }),
+                color: Some(
+                    ColorValue::Rgba {
+                        red: 0,
+                        green: 0,
+                        blue: 0,
+                        alpha: number(f32::NAN),
+                    }
+                    .into(),
+                ),
             }),
         );
         assert_eq!(
@@ -2707,6 +2778,168 @@ mod tests {
     }
 
     #[test]
+    fn wrong_typed_variable_invalidates_only_the_consuming_declaration() {
+        let accent = CustomPropertyName::new("--accent").unwrap();
+        let parent = resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::Color,
+                StyleValue::Color(ColorValue::Named("blue".into())),
+            ),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+        let child = resolve_style(
+            &SpecifiedStyle::new()
+                .push_custom(accent.clone(), StyleValue::Length(LengthValue::Zero))
+                .push(
+                    StyleProperty::Color,
+                    StyleValue::Variable(CustomPropertyReference::with_fallback(
+                        accent,
+                        StyleValue::Color(ColorValue::Named("red".into())),
+                    )),
+                )
+                .push(
+                    StyleProperty::Width,
+                    StyleValue::Size(crate::SizeValue::LengthPercentage(
+                        LengthPercentageValue::Length(LengthValue::Dimension {
+                            value: StyleNumber::new(24.0),
+                            unit: LengthUnit::Px,
+                        }),
+                    )),
+                ),
+            Some(parent.inherited_for_children()),
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            child.inherited_for_children().color(),
+            &ColorValue::Named("blue".into())
+        );
+        assert_eq!(
+            child.computed().layout().size.width,
+            crate::ComputedSizeValue::Value(crate::ComputedLengthPercentage::new(24.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn composite_variables_resolve_in_custom_values_and_registered_declarations() {
+        let color = CustomPropertyName::new("--color").unwrap();
+        let angle = CustomPropertyName::new("--angle").unwrap();
+        let length = CustomPropertyName::new("--length").unwrap();
+        let scale = CustomPropertyName::new("--scale").unwrap();
+        let image = CustomPropertyName::new("--image").unwrap();
+        let specified = SpecifiedStyle::new()
+            .push_custom(
+                color.clone(),
+                StyleValue::Color(ColorValue::Named("red".into())),
+            )
+            .push_custom(angle.clone(), StyleValue::Angle(number(45.0)))
+            .push_custom(length.clone(), StyleValue::Length(px(8.0)))
+            .push_custom(scale.clone(), StyleValue::Number(number(2.0)))
+            .push_custom(
+                image.clone(),
+                StyleValue::BackgroundImages(vec![crate::BackgroundImageValue::Gradient(
+                    crate::GradientValue::Linear {
+                        angle_degrees: component_variable(&angle),
+                        stops: vec![
+                            crate::GradientStopValue {
+                                color: component_variable(&color),
+                                position: None,
+                            },
+                            crate::GradientStopValue {
+                                color: ColorValue::Named("blue".into()).into(),
+                                position: None,
+                            },
+                        ],
+                    },
+                )]),
+            )
+            .push(
+                StyleProperty::BackgroundImage,
+                StyleValue::Variable(CustomPropertyReference::new(image)),
+            )
+            .push(
+                StyleProperty::Transform,
+                StyleValue::Transform(crate::TransformValue(vec![
+                    crate::TransformFunctionValue::Rotate(component_variable(&angle)),
+                    crate::TransformFunctionValue::Scale(
+                        component_variable(&scale),
+                        StyleNumber::new(1.0).into(),
+                    ),
+                    crate::TransformFunctionValue::TranslateZ(component_variable(&length)),
+                ])),
+            );
+
+        let resolved = resolve_style(&specified, None, StyleEnvironment::default()).unwrap();
+        assert!(matches!(
+            &resolved.computed().paint().background_images[0],
+            crate::ComputedBackgroundImage::Gradient(crate::ComputedGradient::Linear {
+                angle_degrees,
+                stops,
+            }) if angle_degrees.get() == 45.0
+                && stops[0].color == ColorValue::Named("red".into())
+        ));
+        assert_eq!(resolved.computed().paint().transform.functions.len(), 3);
+
+        let unresolved =
+            ComponentValue::<ColorValue>::Variable(CustomPropertyReference::new(color));
+        assert!(std::panic::catch_unwind(|| resolved_component(&unresolved)).is_err());
+        let unresolved =
+            ComponentValue::<LengthValue>::Variable(CustomPropertyReference::new(length));
+        assert!(std::panic::catch_unwind(|| resolved_component(&unresolved)).is_err());
+        let unresolved =
+            ComponentValue::<StyleNumber>::Variable(CustomPropertyReference::new(scale));
+        assert!(std::panic::catch_unwind(|| resolved_component(&unresolved)).is_err());
+    }
+
+    #[test]
+    fn missing_composite_variables_invalidate_custom_and_registered_declarations() {
+        let missing = CustomPropertyName::new("--missing").unwrap();
+        let nested = CustomPropertyName::new("--nested").unwrap();
+        let shadow = || {
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: LengthValue::Zero.into(),
+                offset_y: LengthValue::Zero.into(),
+                blur_radius: LengthValue::Zero.into(),
+                color: component_variable(&missing),
+            })
+        };
+        let resolved = resolve_style(
+            &SpecifiedStyle::new()
+                .push_custom(nested.clone(), shadow())
+                .push(StyleProperty::TextShadow, shadow()),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap();
+
+        assert!(
+            resolved
+                .inherited_for_children()
+                .custom_property(&nested)
+                .is_none()
+        );
+        assert!(resolved.inherited_for_children().text_shadow().is_none());
+    }
+
+    #[test]
+    fn direct_invalid_values_remain_resolution_errors() {
+        let error = resolve_style(
+            &SpecifiedStyle::new()
+                .push(StyleProperty::Color, StyleValue::Length(LengthValue::Zero)),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::Color)
+        );
+    }
+
+    #[test]
     fn custom_properties_support_forward_references() {
         let a = CustomPropertyName::new("--a").unwrap();
         let b = CustomPropertyName::new("--b").unwrap();
@@ -3005,14 +3238,14 @@ mod tests {
                 StyleProperty::BackgroundImage,
                 StyleValue::BackgroundImages(vec![crate::BackgroundImageValue::Gradient(
                     crate::GradientValue::Linear {
-                        angle_degrees: number(180.0),
+                        angle_degrees: number(180.0).into(),
                         stops: vec![
                             crate::GradientStopValue {
-                                color: ColorValue::Named("red".into()),
+                                color: ColorValue::Named("red".into()).into(),
                                 position: Some(nested()),
                             },
                             crate::GradientStopValue {
-                                color: ColorValue::Named("blue".into()),
+                                color: ColorValue::Named("blue".into()).into(),
                                 position: None,
                             },
                         ],

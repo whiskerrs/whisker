@@ -1,13 +1,13 @@
 //! Text-content properties: alignment, decoration, transform,
 //! overflow, vertical alignment, whitespace handling.
 
+use crate::ValueOrVariable;
 use crate::css::Css;
 use crate::data_type::{Color, Length, LengthPercentage};
 use crate::keyword::{
     TextAlign, TextDecorationLine, TextDecorationStyle, TextOverflow, TextTransform, VerticalAlign,
     WhiteSpace, WordBreak, WordWrap,
 };
-use crate::style_value::ToStyleValue;
 use crate::to_css::ToCss;
 
 impl Css {
@@ -15,25 +15,16 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/text-shadow>
     pub fn text_shadow(
         self,
-        offset_x: Length,
-        offset_y: Length,
-        blur_radius: Length,
-        color: Color,
+        offset_x: impl Into<ValueOrVariable<Length>>,
+        offset_y: impl Into<ValueOrVariable<Length>>,
+        blur_radius: impl Into<ValueOrVariable<Length>>,
+        color: impl Into<ValueOrVariable<Color>>,
     ) -> Self {
         use crate::to_css::ToCss;
-        let whisker_style::StyleValue::Length(offset_x_value) = offset_x.to_style_value() else {
-            unreachable!()
-        };
-        let whisker_style::StyleValue::Length(offset_y_value) = offset_y.to_style_value() else {
-            unreachable!()
-        };
-        let whisker_style::StyleValue::Length(blur_radius_value) = blur_radius.to_style_value()
-        else {
-            unreachable!()
-        };
-        let whisker_style::StyleValue::Color(color_value) = color.to_style_value() else {
-            unreachable!()
-        };
+        let offset_x = offset_x.into();
+        let offset_y = offset_y.into();
+        let blur_radius = blur_radius.into();
+        let color = color.into();
         let mut css = String::new();
         let _ = offset_x.to_css(&mut css);
         css.push(' ');
@@ -45,10 +36,10 @@ impl Css {
         self.push_semantic(
             crate::StyleProperty::TextShadow,
             whisker_style::StyleValue::TextShadow(whisker_style::TextShadowValue::Shadow {
-                offset_x: offset_x_value,
-                offset_y: offset_y_value,
-                blur_radius: blur_radius_value,
-                color: color_value,
+                offset_x: crate::style_value::to_length_component(&offset_x),
+                offset_y: crate::style_value::to_length_component(&offset_y),
+                blur_radius: crate::style_value::to_length_component(&blur_radius),
+                color: crate::style_value::to_color_component(&color),
             }),
             css,
         )
@@ -72,9 +63,10 @@ impl Css {
         self,
         line: TextDecorationLine,
         style: TextDecorationStyle,
-        color: Color,
+        color: impl Into<ValueOrVariable<Color>>,
     ) -> Self {
         use crate::to_css::ToCss;
+        let color = color.into();
         let line_value = match line {
             TextDecorationLine::None => whisker_style::TextDecorationLineValue::None,
             TextDecorationLine::Underline => whisker_style::TextDecorationLineValue::Underline,
@@ -87,9 +79,6 @@ impl Css {
             TextDecorationStyle::Dashed => whisker_style::TextDecorationStyleValue::Dashed,
             TextDecorationStyle::Wavy => whisker_style::TextDecorationStyleValue::Wavy,
         };
-        let whisker_style::StyleValue::Color(color_value) = color.to_style_value() else {
-            unreachable!()
-        };
         let mut css = String::new();
         let _ = line.to_css(&mut css);
         css.push(' ');
@@ -101,7 +90,7 @@ impl Css {
             whisker_style::StyleValue::TextDecoration(whisker_style::TextDecorationValue {
                 line: line_value,
                 style: style_value,
-                color: Some(color_value),
+                color: Some(crate::style_value::to_color_component(&color)),
             }),
             css,
         )

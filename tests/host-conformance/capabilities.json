@@ -197,11 +197,12 @@
       "basis": "lynx-4.0",
       "features": ["custom-properties"],
       "properties": [],
-      "supported_subset": ["case-sensitive-inherited-typed-values", "whole-value-var-references", "typed-fallbacks", "forward-references", "cycle-invalidation", "typed-var-substitution-inside-length-percentage-calc"],
-      "pending_subset": ["token-stream-values", "var-substitution-inside-non-calc-composite-values-and-functions"],
-      "compatibility_notes": ["Whisker resolves typed custom-property values entirely in Rust and sends only the resulting layout or paint value to Hosts", "Whisker supports typed calc(var(--gap) + 2px) composition in every length-percentage position, including layout, Grid, backgrounds, gradients, transforms, and motion paths, without introducing a runtime CSS parser; arbitrary CSS token-stream substitution remains pending"],
+      "supported_subset": ["case-sensitive-inherited-typed-values", "whole-value-var-references", "typed-fallbacks", "forward-references", "cycle-invalidation", "computed-value-time-declaration-invalidation", "typed-var-substitution-inside-length-percentage-calc", "typed-var-substitution-inside-color-angle-number-and-length-components"],
+      "pending_subset": [],
+      "unsupported_browser_subset": ["arbitrary-css-token-stream-values-and-substitution"],
+      "compatibility_notes": ["Whisker resolves typed custom-property values entirely in Rust and sends only the resulting layout or paint value to Hosts", "Typed var() references compose inside length-percentage calc expressions and inside supported color, angle, number, and length slots in gradients, transforms, text paint, backgrounds, and backdrop blur", "Whisker intentionally does not retain or reparse arbitrary CSS token streams; application code constructs semantic values through the typed Rust API"],
       "protocol": [],
-      "rust": "partial",
+      "rust": "implemented",
       "hosts": {"desktop": "not-applicable", "web": "not-applicable", "android": "not-applicable", "ios": "not-applicable"}
     }
   ]

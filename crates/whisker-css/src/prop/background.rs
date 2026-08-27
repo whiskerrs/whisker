@@ -149,28 +149,22 @@ pub(crate) fn background_image_value(value: &ImageRef) -> whisker_style::Backgro
 
 fn gradient_value(value: &Gradient) -> whisker_style::GradientValue {
     use whisker_style::{
-        BackgroundPositionValue, GradientStopValue, GradientValue, RadialGradientValue,
-        StyleNumber, StyleValue,
+        BackgroundPositionValue, GradientStopValue, GradientValue, RadialGradientValue, StyleNumber,
     };
 
     let stops = |values: &[crate::ColorStop]| {
         values
             .iter()
-            .map(|stop| {
-                let StyleValue::Color(color) = stop.color.to_style_value() else {
-                    unreachable!("Color always has a semantic style value")
-                };
-                GradientStopValue {
-                    color,
-                    position: stop.position.as_ref().map(|position| match position {
-                        StopPosition::LengthPercentage(value) => length_percentage_value(value),
-                        StopPosition::Number(value) => {
-                            whisker_style::LengthPercentageValue::Percentage(StyleNumber::new(
-                                *value * 100.0,
-                            ))
-                        }
-                    }),
-                }
+            .map(|stop| GradientStopValue {
+                color: crate::style_value::to_color_component(&stop.color),
+                position: stop.position.as_ref().map(|position| match position {
+                    StopPosition::LengthPercentage(value) => length_percentage_value(value),
+                    StopPosition::Number(value) => {
+                        whisker_style::LengthPercentageValue::Percentage(StyleNumber::new(
+                            *value * 100.0,
+                        ))
+                    }
+                }),
             })
             .collect()
     };
@@ -179,17 +173,17 @@ fn gradient_value(value: &Gradient) -> whisker_style::GradientValue {
             direction,
             stops: values,
         } => GradientValue::Linear {
-            angle_degrees: StyleNumber::new(match direction {
-                LinearDirection::ToTop => 0.0,
-                LinearDirection::ToTopRight => 45.0,
-                LinearDirection::ToRight => 90.0,
-                LinearDirection::ToBottomRight => 135.0,
-                LinearDirection::ToBottom => 180.0,
-                LinearDirection::ToBottomLeft => 225.0,
-                LinearDirection::ToLeft => 270.0,
-                LinearDirection::ToTopLeft => 315.0,
-                LinearDirection::Angle(value) => angle_degrees(*value),
-            }),
+            angle_degrees: match direction {
+                LinearDirection::ToTop => StyleNumber::new(0.0).into(),
+                LinearDirection::ToTopRight => StyleNumber::new(45.0).into(),
+                LinearDirection::ToRight => StyleNumber::new(90.0).into(),
+                LinearDirection::ToBottomRight => StyleNumber::new(135.0).into(),
+                LinearDirection::ToBottom => StyleNumber::new(180.0).into(),
+                LinearDirection::ToBottomLeft => StyleNumber::new(225.0).into(),
+                LinearDirection::ToLeft => StyleNumber::new(270.0).into(),
+                LinearDirection::ToTopLeft => StyleNumber::new(315.0).into(),
+                LinearDirection::Angle(value) => crate::style_value::to_angle_component(value),
+            },
             stops: stops(values),
         },
         Gradient::Radial {
@@ -214,7 +208,10 @@ fn gradient_value(value: &Gradient) -> whisker_style::GradientValue {
             at,
             stops: values,
         } => GradientValue::Conic {
-            from_degrees: StyleNumber::new(from.map_or(0.0, angle_degrees)),
+            from_degrees: from.as_ref().map_or_else(
+                || StyleNumber::new(0.0).into(),
+                crate::style_value::to_angle_component,
+            ),
             center: at.as_ref().map_or_else(
                 || BackgroundPositionValue {
                     horizontal: percentage(50.0),
@@ -227,14 +224,6 @@ fn gradient_value(value: &Gradient) -> whisker_style::GradientValue {
             ),
             stops: stops(values),
         },
-    }
-}
-
-fn angle_degrees(value: crate::Angle) -> f32 {
-    match value {
-        crate::Angle::Deg(value) => value,
-        crate::Angle::Rad(value) => value.to_degrees(),
-        crate::Angle::Turn(value) => value * 360.0,
     }
 }
 
@@ -394,8 +383,8 @@ mod tests {
     #[test]
     fn background_image_gradient() {
         let g = Gradient::linear_to_bottom([
-            ColorStop::new(NamedColor::Red.into()),
-            ColorStop::new(NamedColor::Blue.into()),
+            ColorStop::new(Color::Named(NamedColor::Red)),
+            ColorStop::new(Color::Named(NamedColor::Blue)),
         ]);
         let s = Css::new().background_image(g);
         assert_eq!(
@@ -409,8 +398,8 @@ mod tests {
     fn background_radial_and_conic_gradients_are_typed() {
         let stops = || {
             vec![
-                ColorStop::at(NamedColor::Red.into(), Percentage(0.0)),
-                ColorStop::at(NamedColor::Blue.into(), Percentage(100.0)),
+                ColorStop::at(Color::Named(NamedColor::Red), Percentage(0.0)),
+                ColorStop::at(Color::Named(NamedColor::Blue), Percentage(100.0)),
             ]
         };
         let radial = Gradient::Radial {
@@ -421,7 +410,7 @@ mod tests {
             stops: stops(),
         };
         let conic = Gradient::Conic {
-            from: Some(crate::Angle::Turn(0.25)),
+            from: Some(crate::Angle::Turn(0.25).into()),
             at: Some((Percentage(25.0).into(), Percentage(75.0).into())),
             stops: stops(),
         };
