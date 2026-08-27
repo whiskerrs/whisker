@@ -25,7 +25,6 @@ fn host_conformance(host: &str) -> Result<()> {
             "whisker-desktop",
             "--features",
             "host-conformance",
-            "every_manifest_case_required_by_desktop_executes",
         ])),
         "web" => web(&root),
         "android" => android(&root),

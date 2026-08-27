@@ -2196,9 +2196,16 @@ fn render_taffy_protocol_and_desktop_box_paint_compose() {
 fn capability_checklist_covers_each_standard_registry_property_once() {
     let checklist: serde_json::Value =
         serde_json::from_str(CAPABILITIES).expect("valid capability checklist JSON");
-    assert_eq!(checklist["schema"], 1);
-    assert_eq!(checklist["target"]["feature_count"], 175);
-    assert_eq!(checklist["target"]["property_count"], 174);
+    assert_eq!(checklist["schema"], 2);
+    let target_property_count = checklist["target"]["property_count"]
+        .as_u64()
+        .expect("target property count") as usize;
+    let target_feature_count = checklist["target"]["feature_count"]
+        .as_u64()
+        .expect("target feature count") as usize;
+    let excluded_property_count = checklist["target"]["excluded_registered_property_count"]
+        .as_u64()
+        .expect("excluded registered property count") as usize;
     let statuses = checklist["statuses"]
         .as_array()
         .expect("status vocabulary")
@@ -2241,11 +2248,25 @@ fn capability_checklist_covers_each_standard_registry_property_once() {
         .filter(|property| property.metadata().origin == PropertyOrigin::Css)
         .map(|property| property.css_name())
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(actual, expected);
-    assert_eq!(actual.len(), 174);
+    let excluded = checklist["excluded_registered_properties"]
+        .as_array()
+        .expect("excluded registered properties")
+        .iter()
+        .map(|entry| entry["property"].as_str().expect("excluded property name"))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(actual.is_disjoint(&excluded));
+    assert_eq!(
+        actual
+            .union(&excluded)
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected
+    );
+    assert_eq!(actual.len(), target_property_count);
+    assert_eq!(excluded.len(), excluded_property_count);
     assert_eq!(
         features,
         std::collections::BTreeSet::from(["custom-properties"])
     );
-    assert_eq!(actual.len() + features.len(), 175);
+    assert_eq!(actual.len() + features.len(), target_feature_count);
 }
