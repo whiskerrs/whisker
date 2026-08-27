@@ -163,22 +163,24 @@
       "basis": "lynx-4.0",
       "properties": ["color", "font-family", "font-feature-settings", "font-optical-sizing", "font-size", "font-style", "font-variation-settings", "font-weight", "letter-spacing", "line-height", "text-align", "text-decoration", "text-indent", "text-overflow", "text-shadow", "white-space", "word-break"],
       "supported_subset": ["basic-font-metrics-and-color", "font-family-fallback-font-style-line-height-letter-spacing-all-hosts", "intrinsic-measurement-uses-paint-typography-all-hosts", "intrinsic-measurement-opentype-features-and-weight-axis-all-hosts", "intrinsic-measurement-white-space-word-break-line-limit-overflow-all-hosts", "intrinsic-measurement-direction-alignment-indent-all-hosts", "text-direction-paint-all-hosts", "single-text-shadow", "lynx-single-line-text-decoration", "lynx-text-align", "lynx-text-indent-length-percentage", "lynx-white-space-word-break-text-overflow", "opentype-feature-settings-all-hosts", "variable-font-axes-web-android-ios", "font-weight-axis-desktop", "lynx-optical-sizing-web-android-ios"],
-      "pending_subset": ["desktop-arbitrary-variable-font-axes-and-optical-sizing"],
+      "pending_subset": [],
+      "unsupported_browser_subset": ["desktop-arbitrary-variable-font-axes-and-optical-sizing"],
+      "compatibility_notes": ["Desktop supports the variable font weight axis but deliberately excludes arbitrary variation axes and automatic optical sizing from its declared text subset."],
       "protocol": ["SetText"],
       "rust": "implemented",
-      "hosts": {"desktop": "partial", "web": "implemented", "android": "implemented", "ios": "implemented"}
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "interaction.pointer",
       "basis": "lynx-4.0",
       "properties": ["cursor", "pointer-events"],
       "supported_subset": ["pointer-events-auto-none", "keyword-only-cursors-web-desktop-android", "ios-hidden-text-vertical-text-crosshair-and-resize-shapes", "resolved-value-inheritance", "host-normalized-pointer-down-move-up-cancel-all-hosts", "mouse-touch-pen-kind-protocol-preservation-all-hosts", "native-mouse-and-touch-acquisition-desktop"],
-      "pending_subset": ["ios-semantic-cursors-without-public-uikit-shapes", "desktop-native-pen-classification"],
-      "unsupported_browser_subset": ["resource-backed-cursors", "cursor-hotspots", "svg-pointer-events-values"],
+      "pending_subset": [],
+      "unsupported_browser_subset": ["resource-backed-cursors", "cursor-hotspots", "svg-pointer-events-values", "ios-semantic-cursors-without-public-uikit-shapes", "desktop-native-pen-classification"],
       "compatibility_notes": ["Lynx pointer-events accepts auto and none; Whisker resolves the documented inheritance effect before emitting SetHitTest", "UIKit provides hidden, text beams, and custom geometric pointer shapes, which iOS uses for none, text, vertical-text, crosshair, and resize keywords", "UIKit has no public platform glyphs for link, context-menu, help, progress, wait, cell, alias, copy, move, no-drop, not-allowed, grab, grabbing, or zoom cursors; iOS preserves those keywords and deliberately retains the system pointer instead of conflating distinct semantics", "The shared Desktop adapter preserves every protocol pointer kind, while winit currently classifies native mouse and touch events but does not expose a portable stylus kind"],
       "protocol": ["SetCursor", "SetHitTest"],
       "rust": "implemented",
-      "hosts": {"desktop": "partial", "web": "implemented", "android": "implemented", "ios": "partial"}
+      "hosts": {"desktop": "implemented", "web": "implemented", "android": "implemented", "ios": "implemented"}
     },
     {
       "id": "motion.rust",
