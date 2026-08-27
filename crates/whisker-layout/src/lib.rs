@@ -1654,6 +1654,34 @@ mod tests {
             }
         );
 
+        assert!(
+            tree.update_style(
+                root,
+                ComputedLayoutStyle {
+                    flex_grow: StyleNumber::new(2.0),
+                    min_size: Axes {
+                        width: ComputedSizeValue::Value(ComputedLengthPercentage::new(1.0, 0.0)),
+                        height: ComputedSizeValue::Value(ComputedLengthPercentage::new(1.0, 0.0)),
+                    },
+                    ..ComputedLayoutStyle::default()
+                },
+            )
+            .unwrap()
+            .contains(PropertyImpactSet::LAYOUT)
+        );
+        assert_eq!(
+            tree.update_style(
+                root,
+                ComputedLayoutStyle {
+                    position: PositionValue::Fixed,
+                    ..ComputedLayoutStyle::default()
+                },
+            ),
+            Err(LayoutError::UnsupportedStyle(
+                UnsupportedLayoutFeature::FixedPosition
+            ))
+        );
+
         let resized = tree
             .compute(root, LayoutSize::new(480.0, 300.0), &mut zero_measure)
             .unwrap();

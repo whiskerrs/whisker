@@ -720,6 +720,7 @@ mod tests {
                 StyleProperty::AnimationName,
                 StyleValue::AnimationNames(vec![]),
             ),
+            (StyleProperty::AnimationName, StyleValue::Animations(vec![])),
             (
                 StyleProperty::AnimationDuration,
                 StyleValue::AnimationDurations(vec![]),
@@ -782,6 +783,22 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(shorthand.animations, vec![animation(Some("pulse"))]);
+
+        let keyframes = Arc::new(KeyframesDefinition {
+            name: "typed".into(),
+            frames: vec![],
+        });
+        let mut typed = animation(Some("typed"));
+        typed.keyframes = Some(Arc::clone(&keyframes));
+        let typed_name = resolve_motion_style(&SpecifiedStyle::new().push(
+            StyleProperty::AnimationName,
+            StyleValue::Animations(vec![typed]),
+        ))
+        .unwrap();
+        assert_eq!(
+            typed_name.animations[0].keyframes.as_ref(),
+            Some(&keyframes)
+        );
 
         let longhands = resolve_motion_style(
             &SpecifiedStyle::new()
