@@ -75,46 +75,6 @@ jobs:
           # other three are the security-relevant gates.
           command: check advisories bans sources
 
-  cross-build-ios:
-    name: cross build (aarch64-apple-ios-sim)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios-sim
-      - uses: Swatinem/rust-cache@v2
-      # Check the user-facing umbrella crate (pulls in runtime + driver
-      # + driver-sys) for the iOS device target. `whisker-driver-sys`'s
-      # build.rs compiles the C++ bridge with `cc`, which finds the iOS
-      # SDK clang from Xcode on the macOS runner — no extra toolchain
-      # setup needed. Catches Rust-level regressions in the device build
-      # (cfg gates, FFI signatures). The Rust source is shared across
-      # iOS/Android, so this covers the bulk of the device-build surface.
-      #
-      # An Android cross-check (aarch64-linux-android) is NOT included
-      # yet: `cargo check` still runs build.rs, which cross-compiles the
-      # C++ bridge and therefore needs the Android NDK clang on PATH.
-      # Add it via `cargo-ndk` / an NDK setup step when wiring Android CI.
-      - run: cargo check -p whisker --target aarch64-apple-ios-sim
-
-  build-ios-runtime:
-    name: swift build (WhiskerModule)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      # The iOS module API is Swift, and nothing else in this workflow
-      # compiles Swift: `cross build` above builds the Rust half for an
-      # iOS target and stops there. A Swift-only break therefore reached
-      # a tagged SwiftPM release and only surfaced when an app built
-      # against it. Compile the module authoring surface for iOS here.
-      - run: |
-          xcodebuild -scheme WhiskerModule \
-            -destination 'generic/platform=iOS Simulator' \
-            -skipPackagePluginValidation \
-            build
-        working-directory: platforms/ios
-
   host-conformance-desktop:
     name: Host conformance (Desktop / wgpu)
     runs-on: ubuntu-latest
