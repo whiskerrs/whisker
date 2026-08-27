@@ -9,14 +9,16 @@ pub mod animation;
 pub mod background;
 pub mod border;
 pub mod flex;
+pub mod keyframes;
 pub mod padding_margin;
 pub mod transform;
 pub mod transition;
 
-pub use animation::Animation;
+pub use animation::{Animation, AnimationTarget};
 pub use background::{Background, BackgroundLayer};
 pub use border::Border;
 pub use flex::Flex;
+pub use keyframes::{Keyframe, Keyframes, KeyframesBuildError, KeyframesBuilder};
 pub use padding_margin::{Margin, MarginValue, Padding};
 pub use transform::{Transform, TransformFn};
 pub use transition::Transition;

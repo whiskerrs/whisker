@@ -6,21 +6,33 @@ use crate::data_type_ext::EasingFunction;
 use crate::keyword::{
     AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
 };
-use crate::style_value::{to_motion_easing, to_motion_time};
+use crate::shorthand::{Animation, AnimationTarget};
+use crate::style_value::{to_animation_value, to_motion_easing, to_motion_time};
 use crate::to_css::ToCss;
 
 impl Css {
     /// Sets `animation-name` — references a `@keyframes` block.
     /// <https://lynxjs.org/api/css/properties/animation-name>
-    pub fn animation_name(self, name: impl Into<String>) -> Self {
-        // Names are CSS identifiers, written bare.
-        let name = name.into();
-        let semantic = (name != "none").then_some(name.clone());
-        self.push_semantic(
-            crate::StyleProperty::AnimationName,
-            whisker_style::StyleValue::AnimationNames(vec![semantic]),
-            name,
-        )
+    pub fn animation_name(self, target: impl Into<AnimationTarget>) -> Self {
+        match target.into() {
+            AnimationTarget::Name(name) => {
+                let semantic = (name != "none").then_some(name.clone());
+                self.push_semantic(
+                    crate::StyleProperty::AnimationName,
+                    whisker_style::StyleValue::AnimationNames(vec![semantic]),
+                    name,
+                )
+            }
+            AnimationTarget::Keyframes(keyframes) => {
+                let animation = Animation::new(keyframes);
+                let name = animation.name.clone();
+                self.push_semantic(
+                    crate::StyleProperty::AnimationName,
+                    whisker_style::StyleValue::Animations(vec![to_animation_value(&animation)]),
+                    name,
+                )
+            }
+        }
     }
 
     /// Sets `animation-duration`.

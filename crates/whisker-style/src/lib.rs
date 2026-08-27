@@ -35,8 +35,9 @@ pub use layout_value::{
 };
 pub use motion::{
     AnimationValue, ComputedMotionStyle, ComputedTransition, ComputedTransitionProperty,
-    MotionDirection, MotionEasing, MotionFillMode, MotionIterationCount, MotionPlayState,
-    MotionStepPosition, MotionTime, TransitionPropertyValue, TransitionValue,
+    KeyframeDefinition, KeyframesDefinition, MotionDirection, MotionEasing, MotionFillMode,
+    MotionIterationCount, MotionPlayState, MotionStepPosition, MotionTime, TransitionPropertyValue,
+    TransitionValue,
 };
 pub use paint::{
     BorderStyleValue, ComputedBackgroundImage, ComputedBackgroundLayerStyle,

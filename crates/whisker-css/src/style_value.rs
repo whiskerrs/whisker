@@ -135,6 +135,7 @@ pub(crate) fn to_transition_value(value: &Transition) -> TransitionValue {
 pub(crate) fn to_animation_value(value: &Animation) -> AnimationValue {
     AnimationValue {
         name: (value.name != "none").then(|| value.name.clone()),
+        keyframes: value.keyframes.as_ref().map(|value| value.definition()),
         duration: value
             .duration
             .map_or_else(MotionTime::default, to_motion_time),

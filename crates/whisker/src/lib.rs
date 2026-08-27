@@ -195,6 +195,7 @@ mod runtime_instance;
 mod standard_ui;
 mod style;
 mod surface_runtime;
+mod transform_interpolation;
 
 pub mod attrs;
 

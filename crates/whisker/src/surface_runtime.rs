@@ -14,16 +14,23 @@ use crate::background_resources::{
 use crate::runtime::element::ElementTag;
 use crate::runtime::value::WhiskerValue;
 use crate::runtime::view::{BindType, DynRenderer, Element};
+use crate::transform_interpolation::interpolate_transform_style;
+#[cfg(test)]
+use crate::transform_interpolation::{identity_transform_function, interpolate_transform_function};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior, InputEvent,
     InputEventError, MeasurementReady, NodeId, PaintColor, ResourceCommand, ResourceEvent,
     ResourceId, ResourceMessageError, SurfaceId,
 };
+#[cfg(test)]
+use whisker_engine::whisker_style::ComputedTransformFunction;
 use whisker_engine::whisker_style::{
-    ComputedLengthPercentage, ComputedTransformFunction, ComputedTransformStyle,
-    ComputedTransitionProperty, InheritedStyle, MotionEasing, ResolvedNodeStyle, SpecifiedStyle,
-    StyleEnvironment, StyleNumber, StyleProperty, StyleResolutionError, resolve_style,
+    AnimationValue, ComputedFlexBasis, ComputedLayoutStyle, ComputedLengthPercentage,
+    ComputedLengthPercentageAuto, ComputedSizeValue, ComputedTransformStyle,
+    ComputedTransitionProperty, InheritedStyle, MotionDirection, MotionEasing, MotionFillMode,
+    MotionIterationCount, MotionPlayState, ResolvedNodeStyle, SpecifiedStyle, StyleEnvironment,
+    StyleNumber, StyleProperty, StyleResolutionError, resolve_style,
 };
 use whisker_engine::{
     DeferredMeasurementApply, FrameSink, LayoutError, LayoutOptions, LayoutProgress,
@@ -434,17 +441,77 @@ impl SurfaceRuntime {
         }
         let mut state = self.state.borrow_mut();
         state.ensure_valid()?;
+        let mut motion_events = state
+            .elements
+            .values_mut()
+            .flat_map(|entry| entry.pending_motion_events.drain(..))
+            .collect::<Vec<_>>();
+        let reference_boxes = state
+            .elements
+            .iter()
+            .filter_map(|(element, entry)| {
+                let layout = state.surface.node(entry.node?)?.layout()?;
+                Some((
+                    *element,
+                    (layout.border_box.width, layout.border_box.height),
+                ))
+            })
+            .collect::<HashMap<_, _>>();
+        let mut completed_layout_transitions = Vec::new();
+        for (element, entry) in &mut state.elements {
+            for animation in &mut entry.animations {
+                let name = animation.declaration.name.clone();
+                motion_events.extend(
+                    animation
+                        .sample(timestamp_ms)
+                        .into_iter()
+                        .map(|kind| PendingMotionEvent::animation(*element, kind, name.as_deref())),
+                );
+            }
+            for (property, transition) in entry
+                .layout_transitions
+                .as_deref_mut()
+                .into_iter()
+                .flat_map(|transitions| transitions.0.iter_mut())
+            {
+                let sample = transition.sample_progress(timestamp_ms);
+                transition.current = interpolate_animated_property(
+                    &transition.from,
+                    &transition.to,
+                    sample.progress,
+                );
+                if sample.started {
+                    motion_events.push(PendingMotionEvent::transition(
+                        *element,
+                        "transitionstart",
+                        *property,
+                    ));
+                }
+                if sample.complete {
+                    motion_events.push(PendingMotionEvent::transition(
+                        *element,
+                        "transitionend",
+                        *property,
+                    ));
+                    completed_layout_transitions.push((*element, *property));
+                }
+            }
+        }
+        {
+            let state = &mut *state;
+            BindingState::apply_keyframe_animation_values(&state.elements, &mut state.surface)?;
+        }
         let mut samples = Vec::new();
         for (element, entry) in &mut state.elements {
             let Some(node) = entry.node else {
                 continue;
             };
             let opacity = entry.opacity_transition.as_deref_mut().map(|transition| {
-                let (progress, complete) = transition.sample_progress(timestamp_ms);
+                let sample = transition.sample_progress(timestamp_ms);
                 transition.current = (transition.from
-                    + (transition.to - transition.from) * progress)
+                    + (transition.to - transition.from) * sample.progress)
                     .clamp(0.0, 1.0);
-                (transition.current, complete)
+                (transition.current, sample)
             });
             let colors = entry
                 .color_transitions
@@ -452,25 +519,40 @@ impl SurfaceRuntime {
                 .into_iter()
                 .flat_map(|transitions| transitions.0.iter_mut())
                 .map(|(property, transition)| {
-                    let (progress, complete) = transition.sample_progress(timestamp_ms);
-                    transition.current = transition.from.interpolate(transition.to, progress);
-                    (*property, transition.current, complete)
+                    let sample = transition.sample_progress(timestamp_ms);
+                    transition.current =
+                        transition.from.interpolate(transition.to, sample.progress);
+                    (*property, transition.current, sample)
                 })
                 .collect::<Vec<_>>();
             let text_color = entry
                 .text_color_transition
                 .as_deref_mut()
                 .map(|transition| {
-                    let (progress, complete) = transition.sample_progress(timestamp_ms);
-                    transition.current = transition.from.interpolate(transition.to, progress);
-                    complete
+                    let sample = transition.sample_progress(timestamp_ms);
+                    transition.current =
+                        transition.from.interpolate(transition.to, sample.progress);
+                    sample
                 });
             let transform = entry.transform_transition.as_deref_mut().map(|transition| {
-                let (progress, complete) = transition.sample_progress(timestamp_ms);
-                transition.current =
-                    interpolate_transform_style(&transition.from, &transition.to, progress)
-                        .expect("only compatible transform lists enter the active timeline");
-                (transition.current.clone(), complete)
+                let sample = transition.sample_progress(timestamp_ms);
+                let (reference_width, reference_height) =
+                    reference_boxes.get(element).copied().unwrap_or_default();
+                transition.current = interpolate_transform_style(
+                    &transition.from,
+                    &transition.to,
+                    sample.progress,
+                    reference_width,
+                    reference_height,
+                )
+                .unwrap_or_else(|| {
+                    if sample.progress < 0.5 {
+                        transition.from.clone()
+                    } else {
+                        transition.to.clone()
+                    }
+                });
+                (transition.current.clone(), sample)
             });
             if opacity.is_some()
                 || !colors.is_empty()
@@ -482,9 +564,21 @@ impl SurfaceRuntime {
         }
         let mut completed_text_colors = Vec::new();
         for (element, node, opacity, colors, text_color, transform) in samples {
-            if let Some((opacity, complete)) = opacity {
+            if let Some((opacity, sample)) = opacity {
+                if sample.started {
+                    motion_events.push(PendingMotionEvent::transition(
+                        element,
+                        "transitionstart",
+                        StyleProperty::Opacity,
+                    ));
+                }
                 state.surface.set_opacity(node, opacity)?;
-                if complete {
+                if sample.complete {
+                    motion_events.push(PendingMotionEvent::transition(
+                        element,
+                        "transitionend",
+                        StyleProperty::Opacity,
+                    ));
                     state.element_mut(element)?.opacity_transition = None;
                 }
             }
@@ -495,9 +589,21 @@ impl SurfaceRuntime {
                     .and_then(|node| node.box_paint())
                     .cloned()
                     .ok_or(RuntimeBindingError::UnknownElement { element })?;
-                for (property, color, complete) in colors {
+                for (property, color, sample) in colors {
+                    if sample.started {
+                        motion_events.push(PendingMotionEvent::transition(
+                            element,
+                            "transitionstart",
+                            property,
+                        ));
+                    }
                     set_box_color(&mut paint, property, color.into_paint());
-                    if complete {
+                    if sample.complete {
+                        motion_events.push(PendingMotionEvent::transition(
+                            element,
+                            "transitionend",
+                            property,
+                        ));
                         let entry = state.element_mut(element)?;
                         if let Some(transitions) = entry.color_transitions.as_deref_mut() {
                             transitions.0.remove(&property);
@@ -509,12 +615,40 @@ impl SurfaceRuntime {
                 }
                 state.surface.set_box_paint(node, paint)?;
             }
-            if text_color == Some(true) {
+            if text_color.is_some_and(|sample| sample.started) {
+                motion_events.push(PendingMotionEvent::transition(
+                    element,
+                    "transitionstart",
+                    StyleProperty::Color,
+                ));
+            }
+            if text_color.is_some_and(|sample| sample.complete) {
+                motion_events.push(PendingMotionEvent::transition(
+                    element,
+                    "transitionend",
+                    StyleProperty::Color,
+                ));
                 completed_text_colors.push(element);
             }
-            if let Some((transform, complete)) = transform {
+            if let Some((mut transform, sample)) = transform {
+                if sample.started {
+                    motion_events.push(PendingMotionEvent::transition(
+                        element,
+                        "transitionstart",
+                        StyleProperty::Transform,
+                    ));
+                }
+                if let Some((x, y)) = active_transform_origin(state.element(element)?) {
+                    transform.origin_x = x;
+                    transform.origin_y = y;
+                }
                 BindingState::apply_transform_update(node, &transform, &mut state.surface)?;
-                if complete {
+                if sample.complete {
+                    motion_events.push(PendingMotionEvent::transition(
+                        element,
+                        "transitionend",
+                        StyleProperty::Transform,
+                    ));
                     state.element_mut(element)?.transform_transition = None;
                 }
             }
@@ -524,7 +658,44 @@ impl SurfaceRuntime {
         for element in completed_text_colors {
             state.element_mut(element)?.text_color_transition = None;
         }
-        Ok(state.elements.values().any(has_active_transition))
+        for (element, property) in completed_layout_transitions {
+            let entry = state.element_mut(element)?;
+            if let Some(transitions) = entry.layout_transitions.as_deref_mut() {
+                transitions.0.remove(&property);
+                if transitions.0.is_empty() {
+                    entry.layout_transitions = None;
+                }
+            }
+        }
+        let active = state.elements.values().any(has_active_transition);
+        let mut firings = Vec::new();
+        motion_events.sort_by_key(|event| event.element.id());
+        if let Some(root) = state.root {
+            for event in motion_events {
+                let Some(target) = state
+                    .elements
+                    .get(&event.element)
+                    .and_then(|entry| entry.node)
+                else {
+                    continue;
+                };
+                let Ok(planned) = state.plan_event(root, target, event.kind) else {
+                    continue;
+                };
+                let body = motion_event_body(&event, timestamp_ms, target);
+                firings.extend(planned.into_iter().map(|(current_target, callback)| {
+                    (callback, with_current_target(&body, current_target))
+                }));
+            }
+        }
+        drop(state);
+        for (callback, body) in firings {
+            callback(body);
+        }
+        // A lifecycle callback may synchronously update style and start a new
+        // timeline. Observe that re-entrant work before deciding whether the
+        // Host should schedule another frame.
+        Ok(active || self.has_active_motion())
     }
 
     /// Returns whether this surface has an active Rust-owned transition.
@@ -712,7 +883,8 @@ impl SurfaceRuntime {
             .surface
             .drive_layout(root, viewport, environment_epoch, provider, options)
             .map_err(RuntimeLayoutError::Measurement)?;
-        let transform_updates = BindingState::active_transform_updates(&state.elements);
+        let transform_updates =
+            BindingState::active_transform_updates(&state.elements, &state.surface);
         BindingState::apply_transform_updates(transform_updates, &mut state.surface)
             .map_err(RuntimeLayoutError::Binding)?;
         Ok(layout)
@@ -789,6 +961,9 @@ struct BoundElement {
     color_transitions: Option<Box<ActiveColorTransitions>>,
     text_color_transition: Option<Box<ActiveTransition<RgbaColor>>>,
     transform_transition: Option<Box<ActiveTransition<ComputedTransformStyle>>>,
+    layout_transitions: Option<Box<ActivePropertyTransitions>>,
+    animations: Vec<ActiveKeyframeAnimation>,
+    pending_motion_events: VecDeque<PendingMotionEvent>,
 }
 
 #[derive(Clone)]
@@ -800,19 +975,109 @@ struct ActiveTransition<Value> {
     delay_ms: f32,
     easing: MotionEasing,
     start_ms: Option<f64>,
+    current_progress: f32,
+    start_emitted: bool,
 }
 
 #[derive(Clone)]
 struct ActiveColorTransitions(HashMap<StyleProperty, ActiveTransition<RgbaColor>>);
+
+#[derive(Clone)]
+struct ActivePropertyTransitions(HashMap<StyleProperty, ActiveTransition<AnimatedPropertyValue>>);
+
+#[derive(Clone, Debug, PartialEq)]
+enum AnimatedPropertyValue {
+    Number(f32),
+    Color(RgbaColor),
+    LengthPercentage(ComputedLengthPercentage),
+    LengthPercentageAuto(ComputedLengthPercentageAuto),
+    Size(ComputedSizeValue),
+    FlexBasis(ComputedFlexBasis),
+    Transform(ComputedTransformStyle),
+    TransformOrigin {
+        x: ComputedLengthPercentage,
+        y: ComputedLengthPercentage,
+    },
+}
+
+#[derive(Clone)]
+struct KeyframePoint {
+    offset: f32,
+    value: AnimatedPropertyValue,
+    easing: Option<MotionEasing>,
+}
+
+#[derive(Clone)]
+struct KeyframePropertyTrack {
+    property: StyleProperty,
+    points: Vec<KeyframePoint>,
+}
+
+#[derive(Clone)]
+struct ActiveKeyframeAnimation {
+    declaration: AnimationValue,
+    tracks: Vec<KeyframePropertyTrack>,
+    current_time_ms: f64,
+    last_timestamp_ms: Option<f64>,
+    current: HashMap<StyleProperty, AnimatedPropertyValue>,
+    finished: bool,
+    sampled_progress: Option<f32>,
+    start_emitted: bool,
+    completed_iterations: u64,
+    end_emitted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingMotionEvent {
+    element: Element,
+    kind: &'static str,
+    animation_type: &'static str,
+    name: String,
+}
+
+impl PendingMotionEvent {
+    fn transition(element: Element, kind: &'static str, property: StyleProperty) -> Self {
+        Self {
+            element,
+            kind,
+            animation_type: "transition-animation",
+            name: property.css_name().to_owned(),
+        }
+    }
+
+    fn animation(element: Element, kind: &'static str, name: Option<&str>) -> Self {
+        Self {
+            element,
+            kind,
+            animation_type: "keyframe-animation",
+            name: name.unwrap_or_default().to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct TransitionSample {
+    progress: f32,
+    started: bool,
+    complete: bool,
+}
 
 fn has_active_transition(entry: &BoundElement) -> bool {
     entry.opacity_transition.is_some()
         || entry.text_color_transition.is_some()
         || entry.transform_transition.is_some()
         || entry
+            .layout_transitions
+            .as_deref()
+            .is_some_and(|transitions| !transitions.0.is_empty())
+        || entry
             .color_transitions
             .as_deref()
             .is_some_and(|transitions| !transitions.0.is_empty())
+        || entry
+            .animations
+            .iter()
+            .any(ActiveKeyframeAnimation::needs_frame)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -824,143 +1089,285 @@ struct RgbaColor {
 }
 
 impl<Value> ActiveTransition<Value> {
-    fn sample_progress(&mut self, timestamp_ms: f64) -> (f32, bool) {
+    fn sample_progress(&mut self, timestamp_ms: f64) -> TransitionSample {
         let start_ms = *self.start_ms.get_or_insert(timestamp_ms);
         let elapsed_ms = timestamp_ms - start_ms - f64::from(self.delay_ms);
         let linear = (elapsed_ms / f64::from(self.duration_ms)).clamp(0.0, 1.0) as f32;
-        (
-            self.easing.sample(linear),
-            elapsed_ms >= f64::from(self.duration_ms),
-        )
+        self.current_progress = self.easing.sample(linear);
+        let started = elapsed_ms >= 0.0 && !self.start_emitted;
+        self.start_emitted |= started;
+        TransitionSample {
+            progress: self.current_progress,
+            started,
+            complete: elapsed_ms >= f64::from(self.duration_ms),
+        }
     }
 }
 
-fn interpolate_transform_style(
-    from: &ComputedTransformStyle,
-    to: &ComputedTransformStyle,
-    progress: f32,
-) -> Option<ComputedTransformStyle> {
-    let count = from.functions.len().max(to.functions.len());
-    let mut functions = Vec::with_capacity(count);
-    for index in 0..count {
-        let function = match (from.functions.get(index), to.functions.get(index)) {
-            (Some(from), Some(to)) => interpolate_transform_function(from, to, progress)?,
-            (Some(from), None) => {
-                interpolate_transform_function(from, &identity_transform_function(from)?, progress)?
-            }
-            (None, Some(to)) => {
-                interpolate_transform_function(&identity_transform_function(to)?, to, progress)?
-            }
-            (None, None) => unreachable!("index is bounded by the longest transform list"),
+impl ActiveKeyframeAnimation {
+    fn needs_frame(&self) -> bool {
+        !self.finished && self.declaration.play_state == MotionPlayState::Running
+    }
+
+    fn sample(&mut self, timestamp_ms: f64) -> Vec<&'static str> {
+        if let Some(previous_timestamp_ms) = self.last_timestamp_ms
+            && self.declaration.play_state == MotionPlayState::Running
+        {
+            self.current_time_ms += (timestamp_ms - previous_timestamp_ms).max(0.0);
+        }
+        self.last_timestamp_ms = Some(timestamp_ms);
+        self.sample_current_time();
+
+        let mut events = Vec::new();
+        let local_ms = self.current_time_ms - f64::from(self.declaration.delay.get());
+        if local_ms >= 0.0 && !self.start_emitted {
+            self.start_emitted = true;
+            events.push("animationstart");
+        }
+        let duration_ms = f64::from(self.declaration.duration.get());
+        if self.start_emitted && duration_ms > 0.0 {
+            let iterations = match self.declaration.iteration_count {
+                MotionIterationCount::Infinite => f64::INFINITY,
+                MotionIterationCount::Count(value) => f64::from(value.get()),
+            };
+            let completed = (local_ms.max(0.0) / duration_ms).floor() as u64;
+            let maximum = if iterations.is_finite() {
+                (iterations.ceil() as u64).saturating_sub(1)
+            } else {
+                u64::MAX
+            };
+            let completed = completed.min(maximum);
+            let event_count = completed
+                .saturating_sub(self.completed_iterations)
+                .min(4096);
+            events.extend(std::iter::repeat_n(
+                "animationiteration",
+                event_count as usize,
+            ));
+            self.completed_iterations = completed;
+        }
+        if self.finished && self.start_emitted && !self.end_emitted {
+            self.end_emitted = true;
+            events.push("animationend");
+        }
+        events
+    }
+
+    fn sample_current_time(&mut self) {
+        let local_ms = self.current_time_ms - f64::from(self.declaration.delay.get());
+        let duration_ms = f64::from(self.declaration.duration.get());
+        let iterations = match self.declaration.iteration_count {
+            MotionIterationCount::Infinite => f64::INFINITY,
+            MotionIterationCount::Count(value) => f64::from(value.get()),
         };
-        functions.push(function);
+        let active_duration = if duration_ms == 0.0 || iterations == 0.0 {
+            0.0
+        } else {
+            duration_ms * iterations
+        };
+
+        let progress = if local_ms < 0.0 {
+            self.finished = false;
+            matches!(
+                self.declaration.fill_mode,
+                MotionFillMode::Backwards | MotionFillMode::Both
+            )
+            .then(|| directed_iteration_progress(0.0, self.declaration.direction, false))
+        } else if local_ms >= active_duration && active_duration.is_finite() {
+            self.finished = true;
+            matches!(
+                self.declaration.fill_mode,
+                MotionFillMode::Forwards | MotionFillMode::Both
+            )
+            .then(|| directed_iteration_progress(iterations, self.declaration.direction, true))
+        } else if duration_ms == 0.0 {
+            self.finished = true;
+            None
+        } else {
+            self.finished = false;
+            Some(directed_iteration_progress(
+                local_ms / duration_ms,
+                self.declaration.direction,
+                false,
+            ))
+        };
+
+        self.sampled_progress = progress;
+
+        self.current.clear();
+        let Some(progress) = progress else {
+            return;
+        };
+        for track in &self.tracks {
+            self.current.insert(
+                track.property,
+                sample_keyframe_track(track, progress, self.declaration.easing, 0.0, 0.0),
+            );
+        }
     }
-    let mut current = to.clone();
-    current.functions = functions;
-    Some(current)
 }
 
-fn interpolate_transform_function(
-    from: &ComputedTransformFunction,
-    to: &ComputedTransformFunction,
+fn directed_iteration_progress(overall: f64, direction: MotionDirection, at_end: bool) -> f32 {
+    let (iteration, progress) = if at_end && overall > 0.0 {
+        let ceiling = overall.ceil();
+        let fractional = overall - overall.floor();
+        if fractional == 0.0 {
+            ((ceiling - 1.0) as u64, 1.0)
+        } else {
+            (overall.floor() as u64, fractional as f32)
+        }
+    } else {
+        (overall.floor() as u64, (overall - overall.floor()) as f32)
+    };
+    let reverse = match direction {
+        MotionDirection::Normal => false,
+        MotionDirection::Reverse => true,
+        MotionDirection::Alternate => iteration % 2 == 1,
+        MotionDirection::AlternateReverse => iteration % 2 == 0,
+    };
+    if reverse { 1.0 - progress } else { progress }
+}
+
+fn sample_keyframe_track(
+    track: &KeyframePropertyTrack,
     progress: f32,
-) -> Option<ComputedTransformFunction> {
-    let number = |from: StyleNumber, to: StyleNumber| {
-        StyleNumber::new(from.get() + (to.get() - from.get()) * progress)
-    };
-    let length = |from: ComputedLengthPercentage, to: ComputedLengthPercentage| {
-        ComputedLengthPercentage::new(
-            from.length() + (to.length() - from.length()) * progress,
-            from.fraction() + (to.fraction() - from.fraction()) * progress,
-        )
-    };
+    default_easing: MotionEasing,
+    reference_width: f32,
+    reference_height: f32,
+) -> AnimatedPropertyValue {
+    let first = track
+        .points
+        .first()
+        .expect("compiled keyframe tracks are non-empty");
+    if progress <= first.offset {
+        return first.value.clone();
+    }
+    let last = track
+        .points
+        .last()
+        .expect("compiled keyframe tracks are non-empty");
+    if progress >= last.offset {
+        return last.value.clone();
+    }
+    for points in track.points.windows(2) {
+        let from = &points[0];
+        let to = &points[1];
+        if progress <= to.offset {
+            let interval = to.offset - from.offset;
+            let local = if interval == 0.0 {
+                1.0
+            } else {
+                (progress - from.offset) / interval
+            };
+            let eased = from.easing.unwrap_or(default_easing).sample(local);
+            return interpolate_animated_property_with_reference(
+                &from.value,
+                &to.value,
+                eased,
+                reference_width,
+                reference_height,
+            );
+        }
+    }
+    last.value.clone()
+}
+
+fn interpolate_animated_property(
+    from: &AnimatedPropertyValue,
+    to: &AnimatedPropertyValue,
+    progress: f32,
+) -> AnimatedPropertyValue {
+    interpolate_animated_property_with_reference(from, to, progress, 0.0, 0.0)
+}
+
+fn interpolate_animated_property_with_reference(
+    from: &AnimatedPropertyValue,
+    to: &AnimatedPropertyValue,
+    progress: f32,
+    reference_width: f32,
+    reference_height: f32,
+) -> AnimatedPropertyValue {
     match (from, to) {
+        (AnimatedPropertyValue::Number(from), AnimatedPropertyValue::Number(to)) => {
+            AnimatedPropertyValue::Number(from + (to - from) * progress)
+        }
+        (AnimatedPropertyValue::Color(from), AnimatedPropertyValue::Color(to)) => {
+            AnimatedPropertyValue::Color(from.interpolate(*to, progress))
+        }
         (
-            ComputedTransformFunction::Translate {
+            AnimatedPropertyValue::LengthPercentage(from),
+            AnimatedPropertyValue::LengthPercentage(to),
+        ) => AnimatedPropertyValue::LengthPercentage(interpolate_length_percentage(
+            *from, *to, progress,
+        )),
+        (
+            AnimatedPropertyValue::LengthPercentageAuto(from),
+            AnimatedPropertyValue::LengthPercentageAuto(to),
+        ) => AnimatedPropertyValue::LengthPercentageAuto(match (from, to) {
+            (
+                ComputedLengthPercentageAuto::Value(from),
+                ComputedLengthPercentageAuto::Value(to),
+            ) => ComputedLengthPercentageAuto::Value(interpolate_length_percentage(
+                *from, *to, progress,
+            )),
+            _ if progress < 0.5 => *from,
+            _ => *to,
+        }),
+        (AnimatedPropertyValue::Size(from), AnimatedPropertyValue::Size(to)) => {
+            AnimatedPropertyValue::Size(match (from, to) {
+                (ComputedSizeValue::Value(from), ComputedSizeValue::Value(to)) => {
+                    ComputedSizeValue::Value(interpolate_length_percentage(*from, *to, progress))
+                }
+                _ if progress < 0.5 => *from,
+                _ => *to,
+            })
+        }
+        (AnimatedPropertyValue::FlexBasis(from), AnimatedPropertyValue::FlexBasis(to)) => {
+            AnimatedPropertyValue::FlexBasis(match (from, to) {
+                (ComputedFlexBasis::Value(from), ComputedFlexBasis::Value(to)) => {
+                    ComputedFlexBasis::Value(interpolate_length_percentage(*from, *to, progress))
+                }
+                _ if progress < 0.5 => *from,
+                _ => *to,
+            })
+        }
+        (AnimatedPropertyValue::Transform(from), AnimatedPropertyValue::Transform(to)) => {
+            interpolate_transform_style(from, to, progress, reference_width, reference_height)
+                .map_or_else(
+                    || {
+                        AnimatedPropertyValue::Transform(if progress < 0.5 {
+                            from.clone()
+                        } else {
+                            to.clone()
+                        })
+                    },
+                    AnimatedPropertyValue::Transform,
+                )
+        }
+        (
+            AnimatedPropertyValue::TransformOrigin {
                 x: from_x,
                 y: from_y,
-                z: from_z,
             },
-            ComputedTransformFunction::Translate {
-                x: to_x,
-                y: to_y,
-                z: to_z,
-            },
-        ) => Some(ComputedTransformFunction::Translate {
-            x: length(*from_x, *to_x),
-            y: length(*from_y, *to_y),
-            z: number(*from_z, *to_z),
-        }),
-        (ComputedTransformFunction::RotateX(from), ComputedTransformFunction::RotateX(to)) => {
-            Some(ComputedTransformFunction::RotateX(number(*from, *to)))
-        }
-        (ComputedTransformFunction::RotateY(from), ComputedTransformFunction::RotateY(to)) => {
-            Some(ComputedTransformFunction::RotateY(number(*from, *to)))
-        }
-        (ComputedTransformFunction::RotateZ(from), ComputedTransformFunction::RotateZ(to)) => {
-            Some(ComputedTransformFunction::RotateZ(number(*from, *to)))
-        }
-        (
-            ComputedTransformFunction::Scale {
-                x: from_x,
-                y: from_y,
-                z: from_z,
-            },
-            ComputedTransformFunction::Scale {
-                x: to_x,
-                y: to_y,
-                z: to_z,
-            },
-        ) => Some(ComputedTransformFunction::Scale {
-            x: number(*from_x, *to_x),
-            y: number(*from_y, *to_y),
-            z: number(*from_z, *to_z),
-        }),
-        (
-            ComputedTransformFunction::Skew {
-                x_degrees: from_x,
-                y_degrees: from_y,
-            },
-            ComputedTransformFunction::Skew {
-                x_degrees: to_x,
-                y_degrees: to_y,
-            },
-        ) => Some(ComputedTransformFunction::Skew {
-            x_degrees: number(*from_x, *to_x),
-            y_degrees: number(*from_y, *to_y),
-        }),
-        // CSS matrix pairs require decomposition; they intentionally snap in
-        // this work unit instead of using visually incorrect element-wise
-        // interpolation.
-        _ => None,
+            AnimatedPropertyValue::TransformOrigin { x: to_x, y: to_y },
+        ) => AnimatedPropertyValue::TransformOrigin {
+            x: interpolate_length_percentage(*from_x, *to_x, progress),
+            y: interpolate_length_percentage(*from_y, *to_y, progress),
+        },
+        _ if progress < 0.5 => from.clone(),
+        _ => to.clone(),
     }
 }
 
-fn identity_transform_function(
-    function: &ComputedTransformFunction,
-) -> Option<ComputedTransformFunction> {
-    let zero = StyleNumber::new(0.0);
-    let one = StyleNumber::new(1.0);
-    match function {
-        ComputedTransformFunction::Translate { .. } => Some(ComputedTransformFunction::Translate {
-            x: ComputedLengthPercentage::ZERO,
-            y: ComputedLengthPercentage::ZERO,
-            z: zero,
-        }),
-        ComputedTransformFunction::RotateX(_) => Some(ComputedTransformFunction::RotateX(zero)),
-        ComputedTransformFunction::RotateY(_) => Some(ComputedTransformFunction::RotateY(zero)),
-        ComputedTransformFunction::RotateZ(_) => Some(ComputedTransformFunction::RotateZ(zero)),
-        ComputedTransformFunction::Scale { .. } => Some(ComputedTransformFunction::Scale {
-            x: one,
-            y: one,
-            z: one,
-        }),
-        ComputedTransformFunction::Skew { .. } => Some(ComputedTransformFunction::Skew {
-            x_degrees: zero,
-            y_degrees: zero,
-        }),
-        ComputedTransformFunction::Matrix(_) => None,
-    }
+fn interpolate_length_percentage(
+    from: ComputedLengthPercentage,
+    to: ComputedLengthPercentage,
+    progress: f32,
+) -> ComputedLengthPercentage {
+    ComputedLengthPercentage::new(
+        from.length() + (to.length() - from.length()) * progress,
+        from.fraction() + (to.fraction() - from.fraction()) * progress,
+    )
 }
 
 impl RgbaColor {
@@ -1074,6 +1481,253 @@ fn set_box_color(paint: &mut BoxPaint, property: StyleProperty, color: PaintColo
     }
 }
 
+const LAYOUT_ANIMATED_PROPERTIES: [StyleProperty; 23] = [
+    StyleProperty::Left,
+    StyleProperty::Right,
+    StyleProperty::Top,
+    StyleProperty::Bottom,
+    StyleProperty::Width,
+    StyleProperty::Height,
+    StyleProperty::MinWidth,
+    StyleProperty::MinHeight,
+    StyleProperty::MaxWidth,
+    StyleProperty::MaxHeight,
+    StyleProperty::MarginTop,
+    StyleProperty::MarginRight,
+    StyleProperty::MarginBottom,
+    StyleProperty::MarginLeft,
+    StyleProperty::PaddingTop,
+    StyleProperty::PaddingRight,
+    StyleProperty::PaddingBottom,
+    StyleProperty::PaddingLeft,
+    StyleProperty::BorderTopWidth,
+    StyleProperty::BorderRightWidth,
+    StyleProperty::BorderBottomWidth,
+    StyleProperty::BorderLeftWidth,
+    StyleProperty::FlexBasis,
+];
+
+fn keyframe_property(property: StyleProperty) -> bool {
+    LAYOUT_ANIMATED_PROPERTIES.contains(&property)
+        || matches!(
+            property,
+            StyleProperty::FlexGrow
+                | StyleProperty::Opacity
+                | StyleProperty::BackgroundColor
+                | StyleProperty::BorderTopColor
+                | StyleProperty::BorderRightColor
+                | StyleProperty::BorderBottomColor
+                | StyleProperty::BorderLeftColor
+                | StyleProperty::Color
+                | StyleProperty::Transform
+                | StyleProperty::TransformOrigin
+        )
+}
+
+fn animated_property_value(
+    resolved: &ResolvedNodeStyle,
+    property: StyleProperty,
+) -> Option<AnimatedPropertyValue> {
+    let computed = resolved.computed();
+    let layout = computed.layout();
+    match property {
+        StyleProperty::Left => Some(AnimatedPropertyValue::LengthPercentageAuto(
+            layout.inset.left,
+        )),
+        StyleProperty::Right => Some(AnimatedPropertyValue::LengthPercentageAuto(
+            layout.inset.right,
+        )),
+        StyleProperty::Top => Some(AnimatedPropertyValue::LengthPercentageAuto(
+            layout.inset.top,
+        )),
+        StyleProperty::Bottom => Some(AnimatedPropertyValue::LengthPercentageAuto(
+            layout.inset.bottom,
+        )),
+        StyleProperty::Width => Some(AnimatedPropertyValue::Size(layout.size.width)),
+        StyleProperty::Height => Some(AnimatedPropertyValue::Size(layout.size.height)),
+        StyleProperty::MinWidth => Some(AnimatedPropertyValue::Size(layout.min_size.width)),
+        StyleProperty::MinHeight => Some(AnimatedPropertyValue::Size(layout.min_size.height)),
+        StyleProperty::MaxWidth => Some(AnimatedPropertyValue::Size(layout.max_size.width)),
+        StyleProperty::MaxHeight => Some(AnimatedPropertyValue::Size(layout.max_size.height)),
+        StyleProperty::MarginTop => Some(AnimatedPropertyValue::LengthPercentageAuto(
+            layout.margin.top,
+        )),
+        StyleProperty::MarginRight => Some(AnimatedPropertyValue::LengthPercentageAuto(
+            layout.margin.right,
+        )),
+        StyleProperty::MarginBottom => Some(AnimatedPropertyValue::LengthPercentageAuto(
+            layout.margin.bottom,
+        )),
+        StyleProperty::MarginLeft => Some(AnimatedPropertyValue::LengthPercentageAuto(
+            layout.margin.left,
+        )),
+        StyleProperty::PaddingTop => {
+            Some(AnimatedPropertyValue::LengthPercentage(layout.padding.top))
+        }
+        StyleProperty::PaddingRight => Some(AnimatedPropertyValue::LengthPercentage(
+            layout.padding.right,
+        )),
+        StyleProperty::PaddingBottom => Some(AnimatedPropertyValue::LengthPercentage(
+            layout.padding.bottom,
+        )),
+        StyleProperty::PaddingLeft => {
+            Some(AnimatedPropertyValue::LengthPercentage(layout.padding.left))
+        }
+        StyleProperty::BorderTopWidth => {
+            Some(AnimatedPropertyValue::LengthPercentage(layout.border.top))
+        }
+        StyleProperty::BorderRightWidth => {
+            Some(AnimatedPropertyValue::LengthPercentage(layout.border.right))
+        }
+        StyleProperty::BorderBottomWidth => Some(AnimatedPropertyValue::LengthPercentage(
+            layout.border.bottom,
+        )),
+        StyleProperty::BorderLeftWidth => {
+            Some(AnimatedPropertyValue::LengthPercentage(layout.border.left))
+        }
+        StyleProperty::FlexBasis => Some(AnimatedPropertyValue::FlexBasis(layout.flex_basis)),
+        StyleProperty::FlexGrow => Some(AnimatedPropertyValue::Number(layout.flex_grow.get())),
+        StyleProperty::Opacity => Some(AnimatedPropertyValue::Number(
+            computed.paint().opacity.get(),
+        )),
+        StyleProperty::Color => {
+            RgbaColor::from_paint(&lower_color(computed.inherited_text().color()))
+                .map(AnimatedPropertyValue::Color)
+        }
+        StyleProperty::Transform => Some(AnimatedPropertyValue::Transform(
+            computed.paint().transform.clone(),
+        )),
+        StyleProperty::TransformOrigin => Some(AnimatedPropertyValue::TransformOrigin {
+            x: computed.paint().transform.origin_x,
+            y: computed.paint().transform.origin_y,
+        }),
+        property if BOX_COLOR_PROPERTIES.contains(&property) => {
+            let paint = lower_paint(computed.paint(), computed.layout()).box_paint;
+            RgbaColor::from_paint(box_color(&paint, property)).map(AnimatedPropertyValue::Color)
+        }
+        _ => None,
+    }
+}
+
+fn set_animated_layout_property(
+    layout: &mut ComputedLayoutStyle,
+    property: StyleProperty,
+    value: &AnimatedPropertyValue,
+) -> bool {
+    match (property, value) {
+        (StyleProperty::Left, AnimatedPropertyValue::LengthPercentageAuto(value)) => {
+            layout.inset.left = *value;
+        }
+        (StyleProperty::Right, AnimatedPropertyValue::LengthPercentageAuto(value)) => {
+            layout.inset.right = *value;
+        }
+        (StyleProperty::Top, AnimatedPropertyValue::LengthPercentageAuto(value)) => {
+            layout.inset.top = *value;
+        }
+        (StyleProperty::Bottom, AnimatedPropertyValue::LengthPercentageAuto(value)) => {
+            layout.inset.bottom = *value;
+        }
+        (StyleProperty::Width, AnimatedPropertyValue::Size(value)) => layout.size.width = *value,
+        (StyleProperty::Height, AnimatedPropertyValue::Size(value)) => layout.size.height = *value,
+        (StyleProperty::MinWidth, AnimatedPropertyValue::Size(value)) => {
+            layout.min_size.width = *value;
+        }
+        (StyleProperty::MinHeight, AnimatedPropertyValue::Size(value)) => {
+            layout.min_size.height = *value;
+        }
+        (StyleProperty::MaxWidth, AnimatedPropertyValue::Size(value)) => {
+            layout.max_size.width = *value;
+        }
+        (StyleProperty::MaxHeight, AnimatedPropertyValue::Size(value)) => {
+            layout.max_size.height = *value;
+        }
+        (StyleProperty::MarginTop, AnimatedPropertyValue::LengthPercentageAuto(value)) => {
+            layout.margin.top = *value;
+        }
+        (StyleProperty::MarginRight, AnimatedPropertyValue::LengthPercentageAuto(value)) => {
+            layout.margin.right = *value;
+        }
+        (StyleProperty::MarginBottom, AnimatedPropertyValue::LengthPercentageAuto(value)) => {
+            layout.margin.bottom = *value;
+        }
+        (StyleProperty::MarginLeft, AnimatedPropertyValue::LengthPercentageAuto(value)) => {
+            layout.margin.left = *value;
+        }
+        (StyleProperty::PaddingTop, AnimatedPropertyValue::LengthPercentage(value)) => {
+            layout.padding.top = *value;
+        }
+        (StyleProperty::PaddingRight, AnimatedPropertyValue::LengthPercentage(value)) => {
+            layout.padding.right = *value;
+        }
+        (StyleProperty::PaddingBottom, AnimatedPropertyValue::LengthPercentage(value)) => {
+            layout.padding.bottom = *value;
+        }
+        (StyleProperty::PaddingLeft, AnimatedPropertyValue::LengthPercentage(value)) => {
+            layout.padding.left = *value;
+        }
+        (StyleProperty::BorderTopWidth, AnimatedPropertyValue::LengthPercentage(value)) => {
+            layout.border.top = *value;
+        }
+        (StyleProperty::BorderRightWidth, AnimatedPropertyValue::LengthPercentage(value)) => {
+            layout.border.right = *value;
+        }
+        (StyleProperty::BorderBottomWidth, AnimatedPropertyValue::LengthPercentage(value)) => {
+            layout.border.bottom = *value;
+        }
+        (StyleProperty::BorderLeftWidth, AnimatedPropertyValue::LengthPercentage(value)) => {
+            layout.border.left = *value;
+        }
+        (StyleProperty::FlexBasis, AnimatedPropertyValue::FlexBasis(value)) => {
+            layout.flex_basis = *value;
+        }
+        (StyleProperty::FlexGrow, AnimatedPropertyValue::Number(value)) => {
+            layout.flex_grow = StyleNumber::new(*value);
+        }
+        _ => return false,
+    }
+    true
+}
+
+fn layout_animation_values(
+    resolved: &ResolvedNodeStyle,
+) -> HashMap<StyleProperty, AnimatedPropertyValue> {
+    LAYOUT_ANIMATED_PROPERTIES
+        .into_iter()
+        .chain([StyleProperty::FlexGrow, StyleProperty::TransformOrigin])
+        .filter_map(|property| {
+            animated_property_value(resolved, property).map(|value| (property, value))
+        })
+        .collect()
+}
+
+fn smoothly_interpolable(from: &AnimatedPropertyValue, to: &AnimatedPropertyValue) -> bool {
+    matches!(
+        (from, to),
+        (
+            AnimatedPropertyValue::Number(_),
+            AnimatedPropertyValue::Number(_)
+        ) | (
+            AnimatedPropertyValue::Color(_),
+            AnimatedPropertyValue::Color(_)
+        ) | (
+            AnimatedPropertyValue::LengthPercentage(_),
+            AnimatedPropertyValue::LengthPercentage(_)
+        ) | (
+            AnimatedPropertyValue::LengthPercentageAuto(ComputedLengthPercentageAuto::Value(_)),
+            AnimatedPropertyValue::LengthPercentageAuto(ComputedLengthPercentageAuto::Value(_))
+        ) | (
+            AnimatedPropertyValue::Size(ComputedSizeValue::Value(_)),
+            AnimatedPropertyValue::Size(ComputedSizeValue::Value(_))
+        ) | (
+            AnimatedPropertyValue::FlexBasis(ComputedFlexBasis::Value(_)),
+            AnimatedPropertyValue::FlexBasis(ComputedFlexBasis::Value(_))
+        ) | (
+            AnimatedPropertyValue::TransformOrigin { .. },
+            AnimatedPropertyValue::TransformOrigin { .. }
+        )
+    )
+}
+
 #[derive(Clone)]
 enum BoundElementKind {
     RawText,
@@ -1112,6 +1766,26 @@ impl BoundElement {
     fn effective_specified(&self) -> SpecifiedStyle {
         self.base_specified.clone().merge(self.specified.clone())
     }
+}
+
+fn active_transform_origin(
+    entry: &BoundElement,
+) -> Option<(ComputedLengthPercentage, ComputedLengthPercentage)> {
+    let keyframe_origin = entry.animations.iter().rev().find_map(|animation| {
+        match animation.current.get(&StyleProperty::TransformOrigin) {
+            Some(AnimatedPropertyValue::TransformOrigin { x, y }) => Some((*x, *y)),
+            _ => None,
+        }
+    });
+    entry
+        .layout_transitions
+        .as_deref()
+        .and_then(|transitions| transitions.0.get(&StyleProperty::TransformOrigin))
+        .and_then(|transition| match &transition.current {
+            AnimatedPropertyValue::TransformOrigin { x, y } => Some((*x, *y)),
+            _ => None,
+        })
+        .or(keyframe_origin)
 }
 
 #[derive(Clone)]
@@ -1408,6 +2082,9 @@ impl BindingState {
                 color_transitions: None,
                 text_color_transition: None,
                 transform_transition: None,
+                layout_transitions: None,
+                animations: Vec::new(),
+                pending_motion_events: VecDeque::new(),
             },
         );
         if let Some(node) = node {
@@ -1536,6 +2213,7 @@ impl BindingState {
         elements: &HashMap<Element, BoundElement>,
         surface: &mut SurfaceEngine,
     ) -> Result<(), RuntimeBindingError> {
+        Self::apply_keyframe_animation_values(elements, surface)?;
         for (element, entry) in elements {
             let Some(node) = entry.node else {
                 continue;
@@ -1555,7 +2233,12 @@ impl BindingState {
                 surface.set_box_paint(node, paint)?;
             }
             if let Some(transition) = entry.transform_transition.as_deref() {
-                Self::apply_transform_update(node, &transition.current, surface)?;
+                let mut transform = transition.current.clone();
+                if let Some((x, y)) = active_transform_origin(entry) {
+                    transform.origin_x = x;
+                    transform.origin_y = y;
+                }
+                Self::apply_transform_update(node, &transform, surface)?;
             }
         }
         Self::reapply_active_text_colors(elements, surface)?;
@@ -1608,6 +2291,16 @@ impl BindingState {
             if let Some(transition) = entry.text_color_transition.as_deref() {
                 return Some(transition.current);
             }
+            if let Some(color) =
+                entry.animations.iter().rev().find_map(|animation| {
+                    match animation.current.get(&StyleProperty::Color) {
+                        Some(AnimatedPropertyValue::Color(color)) => Some(*color),
+                        _ => None,
+                    }
+                })
+            {
+                return Some(color);
+            }
             if entry
                 .specified
                 .declarations()
@@ -1622,14 +2315,46 @@ impl BindingState {
 
     fn active_transform_updates(
         elements: &HashMap<Element, BoundElement>,
+        surface: &SurfaceEngine,
     ) -> Vec<(NodeId, ComputedTransformStyle)> {
         elements
             .values()
             .filter_map(|entry| {
-                Some((
-                    entry.node?,
-                    entry.transform_transition.as_deref()?.current.clone(),
-                ))
+                let node = entry.node?;
+                let layout = surface.node(node)?.layout()?;
+                let mut current = if let Some(transition) = entry.transform_transition.as_deref() {
+                    interpolate_transform_style(
+                        &transition.from,
+                        &transition.to,
+                        transition.current_progress,
+                        layout.border_box.width,
+                        layout.border_box.height,
+                    )
+                    .unwrap_or_else(|| transition.current.clone())
+                } else {
+                    entry.animations.iter().rev().find_map(|animation| {
+                        let progress = animation.sampled_progress?;
+                        let track = animation
+                            .tracks
+                            .iter()
+                            .find(|track| track.property == StyleProperty::Transform)?;
+                        match sample_keyframe_track(
+                            track,
+                            progress,
+                            animation.declaration.easing,
+                            layout.border_box.width,
+                            layout.border_box.height,
+                        ) {
+                            AnimatedPropertyValue::Transform(transform) => Some(transform),
+                            _ => None,
+                        }
+                    })?
+                };
+                if let Some((x, y)) = active_transform_origin(entry) {
+                    current.origin_x = x;
+                    current.origin_y = y;
+                }
+                Some((node, current))
             })
             .collect()
     }
@@ -1656,6 +2381,326 @@ impl BindingState {
             lower_transform(transform, layout.border_box.width, layout.border_box.height)
                 .expect("resolved transform and layout geometry must produce a finite matrix");
         surface.set_transform(node, transform)?;
+        Ok(())
+    }
+
+    fn compile_keyframe_animations(
+        &self,
+        element: Element,
+    ) -> Result<Vec<ActiveKeyframeAnimation>, RuntimeBindingError> {
+        let entry = self.element(element)?;
+        let base = entry.effective_specified();
+        let resolved = entry
+            .resolved
+            .as_ref()
+            .ok_or(RuntimeBindingError::UnknownElement { element })?;
+        let parent_inherited = entry
+            .parent
+            .and_then(|parent| self.elements.get(&parent))
+            .and_then(|parent| parent.resolved.as_ref())
+            .map(|parent| parent.inherited_for_children().clone());
+        let mut animations = Vec::new();
+        for declaration in &resolved.computed().motion().animations {
+            let Some(keyframes) = declaration.keyframes.as_ref() else {
+                continue;
+            };
+            let properties = keyframes
+                .frames
+                .iter()
+                .flat_map(|frame| frame.style.resolved())
+                .map(|declaration| declaration.property())
+                .filter(|property| keyframe_property(*property))
+                .collect::<HashSet<_>>();
+            let mut tracks = Vec::new();
+            for property in properties {
+                let Some(underlying) = animated_property_value(resolved, property) else {
+                    continue;
+                };
+                let mut points = Vec::new();
+                for frame in &keyframes.frames {
+                    if !frame
+                        .style
+                        .resolved()
+                        .iter()
+                        .any(|declaration| declaration.property() == property)
+                    {
+                        continue;
+                    }
+                    let frame_style = base.clone().merge(frame.style.clone());
+                    let frame_resolved =
+                        resolve_style(&frame_style, parent_inherited.as_ref(), self.environment)?;
+                    if let Some(value) = animated_property_value(&frame_resolved, property) {
+                        points.push(KeyframePoint {
+                            offset: frame.offset.get(),
+                            value,
+                            easing: frame.easing,
+                        });
+                    }
+                }
+                if points.first().is_none_or(|point| point.offset > 0.0) {
+                    points.insert(
+                        0,
+                        KeyframePoint {
+                            offset: 0.0,
+                            value: underlying.clone(),
+                            easing: None,
+                        },
+                    );
+                }
+                if points.last().is_none_or(|point| point.offset < 1.0) {
+                    points.push(KeyframePoint {
+                        offset: 1.0,
+                        value: underlying,
+                        easing: None,
+                    });
+                }
+                if !points.is_empty() {
+                    tracks.push(KeyframePropertyTrack { property, points });
+                }
+            }
+            animations.push(ActiveKeyframeAnimation {
+                declaration: declaration.clone(),
+                tracks,
+                current_time_ms: 0.0,
+                last_timestamp_ms: None,
+                current: HashMap::new(),
+                finished: false,
+                sampled_progress: None,
+                start_emitted: false,
+                completed_iterations: 0,
+                end_emitted: false,
+            });
+        }
+        for animation in &mut animations {
+            animation.sample_current_time();
+        }
+        Ok(animations)
+    }
+
+    fn configure_keyframe_animations(
+        &mut self,
+        element: Element,
+    ) -> Result<(), RuntimeBindingError> {
+        let mut animations = self.compile_keyframe_animations(element)?;
+        let previous_animations = self.element(element)?.animations.clone();
+        for (animation, previous_animation) in animations.iter_mut().zip(previous_animations.iter())
+        {
+            let same_definition = animation.declaration.name == previous_animation.declaration.name
+                && animation.declaration.keyframes == previous_animation.declaration.keyframes;
+            if !same_definition {
+                continue;
+            }
+            animation.current_time_ms = previous_animation.current_time_ms;
+            animation.start_emitted = previous_animation.start_emitted;
+            animation.completed_iterations = previous_animation.completed_iterations;
+            animation.end_emitted = previous_animation.end_emitted;
+            animation.last_timestamp_ms = if previous_animation.declaration.play_state
+                == MotionPlayState::Paused
+                && animation.declaration.play_state == MotionPlayState::Running
+            {
+                None
+            } else {
+                previous_animation.last_timestamp_ms
+            };
+            animation.sample_current_time();
+        }
+        let canceled = previous_animations
+            .iter()
+            .enumerate()
+            .filter(|(index, previous)| {
+                if previous.end_emitted {
+                    return false;
+                }
+                animations.get(*index).is_none_or(|animation| {
+                    animation.declaration.name != previous.declaration.name
+                        || animation.declaration.keyframes != previous.declaration.keyframes
+                })
+            })
+            .map(|(_, previous)| {
+                PendingMotionEvent::animation(
+                    element,
+                    "animationcancel",
+                    previous.declaration.name.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let needs_frame = animations.iter().any(ActiveKeyframeAnimation::needs_frame);
+        let entry = self.element_mut(element)?;
+        entry.pending_motion_events.extend(canceled);
+        entry.animations = animations;
+        if needs_frame {
+            crate::runtime::runtime_wake::wake_runtime();
+        }
+        Ok(())
+    }
+
+    fn apply_keyframe_animation_values(
+        elements: &HashMap<Element, BoundElement>,
+        surface: &mut SurfaceEngine,
+    ) -> Result<(), RuntimeBindingError> {
+        for (element, entry) in elements {
+            if entry.animations.is_empty() && entry.layout_transitions.is_none() {
+                continue;
+            }
+            let Some(node) = entry.node else {
+                continue;
+            };
+            let Some(resolved) = entry.resolved.as_ref() else {
+                continue;
+            };
+            let mut values = HashMap::new();
+            let mut tracked = HashSet::new();
+            for animation in &entry.animations {
+                tracked.extend(animation.tracks.iter().map(|track| track.property));
+                for (property, value) in &animation.current {
+                    values.insert(*property, value.clone());
+                }
+            }
+            if let Some(transitions) = entry.layout_transitions.as_deref() {
+                tracked.extend(transitions.0.keys().copied());
+                for (property, transition) in &transitions.0 {
+                    values.insert(*property, transition.current.clone());
+                }
+            }
+            let computed = resolved.computed();
+            let mut layout = computed.layout().clone();
+            let mut layout_changed = false;
+            for (property, value) in &values {
+                layout_changed |= set_animated_layout_property(&mut layout, *property, value);
+            }
+            if layout_changed {
+                surface.update_layout_style(node, layout.clone())?;
+            }
+            if tracked.contains(&StyleProperty::Opacity) {
+                let opacity = match values.get(&StyleProperty::Opacity) {
+                    Some(AnimatedPropertyValue::Number(value)) => *value,
+                    _ => computed.paint().opacity.get(),
+                };
+                surface.set_opacity(node, opacity.clamp(0.0, 1.0))?;
+            }
+            if layout_changed
+                || tracked
+                    .iter()
+                    .any(|property| BOX_COLOR_PROPERTIES.contains(property))
+            {
+                let mut paint = lower_paint(computed.paint(), &layout).box_paint;
+                for property in BOX_COLOR_PROPERTIES {
+                    if let Some(AnimatedPropertyValue::Color(value)) = values.get(&property) {
+                        set_box_color(&mut paint, property, value.into_paint());
+                    }
+                }
+                surface.set_box_paint(node, paint)?;
+            }
+            if tracked.contains(&StyleProperty::Transform)
+                || tracked.contains(&StyleProperty::TransformOrigin)
+            {
+                let mut transform = match values.get(&StyleProperty::Transform) {
+                    Some(AnimatedPropertyValue::Transform(value)) => value.clone(),
+                    _ => computed.paint().transform.clone(),
+                };
+                if let Some(AnimatedPropertyValue::TransformOrigin { x, y }) =
+                    values.get(&StyleProperty::TransformOrigin)
+                {
+                    transform.origin_x = *x;
+                    transform.origin_y = *y;
+                }
+                Self::apply_transform_update(node, &transform, surface)?;
+            }
+            let _ = element;
+        }
+        let text_updates = Self::active_text_color_updates(elements);
+        Self::apply_text_color_updates(text_updates, surface)
+    }
+
+    fn configure_layout_transitions(
+        &mut self,
+        element: Element,
+        previous_targets: &HashMap<StyleProperty, AnimatedPropertyValue>,
+        previous_current: &HashMap<StyleProperty, AnimatedPropertyValue>,
+        was_initialized: bool,
+    ) -> Result<(), RuntimeBindingError> {
+        let (targets, transitions) = {
+            let entry = self.element(element)?;
+            let resolved = entry
+                .resolved
+                .as_ref()
+                .ok_or(RuntimeBindingError::UnknownElement { element })?;
+            (
+                layout_animation_values(resolved),
+                resolved.computed().motion().transitions.clone(),
+            )
+        };
+        let entry = self.element_mut(element)?;
+        if !was_initialized {
+            entry.layout_transitions = None;
+            return Ok(());
+        }
+
+        let mut started = false;
+        for (property, target) in targets {
+            let Some(previous_target) = previous_targets.get(&property) else {
+                continue;
+            };
+            if previous_target == &target {
+                continue;
+            }
+            let canceled = entry
+                .layout_transitions
+                .as_deref_mut()
+                .is_some_and(|active| active.0.remove(&property).is_some());
+            if canceled {
+                entry
+                    .pending_motion_events
+                    .push_back(PendingMotionEvent::transition(
+                        element,
+                        "transitioncancel",
+                        property,
+                    ));
+            }
+            let transition = transitions.iter().rev().find(|transition| {
+                matches!(transition.property, ComputedTransitionProperty::All)
+                    || transition.property == ComputedTransitionProperty::Property(property)
+            });
+            let Some(transition) = transition.filter(|value| value.duration.get() > 0.0) else {
+                continue;
+            };
+            let from = previous_current
+                .get(&property)
+                .unwrap_or(previous_target)
+                .clone();
+            if !smoothly_interpolable(&from, &target) {
+                continue;
+            }
+            entry
+                .layout_transitions
+                .get_or_insert_with(|| Box::new(ActivePropertyTransitions(HashMap::new())))
+                .0
+                .insert(
+                    property,
+                    ActiveTransition {
+                        from: from.clone(),
+                        to: target,
+                        current: from,
+                        duration_ms: transition.duration.get(),
+                        delay_ms: transition.delay.get(),
+                        easing: transition.easing,
+                        start_ms: None,
+                        current_progress: 0.0,
+                        start_emitted: false,
+                    },
+                );
+            started = true;
+        }
+        if entry
+            .layout_transitions
+            .as_deref()
+            .is_some_and(|transitions| transitions.0.is_empty())
+        {
+            entry.layout_transitions = None;
+        }
+        if started {
+            crate::runtime::runtime_wake::wake_runtime();
+        }
         Ok(())
     }
 
@@ -1703,8 +2748,16 @@ impl BindingState {
         if previous_target.to_bits() == target.to_bits() {
             return Ok(());
         }
+        if entry.opacity_transition.take().is_some() {
+            entry
+                .pending_motion_events
+                .push_back(PendingMotionEvent::transition(
+                    element,
+                    "transitioncancel",
+                    StyleProperty::Opacity,
+                ));
+        }
         let Some(transition) = transition.filter(|value| value.duration.get() > 0.0) else {
-            entry.opacity_transition = None;
             self.surface.set_opacity(node, target)?;
             return Ok(());
         };
@@ -1716,6 +2769,8 @@ impl BindingState {
             delay_ms: transition.delay.get(),
             easing: transition.easing,
             start_ms: None,
+            current_progress: 0.0,
+            start_emitted: false,
         }));
         self.surface.set_opacity(node, previous_current)?;
         crate::runtime::runtime_wake::wake_runtime();
@@ -1759,8 +2814,18 @@ impl BindingState {
             if previous_target == target_color {
                 continue;
             }
-            if let Some(active) = entry.color_transitions.as_deref_mut() {
-                active.0.remove(&property);
+            let canceled = entry
+                .color_transitions
+                .as_deref_mut()
+                .is_some_and(|active| active.0.remove(&property).is_some());
+            if canceled {
+                entry
+                    .pending_motion_events
+                    .push_back(PendingMotionEvent::transition(
+                        element,
+                        "transitioncancel",
+                        property,
+                    ));
             }
             let transition = transitions.iter().rev().find(|transition| {
                 matches!(transition.property, ComputedTransitionProperty::All)
@@ -1791,6 +2856,8 @@ impl BindingState {
                         delay_ms: transition.delay.get(),
                         easing: transition.easing,
                         start_ms: None,
+                        current_progress: 0.0,
+                        start_emitted: false,
                     },
                 );
             started = true;
@@ -1850,10 +2917,18 @@ impl BindingState {
         if !was_initialized || Some(previous_target) == target {
             return Ok(());
         }
+        if entry.text_color_transition.take().is_some() {
+            entry
+                .pending_motion_events
+                .push_back(PendingMotionEvent::transition(
+                    element,
+                    "transitioncancel",
+                    StyleProperty::Color,
+                ));
+        }
         let Some((target, transition)) =
             target.zip(transition.filter(|transition| transition.duration.get() > 0.0))
         else {
-            entry.text_color_transition = None;
             return Ok(());
         };
         entry.text_color_transition = Some(Box::new(ActiveTransition {
@@ -1864,6 +2939,8 @@ impl BindingState {
             delay_ms: transition.delay.get(),
             easing: transition.easing,
             start_ms: None,
+            current_progress: 0.0,
+            start_emitted: false,
         }));
         crate::runtime::runtime_wake::wake_runtime();
         Ok(())
@@ -1924,17 +3001,21 @@ impl BindingState {
             }
             return Ok(());
         }
+        if entry.transform_transition.take().is_some() {
+            entry
+                .pending_motion_events
+                .push_back(PendingMotionEvent::transition(
+                    element,
+                    "transitioncancel",
+                    StyleProperty::Transform,
+                ));
+        }
         let Some(transition) = transition.filter(|transition| transition.duration.get() > 0.0)
         else {
-            entry.transform_transition = None;
             return Ok(());
         };
         let mut from = target.clone();
         from.functions = previous_current.functions.clone();
-        if interpolate_transform_style(&from, &target, 0.0).is_none() {
-            entry.transform_transition = None;
-            return Ok(());
-        }
         entry.transform_transition = Some(Box::new(ActiveTransition {
             from: from.clone(),
             to: target,
@@ -1943,6 +3024,8 @@ impl BindingState {
             delay_ms: transition.delay.get(),
             easing: transition.easing,
             start_ms: None,
+            current_progress: 0.0,
+            start_emitted: false,
         }));
         let current = entry
             .transform_transition
@@ -2315,6 +3398,31 @@ fn input_body(event: &InputEvent, target: NodeId) -> WhiskerValue {
     WhiskerValue::map(entries)
 }
 
+fn motion_event_body(
+    event: &PendingMotionEvent,
+    timestamp_ms: f64,
+    target: NodeId,
+) -> WhiskerValue {
+    WhiskerValue::map([
+        ("type", WhiskerValue::String(event.kind.to_owned())),
+        ("timestamp", WhiskerValue::Float(timestamp_ms)),
+        (
+            "target",
+            WhiskerValue::map([("uid", WhiskerValue::Int(target.get() as i64))]),
+        ),
+        (
+            "currentTarget",
+            WhiskerValue::map([("uid", WhiskerValue::Int(target.get() as i64))]),
+        ),
+        (
+            "animation_type",
+            WhiskerValue::String(event.animation_type.to_owned()),
+        ),
+        ("animation_name", WhiskerValue::String(event.name.clone())),
+        ("new_animator", WhiskerValue::Bool(true)),
+    ])
+}
+
 fn with_current_target(body: &WhiskerValue, target: NodeId) -> WhiskerValue {
     let mut body = body.clone();
     if let WhiskerValue::Map(entries) = &mut body {
@@ -2505,9 +3613,36 @@ impl DynRenderer for SurfaceRuntime {
                 .as_ref()
                 .map(|resolved| resolved.computed().paint().transform.clone())
                 .unwrap_or_default();
+            let previous_layout_targets = entry
+                .resolved
+                .as_ref()
+                .map(layout_animation_values)
+                .unwrap_or_default();
+            let previous_layout_current = entry
+                .layout_transitions
+                .as_deref()
+                .into_iter()
+                .flat_map(|transitions| transitions.0.iter())
+                .map(|(property, transition)| (*property, transition.current.clone()))
+                .collect::<HashMap<_, _>>();
             let previous_current_transform = entry.transform_transition.as_deref().map_or_else(
                 || previous_transform.clone(),
-                |transition| transition.current.clone(),
+                |transition| {
+                    entry
+                        .node
+                        .and_then(|node| state.surface.node(node))
+                        .and_then(|node| node.layout())
+                        .and_then(|layout| {
+                            interpolate_transform_style(
+                                &transition.from,
+                                &transition.to,
+                                transition.current_progress,
+                                layout.border_box.width,
+                                layout.border_box.height,
+                            )
+                        })
+                        .unwrap_or_else(|| transition.current.clone())
+                },
             );
             let was_initialized = entry.style_initialized;
             let text_color_snapshots = state
@@ -2531,6 +3666,13 @@ impl DynRenderer for SurfaceRuntime {
                 state.element_mut(handle)?.specified = previous;
                 return Err(error);
             }
+            state.configure_layout_transitions(
+                handle,
+                &previous_layout_targets,
+                &previous_layout_current,
+                was_initialized,
+            )?;
+            state.configure_keyframe_animations(handle)?;
             state.configure_opacity_transition(
                 handle,
                 previous_target,
@@ -2549,6 +3691,10 @@ impl DynRenderer for SurfaceRuntime {
                 &previous_current_transform,
                 was_initialized,
             )?;
+            {
+                let state = &mut *state;
+                BindingState::reapply_active_transitions(&state.elements, &mut state.surface)?;
+            }
             for (element, target, current, initialized) in text_color_snapshots {
                 state.configure_text_color_transition(element, target, current, initialized)?;
             }
@@ -2658,6 +3804,123 @@ impl DynRenderer for SurfaceRuntime {
 #[cfg(test)]
 mod motion_tests {
     use super::*;
+
+    fn opacity_animation(
+        delay_ms: f32,
+        iterations: MotionIterationCount,
+        direction: MotionDirection,
+        fill_mode: MotionFillMode,
+        play_state: MotionPlayState,
+    ) -> ActiveKeyframeAnimation {
+        let mut animation = ActiveKeyframeAnimation {
+            declaration: AnimationValue {
+                name: Some("test".to_owned()),
+                keyframes: None,
+                duration: whisker_engine::whisker_style::MotionTime::milliseconds(100.0),
+                easing: MotionEasing::Linear,
+                delay: whisker_engine::whisker_style::MotionTime::milliseconds(delay_ms),
+                iteration_count: iterations,
+                direction,
+                fill_mode,
+                play_state,
+            },
+            tracks: vec![KeyframePropertyTrack {
+                property: StyleProperty::Opacity,
+                points: vec![
+                    KeyframePoint {
+                        offset: 0.0,
+                        value: AnimatedPropertyValue::Number(0.0),
+                        easing: None,
+                    },
+                    KeyframePoint {
+                        offset: 1.0,
+                        value: AnimatedPropertyValue::Number(1.0),
+                        easing: None,
+                    },
+                ],
+            }],
+            current_time_ms: 0.0,
+            last_timestamp_ms: None,
+            current: HashMap::new(),
+            finished: false,
+            sampled_progress: None,
+            start_emitted: false,
+            completed_iterations: 0,
+            end_emitted: false,
+        };
+        animation.sample_current_time();
+        animation
+    }
+
+    fn opacity_sample(animation: &ActiveKeyframeAnimation) -> Option<f32> {
+        match animation.current.get(&StyleProperty::Opacity) {
+            Some(AnimatedPropertyValue::Number(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn keyframe_timeline_honors_delay_fill_iterations_and_direction() {
+        let mut animation = opacity_animation(
+            50.0,
+            MotionIterationCount::Count(StyleNumber::new(2.0)),
+            MotionDirection::Alternate,
+            MotionFillMode::Both,
+            MotionPlayState::Running,
+        );
+        assert_eq!(opacity_sample(&animation), Some(0.0));
+
+        animation.sample(1_000.0);
+        animation.sample(1_100.0);
+        assert_eq!(opacity_sample(&animation), Some(0.5));
+        animation.sample(1_200.0);
+        assert_eq!(opacity_sample(&animation), Some(0.5));
+        animation.sample(1_250.0);
+        assert_eq!(opacity_sample(&animation), Some(0.0));
+        assert!(animation.finished);
+        assert!(!animation.needs_frame());
+    }
+
+    #[test]
+    fn paused_keyframe_timeline_keeps_its_hold_time_when_resumed() {
+        let mut animation = opacity_animation(
+            0.0,
+            MotionIterationCount::Count(StyleNumber::new(1.0)),
+            MotionDirection::Normal,
+            MotionFillMode::Forwards,
+            MotionPlayState::Running,
+        );
+        animation.sample(1_000.0);
+        animation.sample(1_040.0);
+        assert_eq!(opacity_sample(&animation), Some(0.4));
+
+        animation.declaration.play_state = MotionPlayState::Paused;
+        animation.sample(5_000.0);
+        assert_eq!(opacity_sample(&animation), Some(0.4));
+        assert!(!animation.needs_frame());
+
+        animation.declaration.play_state = MotionPlayState::Running;
+        animation.last_timestamp_ms = None;
+        animation.sample(9_000.0);
+        assert_eq!(opacity_sample(&animation), Some(0.4));
+        animation.sample(9_010.0);
+        assert_eq!(opacity_sample(&animation), Some(0.5));
+    }
+
+    #[test]
+    fn negative_delay_seeks_into_the_first_iteration() {
+        let mut animation = opacity_animation(
+            -25.0,
+            MotionIterationCount::Count(StyleNumber::new(1.0)),
+            MotionDirection::Normal,
+            MotionFillMode::None,
+            MotionPlayState::Running,
+        );
+        assert_eq!(opacity_sample(&animation), Some(0.25));
+        animation.sample(10.0);
+        animation.sample(35.0);
+        assert_eq!(opacity_sample(&animation), Some(0.5));
+    }
 
     fn hsla(hue_degrees: f32) -> PaintColor {
         PaintColor::Hsla {
@@ -2803,22 +4066,41 @@ mod motion_tests {
                 origin_x: ComputedLengthPercentage::new(12.0, 0.0),
                 ..ComputedTransformStyle::default()
             };
-            let current = interpolate_transform_style(&from, &to, 0.5).unwrap();
+            let current = interpolate_transform_style(&from, &to, 0.5, 100.0, 100.0).unwrap();
             assert_eq!(current.origin_x, to.origin_x);
             assert_eq!(current.functions.len(), 1);
             assert!(
-                interpolate_transform_style(&ComputedTransformStyle::default(), &to, 0.5).is_some()
+                interpolate_transform_style(
+                    &ComputedTransformStyle::default(),
+                    &to,
+                    0.5,
+                    100.0,
+                    100.0,
+                )
+                .is_some()
             );
             assert!(
-                interpolate_transform_style(&to, &ComputedTransformStyle::default(), 0.5).is_some()
+                interpolate_transform_style(
+                    &to,
+                    &ComputedTransformStyle::default(),
+                    0.5,
+                    100.0,
+                    100.0,
+                )
+                .is_some()
             );
         }
     }
 
     #[test]
-    fn incompatible_and_matrix_transform_functions_require_decomposition() {
+    fn incompatible_and_matrix_transform_functions_use_decomposition() {
         let number = StyleNumber::new;
-        let matrix = ComputedTransformFunction::Matrix([number(1.0); 16]);
+        let matrix = ComputedTransformFunction::Matrix(
+            [
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ]
+            .map(number),
+        );
         assert!(identity_transform_function(&matrix).is_none());
         assert!(
             interpolate_transform_function(
@@ -2836,11 +4118,17 @@ mod motion_tests {
             )
             .is_none()
         );
+        let matrix_style = ComputedTransformStyle {
+            functions: vec![matrix],
+            ..ComputedTransformStyle::default()
+        };
         assert!(
             interpolate_transform_style(
                 &ComputedTransformStyle::default(),
-                &ComputedTransformStyle::default(),
+                &matrix_style,
                 0.5,
+                100.0,
+                100.0,
             )
             .is_some()
         );

@@ -1,10 +1,12 @@
+use std::cell::RefCell;
 use std::convert::Infallible;
+use std::rc::Rc;
 
 use whisker::css::{
-    Angle, BorderRadius, BorderStyle, Clear, CustomPropertyName, Direction, EasingFunction, Float,
-    GridLine, GridTemplate, GridTrack, ImageRendering, MotionPathCommand, MotionPathPoint,
-    OffsetPath, OffsetRotate, Overflow, Position, Size, StyleProperty, TransformFn, Transition,
-    TransitionPropertyKind,
+    Angle, Animation, AnimationFillMode, AnimationIterationCount, BorderRadius, BorderStyle, Clear,
+    CustomPropertyName, Direction, EasingFunction, Float, GridLine, GridTemplate, GridTrack,
+    ImageRendering, Keyframes, MotionPathCommand, MotionPathPoint, OffsetPath, OffsetRotate,
+    Overflow, Position, Size, StyleProperty, TransformFn, Transition, TransitionPropertyKind,
 };
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -517,6 +519,72 @@ fn opacity_transition_is_sampled_in_rust_and_emitted_as_ordinary_frame_deltas() 
 }
 
 #[test]
+fn layout_transition_is_sampled_before_taffy_and_emits_geometry_deltas() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(23).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let transition = || {
+        Transition::new(TransitionPropertyKind::name("width"))
+            .duration(100.ms())
+            .timing(EasingFunction::Linear)
+    };
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(40))
+                    .height(px(20))
+                    .transition(transition()))
+            }
+        });
+        set_root(root);
+        root
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            Css::new()
+                .width(px(80))
+                .height(px(20))
+                .transition(transition()),
+        );
+    });
+    assert!(surface.step_motion(2_000.0).unwrap());
+    assert!(surface.step_motion(2_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(renderer.frames()[1].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetLayout { geometry, .. } if (geometry.border_box.width - 60.0).abs() < 0.0001)
+    ));
+    assert!(!surface.step_motion(2_100.0).unwrap());
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
 fn box_color_transitions_are_composited_into_one_set_box_paint_delta() {
     __reset_for_tests();
     let owner = Owner::new(None);
@@ -837,6 +905,421 @@ fn compatible_transform_transition_resolves_percentages_after_layout() {
             })
     );
     assert!(!surface.step_motion(5_100.0).unwrap());
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn builder_keyframes_are_sampled_in_rust_and_emit_frame_deltas() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(22).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let fade = Keyframes::builder()
+        .named("fade")
+        .from(Css::new().opacity(0.0).width(px(20)))
+        .to(Css::new().opacity(1.0).width(px(80)))
+        .build()
+        .unwrap();
+    let _root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(40))
+                    .height(px(20))
+                    .opacity(0.25)
+                    .animation(
+                        Animation::new(fade)
+                            .duration(100.ms())
+                            .timing(EasingFunction::Linear)
+                            .fill_mode(AnimationFillMode::Forwards)
+                    ))
+            }
+        });
+        set_root(root);
+        root
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(surface.has_active_motion());
+    assert!(surface.step_motion(6_000.0).unwrap());
+    assert!(surface.step_motion(6_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(renderer.frames()[1].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetOpacity { opacity, .. } if (*opacity - 0.5).abs() < 0.0001)
+    ));
+    assert!(renderer.frames()[1].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetLayout { geometry, .. } if (geometry.border_box.width - 50.0).abs() < 0.0001)
+    ));
+    assert!(!surface.step_motion(6_100.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(renderer.frames()[2].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetOpacity { opacity, .. } if *opacity == 1.0)
+    ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn css_motion_lifecycle_events_are_dispatched_by_the_rust_timeline() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(23).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let pulse = Keyframes::builder()
+        .named("pulse")
+        .from(Css::new().opacity(0.0))
+        .to(Css::new().opacity(1.0))
+        .build()
+        .unwrap();
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! { view(style: Css::new().width(px(40)).height(px(20)).opacity(0.0)) }
+        });
+        set_root(root);
+        root
+    });
+    let events = Rc::new(RefCell::new(Vec::<(String, String, String)>::new()));
+    with_installed_renderer(surface.renderer(), || {
+        for name in [
+            "animationstart",
+            "animationiteration",
+            "animationend",
+            "transitionstart",
+            "transitionend",
+        ] {
+            let events = Rc::clone(&events);
+            set_event_listener(
+                root,
+                name,
+                BindType::Bind,
+                Box::new(move |value| {
+                    let event = value
+                        .deserialize_into::<whisker::event::AnimationEvent>()
+                        .expect("typed motion event payload");
+                    events.borrow_mut().push((
+                        event.kind,
+                        event.animation_type,
+                        event.animation_name,
+                    ));
+                }),
+            );
+        }
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            Css::new()
+                .width(px(40))
+                .height(px(20))
+                .opacity(1.0)
+                .transition(
+                    Transition::new(TransitionPropertyKind::name("opacity"))
+                        .duration(100.ms())
+                        .timing(EasingFunction::Linear),
+                )
+                .animation(
+                    Animation::new(pulse)
+                        .duration(50.ms())
+                        .iteration_count(AnimationIterationCount::Count(2.0))
+                        .timing(EasingFunction::Linear),
+                ),
+        );
+    });
+    assert!(surface.step_motion(1_000.0).unwrap());
+    assert!(surface.step_motion(1_050.0).unwrap());
+    assert!(!surface.step_motion(1_100.0).unwrap());
+
+    let events = events.borrow();
+    assert_eq!(
+        events.as_slice(),
+        &[
+            (
+                "animationstart".into(),
+                "keyframe-animation".into(),
+                "pulse".into(),
+            ),
+            (
+                "transitionstart".into(),
+                "transition-animation".into(),
+                "opacity".into(),
+            ),
+            (
+                "animationiteration".into(),
+                "keyframe-animation".into(),
+                "pulse".into(),
+            ),
+            (
+                "animationend".into(),
+                "keyframe-animation".into(),
+                "pulse".into(),
+            ),
+            (
+                "transitionend".into(),
+                "transition-animation".into(),
+                "opacity".into(),
+            ),
+        ]
+    );
+    drop(events);
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn replacing_active_css_motion_dispatches_cancel_events() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(24).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let fade = Keyframes::builder()
+        .named("fade")
+        .from(Css::new().opacity(0.0))
+        .to(Css::new().opacity(1.0))
+        .build()
+        .unwrap();
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! { view(style: Css::new().width(px(40)).height(px(20)).opacity(0.0)) }
+        });
+        set_root(root);
+        root
+    });
+    let events = Rc::new(RefCell::new(Vec::<String>::new()));
+    with_installed_renderer(surface.renderer(), || {
+        for name in ["animationcancel", "transitioncancel"] {
+            let events = Rc::clone(&events);
+            set_event_listener(
+                root,
+                name,
+                BindType::Bind,
+                Box::new(move |value| {
+                    events.borrow_mut().push(
+                        value
+                            .deserialize_into::<whisker::event::AnimationEvent>()
+                            .expect("typed cancel event")
+                            .kind,
+                    );
+                }),
+            );
+        }
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            Css::new()
+                .width(px(40))
+                .height(px(20))
+                .opacity(1.0)
+                .transition(
+                    Transition::new(TransitionPropertyKind::name("opacity")).duration(100.ms()),
+                )
+                .animation(Animation::new(fade).duration(100.ms())),
+        );
+    });
+    assert!(surface.step_motion(2_000.0).unwrap());
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(root, Css::new().width(px(40)).height(px(20)).opacity(0.5));
+    });
+    assert!(!surface.step_motion(2_010.0).unwrap());
+    assert_eq!(
+        events.borrow().as_slice(),
+        &["animationcancel".to_owned(), "transitioncancel".to_owned()]
+    );
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn incompatible_transform_transition_uses_matrix_decomposition() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(25).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let transformed = |function| {
+        Css::new()
+            .width(px(40))
+            .height(px(20))
+            .transform(function)
+            .transform_origin(Position::Coords(px(0).into(), px(0).into()))
+            .transition(
+                Transition::new(TransitionPropertyKind::name("transform"))
+                    .duration(100.ms())
+                    .timing(EasingFunction::Linear),
+            )
+    };
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! { view(style: transformed(TransformFn::Rotate(0.deg()))) }
+        });
+        set_root(root);
+        root
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            transformed(TransformFn::TranslateX(percent(100).into())),
+        );
+    });
+    assert!(surface.step_motion(3_000.0).unwrap());
+    assert!(surface.step_motion(3_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        renderer.frames()[1]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(operation, Operation::SetTransform { transform, .. }
+            if (transform.0[12] - 20.0).abs() < 0.0001)
+            })
+    );
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn incompatible_keyframe_transforms_use_matrix_decomposition_after_layout() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(26).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let move_across = Keyframes::builder()
+        .named("move-across")
+        .from(Css::new().transform(TransformFn::Rotate(0.deg())))
+        .to(Css::new().transform(TransformFn::TranslateX(percent(100).into())))
+        .build()
+        .unwrap();
+    let _root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(40))
+                    .height(px(20))
+                    .transform_origin(Position::Coords(px(0).into(), px(0).into()))
+                    .animation(
+                        Animation::new(move_across)
+                            .duration(100.ms())
+                            .timing(EasingFunction::Linear)
+                    ))
+            }
+        });
+        set_root(root);
+        root
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(surface.step_motion(4_000.0).unwrap());
+    assert!(surface.step_motion(4_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        renderer.frames()[1]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(operation, Operation::SetTransform { transform, .. }
+            if (transform.0[12] - 20.0).abs() < 0.0001)
+            })
+    );
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
