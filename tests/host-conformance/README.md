@@ -76,7 +76,9 @@ protocol can carry the value but the Host must reject that operation until its
 production implementation and conformance scenarios land. It must never be
 treated as successful no-op support. `partial` means at least one value family
 or required checkpoint is still missing, even when the common operation is
-already consumed.
+already consumed. Entries in `unsupported_browser_subset` are deliberately
+outside the declared Whisker subset; therefore an `implemented` Host has
+completed `supported_subset`, not every value available in a browser.
 
 The target follows two explicit baselines. Layout semantics are the CSS subset
 represented by Taffy 0.13. Non-layout properties follow the standard,
