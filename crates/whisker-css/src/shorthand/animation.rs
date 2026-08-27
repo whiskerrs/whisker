@@ -9,6 +9,7 @@ use crate::data_type_ext::EasingFunction;
 use crate::keyword::{
     AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
 };
+use crate::shorthand::Keyframes;
 use crate::style_value::to_animation_value;
 use crate::to_css::ToCss;
 
@@ -17,6 +18,8 @@ use crate::to_css::ToCss;
 pub struct Animation {
     /// `@keyframes` name.
     pub name: String,
+    /// Typed keyframes used by the Rust-owned timeline.
+    pub keyframes: Option<Keyframes>,
     /// Duration of one cycle.
     pub duration: Option<Time>,
     /// Timing function.
@@ -33,11 +36,43 @@ pub struct Animation {
     pub play_state: Option<AnimationPlayState>,
 }
 
+/// A checked keyframe definition or a migration-only string name.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum AnimationTarget {
+    /// Builder-defined keyframes.
+    Keyframes(Keyframes),
+    /// Compatibility name without an attached Rust keyframe definition.
+    Name(String),
+}
+
+impl From<Keyframes> for AnimationTarget {
+    fn from(value: Keyframes) -> Self {
+        Self::Keyframes(value)
+    }
+}
+
+impl From<String> for AnimationTarget {
+    fn from(value: String) -> Self {
+        Self::Name(value)
+    }
+}
+
+impl From<&str> for AnimationTarget {
+    fn from(value: &str) -> Self {
+        Self::Name(value.to_owned())
+    }
+}
+
 impl Animation {
-    /// Start with the `@keyframes` name.
-    pub fn new(name: impl Into<String>) -> Self {
+    /// Starts an animation from typed keyframes or a compatibility name.
+    pub fn new(target: impl Into<AnimationTarget>) -> Self {
+        let (name, keyframes) = match target.into() {
+            AnimationTarget::Keyframes(keyframes) => (keyframes.name().to_owned(), Some(keyframes)),
+            AnimationTarget::Name(name) => (name, None),
+        };
         Self {
-            name: name.into(),
+            name,
+            keyframes,
             duration: None,
             timing: None,
             delay: None,
@@ -215,5 +250,25 @@ mod tests {
             resolved.computed().motion().animations[1].delay.get(),
             100.0
         );
+    }
+
+    #[test]
+    fn builder_keyframes_reach_semantic_animation_value() {
+        let keyframes = crate::Keyframes::builder()
+            .named("fade")
+            .from(Css::new().opacity(0.0))
+            .to(Css::new().opacity(1.0))
+            .build()
+            .unwrap();
+        let style = Css::new().animation(Animation::new(keyframes).duration(200.ms()));
+        let resolved = whisker_style::resolve_style(
+            &style.to_specified_style().unwrap(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        let animation = &resolved.computed().motion().animations[0];
+        assert_eq!(animation.name.as_deref(), Some("fade"));
+        assert_eq!(animation.keyframes.as_ref().unwrap().frames.len(), 2);
     }
 }

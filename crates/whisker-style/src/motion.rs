@@ -1,5 +1,7 @@
 //! Host-independent transition and keyframe-animation declarations.
 
+use std::sync::Arc;
+
 use crate::{SpecifiedStyle, StyleNumber, StyleProperty, StyleResolutionError, StyleValue};
 
 /// A CSS time normalized to milliseconds.
@@ -210,6 +212,26 @@ pub enum MotionIterationCount {
     Count(StyleNumber),
 }
 
+/// One normalized keyframe in a Rust-owned animation definition.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct KeyframeDefinition {
+    /// Offset within one iteration, normalized to `0..=1`.
+    pub offset: StyleNumber,
+    /// Typed declarations contributed by this keyframe.
+    pub style: SpecifiedStyle,
+    /// Timing function for the interval beginning at this keyframe.
+    pub easing: Option<MotionEasing>,
+}
+
+/// An immutable, shareable keyframe sequence.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct KeyframesDefinition {
+    /// Stable diagnostic and compatibility name.
+    pub name: String,
+    /// Frames sorted by ascending offset.
+    pub frames: Vec<KeyframeDefinition>,
+}
+
 impl Default for MotionIterationCount {
     fn default() -> Self {
         Self::Count(StyleNumber::new(1.0))
@@ -219,8 +241,10 @@ impl Default for MotionIterationCount {
 /// One fully expanded specified keyframe-animation layer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AnimationValue {
-    /// Registered keyframe name; `None` disables the layer.
+    /// Diagnostic keyframe name; `None` disables the layer.
     pub name: Option<String>,
+    /// Typed keyframes for the Rust-owned timeline, when available.
+    pub keyframes: Option<Arc<KeyframesDefinition>>,
     /// Active duration for one iteration.
     pub duration: MotionTime,
     /// Sampling curve applied within keyframe intervals.
@@ -242,8 +266,8 @@ pub struct AnimationValue {
 pub struct ComputedMotionStyle {
     /// Fully resolved transition layers.
     pub transitions: Vec<ComputedTransition>,
-    /// Validated keyframe-animation layers. Keyframe names are bound later by
-    /// the runtime's animation registry.
+    /// Validated keyframe-animation layers. Typed definitions are retained
+    /// inline; compatibility-only names have no Rust timeline to sample.
     pub animations: Vec<AnimationValue>,
 }
 
@@ -337,6 +361,7 @@ pub(crate) fn resolve_motion_style(
     let mut transition_delays = vec![MotionTime::default()];
 
     let mut animation_names = vec![None];
+    let mut animation_keyframes = vec![None];
     let mut animation_durations = vec![MotionTime::default()];
     let mut animation_easings = vec![MotionEasing::default()];
     let mut animation_delays = vec![MotionTime::default()];
@@ -385,6 +410,7 @@ pub(crate) fn resolve_motion_style(
                     return Err(invalid(StyleProperty::Animation));
                 }
                 animation_names = values.iter().map(|value| value.name.clone()).collect();
+                animation_keyframes = values.iter().map(|value| value.keyframes.clone()).collect();
                 animation_durations = values.iter().map(|value| value.duration).collect();
                 animation_easings = values.iter().map(|value| value.easing).collect();
                 animation_delays = values.iter().map(|value| value.delay).collect();
@@ -398,6 +424,14 @@ pub(crate) fn resolve_motion_style(
                     return Err(invalid(StyleProperty::AnimationName));
                 }
                 animation_names = values.clone();
+                animation_keyframes = vec![None; animation_names.len()];
+            }
+            (StyleProperty::AnimationName, StyleValue::Animations(values)) => {
+                if values.is_empty() {
+                    return Err(invalid(StyleProperty::AnimationName));
+                }
+                animation_names = values.iter().map(|value| value.name.clone()).collect();
+                animation_keyframes = values.iter().map(|value| value.keyframes.clone()).collect();
             }
             (StyleProperty::AnimationDuration, StyleValue::AnimationDurations(values)) => {
                 if values.is_empty() {
@@ -500,6 +534,7 @@ pub(crate) fn resolve_motion_style(
     let animations = (0..animation_names.len())
         .map(|index| AnimationValue {
             name: animation_names[index].clone(),
+            keyframes: cyclic(&animation_keyframes, index),
             duration: cyclic(&animation_durations, index),
             easing: cyclic(&animation_easings, index),
             delay: cyclic(&animation_delays, index),
@@ -538,6 +573,7 @@ mod tests {
     fn animation(name: Option<&str>) -> AnimationValue {
         AnimationValue {
             name: name.map(str::to_owned),
+            keyframes: None,
             duration: MotionTime::milliseconds(200.0),
             easing: MotionEasing::Linear,
             delay: MotionTime::milliseconds(10.0),

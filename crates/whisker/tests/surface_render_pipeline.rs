@@ -1,10 +1,10 @@
 use std::convert::Infallible;
 
 use whisker::css::{
-    Angle, BorderRadius, BorderStyle, Clear, CustomPropertyName, Direction, EasingFunction, Float,
-    GridLine, GridTemplate, GridTrack, ImageRendering, MotionPathCommand, MotionPathPoint,
-    OffsetPath, OffsetRotate, Overflow, Position, Size, StyleProperty, TransformFn, Transition,
-    TransitionPropertyKind,
+    Angle, Animation, AnimationFillMode, BorderRadius, BorderStyle, Clear, CustomPropertyName,
+    Direction, EasingFunction, Float, GridLine, GridTemplate, GridTrack, ImageRendering, Keyframes,
+    MotionPathCommand, MotionPathPoint, OffsetPath, OffsetRotate, Overflow, Position, Size,
+    StyleProperty, TransformFn, Transition, TransitionPropertyKind,
 };
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -517,6 +517,72 @@ fn opacity_transition_is_sampled_in_rust_and_emitted_as_ordinary_frame_deltas() 
 }
 
 #[test]
+fn layout_transition_is_sampled_before_taffy_and_emits_geometry_deltas() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(23).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let transition = || {
+        Transition::new(TransitionPropertyKind::name("width"))
+            .duration(100.ms())
+            .timing(EasingFunction::Linear)
+    };
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(40))
+                    .height(px(20))
+                    .transition(transition()))
+            }
+        });
+        set_root(root);
+        root
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            Css::new()
+                .width(px(80))
+                .height(px(20))
+                .transition(transition()),
+        );
+    });
+    assert!(surface.step_motion(2_000.0).unwrap());
+    assert!(surface.step_motion(2_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(renderer.frames()[1].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetLayout { geometry, .. } if (geometry.border_box.width - 60.0).abs() < 0.0001)
+    ));
+    assert!(!surface.step_motion(2_100.0).unwrap());
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
 fn box_color_transitions_are_composited_into_one_set_box_paint_delta() {
     __reset_for_tests();
     let owner = Owner::new(None);
@@ -837,6 +903,86 @@ fn compatible_transform_transition_resolves_percentages_after_layout() {
             })
     );
     assert!(!surface.step_motion(5_100.0).unwrap());
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn builder_keyframes_are_sampled_in_rust_and_emit_frame_deltas() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(22).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let fade = Keyframes::builder()
+        .named("fade")
+        .from(Css::new().opacity(0.0).width(px(20)))
+        .to(Css::new().opacity(1.0).width(px(80)))
+        .build()
+        .unwrap();
+    let _root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(40))
+                    .height(px(20))
+                    .opacity(0.25)
+                    .animation(
+                        Animation::new(fade)
+                            .duration(100.ms())
+                            .timing(EasingFunction::Linear)
+                            .fill_mode(AnimationFillMode::Forwards)
+                    ))
+            }
+        });
+        set_root(root);
+        root
+    });
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(surface.has_active_motion());
+    assert!(surface.step_motion(6_000.0).unwrap());
+    assert!(surface.step_motion(6_050.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(renderer.frames()[1].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetOpacity { opacity, .. } if (*opacity - 0.5).abs() < 0.0001)
+    ));
+    assert!(renderer.frames()[1].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetLayout { geometry, .. } if (geometry.border_box.width - 50.0).abs() < 0.0001)
+    ));
+    assert!(!surface.step_motion(6_100.0).unwrap());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(renderer.frames()[2].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetOpacity { opacity, .. } if *opacity == 1.0)
+    ));
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 

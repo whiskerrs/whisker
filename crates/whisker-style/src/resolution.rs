@@ -4,14 +4,13 @@ use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    BorderRadiusValue, CalcExpression, ColorValue, ComputedLayoutStyle, ComputedMotionStyle,
-    ComputedPaintStyle, CursorValue, CustomPropertyName, CustomPropertyReference, DirectionValue,
-    FlexBasisValue, FontFamilyValue, FontFeatureValue, FontOpticalSizingValue, FontStyleValue,
-    FontVariationValue, FontWeightValue, LengthPercentageAutoValue, LengthPercentageValue,
-    LengthUnit, LengthValue, LineHeightValue, PointerEventsValue, SizeValue, SpecifiedStyle,
-    StyleNumber, StyleProperty, StyleValue, TextAlignValue, TextDecorationLineValue,
-    TextDecorationStyleValue, TextDecorationValue, TextOverflowValue, TextShadowValue,
-    WhiteSpaceValue, WordBreakValue,
+    CalcExpression, ColorValue, ComputedLayoutStyle, ComputedMotionStyle, ComputedPaintStyle,
+    CursorValue, CustomPropertyName, CustomPropertyReference, DirectionValue, FontFamilyValue,
+    FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue, FontWeightValue,
+    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, PointerEventsValue,
+    SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
+    TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
+    TextShadowValue, WhiteSpaceValue, WordBreakValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;

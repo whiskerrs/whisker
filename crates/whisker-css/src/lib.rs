@@ -67,8 +67,9 @@ pub use crate::data_type::{
 pub use crate::data_type_ext::{EasingFunction, Integer, Position};
 pub use crate::keyword::*;
 pub use crate::shorthand::{
-    Animation, Background, BackgroundLayer, Border, Flex, Margin, MarginValue, Padding, Transform,
-    TransformFn, Transition,
+    Animation, AnimationTarget, Background, BackgroundLayer, Border, Flex, Keyframe, Keyframes,
+    KeyframesBuildError, KeyframesBuilder, Margin, MarginValue, Padding, Transform, TransformFn,
+    Transition,
 };
 pub use crate::to_css::ToCss;
 pub use crate::value::{
