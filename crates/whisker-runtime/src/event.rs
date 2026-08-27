@@ -1,5 +1,5 @@
-//! Typed event objects deserialized from the [`WhiskerValue`] body
-//! Lynx hands an event handler.
+//! Typed event objects deserialized from the [`WhiskerValue`] body the Rust
+//! runtime or a Host hands an event handler.
 //!
 //! Mirrors Lynx's event hierarchy (see
 //! <https://lynxjs.org/api/lynx-api/event/event.html>):
@@ -253,7 +253,8 @@ pub struct TouchEvent {
     pub changed_touches: Vec<Touch>,
 }
 
-/// Keyframe / transition animation lifecycle event.
+/// Keyframe / transition animation lifecycle event emitted by the Rust-owned
+/// timeline.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[non_exhaustive]
 pub struct AnimationEvent {

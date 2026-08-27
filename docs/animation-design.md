@@ -84,6 +84,8 @@ The common sampler currently covers:
 - background, border, and inherited text colors in premultiplied sRGB;
 - compatible translate, rotate, scale, and skew function lists, including
   identity padding;
+- matrix functions and incompatible transform-list suffixes through common
+  4x4 matrix decomposition, quaternion interpolation, and recomposition;
 - transform origin;
 - the Lynx transitionable layout slice: physical insets, width/height and
   min/max constraints, margin, padding, border widths, and flex basis.
@@ -95,8 +97,26 @@ animation implementation.
 
 Length-percentage pairs interpolate as two affine components. `auto`, intrinsic
 sizing keywords, and incompatible value kinds sample discretely in keyframes
-and do not start transitions. Incompatible transform lists and matrix functions
-also sample discretely until matrix decomposition is implemented.
+and do not start transitions. Singular transform matrices that cannot be
+decomposed use discrete midpoint sampling; all other transform interpolation is
+performed in Rust after resolving percentage translations against the final
+Taffy border box.
+
+## Lifecycle events
+
+The Rust timeline emits the Lynx-compatible lifecycle surface through the same
+capture/bubble listener path as Host input events:
+
+- `animationstart`, `animationiteration`, `animationend`, and
+  `animationcancel` for keyframe animations;
+- `transitionstart`, `transitionend`, and `transitioncancel` for transitions.
+
+The payload deserializes into `AnimationEvent`. It identifies the animation as
+`keyframe-animation` or `transition-animation`; `animation_name` contains the
+keyframe name or transitioned CSS property. Replacing an active timeline emits
+its cancel event before the replacement starts. Because the runtime owns both
+time and dispatch, Hosts need neither animation objects nor lifecycle-specific
+protocol commands.
 
 ## Frame and idle behavior
 
@@ -139,9 +159,8 @@ a public `Tween` or reactive signal per property. Compiled property tracks are
 sampled directly into retained presentation state to keep per-frame overhead
 small.
 
-## Remaining compatibility work
+## Compatibility boundary
 
-- Decompose matrix and incompatible transform lists instead of discrete
-  midpoint sampling.
-- Emit Rust-owned animation and transition lifecycle events. The typed event
-  handlers remain available, but the new timeline does not emit them yet.
+The current public API follows Lynx's lifecycle event set. The browser-only
+`transitionrun` event is not exposed; adding it later would be an API expansion,
+not a Host rendering change.
