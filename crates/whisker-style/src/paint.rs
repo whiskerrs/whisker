@@ -3,11 +3,11 @@
 use crate::{
     BackdropFilterValue, BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue,
     BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundSizeValue, ColorValue,
-    ComputedLengthPercentage, DirectionValue, Edges, GradientValue, ImageRenderingValue,
-    InheritedStyle, LengthPercentageValue, MotionPathCommandValue, OffsetPathValue,
-    OffsetRotateValue, RadialGradientValue, SpecifiedStyle, StyleEnvironment, StyleNumber,
-    StyleProperty, StyleResolutionError, StyleValue, TransformFunctionValue, TransformOriginValue,
-    TransformValue, layout::resolve_affine,
+    ComponentValue, ComputedLengthPercentage, DirectionValue, Edges, GradientValue,
+    ImageRenderingValue, InheritedStyle, LengthPercentageValue, MotionPathCommandValue,
+    OffsetPathValue, OffsetRotateValue, RadialGradientValue, SpecifiedStyle, StyleEnvironment,
+    StyleNumber, StyleProperty, StyleResolutionError, StyleValue, TransformFunctionValue,
+    TransformOriginValue, TransformValue, layout::resolve_affine,
 };
 
 /// Four physical corners in top-left, top-right, bottom-right, bottom-left order.
@@ -429,6 +429,7 @@ pub(crate) fn resolve_paint_style(
                 paint.backdrop_blur = match value {
                     BackdropFilterValue::None => None,
                     BackdropFilterValue::Blur(radius) => {
+                        let radius = component(radius);
                         let radius = resolve_affine(
                             &LengthPercentageValue::Length(*radius),
                             inherited.font_size(),
@@ -508,7 +509,7 @@ pub(crate) fn resolve_paint_style(
                 let StyleValue::Background(value) = value else {
                     return Err(invalid(property));
                 };
-                paint.background_color = value.color.clone();
+                paint.background_color = component(&value.color).clone();
                 paint.background_images = value
                     .layers
                     .iter()
@@ -982,7 +983,7 @@ fn resolve_transform_functions(
                     z: StyleNumber::new(0.0),
                 },
                 TransformFunctionValue::TranslateZ(z) => {
-                    let z = length(z)?;
+                    let z = length(component(z))?;
                     ComputedTransformFunction::Translate {
                         x: ComputedLengthPercentage::ZERO,
                         y: ComputedLengthPercentage::ZERO,
@@ -990,7 +991,7 @@ fn resolve_transform_functions(
                     }
                 }
                 TransformFunctionValue::Translate3d(x, y, z) => {
-                    let z = length(z)?;
+                    let z = length(component(z))?;
                     ComputedTransformFunction::Translate {
                         x: length_percentage(x)?,
                         y: length_percentage(y)?,
@@ -998,40 +999,40 @@ fn resolve_transform_functions(
                     }
                 }
                 TransformFunctionValue::Rotate(angle) | TransformFunctionValue::RotateZ(angle) => {
-                    ComputedTransformFunction::RotateZ(finite(*angle)?)
+                    ComputedTransformFunction::RotateZ(finite(*component(angle))?)
                 }
                 TransformFunctionValue::RotateX(angle) => {
-                    ComputedTransformFunction::RotateX(finite(*angle)?)
+                    ComputedTransformFunction::RotateX(finite(*component(angle))?)
                 }
                 TransformFunctionValue::RotateY(angle) => {
-                    ComputedTransformFunction::RotateY(finite(*angle)?)
+                    ComputedTransformFunction::RotateY(finite(*component(angle))?)
                 }
                 TransformFunctionValue::Scale(x, y) => ComputedTransformFunction::Scale {
-                    x: finite(*x)?,
-                    y: finite(*y)?,
+                    x: finite(*component(x))?,
+                    y: finite(*component(y))?,
                     z: StyleNumber::new(1.0),
                 },
                 TransformFunctionValue::ScaleX(x) => ComputedTransformFunction::Scale {
-                    x: finite(*x)?,
+                    x: finite(*component(x))?,
                     y: StyleNumber::new(1.0),
                     z: StyleNumber::new(1.0),
                 },
                 TransformFunctionValue::ScaleY(y) => ComputedTransformFunction::Scale {
                     x: StyleNumber::new(1.0),
-                    y: finite(*y)?,
+                    y: finite(*component(y))?,
                     z: StyleNumber::new(1.0),
                 },
                 TransformFunctionValue::Skew(x, y) => ComputedTransformFunction::Skew {
-                    x_degrees: finite(*x)?,
-                    y_degrees: finite(*y)?,
+                    x_degrees: finite(*component(x))?,
+                    y_degrees: finite(*component(y))?,
                 },
                 TransformFunctionValue::SkewX(x) => ComputedTransformFunction::Skew {
-                    x_degrees: finite(*x)?,
+                    x_degrees: finite(*component(x))?,
                     y_degrees: StyleNumber::new(0.0),
                 },
                 TransformFunctionValue::SkewY(y) => ComputedTransformFunction::Skew {
                     x_degrees: StyleNumber::new(0.0),
-                    y_degrees: finite(*y)?,
+                    y_degrees: finite(*component(y))?,
                 },
                 TransformFunctionValue::Matrix(values) => {
                     if !values.iter().all(|value| value.get().is_finite()) {
@@ -1120,7 +1121,7 @@ fn resolve_gradient(
             .iter()
             .map(|stop| {
                 Ok(ComputedGradientStop {
-                    color: color(&StyleValue::Color(stop.color.clone()), property)?,
+                    color: color(&StyleValue::Color(component(&stop.color).clone()), property)?,
                     position: stop
                         .position
                         .as_ref()
@@ -1144,6 +1145,7 @@ fn resolve_gradient(
             angle_degrees,
             stops: values,
         } => {
+            let angle_degrees = component(angle_degrees);
             if !angle_degrees.get().is_finite() {
                 return Err(invalid(property));
             }
@@ -1186,6 +1188,7 @@ fn resolve_gradient(
             center,
             stops: values,
         } => {
+            let from_degrees = component(from_degrees);
             if !from_degrees.get().is_finite() {
                 return Err(invalid(property));
             }
@@ -1358,6 +1361,12 @@ fn invalid(property: StyleProperty) -> StyleResolutionError {
     StyleResolutionError::InvalidPropertyValue(property)
 }
 
+fn component<T>(value: &ComponentValue<T>) -> &T {
+    value
+        .value()
+        .expect("custom-property components are materialized before paint resolution")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1365,6 +1374,22 @@ mod tests {
         BackdropFilterValue, BackgroundLayerValue, BackgroundRepeatValue, BackgroundValue,
         BorderRadiusValue, GradientStopValue, LengthPercentageValue, LengthUnit, LengthValue,
     };
+
+    #[test]
+    fn unresolved_composite_component_is_rejected_before_paint_lowering() {
+        let name = crate::CustomPropertyName::new("--value").unwrap();
+        let value = ComponentValue::<ColorValue>::Variable(crate::CustomPropertyReference::new(
+            name.clone(),
+        ));
+        assert!(std::panic::catch_unwind(|| component(&value)).is_err());
+        let value = ComponentValue::<LengthValue>::Variable(crate::CustomPropertyReference::new(
+            name.clone(),
+        ));
+        assert!(std::panic::catch_unwind(|| component(&value)).is_err());
+        let value =
+            ComponentValue::<StyleNumber>::Variable(crate::CustomPropertyReference::new(name));
+        assert!(std::panic::catch_unwind(|| component(&value)).is_err());
+    }
 
     fn number(value: f32) -> StyleNumber {
         StyleNumber::new(value)
@@ -1388,10 +1413,13 @@ mod tests {
     #[test]
     fn backdrop_blur_resolves_relative_lengths_and_rejects_negative_radii() {
         let blur = |value| {
-            StyleValue::BackdropFilter(BackdropFilterValue::Blur(LengthValue::Dimension {
-                value: number(value),
-                unit: LengthUnit::Rem,
-            }))
+            StyleValue::BackdropFilter(BackdropFilterValue::Blur(
+                LengthValue::Dimension {
+                    value: number(value),
+                    unit: LengthUnit::Rem,
+                }
+                .into(),
+            ))
         };
         let resolved = crate::resolve_style(
             &SpecifiedStyle::new().push(StyleProperty::BackdropFilter, blur(2.0)),
@@ -1430,10 +1458,13 @@ mod tests {
         );
         for value in [
             StyleValue::Number(number(1.0)),
-            StyleValue::BackdropFilter(BackdropFilterValue::Blur(LengthValue::Dimension {
-                value: number(f32::NAN),
-                unit: LengthUnit::Px,
-            })),
+            StyleValue::BackdropFilter(BackdropFilterValue::Blur(
+                LengthValue::Dimension {
+                    value: number(f32::NAN),
+                    unit: LengthUnit::Px,
+                }
+                .into(),
+            )),
         ] {
             assert_eq!(
                 crate::resolve_style(
@@ -1455,7 +1486,7 @@ mod tests {
                 LengthPercentageValue::Percentage(number(50.0)),
                 px_length(4.0),
             ),
-            TransformFunctionValue::Scale(number(2.0), number(3.0)),
+            TransformFunctionValue::Scale(number(2.0).into(), number(3.0).into()),
         ]));
         let origin = StyleValue::TransformOrigin(TransformOriginValue {
             horizontal: LengthPercentageValue::Percentage(number(25.0)),
@@ -1492,11 +1523,14 @@ mod tests {
             &SpecifiedStyle::new().push(
                 StyleProperty::Transform,
                 StyleValue::Transform(TransformValue(vec![
-                    TransformFunctionValue::RotateX(number(30.0)),
-                    TransformFunctionValue::TranslateZ(LengthValue::Dimension {
-                        value: number(8.0),
-                        unit: LengthUnit::Px,
-                    }),
+                    TransformFunctionValue::RotateX(number(30.0).into()),
+                    TransformFunctionValue::TranslateZ(
+                        LengthValue::Dimension {
+                            value: number(8.0),
+                            unit: LengthUnit::Px,
+                        }
+                        .into(),
+                    ),
                 ])),
             ),
             None,
@@ -1529,21 +1563,21 @@ mod tests {
         let functions = vec![
             TransformFunctionValue::TranslateX(percentage(10.0)),
             TransformFunctionValue::TranslateY(px_length(2.0)),
-            TransformFunctionValue::TranslateZ(LengthValue::Zero),
+            TransformFunctionValue::TranslateZ(LengthValue::Zero.into()),
             TransformFunctionValue::Translate3d(
                 px_length(3.0),
                 percentage(20.0),
-                LengthValue::Zero,
+                LengthValue::Zero.into(),
             ),
-            TransformFunctionValue::Rotate(number(10.0)),
-            TransformFunctionValue::RotateX(number(0.0)),
-            TransformFunctionValue::RotateY(number(0.0)),
-            TransformFunctionValue::RotateZ(number(20.0)),
-            TransformFunctionValue::ScaleX(number(2.0)),
-            TransformFunctionValue::ScaleY(number(3.0)),
-            TransformFunctionValue::Skew(number(4.0), number(5.0)),
-            TransformFunctionValue::SkewX(number(6.0)),
-            TransformFunctionValue::SkewY(number(7.0)),
+            TransformFunctionValue::Rotate(number(10.0).into()),
+            TransformFunctionValue::RotateX(number(0.0).into()),
+            TransformFunctionValue::RotateY(number(0.0).into()),
+            TransformFunctionValue::RotateZ(number(20.0).into()),
+            TransformFunctionValue::ScaleX(number(2.0).into()),
+            TransformFunctionValue::ScaleY(number(3.0).into()),
+            TransformFunctionValue::Skew(number(4.0).into(), number(5.0).into()),
+            TransformFunctionValue::SkewX(number(6.0).into()),
+            TransformFunctionValue::SkewY(number(7.0).into()),
             TransformFunctionValue::Matrix([
                 number(1.0),
                 number(2.0),
@@ -1661,29 +1695,33 @@ mod tests {
             ),
             TransformFunctionValue::TranslateX(LengthPercentageValue::Length(length(f32::NAN))),
             TransformFunctionValue::TranslateY(LengthPercentageValue::Length(length(f32::NAN))),
-            TransformFunctionValue::TranslateZ(length(f32::NAN)),
-            TransformFunctionValue::Translate3d(px_length(0.0), px_length(0.0), length(f32::NAN)),
+            TransformFunctionValue::TranslateZ(length(f32::NAN).into()),
+            TransformFunctionValue::Translate3d(
+                px_length(0.0),
+                px_length(0.0),
+                length(f32::NAN).into(),
+            ),
             TransformFunctionValue::Translate3d(
                 LengthPercentageValue::Length(length(f32::NAN)),
                 px_length(0.0),
-                LengthValue::Zero,
+                LengthValue::Zero.into(),
             ),
             TransformFunctionValue::Translate3d(
                 px_length(0.0),
                 LengthPercentageValue::Length(length(f32::NAN)),
-                LengthValue::Zero,
+                LengthValue::Zero.into(),
             ),
-            TransformFunctionValue::Rotate(number(f32::NAN)),
-            TransformFunctionValue::RotateX(number(f32::NAN)),
-            TransformFunctionValue::RotateY(number(f32::NAN)),
-            TransformFunctionValue::Scale(number(f32::NAN), number(1.0)),
-            TransformFunctionValue::Scale(number(1.0), number(f32::NAN)),
-            TransformFunctionValue::ScaleX(number(f32::INFINITY)),
-            TransformFunctionValue::ScaleY(number(f32::INFINITY)),
-            TransformFunctionValue::Skew(number(f32::NAN), number(0.0)),
-            TransformFunctionValue::Skew(number(0.0), number(f32::NAN)),
-            TransformFunctionValue::SkewX(number(f32::NAN)),
-            TransformFunctionValue::SkewY(number(f32::NAN)),
+            TransformFunctionValue::Rotate(number(f32::NAN).into()),
+            TransformFunctionValue::RotateX(number(f32::NAN).into()),
+            TransformFunctionValue::RotateY(number(f32::NAN).into()),
+            TransformFunctionValue::Scale(number(f32::NAN).into(), number(1.0).into()),
+            TransformFunctionValue::Scale(number(1.0).into(), number(f32::NAN).into()),
+            TransformFunctionValue::ScaleX(number(f32::INFINITY).into()),
+            TransformFunctionValue::ScaleY(number(f32::INFINITY).into()),
+            TransformFunctionValue::Skew(number(f32::NAN).into(), number(0.0).into()),
+            TransformFunctionValue::Skew(number(0.0).into(), number(f32::NAN).into()),
+            TransformFunctionValue::SkewX(number(f32::NAN).into()),
+            TransformFunctionValue::SkewY(number(f32::NAN).into()),
             TransformFunctionValue::Matrix(non_finite_matrix),
             TransformFunctionValue::Matrix3d(non_finite_matrix_3d),
         ] {
@@ -1695,10 +1733,10 @@ mod tests {
             );
         }
         for function in [
-            TransformFunctionValue::TranslateZ(length(1.0)),
-            TransformFunctionValue::Translate3d(px_length(0.0), px_length(0.0), length(1.0)),
-            TransformFunctionValue::RotateX(number(1.0)),
-            TransformFunctionValue::RotateY(number(1.0)),
+            TransformFunctionValue::TranslateZ(length(1.0).into()),
+            TransformFunctionValue::Translate3d(px_length(0.0), px_length(0.0), length(1.0).into()),
+            TransformFunctionValue::RotateX(number(1.0).into()),
+            TransformFunctionValue::RotateY(number(1.0).into()),
             TransformFunctionValue::Matrix3d(spatial_matrix_3d),
         ] {
             assert!(invalid_transform(function).is_ok());
@@ -2413,7 +2451,7 @@ mod tests {
                             BackgroundBoxValue::Content,
                         ),
                     ],
-                    color: color.clone(),
+                    color: color.clone().into(),
                 }),
             )
             .push(StyleProperty::BackgroundPositionY, px(9.0));
@@ -2456,7 +2494,7 @@ mod tests {
                 StyleProperty::Background,
                 StyleValue::Background(BackgroundValue {
                     layers: Vec::new(),
-                    color: ColorValue::Named("empty".into()),
+                    color: ColorValue::Named("empty".into()).into(),
                 }),
             ),
             None,
@@ -2502,7 +2540,7 @@ mod tests {
                         StyleProperty::Background,
                         StyleValue::Background(BackgroundValue {
                             layers: vec![layer],
-                            color: ColorValue::Named("invalid".into()),
+                            color: ColorValue::Named("invalid".into()).into(),
                         }),
                     ),
                     None,
@@ -2518,7 +2556,7 @@ mod tests {
     #[test]
     fn background_gradients_resolve_all_shapes_and_reject_invalid_values() {
         let stop = |name: &str, position| GradientStopValue {
-            color: ColorValue::Named(name.into()),
+            color: ColorValue::Named(name.into()).into(),
             position,
         };
         let stops = || {
@@ -2548,7 +2586,7 @@ mod tests {
             vec![ComputedBackgroundImage::None]
         );
         let linear = resolve(BackgroundImageValue::Gradient(GradientValue::Linear {
-            angle_degrees: number(90.0),
+            angle_degrees: number(90.0).into(),
             stops: stops(),
         }))
         .unwrap();
@@ -2563,7 +2601,7 @@ mod tests {
                 && stops[2].position.unwrap().fraction() == 1.0
         ));
         let implicit_endpoints = resolve(BackgroundImageValue::Gradient(GradientValue::Linear {
-            angle_degrees: number(0.0),
+            angle_degrees: number(0.0).into(),
             stops: vec![stop("start", None), stop("end", None)],
         }))
         .unwrap();
@@ -2604,7 +2642,7 @@ mod tests {
         }
 
         let conic = resolve(BackgroundImageValue::Gradient(GradientValue::Conic {
-            from_degrees: number(45.0),
+            from_degrees: number(45.0).into(),
             center: BackgroundPositionValue {
                 horizontal: percentage(25.0),
                 vertical: percentage(75.0),
@@ -2629,28 +2667,29 @@ mod tests {
                 green: 0,
                 blue: 0,
                 alpha: number(f32::NAN),
-            },
+            }
+            .into(),
             position: None,
         };
         let invalid = [
             BackgroundImageValue::Url("  ".into()),
             BackgroundImageValue::Gradient(GradientValue::Linear {
-                angle_degrees: number(f32::NAN),
+                angle_degrees: number(f32::NAN).into(),
                 stops: stops(),
             }),
             BackgroundImageValue::Gradient(GradientValue::Linear {
-                angle_degrees: number(0.0),
+                angle_degrees: number(0.0).into(),
                 stops: vec![stop("only", None)],
             }),
             BackgroundImageValue::Gradient(GradientValue::Linear {
-                angle_degrees: number(0.0),
+                angle_degrees: number(0.0).into(),
                 stops: vec![
                     stop("bad-position", Some(px_length(f32::NAN))),
                     stop("end", None),
                 ],
             }),
             BackgroundImageValue::Gradient(GradientValue::Linear {
-                angle_degrees: number(0.0),
+                angle_degrees: number(0.0).into(),
                 stops: vec![invalid_color, stop("end", None)],
             }),
             BackgroundImageValue::Gradient(GradientValue::Radial {
@@ -2670,7 +2709,7 @@ mod tests {
                 stops: vec![stop("only", None)],
             }),
             BackgroundImageValue::Gradient(GradientValue::Conic {
-                from_degrees: number(f32::NAN),
+                from_degrees: number(f32::NAN).into(),
                 center: BackgroundPositionValue {
                     horizontal: percentage(50.0),
                     vertical: percentage(50.0),
@@ -2678,7 +2717,7 @@ mod tests {
                 stops: stops(),
             }),
             BackgroundImageValue::Gradient(GradientValue::Conic {
-                from_degrees: number(0.0),
+                from_degrees: number(0.0).into(),
                 center: BackgroundPositionValue {
                     horizontal: px_length(f32::NAN),
                     vertical: percentage(50.0),
@@ -2686,7 +2725,7 @@ mod tests {
                 stops: stops(),
             }),
             BackgroundImageValue::Gradient(GradientValue::Conic {
-                from_degrees: number(0.0),
+                from_degrees: number(0.0).into(),
                 center: BackgroundPositionValue {
                     horizontal: percentage(50.0),
                     vertical: percentage(50.0),

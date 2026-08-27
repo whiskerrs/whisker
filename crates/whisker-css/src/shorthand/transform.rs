@@ -2,9 +2,10 @@
 
 use core::fmt;
 
+use crate::ValueOrVariable;
 use crate::css::Css;
-use crate::data_type::{Angle, Length, LengthPercentage};
-use crate::to_css::{ToCss, write_number};
+use crate::data_type::{Angle, Length, LengthPercentage, Number};
+use crate::to_css::ToCss;
 
 /// One CSS transform function. Lynx supports the 2-D and 3-D
 /// transform families except `rotate3d()` and `scale3d()`.
@@ -17,29 +18,29 @@ pub enum TransformFn {
     /// `translateY(<y>)`.
     TranslateY(LengthPercentage),
     /// `translateZ(<z>)`.
-    TranslateZ(Length),
+    TranslateZ(ValueOrVariable<Length>),
     /// `translate3d(<x>, <y>, <z>)`.
-    Translate3d(LengthPercentage, LengthPercentage, Length),
+    Translate3d(LengthPercentage, LengthPercentage, ValueOrVariable<Length>),
     /// `rotate(<angle>)` — alias of `rotateZ`.
-    Rotate(Angle),
+    Rotate(ValueOrVariable<Angle>),
     /// `rotateX(<angle>)`.
-    RotateX(Angle),
+    RotateX(ValueOrVariable<Angle>),
     /// `rotateY(<angle>)`.
-    RotateY(Angle),
+    RotateY(ValueOrVariable<Angle>),
     /// `rotateZ(<angle>)`.
-    RotateZ(Angle),
+    RotateZ(ValueOrVariable<Angle>),
     /// `scale(<x>, <y>)`.
-    Scale(f32, f32),
+    Scale(ValueOrVariable<Number>, ValueOrVariable<Number>),
     /// `scaleX(<x>)`.
-    ScaleX(f32),
+    ScaleX(ValueOrVariable<Number>),
     /// `scaleY(<y>)`.
-    ScaleY(f32),
+    ScaleY(ValueOrVariable<Number>),
     /// `skew(<x-angle>, <y-angle>)`.
-    Skew(Angle, Angle),
+    Skew(ValueOrVariable<Angle>, ValueOrVariable<Angle>),
     /// `skewX(<angle>)`.
-    SkewX(Angle),
+    SkewX(ValueOrVariable<Angle>),
     /// `skewY(<angle>)`.
-    SkewY(Angle),
+    SkewY(ValueOrVariable<Angle>),
     /// `matrix(a, b, c, d, tx, ty)`.
     Matrix([f32; 6]),
     /// `matrix3d(...)` — 16-element column-major matrix.
@@ -86,19 +87,19 @@ impl ToCss for TransformFn {
             TransformFn::RotateZ(a) => fn_one(dest, "rotateZ", a),
             TransformFn::Scale(x, y) => {
                 dest.write_str("scale(")?;
-                write_number(dest, *x)?;
+                x.to_css(dest)?;
                 dest.write_str(", ")?;
-                write_number(dest, *y)?;
+                y.to_css(dest)?;
                 dest.write_char(')')
             }
             TransformFn::ScaleX(x) => {
                 dest.write_str("scaleX(")?;
-                write_number(dest, *x)?;
+                x.to_css(dest)?;
                 dest.write_char(')')
             }
             TransformFn::ScaleY(y) => {
                 dest.write_str("scaleY(")?;
-                write_number(dest, *y)?;
+                y.to_css(dest)?;
                 dest.write_char(')')
             }
             TransformFn::Skew(x, y) => {
@@ -116,7 +117,7 @@ impl ToCss for TransformFn {
                     if i > 0 {
                         dest.write_str(", ")?;
                     }
-                    write_number(dest, *v)?;
+                    crate::to_css::write_number(dest, *v)?;
                 }
                 dest.write_char(')')
             }
@@ -126,7 +127,7 @@ impl ToCss for TransformFn {
                     if i > 0 {
                         dest.write_str(", ")?;
                     }
-                    write_number(dest, *v)?;
+                    crate::to_css::write_number(dest, *v)?;
                 }
                 dest.write_char(')')
             }
@@ -134,7 +135,7 @@ impl ToCss for TransformFn {
     }
 }
 
-fn fn_one(dest: &mut dyn fmt::Write, name: &str, a: &Angle) -> fmt::Result {
+fn fn_one(dest: &mut dyn fmt::Write, name: &str, a: &ValueOrVariable<Angle>) -> fmt::Result {
     dest.write_str(name)?;
     dest.write_char('(')?;
     a.to_css(dest)?;
@@ -215,8 +216,8 @@ mod tests {
     fn chain_of_transforms() {
         let s = Css::new().transform([
             TransformFn::TranslateX(px(10).into()),
-            TransformFn::Rotate(45.deg()),
-            TransformFn::Scale(1.5, 2.0),
+            TransformFn::Rotate(45.deg().into()),
+            TransformFn::Scale(Number::new(1.5).into(), Number::new(2.0).into()),
         ]);
         assert_eq!(
             s.to_string(),
@@ -240,13 +241,17 @@ mod tests {
         );
         assert_eq!(
             Css::new()
-                .transform(TransformFn::TranslateZ(px(4)))
+                .transform(TransformFn::TranslateZ(px(4).into()))
                 .to_string(),
             "transform: translateZ(4px);"
         );
         assert_eq!(
             Css::new()
-                .transform(TransformFn::Translate3d(px(1).into(), px(2).into(), px(3),))
+                .transform(TransformFn::Translate3d(
+                    px(1).into(),
+                    px(2).into(),
+                    px(3).into(),
+                ))
                 .to_string(),
             "transform: translate3d(1px, 2px, 3px);"
         );
@@ -255,9 +260,9 @@ mod tests {
     #[test]
     fn rotate_axes() {
         let s = Css::new().transform([
-            TransformFn::RotateX(10.deg()),
-            TransformFn::RotateY(20.deg()),
-            TransformFn::RotateZ(30.deg()),
+            TransformFn::RotateX(10.deg().into()),
+            TransformFn::RotateY(20.deg().into()),
+            TransformFn::RotateZ(30.deg().into()),
         ]);
         assert_eq!(
             s.to_string(),
@@ -267,16 +272,19 @@ mod tests {
 
     #[test]
     fn scale_axes() {
-        let s = Css::new().transform([TransformFn::ScaleX(2.0), TransformFn::ScaleY(0.5)]);
+        let s = Css::new().transform([
+            TransformFn::ScaleX(Number::new(2.0).into()),
+            TransformFn::ScaleY(Number::new(0.5).into()),
+        ]);
         assert_eq!(s.to_string(), "transform: scaleX(2) scaleY(0.5);");
     }
 
     #[test]
     fn skew_variants() {
         let s = Css::new().transform([
-            TransformFn::Skew(10.deg(), 20.deg()),
-            TransformFn::SkewX(5.deg()),
-            TransformFn::SkewY(15.deg()),
+            TransformFn::Skew(10.deg().into(), 20.deg().into()),
+            TransformFn::SkewX(5.deg().into()),
+            TransformFn::SkewY(15.deg().into()),
         ]);
         assert_eq!(
             s.to_string(),
@@ -306,8 +314,8 @@ mod tests {
 
     #[test]
     fn transform_from_vec_and_array() {
-        let from_vec = Css::new().transform(vec![TransformFn::Rotate(10.deg())]);
-        let from_arr = Css::new().transform([TransformFn::Rotate(10.deg())]);
+        let from_vec = Css::new().transform(vec![TransformFn::Rotate(10.deg().into())]);
+        let from_arr = Css::new().transform([TransformFn::Rotate(10.deg().into())]);
         assert_eq!(from_vec.to_string(), from_arr.to_string());
     }
 
@@ -315,7 +323,7 @@ mod tests {
     fn transform_builder_pattern() {
         let t = Transform::new()
             .push(TransformFn::TranslateX(px(10).into()))
-            .push(TransformFn::Rotate(45.deg()));
+            .push(TransformFn::Rotate(45.deg().into()));
         let s = Css::new().transform(t);
         assert_eq!(s.to_string(), "transform: translateX(10px) rotate(45deg);");
     }

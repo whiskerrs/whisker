@@ -8,7 +8,6 @@ use crate::data_type_ext::Position;
 use crate::keyword::{
     BackgroundAttachment, BackgroundClip, BackgroundOrigin, BackgroundRepeat, BackgroundSize,
 };
-use crate::style_value::ToStyleValue;
 use crate::to_css::ToCss;
 use crate::value::ImageRef;
 
@@ -131,7 +130,7 @@ pub struct Background {
     /// Image layers, listed first-to-last.
     pub layers: Vec<BackgroundLayer>,
     /// Trailing color.
-    pub color: Option<Color>,
+    pub color: Option<crate::ValueOrVariable<Color>>,
 }
 
 impl Background {
@@ -147,8 +146,8 @@ impl Background {
     }
 
     /// Set the trailing color.
-    pub fn color(mut self, c: Color) -> Self {
-        self.color = Some(c);
+    pub fn color(mut self, c: impl Into<crate::ValueOrVariable<Color>>) -> Self {
+        self.color = Some(c.into());
         self
     }
 }
@@ -241,18 +240,16 @@ fn background_value(background: &Background) -> Option<whisker_style::StyleValue
         })
         .collect::<Option<Vec<_>>>()?;
     let color = background.color.as_ref().map_or_else(
-        || ColorValue::Rgba {
-            red: 0,
-            green: 0,
-            blue: 0,
-            alpha: StyleNumber::new(0.0),
+        || {
+            ColorValue::Rgba {
+                red: 0,
+                green: 0,
+                blue: 0,
+                alpha: StyleNumber::new(0.0),
+            }
+            .into()
         },
-        |color| {
-            let StyleValue::Color(value) = color.to_style_value() else {
-                unreachable!("Color always has a semantic style value")
-            };
-            value
-        },
+        crate::style_value::to_color_component,
     );
     Some(StyleValue::Background(BackgroundValue { layers, color }))
 }
@@ -285,8 +282,8 @@ mod tests {
     #[test]
     fn background_gradient_with_color_trailing() {
         let layer = BackgroundLayer::new(Gradient::linear_to_bottom([
-            ColorStop::new(NamedColor::Red.into()),
-            ColorStop::new(NamedColor::Blue.into()),
+            ColorStop::new(Color::Named(NamedColor::Red)),
+            ColorStop::new(Color::Named(NamedColor::Blue)),
         ]));
         let s = Css::new().background(
             Background::new()

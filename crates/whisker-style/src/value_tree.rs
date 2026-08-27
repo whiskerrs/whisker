@@ -1,11 +1,319 @@
 //! Internal traversal of typed values that contain length-percentage leaves.
 
 use crate::{
-    BackgroundImageValue, BackgroundSizeValue, GradientValue, GridMaxTrackSizingValue,
-    GridMinTrackSizingValue, GridTemplateComponentValue, LengthPercentageAutoValue,
-    LengthPercentageValue, OffsetPathValue, RadialGradientValue, SizeValue, StyleValue,
+    BackgroundImageValue, BackgroundSizeValue, ColorValue, ComponentValue, CustomPropertyReference,
+    GradientValue, GridMaxTrackSizingValue, GridMinTrackSizingValue, GridTemplateComponentValue,
+    LengthPercentageAutoValue, LengthPercentageValue, LengthValue, OffsetPathValue,
+    RadialGradientValue, SizeValue, StyleNumber, StyleValue, TextDecorationValue, TextShadowValue,
     TransformFunctionValue,
 };
+
+/// Expected type of one custom-property reference nested in a composite value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ComponentKind {
+    Color,
+    Length,
+    Number,
+    Angle,
+}
+
+/// Visits every custom-property reference nested outside `calc()`.
+pub(crate) fn visit_component_variables<'a>(
+    value: &'a StyleValue,
+    visit: &mut dyn FnMut(&'a CustomPropertyReference),
+) {
+    match value {
+        StyleValue::BackgroundImages(images) => {
+            for image in images {
+                visit_background_image_components(image, visit);
+            }
+        }
+        StyleValue::Background(background) => {
+            visit_component(&background.color, visit);
+            for layer in &background.layers {
+                visit_background_image_components(&layer.image, visit);
+            }
+        }
+        StyleValue::BackdropFilter(crate::BackdropFilterValue::Blur(radius)) => {
+            visit_component(radius, visit);
+        }
+        StyleValue::Transform(transform) => {
+            for function in &transform.0 {
+                visit_transform_components(function, visit);
+            }
+        }
+        StyleValue::TextShadow(TextShadowValue::Shadow {
+            offset_x,
+            offset_y,
+            blur_radius,
+            color,
+        }) => {
+            visit_component(offset_x, visit);
+            visit_component(offset_y, visit);
+            visit_component(blur_radius, visit);
+            visit_component(color, visit);
+        }
+        StyleValue::TextDecoration(TextDecorationValue {
+            color: Some(color), ..
+        }) => visit_component(color, visit),
+        _ => {}
+    }
+}
+
+/// Clones a value while resolving every non-`calc()` component variable.
+pub(crate) fn try_map_component_variables(
+    value: &StyleValue,
+    resolve: &mut dyn FnMut(&CustomPropertyReference, ComponentKind) -> Option<StyleValue>,
+) -> Option<StyleValue> {
+    let mut mapped = value.clone();
+    match &mut mapped {
+        StyleValue::BackgroundImages(images) => {
+            for image in images {
+                map_background_image_components(image, resolve)?;
+            }
+        }
+        StyleValue::Background(background) => {
+            map_color_component(&mut background.color, resolve)?;
+            for layer in &mut background.layers {
+                map_background_image_components(&mut layer.image, resolve)?;
+            }
+        }
+        StyleValue::BackdropFilter(crate::BackdropFilterValue::Blur(radius)) => {
+            map_length_component(radius, resolve)?;
+        }
+        StyleValue::Transform(transform) => {
+            for function in &mut transform.0 {
+                map_transform_components(function, resolve)?;
+            }
+        }
+        StyleValue::TextShadow(TextShadowValue::Shadow {
+            offset_x,
+            offset_y,
+            blur_radius,
+            color,
+        }) => {
+            map_length_component(offset_x, resolve)?;
+            map_length_component(offset_y, resolve)?;
+            map_length_component(blur_radius, resolve)?;
+            map_color_component(color, resolve)?;
+        }
+        StyleValue::TextDecoration(TextDecorationValue {
+            color: Some(color), ..
+        }) => map_color_component(color, resolve)?,
+        _ => {}
+    }
+    Some(mapped)
+}
+
+fn visit_component<'a, T>(
+    component: &'a ComponentValue<T>,
+    visit: &mut dyn FnMut(&'a CustomPropertyReference),
+) {
+    if let ComponentValue::Variable(reference) = component {
+        visit(reference);
+    }
+}
+
+fn visit_background_image_components<'a>(
+    image: &'a BackgroundImageValue,
+    visit: &mut dyn FnMut(&'a CustomPropertyReference),
+) {
+    let BackgroundImageValue::Gradient(gradient) = image else {
+        return;
+    };
+    match gradient {
+        GradientValue::Linear {
+            angle_degrees,
+            stops,
+        } => {
+            visit_component(angle_degrees, visit);
+            visit_stop_components(stops, visit);
+        }
+        GradientValue::Radial { stops, .. } => visit_stop_components(stops, visit),
+        GradientValue::Conic {
+            from_degrees,
+            stops,
+            ..
+        } => {
+            visit_component(from_degrees, visit);
+            visit_stop_components(stops, visit);
+        }
+    }
+}
+
+fn visit_stop_components<'a>(
+    stops: &'a [crate::GradientStopValue],
+    visit: &mut dyn FnMut(&'a CustomPropertyReference),
+) {
+    for stop in stops {
+        visit_component(&stop.color, visit);
+    }
+}
+
+fn visit_transform_components<'a>(
+    function: &'a TransformFunctionValue,
+    visit: &mut dyn FnMut(&'a CustomPropertyReference),
+) {
+    match function {
+        TransformFunctionValue::TranslateZ(value) => visit_component(value, visit),
+        TransformFunctionValue::Translate3d(_, _, value) => visit_component(value, visit),
+        TransformFunctionValue::Rotate(value)
+        | TransformFunctionValue::RotateX(value)
+        | TransformFunctionValue::RotateY(value)
+        | TransformFunctionValue::RotateZ(value)
+        | TransformFunctionValue::ScaleX(value)
+        | TransformFunctionValue::ScaleY(value)
+        | TransformFunctionValue::SkewX(value)
+        | TransformFunctionValue::SkewY(value) => visit_component(value, visit),
+        TransformFunctionValue::Scale(x, y) | TransformFunctionValue::Skew(x, y) => {
+            visit_component(x, visit);
+            visit_component(y, visit);
+        }
+        _ => {}
+    }
+}
+
+fn map_background_image_components(
+    image: &mut BackgroundImageValue,
+    resolve: &mut dyn FnMut(&CustomPropertyReference, ComponentKind) -> Option<StyleValue>,
+) -> Option<()> {
+    let BackgroundImageValue::Gradient(gradient) = image else {
+        return Some(());
+    };
+    match gradient {
+        GradientValue::Linear {
+            angle_degrees,
+            stops,
+        } => {
+            map_angle_component(angle_degrees, resolve)?;
+            map_stop_components(stops, resolve)?;
+        }
+        GradientValue::Radial { stops, .. } => map_stop_components(stops, resolve)?,
+        GradientValue::Conic {
+            from_degrees,
+            stops,
+            ..
+        } => {
+            map_angle_component(from_degrees, resolve)?;
+            map_stop_components(stops, resolve)?;
+        }
+    }
+    Some(())
+}
+
+fn map_stop_components(
+    stops: &mut [crate::GradientStopValue],
+    resolve: &mut dyn FnMut(&CustomPropertyReference, ComponentKind) -> Option<StyleValue>,
+) -> Option<()> {
+    for stop in stops {
+        map_color_component(&mut stop.color, resolve)?;
+    }
+    Some(())
+}
+
+fn map_transform_components(
+    function: &mut TransformFunctionValue,
+    resolve: &mut dyn FnMut(&CustomPropertyReference, ComponentKind) -> Option<StyleValue>,
+) -> Option<()> {
+    match function {
+        TransformFunctionValue::TranslateZ(value) => map_length_component(value, resolve)?,
+        TransformFunctionValue::Translate3d(_, _, value) => {
+            map_length_component(value, resolve)?;
+        }
+        TransformFunctionValue::Rotate(value)
+        | TransformFunctionValue::RotateX(value)
+        | TransformFunctionValue::RotateY(value)
+        | TransformFunctionValue::RotateZ(value)
+        | TransformFunctionValue::SkewX(value)
+        | TransformFunctionValue::SkewY(value) => map_angle_component(value, resolve)?,
+        TransformFunctionValue::ScaleX(value) | TransformFunctionValue::ScaleY(value) => {
+            map_number_component(value, resolve)?;
+        }
+        TransformFunctionValue::Scale(x, y) => {
+            map_number_component(x, resolve)?;
+            map_number_component(y, resolve)?;
+        }
+        TransformFunctionValue::Skew(x, y) => {
+            map_angle_component(x, resolve)?;
+            map_angle_component(y, resolve)?;
+        }
+        _ => {}
+    }
+    Some(())
+}
+
+fn map_component<T>(
+    component: &mut ComponentValue<T>,
+    kind: ComponentKind,
+    resolve: &mut dyn FnMut(&CustomPropertyReference, ComponentKind) -> Option<StyleValue>,
+    extract: impl FnOnce(StyleValue) -> Option<T>,
+) -> Option<()> {
+    let ComponentValue::Variable(reference) = component else {
+        return Some(());
+    };
+    *component = ComponentValue::Value(extract(resolve(reference, kind)?)?);
+    Some(())
+}
+
+fn map_color_component(
+    component: &mut ComponentValue<ColorValue>,
+    resolve: &mut dyn FnMut(&CustomPropertyReference, ComponentKind) -> Option<StyleValue>,
+) -> Option<()> {
+    map_component(
+        component,
+        ComponentKind::Color,
+        resolve,
+        |value| match value {
+            StyleValue::Color(value) => Some(value),
+            _ => None,
+        },
+    )
+}
+
+fn map_length_component(
+    component: &mut ComponentValue<LengthValue>,
+    resolve: &mut dyn FnMut(&CustomPropertyReference, ComponentKind) -> Option<StyleValue>,
+) -> Option<()> {
+    map_component(
+        component,
+        ComponentKind::Length,
+        resolve,
+        |value| match value {
+            StyleValue::Length(value) => Some(value),
+            _ => None,
+        },
+    )
+}
+
+fn map_number_component(
+    component: &mut ComponentValue<StyleNumber>,
+    resolve: &mut dyn FnMut(&CustomPropertyReference, ComponentKind) -> Option<StyleValue>,
+) -> Option<()> {
+    map_component(
+        component,
+        ComponentKind::Number,
+        resolve,
+        |value| match value {
+            StyleValue::Number(value) => Some(value),
+            _ => None,
+        },
+    )
+}
+
+fn map_angle_component(
+    component: &mut ComponentValue<StyleNumber>,
+    resolve: &mut dyn FnMut(&CustomPropertyReference, ComponentKind) -> Option<StyleValue>,
+) -> Option<()> {
+    map_component(
+        component,
+        ComponentKind::Angle,
+        resolve,
+        |value| match value {
+            StyleValue::Angle(value) => Some(value),
+            _ => None,
+        },
+    )
+}
 
 /// Visits every length-percentage leaf nested in a specified value.
 pub(crate) fn visit_length_percentages<'a>(
@@ -419,9 +727,9 @@ mod tests {
     use crate::{
         BackgroundAttachmentValue, BackgroundBoxValue, BackgroundLayerValue,
         BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundRepeatValue, BackgroundValue,
-        BorderRadiusValue, ColorValue, GradientStopValue, GridRepetitionCountValue,
-        GridTemplateRepetitionValue, GridTemplateValue, GridTrackSizingValue, InsetPathValue,
-        StyleNumber, TransformOriginValue, TransformValue,
+        BorderRadiusValue, ColorValue, CustomPropertyName, GradientStopValue,
+        GridRepetitionCountValue, GridTemplateRepetitionValue, GridTemplateValue,
+        GridTrackSizingValue, InsetPathValue, StyleNumber, TransformOriginValue, TransformValue,
     };
 
     fn lp(value: f32) -> LengthPercentageValue {
@@ -430,7 +738,7 @@ mod tests {
 
     fn stop() -> GradientStopValue {
         GradientStopValue {
-            color: ColorValue::Named("red".into()),
+            color: ColorValue::Named("red".into()).into(),
             position: Some(lp(1.0)),
         }
     }
@@ -440,6 +748,14 @@ mod tests {
             min: GridMinTrackSizingValue::Fixed(lp(1.0)),
             max: GridMaxTrackSizingValue::FitContent(lp(1.0)),
         }
+    }
+
+    fn component_reference<T>(name: &CustomPropertyName) -> ComponentValue<T> {
+        ComponentValue::Variable(CustomPropertyReference::new(name.clone()))
+    }
+
+    fn transparent() -> ColorValue {
+        ColorValue::Named("transparent".into())
     }
 
     fn assert_maps_every_leaf(value: StyleValue, expected: usize) {
@@ -469,12 +785,235 @@ mod tests {
         }
     }
 
+    fn assert_maps_every_component(value: StyleValue, expected: usize) {
+        let mut visited = 0;
+        visit_component_variables(&value, &mut |_| visited += 1);
+        assert_eq!(visited, expected);
+
+        let replacement = |kind| match kind {
+            ComponentKind::Color => StyleValue::Color(transparent()),
+            ComponentKind::Length => StyleValue::Length(LengthValue::Zero),
+            ComponentKind::Number => StyleValue::Number(StyleNumber::new(2.0)),
+            ComponentKind::Angle => StyleValue::Angle(StyleNumber::new(45.0)),
+        };
+        let mapped = try_map_component_variables(&value, &mut |_, kind| Some(replacement(kind)))
+            .expect("every typed component maps");
+        let mut remaining = 0;
+        visit_component_variables(&mapped, &mut |_| remaining += 1);
+        assert_eq!(remaining, 0);
+
+        for failure_index in 0..expected {
+            let mut index = 0;
+            let failed = try_map_component_variables(&value, &mut |_, kind| {
+                let should_fail = index == failure_index;
+                index += 1;
+                (!should_fail).then(|| replacement(kind))
+            });
+            assert!(failed.is_none());
+        }
+    }
+
+    fn variable_stop(name: &CustomPropertyName) -> GradientStopValue {
+        GradientStopValue {
+            color: component_reference(name),
+            position: None,
+        }
+    }
+
+    #[test]
+    fn composite_mapping_propagates_failure_from_every_component_slot() {
+        let name = CustomPropertyName::new("--value").unwrap();
+        assert_maps_every_component(
+            StyleValue::BackgroundImages(vec![
+                BackgroundImageValue::Gradient(GradientValue::Linear {
+                    angle_degrees: component_reference(&name),
+                    stops: vec![variable_stop(&name)],
+                }),
+                BackgroundImageValue::Gradient(GradientValue::Radial {
+                    shape: RadialGradientValue::Circle,
+                    stops: vec![variable_stop(&name)],
+                }),
+                BackgroundImageValue::Gradient(GradientValue::Conic {
+                    from_degrees: component_reference(&name),
+                    center: BackgroundPositionValue {
+                        horizontal: lp(0.0),
+                        vertical: lp(0.0),
+                    },
+                    stops: vec![variable_stop(&name)],
+                }),
+            ]),
+            5,
+        );
+        assert_maps_every_component(
+            StyleValue::Background(BackgroundValue {
+                layers: vec![BackgroundLayerValue {
+                    image: BackgroundImageValue::Gradient(GradientValue::Linear {
+                        angle_degrees: component_reference(&name),
+                        stops: vec![variable_stop(&name)],
+                    }),
+                    position: BackgroundPositionValue {
+                        horizontal: lp(0.0),
+                        vertical: lp(0.0),
+                    },
+                    size: BackgroundSizeValue::Auto,
+                    repeat: BackgroundRepeatValue {
+                        horizontal: BackgroundRepeatModeValue::Repeat,
+                        vertical: BackgroundRepeatModeValue::Repeat,
+                    },
+                    origin: BackgroundBoxValue::Padding,
+                    clip: BackgroundBoxValue::Border,
+                    attachment: BackgroundAttachmentValue::Scroll,
+                }],
+                color: component_reference(&name),
+            }),
+            3,
+        );
+        assert_maps_every_component(
+            StyleValue::BackdropFilter(crate::BackdropFilterValue::Blur(component_reference(
+                &name,
+            ))),
+            1,
+        );
+        assert_maps_every_component(
+            StyleValue::Transform(TransformValue(vec![
+                TransformFunctionValue::TranslateZ(component_reference(&name)),
+                TransformFunctionValue::Translate3d(lp(0.0), lp(0.0), component_reference(&name)),
+                TransformFunctionValue::Rotate(component_reference(&name)),
+                TransformFunctionValue::RotateX(component_reference(&name)),
+                TransformFunctionValue::RotateY(component_reference(&name)),
+                TransformFunctionValue::RotateZ(component_reference(&name)),
+                TransformFunctionValue::ScaleX(component_reference(&name)),
+                TransformFunctionValue::ScaleY(component_reference(&name)),
+                TransformFunctionValue::Scale(
+                    component_reference(&name),
+                    component_reference(&name),
+                ),
+                TransformFunctionValue::Skew(
+                    component_reference(&name),
+                    component_reference(&name),
+                ),
+                TransformFunctionValue::SkewX(component_reference(&name)),
+                TransformFunctionValue::SkewY(component_reference(&name)),
+            ])),
+            14,
+        );
+        assert_maps_every_component(
+            StyleValue::TextShadow(TextShadowValue::Shadow {
+                offset_x: component_reference(&name),
+                offset_y: component_reference(&name),
+                blur_radius: component_reference(&name),
+                color: component_reference(&name),
+            }),
+            4,
+        );
+        assert_maps_every_component(
+            StyleValue::TextDecoration(TextDecorationValue {
+                line: crate::TextDecorationLineValue::Underline,
+                style: crate::TextDecorationStyleValue::Solid,
+                color: Some(component_reference(&name)),
+            }),
+            1,
+        );
+    }
+
+    #[test]
+    fn component_variables_visit_map_and_reject_each_wrong_type() {
+        let name = CustomPropertyName::new("--value").unwrap();
+
+        let mut visited = 0;
+        let mut visit = |_| {
+            visited += 1;
+        };
+        let color_reference = component_reference::<ColorValue>(&name);
+        let color_literal = ComponentValue::Value(transparent());
+        let length_reference = component_reference::<LengthValue>(&name);
+        let length_literal = ComponentValue::Value(LengthValue::Zero);
+        let number_reference = component_reference::<StyleNumber>(&name);
+        let number_literal = ComponentValue::Value(StyleNumber::new(1.0));
+        visit_component(&color_reference, &mut visit);
+        visit_component(&color_literal, &mut visit);
+        visit_component(&length_reference, &mut visit);
+        visit_component(&length_literal, &mut visit);
+        visit_component(&number_reference, &mut visit);
+        visit_component(&number_literal, &mut visit);
+        assert_eq!(visited, 3);
+
+        let mut color = component_reference(&name);
+        assert!(
+            map_color_component(&mut color, &mut |_, kind| {
+                assert_eq!(kind, ComponentKind::Color);
+                Some(StyleValue::Color(transparent()))
+            })
+            .is_some()
+        );
+        assert_eq!(color, ComponentValue::Value(transparent()));
+
+        let mut length = component_reference(&name);
+        assert!(
+            map_length_component(&mut length, &mut |_, kind| {
+                assert_eq!(kind, ComponentKind::Length);
+                Some(StyleValue::Length(LengthValue::Zero))
+            })
+            .is_some()
+        );
+        assert_eq!(length, ComponentValue::Value(LengthValue::Zero));
+
+        let mut number = component_reference(&name);
+        assert!(
+            map_number_component(&mut number, &mut |_, kind| {
+                assert_eq!(kind, ComponentKind::Number);
+                Some(StyleValue::Number(StyleNumber::new(2.0)))
+            })
+            .is_some()
+        );
+        assert_eq!(number, ComponentValue::Value(StyleNumber::new(2.0)));
+
+        let mut angle = component_reference(&name);
+        assert!(
+            map_angle_component(&mut angle, &mut |_, kind| {
+                assert_eq!(kind, ComponentKind::Angle);
+                Some(StyleValue::Angle(StyleNumber::new(45.0)))
+            })
+            .is_some()
+        );
+        assert_eq!(angle, ComponentValue::Value(StyleNumber::new(45.0)));
+
+        let mut literal = ComponentValue::Value(transparent());
+        assert!(map_color_component(&mut literal, &mut |_, _| None).is_some());
+        let mut literal = ComponentValue::Value(LengthValue::Zero);
+        assert!(map_length_component(&mut literal, &mut |_, _| None).is_some());
+        let mut literal = ComponentValue::Value(StyleNumber::new(1.0));
+        assert!(map_number_component(&mut literal, &mut |_, _| None).is_some());
+
+        let wrong_color = StyleValue::Length(LengthValue::Zero);
+        let wrong_scalar = StyleValue::Color(transparent());
+        let mut color = component_reference(&name);
+        assert!(map_color_component(&mut color, &mut |_, _| Some(wrong_color.clone())).is_none());
+        let mut length = component_reference(&name);
+        assert!(
+            map_length_component(&mut length, &mut |_, _| Some(wrong_scalar.clone())).is_none()
+        );
+        let mut number = component_reference(&name);
+        assert!(
+            map_number_component(&mut number, &mut |_, _| Some(wrong_scalar.clone())).is_none()
+        );
+        let mut angle = component_reference(&name);
+        assert!(map_angle_component(&mut angle, &mut |_, _| Some(wrong_scalar.clone())).is_none());
+
+        let mut missing = component_reference::<ColorValue>(&name);
+        assert!(map_color_component(&mut missing, &mut |_, _| None).is_none());
+        let mut missing = component_reference::<LengthValue>(&name);
+        assert!(map_length_component(&mut missing, &mut |_, _| None).is_none());
+        let mut missing = component_reference::<StyleNumber>(&name);
+        assert!(map_number_component(&mut missing, &mut |_, _| None).is_none());
+    }
+
     #[test]
     fn background_walk_covers_images_geometry_and_shorthand_layers() {
         assert_maps_every_leaf(
             StyleValue::BackgroundImages(vec![
                 BackgroundImageValue::Gradient(GradientValue::Linear {
-                    angle_degrees: StyleNumber::new(0.0),
+                    angle_degrees: StyleNumber::new(0.0).into(),
                     stops: vec![stop()],
                 }),
                 BackgroundImageValue::Gradient(GradientValue::Radial {
@@ -482,7 +1021,7 @@ mod tests {
                     stops: vec![stop()],
                 }),
                 BackgroundImageValue::Gradient(GradientValue::Conic {
-                    from_degrees: StyleNumber::new(0.0),
+                    from_degrees: StyleNumber::new(0.0).into(),
                     center: BackgroundPositionValue {
                         horizontal: lp(1.0),
                         vertical: lp(1.0),
@@ -515,7 +1054,7 @@ mod tests {
                     clip: BackgroundBoxValue::Border,
                     attachment: BackgroundAttachmentValue::Scroll,
                 }],
-                color: ColorValue::Named("transparent".into()),
+                color: ColorValue::Named("transparent".into()).into(),
             }),
             6,
         );
@@ -542,7 +1081,11 @@ mod tests {
                 TransformFunctionValue::Translate(lp(1.0), lp(1.0)),
                 TransformFunctionValue::TranslateX(lp(1.0)),
                 TransformFunctionValue::TranslateY(lp(1.0)),
-                TransformFunctionValue::Translate3d(lp(1.0), lp(1.0), crate::LengthValue::Zero),
+                TransformFunctionValue::Translate3d(
+                    lp(1.0),
+                    lp(1.0),
+                    crate::LengthValue::Zero.into(),
+                ),
             ])),
             6,
         );
@@ -666,9 +1209,9 @@ mod tests {
             )]),
             StyleValue::BackgroundImages(vec![BackgroundImageValue::Gradient(
                 GradientValue::Linear {
-                    angle_degrees: StyleNumber::new(0.0),
+                    angle_degrees: StyleNumber::new(0.0).into(),
                     stops: vec![GradientStopValue {
-                        color: ColorValue::Named("red".into()),
+                        color: ColorValue::Named("red".into()).into(),
                         position: None,
                     }],
                 },
@@ -679,7 +1222,7 @@ mod tests {
                 height: None,
             }),
             StyleValue::Transform(TransformValue(vec![TransformFunctionValue::Rotate(
-                StyleNumber::new(45.0),
+                StyleNumber::new(45.0).into(),
             )])),
             StyleValue::OffsetPath(OffsetPathValue::None),
             StyleValue::OffsetPath(OffsetPathValue::Path(Vec::new())),

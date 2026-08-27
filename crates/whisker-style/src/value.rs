@@ -79,6 +79,34 @@ pub enum CalcExpression {
     Div(Box<Self>, Box<Self>),
 }
 
+/// One typed component inside a composite specified value.
+///
+/// Variables are removed during computed-style materialization, before layout
+/// or paint resolution observes the enclosing value.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ComponentValue<T> {
+    /// A literal typed component.
+    Value(T),
+    /// A typed custom-property reference.
+    Variable(CustomPropertyReference),
+}
+
+impl<T> ComponentValue<T> {
+    /// Returns the literal value after custom-property materialization.
+    pub const fn value(&self) -> Option<&T> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Variable(_) => None,
+        }
+    }
+}
+
+impl<T> From<T> for ComponentValue<T> {
+    fn from(value: T) -> Self {
+        Self::Value(value)
+    }
+}
+
 /// A font family selected by application code or by the platform default.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FontFamilyValue {
@@ -381,7 +409,7 @@ pub enum BackgroundImageValue {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GradientStopValue {
     /// Stop color.
-    pub color: ColorValue,
+    pub color: ComponentValue<ColorValue>,
     /// Optional distance along the gradient line.
     pub position: Option<LengthPercentageValue>,
 }
@@ -405,7 +433,7 @@ pub enum GradientValue {
     /// Linear gradient with a clockwise angle from the positive vertical axis.
     Linear {
         /// Direction in degrees.
-        angle_degrees: StyleNumber,
+        angle_degrees: ComponentValue<StyleNumber>,
         /// Ordered stops.
         stops: Vec<GradientStopValue>,
     },
@@ -419,7 +447,7 @@ pub enum GradientValue {
     /// Conic gradient around a configurable center.
     Conic {
         /// Starting angle in degrees.
-        from_degrees: StyleNumber,
+        from_degrees: ComponentValue<StyleNumber>,
         /// Center in the image box.
         center: BackgroundPositionValue,
         /// Ordered stops.
@@ -525,19 +553,19 @@ pub struct BackgroundValue {
     /// Ordered image layers, front to back.
     pub layers: Vec<BackgroundLayerValue>,
     /// The shorthand's resolved specified color, including transparent default.
-    pub color: ColorValue,
+    pub color: ComponentValue<ColorValue>,
 }
 
 /// Supported subset of the CSS `backdrop-filter` property.
 ///
 /// Whisker intentionally supports only `none` and one `blur(<length>)`
 /// function. Color transforms and filter chains remain out of scope.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BackdropFilterValue {
     /// Do not filter the pixels behind the element.
     None,
     /// Apply a Gaussian blur with the specified non-negative radius.
-    Blur(LengthValue),
+    Blur(ComponentValue<LengthValue>),
 }
 
 /// Raster-image scaling algorithm supported by Lynx-compatible styling.
@@ -562,29 +590,33 @@ pub enum TransformFunctionValue {
     /// Vertical translation.
     TranslateY(LengthPercentageValue),
     /// Depth translation.
-    TranslateZ(LengthValue),
+    TranslateZ(ComponentValue<LengthValue>),
     /// Three-axis translation.
-    Translate3d(LengthPercentageValue, LengthPercentageValue, LengthValue),
+    Translate3d(
+        LengthPercentageValue,
+        LengthPercentageValue,
+        ComponentValue<LengthValue>,
+    ),
     /// Rotation around the z axis, in degrees.
-    Rotate(StyleNumber),
+    Rotate(ComponentValue<StyleNumber>),
     /// Rotation around the x axis, in degrees.
-    RotateX(StyleNumber),
+    RotateX(ComponentValue<StyleNumber>),
     /// Rotation around the y axis, in degrees.
-    RotateY(StyleNumber),
+    RotateY(ComponentValue<StyleNumber>),
     /// Rotation around the z axis, in degrees.
-    RotateZ(StyleNumber),
+    RotateZ(ComponentValue<StyleNumber>),
     /// Two-axis scale.
-    Scale(StyleNumber, StyleNumber),
+    Scale(ComponentValue<StyleNumber>, ComponentValue<StyleNumber>),
     /// Horizontal scale.
-    ScaleX(StyleNumber),
+    ScaleX(ComponentValue<StyleNumber>),
     /// Vertical scale.
-    ScaleY(StyleNumber),
+    ScaleY(ComponentValue<StyleNumber>),
     /// Two-axis skew, in degrees.
-    Skew(StyleNumber, StyleNumber),
+    Skew(ComponentValue<StyleNumber>, ComponentValue<StyleNumber>),
     /// Horizontal skew, in degrees.
-    SkewX(StyleNumber),
+    SkewX(ComponentValue<StyleNumber>),
     /// Vertical skew, in degrees.
-    SkewY(StyleNumber),
+    SkewY(ComponentValue<StyleNumber>),
     /// CSS six-value affine matrix.
     Matrix([StyleNumber; 6]),
     /// Column-major four-by-four matrix.
@@ -714,13 +746,13 @@ pub enum TextShadowValue {
     /// Paint one shadow behind the glyphs.
     Shadow {
         /// Horizontal offset.
-        offset_x: LengthValue,
+        offset_x: ComponentValue<LengthValue>,
         /// Vertical offset.
-        offset_y: LengthValue,
+        offset_y: ComponentValue<LengthValue>,
         /// Non-negative blur radius.
-        blur_radius: LengthValue,
+        blur_radius: ComponentValue<LengthValue>,
         /// Shadow color.
-        color: ColorValue,
+        color: ComponentValue<ColorValue>,
     },
 }
 
@@ -758,7 +790,7 @@ pub struct TextDecorationValue {
     /// Selected stroke style.
     pub style: TextDecorationStyleValue,
     /// Explicit decoration color, or the resolved text color when omitted.
-    pub color: Option<ColorValue>,
+    pub color: Option<ComponentValue<ColorValue>>,
 }
 
 /// An owned value in a specified inline-style declaration.
@@ -772,6 +804,8 @@ pub enum StyleValue {
     Integer(i64),
     /// Unitless real number.
     Number(StyleNumber),
+    /// Angle normalized to clockwise degrees for custom-property storage.
+    Angle(StyleNumber),
     /// UTF-8 text whose interpretation is defined by its property schema.
     Text(String),
     /// Length value.
@@ -931,11 +965,10 @@ impl CustomPropertyName {
     /// rejected so invalid names cannot enter computed style.
     pub fn new(name: impl Into<String>) -> Option<Self> {
         let name = name.into();
-        if name.len() <= 2
-            || !name.starts_with("--")
-            || name
-                .chars()
-                .any(|character| character.is_control() || character.is_whitespace())
+        let mut suffix = name.strip_prefix("--")?.chars();
+        let first = suffix.next()?;
+        if !is_custom_property_ident_character(first)
+            || suffix.any(|character| !is_custom_property_ident_character(character))
         {
             return None;
         }
@@ -946,6 +979,13 @@ impl CustomPropertyName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+fn is_custom_property_ident_character(character: char) -> bool {
+    character == '_'
+        || character == '-'
+        || character.is_ascii_alphanumeric()
+        || !character.is_ascii()
 }
 
 /// A whole-value `var()` reference retained until computed-style resolution.
@@ -1062,8 +1102,17 @@ mod tests {
             "--Accent"
         );
         assert!(CustomPropertyName::new("--色").is_some());
+        assert!(CustomPropertyName::new("--accent-2").is_some());
+        assert!(CustomPropertyName::new("--_private").is_some());
         assert!(CustomPropertyName::new("accent").is_none());
         assert!(CustomPropertyName::new("--").is_none());
         assert!(CustomPropertyName::new("--bad name").is_none());
+        assert!(CustomPropertyName::new("--1bad").is_some());
+        assert!(CustomPropertyName::new("--bad:value").is_none());
+
+        let unresolved = ComponentValue::<ColorValue>::Variable(CustomPropertyReference::new(
+            CustomPropertyName::new("--accent").unwrap(),
+        ));
+        assert!(unresolved.value().is_none());
     }
 }

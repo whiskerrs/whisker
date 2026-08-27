@@ -1244,7 +1244,9 @@ mod tests {
         let projected = surface.node(root).unwrap().transform().unwrap();
         assert_eq!(projected.0[12], 20.0);
 
-        let rotated = resolved(TransformFunctionValue::Rotate(StyleNumber::new(90.0)));
+        let rotated = resolved(TransformFunctionValue::Rotate(
+            StyleNumber::new(90.0).into(),
+        ));
         assert!(
             surface
                 .update_computed_style(root, rotated.computed())

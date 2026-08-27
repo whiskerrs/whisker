@@ -730,8 +730,8 @@ fn background_shorthand_preserves_geometry_for_each_url_layer() {
 fn background_gradients_lower_without_host_resources() {
     let stops = || {
         vec![
-            ColorStop::new(NamedColor::Red.into()),
-            ColorStop::new(NamedColor::Blue.into()),
+            ColorStop::new(Color::Named(NamedColor::Red)),
+            ColorStop::new(Color::Named(NamedColor::Blue)),
         ]
     };
     let linear = render_gradient(
@@ -788,7 +788,7 @@ fn background_gradients_lower_without_host_resources() {
     let conic = render_gradient(
         49,
         Gradient::Conic {
-            from: Some(Angle::Turn(0.25)),
+            from: Some(Angle::Turn(0.25).into()),
             at: Some((Percentage(25.0).into(), Percentage(75.0).into())),
             stops: stops(),
         },

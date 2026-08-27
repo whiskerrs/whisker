@@ -582,6 +582,29 @@ machine-readable implementation state lives in
 every registry entry assigned to layout, motion, or one of these protocol
 capabilities without creating a per-property Host dispatch layer.
 
+### Typed custom properties
+
+Whisker supports custom properties as inherited, case-sensitive semantic
+values. A declaration stores a typed `StyleValue`, not an unparsed CSS token
+stream. `var()` references are resolved in Rust before layout, measurement,
+motion sampling, or paint lowering, so custom-property names and unresolved
+references never cross the Host protocol boundary.
+
+Whole-value references, typed fallbacks, forward references, cycle
+invalidation, and `calc()` operands are supported. Typed references may also
+occupy the color, angle, number, and length components of supported composite
+values such as gradients, transforms, text paint, background shorthands, and
+backdrop blur. If substitution produces a value incompatible with the
+consuming grammar slot, that declaration alone becomes invalid at computed
+value time; unrelated declarations and the frame remain valid.
+
+Arbitrary CSS token-stream custom-property values are intentionally outside
+the core. Supporting them would require retaining text, substituting tokens,
+and reparsing each consuming property at runtime, contrary to the typed
+inline-style architecture and footprint goals. A future optional stylesheet
+compatibility layer may translate token streams into the same typed specified
+values before they enter the runtime.
+
 The Host maps these values to platform objects and drawing APIs. It does not
 rerun style resolution. A renderer capability table classifies each feature as
 native, emulated, or unsupported. Required capabilities are validated when the

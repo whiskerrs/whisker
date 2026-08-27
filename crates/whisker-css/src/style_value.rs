@@ -27,7 +27,7 @@ use crate::{
     ImageRendering, Integer, JustifyContent, Length, LengthPercentage, LineHeight, MarginValue,
     MotionPathCommand, Number, OffsetDistance, OffsetPath, OffsetRotate, Overflow, Percentage,
     PointerEvents, Position, PositionKind, Size, Time, Transform, TransformFn, Transition,
-    TransitionPropertyKind, Visibility,
+    TransitionPropertyKind, ValueOrVariable, Visibility,
 };
 use whisker_style::{OverflowValue, VisibilityValue};
 
@@ -194,11 +194,17 @@ impl ToStyleValue for Length {
     }
 }
 
+impl ToStyleValue for Angle {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::Angle(StyleNumber::new(angle_degrees(*self)))
+    }
+}
+
 impl ToStyleValue for BackdropFilter {
     fn to_style_value(&self) -> StyleValue {
         StyleValue::BackdropFilter(match self {
             Self::None => BackdropFilterValue::None,
-            Self::Blur(radius) => BackdropFilterValue::Blur(to_length(*radius)),
+            Self::Blur(radius) => BackdropFilterValue::Blur(to_length_component(radius)),
         })
     }
 }
@@ -840,6 +846,35 @@ fn angle_degrees(value: Angle) -> f32 {
     }
 }
 
+pub(crate) fn to_color_component(
+    value: &ValueOrVariable<Color>,
+) -> whisker_style::ComponentValue<ColorValue> {
+    value.to_component(|value| {
+        let StyleValue::Color(value) = value.to_style_value() else {
+            unreachable!("Color always has a semantic style value")
+        };
+        value
+    })
+}
+
+pub(crate) fn to_angle_component(
+    value: &ValueOrVariable<Angle>,
+) -> whisker_style::ComponentValue<StyleNumber> {
+    value.to_component(|value| StyleNumber::new(angle_degrees(*value)))
+}
+
+pub(crate) fn to_length_component(
+    value: &ValueOrVariable<Length>,
+) -> whisker_style::ComponentValue<LengthValue> {
+    value.to_component(|value| to_length(*value))
+}
+
+pub(crate) fn to_number_component(
+    value: &ValueOrVariable<Number>,
+) -> whisker_style::ComponentValue<StyleNumber> {
+    value.to_component(|value| StyleNumber::new(value.value()))
+}
+
 fn to_transform_function(value: &TransformFn) -> TransformFunctionValue {
     match value {
         TransformFn::Translate(x, y) => {
@@ -847,39 +882,26 @@ fn to_transform_function(value: &TransformFn) -> TransformFunctionValue {
         }
         TransformFn::TranslateX(x) => TransformFunctionValue::TranslateX(to_length_percentage(x)),
         TransformFn::TranslateY(y) => TransformFunctionValue::TranslateY(to_length_percentage(y)),
-        TransformFn::TranslateZ(z) => TransformFunctionValue::TranslateZ(to_length(*z)),
+        TransformFn::TranslateZ(z) => TransformFunctionValue::TranslateZ(to_length_component(z)),
         TransformFn::Translate3d(x, y, z) => TransformFunctionValue::Translate3d(
             to_length_percentage(x),
             to_length_percentage(y),
-            to_length(*z),
+            to_length_component(z),
         ),
-        TransformFn::Rotate(angle) => {
-            TransformFunctionValue::Rotate(StyleNumber::new(angle_degrees(*angle)))
-        }
-        TransformFn::RotateX(angle) => {
-            TransformFunctionValue::RotateX(StyleNumber::new(angle_degrees(*angle)))
-        }
-        TransformFn::RotateY(angle) => {
-            TransformFunctionValue::RotateY(StyleNumber::new(angle_degrees(*angle)))
-        }
-        TransformFn::RotateZ(angle) => {
-            TransformFunctionValue::RotateZ(StyleNumber::new(angle_degrees(*angle)))
-        }
+        TransformFn::Rotate(angle) => TransformFunctionValue::Rotate(to_angle_component(angle)),
+        TransformFn::RotateX(angle) => TransformFunctionValue::RotateX(to_angle_component(angle)),
+        TransformFn::RotateY(angle) => TransformFunctionValue::RotateY(to_angle_component(angle)),
+        TransformFn::RotateZ(angle) => TransformFunctionValue::RotateZ(to_angle_component(angle)),
         TransformFn::Scale(x, y) => {
-            TransformFunctionValue::Scale(StyleNumber::new(*x), StyleNumber::new(*y))
+            TransformFunctionValue::Scale(to_number_component(x), to_number_component(y))
         }
-        TransformFn::ScaleX(x) => TransformFunctionValue::ScaleX(StyleNumber::new(*x)),
-        TransformFn::ScaleY(y) => TransformFunctionValue::ScaleY(StyleNumber::new(*y)),
-        TransformFn::Skew(x, y) => TransformFunctionValue::Skew(
-            StyleNumber::new(angle_degrees(*x)),
-            StyleNumber::new(angle_degrees(*y)),
-        ),
-        TransformFn::SkewX(angle) => {
-            TransformFunctionValue::SkewX(StyleNumber::new(angle_degrees(*angle)))
+        TransformFn::ScaleX(x) => TransformFunctionValue::ScaleX(to_number_component(x)),
+        TransformFn::ScaleY(y) => TransformFunctionValue::ScaleY(to_number_component(y)),
+        TransformFn::Skew(x, y) => {
+            TransformFunctionValue::Skew(to_angle_component(x), to_angle_component(y))
         }
-        TransformFn::SkewY(angle) => {
-            TransformFunctionValue::SkewY(StyleNumber::new(angle_degrees(*angle)))
-        }
+        TransformFn::SkewX(angle) => TransformFunctionValue::SkewX(to_angle_component(angle)),
+        TransformFn::SkewY(angle) => TransformFunctionValue::SkewY(to_angle_component(angle)),
         TransformFn::Matrix(matrix) => TransformFunctionValue::Matrix(matrix.map(StyleNumber::new)),
         TransformFn::Matrix3d(matrix) => {
             TransformFunctionValue::Matrix3d(matrix.map(StyleNumber::new))

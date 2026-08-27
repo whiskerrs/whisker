@@ -843,7 +843,7 @@ fn compatible_transform_transition_resolves_percentages_after_layout() {
     let transformed = |translate, scale: Option<f32>| {
         let mut functions = vec![TransformFn::TranslateX(percent(translate).into())];
         if let Some(scale) = scale {
-            functions.push(TransformFn::Scale(scale, scale));
+            functions.push(TransformFn::Scale(scale.into(), scale.into()));
         }
         Css::new()
             .width(px(40))
@@ -1207,7 +1207,7 @@ fn incompatible_transform_transition_uses_matrix_decomposition() {
     };
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
-            render! { view(style: transformed(TransformFn::Rotate(0.deg()))) }
+            render! { view(style: transformed(TransformFn::Rotate(0.deg().into()))) }
         });
         set_root(root);
         root
@@ -1265,7 +1265,7 @@ fn incompatible_keyframe_transforms_use_matrix_decomposition_after_layout() {
     );
     let move_across = Keyframes::builder()
         .named("move-across")
-        .from(Css::new().transform(TransformFn::Rotate(0.deg())))
+        .from(Css::new().transform(TransformFn::Rotate(0.deg().into())))
         .to(Css::new().transform(TransformFn::TranslateX(percent(100).into())))
         .build()
         .unwrap();
@@ -1445,7 +1445,7 @@ fn render_transform_and_origin_reach_the_frame_sink_after_layout() {
     let style = Css::new()
         .width(px(40))
         .height(px(20))
-        .transform(TransformFn::Scale(2.0, 2.0))
+        .transform(TransformFn::Scale(2.0.into(), 2.0.into()))
         .transform_origin(Position::Coords(percent(25).into(), percent(50).into()));
     let root_element = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| render! { view(style: style) });
@@ -1483,7 +1483,7 @@ fn render_transform_and_origin_reach_the_frame_sink_after_layout() {
     let resized = Css::new()
         .width(px(80))
         .height(px(20))
-        .transform(TransformFn::Scale(2.0, 2.0))
+        .transform(TransformFn::Scale(2.0.into(), 2.0.into()))
         .transform_origin(Position::Coords(percent(25).into(), percent(50).into()));
     with_installed_renderer(surface.renderer(), || {
         whisker::apply_style(root_element, resized)
@@ -1599,7 +1599,7 @@ fn render_lynx_perspective_is_lowered_into_the_current_node_transform() {
         .width(px(40))
         .height(px(20))
         .perspective(px(100))
-        .transform(TransformFn::RotateY(Angle::Deg(60.0)))
+        .transform(TransformFn::RotateY(Angle::Deg(60.0).into()))
         .transform_origin(Position::Coords(px(0).into(), px(0).into()));
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| render! { view(style: style) });
@@ -2500,4 +2500,79 @@ fn inherited_custom_property_reaches_taffy_and_frame_protocol() {
                 && geometry.border_box.width == 72.0
                 && geometry.border_box.height == 20.0
     )));
+}
+
+#[test]
+fn inherited_custom_property_update_drives_descendant_layout_transition() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(32).expect("test surface"),
+        StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+    );
+    let card_width = CustomPropertyName::new("--card-width").unwrap();
+    let transition = || {
+        Transition::new(TransitionPropertyKind::name("width"))
+            .duration(100.ms())
+            .timing(EasingFunction::Linear)
+    };
+    let root = with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(200))
+                    .height(px(100))
+                    .custom_property(card_width.clone(), Size::from(px(40)))) {
+                    view(style: Css::new()
+                        .property_variable(StyleProperty::Width, card_width.clone())
+                        .height(px(20))
+                        .transition(transition()))
+                }
+            }
+        });
+        set_root(root);
+        root
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(200.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("initial custom-property frame");
+
+    with_installed_renderer(surface.renderer(), || {
+        whisker::apply_style(
+            root,
+            Css::new()
+                .width(px(200))
+                .height(px(100))
+                .custom_property(card_width, Size::from(px(80))),
+        );
+    });
+    assert!(surface.has_active_motion());
+    assert!(surface.step_motion(3_000.0).expect("start transition"));
+    assert!(surface.step_motion(3_050.0).expect("sample midpoint"));
+    surface
+        .render_frame(
+            LayoutSize::new(200.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("midpoint custom-property frame");
+    assert!(renderer.frames()[1].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetLayout { geometry, .. } if (geometry.border_box.width - 60.0).abs() < 0.0001)
+    ));
+    assert!(!surface.step_motion(3_100.0).expect("finish transition"));
+
+    with_installed_renderer(surface.renderer(), || owner.dispose());
 }

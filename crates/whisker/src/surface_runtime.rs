@@ -1088,6 +1088,23 @@ struct RgbaColor {
     alpha: f32,
 }
 
+#[derive(Clone)]
+struct MotionSnapshot {
+    element: Element,
+    resolved: ResolvedNodeStyle,
+    initialized: bool,
+    layout_targets: HashMap<StyleProperty, AnimatedPropertyValue>,
+    layout_current: HashMap<StyleProperty, AnimatedPropertyValue>,
+    opacity_target: f32,
+    opacity_current: f32,
+    box_paint: BoxPaint,
+    current_colors: HashMap<StyleProperty, RgbaColor>,
+    transform_target: ComputedTransformStyle,
+    transform_current: ComputedTransformStyle,
+    text_color_target: Option<RgbaColor>,
+    text_color_current: Option<RgbaColor>,
+}
+
 impl<Value> ActiveTransition<Value> {
     fn sample_progress(&mut self, timestamp_ms: f64) -> TransitionSample {
         let start_ms = *self.start_ms.get_or_insert(timestamp_ms);
@@ -3111,6 +3128,84 @@ impl BindingState {
         Ok(elements)
     }
 
+    fn motion_snapshots(&self, root: Element) -> Result<Vec<MotionSnapshot>, RuntimeBindingError> {
+        self.element_subtree(root)?
+            .into_iter()
+            .map(|element| {
+                let entry = self.element(element)?;
+                let resolved = entry
+                    .resolved
+                    .as_ref()
+                    .ok_or(RuntimeBindingError::UnknownElement { element })?;
+                let computed = resolved.computed();
+                let opacity_target = computed.paint().opacity.get();
+                let opacity_current = entry
+                    .opacity_transition
+                    .as_deref()
+                    .map_or(opacity_target, |transition| transition.current);
+                let box_paint = lower_paint(computed.paint(), computed.layout()).box_paint;
+                let current_colors = entry
+                    .color_transitions
+                    .as_deref()
+                    .into_iter()
+                    .flat_map(|transitions| transitions.0.iter())
+                    .map(|(property, transition)| (*property, transition.current))
+                    .collect();
+                let transform_target = computed.paint().transform.clone();
+                let transform_current = entry.transform_transition.as_deref().map_or_else(
+                    || transform_target.clone(),
+                    |transition| {
+                        entry
+                            .node
+                            .and_then(|node| self.surface.node(node))
+                            .and_then(|node| node.layout())
+                            .and_then(|layout| {
+                                interpolate_transform_style(
+                                    &transition.from,
+                                    &transition.to,
+                                    transition.current_progress,
+                                    layout.border_box.width,
+                                    layout.border_box.height,
+                                )
+                            })
+                            .unwrap_or_else(|| transition.current.clone())
+                    },
+                );
+                let layout_targets = layout_animation_values(resolved);
+                let layout_current = entry
+                    .layout_transitions
+                    .as_deref()
+                    .into_iter()
+                    .flat_map(|transitions| transitions.0.iter())
+                    .map(|(property, transition)| (*property, transition.current.clone()))
+                    .collect();
+                let text_color_target =
+                    RgbaColor::from_paint(&lower_color(computed.inherited_text().color()));
+                let text_color_current = text_color_target.map(|target| {
+                    entry
+                        .text_color_transition
+                        .as_deref()
+                        .map_or(target, |transition| transition.current)
+                });
+                Ok(MotionSnapshot {
+                    element,
+                    resolved: resolved.clone(),
+                    initialized: entry.style_initialized,
+                    layout_targets,
+                    layout_current,
+                    opacity_target,
+                    opacity_current,
+                    box_paint,
+                    current_colors,
+                    transform_target,
+                    transform_current,
+                    text_color_target,
+                    text_color_current,
+                })
+            })
+            .collect()
+    }
+
     fn refresh_text(&mut self, text_element: Element) -> Result<(), RuntimeBindingError> {
         if !self.element(text_element)?.kind.accepts_plain_text() {
             return Err(RuntimeBindingError::InvalidRawTextParent {
@@ -3585,118 +3680,56 @@ impl DynRenderer for SurfaceRuntime {
                 return Ok(());
             }
             let previous = entry.specified.clone();
-            let previous_target = entry
-                .resolved
-                .as_ref()
-                .map_or(1.0, |style| style.computed().paint().opacity.get());
-            let previous_current = entry
-                .opacity_transition
-                .as_deref()
-                .map_or(previous_target, |transition| transition.current);
-            let previous_paint = entry
-                .resolved
-                .as_ref()
-                .map(|resolved| {
-                    let computed = resolved.computed();
-                    lower_paint(computed.paint(), computed.layout()).box_paint
-                })
-                .unwrap_or_default();
-            let previous_current_colors = entry
-                .color_transitions
-                .as_deref()
-                .into_iter()
-                .flat_map(|transitions| transitions.0.iter())
-                .map(|(property, transition)| (*property, transition.current))
-                .collect::<HashMap<_, _>>();
-            let previous_transform = entry
-                .resolved
-                .as_ref()
-                .map(|resolved| resolved.computed().paint().transform.clone())
-                .unwrap_or_default();
-            let previous_layout_targets = entry
-                .resolved
-                .as_ref()
-                .map(layout_animation_values)
-                .unwrap_or_default();
-            let previous_layout_current = entry
-                .layout_transitions
-                .as_deref()
-                .into_iter()
-                .flat_map(|transitions| transitions.0.iter())
-                .map(|(property, transition)| (*property, transition.current.clone()))
-                .collect::<HashMap<_, _>>();
-            let previous_current_transform = entry.transform_transition.as_deref().map_or_else(
-                || previous_transform.clone(),
-                |transition| {
-                    entry
-                        .node
-                        .and_then(|node| state.surface.node(node))
-                        .and_then(|node| node.layout())
-                        .and_then(|layout| {
-                            interpolate_transform_style(
-                                &transition.from,
-                                &transition.to,
-                                transition.current_progress,
-                                layout.border_box.width,
-                                layout.border_box.height,
-                            )
-                        })
-                        .unwrap_or_else(|| transition.current.clone())
-                },
-            );
-            let was_initialized = entry.style_initialized;
-            let text_color_snapshots = state
-                .element_subtree(handle)?
-                .into_iter()
-                .filter_map(|element| {
-                    let entry = state.elements.get(&element)?;
-                    let resolved = entry.resolved.as_ref()?;
-                    let target = RgbaColor::from_paint(&lower_color(
-                        resolved.computed().inherited_text().color(),
-                    ))?;
-                    let current = entry
-                        .text_color_transition
-                        .as_deref()
-                        .map_or(target, |transition| transition.current);
-                    Some((element, target, current, entry.style_initialized))
-                })
-                .collect::<Vec<_>>();
+            let snapshots = state.motion_snapshots(handle)?;
             state.element_mut(handle)?.specified = style.clone();
             if let Err(error) = state.apply_subtree(handle) {
                 state.element_mut(handle)?.specified = previous;
                 return Err(error);
             }
-            state.configure_layout_transitions(
-                handle,
-                &previous_layout_targets,
-                &previous_layout_current,
-                was_initialized,
-            )?;
-            state.configure_keyframe_animations(handle)?;
-            state.configure_opacity_transition(
-                handle,
-                previous_target,
-                previous_current,
-                was_initialized,
-            )?;
-            state.configure_color_transitions(
-                handle,
-                &previous_paint,
-                &previous_current_colors,
-                was_initialized,
-            )?;
-            state.configure_transform_transition(
-                handle,
-                &previous_transform,
-                &previous_current_transform,
-                was_initialized,
-            )?;
+            for snapshot in &snapshots {
+                state.configure_layout_transitions(
+                    snapshot.element,
+                    &snapshot.layout_targets,
+                    &snapshot.layout_current,
+                    snapshot.initialized,
+                )?;
+                if state.element(snapshot.element)?.resolved.as_ref() != Some(&snapshot.resolved) {
+                    state.configure_keyframe_animations(snapshot.element)?;
+                }
+                state.configure_opacity_transition(
+                    snapshot.element,
+                    snapshot.opacity_target,
+                    snapshot.opacity_current,
+                    snapshot.initialized,
+                )?;
+                state.configure_color_transitions(
+                    snapshot.element,
+                    &snapshot.box_paint,
+                    &snapshot.current_colors,
+                    snapshot.initialized,
+                )?;
+                state.configure_transform_transition(
+                    snapshot.element,
+                    &snapshot.transform_target,
+                    &snapshot.transform_current,
+                    snapshot.initialized,
+                )?;
+            }
             {
                 let state = &mut *state;
                 BindingState::reapply_active_transitions(&state.elements, &mut state.surface)?;
             }
-            for (element, target, current, initialized) in text_color_snapshots {
-                state.configure_text_color_transition(element, target, current, initialized)?;
+            for snapshot in snapshots {
+                if let (Some(target), Some(current)) =
+                    (snapshot.text_color_target, snapshot.text_color_current)
+                {
+                    state.configure_text_color_transition(
+                        snapshot.element,
+                        target,
+                        current,
+                        snapshot.initialized,
+                    )?;
+                }
             }
             let text_updates = BindingState::active_text_color_updates(&state.elements);
             BindingState::apply_text_color_updates(text_updates, &mut state.surface)?;
