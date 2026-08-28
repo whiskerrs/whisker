@@ -39,7 +39,8 @@ mod host_conformance_tests;
 use element::DesktopElementRegistry;
 pub use element::{
     BuiltInElementModule, DesktopElementFactory, DesktopModuleDefinition, DesktopNativeElement,
-    DesktopNativeEvent, DesktopViewDefinition, DesktopViewImplementation,
+    DesktopNativeEvent, DesktopRaster, DesktopRasterError, DesktopViewDefinition,
+    DesktopViewImplementation,
 };
 pub use input::{
     DesktopMouseButton, DesktopPointerAdapter, DesktopPointerEvent, DesktopPointerPhase,

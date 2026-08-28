@@ -60,6 +60,7 @@ type DesktopPropSetter<T> = Arc<dyn Fn(&mut T, &WhiskerValue) + Send + Sync>;
 type DesktopPropClearer<T> = Arc<dyn Fn(&mut T) + Send + Sync>;
 type DesktopCommandHandler<T> =
     Arc<dyn Fn(&mut T, &WhiskerValue) -> Option<DesktopNativeEvent> + Send + Sync>;
+type DesktopRasterizer<T> = Arc<dyn Fn(&T, u32, u32) -> Option<DesktopRaster> + Send + Sync>;
 
 struct DesktopPropBinding<T> {
     set: DesktopPropSetter<T>,
@@ -82,6 +83,7 @@ pub struct DesktopViewDefinition<T> {
     properties: HashMap<String, DesktopPropBinding<T>>,
     events: HashSet<String>,
     commands: HashMap<String, DesktopCommandHandler<T>>,
+    rasterizer: Option<DesktopRasterizer<T>>,
     plain_text: bool,
 }
 
@@ -97,6 +99,7 @@ where
             properties: HashMap::new(),
             events: HashSet::new(),
             commands: HashMap::new(),
+            rasterizer: None,
             plain_text: false,
         }
     }
@@ -163,6 +166,20 @@ where
         self
     }
 
+    /// Declares module-owned raster content painted inside the element's
+    /// computed content box.
+    pub fn raster(
+        mut self,
+        rasterize: impl Fn(&T, u32, u32) -> Option<DesktopRaster> + Send + Sync + 'static,
+    ) -> Self {
+        assert!(
+            self.rasterizer.replace(Arc::new(rasterize)).is_none(),
+            "duplicate Desktop raster binding for {}",
+            self.name,
+        );
+        self
+    }
+
     fn bind(&self, registration: &ElementRegistration) -> Result<NativeConstructor, String> {
         if registration.child_policy.accepts_plain_text() != self.plain_text {
             return Err(format!(
@@ -217,6 +234,7 @@ where
             create: Arc::clone(&self.create),
             properties,
             commands,
+            rasterizer: self.rasterizer.clone(),
         });
         Ok(Arc::new(move || {
             Box::new(DeclaredDesktopElement {
@@ -242,6 +260,7 @@ struct BoundDesktopViewDefinition<T> {
     create: Arc<dyn Fn() -> T + Send + Sync>,
     properties: HashMap<PropertyId, DesktopPropBinding<T>>,
     commands: HashMap<CommandId, DesktopCommandHandler<T>>,
+    rasterizer: Option<DesktopRasterizer<T>>,
 }
 
 struct DeclaredDesktopElement<T> {
@@ -288,6 +307,17 @@ where
             .get(&command)
             .expect("Desktop Host validates command IDs");
         handler(&mut self.state, arguments)
+    }
+
+    fn rasterize(&self, width: u32, height: u32) -> Option<DesktopRaster> {
+        self.definition
+            .rasterizer
+            .as_ref()
+            .and_then(|rasterize| rasterize(&self.state, width, height))
+    }
+
+    fn has_raster_content(&self) -> bool {
+        self.definition.rasterizer.is_some()
     }
 }
 
@@ -453,6 +483,103 @@ pub struct DesktopNativeEvent {
     pub detail: WhiskerValue,
 }
 
+/// RGBA8 content produced by a module-owned Desktop element.
+///
+/// The module keeps vector decoding or native drawing dependencies on its own
+/// side of the Host boundary. The shared Desktop renderer only uploads this
+/// platform-neutral pixel buffer and composites it with common Whisker layout,
+/// clipping, transforms, and opacity.
+#[derive(Clone, Debug)]
+pub struct DesktopRaster {
+    generation: u64,
+    width: u32,
+    height: u32,
+    pixels: Arc<[u8]>,
+}
+
+impl DesktopRaster {
+    /// Creates a validated straight-alpha RGBA8 raster.
+    pub fn new(
+        generation: u64,
+        width: u32,
+        height: u32,
+        pixels: impl Into<Arc<[u8]>>,
+    ) -> Result<Self, DesktopRasterError> {
+        let pixels = pixels.into();
+        let expected = width
+            .checked_mul(height)
+            .and_then(|count| count.checked_mul(4))
+            .map(|count| count as usize)
+            .ok_or(DesktopRasterError::DimensionsOverflow)?;
+        if width == 0 || height == 0 {
+            return Err(DesktopRasterError::EmptyDimensions);
+        }
+        if pixels.len() != expected {
+            return Err(DesktopRasterError::ByteLength {
+                actual: pixels.len(),
+                expected,
+            });
+        }
+        Ok(Self {
+            generation,
+            width,
+            height,
+            pixels,
+        })
+    }
+
+    /// Module-defined generation used by the GPU upload cache.
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Physical pixel width.
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Physical pixel height.
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Straight-alpha RGBA8 bytes in row-major order.
+    pub fn pixels(&self) -> &[u8] {
+        &self.pixels
+    }
+}
+
+/// Invalid module-owned Desktop raster data.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DesktopRasterError {
+    /// Width or height was zero.
+    EmptyDimensions,
+    /// Computing `width * height * 4` overflowed.
+    DimensionsOverflow,
+    /// The RGBA8 payload did not match its dimensions.
+    ByteLength {
+        /// Received byte count.
+        actual: usize,
+        /// Required byte count.
+        expected: usize,
+    },
+}
+
+impl fmt::Display for DesktopRasterError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyDimensions => formatter.write_str("Desktop raster dimensions are empty"),
+            Self::DimensionsOverflow => formatter.write_str("Desktop raster dimensions overflow"),
+            Self::ByteLength { actual, expected } => write!(
+                formatter,
+                "Desktop raster has {actual} bytes, expected {expected}",
+            ),
+        }
+    }
+}
+
+impl Error for DesktopRasterError {}
+
 /// Target definition implemented beside an external element's Rust schema.
 ///
 /// The schema remains the source of truth for valid IDs and value shapes; the
@@ -470,6 +597,20 @@ pub trait DesktopNativeElement: fmt::Debug + 'static {
         command: CommandId,
         arguments: &WhiskerValue,
     ) -> Option<DesktopNativeEvent>;
+
+    /// Produces element-owned pixels for the requested physical bounds.
+    ///
+    /// Implementations should cache by `(generation, width, height)` and may
+    /// return `None` for empty or temporarily unavailable content. The default
+    /// keeps state-only custom elements allocation-free.
+    fn rasterize(&self, _width: u32, _height: u32) -> Option<DesktopRaster> {
+        None
+    }
+
+    /// Whether this element contributes raster content at all.
+    fn has_raster_content(&self) -> bool {
+        false
+    }
 }
 
 /// Built-in element implementations contributed by the Desktop platform.
@@ -511,6 +652,16 @@ impl DesktopElementContent {
             Self::Text(content) => content.as_ref(),
             Self::Native { text, .. } => text.as_ref(),
             Self::Empty | Self::ScrollContainer => None,
+        }
+    }
+
+    pub(crate) fn rasterizer(&self) -> Option<&dyn DesktopNativeElement> {
+        match self {
+            Self::Native { implementation, .. } if implementation.has_raster_content() => {
+                Some(implementation.as_ref())
+            }
+            Self::Native { .. } => None,
+            Self::Empty | Self::Text(_) | Self::ScrollContainer => None,
         }
     }
 
@@ -849,6 +1000,25 @@ mod tests {
     use whisker_style::StyleEnvironment;
 
     use super::*;
+
+    #[test]
+    fn desktop_raster_validates_dimensions_and_rgba_length() {
+        assert_eq!(
+            DesktopRaster::new(1, 0, 1, Vec::<u8>::new()).unwrap_err(),
+            DesktopRasterError::EmptyDimensions,
+        );
+        assert_eq!(
+            DesktopRaster::new(1, 2, 2, vec![0; 15]).unwrap_err(),
+            DesktopRasterError::ByteLength {
+                actual: 15,
+                expected: 16,
+            },
+        );
+        let raster = DesktopRaster::new(7, 2, 2, vec![255; 16]).unwrap();
+        assert_eq!(raster.generation(), 7);
+        assert_eq!((raster.width(), raster.height()), (2, 2));
+        assert_eq!(raster.pixels(), &[255; 16]);
+    }
 
     #[test]
     fn built_in_module_binds_view_text_and_scroll_through_one_registry() {

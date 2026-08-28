@@ -53,8 +53,7 @@ pub struct Compiled {
     /// emitted unconditionally, and at minimum every successful
     /// compile contains that opcode plus the trailing end marker.
     ///
-    /// Pass straight through `WhiskerValue::Bytes` (or, in the
-    /// current transport, the base64-encoded `display_list:` prop)
+    /// Pass through the current base64-encoded `display_list:` Prop
     /// to the platform replayer. The bytes carry no input-side
     /// references — they're freely copyable across the FFI
     /// boundary and don't depend on `svg_xml` staying alive.

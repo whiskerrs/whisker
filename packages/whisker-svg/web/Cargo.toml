@@ -1,0 +1,13 @@
+[package]
+name = "whisker-svg-web-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Web Host implementation for whisker-svg."
+
+[dependencies]
+base64 = { workspace = true }
+whisker-svg = { workspace = true }
+whisker-web = { workspace = true }

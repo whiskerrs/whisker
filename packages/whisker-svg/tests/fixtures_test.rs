@@ -5,8 +5,7 @@
 //! [`TraceVisitor`], and asserts the trace matches the matching
 //! `*.trace.txt`. Also asserts the produced bytes match
 //! `*.bin` — those byte files are the canonical cross-platform
-//! fixtures consumed by the iOS / Android replayer tests in
-//! `packages/whisker-svg/`.
+//! fixtures consumed by each Host replayer.
 //!
 //! ## Updating goldens
 //!

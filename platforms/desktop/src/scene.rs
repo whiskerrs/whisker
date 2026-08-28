@@ -305,6 +305,15 @@ pub(crate) enum PaintCommand<'a> {
         transform: Transform,
         opacity: f32,
     },
+    Raster {
+        node: NodeId,
+        rect: LayoutRect,
+        rasterizer: &'a dyn crate::DesktopNativeElement,
+        clip: LogicalClip,
+        shape_clips: ShapeClipStack,
+        transform: Transform,
+        opacity: f32,
+    },
 }
 
 #[derive(Debug)]
@@ -565,6 +574,17 @@ impl DesktopScene {
                 rect: content_rect,
                 content,
                 clip: descendant_clip.intersect(content_rect, true, true),
+                shape_clips: descendant_shape_clips.clone(),
+                transform,
+                opacity,
+            });
+        }
+        if visible && let Some(rasterizer) = node.content.rasterizer() {
+            commands.push(PaintCommand::Raster {
+                node: id,
+                rect: content,
+                rasterizer,
+                clip: descendant_clip.intersect(content, true, true),
                 shape_clips: descendant_shape_clips.clone(),
                 transform,
                 opacity,

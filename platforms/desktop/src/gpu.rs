@@ -1499,6 +1499,7 @@ enum DrawCommand {
         shape_clips: ShapeClipStack,
         gradient: Option<LinearGradientDraw>,
         resource: Option<ResourceId>,
+        native: Option<NodeId>,
         pixelated: bool,
     },
     Text {
@@ -1919,8 +1920,61 @@ fn push_quad_draw(
         shape_clips: shape_clips.clone(),
         gradient,
         resource,
+        native: None,
         pixelated,
     });
+}
+
+struct NativeRasterDraw<'a> {
+    node: NodeId,
+    rect: LayoutRect,
+    transform: Transform,
+    clip: LogicalClip,
+    shape_clips: &'a ShapeClipStack,
+    opacity: f32,
+}
+
+fn push_native_raster_draw(
+    vertices: &mut Vec<BoxVertex>,
+    draws: &mut Vec<DrawCommand>,
+    draw: NativeRasterDraw<'_>,
+) {
+    let NativeRasterDraw {
+        node,
+        rect,
+        transform,
+        clip,
+        shape_clips,
+        opacity,
+    } = draw;
+    let paint = whisker_protocol::BoxPaint::default();
+    let primitive = background_gradient_primitive(rect, rect, &paint, PaintBox::Border);
+    let start = vertices.len() as u32;
+    push_transformed_quad(vertices, primitive, transform);
+    draws.push(DrawCommand::Quads {
+        vertices: start..vertices.len() as u32,
+        clip,
+        shape_clips: shape_clips.clone(),
+        gradient: Some(LinearGradientDraw {
+            start_end: [opacity, 0.0, 0.0, 0.0],
+            tile_rect: [rect.x, rect.y, rect.width, rect.height],
+            tile_stride: [rect.width, rect.height, 0.0, 0.0],
+            tile_domain: [rect.x, rect.y, rect.width, rect.height],
+            stops: Vec::new(),
+            kind: 4,
+            geometry_flags: 3,
+        }),
+        resource: None,
+        native: Some(node),
+        pixelated: false,
+    });
+}
+
+struct NativeRasterCache {
+    generation: u64,
+    width: u32,
+    height: u32,
+    image: GpuImageResource,
 }
 
 pub(crate) struct GpuRenderer {
@@ -1934,6 +1988,7 @@ pub(crate) struct GpuRenderer {
     text_atlas: TextAtlas,
     text_renderers: HashMap<NodeId, TextRenderer>,
     image_resources: HashMap<ResourceId, GpuImageResource>,
+    native_rasters: HashMap<NodeId, NativeRasterCache>,
 }
 
 impl GpuRenderer {
@@ -2002,6 +2057,7 @@ impl GpuRenderer {
             text_atlas,
             text_renderers: HashMap::new(),
             image_resources: HashMap::new(),
+            native_rasters: HashMap::new(),
         })
     }
 
@@ -2261,8 +2317,71 @@ impl GpuRenderer {
                     }
                     draws.push(DrawCommand::Text { index, node: *node })
                 }
+                PaintCommand::Raster {
+                    node,
+                    rect,
+                    rasterizer,
+                    clip,
+                    shape_clips,
+                    transform,
+                    opacity,
+                } => {
+                    let width = (rect.width * scale).ceil().max(1.0) as u32;
+                    let height = (rect.height * scale).ceil().max(1.0) as u32;
+                    let Some(raster) = rasterizer.rasterize(width, height) else {
+                        self.native_rasters.remove(node);
+                        continue;
+                    };
+                    let stale = self.native_rasters.get(node).is_none_or(|cached| {
+                        cached.generation != raster.generation()
+                            || cached.width != raster.width()
+                            || cached.height != raster.height()
+                    });
+                    if stale {
+                        let upload = RasterResource::new(
+                            raster.width(),
+                            raster.height(),
+                            raster.pixels().to_vec(),
+                        )?;
+                        let image = self
+                            .box_gpu
+                            .upload_image(&self.device, &self.queue, &upload);
+                        self.native_rasters.insert(
+                            *node,
+                            NativeRasterCache {
+                                generation: raster.generation(),
+                                width: raster.width(),
+                                height: raster.height(),
+                                image,
+                            },
+                        );
+                    }
+                    push_native_raster_draw(
+                        &mut vertices,
+                        &mut draws,
+                        NativeRasterDraw {
+                            node: *node,
+                            rect: *rect,
+                            transform: *transform,
+                            clip: *clip,
+                            shape_clips,
+                            opacity: *opacity,
+                        },
+                    );
+                }
             }
         }
+        let live_native_nodes = draws
+            .iter()
+            .filter_map(|draw| match draw {
+                DrawCommand::Quads {
+                    native: Some(node), ..
+                } => Some(*node),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        self.native_rasters
+            .retain(|node, _| live_native_nodes.contains(node));
         let live_text_nodes = draws
             .iter()
             .filter_map(|draw| match draw {
@@ -2614,6 +2733,7 @@ impl GpuRenderer {
                     vertices,
                     clip,
                     resource,
+                    native,
                     pixelated,
                     ..
                 } => {
@@ -2642,8 +2762,11 @@ impl GpuRenderer {
                     pass.set_pipeline(&self.box_gpu.pipeline);
                     pass.set_bind_group(0, &self.box_gpu.viewport_bind_group, &[]);
                     pass.set_bind_group(1, &shape_clip_bind_group, &[]);
-                    let image = resource
-                        .and_then(|resource| self.image_resources.get(&resource))
+                    let image = native
+                        .and_then(|node| self.native_rasters.get(&node).map(|entry| &entry.image))
+                        .or_else(|| {
+                            resource.and_then(|resource| self.image_resources.get(&resource))
+                        })
                         .unwrap_or(&self.box_gpu.fallback_image);
                     pass.set_bind_group(
                         2,
@@ -2739,7 +2862,11 @@ impl GpuRenderer {
         let bottom = (clip.bottom.unwrap_or(self.config.height as f32 / scale) * scale)
             .ceil()
             .clamp(0.0, self.config.height as f32) as u32;
-        (right > left && bottom > top).then_some((left, top, right - left, bottom - top))
+        if right > left && bottom > top {
+            Some((left, top, right - left, bottom - top))
+        } else {
+            None
+        }
     }
 }
 
@@ -2961,6 +3088,7 @@ pub(crate) async fn render_clipped_box_primitives_with_backdrops_offscreen(
             shape_clips: shape_clips.clone(),
             gradient: gradient.clone(),
             resource: *resource,
+            native: None,
             pixelated: *pixelated,
         });
     }
