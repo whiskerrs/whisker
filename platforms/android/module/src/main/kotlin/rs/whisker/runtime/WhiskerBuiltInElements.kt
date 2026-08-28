@@ -101,7 +101,7 @@ public class BuiltInElementModule : Module() {
         Name("whisker.ui")
         View(WhiskerBuiltInElements.view())
         View(WhiskerBuiltInElements.text())
-        View(WhiskerBuiltInElements.scrollView())
+        View(WhiskerBuiltInElements.scrollView()) { Events("scroll") }
     }
 }
 

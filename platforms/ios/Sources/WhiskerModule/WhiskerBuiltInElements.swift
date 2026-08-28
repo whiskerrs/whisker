@@ -13,8 +13,9 @@ public class WhiskerContainerView: UIView {
 }
 
 /** Vertical native scroll container with a dedicated multi-child content view. */
-public final class WhiskerScrollContainerView: UIScrollView {
+public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegate, WhiskerEventSource {
     public let contentView = WhiskerContainerView(frame: .zero)
+    private var eventSink: ((String, WhiskerValue) -> Void)?
 
     public override init(frame: CGRect) {
         super.init(frame: frame)
@@ -26,9 +27,25 @@ public final class WhiskerScrollContainerView: UIScrollView {
         contentInsetAdjustmentBehavior = .never
         automaticallyAdjustsScrollIndicatorInsets = false
         addSubview(contentView)
+        delegate = self
     }
 
     public required init?(coder: NSCoder) { nil }
+
+    public func installWhiskerEventSink(_ sink: ((String, WhiskerValue) -> Void)?) {
+        eventSink = sink
+    }
+
+    public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        eventSink?("scroll", .map([
+            "scrollLeft": .float(Double(contentOffset.x)),
+            "scrollTop": .float(Double(contentOffset.y)),
+            "scrollWidth": .float(Double(contentSize.width)),
+            "scrollHeight": .float(Double(contentSize.height)),
+            "viewportWidth": .float(Double(bounds.width)),
+            "viewportHeight": .float(Double(bounds.height)),
+        ]))
+    }
 
     public override func layoutSubviews() {
         super.layoutSubviews()
@@ -367,7 +384,7 @@ public final class BuiltInElementModule: Module {
             Name("whisker.ui")
             View(WhiskerBuiltInElements.view())
             View(WhiskerBuiltInElements.text())
-            View(WhiskerBuiltInElements.scrollView())
+            View(WhiskerBuiltInElements.scrollView()) { Events("scroll") }
         }
     }
 }

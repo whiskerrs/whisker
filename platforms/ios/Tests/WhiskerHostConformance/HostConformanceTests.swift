@@ -129,6 +129,29 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(scrollView.contentInset, .zero)
     }
 
+    func testScrollViewEmitsLogicalScrollGeometry() {
+        let scrollView = WhiskerScrollContainerView(
+            frame: CGRect(x: 0, y: 0, width: 100, height: 80)
+        )
+        scrollView.contentView.addSubview(
+            UIView(frame: CGRect(x: 0, y: 0, width: 100, height: 300))
+        )
+        scrollView.layoutIfNeeded()
+        var detail: WhiskerValue?
+        scrollView.installWhiskerEventSink { name, value in
+            if name == "scroll" { detail = value }
+        }
+
+        scrollView.contentOffset = CGPoint(x: 0, y: 120)
+
+        guard case let .map(values)? = detail else {
+            return XCTFail("scroll must emit a map payload")
+        }
+        XCTAssertEqual(values["scrollTop"], .float(120))
+        XCTAssertEqual(values["viewportHeight"], .float(80))
+        XCTAssertEqual(values["scrollHeight"], .float(300))
+    }
+
     func testScrollOverflowClipUsesStationaryViewportInsteadOfMovingContent() throws {
         let registration = WhiskerElementRegistration(
             elementType: 3,

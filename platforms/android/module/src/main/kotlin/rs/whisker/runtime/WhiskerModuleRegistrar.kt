@@ -132,7 +132,7 @@ public class WhiskerMountedElement internal constructor(
     private var eventMask: Long = 0
 
     init {
-        (view as? WhiskerUI<*>)?.installWhiskerEventSink { name, detail ->
+        (view as? WhiskerEventSource)?.installWhiskerEventSink { name, detail ->
             val event = eventsByName[name] ?: return@installWhiskerEventSink
             val bit = 1L shl (event.id - 1)
             if (eventMask and bit != 0L) eventSink(event, detail)
@@ -168,7 +168,7 @@ public class WhiskerMountedElement internal constructor(
 
     public fun childrenHost(): android.view.ViewGroup? = childrenHost?.invoke(view)
 
-    public fun dispose() { (view as? WhiskerUI<*>)?.installWhiskerEventSink(null) }
+    public fun dispose() { (view as? WhiskerEventSource)?.installWhiskerEventSink(null) }
 }
 
 /** Host-owned declaration. It contains names and behavior, never Rust IDs. */

@@ -63,6 +63,35 @@ class HostConformanceTest {
     }
 
     @Test
+    fun scrollViewEmitsLogicalScrollGeometry() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val scrollView = WhiskerScrollContainerView(context)
+                val density = context.resources.displayMetrics.density
+                scrollView.layout(0, 0, (100 * density).roundToInt(), (80 * density).roundToInt())
+                scrollView.contentView.layout(
+                    0,
+                    0,
+                    (100 * density).roundToInt(),
+                    (300 * density).roundToInt(),
+                )
+                var detail: WhiskerValue? = null
+                scrollView.installWhiskerEventSink { name, value ->
+                    if (name == "scroll") detail = value
+                }
+
+                scrollView.scrollTo(0, (120 * density).roundToInt())
+
+                val values = (detail as WhiskerValue.Map).value
+                assertEquals(120.0, (values.getValue("scrollTop") as WhiskerValue.Float).value, 0.001)
+                assertEquals(80.0, (values.getValue("viewportHeight") as WhiskerValue.Float).value, 0.001)
+                assertEquals(300.0, (values.getValue("scrollHeight") as WhiskerValue.Float).value, 0.001)
+            }
+    }
+
+    @Test
     fun everySharedPaintScenarioUsesTheProductionAndroidView() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()

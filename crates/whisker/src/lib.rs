@@ -230,8 +230,8 @@ pub mod __tags {
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
         BindType, Element, append_child, apply_attr, apply_attr_bool, apply_attr_int,
-        apply_attr_int_mapped, apply_attr_owned, create_element, create_element_by_name,
-        create_phantom_element, set_attribute_object, set_event_listener,
+        apply_attr_int_mapped, apply_attr_owned, create_element, create_phantom_element,
+        set_attribute_object, set_event_listener,
     };
 
     // A trait, not `macro_rules!`: RA's method-completion does NOT
@@ -1204,25 +1204,12 @@ pub mod __tags {
         }
     }
 
-    // ---- list / list-item (Lynx's virtualized list) ---------------------
-    //
-    // The builder opts into Lynx's *decoupled native* list. Two flags
-    // gate that mode (see `list_element.cc`):
-    //   • `custom-list-name="list-container"` → `ResolveEnableNativeList`
-    //     Case 2 sets `disable_list_platform_implementation_ = true`.
-    //     This is a *string* compare, so it survives `apply_attr`'s
-    //     stringification.
-    //   • the decoupled mediator additionally needs
-    //     `enable_decoupled_list_`, which `ResolveEnableDecoupledList`
-    //     only reads from the attr when the value `IsBool()` — a
-    //     stringified attr never is, so it falls back to
-    //     `LynxEnv::EnableDecoupledList()`, which defaults to `true`.
-    // So `custom-list-name` alone activates the decoupled path.
+    // ---- list (Rust-owned virtualized control primitive) ----------------
 
-    /// `<list>` — Lynx's native-virtualised list. Pass the items
-    /// source as three kwargs and Lynx mounts only the visible items
-    /// onto platform views (recycling the rest), so the list scales
-    /// to thousands of rows without per-row mount cost.
+    /// `list` keeps a bounded window of ordinary item subtrees mounted below
+    /// the standard `ScrollView`. It is control flow like [`ForEach`], not a
+    /// Host element: FramePacket contains the ScrollView, spacer Views, and
+    /// visible item nodes only.
     ///
     /// Use `list` when the data set is large enough that
     /// `scroll_view` + a [`ForEach`](crate::ForEach) inside would
@@ -1234,7 +1221,7 @@ pub mod __tags {
     /// render! {
     ///     list(
     ///         each: move || items.get(),
-    ///         key: |s: &String| s.clone(),
+    ///         meta: |s: &String| ItemMeta::key(s.clone()).estimated_size(44),
     ///         children: |s: String| render! { view { text(value: s) } },
     ///     )
     /// }
@@ -1243,24 +1230,17 @@ pub mod __tags {
     /// # Trade-offs
     ///
     /// The builder takes its items source as three kwargs (`each`,
-    /// `key`, `children`) and **does not accept a body** — the macro
+    /// `meta`, `children`) and **does not accept a body** — the macro
     /// rejects `list { … }` invocations because items can only come
     /// through the reactive props. The three setters are
     /// **type-stated**: `__h()` is only callable when all three have
     /// been supplied, so a missing prop is a compile-time error at
     /// the close of the builder chain rather than a runtime panic.
     ///
-    /// `__h()` installs:
-    ///   1. an `effect` that diffs `each()` against per-key
-    ///      bookkeeping, materialises new items + detaches removed
-    ///      ones under the list element, eagerly computes each
-    ///      item's Lynx `impl_id` (sign), and updates the shared
-    ///      items Vec the native-item provider closure reads from.
-    ///   2. the `NativeItemProvider` so Lynx's list machinery can
-    ///      call `componentAtIndex(i)` and get a sign back without
-    ///      re-entering the renderer (the sign is already cached).
-    ///   3. `set_update_list_info(handle, count)` on every reactive
-    ///      update — what tells Lynx how many slots to lay out.
+    /// `__h()` installs one reactive keyed reconciler and one ordinary
+    /// ScrollView `scroll` listener. The Host reports geometry with the same
+    /// node event path used by custom elements; no list-specific bridge call
+    /// exists.
     #[allow(non_camel_case_types)]
     pub struct list<EachF = (), MetaF = (), ChildF = ()> {
         handle: Element,
@@ -1270,11 +1250,11 @@ pub mod __tags {
     }
     #[allow(non_snake_case)]
     pub fn __list_ctor() -> list<(), (), ()> {
-        let handle = create_element_by_name("list");
-        // `custom-list-name` is the string-compare flag that disables
-        // the platform list impl; the decoupled mediator then activates
-        // via the env default (true).
-        apply_attr::<_, ::std::string::String>(handle, "custom-list-name", "list-container");
+        // `list` is a Rust control primitive, not a Host element. Its only
+        // Host-visible container is the same built-in ScrollView that an app
+        // can author directly; the Rust virtualizer mounts ordinary children
+        // into a bounded window below it.
+        let handle = create_element(ElementTag::ScrollView);
         list {
             handle,
             each: (),
@@ -1570,6 +1550,28 @@ pub mod __tags {
         }
     }
     impl<EachF, ChildF> list<EachF, (), ChildF> {
+        /// Stable identity extractor, matching [`ForEach`](crate::ForEach).
+        /// Items use the default 44 logical-pixel estimate; use [`meta`](Self::meta)
+        /// when the data source can provide a better per-item estimate or other
+        /// virtual-layout hints.
+        pub fn key<T: 'static, K: 'static, F>(
+            self,
+            f: F,
+        ) -> list<EachF, ::whisker_runtime::view::MetaFn<T, K>, ChildF>
+        where
+            F: ::std::convert::Into<::whisker_runtime::view::KeyFn<T, K>>,
+        {
+            let key = f.into();
+            list {
+                handle: self.handle,
+                each: self.each,
+                meta: ::whisker_runtime::view::KeyFn(::std::rc::Rc::new(move |item: &T| {
+                    ::whisker_runtime::view::ItemMeta::key(key.call(item))
+                })),
+                children: self.children,
+            }
+        }
+
         /// Identity + per-item layout metadata extractor — see
         /// [`ItemMeta`]. Replaces the former `key:` prop: the key is
         /// `ItemMeta::key(...)`, and the metadata (estimated size,
@@ -1622,15 +1624,7 @@ pub mod __tags {
         T: ::std::clone::Clone + 'static,
         K: ::std::cmp::Eq + ::std::hash::Hash + ::std::clone::Clone + 'static,
     {
-        /// Finalise the builder: drive the `<list>`'s native item
-        /// provider on demand via the container-agnostic
-        /// [`virtualize`](whisker_runtime::view::virtualize) core.
-        ///
-        /// Items are built lazily in `componentAtIndex` (only visible
-        /// slots exist), each stamped a stable `item-key` from the `key`
-        /// extractor and recycled on `enqueueComponent`. See
-        /// `docs/list-design.md` — the on-demand contract is pending
-        /// on-device verification against the Lynx fork's list.
+        /// Finalise the builder by installing the Rust-owned windowing core.
         #[allow(non_snake_case)]
         pub fn __h(self) -> Element {
             let handle = self.handle;

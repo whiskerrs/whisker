@@ -7,8 +7,14 @@ import android.view.ViewGroup
 /** Context supplied when a module element is mounted by `WhiskerView`. */
 public typealias WhiskerContext = Context
 
+/** Event source shared by class-backed module Views and built-in controls. */
+public interface WhiskerEventSource {
+    public fun installWhiskerEventSink(sink: ((String, WhiskerValue) -> Unit)?)
+}
+
 /** Lightweight native-element base class with no renderer SDK dependency. */
-public abstract class WhiskerUI<V : View>(context: Context) : WhiskerContainerView(context) {
+public abstract class WhiskerUI<V : View>(context: Context) :
+    WhiskerContainerView(context), WhiskerEventSource {
     private val nativeView: V = createView(context)
     private var eventSink: ((String, WhiskerValue) -> Unit)? = null
 
@@ -26,7 +32,7 @@ public abstract class WhiskerUI<V : View>(context: Context) : WhiskerContainerVi
 
     public fun view(): V = nativeView
 
-    internal fun installWhiskerEventSink(sink: ((String, WhiskerValue) -> Unit)?) {
+    final override fun installWhiskerEventSink(sink: ((String, WhiskerValue) -> Unit)?) {
         eventSink = sink
     }
 

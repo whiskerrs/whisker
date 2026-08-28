@@ -22,9 +22,9 @@ use whisker_engine::RecordingRenderer;
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     CommandId, ElementCommandSchema, ElementEventSchema, ElementMeasurement, ElementPropertySchema,
-    ElementSchema, ElementValueKind, EventId, MeasureTextDirection, MeasuredSize,
-    MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse, Operation,
-    PaintColor, PreparedContentId, PropertyId, SurfaceId, WhiskerValue,
+    ElementSchema, ElementValueKind, EventId, InputEvent, InputEventKind, MeasureTextDirection,
+    MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse,
+    Operation, PaintColor, PreparedContentId, PropertyId, SurfaceId, WhiskerValue,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{LayoutOptions, MeasurementProvider};
@@ -76,6 +76,116 @@ impl MeasurementProvider for TextHost {
         }));
         Ok(())
     }
+}
+
+#[test]
+fn list_virtualizes_through_scroll_view_and_reacts_to_host_scroll_geometry() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(41).unwrap(),
+        StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                list(
+                    style: css!(width: percent(100), height: px(100)),
+                    each: || (0_u32..100).collect::<Vec<_>>(),
+                    key: |row: &u32| *row,
+                    children: |row: u32| render! {
+                        text(style: css!(height: px(20), font_size: px(20)), value: format!("row-{row}"))
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+    let registrations = surface.element_registrations();
+    let scroll_type = registrations
+        .iter()
+        .find(|registration| registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME)
+        .unwrap()
+        .element_type;
+    let standard_types = registrations
+        .iter()
+        .filter(|registration| registration.name.starts_with("whisker.ui/"))
+        .map(|registration| registration.element_type)
+        .collect::<Vec<_>>();
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    let first = &renderer.frames()[0].packet;
+    let scroll_node = first
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::CreateNode {
+                node, element_type, ..
+            } if *element_type == scroll_type => Some(*node),
+            _ => None,
+        })
+        .expect("List lowers to the standard ScrollView element");
+    assert!(
+        first.operations.iter().all(|operation| !matches!(
+            operation,
+            Operation::CreateNode { element_type, .. }
+                if !standard_types.contains(element_type)
+        )),
+        "List must not introduce a Host-visible custom element"
+    );
+    let initial_rows = first
+        .operations
+        .iter()
+        .filter(|operation| matches!(operation, Operation::SetText { content, .. } if content.payload.text.starts_with("row-")))
+        .count();
+    assert!(initial_rows < 100, "only the visible window should mount");
+
+    with_installed_renderer(surface.renderer(), || {
+        surface
+            .dispatch_input(&InputEvent {
+                surface: surface.surface(),
+                timestamp_ms: 16.0,
+                kind: InputEventKind::Named("scroll".to_owned()),
+                pointer: None,
+                target: Some(scroll_node),
+                detail: WhiskerValue::map([
+                    ("scrollTop", WhiskerValue::Float(2_200.0)),
+                    ("viewportHeight", WhiskerValue::Float(100.0)),
+                    ("scrollHeight", WhiskerValue::Float(4_400.0)),
+                ]),
+            })
+            .unwrap();
+        whisker::flush();
+    });
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            2,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    assert!(renderer.frames().last().unwrap().packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetText { content, .. } if content.payload.text == "row-50")
+    ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
 #[test]

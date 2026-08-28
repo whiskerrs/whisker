@@ -1,9 +1,13 @@
 import UIKit
 
-/** Runtime-facing contract implemented by module-owned native Views. */
-public protocol WhiskerNativeElement: AnyObject {
-    static func makeWhiskerView() -> UIView
+/** Event source shared by class-backed module Views and built-in controls. */
+public protocol WhiskerEventSource: AnyObject {
     func installWhiskerEventSink(_ sink: ((String, WhiskerValue) -> Void)?)
+}
+
+/** Runtime-facing contract implemented by module-owned native Views. */
+public protocol WhiskerNativeElement: WhiskerEventSource {
+    static func makeWhiskerView() -> UIView
 }
 
 /** Lightweight native-element base class with no renderer SDK dependency. */

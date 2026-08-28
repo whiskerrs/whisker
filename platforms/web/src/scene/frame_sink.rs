@@ -2,6 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
+use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 use whisker_engine::FrameSink;
 use whisker_protocol::{
     ApplyResult, ElementRegistration, ElementTypeId, FrameMode, FramePacket, NodeId, Operation,
@@ -30,6 +32,7 @@ pub(crate) struct DomFrameSink {
     text_nodes: HashMap<NodeId, web_sys::Element>,
     native_nodes: HashMap<NodeId, Box<dyn WebNativeElement>>,
     event_masks: HashMap<NodeId, Rc<Cell<u64>>>,
+    scroll_listeners: HashMap<NodeId, Closure<dyn FnMut(web_sys::Event)>>,
     pending_events: Rc<RefCell<VecDeque<WebProviderEvent>>>,
 }
 
@@ -104,6 +107,7 @@ impl DomFrameSink {
             text_nodes: HashMap::new(),
             native_nodes: HashMap::new(),
             event_masks: HashMap::new(),
+            scroll_listeners: HashMap::new(),
             pending_events: Rc::new(RefCell::new(VecDeque::new())),
         })
     }
@@ -186,6 +190,7 @@ impl DomFrameSink {
             self.text_nodes.clear();
             self.native_nodes.clear();
             self.event_masks.clear();
+            self.scroll_listeners.clear();
             self.pending_events.borrow_mut().clear();
         }
         for operation in &packet.operations {
@@ -247,7 +252,7 @@ impl DomFrameSink {
                         None,
                     ),
                     WebElementFactoryKind::Native(create) => {
-                        let native = create(&self.document, emitter)
+                        let native = create(&self.document, emitter.clone())
                             .map_err(|error| js_error("create native Whisker DOM node", error))?;
                         (native.element(), Some(native))
                     }
@@ -266,6 +271,46 @@ impl DomFrameSink {
                 if binding.scroll_content {
                     set_style(&element, "overflow-x", "hidden")?;
                     set_style(&element, "overflow-y", "auto")?;
+                    let emitter = emitter.clone();
+                    let scroll_element = element.clone();
+                    let listener = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                        let Some(html) = scroll_element.dyn_ref::<web_sys::HtmlElement>() else {
+                            return;
+                        };
+                        emitter.emit(WebNativeEvent {
+                            event: "scroll".to_owned(),
+                            detail: WhiskerValue::map([
+                                (
+                                    "scrollLeft",
+                                    WhiskerValue::Int(i64::from(html.scroll_left())),
+                                ),
+                                ("scrollTop", WhiskerValue::Int(i64::from(html.scroll_top()))),
+                                (
+                                    "scrollWidth",
+                                    WhiskerValue::Int(i64::from(html.scroll_width())),
+                                ),
+                                (
+                                    "scrollHeight",
+                                    WhiskerValue::Int(i64::from(html.scroll_height())),
+                                ),
+                                (
+                                    "viewportWidth",
+                                    WhiskerValue::Int(i64::from(html.client_width())),
+                                ),
+                                (
+                                    "viewportHeight",
+                                    WhiskerValue::Int(i64::from(html.client_height())),
+                                ),
+                            ]),
+                        });
+                    });
+                    element
+                        .add_event_listener_with_callback(
+                            "scroll",
+                            listener.as_ref().unchecked_ref(),
+                        )
+                        .map_err(|error| js_error("register Whisker scroll listener", error))?;
+                    self.scroll_listeners.insert(*node, listener);
                 }
                 self.root
                     .append_child(&element)
@@ -636,6 +681,7 @@ impl DomFrameSink {
             self.text_nodes.remove(&node);
             self.native_nodes.remove(&node);
             self.event_masks.remove(&node);
+            self.scroll_listeners.remove(&node);
         }
     }
 }

@@ -711,7 +711,8 @@ impl WhiskerModule for BuiltInElementModule {
             .view(WebViewDefinition::new("whisker.ui/Text", div, Clone::clone).plain_text())
             .view(
                 WebViewDefinition::new("whisker.ui/ScrollView", div, Clone::clone)
-                    .scroll_container(),
+                    .scroll_container()
+                    .event("scroll"),
             )
     }
 }

@@ -1,79 +1,40 @@
-//! `virtualize` — the container-agnostic core that drives a native
-//! item provider (Lynx's `componentAtIndex` / `enqueueComponent`
-//! contract) on demand.
+//! Rust-owned windowing for the built-in `list` control primitive.
 //!
-//! The core is deliberately split from the element it drives —
-//! `ListMount = Virtualizer + <list> element` — so it knows nothing
-//! about `<list>` specifically, only that `handle` carries a native
-//! item provider and a count broadcast.
-//!
-//! # Model (pull, on-demand)
-//!
-//! 1. An effect subscribes to `items()`: on every change it snapshots
-//!    the data, bumps a `layout-id` (so the native container registers
-//!    a new data version), and broadcasts the new item count via
-//!    `set_update_list_info`. **No elements are created here.**
-//! 2. A [`NativeItemProvider`] is installed. When a slot enters the
-//!    viewport the native container calls `component_at_index(i)`; we
-//!    build the element for `items[i]` *on demand* under a per-slot
-//!    owner **parented to the setup owner** (so the item inherits the
-//!    list's context — `use_context` / `use_navigator` work even though
-//!    the callback fires outside any reactive scope), stamp a STABLE
-//!    `item-key` (so reorders diff correctly), **append it to the list**
-//!    (the provider contract — see below), and return its Lynx sign.
-//!    When the slot scrolls out `enqueue_component(sign)` removes it from
-//!    the list and disposes the owner (recycle / release). Only the
-//!    visible + buffered slots are attached at once, so this stays
-//!    virtualised even though items are real children while live.
-//!
-//! On owner disposal every live slot is disposed and the provider is
-//! released through `whisker-driver`'s `trampoline_free`.
-//!
-//! # Provider contract
-//!
-//! Lynx `ListElement::ComponentAtIndex` requires the embedder callback
-//! to **attach the item to the list** (`append_child(list, item)`) and
-//! return its `impl_id`; it then runs `OnComponentFinished` → layout
-//! over that freshly-appended subtree. Returning the sign *without*
-//! appending leaves the item unparented and the native list crashes in
-//! `OnListItemWillAppear` (null `element_container`). Re-entrant
-//! element creation during the callback is safe — the bridge renderer
-//! holds no field borrow across an FFI call.
+//! A list is deliberately not a Host element. The authoring builder creates
+//! the ordinary built-in `ScrollView`; this module keeps only a bounded set of
+//! ordinary item subtrees mounted below it and uses two presentation-only
+//! spacer Views to preserve the complete scroll extent. Hosts therefore need
+//! no list-specific ABI, view class, recycling contract, or data source.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
+use whisker_style::{
+    LengthPercentageValue, LengthUnit, LengthValue, SizeValue, SpecifiedStyle, StyleNumber,
+    StyleProperty, StyleValue,
+};
+use whisker_value::WhiskerValue;
+
+use crate::element::ElementTag;
 use crate::reactive::{Owner, effect, on_cleanup};
 
-use super::apply::apply_attr_owned;
 use super::handle::Element;
-use super::list_provider::{INVALID_ITEM_INDEX, NativeItemProvider};
 use super::renderer::{
-    ListItemAction, append_child, create_element_by_name, element_sign,
-    install_list_native_item_provider, remove_child, set_attribute_bool, set_attribute_int,
-    set_update_list_info, update_list_actions,
+    BindType, append_child, children_of, create_element, insert_child_at, remove_child,
+    set_event_listener, set_specified_style,
 };
 
-/// Identity + per-item layout metadata for one list item, derived from
-/// the DATA by the list's `meta` closure. This is the single source of
-/// truth: items build on demand, so nothing element-side exists when
-/// the data-source diff is sent — Lynx's adapter ingests exactly these
-/// fields from the action stream (and re-ingests them via an in-place
-/// update when they change for a surviving key).
+const DEFAULT_ITEM_SIZE: f32 = 44.0;
+const DEFAULT_VIEWPORT_SIZE: f32 = 600.0;
+const DEFAULT_OVERSCAN_ITEMS: usize = 2;
+
+/// Stable identity and layout hints for a virtualized item.
 ///
-/// ```ignore
-/// meta: |r: &Row| match r {
-///     Row::Header => ItemMeta::key("header")
-///         .estimated_size(160)
-///         .full_span(true)
-///         .sticky_top(true),
-///     Row::Item(n) => ItemMeta::key(format!("item-{n}"))
-///         .reuse_identifier("row")
-///         .estimated_size(84),
-/// }
-/// ```
+/// Only `key` and `estimated_size` participate in the first Rust virtualizer.
+/// The remaining hints stay in the Rust data model for Grid, sticky, and slot
+/// recycling policies; none cross the Host boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemMeta<K> {
     key: K,
@@ -86,9 +47,7 @@ pub struct ItemMeta<K> {
 }
 
 impl<K> ItemMeta<K> {
-    /// Stable logical identity — the same key must identify the same
-    /// item across data updates, since it drives the native reorder /
-    /// insert / remove diff.
+    /// Creates metadata with one stable logical key.
     pub fn key(key: K) -> Self {
         Self {
             key,
@@ -101,811 +60,252 @@ impl<K> ItemMeta<K> {
         }
     }
 
-    /// Recycle-pool identifier: slots sharing one are reused for each
-    /// other. Defaults to a single shared pool.
+    /// Groups items that may share a future recycled presentation slot.
     pub fn reuse_identifier(mut self, id: impl Into<String>) -> Self {
         self.reuse_identifier = Some(id.into());
         self
     }
 
-    /// Estimated main-axis size (px) used to lay out the slot before
-    /// its real content is measured.
+    /// Sets the estimated main-axis size in logical pixels.
     pub fn estimated_size(mut self, px: i32) -> Self {
         self.estimated_size = Some(px);
         self
     }
 
-    /// Span every column in a multi-column (`flow` / `waterfall`) list.
-    pub fn full_span(mut self, v: bool) -> Self {
-        self.full_span = v;
+    /// Marks an item as spanning the complete cross axis in Grid layouts.
+    pub fn full_span(mut self, value: bool) -> Self {
+        self.full_span = value;
         self
     }
 
-    /// Pin to the top edge while scrolled past (requires `sticky` on
-    /// the list).
-    pub fn sticky_top(mut self, v: bool) -> Self {
-        self.sticky_top = v;
+    /// Marks an item as a leading-edge sticky candidate.
+    pub fn sticky_top(mut self, value: bool) -> Self {
+        self.sticky_top = value;
         self
     }
 
-    /// Pin to the bottom edge (requires `sticky` on the list).
-    pub fn sticky_bottom(mut self, v: bool) -> Self {
-        self.sticky_bottom = v;
+    /// Marks an item as a trailing-edge sticky candidate.
+    pub fn sticky_bottom(mut self, value: bool) -> Self {
+        self.sticky_bottom = value;
         self
     }
 
-    /// Opt the slot out of recycling (`false`) — e.g. a page in a
-    /// pager list whose state must survive off-screen.
-    pub fn recyclable(mut self, v: bool) -> Self {
-        self.recyclable = v;
+    /// Controls whether a future slot allocator may recycle this item.
+    pub fn recyclable(mut self, value: bool) -> Self {
+        self.recyclable = value;
         self
+    }
+
+    fn main_axis_size(&self) -> f32 {
+        self.estimated_size
+            .map(|value| value.max(0) as f32)
+            .unwrap_or(DEFAULT_ITEM_SIZE)
     }
 }
 
-/// The metadata half of a resolved item entry (identity handled
-/// separately as the stable `w_<id>` wire key).
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MetaFields {
-    reuse_identifier: Option<String>,
-    estimated_size: Option<i32>,
-    full_span: bool,
-    sticky_top: bool,
-    sticky_bottom: bool,
-    recyclable: bool,
+struct MountedEntry {
+    owner: Owner,
+    handle: Element,
 }
 
-impl MetaFields {
-    fn action(&self, position: i32, key: &str) -> ListItemAction {
-        ListItemAction {
-            position,
-            key: key.to_string(),
-            estimated_size: self.estimated_size,
-            full_span: self.full_span,
-            sticky_top: self.sticky_top,
-            sticky_bottom: self.sticky_bottom,
-            recyclable: self.recyclable,
+#[derive(Clone, Copy)]
+struct ScrollGeometry {
+    offset: f32,
+    viewport: f32,
+}
+
+impl Default for ScrollGeometry {
+    fn default() -> Self {
+        Self {
+            offset: 0.0,
+            viewport: DEFAULT_VIEWPORT_SIZE,
         }
     }
 }
 
-/// Send a data-source update as the MINIMAL action set against the
-/// previous key list: the longest common prefix and suffix survive
-/// untouched (keeping their native `ItemHolder` identity — which is
-/// what lets the list hold its scroll position across an append), and
-/// only the middle window is expressed as remove+insert. Surviving
-/// items whose METADATA changed get an in-place update entry.
+/// Installs Rust-side virtualization below an ordinary ScrollView.
 ///
-/// Index contract (what Lynx's `AdapterHelper` expects, matching
-/// ReactLynx's `ListUpdateInfoRecording` output): removals are
-/// ascending indices into the PRE-update list and apply first; insert
-/// positions are ascending splice points into the post-removal list;
-/// update positions index the FINAL list (the adapter applies
-/// remove → insert → update in that order).
-///
-/// A reorder that survives neither prefix nor suffix degrades to a
-/// full-window remove+insert. When the renderer can't deliver explicit
-/// actions (a Lynx build predating the capi, or a test renderer), falls
-/// back to the full-replace [`set_update_list_info`].
-fn send_data_source_update(
-    handle: Element,
-    prev: &[String],
-    keys: &[String],
-    prev_meta: &HashMap<String, MetaFields>,
-    metas: &[MetaFields],
-) {
-    let (p, s) = splice_bounds(prev, keys);
-
-    let removals: Vec<i32> = (p..prev.len() - s).map(|i| i as i32).collect();
-    let inserts: Vec<ListItemAction> = keys[p..keys.len() - s]
-        .iter()
-        .zip(metas[p..keys.len() - s].iter())
-        .enumerate()
-        .map(|(k, (key, meta))| meta.action((p + k) as i32, key))
-        .collect();
-    // Surviving (prefix + suffix) keys whose metadata changed: refresh
-    // it in place. Positions index the FINAL list.
-    let mut updates: Vec<ListItemAction> = Vec::new();
-    let survivors = (0..p).chain((keys.len() - s)..keys.len());
-    for i in survivors {
-        let key = &keys[i];
-        if prev_meta.get(key).is_some_and(|m| *m != metas[i]) {
-            updates.push(metas[i].action(i as i32, key));
-        }
-    }
-
-    if removals.is_empty() && inserts.is_empty() && updates.is_empty() {
-        return;
-    }
-    if !update_list_actions(handle, &removals, &inserts, &updates) {
-        set_update_list_info(handle, keys, prev.len());
-    }
-}
-
-/// Longest common prefix / suffix lengths between two key lists. The
-/// zip over the two post-prefix slices yields at most
-/// `min(prev.len(), keys.len()) - p` pairs, so the suffix can never
-/// overlap the prefix.
-fn splice_bounds(prev: &[String], keys: &[String]) -> (usize, usize) {
-    let p = prev
-        .iter()
-        .zip(keys.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
-    let s = prev[p..]
-        .iter()
-        .rev()
-        .zip(keys[p..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
-    (p, s)
-}
-
-/// Drive `handle`'s native item provider on demand.
-///
-/// - `handle` — the container element (already created) that carries a
-///   native item provider (e.g. a `<list>`).
-/// - `items` — reactive data source; re-read on any change it tracks.
-/// - `meta` — identity + per-item layout metadata extractor (see
-///   [`ItemMeta`]). The key keeps the same `item-key` across data
-///   updates so the native diff can move/remove; the metadata rides
-///   the same actions (it can't come from the built elements — they
-///   don't exist yet at diff time).
-/// - `build` — slot CONTENT builder; called *once per slot creation*
-///   with a clone of `items()[i]`, returns any element. The
-///   virtualizer owns the native `list-item` wrapper around it.
-pub fn virtualize<T, K, ItemsFn, MetaFn, BuildFn>(
-    handle: Element,
-    items: ItemsFn,
-    meta: MetaFn,
-    build: BuildFn,
+/// `each`, `meta`, and `children` mirror `ForEach`'s source, identity, and
+/// item-builder split. Host `scroll` events update the mounted window;
+/// reactive source changes run through the same reconciliation path.
+pub fn virtualize<T, K>(
+    scroll_view: Element,
+    each: impl Fn() -> Vec<T> + 'static,
+    meta: impl Fn(&T) -> ItemMeta<K> + 'static,
+    children: impl Fn(T) -> Element + 'static,
 ) where
     T: Clone + 'static,
     K: Eq + Hash + Clone + 'static,
-    ItemsFn: Fn() -> Vec<T> + 'static,
-    MetaFn: Fn(&T) -> ItemMeta<K> + 'static,
-    BuildFn: Fn(T) -> Element + 'static,
 {
-    let current_items: Rc<RefCell<Vec<T>>> = Rc::new(RefCell::new(Vec::new()));
-    // Live slots: Lynx sign -> (element, owner). Each `component_at_index`
-    // builds a FRESH element (the native list requires an element ready to
-    // bind to *this* item_holder — reusing one that's live elsewhere breaks
-    // its diff on data updates), tracks it here, and returns its sign.
-    let live: Rc<RefCell<HashMap<i32, (Element, Owner)>>> = Rc::new(RefCell::new(HashMap::new()));
-    // Enqueued slots awaiting disposal. The native `EnqueueElement` calls
-    // `enqueue_component` and THEN detaches the element itself
-    // (`RemoveListItemPaintingNode` + `DetachChild`), so disposing during the
-    // callback is a use-after-free. We defer: an enqueued slot lands here and
-    // is disposed at the start of the next provider call / data update, by
-    // which point the native has finished detaching it.
-    let pending: Rc<RefCell<Vec<(Element, Owner)>>> = Rc::new(RefCell::new(Vec::new()));
-    // Stable `item-key` ids: a logical key keeps the same
-    // `item-key="w_{id}"` across rebuilds so the native diff can move it.
-    let key_ids: Rc<RefCell<HashMap<K, u64>>> = Rc::new(RefCell::new(HashMap::new()));
-    let next_id: Rc<Cell<u64>> = Rc::new(Cell::new(0));
-    let layout_id: Rc<Cell<i64>> = Rc::new(Cell::new(0));
-    // Item-key list + per-key metadata from the previous data-source
-    // update — the prefix/suffix splice diffs against these, so
-    // untouched items keep their native identity and the list holds its
-    // scroll position across appends.
-    let prev_keys: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
-    let prev_meta: Rc<RefCell<HashMap<String, MetaFields>>> = Rc::new(RefCell::new(HashMap::new()));
-    let meta = Rc::new(meta);
-    let build = Rc::new(build);
-    // Anchored to the owner active at SETUP so items built on demand
-    // inherit context — `use_context` / `use_navigator` walk the owner
-    // chain, and `component_at_index` fires outside any reactive scope,
-    // where a detached slot owner would sever it.
-    let parent_owner = Owner::new(None);
+    let leading_spacer = create_element(ElementTag::View);
+    let trailing_spacer = create_element(ElementTag::View);
+    append_child(scroll_view, leading_spacer);
+    append_child(scroll_view, trailing_spacer);
 
-    // Dispose the deferred batch. Safe to call whenever control is back in a
-    // whisker frame (the native has finished its `EnqueueElement` detach).
-    let flush_pending = {
-        let pending = pending.clone();
-        move || {
-            let batch: Vec<(Element, Owner)> = pending.borrow_mut().drain(..).collect();
-            for (element, owner) in batch {
-                remove_child(handle, element);
-                owner.dispose();
+    let each = Rc::new(each);
+    let meta = Rc::new(meta);
+    let children = Rc::new(children);
+    let geometry = Rc::new(RefCell::new(ScrollGeometry::default()));
+    let mounted: Rc<RefCell<HashMap<K, MountedEntry>>> = Rc::new(RefCell::new(HashMap::new()));
+
+    let reconcile: Rc<dyn Fn()> = {
+        let each = Rc::clone(&each);
+        let meta = Rc::clone(&meta);
+        let children = Rc::clone(&children);
+        let geometry = Rc::clone(&geometry);
+        let mounted = Rc::clone(&mounted);
+        Rc::new(move || {
+            let items = each();
+            let metadata = items.iter().map(|item| meta(item)).collect::<Vec<_>>();
+            let sizes = metadata
+                .iter()
+                .map(ItemMeta::main_axis_size)
+                .collect::<Vec<_>>();
+            let geometry = *geometry.borrow();
+
+            let mut cursor = 0.0;
+            let first_visible = sizes
+                .iter()
+                .position(|size| {
+                    let visible = cursor + *size > geometry.offset;
+                    cursor += *size;
+                    visible
+                })
+                .unwrap_or(sizes.len());
+            let start = first_visible.saturating_sub(DEFAULT_OVERSCAN_ITEMS);
+            let visible_end = geometry.offset + geometry.viewport.max(0.0);
+            let mut extent = sizes.iter().take(start).sum::<f32>();
+            let mut end = start;
+            while end < sizes.len()
+                && (extent < visible_end || end < first_visible.saturating_add(1))
+            {
+                extent += sizes[end];
+                end += 1;
             }
-        }
+            end = end.saturating_add(DEFAULT_OVERSCAN_ITEMS).min(sizes.len());
+
+            set_spacer_size(leading_spacer, sizes[..start].iter().sum());
+            set_spacer_size(trailing_spacer, sizes[end..].iter().sum());
+
+            let mut old = std::mem::take(&mut *mounted.borrow_mut());
+            let mut next = HashMap::with_capacity(end.saturating_sub(start));
+            let mut order = Vec::with_capacity(end.saturating_sub(start));
+            for index in start..end {
+                let key = metadata[index].key.clone();
+                let entry = if let Some(entry) = old.remove(&key) {
+                    entry
+                } else {
+                    let owner = Owner::new(None);
+                    let handle = owner.with(|| children(items[index].clone()));
+                    MountedEntry { owner, handle }
+                };
+                order.push((key.clone(), entry.handle));
+                next.insert(key, entry);
+            }
+
+            for (_, entry) in old.drain() {
+                remove_child(scroll_view, entry.handle);
+                entry.owner.dispose();
+            }
+            let attached = children_of(scroll_view);
+            for entry in next.values() {
+                if attached.contains(&entry.handle) {
+                    remove_child(scroll_view, entry.handle);
+                }
+            }
+            for (index, (_, handle)) in order.into_iter().enumerate() {
+                insert_child_at(scroll_view, handle, index + 1);
+            }
+            *mounted.borrow_mut() = next;
+        })
     };
 
     {
-        let current_items = current_items.clone();
-        let layout_id = layout_id.clone();
-        let prev_keys = prev_keys.clone();
-        let prev_meta = prev_meta.clone();
-        let key_ids = key_ids.clone();
-        let next_id = next_id.clone();
-        let meta = meta.clone();
-        let flush_pending = flush_pending.clone();
-        effect(move || {
-            flush_pending();
-            let new_items = items();
-            // `component_at_index` stamps the matching
-            // `item-key="w_{id}"` on each wrapper it builds, which is
-            // how the native list reconciles a reorder.
-            let mut keys: Vec<String> = Vec::with_capacity(new_items.len());
-            let mut metas: Vec<MetaFields> = Vec::with_capacity(new_items.len());
-            {
-                let mut ids = key_ids.borrow_mut();
-                for item in &new_items {
-                    let m = meta(item);
-                    let id = match ids.get(&m.key) {
-                        Some(id) => *id,
-                        None => {
-                            let id = next_id.get();
-                            next_id.set(id + 1);
-                            ids.insert(m.key.clone(), id);
-                            id
-                        }
-                    };
-                    keys.push(format!("w_{id}"));
-                    metas.push(MetaFields {
-                        reuse_identifier: m.reuse_identifier,
-                        estimated_size: m.estimated_size,
-                        full_span: m.full_span,
-                        sticky_top: m.sticky_top,
-                        sticky_bottom: m.sticky_bottom,
-                        recyclable: m.recyclable,
-                    });
-                }
-            }
-            *current_items.borrow_mut() = new_items;
-            let lid = layout_id.get();
-            layout_id.set(lid + 1);
-            set_attribute_int(handle, "layout-id", lid);
-            send_data_source_update(
-                handle,
-                &prev_keys.borrow(),
-                &keys,
-                &prev_meta.borrow(),
-                &metas,
-            );
-            *prev_meta.borrow_mut() = keys.iter().cloned().zip(metas).collect();
-            *prev_keys.borrow_mut() = keys;
-        });
+        let reconcile = Rc::clone(&reconcile);
+        effect(move || reconcile());
     }
 
-    let provider = NativeItemProvider {
-        component_at_index: {
-            let current_items = current_items.clone();
-            let live = live.clone();
-            let key_ids = key_ids.clone();
-            let next_id = next_id.clone();
-            let meta = meta.clone();
-            let build = build.clone();
-            let flush_pending = flush_pending.clone();
-            Box::new(move |index, _op_id, _reuse| {
-                flush_pending();
-                let item = match current_items.borrow().get(index as usize) {
-                    Some(t) => t.clone(),
-                    None => return INVALID_ITEM_INDEX,
-                };
-                let m = meta(&item);
-                let id = {
-                    let mut ids = key_ids.borrow_mut();
-                    match ids.get(&m.key) {
-                        Some(id) => *id,
-                        None => {
-                            let id = next_id.get();
-                            next_id.set(id + 1);
-                            ids.insert(m.key.clone(), id);
-                            id
-                        }
-                    }
-                };
-                // The virtualizer owns the native `list-item` wrapper;
-                // the user's `build` returns plain content. The wrapper
-                // must be ATTACHED before the sign is returned (see the
-                // provider contract in the module doc), and `full-span`
-                // stamped AFTER that append — its element-side half only
-                // applies once the parent is already the list.
-                let owner = Owner::new(Some(parent_owner));
-                let (wrapper, content) = owner.with(|| {
-                    let wrapper = create_element_by_name("list-item");
-                    let content = (build)(item);
-                    (wrapper, content)
-                });
-                append_child(wrapper, content);
-                apply_attr_owned::<_, String>(wrapper, "item-key".to_string(), format!("w_{id}"));
-                if let Some(reuse) = &m.reuse_identifier {
-                    apply_attr_owned::<_, String>(
-                        wrapper,
-                        "reuse-identifier".to_string(),
-                        reuse.clone(),
-                    );
+    {
+        let geometry = Rc::clone(&geometry);
+        let reconcile = Rc::clone(&reconcile);
+        set_event_listener(
+            scroll_view,
+            "scroll",
+            BindType::Bind,
+            Box::new(move |event| {
+                if let Some(next) = scroll_geometry(&event) {
+                    *geometry.borrow_mut() = next;
+                    reconcile();
                 }
-                append_child(handle, wrapper);
-                if m.full_span {
-                    set_attribute_bool(wrapper, "full-span", true);
-                }
-                let sign = element_sign(wrapper);
-                live.borrow_mut().insert(sign, (wrapper, owner));
-                sign
-            })
-        },
-        enqueue_component: Some({
-            let live = live.clone();
-            let pending = pending.clone();
-            Box::new(move |sign| {
-                // Deferred, never destroyed here — the native detaches
-                // the element after this callback returns.
-                if let Some(slot) = live.borrow_mut().remove(&sign) {
-                    pending.borrow_mut().push(slot);
-                }
-            })
-        }),
-    };
-    install_list_native_item_provider(handle, provider);
+            }),
+        );
+    }
 
     on_cleanup(move || {
-        flush_pending();
-        // `parent_owner` cascades to every live slot owner (each is its
-        // child), freeing their elements.
-        parent_owner.dispose();
-        live.borrow_mut().clear();
+        for (_, entry) in mounted.borrow_mut().drain() {
+            remove_child(scroll_view, entry.handle);
+            entry.owner.dispose();
+        }
+        remove_child(scroll_view, leading_spacer);
+        remove_child(scroll_view, trailing_spacer);
     });
+}
+
+fn set_spacer_size(element: Element, size: f32) {
+    let px = LengthPercentageValue::Length(if size == 0.0 {
+        LengthValue::Zero
+    } else {
+        LengthValue::Dimension {
+            value: StyleNumber::new(size),
+            unit: LengthUnit::Px,
+        }
+    });
+    let style = SpecifiedStyle::new()
+        .push(
+            StyleProperty::Height,
+            StyleValue::Size(SizeValue::LengthPercentage(px)),
+        )
+        .push(
+            StyleProperty::FlexShrink,
+            StyleValue::Number(StyleNumber::new(0.0)),
+        );
+    set_specified_style(element, &style);
+}
+
+fn scroll_geometry(event: &WhiskerValue) -> Option<ScrollGeometry> {
+    let WhiskerValue::Map(event) = event else {
+        return None;
+    };
+    let detail = match event.get("detail") {
+        Some(WhiskerValue::Map(detail)) => detail,
+        _ => event,
+    };
+    let number = |name: &str| match detail.get(name) {
+        Some(WhiskerValue::Float(value)) => Some(*value as f32),
+        Some(WhiskerValue::Int(value)) => Some(*value as f32),
+        _ => None,
+    };
+    Some(ScrollGeometry {
+        offset: number("scrollTop")?.max(0.0),
+        viewport: number("viewportHeight")?.max(0.0),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::element::ElementTag;
-    use crate::reactive::flush;
-    use crate::view::renderer::{DynRenderer, install_renderer, uninstall_renderer};
-    use crate::view::{BindType, create_element_by_name};
-
-    /// Recording renderer: captures `set_update_list_info(count)`, the
-    /// installed provider, and `item-key` stamps so tests can drive the
-    /// provider like the C++ list and assert on identity.
-    #[derive(Default)]
-    struct CapturingRenderer {
-        next_id: std::cell::Cell<u32>,
-        last_count: Rc<RefCell<Option<i32>>>,
-        installed: Rc<RefCell<Option<NativeItemProvider>>>,
-        item_keys: Rc<RefCell<HashMap<u32, String>>>,
-    }
-
-    impl CapturingRenderer {
-        fn alloc_id(&self) -> u32 {
-            let id = self.next_id.get();
-            self.next_id.set(id + 1);
-            id
-        }
-    }
-
-    impl DynRenderer for CapturingRenderer {
-        fn create_element(&self, _tag: ElementTag) -> Element {
-            Element::from_raw(self.alloc_id())
-        }
-        fn create_element_by_name(&self, _tag: &str) -> Element {
-            Element::from_raw(self.alloc_id())
-        }
-        fn release_element(&self, _h: Element) {}
-        fn element_sign(&self, handle: Element) -> i32 {
-            handle.id() as i32
-        }
-        fn set_attribute(&self, h: Element, k: &str, v: &str) {
-            if k == "item-key" {
-                self.item_keys.borrow_mut().insert(h.id(), v.to_string());
-            }
-        }
-        fn set_inline_styles(&self, _h: Element, _css: &str) {}
-        fn set_update_list_info(&self, _h: Element, item_keys: &[String], _prev_count: usize) {
-            *self.last_count.borrow_mut() = Some(item_keys.len() as i32);
-        }
-        fn install_list_native_item_provider(
-            &self,
-            _h: Element,
-            provider: NativeItemProvider,
-        ) -> bool {
-            *self.installed.borrow_mut() = Some(provider);
-            true
-        }
-        fn append_child(&self, _p: Element, _c: Element) {}
-        fn remove_child(&self, _p: Element, _c: Element) {}
-        fn set_event_listener(
-            &self,
-            _h: Element,
-            _n: &str,
-            _bt: BindType,
-            _cb: Box<dyn Fn(crate::value::WhiskerValue) + 'static>,
-        ) {
-        }
-        fn set_root(&self, _p: Element) {}
-        fn flush(&self) {}
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn with_capturing<R>(
-        f: impl FnOnce(
-            Rc<RefCell<Option<i32>>>,
-            Rc<RefCell<Option<NativeItemProvider>>>,
-            Rc<RefCell<HashMap<u32, String>>>,
-        ) -> R,
-    ) -> R {
-        crate::reactive::__reset_for_tests();
-        let recorder = CapturingRenderer::default();
-        let last_count = recorder.last_count.clone();
-        let installed = recorder.installed.clone();
-        let item_keys = recorder.item_keys.clone();
-        let prev = install_renderer(Box::new(recorder));
-        let r = f(last_count, installed, item_keys);
-        uninstall_renderer(prev);
-        r
-    }
 
     #[test]
-    fn broadcasts_count_and_installs_provider() {
-        with_capturing(|count, installed, _| {
-            let owner = Owner::new(None);
-            owner.with(|| {
-                let handle = create_element_by_name("list");
-                virtualize(
-                    handle,
-                    || vec![10_i32, 20, 30],
-                    |x| ItemMeta::<i32>::key(*x),
-                    |_x| create_element_by_name("list-item"),
-                );
-            });
-            flush();
-            assert_eq!(*count.borrow(), Some(3));
-            assert!(installed.borrow().is_some());
-            owner.dispose();
-        });
-    }
-
-    #[test]
-    fn component_at_index_builds_and_stamps_stable_item_key() {
-        with_capturing(|_count, installed, item_keys| {
-            let owner = Owner::new(None);
-            owner.with(|| {
-                let handle = create_element_by_name("list");
-                virtualize(
-                    handle,
-                    || vec![100_i32, 200, 300],
-                    |x| ItemMeta::<i32>::key(*x),
-                    |_x| create_element_by_name("list-item"),
-                );
-            });
-            flush();
-
-            let mut provider = installed.borrow_mut().take().expect("provider");
-            let s0 = (provider.component_at_index)(0, 0, false);
-            let s1 = (provider.component_at_index)(1, 0, false);
-            assert_ne!(s0, INVALID_ITEM_INDEX);
-            assert_ne!(s1, INVALID_ITEM_INDEX);
-            assert_ne!(s0, s1);
-            // item-keys stamped, distinct, positionally "w_0"/"w_1" here
-            // because keys are first-seen in order.
-            let keys = item_keys.borrow();
-            assert_eq!(keys.get(&(s0 as u32)), Some(&"w_0".to_string()));
-            assert_eq!(keys.get(&(s1 as u32)), Some(&"w_1".to_string()));
-            owner.dispose();
-        });
-    }
-
-    #[test]
-    fn same_key_keeps_stable_item_key_across_reorder() {
-        with_capturing(|_count, installed, item_keys| {
-            let owner = Owner::new(None);
-            let (items, set_items) = crate::reactive::signal(vec![1_i32, 2, 3]).split();
-            owner.with(|| {
-                let handle = create_element_by_name("list");
-                virtualize(
-                    handle,
-                    move || items.get(),
-                    |x| ItemMeta::<i32>::key(*x),
-                    |_x| create_element_by_name("list-item"),
-                );
-            });
-            flush();
-
-            let mut provider = installed.borrow_mut().take().expect("provider");
-            // Build key 3 at index 2 → gets some stable id.
-            let sign_three_first = (provider.component_at_index)(2, 0, false);
-            let key_three = item_keys
-                .borrow()
-                .get(&(sign_three_first as u32))
-                .cloned()
-                .unwrap();
-
-            // Reorder so key 3 is now at index 0.
-            set_items.set(vec![3_i32, 1, 2]);
-            flush();
-            let sign_three_again = (provider.component_at_index)(0, 0, false);
-            let key_three_again = item_keys
-                .borrow()
-                .get(&(sign_three_again as u32))
-                .cloned()
-                .unwrap();
-
-            // Same logical key → same item-key, even at a new index.
-            assert_eq!(key_three, key_three_again);
-            owner.dispose();
-        });
-    }
-
-    #[test]
-    fn enqueue_defers_disposal_until_next_provider_call() {
-        with_capturing(|_count, installed, _| {
-            let owner = Owner::new(None);
-            let dropped = Rc::new(RefCell::new(0u32));
-            owner.with(|| {
-                let handle = create_element_by_name("list");
-                let dr = dropped.clone();
-                virtualize(
-                    handle,
-                    || vec![1_i32, 2],
-                    |x| ItemMeta::<i32>::key(*x),
-                    move |_x| {
-                        let dr = dr.clone();
-                        crate::reactive::on_cleanup(move || *dr.borrow_mut() += 1);
-                        create_element_by_name("list-item")
-                    },
-                );
-            });
-            flush();
-
-            let mut provider = installed.borrow_mut().take().expect("provider");
-            let s0 = (provider.component_at_index)(0, 0, false);
-            assert_ne!(s0, INVALID_ITEM_INDEX);
-
-            // Enqueue must NOT dispose synchronously (native still detaches the
-            // element after this returns → use-after-free otherwise).
-            let enqueue = provider.enqueue_component.as_mut().expect("enqueue");
-            (enqueue)(s0);
-            assert_eq!(*dropped.borrow(), 0, "enqueue defers disposal");
-
-            // The next provider call flushes the deferred batch.
-            let _s1 = (provider.component_at_index)(1, 1, false);
-            assert_eq!(*dropped.borrow(), 1, "deferred slot disposed on next call");
-
-            owner.dispose();
-        });
-    }
-
-    #[test]
-    fn out_of_range_index_returns_invalid() {
-        with_capturing(|_count, installed, _| {
-            let owner = Owner::new(None);
-            owner.with(|| {
-                let handle = create_element_by_name("list");
-                virtualize(
-                    handle,
-                    || vec![1_i32, 2],
-                    |x| ItemMeta::<i32>::key(*x),
-                    |_x| create_element_by_name("list-item"),
-                );
-            });
-            flush();
-            let mut provider = installed.borrow_mut().take().expect("provider");
-            assert_eq!(
-                (provider.component_at_index)(5, 0, false),
-                INVALID_ITEM_INDEX
-            );
-            owner.dispose();
-        });
-    }
-
-    fn ks(keys: &[&str]) -> Vec<String> {
-        keys.iter().map(|s| s.to_string()).collect()
-    }
-
-    /// The splice as `(removals, insert (position, key) pairs)` —
-    /// mirrors what `send_data_source_update` derives from
-    /// `splice_bounds`.
-    fn splice(prev: &[String], keys: &[String]) -> (Vec<i32>, Vec<(i32, String)>) {
-        let (p, s) = splice_bounds(prev, keys);
-        let removals: Vec<i32> = (p..prev.len() - s).map(|i| i as i32).collect();
-        let inserts: Vec<(i32, String)> = keys[p..keys.len() - s]
-            .iter()
-            .enumerate()
-            .map(|(k, key)| ((p + k) as i32, key.clone()))
-            .collect();
-        (removals, inserts)
-    }
-
-    #[test]
-    fn splice_diff_append_is_insert_only() {
-        let (removals, inserts) = splice(&ks(&["a", "b"]), &ks(&["a", "b", "c", "d"]));
-        assert!(removals.is_empty());
-        assert_eq!(inserts, vec![(2, "c".to_string()), (3, "d".to_string())]);
-    }
-
-    #[test]
-    fn splice_diff_prepend_is_insert_at_zero() {
-        let (removals, inserts) = splice(&ks(&["a", "b"]), &ks(&["x", "a", "b"]));
-        assert!(removals.is_empty());
-        assert_eq!(inserts, vec![(0, "x".to_string())]);
-    }
-
-    #[test]
-    fn splice_diff_mid_replace_touches_only_the_window() {
-        // [a b c d e] -> [a b X Y e]: remove old 2,3; insert X@2, Y@3.
-        let (removals, inserts) = splice(
-            &ks(&["a", "b", "c", "d", "e"]),
-            &ks(&["a", "b", "X", "Y", "e"]),
-        );
-        assert_eq!(removals, vec![2, 3]);
-        assert_eq!(inserts, vec![(2, "X".to_string()), (3, "Y".to_string())]);
-    }
-
-    #[test]
-    fn splice_diff_removal_only() {
-        let (removals, inserts) = splice(&ks(&["a", "b", "c"]), &ks(&["a", "c"]));
-        assert_eq!(removals, vec![1]);
-        assert!(inserts.is_empty());
-    }
-
-    #[test]
-    fn splice_diff_identical_is_empty() {
-        let (removals, inserts) = splice(&ks(&["a", "b"]), &ks(&["a", "b"]));
-        assert!(removals.is_empty());
-        assert!(inserts.is_empty());
-    }
-
-    #[test]
-    fn splice_diff_reorder_degrades_to_full_window() {
-        // No common prefix/suffix survives a rotate — remove all, insert all.
-        let (removals, inserts) = splice(&ks(&["a", "b", "c"]), &ks(&["b", "c", "a"]));
-        assert_eq!(removals, vec![0, 1, 2]);
-        assert_eq!(
-            inserts,
-            vec![
-                (0, "b".to_string()),
-                (1, "c".to_string()),
-                (2, "a".to_string())
-            ]
-        );
-    }
-
-    /// One recorded `update_list_actions` call:
-    /// `(removals, inserts, updates)`.
-    type RecordedActions = (Vec<i32>, Vec<ListItemAction>, Vec<ListItemAction>);
-
-    /// Renderer that accepts explicit actions (like the real bridge on a
-    /// new-enough Lynx) — the virtualizer must prefer them and NOT fall
-    /// back to the full replace.
-    #[derive(Default)]
-    struct ActionsRenderer {
-        next_id: std::cell::Cell<u32>,
-        actions: Rc<RefCell<Vec<RecordedActions>>>,
-        full_replace_calls: Rc<RefCell<u32>>,
-    }
-
-    impl DynRenderer for ActionsRenderer {
-        fn create_element(&self, _tag: ElementTag) -> Element {
-            let id = self.next_id.get();
-            self.next_id.set(id + 1);
-            Element::from_raw(id)
-        }
-        fn create_element_by_name(&self, _tag: &str) -> Element {
-            self.create_element(ElementTag::View)
-        }
-        fn release_element(&self, _h: Element) {}
-        fn set_attribute(&self, _h: Element, _k: &str, _v: &str) {}
-        fn set_inline_styles(&self, _h: Element, _css: &str) {}
-        fn set_update_list_info(&self, _h: Element, _keys: &[String], _prev: usize) {
-            *self.full_replace_calls.borrow_mut() += 1;
-        }
-        fn update_list_actions(
-            &self,
-            _h: Element,
-            removals: &[i32],
-            inserts: &[ListItemAction],
-            updates: &[ListItemAction],
-        ) -> bool {
-            self.actions
-                .borrow_mut()
-                .push((removals.to_vec(), inserts.to_vec(), updates.to_vec()));
-            true
-        }
-        fn install_list_native_item_provider(&self, _h: Element, _p: NativeItemProvider) -> bool {
-            true
-        }
-        fn append_child(&self, _p: Element, _c: Element) {}
-        fn remove_child(&self, _p: Element, _c: Element) {}
-        fn set_event_listener(
-            &self,
-            _h: Element,
-            _n: &str,
-            _bt: BindType,
-            _cb: Box<dyn Fn(crate::value::WhiskerValue) + 'static>,
-        ) {
-        }
-        fn set_root(&self, _p: Element) {}
-        fn flush(&self) {}
-    }
-
-    #[test]
-    fn append_sends_insert_only_actions_and_skips_full_replace() {
-        crate::reactive::__reset_for_tests();
-        let recorder = ActionsRenderer::default();
-        let actions = recorder.actions.clone();
-        let full_replace = recorder.full_replace_calls.clone();
-        let prev = install_renderer(Box::new(recorder));
-
-        let owner = Owner::new(None);
-        let (items, set_items) = crate::reactive::signal(vec![1_i32, 2]).split();
-        owner.with(|| {
-            let handle = create_element_by_name("list");
-            virtualize(
-                handle,
-                move || items.get(),
-                |x| ItemMeta::<i32>::key(*x).estimated_size(84),
-                |_x| create_element_by_name("view"),
-            );
-        });
-        flush();
-        // Initial population: pure insert of both keys, metadata riding
-        // the entries.
-        assert_eq!(actions.borrow().len(), 1);
-        assert_eq!(actions.borrow()[0].0, Vec::<i32>::new());
-        assert_eq!(actions.borrow()[0].1.len(), 2);
-        assert_eq!(actions.borrow()[0].1[0].estimated_size, Some(84));
-        assert!(actions.borrow()[0].2.is_empty());
-
-        // Append: insert-only at the tail, untouched items unmentioned.
-        set_items.set(vec![1_i32, 2, 3]);
-        flush();
-        assert_eq!(actions.borrow().len(), 2);
-        let (removals, inserts, updates) = actions.borrow()[1].clone();
-        assert!(removals.is_empty());
-        assert_eq!(inserts.len(), 1);
-        assert_eq!(inserts[0].position, 2);
-        assert_eq!(inserts[0].key, "w_2");
-        assert!(updates.is_empty());
-
-        // Identical re-run: nothing sent.
-        set_items.set(vec![1_i32, 2, 3]);
-        flush();
-        assert_eq!(actions.borrow().len(), 2);
-
-        assert_eq!(*full_replace.borrow(), 0, "must not fall back");
-        owner.dispose();
-        uninstall_renderer(prev);
-    }
-
-    #[test]
-    fn metadata_change_on_surviving_key_sends_in_place_update() {
-        crate::reactive::__reset_for_tests();
-        let recorder = ActionsRenderer::default();
-        let actions = recorder.actions.clone();
-        let prev = install_renderer(Box::new(recorder));
-
-        let owner = Owner::new(None);
-        // `full_span` derives from the DATA (value >= 100), so flipping
-        // an item's value past the threshold changes its metadata while
-        // its key (the index-stable first element) survives.
-        let (items, set_items) = crate::reactive::signal(vec![(1_i32, 0_i32), (2, 0)]).split();
-        owner.with(|| {
-            let handle = create_element_by_name("list");
-            virtualize(
-                handle,
-                move || items.get(),
-                |x: &(i32, i32)| ItemMeta::<i32>::key(x.0).full_span(x.1 >= 100),
-                |_x| create_element_by_name("view"),
-            );
-        });
-        flush();
-        assert_eq!(actions.borrow().len(), 1);
-
-        // Same keys, item 1's metadata flips → one in-place update, no
-        // structural actions.
-        set_items.set(vec![(1_i32, 0_i32), (2, 100)]);
-        flush();
-        assert_eq!(actions.borrow().len(), 2);
-        let (removals, inserts, updates) = actions.borrow()[1].clone();
-        assert!(removals.is_empty());
-        assert!(inserts.is_empty());
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].position, 1);
-        assert_eq!(updates[0].key, "w_1");
-        assert!(updates[0].full_span);
-
-        owner.dispose();
-        uninstall_renderer(prev);
+    fn reads_wrapped_scroll_geometry() {
+        let event = WhiskerValue::map([(
+            "detail",
+            WhiskerValue::map([
+                ("scrollTop", WhiskerValue::Float(120.0)),
+                ("viewportHeight", WhiskerValue::Int(480)),
+            ]),
+        )]);
+        let geometry = scroll_geometry(&event).unwrap();
+        assert_eq!(geometry.offset, 120.0);
+        assert_eq!(geometry.viewport, 480.0);
     }
 }

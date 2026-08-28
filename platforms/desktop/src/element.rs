@@ -823,7 +823,11 @@ impl WhiskerModule for BuiltInElementModule {
             .name("whisker.ui")
             .view(DesktopViewDefinition::new("whisker.ui/View", |_| ()))
             .view(DesktopViewDefinition::new("whisker.ui/Text", |_| ()).plain_text())
-            .view(DesktopViewDefinition::new("whisker.ui/ScrollView", |_| ()).scroll_container())
+            .view(
+                DesktopViewDefinition::new("whisker.ui/ScrollView", |_| ())
+                    .scroll_container()
+                    .event("scroll"),
+            )
     }
 }
 

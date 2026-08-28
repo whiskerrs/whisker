@@ -481,9 +481,43 @@ impl DesktopScene {
             if is_scroll {
                 let max = self.max_scroll_offset(node);
                 let state = self.nodes.get_mut(&node).expect("scroll hit remains live");
-                let next = [0.0, (state.scroll_offset[1] + delta[1]).clamp(0.0, max[1])];
+                let next = [
+                    (state.scroll_offset[0] + delta[0]).clamp(0.0, max[0]),
+                    (state.scroll_offset[1] + delta[1]).clamp(0.0, max[1]),
+                ];
                 let changed = next != state.scroll_offset;
                 state.scroll_offset = next;
+                if changed {
+                    let viewport = state.presentation.layout.content_box;
+                    self.pending_events
+                        .lock()
+                        .unwrap()
+                        .push(DesktopProviderEvent {
+                            target: node,
+                            name: "scroll".to_owned(),
+                            detail: WhiskerValue::map([
+                                ("scrollLeft", WhiskerValue::Float(f64::from(next[0]))),
+                                ("scrollTop", WhiskerValue::Float(f64::from(next[1]))),
+                                (
+                                    "scrollWidth",
+                                    WhiskerValue::Float(f64::from(viewport.width + max[0])),
+                                ),
+                                (
+                                    "scrollHeight",
+                                    WhiskerValue::Float(f64::from(viewport.height + max[1])),
+                                ),
+                                (
+                                    "viewportWidth",
+                                    WhiskerValue::Float(f64::from(viewport.width)),
+                                ),
+                                (
+                                    "viewportHeight",
+                                    WhiskerValue::Float(f64::from(viewport.height)),
+                                ),
+                            ]),
+                        });
+                    self.event_wake.wake();
+                }
                 return changed;
             }
             current = self
@@ -497,16 +531,22 @@ impl DesktopScene {
     fn max_scroll_offset(&self, node: NodeId) -> [f32; 2] {
         let state = self.nodes.get(&node).expect("scroll node remains live");
         let viewport = state.presentation.layout.content_box;
-        let content_height = state
+        let (content_width, content_height) = state
             .presentation
             .children
             .iter()
             .filter_map(|child| self.nodes.get(child))
-            .fold(viewport.height, |extent, child| {
+            .fold((viewport.width, viewport.height), |extent, child| {
                 let rect = child.presentation.layout.border_box;
-                extent.max(rect.y + rect.height)
+                (
+                    extent.0.max(rect.x + rect.width),
+                    extent.1.max(rect.y + rect.height),
+                )
             });
-        [0.0, (content_height - viewport.height).max(0.0)]
+        [
+            (content_width - viewport.width).max(0.0),
+            (content_height - viewport.height).max(0.0),
+        ]
     }
 
     fn clamp_scroll_offsets(&mut self) {
@@ -1897,6 +1937,10 @@ mod tests {
                         node: scroll,
                         element_type: element_type(whisker::SCROLL_VIEW_ELEMENT_NAME),
                     },
+                    Operation::SetEventMask {
+                        node: scroll,
+                        event_mask: 1,
+                    },
                     Operation::CreateNode {
                         node: content,
                         element_type: element_type(whisker::VIEW_ELEMENT_NAME),
@@ -1950,6 +1994,21 @@ mod tests {
         assert_eq!(scene.hit_test([10.0, 60.0]), Some(content));
         assert!(scene.scroll_at([10.0, 60.0], [0.0, 120.0]));
         assert_eq!(scene.nodes[&scroll].scroll_offset, [0.0, 120.0]);
+        assert_eq!(
+            scene.take_events(),
+            vec![DesktopProviderEvent {
+                target: scroll,
+                name: "scroll".to_owned(),
+                detail: WhiskerValue::map([
+                    ("scrollLeft", WhiskerValue::Float(0.0)),
+                    ("scrollTop", WhiskerValue::Float(120.0)),
+                    ("scrollWidth", WhiskerValue::Float(100.0)),
+                    ("scrollHeight", WhiskerValue::Float(300.0)),
+                    ("viewportWidth", WhiskerValue::Float(98.0)),
+                    ("viewportHeight", WhiskerValue::Float(96.0)),
+                ]),
+            }]
+        );
         assert_eq!(scene.hit_test([10.0, 60.0]), Some(target));
         assert!(scene.paint_commands().iter().any(|command| {
             matches!(

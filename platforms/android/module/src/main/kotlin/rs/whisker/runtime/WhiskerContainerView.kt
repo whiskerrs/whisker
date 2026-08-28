@@ -110,8 +110,9 @@ public open class WhiskerContainerView(context: Context) : ViewGroup(context) {
 }
 
 /** Native vertical scroll container with a dedicated multi-child content host. */
-public class WhiskerScrollContainerView(context: Context) : ScrollView(context) {
+public class WhiskerScrollContainerView(context: Context) : ScrollView(context), WhiskerEventSource {
     public val contentView: WhiskerContainerView = WhiskerContainerView(context)
+    private var eventSink: ((String, WhiskerValue) -> Unit)? = null
 
     init {
         isFillViewport = true
@@ -120,5 +121,25 @@ public class WhiskerScrollContainerView(context: Context) : ScrollView(context) 
             contentView,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
         )
+        setOnScrollChangeListener { _, scrollX, scrollY, _, _ ->
+            val density = resources.displayMetrics.density
+            eventSink?.invoke(
+                "scroll",
+                WhiskerValue.Map(
+                    mapOf(
+                        "scrollLeft" to WhiskerValue.Float(scrollX / density.toDouble()),
+                        "scrollTop" to WhiskerValue.Float(scrollY / density.toDouble()),
+                        "scrollWidth" to WhiskerValue.Float(contentView.width / density.toDouble()),
+                        "scrollHeight" to WhiskerValue.Float(contentView.height / density.toDouble()),
+                        "viewportWidth" to WhiskerValue.Float(width / density.toDouble()),
+                        "viewportHeight" to WhiskerValue.Float(height / density.toDouble()),
+                    ),
+                ),
+            )
+        }
+    }
+
+    override fun installWhiskerEventSink(sink: ((String, WhiskerValue) -> Unit)?) {
+        eventSink = sink
     }
 }

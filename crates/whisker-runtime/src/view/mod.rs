@@ -20,7 +20,6 @@ pub mod apply;
 pub mod control_flow;
 pub mod handle;
 pub mod into_view;
-pub mod list_provider;
 pub mod renderer;
 pub mod virtualizer;
 
@@ -36,10 +35,8 @@ pub use into_view::{
     Children, EachFn, Fallback, IntoView, ItemFn, KeyFn, MetaFn, TextChildren, View, WhenFn,
     mount_children, mount_text_children, mount_view,
 };
-pub use list_provider::{INVALID_ITEM_INDEX, NativeItemProvider};
 #[doc(hidden)]
 pub use renderer::__reset_children_mirror_for_tests;
-pub use renderer::ListItemAction;
 pub use virtualizer::{ItemMeta, virtualize};
 
 // Element-manipulation + lifecycle surface the `render!` macro expands
@@ -48,10 +45,9 @@ pub use virtualizer::{ItemMeta, virtualize};
 pub use renderer::{
     BindType, append_child, child_index, children_of, create_element, create_element_by_name,
     create_element_by_schema, create_phantom_element, dispatch_event, flush, insert_child_at,
-    install_list_native_item_provider, is_phantom, previous_sibling, release_element, remove_child,
-    set_attribute, set_attribute_bool, set_attribute_double, set_attribute_int,
-    set_attribute_object, set_event_listener, set_inline_styles, set_root, set_specified_style,
-    set_update_list_info,
+    is_phantom, previous_sibling, release_element, remove_child, set_attribute, set_attribute_bool,
+    set_attribute_double, set_attribute_int, set_attribute_object, set_event_listener,
+    set_inline_styles, set_root, set_specified_style,
 };
 
 // Renderer-wiring internals. Public because Hosts and test renderers link
@@ -60,6 +56,6 @@ pub use renderer::{
 // module-author API, hence `#[doc(hidden)]`.
 #[doc(hidden)]
 pub use renderer::{
-    DynRenderer, EventDispatchPlan, PHANTOM_BASE, current_renderer_id, element_sign,
-    install_renderer, try_invoke_element_command, uninstall_renderer, with_installed_renderer,
+    DynRenderer, EventDispatchPlan, PHANTOM_BASE, current_renderer_id, install_renderer,
+    try_invoke_element_command, uninstall_renderer, with_installed_renderer,
 };

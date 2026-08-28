@@ -2,7 +2,9 @@
 
 use crate::element::ElementTag;
 use crate::{ElementModuleDefinition, ElementProviderMetadata};
-use whisker_engine::whisker_protocol::{ChildPolicy, ElementMeasurement, ElementSchema};
+use whisker_engine::whisker_protocol::{
+    ChildPolicy, ElementEventSchema, ElementMeasurement, ElementSchema, ElementValueKind, EventId,
+};
 use whisker_engine::whisker_style::{
     FlexDirectionValue, OverflowValue, SpecifiedStyle, StyleProperty, StyleValue,
 };
@@ -51,11 +53,17 @@ pub fn text_element_binding() -> ElementSchema {
 
 /// Returns the Host-independent binding for the standard scroll container.
 pub fn scroll_view_element_binding() -> ElementSchema {
-    element_schema(
+    let mut schema = element_schema(
         SCROLL_VIEW_ELEMENT_NAME,
         ChildPolicy::Elements,
         ElementMeasurement::None,
-    )
+    );
+    schema.events.push(ElementEventSchema {
+        event: EventId::new(1).expect("the standard scroll event ID is non-zero"),
+        name: "scroll".to_owned(),
+        detail: Some(ElementValueKind::Map),
+    });
+    schema
 }
 
 /// Returns the providers exported by the built-in UI package.

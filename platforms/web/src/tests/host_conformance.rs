@@ -66,6 +66,102 @@ fn browser_pointer_metadata_maps_to_protocol_values() {
 }
 
 #[wasm_bindgen_test]
+fn scroll_view_emits_logical_scroll_geometry() {
+    let mut driver = Driver::new();
+    let registry = ElementRegistry::standard();
+    let scroll_type = registry
+        .registration_for_builtin(whisker::ElementTag::ScrollView)
+        .unwrap()
+        .element_type;
+    let view_type = registry
+        .registration_for_builtin(whisker::ElementTag::View)
+        .unwrap()
+        .element_type;
+    let scroll = NodeId::new(1).unwrap();
+    let content = NodeId::new(2).unwrap();
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![
+                Operation::CreateNode {
+                    node: scroll,
+                    element_type: scroll_type,
+                },
+                Operation::CreateNode {
+                    node: content,
+                    element_type: view_type,
+                },
+                Operation::InsertChild {
+                    parent: scroll,
+                    child: content,
+                    index: 0,
+                },
+                Operation::SetLayout {
+                    node: scroll,
+                    geometry: LayoutGeometry {
+                        border_box: LayoutRect {
+                            width: 100.0,
+                            height: 80.0,
+                            ..LayoutRect::default()
+                        },
+                        content_box: LayoutRect {
+                            width: 100.0,
+                            height: 80.0,
+                            ..LayoutRect::default()
+                        },
+                    },
+                },
+                Operation::SetLayout {
+                    node: content,
+                    geometry: LayoutGeometry {
+                        border_box: LayoutRect {
+                            width: 100.0,
+                            height: 300.0,
+                            ..LayoutRect::default()
+                        },
+                        content_box: LayoutRect {
+                            width: 100.0,
+                            height: 300.0,
+                            ..LayoutRect::default()
+                        },
+                    },
+                },
+                Operation::SetEventMask {
+                    node: scroll,
+                    event_mask: 1,
+                },
+            ],
+        })
+        .unwrap();
+
+    let element = driver.node(1).dyn_into::<web_sys::HtmlElement>().unwrap();
+    element.set_scroll_top(120);
+    element
+        .dispatch_event(&web_sys::Event::new("scroll").unwrap())
+        .unwrap();
+
+    let events = driver.sink.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].name, "scroll");
+    let WhiskerValue::Map(detail) = &events[0].detail else {
+        panic!("scroll detail must be a map")
+    };
+    assert_eq!(detail.get("scrollTop"), Some(&WhiskerValue::Int(120)));
+    assert_eq!(detail.get("viewportHeight"), Some(&WhiskerValue::Int(80)));
+    assert_eq!(detail.get("scrollHeight"), Some(&WhiskerValue::Int(300)));
+}
+
+#[wasm_bindgen_test]
 fn padded_parent_preserves_child_border_box_coordinates() {
     let mut driver = Driver::new();
     let parent = NodeId::new(1).unwrap();

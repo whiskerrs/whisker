@@ -317,6 +317,7 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             // `Into<EachFn<T>>`, whereas the generic `attr` fallback
             // would try `Into<Signal<String>>`.
             | ("list", "each")
+            | ("list", "key")
             | ("list", "meta")
             | ("list", "children")
     )

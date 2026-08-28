@@ -233,7 +233,7 @@ public struct WhiskerTextShadow {
 public final class WhiskerMountedElement {
     public let registration: WhiskerElementRegistration
     public let view: UIView
-    private let nativeElement: WhiskerNativeElement?
+    private let eventSource: WhiskerEventSource?
     private let textUpdater: ((UIView, WhiskerTextContent) -> Void)?
     private let textStyleUpdater: ((UIView, WhiskerTextStyle) -> Void)?
     private let childrenHostProvider: ((UIView) -> UIView)?
@@ -256,7 +256,7 @@ public final class WhiskerMountedElement {
     ) {
         self.registration = registration
         self.view = view
-        self.nativeElement = view as? WhiskerNativeElement
+        self.eventSource = view as? WhiskerEventSource
         self.textUpdater = textUpdater
         self.textStyleUpdater = textStyleUpdater
         self.childrenHostProvider = childrenHost
@@ -264,7 +264,7 @@ public final class WhiskerMountedElement {
         self.commands = commands
         self.eventsByName = eventsByName
         self.eventSink = eventSink
-        nativeElement?.installWhiskerEventSink { [weak self] name, detail in
+        eventSource?.installWhiskerEventSink { [weak self] name, detail in
             guard let self, let event = self.eventsByName[name] else { return }
             let bit = UInt64(1) << UInt64(event.id - 1)
             if self.eventMask & bit != 0 { self.eventSink(event, detail) }
@@ -297,7 +297,7 @@ public final class WhiskerMountedElement {
     }
 
     public func childrenHost() -> UIView? { childrenHostProvider?(view) }
-    public func dispose() { nativeElement?.installWhiskerEventSink(nil) }
+    public func dispose() { eventSource?.installWhiskerEventSink(nil) }
 }
 
 /** Host-owned declaration. It contains names and behavior, never Rust IDs. */
