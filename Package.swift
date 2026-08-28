@@ -42,22 +42,7 @@ let package = Package(
         .target(
             name: "WhiskerRuntime",
             dependencies: ["WhiskerModule"],
-            path: "platforms/ios/Sources/WhiskerRuntime",
-            swiftSettings: [.define("WHISKER_HOST_CONFORMANCE")]
-        ),
-        .target(
-            name: "WhiskerHostConformanceStubs",
-            path: "tests/host-conformance/runners/ios/Stubs"
-        ),
-        .testTarget(
-            name: "WhiskerIOSHostConformanceTests",
-            dependencies: [
-                "WhiskerRuntime",
-                "WhiskerModule",
-                "WhiskerCBridge",
-                "WhiskerHostConformanceStubs",
-            ],
-            path: "tests/host-conformance/runners/ios/Tests"
+            path: "platforms/ios/Sources/WhiskerRuntime"
         ),
         .executableTarget(
             name: "WhiskerModuleCodegen",

@@ -2685,6 +2685,8 @@ private var fixtureRoot: URL {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("tests/host-conformance")
 }
 
 private func json(at url: URL) throws -> [String: Any] {

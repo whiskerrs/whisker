@@ -250,14 +250,15 @@ fn android(root: &Path) -> Result<()> {
         root.join("platforms/android/gradle-plugin/gradlew")
     };
     run(Command::new(wrapper)
-        .current_dir(root)
+        .current_dir(root.join("platforms/android"))
         .arg("--project-dir")
-        .arg(root.join("tests/host-conformance/runners/android"))
-        .arg(":app:connectedDebugAndroidTest"))
+        .arg(root.join("platforms/android"))
+        .arg(":runtime:connectedDebugAndroidTest"))
 }
 
 #[cfg(target_os = "macos")]
 fn ios(root: &Path) -> Result<()> {
+    let package_root = root.join("platforms/ios");
     let sdk = capture(Command::new("xcrun").args(["--sdk", "iphonesimulator", "--show-sdk-path"]))?;
     let triple = match std::env::consts::ARCH {
         "aarch64" => "arm64-apple-ios-simulator",
@@ -265,10 +266,10 @@ fn ios(root: &Path) -> Result<()> {
         architecture => bail!("unsupported macOS architecture {architecture}"),
     };
     run(Command::new("swift")
-        .current_dir(root)
+        .current_dir(&package_root)
         .arg("build")
         .arg("--package-path")
-        .arg(root)
+        .arg(&package_root)
         .arg("--build-tests")
         .arg("--triple")
         .arg(triple)
@@ -294,7 +295,7 @@ fn ios(root: &Path) -> Result<()> {
     let developer_dir = capture(Command::new("xcode-select").arg("-p"))?;
     let xctest = Path::new(developer_dir.trim())
         .join("Platforms/iPhoneSimulator.platform/Developer/Library/Xcode/Agents/xctest");
-    let bundle = root
+    let bundle = package_root
         .join(".build")
         .join(triple)
         .join("debug/WhiskerPackageTests.xctest");
