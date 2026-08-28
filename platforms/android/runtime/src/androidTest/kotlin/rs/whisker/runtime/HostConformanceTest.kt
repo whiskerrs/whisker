@@ -29,6 +29,7 @@ import kotlin.math.roundToInt
 import rs.whisker.runtime.resource.HostResourceFailureCode
 import rs.whisker.runtime.resource.HostResourceSnapshot
 import rs.whisker.runtime.resource.HostResourceState
+import rs.whisker.runtime.measure.HostMeasureBatchAbi
 
 private const val BACKGROUND_PACKED_LAYERS = 256
 
@@ -161,6 +162,89 @@ class HostConformanceTest {
                         Driver(context, "android.opacity-rejection").rejectOpacity(opacity),
                     )
                 }
+            }
+    }
+
+    @Test
+    fun acceptsHeterogeneousOperationsAsOneTransactionalFrameBatch() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val view = WhiskerView(context)
+                val metadata = longArrayOf(
+                    // create node 1 as the built-in View element
+                    1, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+                    // assign both border and content geometry
+                    6, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+                    // apply opacity after layout
+                    10, 0, 1, 0, 0, 0, 0, 0, 0.4f.toRawBits().toLong(), 0,
+                )
+                val response = LongArray(2)
+
+                assertTrue(
+                    view.presentFrameFromNative(
+                        mode = 0,
+                        epoch = 3,
+                        baseRevision = 0,
+                        targetRevision = 9,
+                        metadata = metadata,
+                        numbers = arrayOf(
+                            null,
+                            floatArrayOf(10f, 20f, 30f, 40f, 0f, 0f, 30f, 40f),
+                            null,
+                        ),
+                        texts = arrayOfNulls(3),
+                        names = arrayOfNulls(3),
+                        values = arrayOfNulls(3),
+                        response = response,
+                    ),
+                )
+                assertEquals(0L, response[0])
+                assertEquals(9L, response[1])
+                assertEquals(9L, view.currentRevisionFromNative())
+                assertEquals(0.4f, view.getChildAt(0).alpha, 0.001f)
+
+                val snapshotResponse = LongArray(2)
+                assertTrue(
+                    view.presentFrameFromNative(
+                        mode = 1,
+                        epoch = 3,
+                        baseRevision = 8,
+                        targetRevision = 10,
+                        metadata = LongArray(0),
+                        numbers = emptyArray(),
+                        texts = emptyArray(),
+                        names = emptyArray(),
+                        values = emptyArray(),
+                        response = snapshotResponse,
+                    ),
+                )
+                assertEquals(1L, snapshotResponse[0])
+                assertEquals(9L, snapshotResponse[1])
+                assertEquals(0.4f, view.getChildAt(0).alpha, 0.001f)
+
+                val rejectedResponse = LongArray(2)
+                assertTrue(
+                    view.presentFrameFromNative(
+                        mode = 1,
+                        epoch = 3,
+                        baseRevision = 9,
+                        targetRevision = 10,
+                        metadata = longArrayOf(
+                            10, 0, 1, 0, 0, 0, 0, 0,
+                            Float.NaN.toRawBits().toLong(), 0,
+                        ),
+                        numbers = arrayOf(null),
+                        texts = arrayOfNulls(1),
+                        names = arrayOfNulls(1),
+                        values = arrayOfNulls(1),
+                        response = rejectedResponse,
+                    ),
+                )
+                assertEquals(2L, rejectedResponse[0])
+                assertEquals(9L, rejectedResponse[1])
+                assertEquals(0.4f, view.getChildAt(0).alpha, 0.001f)
             }
     }
 
@@ -713,44 +797,55 @@ private class Driver(
         val indent = command.optJSONObject("indent")
         val indentLogicalPixels = indent?.optDouble("logical_pixels", 0.0)?.toFloat() ?: 0f
         val indentPercentage = indent?.optDouble("percentage", 0.0)?.toFloat() ?: 0f
-        val result = view.measureFromNative(
-            elementType = 2,
-            kind = 1,
-            knownWidth = 0f,
-            knownHeight = 0f,
-            knownMask = 0,
-            availableWidth = command.getDouble("available_width").toFloat(),
-            availableHeight = Float.POSITIVE_INFINITY,
-            availableWidthKind = 0,
-            availableHeightKind = 2,
-            text = command.getString("text"),
-            fontFamilies = families,
-            fontSize = command.getDouble("font_size").toFloat(),
-            fontWeight = command.optInt("font_weight", 400),
-            fontStyle = when (command.optString("font_style", "normal")) {
+        val requestInts = IntArray(HostMeasureBatchAbi.REQUEST_INT_STRIDE).apply {
+            this[HostMeasureBatchAbi.ELEMENT_TYPE] = 2
+            this[HostMeasureBatchAbi.KIND] = 1
+            this[HostMeasureBatchAbi.AVAILABLE_WIDTH_KIND] = 0
+            this[HostMeasureBatchAbi.AVAILABLE_HEIGHT_KIND] = 2
+            this[HostMeasureBatchAbi.FONT_WEIGHT] = command.optInt("font_weight", 400)
+            this[HostMeasureBatchAbi.FONT_STYLE] = when (command.optString("font_style", "normal")) {
                 "italic" -> 1
                 "oblique" -> 2
                 "normal" -> 0
                 else -> error("unsupported font_style: $command")
-            },
-            wrap = wrap,
-            wordBreak = wordBreak,
-            overflow = overflow,
-            letterSpacing = command.optDouble("letter_spacing", 0.0).toFloat(),
-            lineHeight = command.getDouble("line_height").toFloat(),
-            indentLogicalPixels = indentLogicalPixels,
-            indentPercentage = indentPercentage,
-            maxLines = maxLines,
-            fontSettings = (featureSettings + variationSettings).toTypedArray(),
-            fontFeatureCount = featureSettings.size,
-            fontOpticalSizing = opticalSizing,
-            payloadVersion = 0,
-            payload = byteArrayOf(),
-            intrinsicWidth = 0f,
-            intrinsicHeight = 0f,
-            intrinsicMask = 0,
-            direction = direction,
-            alignment = alignment,
+            }
+            this[HostMeasureBatchAbi.WRAP] = wrap
+            this[HostMeasureBatchAbi.WORD_BREAK] = wordBreak
+            this[HostMeasureBatchAbi.OVERFLOW] = overflow
+            this[HostMeasureBatchAbi.MAX_LINES] = maxLines
+            this[HostMeasureBatchAbi.FONT_FEATURE_COUNT] = featureSettings.size
+            this[HostMeasureBatchAbi.FONT_OPTICAL_SIZING] = opticalSizing
+            this[HostMeasureBatchAbi.DIRECTION] = direction
+            this[HostMeasureBatchAbi.ALIGNMENT] = alignment
+        }
+        val requestFloats = FloatArray(HostMeasureBatchAbi.REQUEST_FLOAT_STRIDE).apply {
+            this[HostMeasureBatchAbi.AVAILABLE_WIDTH] =
+                command.getDouble("available_width").toFloat()
+            this[HostMeasureBatchAbi.AVAILABLE_HEIGHT] = Float.POSITIVE_INFINITY
+            this[HostMeasureBatchAbi.FONT_SIZE] = command.getDouble("font_size").toFloat()
+            this[HostMeasureBatchAbi.LINE_HEIGHT] = command.getDouble("line_height").toFloat()
+            this[HostMeasureBatchAbi.LETTER_SPACING] =
+                command.optDouble("letter_spacing", 0.0).toFloat()
+            this[HostMeasureBatchAbi.INDENT_LOGICAL_PIXELS] = indentLogicalPixels
+            this[HostMeasureBatchAbi.INDENT_PERCENTAGE] = indentPercentage
+        }
+        val batch = view.measureBatchFromNative(
+            longArrayOf(command.getLong("key"), 1L, 1L),
+            requestInts,
+            requestFloats,
+            arrayOf(command.getString("text"), command.optString("locale", "")),
+            arrayOf(families),
+            arrayOf((featureSettings + variationSettings).toTypedArray()),
+            arrayOf(byteArrayOf()),
+        )
+        val result = floatArrayOf(
+            batch.ints[0].toFloat(),
+            batch.ints[1].toFloat(),
+            batch.floats[0],
+            batch.floats[1],
+            batch.floats[2],
+            batch.floats[3],
+            batch.ints[2].toFloat(),
         )
         check(result.size >= 7 && result[0] == 1f) { "$id text measurement was not ready" }
         if (id == "host.measure.text.font-features") {

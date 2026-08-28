@@ -15,8 +15,22 @@ typedef struct { jobject surface; void* runtime; } WhiskerAndroidView;
 static JavaVM* g_vm;
 static jclass g_view_class;
 static jmethodID g_request_frame, g_begin_bootstrap, g_register_element, g_finish_bootstrap;
-static jmethodID g_begin_frame, g_current_revision, g_stage_operation, g_commit_frame, g_measure;
+static jmethodID g_present_frame, g_current_revision, g_measure_batch;
 static jmethodID g_resource_command, g_invoke_module, g_observe_module;
+static jclass g_measure_response_class;
+static jfieldID g_measure_response_longs, g_measure_response_ints, g_measure_response_floats;
+
+enum {
+    MEASURE_REQUEST_LONG_STRIDE = 3,
+    MEASURE_REQUEST_INT_STRIDE = 17,
+    MEASURE_REQUEST_FLOAT_STRIDE = 11,
+    MEASURE_REQUEST_STRING_STRIDE = 2,
+    MEASURE_RESPONSE_LONG_STRIDE = 4,
+    MEASURE_RESPONSE_INT_STRIDE = 3,
+    MEASURE_RESPONSE_FLOAT_STRIDE = 4,
+};
+
+enum { WHISKER_ANDROID_OPERATION_STRIDE = 10 };
 
 void whisker_mobile_bridge_anchor(void) {}
 
@@ -282,31 +296,33 @@ static jobjectArray font_settings(JNIEnv* env,
 }
 
 static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMobileApplyResponse* response) {
-    if (frame == NULL || response == NULL || frame->abi_major != WHISKER_MOBILE_ABI_MAJOR) return false;
+    if (frame == NULL || response == NULL || frame->abi_major != WHISKER_MOBILE_ABI_MAJOR ||
+        frame->operation_count > INT32_MAX / WHISKER_ANDROID_OPERATION_STRIDE ||
+        (frame->operations == NULL) != (frame->operation_count == 0)) return false;
     bool attached; JNIEnv* env = whisker_env(&attached); jobject view = env != NULL ? local_view(env, data) : NULL;
     if (view == NULL) return false;
-    jint begin = (*env)->CallIntMethod(env, view, g_begin_frame, (jint)frame->mode,
-        (jint)frame->scene_epoch, (jlong)frame->base_revision, (jlong)frame->target_revision);
-    if (clear_exception(env)) begin = WHISKER_APPLY_REJECTED;
-    if (begin == WHISKER_APPLY_NEED_SNAPSHOT) {
-        jlong revision = (*env)->CallLongMethod(env, view, g_current_revision);
-        if (clear_exception(env)) {
-            (*env)->DeleteLocalRef(env, view);
-            if (attached) (*g_vm)->DetachCurrentThread(g_vm);
-            return false;
-        }
-        response->status = WHISKER_APPLY_NEED_SNAPSHOT; response->revision = (uint64_t)revision;
-        (*env)->DeleteLocalRef(env, view); if (attached) (*g_vm)->DetachCurrentThread(g_vm); return true;
-    }
-    if (begin != WHISKER_APPLY_ACCEPTED) {
-        response->status = WHISKER_APPLY_REJECTED;
-        response->revision = (uint64_t)(*env)->CallLongMethod(env, view, g_current_revision);
-        bool failed = clear_exception(env);
-        (*env)->DeleteLocalRef(env, view);
-        if (attached) (*g_vm)->DetachCurrentThread(g_vm);
-        return !failed;
-    }
+
+    const jsize operation_count = (jsize)frame->operation_count;
+    const jsize metadata_count = operation_count * WHISKER_ANDROID_OPERATION_STRIDE;
+    jlongArray metadata = (*env)->NewLongArray(env, metadata_count);
+    jclass float_array_class = (*env)->FindClass(env, "[F");
+    jclass string_class = (*env)->FindClass(env, "java/lang/String");
+    jclass string_array_class = (*env)->FindClass(env, "[Ljava/lang/String;");
+    jclass value_class = (*env)->FindClass(env, "rs/whisker/runtime/WhiskerValue");
+    jobjectArray number_batches = float_array_class == NULL ? NULL
+        : (*env)->NewObjectArray(env, operation_count, float_array_class, NULL);
+    jobjectArray texts = string_class == NULL ? NULL
+        : (*env)->NewObjectArray(env, operation_count, string_class, NULL);
+    jobjectArray name_batches = string_array_class == NULL ? NULL
+        : (*env)->NewObjectArray(env, operation_count, string_array_class, NULL);
+    jobjectArray values = value_class == NULL ? NULL
+        : (*env)->NewObjectArray(env, operation_count, value_class, NULL);
+    jlongArray result = (*env)->NewLongArray(env, 2);
+    jlong* metadata_values = malloc(
+        (metadata_count > 0 ? (size_t)metadata_count : 1) * sizeof(jlong));
     bool ok = true;
+    if (metadata == NULL || number_batches == NULL || texts == NULL || name_batches == NULL ||
+        values == NULL || result == NULL || metadata_values == NULL || clear_exception(env)) ok = false;
     for (size_t i = 0; i < frame->operation_count && ok; ++i) {
         const WhiskerMobileOperation* op = &frame->operations[i];
         jfloatArray numbers = NULL; jstring text = NULL; jobjectArray names = NULL; jobject value = NULL;
@@ -618,80 +634,268 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
             case WHISKER_OP_PROPERTY: case WHISKER_OP_COMMAND: value = raw_to_value(env, op->payload); break;
         }
         if (!ok) break;
-        ok = (*env)->CallBooleanMethod(env, view, g_stage_operation,
-            (jint)op->tag,(jint)staged_flags,(jlong)op->node,(jlong)op->parent,(jlong)op->child,
-            (jint)op->index,(jint)op->member,(jint)op->integer,(jfloat)staged_scalar,(jlong)op->wide,
-            numbers,text,names,value) == JNI_TRUE && !clear_exception(env);
+        const size_t offset = i * WHISKER_ANDROID_OPERATION_STRIDE;
+        uint32_t scalar_bits;
+        memcpy(&scalar_bits, &staged_scalar, sizeof(scalar_bits));
+        metadata_values[offset] = (jlong)op->tag;
+        metadata_values[offset + 1] = (jlong)staged_flags;
+        metadata_values[offset + 2] = (jlong)op->node;
+        metadata_values[offset + 3] = (jlong)op->parent;
+        metadata_values[offset + 4] = (jlong)op->child;
+        metadata_values[offset + 5] = (jlong)op->index;
+        metadata_values[offset + 6] = (jlong)op->member;
+        metadata_values[offset + 7] = (jlong)op->integer;
+        metadata_values[offset + 8] = (jlong)scalar_bits;
+        metadata_values[offset + 9] = (jlong)op->wide;
+        (*env)->SetObjectArrayElement(env, number_batches, (jsize)i, numbers);
+        (*env)->SetObjectArrayElement(env, texts, (jsize)i, text);
+        (*env)->SetObjectArrayElement(env, name_batches, (jsize)i, names);
+        (*env)->SetObjectArrayElement(env, values, (jsize)i, value);
+        if (clear_exception(env)) ok = false;
         if (numbers) (*env)->DeleteLocalRef(env, numbers); if (text) (*env)->DeleteLocalRef(env, text);
         if (names) (*env)->DeleteLocalRef(env, names); if (value) (*env)->DeleteLocalRef(env, value);
     }
-    if (ok) ok = (*env)->CallBooleanMethod(env, view, g_commit_frame) == JNI_TRUE && !clear_exception(env);
+    if (ok && metadata_count > 0) {
+        (*env)->SetLongArrayRegion(env, metadata, 0, metadata_count, metadata_values);
+        if (clear_exception(env)) ok = false;
+    }
+    if (ok) ok = (*env)->CallBooleanMethod(env, view, g_present_frame,
+        (jint)frame->mode, (jint)frame->scene_epoch,
+        (jlong)frame->base_revision, (jlong)frame->target_revision,
+        metadata, number_batches, texts, name_batches, values, result) == JNI_TRUE &&
+        !clear_exception(env);
     if (ok) {
-        response->status = WHISKER_APPLY_ACCEPTED;
-        response->revision = frame->target_revision;
-    } else {
+        jlong result_values[2];
+        (*env)->GetLongArrayRegion(env, result, 0, 2, result_values);
+        ok = !clear_exception(env) && result_values[0] >= WHISKER_APPLY_ACCEPTED &&
+            result_values[0] <= WHISKER_APPLY_REJECTED;
+        if (ok) {
+            response->status = (uint8_t)result_values[0];
+            response->revision = (uint64_t)result_values[1];
+        }
+    }
+    if (!ok) {
         response->status = WHISKER_APPLY_REJECTED;
         response->revision = (uint64_t)(*env)->CallLongMethod(env, view, g_current_revision);
         if (clear_exception(env)) {
-            (*env)->DeleteLocalRef(env, view);
-            if (attached) (*g_vm)->DetachCurrentThread(g_vm);
-            return false;
+            ok = false;
+        } else {
+            ok = true;
         }
     }
-    (*env)->DeleteLocalRef(env, view); if (attached) (*g_vm)->DetachCurrentThread(g_vm); return true;
+    free(metadata_values);
+    if (result) (*env)->DeleteLocalRef(env, result);
+    if (values) (*env)->DeleteLocalRef(env, values);
+    if (name_batches) (*env)->DeleteLocalRef(env, name_batches);
+    if (texts) (*env)->DeleteLocalRef(env, texts);
+    if (number_batches) (*env)->DeleteLocalRef(env, number_batches);
+    if (value_class) (*env)->DeleteLocalRef(env, value_class);
+    if (string_array_class) (*env)->DeleteLocalRef(env, string_array_class);
+    if (string_class) (*env)->DeleteLocalRef(env, string_class);
+    if (float_array_class) (*env)->DeleteLocalRef(env, float_array_class);
+    if (metadata) (*env)->DeleteLocalRef(env, metadata);
+    (*env)->DeleteLocalRef(env, view); if (attached) (*g_vm)->DetachCurrentThread(g_vm); return ok;
+}
+
+static bool valid_measure_request(const WhiskerMobileMeasureRequest* r) {
+    return r->text.len <= INT32_MAX && (r->text.ptr == NULL) == (r->text.len == 0) &&
+        r->locale.len <= INT32_MAX && (r->locale.ptr == NULL) == (r->locale.len == 0) &&
+        r->payload.len <= INT32_MAX && (r->payload.ptr == NULL) == (r->payload.len == 0) &&
+        r->font_family_count <= 4096 &&
+        (r->font_families == NULL) == (r->font_family_count == 0) &&
+        (r->kind != WHISKER_MEASURE_TEXT || r->font_family_count != 0) &&
+        r->font_feature_count <= 4096 && r->font_variation_count <= 4096 &&
+        r->direction <= 2 && r->alignment <= 4 &&
+        r->font_family_count + r->font_feature_count + r->font_variation_count <= 4096 &&
+        valid_font_settings(r->font_features, r->font_feature_count,
+                            r->font_variations, r->font_variation_count);
 }
 
 static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests, size_t count,
                          WhiskerMobileMeasureResponse* responses) {
     if (count > 4096 || (requests == NULL) != (count == 0) ||
         (responses == NULL) != (count == 0)) return false;
-    bool attached; JNIEnv* env = whisker_env(&attached); jobject view = env != NULL ? local_view(env, data) : NULL;
-    if (view == NULL) { if (attached) (*g_vm)->DetachCurrentThread(g_vm); return false; }
-    bool ok = true;
-    for (size_t i=0;i<count && ok;++i) {
-        const WhiskerMobileMeasureRequest* r = &requests[i];
-        if (r->text.len > INT32_MAX || (r->text.ptr == NULL) != (r->text.len == 0) ||
-            r->locale.len > INT32_MAX || (r->locale.ptr == NULL) != (r->locale.len == 0) ||
-            r->payload.len > INT32_MAX || (r->payload.ptr == NULL) != (r->payload.len == 0) ||
-            r->font_family_count > 4096 ||
-            (r->font_families == NULL) != (r->font_family_count == 0) ||
-            (r->kind == WHISKER_MEASURE_TEXT && r->font_family_count == 0) ||
-            r->font_feature_count > 4096 ||
-            r->font_variation_count > 4096 ||
-            r->direction > 2 || r->alignment > 4 ||
-            r->font_family_count + r->font_feature_count + r->font_variation_count > 4096) {
-            ok = false;
-            break;
-        }
-        jstring text = new_string(env, r->text.ptr, r->text.len);
-        jobjectArray families = string_refs(env, r->font_families, r->font_family_count);
-        jbyteArray payload = (*env)->NewByteArray(env, (jsize)r->payload.len);
-        jobjectArray font_values = font_settings(env, r->font_features, r->font_feature_count,
-                                                  r->font_variations, r->font_variation_count);
-        if (text == NULL || families == NULL || payload == NULL || font_values == NULL) ok = false;
-        if (payload && r->payload.len) (*env)->SetByteArrayRegion(env, payload, 0, (jsize)r->payload.len, (const jbyte*)r->payload.ptr);
-        jfloatArray result = ok ? (*env)->CallObjectMethod(env, view, g_measure,
-            (jint)r->element_type,(jint)r->kind,r->known_width,r->known_height,(jint)r->known_mask,
-            r->available_width,r->available_height,(jint)r->available_width_kind,(jint)r->available_height_kind,
-            text,families,r->font_size,(jint)r->font_weight,(jint)r->font_style,(jint)r->wrap,
-            (jint)r->word_break,(jint)r->overflow,
-            r->letter_spacing,r->line_height,r->indent_logical_pixels,r->indent_percentage,
-            (jint)r->max_lines,font_values,(jint)r->font_feature_count,(jint)r->font_optical_sizing,
-            (jint)r->payload_version,payload,r->intrinsic_width,r->intrinsic_height,
-            (jint)r->intrinsic_mask,(jint)r->direction,(jint)r->alignment) : NULL;
-        if (clear_exception(env) || result == NULL || (*env)->GetArrayLength(env, result) < 7) ok = false;
-        if (ok) {
-            jfloat values[7]; (*env)->GetFloatArrayRegion(env, result, 0, 7, values);
-            responses[i].key=r->key; responses[i].environment_epoch=r->environment_epoch;
-            responses[i].status=(uint32_t)values[0]; responses[i].reason=(uint32_t)values[1];
-            responses[i].width=values[2]; responses[i].height=values[3]; responses[i].first_baseline=values[4];
-            responses[i].last_baseline=values[5]; responses[i].metrics_mask=(uint32_t)values[6];
-        }
-        if (result) (*env)->DeleteLocalRef(env, result); if (payload) (*env)->DeleteLocalRef(env, payload);
-        if (font_values) (*env)->DeleteLocalRef(env, font_values);
-        if (families) (*env)->DeleteLocalRef(env, families); if (text) (*env)->DeleteLocalRef(env, text);
+    for (size_t i = 0; i < count; ++i) {
+        if (!valid_measure_request(&requests[i])) return false;
     }
-    (*env)->DeleteLocalRef(env, view); if (attached) (*g_vm)->DetachCurrentThread(g_vm); return ok;
+
+    bool attached;
+    JNIEnv* env = whisker_env(&attached);
+    jobject view = env != NULL ? local_view(env, data) : NULL;
+    if (view == NULL) {
+        if (attached) (*g_vm)->DetachCurrentThread(g_vm);
+        return false;
+    }
+
+    jlongArray request_longs = (*env)->NewLongArray(env, (jsize)(count * MEASURE_REQUEST_LONG_STRIDE));
+    jintArray request_ints = (*env)->NewIntArray(env, (jsize)(count * MEASURE_REQUEST_INT_STRIDE));
+    jfloatArray request_floats = (*env)->NewFloatArray(env, (jsize)(count * MEASURE_REQUEST_FLOAT_STRIDE));
+    jclass string_class = (*env)->FindClass(env, "java/lang/String");
+    jclass string_array_class = (*env)->FindClass(env, "[Ljava/lang/String;");
+    jclass byte_array_class = (*env)->FindClass(env, "[B");
+    jobjectArray request_strings = string_class == NULL ? NULL : (*env)->NewObjectArray(
+        env, (jsize)(count * MEASURE_REQUEST_STRING_STRIDE), string_class, NULL);
+    jobjectArray family_batches = string_array_class == NULL ? NULL : (*env)->NewObjectArray(
+        env, (jsize)count, string_array_class, NULL);
+    jobjectArray setting_batches = string_array_class == NULL ? NULL : (*env)->NewObjectArray(
+        env, (jsize)count, string_array_class, NULL);
+    jobjectArray payload_batches = byte_array_class == NULL ? NULL : (*env)->NewObjectArray(
+        env, (jsize)count, byte_array_class, NULL);
+    jlong* longs = calloc(count * MEASURE_REQUEST_LONG_STRIDE + 1, sizeof(jlong));
+    jint* ints = calloc(count * MEASURE_REQUEST_INT_STRIDE + 1, sizeof(jint));
+    jfloat* values = calloc(count * MEASURE_REQUEST_FLOAT_STRIDE + 1, sizeof(jfloat));
+    bool ok = request_longs != NULL && request_ints != NULL && request_floats != NULL &&
+        request_strings != NULL && family_batches != NULL && setting_batches != NULL &&
+        payload_batches != NULL && longs != NULL && ints != NULL && values != NULL;
+
+    for (size_t i = 0; i < count && ok; ++i) {
+        const WhiskerMobileMeasureRequest* r = &requests[i];
+        size_t long_base = i * MEASURE_REQUEST_LONG_STRIDE;
+        longs[long_base] = (jlong)r->key;
+        longs[long_base + 1] = (jlong)r->node;
+        longs[long_base + 2] = (jlong)r->environment_epoch;
+
+        size_t int_base = i * MEASURE_REQUEST_INT_STRIDE;
+        ints[int_base] = (jint)r->element_type;
+        ints[int_base + 1] = (jint)r->kind;
+        ints[int_base + 2] = (jint)r->known_mask;
+        ints[int_base + 3] = (jint)r->available_width_kind;
+        ints[int_base + 4] = (jint)r->available_height_kind;
+        ints[int_base + 5] = (jint)r->font_weight;
+        ints[int_base + 6] = (jint)r->font_style;
+        ints[int_base + 7] = (jint)r->wrap;
+        ints[int_base + 8] = (jint)r->word_break;
+        ints[int_base + 9] = (jint)r->overflow;
+        ints[int_base + 10] = (jint)r->max_lines;
+        ints[int_base + 11] = (jint)r->font_feature_count;
+        ints[int_base + 12] = (jint)r->font_optical_sizing;
+        ints[int_base + 13] = (jint)r->payload_version;
+        ints[int_base + 14] = (jint)r->intrinsic_mask;
+        ints[int_base + 15] = (jint)r->direction;
+        ints[int_base + 16] = (jint)r->alignment;
+
+        size_t float_base = i * MEASURE_REQUEST_FLOAT_STRIDE;
+        values[float_base] = r->known_width;
+        values[float_base + 1] = r->known_height;
+        values[float_base + 2] = r->available_width;
+        values[float_base + 3] = r->available_height;
+        values[float_base + 4] = r->font_size;
+        values[float_base + 5] = r->line_height;
+        values[float_base + 6] = r->letter_spacing;
+        values[float_base + 7] = r->indent_logical_pixels;
+        values[float_base + 8] = r->indent_percentage;
+        values[float_base + 9] = r->intrinsic_width;
+        values[float_base + 10] = r->intrinsic_height;
+
+        jstring text = new_string(env, r->text.ptr, r->text.len);
+        jstring locale = new_string(env, r->locale.ptr, r->locale.len);
+        jobjectArray families = string_refs(env, r->font_families, r->font_family_count);
+        jobjectArray settings = font_settings(env, r->font_features, r->font_feature_count,
+                                               r->font_variations, r->font_variation_count);
+        jbyteArray payload = (*env)->NewByteArray(env, (jsize)r->payload.len);
+        ok = text != NULL && locale != NULL && families != NULL && settings != NULL && payload != NULL;
+        if (ok && r->payload.len > 0) {
+            (*env)->SetByteArrayRegion(env, payload, 0, (jsize)r->payload.len,
+                                      (const jbyte*)r->payload.ptr);
+        }
+        if (ok) {
+            (*env)->SetObjectArrayElement(env, request_strings,
+                (jsize)(i * MEASURE_REQUEST_STRING_STRIDE), text);
+            (*env)->SetObjectArrayElement(env, request_strings,
+                (jsize)(i * MEASURE_REQUEST_STRING_STRIDE + 1), locale);
+            (*env)->SetObjectArrayElement(env, family_batches, (jsize)i, families);
+            (*env)->SetObjectArrayElement(env, setting_batches, (jsize)i, settings);
+            (*env)->SetObjectArrayElement(env, payload_batches, (jsize)i, payload);
+            if (clear_exception(env)) ok = false;
+        }
+        if (payload) (*env)->DeleteLocalRef(env, payload);
+        if (settings) (*env)->DeleteLocalRef(env, settings);
+        if (families) (*env)->DeleteLocalRef(env, families);
+        if (locale) (*env)->DeleteLocalRef(env, locale);
+        if (text) (*env)->DeleteLocalRef(env, text);
+    }
+
+    if (ok && count > 0) {
+        (*env)->SetLongArrayRegion(env, request_longs, 0,
+            (jsize)(count * MEASURE_REQUEST_LONG_STRIDE), longs);
+        (*env)->SetIntArrayRegion(env, request_ints, 0,
+            (jsize)(count * MEASURE_REQUEST_INT_STRIDE), ints);
+        (*env)->SetFloatArrayRegion(env, request_floats, 0,
+            (jsize)(count * MEASURE_REQUEST_FLOAT_STRIDE), values);
+        if (clear_exception(env)) ok = false;
+    }
+    free(values);
+    free(ints);
+    free(longs);
+
+    jobject result = ok ? (*env)->CallObjectMethod(env, view, g_measure_batch,
+        request_longs, request_ints, request_floats, request_strings,
+        family_batches, setting_batches, payload_batches) : NULL;
+    if (clear_exception(env) || result == NULL) ok = false;
+
+    jlongArray response_longs = ok ? (jlongArray)(*env)->GetObjectField(
+        env, result, g_measure_response_longs) : NULL;
+    jintArray response_ints = ok ? (jintArray)(*env)->GetObjectField(
+        env, result, g_measure_response_ints) : NULL;
+    jfloatArray response_floats = ok ? (jfloatArray)(*env)->GetObjectField(
+        env, result, g_measure_response_floats) : NULL;
+    if (ok && (response_longs == NULL || response_ints == NULL || response_floats == NULL ||
+        (*env)->GetArrayLength(env, response_longs) != (jsize)(count * MEASURE_RESPONSE_LONG_STRIDE) ||
+        (*env)->GetArrayLength(env, response_ints) != (jsize)(count * MEASURE_RESPONSE_INT_STRIDE) ||
+        (*env)->GetArrayLength(env, response_floats) != (jsize)(count * MEASURE_RESPONSE_FLOAT_STRIDE))) {
+        ok = false;
+    }
+
+    jlong* returned_longs = calloc(count * MEASURE_RESPONSE_LONG_STRIDE + 1, sizeof(jlong));
+    jint* returned_ints = calloc(count * MEASURE_RESPONSE_INT_STRIDE + 1, sizeof(jint));
+    jfloat* returned_floats = calloc(count * MEASURE_RESPONSE_FLOAT_STRIDE + 1, sizeof(jfloat));
+    if (returned_longs == NULL || returned_ints == NULL || returned_floats == NULL) ok = false;
+    if (ok && count > 0) {
+        (*env)->GetLongArrayRegion(env, response_longs, 0,
+            (jsize)(count * MEASURE_RESPONSE_LONG_STRIDE), returned_longs);
+        (*env)->GetIntArrayRegion(env, response_ints, 0,
+            (jsize)(count * MEASURE_RESPONSE_INT_STRIDE), returned_ints);
+        (*env)->GetFloatArrayRegion(env, response_floats, 0,
+            (jsize)(count * MEASURE_RESPONSE_FLOAT_STRIDE), returned_floats);
+        if (clear_exception(env)) ok = false;
+    }
+    for (size_t i = 0; i < count && ok; ++i) {
+        size_t long_base = i * MEASURE_RESPONSE_LONG_STRIDE;
+        size_t int_base = i * MEASURE_RESPONSE_INT_STRIDE;
+        size_t float_base = i * MEASURE_RESPONSE_FLOAT_STRIDE;
+        responses[i].key = (uint64_t)returned_longs[long_base];
+        responses[i].environment_epoch = (uint64_t)returned_longs[long_base + 1];
+        responses[i].request_id = (uint64_t)returned_longs[long_base + 2];
+        responses[i].prepared_content = (uint64_t)returned_longs[long_base + 3];
+        responses[i].status = (uint32_t)returned_ints[int_base];
+        responses[i].reason = (uint32_t)returned_ints[int_base + 1];
+        responses[i].metrics_mask = (uint32_t)returned_ints[int_base + 2];
+        responses[i].width = returned_floats[float_base];
+        responses[i].height = returned_floats[float_base + 1];
+        responses[i].first_baseline = returned_floats[float_base + 2];
+        responses[i].last_baseline = returned_floats[float_base + 3];
+    }
+    free(returned_floats);
+    free(returned_ints);
+    free(returned_longs);
+
+    if (response_floats) (*env)->DeleteLocalRef(env, response_floats);
+    if (response_ints) (*env)->DeleteLocalRef(env, response_ints);
+    if (response_longs) (*env)->DeleteLocalRef(env, response_longs);
+    if (result) (*env)->DeleteLocalRef(env, result);
+    if (payload_batches) (*env)->DeleteLocalRef(env, payload_batches);
+    if (setting_batches) (*env)->DeleteLocalRef(env, setting_batches);
+    if (family_batches) (*env)->DeleteLocalRef(env, family_batches);
+    if (request_strings) (*env)->DeleteLocalRef(env, request_strings);
+    if (byte_array_class) (*env)->DeleteLocalRef(env, byte_array_class);
+    if (string_array_class) (*env)->DeleteLocalRef(env, string_array_class);
+    if (string_class) (*env)->DeleteLocalRef(env, string_class);
+    if (request_floats) (*env)->DeleteLocalRef(env, request_floats);
+    if (request_ints) (*env)->DeleteLocalRef(env, request_ints);
+    if (request_longs) (*env)->DeleteLocalRef(env, request_longs);
+    (*env)->DeleteLocalRef(env, view);
+    if (attached) (*g_vm)->DetachCurrentThread(g_vm);
+    return ok;
 }
 
 static char* copy_utf8(JNIEnv* env, jstring string, size_t* length) {
@@ -831,15 +1035,24 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     METHOD(g_begin_bootstrap,"beginBootstrapFromNative","()V")
     METHOD(g_register_element,"registerElementFromNative","(ILjava/lang/String;III[I[I[Ljava/lang/String;[I[I[Ljava/lang/String;[I[I[Ljava/lang/String;)V")
     METHOD(g_finish_bootstrap,"finishBootstrapFromNative","()Z")
-    METHOD(g_begin_frame,"beginFrameFromNative","(IIJJ)I")
+    METHOD(g_present_frame,"presentFrameFromNative","(IIJJ[J[[F[Ljava/lang/String;[[Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;[J)Z")
     METHOD(g_current_revision,"currentRevisionFromNative","()J")
-    METHOD(g_stage_operation,"stageOperationFromNative","(IIJJJIIIFJ[FLjava/lang/String;[Ljava/lang/String;Lrs/whisker/runtime/WhiskerValue;)Z")
-    METHOD(g_commit_frame,"commitFrameFromNative","()Z")
-    METHOD(g_measure,"measureFromNative","(IIFFIFFIILjava/lang/String;[Ljava/lang/String;FIIIIIFFFFI[Ljava/lang/String;III[BFFIII)[F")
+    METHOD(g_measure_batch,"measureBatchFromNative","([J[I[F[Ljava/lang/String;[[Ljava/lang/String;[[Ljava/lang/String;[[B)Lrs/whisker/runtime/measure/HostMeasureBatchResponse;")
     METHOD(g_resource_command,"resourceCommandFromNative","(IIIJJLjava/lang/String;[B)Z")
     METHOD(g_invoke_module,"invokeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;ZJJ)Z")
     METHOD(g_observe_module,"observeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;Z)V")
 #undef METHOD
+    jclass measure_response_local = (*env)->FindClass(
+        env, "rs/whisker/runtime/measure/HostMeasureBatchResponse");
+    if (measure_response_local == NULL) return JNI_ERR;
+    g_measure_response_class = (*env)->NewGlobalRef(env, measure_response_local);
+    (*env)->DeleteLocalRef(env, measure_response_local);
+    if (g_measure_response_class == NULL) return JNI_ERR;
+    g_measure_response_longs = (*env)->GetFieldID(env, g_measure_response_class, "longs", "[J");
+    g_measure_response_ints = (*env)->GetFieldID(env, g_measure_response_class, "ints", "[I");
+    g_measure_response_floats = (*env)->GetFieldID(env, g_measure_response_class, "floats", "[F");
+    if (g_measure_response_longs == NULL || g_measure_response_ints == NULL ||
+        g_measure_response_floats == NULL) return JNI_ERR;
     return JNI_VERSION_1_6;
 }
 
