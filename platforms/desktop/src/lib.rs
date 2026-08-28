@@ -140,6 +140,22 @@ impl DesktopRuntime {
         self.surface.cursor_at(logical_position)
     }
 
+    /// Resolves the Host-visible target after applying transient scroll state.
+    pub fn target_input(&self, event: &mut InputEvent) {
+        if event.target.is_none()
+            && let Some(pointer) = event.pointer
+        {
+            event.target = self
+                .surface
+                .hit_test([pointer.position.x, pointer.position.y]);
+        }
+    }
+
+    /// Applies a logical wheel/trackpad delta to the nearest scroll container.
+    pub fn scroll_at(&mut self, logical_position: [f32; 2], delta: [f32; 2]) -> bool {
+        self.surface.scroll_at(logical_position, delta)
+    }
+
     /// Registers one already-decoded RGBA8 raster for later `ResourceId`
     /// background-image references. Acquisition and decoding remain Host work
     /// and do not run in the per-frame protocol path.

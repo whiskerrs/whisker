@@ -85,6 +85,7 @@ pub struct DesktopViewDefinition<T> {
     commands: HashMap<String, DesktopCommandHandler<T>>,
     rasterizer: Option<DesktopRasterizer<T>>,
     plain_text: bool,
+    scroll_content: bool,
 }
 
 impl<T> DesktopViewDefinition<T>
@@ -101,6 +102,7 @@ where
             commands: HashMap::new(),
             rasterizer: None,
             plain_text: false,
+            scroll_content: false,
         }
     }
 
@@ -108,6 +110,12 @@ where
     /// content through the common Desktop text renderer.
     pub fn plain_text(mut self) -> Self {
         self.plain_text = true;
+        self
+    }
+
+    /// Declares that the Host object owns transient vertical scroll state.
+    pub fn scroll_container(mut self) -> Self {
+        self.scroll_content = true;
         self
     }
 
@@ -235,6 +243,7 @@ where
             properties,
             commands,
             rasterizer: self.rasterizer.clone(),
+            scroll_content: self.scroll_content,
         });
         Ok(Arc::new(move || {
             Box::new(DeclaredDesktopElement {
@@ -261,6 +270,7 @@ struct BoundDesktopViewDefinition<T> {
     properties: HashMap<PropertyId, DesktopPropBinding<T>>,
     commands: HashMap<CommandId, DesktopCommandHandler<T>>,
     rasterizer: Option<DesktopRasterizer<T>>,
+    scroll_content: bool,
 }
 
 struct DeclaredDesktopElement<T> {
@@ -318,6 +328,10 @@ where
 
     fn has_raster_content(&self) -> bool {
         self.definition.rasterizer.is_some()
+    }
+
+    fn is_scroll_container(&self) -> bool {
+        self.definition.scroll_content
     }
 }
 
@@ -611,6 +625,11 @@ pub trait DesktopNativeElement: fmt::Debug + 'static {
     fn has_raster_content(&self) -> bool {
         false
     }
+
+    /// Whether this element owns transient vertical scroll state.
+    fn is_scroll_container(&self) -> bool {
+        false
+    }
 }
 
 /// Built-in element implementations contributed by the Desktop platform.
@@ -624,7 +643,7 @@ impl WhiskerModule for BuiltInElementModule {
         DesktopModuleDefinition::new()
             .view(DesktopViewDefinition::new("whisker.ui/View", || ()))
             .view(DesktopViewDefinition::new("whisker.ui/Text", || ()).plain_text())
-            .view(DesktopViewDefinition::new("whisker.ui/ScrollView", || ()))
+            .view(DesktopViewDefinition::new("whisker.ui/ScrollView", || ()).scroll_container())
     }
 }
 
@@ -647,6 +666,14 @@ pub(crate) enum DesktopElementContent {
 }
 
 impl DesktopElementContent {
+    pub(crate) fn is_scroll_container(&self) -> bool {
+        match self {
+            Self::ScrollContainer => true,
+            Self::Native { implementation, .. } => implementation.is_scroll_container(),
+            Self::Empty | Self::Text(_) => false,
+        }
+    }
+
     pub(crate) fn text(&self) -> Option<&TextContent> {
         match self {
             Self::Text(content) => content.as_ref(),
@@ -1029,6 +1056,10 @@ mod tests {
         let registry = DesktopElementRegistry::bind(&registrations, &factories).unwrap();
         for registration in &registrations {
             let content = registry.create(registration.element_type).unwrap();
+            assert_eq!(
+                content.is_scroll_container(),
+                registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME,
+            );
             assert_eq!(
                 matches!(
                     content,

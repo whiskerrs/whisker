@@ -150,7 +150,10 @@ pub fn app() -> Element {
                             style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(14)),
                             value: "Total balance",
                         )
-                        view(on_tap: move |_| hidden.set(!hidden.get())) {
+                        view(
+                            on_tap: move |_| hidden.set(!hidden.get()),
+                            on_click: move |_| hidden.set(!hidden.get()),
+                        ) {
                             Icon(svg: eye_icon, color: "#FFFFFF", size: "18")
                         }
                     }
@@ -250,7 +253,11 @@ fn segment(label: &'static str, index: usize, selected: RwSignal<usize>) -> Elem
     });
 
     render! {
-        view(style: pill_style, on_tap: move |_| selected.set(index)) {
+        view(
+            style: pill_style,
+            on_tap: move |_| selected.set(index),
+            on_click: move |_| selected.set(index),
+        ) {
             text(style: label_style, value: label)
         }
     }
