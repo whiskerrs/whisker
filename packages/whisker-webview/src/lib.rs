@@ -126,10 +126,6 @@
 //! - [`WebViewRef::stop_loading`] — abort the in-flight load.
 //! - [`WebViewRef::post_message`] — push a string to the page.
 //! - [`WebViewRef::evaluate_javascript`] — run script (fire-and-forget).
-//! - [`WebViewRef::evaluate_javascript_with_result`] — async: run script
-//!   and get its completion value back as a JSON-encoded string.
-//! - [`WebViewRef::can_go_back`] / [`WebViewRef::can_go_forward`] —
-//!   async history-availability checks.
 //!
 //! ## Permissions
 //!
@@ -155,7 +151,7 @@ use std::rc::Rc;
 
 use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
-use whisker::{ElementRef, RefError, Signal, Style};
+use whisker::{ElementRef, Signal, Style};
 
 // Every native event delivers its body under `detail` on both platforms, so
 // each payload struct reads one shape. Fields are `#[serde(default)]` so a
@@ -323,10 +319,9 @@ pub fn default_origin_whitelist() -> Vec<String> {
 ///
 /// Wraps the framework-internal `ElementRef` bound on mount when passed
 /// as the component's `webview_ref:` prop. Methods dispatch the matching
-/// platform UI method through `ElementRef::invoke` / `invoke_typed`. The
-/// fire-and-forget methods swallow "not mounted" / platform errors —
-/// these are UI controls; use the async result methods (which return a
-/// [`RefError`]) when you need to inspect failures.
+/// platform command through `ElementRef::command`. Commands are ordered,
+/// one-way operations; these convenience methods swallow "not mounted"
+/// / platform errors.
 ///
 /// `Clone` produces a shared handle (same backing arena slot), so the
 /// same handle can drive multiple event closures.
@@ -354,24 +349,24 @@ impl WebViewRef {
 
     /// Reload the current page. No-op if the element isn't mounted.
     pub fn reload(&self) {
-        let _ = self.r.invoke("reload", WhiskerValue::Null);
+        let _ = self.r.command("reload", WhiskerValue::Null);
     }
 
     /// Navigate back one entry in history. No-op if unmounted or there's
     /// no back entry.
     pub fn go_back(&self) {
-        let _ = self.r.invoke("goBack", WhiskerValue::Null);
+        let _ = self.r.command("goBack", WhiskerValue::Null);
     }
 
     /// Navigate forward one entry in history. No-op if unmounted or
     /// there's no forward entry.
     pub fn go_forward(&self) {
-        let _ = self.r.invoke("goForward", WhiskerValue::Null);
+        let _ = self.r.command("goForward", WhiskerValue::Null);
     }
 
     /// Abort the in-flight load. No-op if unmounted.
     pub fn stop_loading(&self) {
-        let _ = self.r.invoke("stopLoading", WhiskerValue::Null);
+        let _ = self.r.command("stopLoading", WhiskerValue::Null);
     }
 
     /// Push a string to the page (Rust → JS). No-op if unmounted.
@@ -379,55 +374,17 @@ impl WebViewRef {
     /// The native side delivers `data` to the page's `window.whisker`
     /// message handler.
     pub fn post_message(&self, data: &str) {
-        let _ = self.r.invoke(
-            "postMessage",
-            WhiskerValue::args([WhiskerValue::String(data.to_string())]),
-        );
+        let _ = self
+            .r
+            .command("postMessage", WhiskerValue::String(data.to_string()));
     }
 
     /// Run JavaScript in the page, fire-and-forget. No-op if unmounted.
-    /// Use [`evaluate_javascript_with_result`](Self::evaluate_javascript_with_result)
-    /// when you need the script's value.
     pub fn evaluate_javascript(&self, script: &str) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "evaluateJavaScript",
-            WhiskerValue::args([WhiskerValue::String(script.to_string())]),
+            WhiskerValue::String(script.to_string()),
         );
-    }
-
-    /// Async: run JavaScript and get its completion value back as a
-    /// JSON-encoded string (`"null"` when the script yields no value).
-    ///
-    /// ```ignore
-    /// let title = webview.evaluate_javascript_with_result("document.title").await?;
-    /// // title == "\"My Page\"" — JSON-encoded, so decode as needed.
-    /// ```
-    ///
-    /// Platform asymmetry: a script that throws rejects with
-    /// [`RefError::DispatchFailed`] on iOS, but resolves `"null"` on
-    /// Android — `WebView.evaluateJavascript` cannot observe JS
-    /// exceptions.
-    pub async fn evaluate_javascript_with_result(&self, script: &str) -> Result<String, RefError> {
-        self.r
-            .invoke_typed::<String>(
-                "evaluateJavaScriptWithResult",
-                WhiskerValue::args([WhiskerValue::String(script.to_string())]),
-            )
-            .await
-    }
-
-    /// Async: can the view navigate back in history right now?
-    pub async fn can_go_back(&self) -> Result<bool, RefError> {
-        self.r
-            .invoke_typed::<bool>("canGoBack", WhiskerValue::Null)
-            .await
-    }
-
-    /// Async: can the view navigate forward in history right now?
-    pub async fn can_go_forward(&self) -> Result<bool, RefError> {
-        self.r
-            .invoke_typed::<bool>("canGoForward", WhiskerValue::Null)
-            .await
     }
 }
 
@@ -442,7 +399,18 @@ impl Default for WebViewRef {
 // attr. Attr names are the kebab-cased field names (`user-agent`).
 
 #[doc(hidden)]
-#[whisker::module_component("WebView")]
+#[whisker::module_component(
+    name = "whisker-webview:WebView",
+    measurement = None,
+    commands = [
+        ("reload", Null),
+        ("goBack", Null),
+        ("goForward", Null),
+        ("stopLoading", Null),
+        ("postMessage", String),
+        ("evaluateJavaScript", String),
+    ],
+)]
 pub fn native_webview(
     url: Signal<String>,
     html: Signal<String>,
@@ -627,6 +595,27 @@ fn origin_whitelist_json(origins: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn component_schema_declares_only_one_way_commands() {
+        let schema = native_webview_schema::schema();
+        assert_eq!(schema.name, "whisker-webview:WebView");
+        assert_eq!(
+            schema
+                .commands
+                .iter()
+                .map(|command| command.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "reload",
+                "goBack",
+                "goForward",
+                "stopLoading",
+                "postMessage",
+                "evaluateJavaScript",
+            ]
+        );
+    }
 
     #[test]
     fn bool_attr_strings() {

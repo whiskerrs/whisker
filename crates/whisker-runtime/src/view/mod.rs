@@ -61,5 +61,5 @@ pub use renderer::{
 #[doc(hidden)]
 pub use renderer::{
     DynRenderer, EventDispatchPlan, PHANTOM_BASE, current_renderer_id, element_sign,
-    install_renderer, try_invoke_element_method, uninstall_renderer, with_installed_renderer,
+    install_renderer, try_invoke_element_command, uninstall_renderer, with_installed_renderer,
 };

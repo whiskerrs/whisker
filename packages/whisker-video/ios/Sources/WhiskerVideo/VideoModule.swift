@@ -22,11 +22,10 @@ public final class VideoModule: Module {
                 Prop("src") { (view: VideoView, value: WhiskerValue) in
                     view.setSrc(value.asString ?? "")
                 }
-                Function("play")  { (view: VideoView, _: [WhiskerValue]) in view.play();  return .null }
-                Function("pause") { (view: VideoView, _: [WhiskerValue]) in view.pause(); return .null }
-                Function("seek")  { (view: VideoView, args: [WhiskerValue]) in
-                    view.seek(args.first?.asDouble ?? 0)
-                    return .null
+                Command("play")  { (view: VideoView, _: WhiskerValue) in view.play() }
+                Command("pause") { (view: VideoView, _: WhiskerValue) in view.pause() }
+                Command("seek")  { (view: VideoView, parameters: WhiskerValue) in
+                    view.seek(parameters.asDouble ?? 0)
                 }
             }
         }

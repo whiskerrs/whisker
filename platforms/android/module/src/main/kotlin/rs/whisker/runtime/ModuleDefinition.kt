@@ -56,19 +56,22 @@ package rs.whisker.runtime
  */
 public sealed interface WhiskerDefinitionComponent
 
+/** Components that are valid inside a `View(...)` declaration. */
+public sealed interface WhiskerViewDefinitionComponent : WhiskerDefinitionComponent
+
 /** `Name("Foo")` — the module's local tag name. */
 public data class WhiskerNameComponent(public val value: String) :
     WhiskerDefinitionComponent
 
 /**
  * `View(Foo::class.java) { ... }` — registers a native View class
- * + its inner DSL block (Prop / Function / Events). The class is
+ * + its inner DSL block (Prop / Command / Events). The class is
  * type-erased to `Class<*>` so the parent struct isn't generic;
  * the concrete class is typically a [WhiskerUI] subclass.
  */
 public data class WhiskerViewComponent(
     public val viewClass: Class<*>? = null,
-    public val components: List<WhiskerDefinitionComponent>,
+    public val components: List<WhiskerViewDefinitionComponent>,
     public val elementName: String? = null,
     internal val factory: WhiskerElementFactory? = null,
 ) : WhiskerDefinitionComponent
@@ -86,17 +89,15 @@ public data class WhiskerPropComponent(
     public val name: String,
     public val setter: WhiskerPropSetterFn,
     public val clearer: WhiskerPropClearerFn,
-) : WhiskerDefinitionComponent
+) : WhiskerViewDefinitionComponent
 
 /**
- * Type-erased function handler. `view` is `null` for module-level
- * [Function]s, the native element instance for view-block [Function]s.
- * `args` are the raw positional [WhiskerValue]s from the Rust call
+ * Module function handler. `args` are the raw positional [WhiskerValue]s from the Rust call
  * site — no auto-deserialization, the author destructures, e.g.
  * `args[0].asDouble()`; the return is a raw [WhiskerValue]
  * (`WhiskerValue.Null` for "no result").
  */
-public typealias WhiskerFunctionHandlerFn = (view: Any?, args: List<WhiskerValue>) -> WhiskerValue
+public typealias WhiskerFunctionHandlerFn = (args: List<WhiskerValue>) -> WhiskerValue
 
 public data class WhiskerFunctionComponent(
     public val name: String,
@@ -104,14 +105,13 @@ public data class WhiskerFunctionComponent(
 ) : WhiskerDefinitionComponent
 
 /**
- * Type-erased ASYNC function handler. Like [WhiskerFunctionHandlerFn]
+ * Module ASYNC function handler. Like [WhiskerFunctionHandlerFn]
  * but instead of returning a value it resolves the given [promise] —
- * now or later, e.g. from a purchase / network completion. `view` is
- * `null` for module-level `AsyncFunction`s. Mirrors Expo's
+ * now or later, e.g. from a purchase / network completion. Mirrors Expo's
  * `AsyncFunction` + `Promise` (callback-resolved form).
  */
 public typealias WhiskerAsyncFunctionHandlerFn =
-    (view: Any?, args: List<WhiskerValue>, promise: WhiskerPromise) -> Unit
+    (args: List<WhiskerValue>, promise: WhiskerPromise) -> Unit
 
 public data class WhiskerAsyncFunctionComponent(
     public val name: String,
@@ -124,19 +124,19 @@ public typealias WhiskerCommandHandlerFn = (view: Any, parameters: WhiskerValue)
 public data class WhiskerCommandComponent(
     public val name: String,
     public val handler: WhiskerCommandHandlerFn,
-) : WhiskerDefinitionComponent
+) : WhiskerViewDefinitionComponent
 
 /** Resolved inherited text-style consumer for a native View. */
 public typealias WhiskerTextStyleHandlerFn = (view: Any, style: WhiskerTextStyle) -> Unit
 
 public data class WhiskerTextStyleComponent(
     public val handler: WhiskerTextStyleHandlerFn,
-) : WhiskerDefinitionComponent
+) : WhiskerViewDefinitionComponent
 
 /** Synchronous intrinsic measurement provider for one View declaration. */
 public data class WhiskerMeasurementComponent(
     public val handler: (WhiskerMeasureRequest) -> WhiskerMeasuredSize?,
-) : WhiskerDefinitionComponent
+) : WhiskerViewDefinitionComponent
 
 /**
  * `Events("a", "b", ...)` — declare event names this module emits.
@@ -146,8 +146,7 @@ public data class WhiskerMeasurementComponent(
  */
 public data class WhiskerEventsComponent(
     public val names: List<String>,
-) :
-    WhiskerDefinitionComponent
+) : WhiskerViewDefinitionComponent
 
 /**
  * `OnStartObserving("name") { ... }` — fires when the listener
@@ -194,7 +193,7 @@ public annotation class WhiskerDefinitionDsl
  * an imported top-level / constructor name).
  *
  * They're plain (non-`inline`/non-`reified`) members; the
- * generic [WhiskerViewDefinitionBuilder.Prop] / `Function`
+ * generic [WhiskerViewDefinitionBuilder.Prop] / `Command`
  * overloads use unchecked casts at dispatch time instead of
  * reified type checks. A type mismatch therefore surfaces as a
  * `ClassCastException` when the closure runs (loud), rather than
@@ -210,7 +209,7 @@ public class WhiskerModuleDefinitionBuilder {
 
     /**
      * `View(MyView::class.java) { ... }` — registers a native View
-     * class + its inner DSL block (Prop / Function / Events).
+     * class + its inner DSL block (Prop / Command / Events).
      */
     public fun View(
         viewClass: Class<*>,
@@ -290,7 +289,7 @@ public class WhiskerModuleDefinitionBuilder {
         name: String,
         handler: (args: List<WhiskerValue>) -> WhiskerValue,
     ): WhiskerDefinitionComponent =
-        WhiskerFunctionComponent(name) { _, args -> handler(args) }.also { components.add(it) }
+        WhiskerFunctionComponent(name, handler).also { components.add(it) }
 
     /**
      * `AsyncFunction("getOfferings") { args, promise -> ...; promise.resolve(x) }`
@@ -301,8 +300,7 @@ public class WhiskerModuleDefinitionBuilder {
         name: String,
         handler: (args: List<WhiskerValue>, promise: WhiskerPromise) -> Unit,
     ): WhiskerDefinitionComponent =
-        WhiskerAsyncFunctionComponent(name) { _, args, promise -> handler(args, promise) }
-            .also { components.add(it) }
+        WhiskerAsyncFunctionComponent(name, handler).also { components.add(it) }
 }
 
 /**
@@ -313,7 +311,7 @@ public class WhiskerModuleDefinitionBuilder {
  */
 @WhiskerDefinitionDsl
 public class WhiskerViewDefinitionBuilder {
-    internal val components: MutableList<WhiskerDefinitionComponent> = mutableListOf()
+    internal val components: MutableList<WhiskerViewDefinitionComponent> = mutableListOf()
 
     /**
      * `Prop("src") { view: VideoView, value -> view.setSrc(value.asString()) }`
@@ -326,7 +324,7 @@ public class WhiskerViewDefinitionBuilder {
         name: String,
         clear: (V) -> Unit = {},
         setter: (V, WhiskerValue) -> Unit,
-    ): WhiskerDefinitionComponent =
+    ): WhiskerViewDefinitionComponent =
         WhiskerPropComponent(
             name = name,
             setter = { viewAny, value ->
@@ -340,14 +338,14 @@ public class WhiskerViewDefinitionBuilder {
         ).also { components.add(it) }
 
     /** `Events("a", "b", ...)` declared inside a `View(...)` block. */
-    public fun Events(vararg names: String): WhiskerDefinitionComponent =
+    public fun Events(vararg names: String): WhiskerViewDefinitionComponent =
         WhiskerEventsComponent(names.toList()).also { components.add(it) }
 
     /** Declares one ordered, one-way command on a mounted View. */
     public fun <V : Any> Command(
         name: String,
         handler: (view: V, parameters: WhiskerValue) -> Unit,
-    ): WhiskerDefinitionComponent =
+    ): WhiskerViewDefinitionComponent =
         WhiskerCommandComponent(name) { viewAny, parameters ->
             @Suppress("UNCHECKED_CAST")
             handler(viewAny as V, parameters)
@@ -356,7 +354,7 @@ public class WhiskerViewDefinitionBuilder {
     /** Receives the resolved inherited text style for this View. */
     public fun <V : Any> TextStyle(
         handler: (view: V, style: WhiskerTextStyle) -> Unit,
-    ): WhiskerDefinitionComponent =
+    ): WhiskerViewDefinitionComponent =
         WhiskerTextStyleComponent { viewAny, style ->
             @Suppress("UNCHECKED_CAST")
             handler(viewAny as V, style)
@@ -365,30 +363,9 @@ public class WhiskerViewDefinitionBuilder {
     /** Supplies Host intrinsic metrics for Custom/ReplacedContent schemas. */
     public fun Measurement(
         handler: (WhiskerMeasureRequest) -> WhiskerMeasuredSize?,
-    ): WhiskerDefinitionComponent =
+    ): WhiskerViewDefinitionComponent =
         WhiskerMeasurementComponent(handler).also { components.add(it) }
 
-    /** Legacy view Function retained while existing packages migrate to Command. */
-    @Deprecated("View Function is not part of whisker-module v1; use Command")
-    public fun <V : Any> Function(
-        name: String,
-        handler: (view: V, args: List<WhiskerValue>) -> WhiskerValue,
-    ): WhiskerDefinitionComponent =
-        WhiskerFunctionComponent(name) { viewAny, args ->
-            @Suppress("UNCHECKED_CAST")
-            handler(viewAny as V, args)
-        }.also { components.add(it) }
-
-    /** Legacy result-bearing View function retained for source migration. */
-    @Deprecated("View AsyncFunction is not part of whisker-module v1")
-    public fun <V : Any> AsyncFunction(
-        name: String,
-        handler: (view: V, args: List<WhiskerValue>, promise: WhiskerPromise) -> Unit,
-    ): WhiskerDefinitionComponent =
-        WhiskerAsyncFunctionComponent(name) { viewAny, args, promise ->
-            @Suppress("UNCHECKED_CAST")
-            handler(viewAny as V, args, promise)
-        }.also { components.add(it) }
 }
 
 // ----- ModuleDefinition value -----------------------------------------------

@@ -25,11 +25,10 @@ class VideoModule : Module() {
             Prop("src") { view: VideoView, value ->
                 view.setSrc(value.asString() ?: "")
             }
-            Function("play") { view: VideoView, _ -> view.play(); WhiskerValue.Null }
-            Function("pause") { view: VideoView, _ -> view.pause(); WhiskerValue.Null }
-            Function("seek") { view: VideoView, args ->
-                view.seek(args.getOrNull(0)?.asDouble() ?: 0.0)
-                WhiskerValue.Null
+            Command("play") { view: VideoView, _ -> view.play() }
+            Command("pause") { view: VideoView, _ -> view.pause() }
+            Command("seek") { view: VideoView, parameters ->
+                view.seek(parameters.asDouble() ?: 0.0)
             }
         }
     }

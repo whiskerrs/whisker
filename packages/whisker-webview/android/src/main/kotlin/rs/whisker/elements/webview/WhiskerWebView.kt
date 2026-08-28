@@ -52,9 +52,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerCustomEvent
-import rs.whisker.runtime.WhiskerPromise
 import rs.whisker.runtime.WhiskerUI
-import rs.whisker.runtime.WhiskerValue
 
 open class WhiskerWebView(context: WhiskerContext) :
     WhiskerUI<android.webkit.WebView>(context) {
@@ -407,53 +405,10 @@ open class WhiskerWebView(context: WhiskerContext) :
         wv.evaluateJavascript("window.whisker._receive($encoded)", null)
     }
 
-    /**
-     * Run [script] in the page and return the result as a
-     * `WhiskerValue.Map(mapOf("value" to …))`.
-     *
-     * One layer of JSON encoding is stripped so the Rust side gets a bare
-     * string; non-string results (numbers, booleans, null) come back as
-     * their token text ("42", "null").
-     *
-     * TODO: Android result-returning element methods need the invoke_async
-     * bridge path in lynx_native_renderer.cc, which is compiled iOS-only in
-     * Lynx 3.8.0-whisker.1 (memory note
-     * `whisker_element_method_results_need_async`). Until the fork wires
-     * that up, the returned value does not reach Rust — and the
-     * `evaluateJavascript` callback is not guaranteed to have run by the
-     * time this returns, so `result` may still be empty.
-     */
-    fun evaluateJs(script: String): WhiskerValue {
-        val wv = view ?: return WhiskerValue.Map(mapOf("value" to WhiskerValue.Str("")))
-        var result: String = ""
-        wv.evaluateJavascript(script) { jsonEncodedResult ->
-            // Null once the WebView has been destroyed.
-            val raw = jsonEncodedResult ?: "null"
-            result = jsonDecodeString(raw)
-        }
-        return WhiskerValue.Map(mapOf("value" to WhiskerValue.Str(result)))
+    /** Run [script] in the page for its side effects. */
+    fun evaluateJs(script: String) {
+        view?.evaluateJavascript(script, null)
     }
-
-    /** Evaluate JavaScript and resolve [promise] from the WebView's
-     *  callback with the JSON-encoded result string (`"null"` when the
-     *  script yields no value — including on a JS exception, which
-     *  Android's `evaluateJavascript` does not report). */
-    fun evaluateJsWithResult(script: String, promise: WhiskerPromise) {
-        val wv = view
-        if (wv == null) {
-            promise.resolve(WhiskerValue.Str("null"))
-            return
-        }
-        wv.evaluateJavascript(script) { jsonEncodedResult ->
-            promise.resolve(WhiskerValue.Str(jsonEncodedResult ?: "null"))
-        }
-    }
-
-    fun queryCanGoBack(): WhiskerValue =
-        WhiskerValue.Bool(view?.canGoBack() ?: false)
-
-    fun queryCanGoForward(): WhiskerValue =
-        WhiskerValue.Bool(view?.canGoForward() ?: false)
 
     // -------------------------------------------------------------------------
     // Inner JS bridge interface
@@ -482,54 +437,6 @@ open class WhiskerWebView(context: WhiskerContext) :
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
-
-    /**
-     * Strip one layer of JSON string encoding from a value delivered by
-     * `evaluateJavascript`'s ValueCallback, which JSON-encodes the JS
-     * return value: a JS string `"hello"` arrives as the Java String
-     * `"\"hello\""`, while a number, boolean, or null arrives as its bare
-     * token. Only the former is unwrapped; malformed input is returned
-     * unchanged.
-     */
-    private fun jsonDecodeString(s: String): String {
-        if (s.length < 2 || !s.startsWith('"') || !s.endsWith('"')) {
-            return s
-        }
-        val inner = s.substring(1, s.length - 1)
-        val out = StringBuilder(inner.length)
-        var i = 0
-        while (i < inner.length) {
-            val c = inner[i]
-            if (c == '\\' && i + 1 < inner.length) {
-                when (val esc = inner[i + 1]) {
-                    '"', '\\', '/' -> { out.append(esc); i += 2 }
-                    'n' -> { out.append('\n'); i += 2 }
-                    'r' -> { out.append('\r'); i += 2 }
-                    't' -> { out.append('\t'); i += 2 }
-                    'b' -> { out.append('\b'); i += 2 }
-                    'u' -> {
-                        if (i + 5 < inner.length) {
-                            val hex = inner.substring(i + 2, i + 6)
-                            val code = hex.toIntOrNull(16)
-                            if (code != null) {
-                                out.append(code.toChar())
-                                i += 6
-                            } else {
-                                out.append(c); i++
-                            }
-                        } else {
-                            out.append(c); i++
-                        }
-                    }
-                    else -> { out.append(c); i++ }
-                }
-            } else {
-                out.append(c)
-                i++
-            }
-        }
-        return out.toString()
-    }
 
     /**
      * Match a URL against a glob pattern. Only `*` is meaningful; every

@@ -112,12 +112,13 @@ definition are independently compiled and matched by strings at bootstrap.
 Desktop and Web use ordinary Rust Host crates with the same definition shape.
 
 Android/iOS use `Function` and `AsyncFunction` only at module level. A
-`View` block exposes one-way `Command`s; result-bearing element commands are
-not part of version 1. Web/Desktop use the same vocabulary through their Rust
-builders. `Prop` always has separate set and clear callbacks, and all values
-are `WhiskerValue`. A `TextStyle` hook receives the resolved inherited text
-style. A synchronous `Measurement` hook returns an intrinsic size or reports
-the request unsupported.
+`View` block exposes one-way `Command`s and cannot declare `Function` or
+`AsyncFunction`. Observable component state travels through props and events;
+a genuinely service-like request belongs on a module-level function. Web/Desktop
+use the same vocabulary through their Rust builders. `Prop` always has separate
+set and clear callbacks, and all values are `WhiskerValue`. A `TextStyle` hook
+receives the resolved inherited text style. A synchronous `Measurement` hook
+returns an intrinsic size or reports the request unsupported.
 
 ```swift
 // iOS — packages/whisker-local-store/ios/.../LocalStoreModule.swift

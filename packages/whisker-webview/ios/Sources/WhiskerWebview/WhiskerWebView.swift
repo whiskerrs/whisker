@@ -281,62 +281,9 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
         webView?.evaluateJavaScript("window.whisker._receive(\(jsString))", completionHandler: nil)
     }
 
-    /// Evaluate arbitrary JavaScript for its side effects. The returned
-    /// `value` is always the empty string — the completion fires after
-    /// this synchronous dispatch returns; use
-    /// [`evaluateJavaScript(_:resolving:)`] for the result.
-    public func evaluateJavaScript(_ script: String) -> WhiskerValue {
-        guard let wv = webView else {
-            return .map(["value": .string("")])
-        }
-        wv.evaluateJavaScript(script, completionHandler: nil)
-        return .map(["value": .string("")])
-    }
-
-    /// Evaluate JavaScript and settle `promise` from the completion:
-    /// the result as a JSON-encoded string (`"null"` when the script
-    /// yields no value), matching Android's `evaluateJavascript`
-    /// callback convention; a JS exception rejects.
-    public func evaluateJavaScript(_ script: String, resolving promise: WhiskerPromise) {
-        guard let wv = webView else {
-            promise.resolve(.string("null"))
-            return
-        }
-        wv.evaluateJavaScript(script) { value, error in
-            if let error = error {
-                // The JS exception text rides in userInfo, not
-                // localizedDescription.
-                let ns = error as NSError
-                let detail = ns.userInfo["WKJavaScriptExceptionMessage"] as? String
-                    ?? error.localizedDescription
-                promise.reject("evaluateJavaScript failed: \(detail)")
-                return
-            }
-            guard let value = value else {
-                promise.resolve(.string("null"))
-                return
-            }
-            // The precheck matters: `JSONSerialization.data` raises an
-            // (uncatchable) NSException for non-JSON top-level objects.
-            guard JSONSerialization.isValidJSONObject(value)
-                || value is NSString || value is NSNumber || value is NSNull,
-                let data = try? JSONSerialization.data(
-                    withJSONObject: value, options: .fragmentsAllowed),
-                let json = String(data: data, encoding: .utf8)
-            else {
-                promise.reject("evaluateJavaScript: result is not JSON-encodable")
-                return
-            }
-            promise.resolve(.string(json))
-        }
-    }
-
-    public func canGoBackResult() -> WhiskerValue {
-        return .bool(webView?.canGoBack ?? false)
-    }
-
-    public func canGoForwardResult() -> WhiskerValue {
-        return .bool(webView?.canGoForward ?? false)
+    /// Evaluate arbitrary JavaScript for its side effects.
+    public func evaluateJavaScript(_ script: String) {
+        webView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
     // MARK: - Script-message handler (called by the proxy)

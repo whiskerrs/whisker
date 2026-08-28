@@ -12,7 +12,7 @@
 //! - Primitive `WhiskerValue` conversions remain independently tested.
 //!
 //! No real C bridge: the in-memory `Recorder` swallows element ops,
-//! and `invoke_element_method` returns an Error for unmounted refs,
+//! and element-command dispatch returns an Error for unmounted refs,
 //! so we focus on the binding-state machinery rather than dispatch.
 
 use std::cell::RefCell;
@@ -195,8 +195,7 @@ fn command_on_unbound_ref_returns_not_bound() {
 fn try_from_whisker_value_f64_rejects_string() {
     use whisker::platform_module::WhiskerValue;
     // `TryFrom<WhiskerValue>`'s primitive conversions are a public
-    // surface even though `invoke_typed::<T>` goes through serde: a
-    // String must not silently coerce to f64.
+    // module-result surface: a String must not silently coerce to f64.
     let bad_payload = WhiskerValue::String("not-a-number".into());
     let result: Result<f64, _> = f64::try_from(bad_payload);
     let msg = result.expect_err("String can't convert to f64");

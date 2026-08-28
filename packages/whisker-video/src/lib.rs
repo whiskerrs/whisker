@@ -39,8 +39,7 @@
 //!   is auto-prepended).
 //! - [`VideoHandle`] wraps an `ElementRef` (the element-id handle
 //!   bound on mount); methods dispatch through
-//!   `ElementRef::invoke(method, args)` over the raw
-//!   `Vec<WhiskerValue>` wire.
+//!   `ElementRef::command(name, parameters)` over the module protocol.
 //! - No `status()` signal yet — see
 //!   [#128](https://github.com/whiskerrs/whisker/issues/128) for
 //!   the pending observable-state decision.
@@ -59,19 +58,22 @@ use whisker::{ElementRef, Signal};
 
 /// `whisker-video:Video` element. The platform-side `@WhiskerModule`
 /// (`VideoModule`) registers a `VideoView` for this tag plus the
-/// `Prop("src")` setter + `play` / `pause` / `seek` functions. `src`
+/// `Prop("src")` setter + `play` / `pause` / `seek` commands. `src`
 /// is the media URL; `style` is the standard layout-styling string.
-#[whisker::module_component("Video")]
+#[whisker::module_component(
+    name = "whisker-video:Video",
+    measurement = None,
+    commands = [("play", Null), ("pause", Null), ("seek", Float)],
+)]
 pub fn video(src: Signal<String>, style: whisker::Style) {}
 
 /// Typed imperative handle for a mounted `Video` element.
 ///
 /// Wraps the `ElementRef` (element-id handle) bound on mount when
 /// passed as the element's `ref:` prop. Each method dispatches the
-/// matching platform `Function` through `ElementRef::invoke`. Errors
-/// (element not mounted, platform-side failure) are swallowed — these
-/// are fire-and-forget UI controls; call `r().invoke(...)` directly
-/// for the raw `WhiskerValue` if you need to inspect failures.
+/// matching platform `Command` through `ElementRef::command`. Errors
+/// (element not mounted, platform-side failure) are swallowed because
+/// these are fire-and-forget UI controls.
 ///
 /// `Copy` (the inner `ElementRef` is a slotmap-handle), so passing
 /// it to multiple `on_tap` closures is just a copy — no `clone()`.
@@ -97,12 +99,12 @@ impl VideoHandle {
     /// Start or resume playback from the current position.
     ///
     /// No-op if the element isn't mounted yet (the underlying
-    /// `ElementRef::invoke` swallows the dispatch) or if the
+    /// `ElementRef::command` cannot enqueue the dispatch) or if the
     /// native player is still loading `src`. Safe to call from a
     /// user gesture before the source finishes loading — the
     /// native player will start as soon as it's ready.
     pub fn play(&self) {
-        let _ = self.r.invoke("play", WhiskerValue::args([]));
+        let _ = self.r.command("play", WhiskerValue::Null);
     }
 
     /// Pause playback at the current position.
@@ -112,7 +114,7 @@ impl VideoHandle {
     /// nothing is currently playing or if the element isn't
     /// mounted.
     pub fn pause(&self) {
-        let _ = self.r.invoke("pause", WhiskerValue::args([]));
+        let _ = self.r.command("pause", WhiskerValue::Null);
     }
 
     /// Seek to an absolute position (seconds from the start).
@@ -124,15 +126,33 @@ impl VideoHandle {
     /// `whisker-video` does not currently expose a buffering
     /// signal (track via the platform's native controls instead).
     pub fn seek(&self, position_seconds: f64) {
-        let _ = self.r.invoke(
-            "seek",
-            WhiskerValue::args([WhiskerValue::Float(position_seconds)]),
-        );
+        let _ = self
+            .r
+            .command("seek", WhiskerValue::Float(position_seconds));
     }
 }
 
 impl Default for VideoHandle {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn component_schema_declares_only_one_way_commands() {
+        let schema = video_schema::schema();
+        assert_eq!(schema.name, "whisker-video:Video");
+        assert_eq!(
+            schema
+                .commands
+                .iter()
+                .map(|command| command.name.as_str())
+                .collect::<Vec<_>>(),
+            ["play", "pause", "seek"]
+        );
     }
 }

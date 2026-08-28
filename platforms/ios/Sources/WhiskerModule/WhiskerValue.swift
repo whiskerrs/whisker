@@ -48,7 +48,7 @@ public enum WhiskerValue: Equatable {
 // MARK: - Convenience accessors
 
 /// Typed reads for module authors destructuring raw `WhiskerValue`
-/// args (`args[0].asDouble()`, `value.asString()`, …). Numeric
+/// args (`args[0].asDouble`, `value.asString`, …). Numeric
 /// reads coerce between `.int` / `.float`; everything else returns
 /// `nil` on a case mismatch.
 public extension WhiskerValue {

@@ -5,7 +5,7 @@
 //! and `EditText` on Android, with a Leptos-style **two-way binding**
 //! as the headline API plus a typed imperative handle ([`InputRef`])
 //! bound on mount via `ref:` for `focus` / `blur` / `clear` /
-//! `setValue` / `getValue`.
+//! `setValue`.
 //!
 //! The Lynx tag is `whisker-input:Input` (the crate name is
 //! auto-prepended by `#[whisker::module_component]`).
@@ -132,9 +132,9 @@
 //! - [`InputRef::blur`] — resign focus + dismiss the keyboard.
 //! - [`InputRef::clear`] — clear the text to empty.
 //! - [`InputRef::set_value`] — replace the text imperatively.
-//! - [`InputRef::get_value`] — async read of the current text.
-//!   Reliable on iOS; Android result-returning element methods may
-//!   require a Lynx fork release (see the method docs).
+//!
+//! Read the current text from the bound `text` signal or from an input event.
+//! Component commands are deliberately one-way and do not return state.
 //!
 //! ## Native source
 //!
@@ -149,7 +149,7 @@ use std::rc::Rc;
 
 use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
-use whisker::{ElementRef, RefError, Signal, Style};
+use whisker::{ElementRef, Signal, Style};
 
 /// Payload of an input event (`input` / `change` / `submit`).
 ///
@@ -347,10 +347,9 @@ impl AutoCapitalize {
 ///
 /// Wraps the framework-internal `ElementRef` bound on mount when
 /// passed as the component's `input_ref:` prop. Methods dispatch the
-/// matching platform UI method through `ElementRef::invoke` /
-/// `invoke_typed`. The fire-and-forget methods swallow "not mounted"
-/// / platform errors — these are UI controls; use [`InputRef::get_value`]
-/// (which returns a [`RefError`]) when you need to inspect failures.
+/// matching platform command through `ElementRef::command`. Commands
+/// are ordered, one-way operations; these convenience methods swallow
+/// "not mounted" / platform errors.
 ///
 /// `Clone` produces a shared handle (same backing arena slot), so the
 /// same handle can drive multiple event closures.
@@ -379,13 +378,13 @@ impl InputRef {
     /// Focus the field and raise the keyboard. No-op if the element
     /// isn't mounted yet.
     pub fn focus(&self) {
-        let _ = self.r.invoke("focus", WhiskerValue::Null);
+        let _ = self.r.command("focus", WhiskerValue::Null);
     }
 
     /// Resign focus and dismiss the keyboard. No-op if the element
     /// isn't mounted or isn't focused.
     pub fn blur(&self) {
-        let _ = self.r.invoke("blur", WhiskerValue::Null);
+        let _ = self.r.command("blur", WhiskerValue::Null);
     }
 
     /// Clear the text to empty. No-op if the element isn't mounted.
@@ -395,7 +394,7 @@ impl InputRef {
     /// event (if the platform emits one) drives the signal update.
     /// For a guaranteed signal update prefer `text.set(String::new())`.
     pub fn clear(&self) {
-        let _ = self.r.invoke("clear", WhiskerValue::Null);
+        let _ = self.r.command("clear", WhiskerValue::Null);
     }
 
     /// Replace the field's text imperatively. No-op if the element
@@ -405,25 +404,10 @@ impl InputRef {
     /// change: it only re-sets its text when `v` differs from what it
     /// currently shows, so the cursor doesn't jump on a no-op write.
     pub fn set_value(&self, v: &str) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "setValue",
             WhiskerValue::map([("value", WhiskerValue::String(v.to_string()))]),
         );
-    }
-
-    /// Async read of the field's current text.
-    ///
-    /// **iOS:** reliable — the result arrives over Lynx's UI-method
-    /// callback. **Android:** result-returning custom element methods
-    /// may require a Lynx fork release (the result-method plumbing is
-    /// iOS-only-compiled upstream). On an unforked Android runtime this
-    /// resolves to [`RefError::DispatchFailed`] or `NotBound`; prefer
-    /// reading a bound `text` signal there.
-    pub async fn get_value(&self) -> Result<String, RefError> {
-        self.r
-            .invoke_typed::<GetValueResult>("getValue", WhiskerValue::Null)
-            .await
-            .map(|r| r.value)
     }
 }
 
@@ -433,22 +417,22 @@ impl Default for InputRef {
     }
 }
 
-/// Decode target for `getValue` — the native side returns
-/// `{ "value": "<text>" }`; [`InputRef::get_value`] unwraps it to the
-/// bare `String`.
-#[derive(Debug, Default, serde::Deserialize)]
-struct GetValueResult {
-    #[serde(default)]
-    value: String,
-}
-
 // Bool / number / enum props reach the native side pre-stringified ("true" /
 // "false", a decimal string, the enum's `as_attr`), so it reads one stable
 // string form per attr. Attr names are the kebab-cased field names
 // (`placeholder-color`, `caret-color`, `selection-color`).
 
 #[doc(hidden)]
-#[whisker::module_component("Input")]
+#[whisker::module_component(
+    name = "whisker-input:Input",
+    measurement = None,
+    commands = [
+        ("focus", Null),
+        ("blur", Null),
+        ("clear", Null),
+        ("setValue", Map),
+    ],
+)]
 pub fn native_input(
     value: Signal<String>,
     placeholder: Signal<String>,
@@ -689,6 +673,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn component_schema_declares_only_one_way_commands() {
+        let schema = native_input_schema::schema();
+        assert_eq!(schema.name, "whisker-input:Input");
+        assert_eq!(
+            schema
+                .commands
+                .iter()
+                .map(|command| command.name.as_str())
+                .collect::<Vec<_>>(),
+            ["focus", "blur", "clear", "setValue"]
+        );
+    }
+
+    #[test]
     fn keyboard_type_wire_strings() {
         assert_eq!(KeyboardType::Default.as_attr(), "default");
         assert_eq!(KeyboardType::Number.as_attr(), "number");
@@ -757,12 +755,5 @@ mod tests {
         // serde refuses to build a struct from a bare `null`, so `bind_typed`
         // falls back to `E::default()` for a null body.
         assert_eq!(InputEvent::default().value(), "");
-    }
-
-    #[test]
-    fn get_value_result_unwraps_value() {
-        let v = WhiskerValue::map([("value", WhiskerValue::String("abc".into()))]);
-        let r: GetValueResult = v.deserialize_into().expect("deserialize getValue");
-        assert_eq!(r.value, "abc");
     }
 }

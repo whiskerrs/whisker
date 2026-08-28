@@ -389,14 +389,14 @@ public fun Module.registerWithWhisker(crateName: String? = null) {
         WhiskerModuleRegistry.registerDispatch(qualifiedName) { method, args ->
             val function = functions[method]
                 ?: return@registerDispatch WhiskerValue.Err("unknown method `$method` on module `$name`")
-            function.handler(null, args.asList())
+            function.handler(args.asList())
         }
     }
     val asyncFunctions = def.asyncFunctions.associateBy { it.name }
     if (asyncFunctions.isNotEmpty()) {
         WhiskerModuleRegistry.registerDispatchAsync(qualifiedName) { method, args, promise ->
             val function = asyncFunctions[method] ?: return@registerDispatchAsync false
-            function.handler(null, args.asList(), promise)
+            function.handler(args.asList(), promise)
             true
         }
     }

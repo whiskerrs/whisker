@@ -503,7 +503,7 @@ public func definition() -> ModuleDefinition {
   View("whisker.input/TextInput", TextInputView.self) {
     Prop("value") { view, value in view.reconcileValue(value) }
     Events("change", "selectionChange")
-    Function("focus") { view, _ in view.focus(); return .null }
+    Command("focus") { view, _ in view.focus() }
   }
 }
 ```
@@ -1332,8 +1332,9 @@ path was removed directly rather than standardized.
     fallback.
 20. View-local imperative API is `Command` and is one-way in version 1;
     service-only `Function` and `AsyncFunction` retain result semantics.
-21. `Constants` and result-bearing element commands are unsupported until a
-    complete four-Host consumer and lifecycle contract exists.
+21. `Constants` and result-bearing element commands are not part of the
+    component model. Observable View state uses events/props; service-like
+    requests use module-level `Function` or `AsyncFunction`.
 
 ## Deferred details
 

@@ -3406,7 +3406,7 @@ impl BindingState {
         element: Element,
         name: &str,
         params: &WhiskerValue,
-    ) -> Result<WhiskerValue, RuntimeBindingError> {
+    ) -> Result<(), RuntimeBindingError> {
         let (node, command, expected) = {
             let entry = self.element(element)?;
             let registration = entry.kind.registration().ok_or_else(|| {
@@ -3437,7 +3437,7 @@ impl BindingState {
             }
         })?;
         self.surface.invoke_command(node, command, arguments)?;
-        Ok(WhiskerValue::Null)
+        Ok(())
     }
 }
 
@@ -3817,22 +3817,22 @@ impl DynRenderer for SurfaceRuntime {
         state.record(result);
     }
 
-    fn invoke_element_method(
+    fn invoke_element_command(
         &self,
         handle: Element,
-        method: &str,
-        params: WhiskerValue,
-    ) -> Option<WhiskerValue> {
+        command: &str,
+        parameters: WhiskerValue,
+    ) -> Option<Result<(), String>> {
         let mut state = self.state.borrow_mut();
-        Some(match state.invoke_command(handle, method, &params) {
-            Ok(value) => {
+        Some(match state.invoke_command(handle, command, &parameters) {
+            Ok(()) => {
                 state.record(Ok(()));
-                value
+                Ok(())
             }
             Err(error) => {
                 let message = error.to_string();
                 state.record(Err(error));
-                WhiskerValue::Error(message)
+                Err(message)
             }
         })
     }

@@ -1135,14 +1135,13 @@ View-bound imperative methods use a generation-checked handle:
 video.play();
 video.pause();
 video.seek(Duration::from_secs(30));
-let image = video.snapshot().await?;
 ```
 
 Fire-and-forget commands are ordered inside the frame packet after any
-properties or geometry they depend on. Result-bearing commands allocate a
-typed `ResultId` and complete through `CommandCompleted`. Calling a handle
-after its node generation was deleted returns a stale-element error rather
-than targeting a reused node.
+properties or geometry they depend on. Component state is observed through
+events and props; result-bearing work belongs to a module-level service.
+Calling a handle after its node generation was deleted returns a stale-element
+error rather than targeting a reused node.
 
 ### Host element factory
 
@@ -1501,15 +1500,14 @@ Commands that must be ordered relative to visual mutations, such as focus,
 scroll, video playback, or pointer capture, are encoded in the frame packet
 after the properties on which they depend.
 
-A fire-and-forget command has no result ID. A result-bearing command allocates
-a typed `ResultId`; the Host may complete it immediately after accepting the
-packet or later through `CommandCompleted`. Completion never changes the
-already accepted scene revision.
+A component command has no result ID and cannot synchronously or asynchronously
+return a value. This keeps View mutation ordered inside the frame protocol.
 
 Read queries that require up-to-date Host state must declare their scheduling
 semantics. They cannot silently force a present in the middle of reactive
-evaluation. Geometry queries should normally read Rust's accepted layout;
-Host queries are for genuinely platform-owned state.
+evaluation. Geometry queries should normally read Rust's accepted layout.
+Genuinely platform-owned state is exposed as a View event/prop or through a
+module-level service API rather than a result-bearing component command.
 
 ## Paint and clipping
 

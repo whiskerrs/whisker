@@ -60,6 +60,11 @@ import Foundation
 /// below.
 public protocol WhiskerDefinitionComponent {}
 
+/// Components accepted inside a `View(...)` declaration. Module functions
+/// deliberately do not conform, so a result-bearing `Function` cannot be
+/// placed in a View block.
+public protocol WhiskerViewDefinitionComponent: WhiskerDefinitionComponent {}
+
 // MARK: - Top-level components
 
 /// Module-name component. Exactly one expected per module.
@@ -75,7 +80,7 @@ public struct WhiskerNameComponent: WhiskerDefinitionComponent {
 }
 
 /// View block — registers a native View class + its `Prop` /
-/// `Function` / `Events` sub-components. Exactly one expected for
+/// `Command` / `Events` sub-components. Exactly one expected for
 /// view-bearing modules; absent entirely for function-only modules.
 public struct WhiskerViewComponent: WhiskerDefinitionComponent {
     /// Type-erased to AnyClass so the call site doesn't need to
@@ -103,17 +108,17 @@ public struct WhiskerViewComponent: WhiskerDefinitionComponent {
     }
 }
 
-// MARK: - View-block components (also legal at module-level for function-only modules)
+// MARK: - View-block components
 
 /// Type-erased setter the framework calls on prop dispatch.
 /// `view` is the native element instance the value was set on; `value`
 /// is the raw `WhiskerValue` — no auto-deserialization, the author
-/// destructures it, e.g. `value.asString()`.
+/// destructures it, e.g. `value.asString`.
 public typealias WhiskerPropSetter = (_ view: AnyObject, _ value: WhiskerValue) -> Void
 public typealias WhiskerPropClearer = (_ view: AnyObject) -> Void
 
 /// Prop component — a single named setter on the view class.
-public struct WhiskerPropComponent: WhiskerDefinitionComponent {
+public struct WhiskerPropComponent: WhiskerViewDefinitionComponent {
     public let name: String
     public let setter: WhiskerPropSetter
     public let clearer: WhiskerPropClearer
@@ -128,16 +133,13 @@ public struct WhiskerPropComponent: WhiskerDefinitionComponent {
     }
 }
 
-/// Type-erased function handler. `args` are the raw positional
+/// Module function handler. `args` are the raw positional
 /// `WhiskerValue`s from the Rust call site — no auto-deserialization,
-/// the author destructures, e.g. `args[0].asDouble()`; the result is
-/// a raw `WhiskerValue` (`.null` for "no result"). `view` is `nil` for module-level
-/// `Function`s, the native element instance for view-block `Function`s.
-public typealias WhiskerFunctionHandler = (_ view: AnyObject?, _ args: [WhiskerValue]) -> WhiskerValue
+/// the author destructures, e.g. `args[0].asDouble`; the result is
+/// a raw `WhiskerValue` (`.null` for "no result").
+public typealias WhiskerFunctionHandler = (_ args: [WhiskerValue]) -> WhiskerValue
 
-/// Sync function component. Same shape inside a `View(...)`
-/// block (gets the view as `view`) and at module-level
-/// (view-less; `view` is `nil`).
+/// Module-level synchronous function component.
 public struct WhiskerFunctionComponent: WhiskerDefinitionComponent {
     public let name: String
     public let handler: WhiskerFunctionHandler
@@ -147,13 +149,12 @@ public struct WhiskerFunctionComponent: WhiskerDefinitionComponent {
     }
 }
 
-/// Type-erased ASYNC function handler. Like `WhiskerFunctionHandler`
+/// Module ASYNC function handler. Like `WhiskerFunctionHandler`
 /// but instead of returning a value it resolves the given `promise`
 /// — now or later, e.g. from a StoreKit / URLSession completion.
-/// `view` is `nil` for module-level `AsyncFunction`s. Mirrors Expo's
-/// `AsyncFunction` + `Promise` (the callback-resolved form).
+/// Mirrors Expo's `AsyncFunction` + `Promise` (the callback-resolved form).
 public typealias WhiskerAsyncFunctionHandler =
-    (_ view: AnyObject?, _ args: [WhiskerValue], _ promise: WhiskerPromise) -> Void
+    (_ args: [WhiskerValue], _ promise: WhiskerPromise) -> Void
 
 /// Async function component — the async parallel of
 /// `WhiskerFunctionComponent`. The Host hands the handler a
@@ -170,7 +171,7 @@ public struct WhiskerAsyncFunctionComponent: WhiskerDefinitionComponent {
 /// One-way command applied to a mounted Host View.
 public typealias WhiskerCommandHandler = (_ view: AnyObject, _ parameters: WhiskerValue) -> Void
 
-public struct WhiskerCommandComponent: WhiskerDefinitionComponent {
+public struct WhiskerCommandComponent: WhiskerViewDefinitionComponent {
     public let name: String
     public let handler: WhiskerCommandHandler
     public init(name: String, handler: @escaping WhiskerCommandHandler) {
@@ -182,7 +183,7 @@ public struct WhiskerCommandComponent: WhiskerDefinitionComponent {
 /// Resolved inherited text-style consumer for a native View.
 public typealias WhiskerTextStyleHandler = (_ view: AnyObject, _ style: WhiskerTextStyle) -> Void
 
-public struct WhiskerTextStyleComponent: WhiskerDefinitionComponent {
+public struct WhiskerTextStyleComponent: WhiskerViewDefinitionComponent {
     public let handler: WhiskerTextStyleHandler
     public init(handler: @escaping WhiskerTextStyleHandler) {
         self.handler = handler
@@ -190,7 +191,7 @@ public struct WhiskerTextStyleComponent: WhiskerDefinitionComponent {
 }
 
 /// Synchronous intrinsic measurement provider for one View declaration.
-public struct WhiskerMeasurementComponent: WhiskerDefinitionComponent {
+public struct WhiskerMeasurementComponent: WhiskerViewDefinitionComponent {
     public let handler: (WhiskerMeasureRequest) -> WhiskerMeasuredSize?
     public init(handler: @escaping (WhiskerMeasureRequest) -> WhiskerMeasuredSize?) {
         self.handler = handler
@@ -205,7 +206,7 @@ public struct WhiskerMeasurementComponent: WhiskerDefinitionComponent {
 ///
 /// The matching `OnStartObserving` / `OnStopObserving` blocks below
 /// let the module lazily attach / detach its underlying source.
-public struct WhiskerEventsComponent: WhiskerDefinitionComponent {
+public struct WhiskerEventsComponent: WhiskerViewDefinitionComponent {
     public let names: [String]
     public init(_ names: [String]) {
         self.names = names
@@ -277,33 +278,33 @@ public struct WhiskerModuleDefinitionBuilder {
 @resultBuilder
 public struct WhiskerViewDefinitionBuilder {
     public static func buildBlock(
-        _ components: WhiskerDefinitionComponent...
-    ) -> [WhiskerDefinitionComponent] {
+        _ components: WhiskerViewDefinitionComponent...
+    ) -> [WhiskerViewDefinitionComponent] {
         components
     }
     public static func buildBlock(
-        _ component: WhiskerDefinitionComponent
-    ) -> [WhiskerDefinitionComponent] {
+        _ component: WhiskerViewDefinitionComponent
+    ) -> [WhiskerViewDefinitionComponent] {
         [component]
     }
-    public static func buildBlock() -> [WhiskerDefinitionComponent] { [] }
+    public static func buildBlock() -> [WhiskerViewDefinitionComponent] { [] }
 
     public static func buildOptional(
-        _ component: WhiskerDefinitionComponent?
-    ) -> WhiskerDefinitionComponent {
+        _ component: WhiskerViewDefinitionComponent?
+    ) -> WhiskerViewDefinitionComponent {
         component ?? EmptyComponent()
     }
     public static func buildEither(
-        first: WhiskerDefinitionComponent
-    ) -> WhiskerDefinitionComponent { first }
+        first: WhiskerViewDefinitionComponent
+    ) -> WhiskerViewDefinitionComponent { first }
     public static func buildEither(
-        second: WhiskerDefinitionComponent
-    ) -> WhiskerDefinitionComponent { second }
+        second: WhiskerViewDefinitionComponent
+    ) -> WhiskerViewDefinitionComponent { second }
 }
 
 /// Empty / placeholder component for optional-builder paths.
 /// Registration phase filters these out.
-public struct EmptyComponent: WhiskerDefinitionComponent {
+public struct EmptyComponent: WhiskerViewDefinitionComponent {
     public init() {}
 }
 
@@ -437,9 +438,9 @@ public func Name(_ value: String) -> WhiskerDefinitionComponent {
 /// its inner DSL block (Prop / Command / Events).
 public func View<V: AnyObject>(
     _ viewClass: V.Type,
-    @WhiskerViewDefinitionBuilder _ body: () -> [WhiskerDefinitionComponent]
+    @WhiskerViewDefinitionBuilder _ body: () -> [WhiskerViewDefinitionComponent]
 ) -> WhiskerDefinitionComponent {
-    WhiskerViewComponent(viewClass: viewClass, components: body())
+    WhiskerViewComponent(viewClass: viewClass, components: body().map { $0 })
 }
 
 /// Registers a Host factory through the same multi-View module DSL.
@@ -451,20 +452,20 @@ public func View(_ factory: WhiskerElementFactory) -> WhiskerDefinitionComponent
 /// by class-backed views.
 public func View(
     _ factory: WhiskerElementFactory,
-    @WhiskerViewDefinitionBuilder _ body: () -> [WhiskerDefinitionComponent]
+    @WhiskerViewDefinitionBuilder _ body: () -> [WhiskerViewDefinitionComponent]
 ) -> WhiskerDefinitionComponent {
-    WhiskerViewComponent(factory: factory, components: body())
+    WhiskerViewComponent(factory: factory, components: body().map { $0 })
 }
 
 /// String-declared element identity, resolved to Rust IDs at bootstrap.
 public func View<V: AnyObject>(
     _ elementName: String,
     _ viewClass: V.Type,
-    @WhiskerViewDefinitionBuilder _ body: () -> [WhiskerDefinitionComponent]
+    @WhiskerViewDefinitionBuilder _ body: () -> [WhiskerViewDefinitionComponent]
 ) -> WhiskerDefinitionComponent {
     WhiskerViewComponent(
         viewClass: viewClass,
-        components: body(),
+        components: body().map { $0 },
         elementName: elementName
     )
 }
@@ -472,7 +473,7 @@ public func View<V: AnyObject>(
 /// `Events("a", "b", ...)` — declare event names this module
 /// emits. Metadata only; dispatch goes through
 /// `Module.sendEvent(name, payload)`.
-public func Events(_ names: String...) -> WhiskerDefinitionComponent {
+public func Events(_ names: String...) -> WhiskerViewDefinitionComponent {
     WhiskerEventsComponent(names)
 }
 
@@ -498,16 +499,16 @@ public func OnStopObserving(
 
 // MARK: - Prop factories
 
-/// `Prop("src") { (view: VideoView, value) in view.setSrc(value.asString()) }`
+/// `Prop("src") { (view: VideoView, value) in view.setSrc(value.asString ?? "") }`
 /// — view-bearing prop setter. `value` is the raw
-/// `WhiskerValue`; the author destructures it (`.asString()`,
-/// `.asDouble()`, …). The framework downcasts the view and
+/// `WhiskerValue`; the author destructures it (`.asString`,
+/// `.asDouble`, …). The framework downcasts the view and
 /// silently no-ops on a view-type mismatch (debug-build log).
 public func Prop<V: AnyObject>(
     _ name: String,
     clear: @escaping (V) -> Void = { _ in },
     _ setter: @escaping (V, WhiskerValue) -> Void
-) -> WhiskerDefinitionComponent {
+) -> WhiskerViewDefinitionComponent {
     WhiskerPropComponent(
         name: name,
         clearer: { uiAny in if let ui = uiAny as? V { clear(ui) } }
@@ -525,7 +526,7 @@ public func Prop<V: AnyObject>(
 /// Receives the resolved inherited text style for a native View.
 public func TextStyle<V: AnyObject>(
     _ handler: @escaping (V, WhiskerTextStyle) -> Void
-) -> WhiskerDefinitionComponent {
+) -> WhiskerViewDefinitionComponent {
     WhiskerTextStyleComponent { view, style in
         if let typed = view as? V { handler(typed, style) }
     }
@@ -534,15 +535,13 @@ public func TextStyle<V: AnyObject>(
 /// Supplies Host intrinsic metrics for Custom/ReplacedContent schemas.
 public func Measurement(
     _ handler: @escaping (WhiskerMeasureRequest) -> WhiskerMeasuredSize?
-) -> WhiskerDefinitionComponent {
+) -> WhiskerViewDefinitionComponent {
     WhiskerMeasurementComponent(handler: handler)
 }
 
 // MARK: - Function factories (module-level raw `[WhiskerValue]`)
 
-// Two forms: view-bound (inside a `View(...)` block; closure gets
-// the view + raw args) and module-level (function-only module; raw
-// args only). Both pass the raw `[WhiskerValue]` through unchanged
+// Module-level functions pass the raw `[WhiskerValue]` through unchanged
 // — no arity overloads, no type coercion. The closure returns a
 // `WhiskerValue` (`.null` for "no result").
 
@@ -550,23 +549,10 @@ public func Measurement(
 public func Command<V: AnyObject>(
     _ name: String,
     _ handler: @escaping (V, WhiskerValue) -> Void
-) -> WhiskerDefinitionComponent {
+) -> WhiskerViewDefinitionComponent {
     WhiskerCommandComponent(name: name) { viewAny, parameters in
         guard let view = viewAny as? V else { return }
         handler(view, parameters)
-    }
-}
-
-@available(*, deprecated, message: "View Function is not part of whisker-module v1; use Command")
-public func Function<V: AnyObject>(
-    _ name: String,
-    _ handler: @escaping (V, [WhiskerValue]) -> WhiskerValue
-) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { viewAny, args in
-        guard let view = viewAny as? V else {
-            return .error("Function(\"\(name)\") view type mismatch")
-        }
-        return handler(view, args)
     }
 }
 
@@ -576,23 +562,10 @@ public func Function(
     _ name: String,
     _ handler: @escaping ([WhiskerValue]) -> WhiskerValue
 ) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { _, args in handler(args) }
+    WhiskerFunctionComponent(name: name, handler: handler)
 }
 
 // MARK: - AsyncFunction factories (Expo-style `AsyncFunction` + `Promise`)
-
-@available(*, deprecated, message: "View AsyncFunction is not part of whisker-module v1")
-public func AsyncFunction<V: AnyObject>(
-    _ name: String,
-    _ handler: @escaping (V, [WhiskerValue], WhiskerPromise) -> Void
-) -> WhiskerDefinitionComponent {
-    WhiskerAsyncFunctionComponent(name: name) { viewAny, args, promise in
-        guard let view = viewAny as? V else {
-            return promise.reject("AsyncFunction(\"\(name)\") view type mismatch")
-        }
-        handler(view, args, promise)
-    }
-}
 
 /// `AsyncFunction("getOfferings") { (args, promise) in ... }` —
 /// module-level (view-less) async function for a function-only module.
@@ -600,5 +573,5 @@ public func AsyncFunction(
     _ name: String,
     _ handler: @escaping ([WhiskerValue], WhiskerPromise) -> Void
 ) -> WhiskerDefinitionComponent {
-    WhiskerAsyncFunctionComponent(name: name) { _, args, promise in handler(args, promise) }
+    WhiskerAsyncFunctionComponent(name: name, handler: handler)
 }

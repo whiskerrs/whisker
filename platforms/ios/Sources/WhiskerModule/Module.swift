@@ -11,7 +11,7 @@
 //         Name("Video")
 //         View(VideoView.self) {
 //             Prop("src") { (view: VideoView, value: String) in view.setSrc(value) }
-//             Function("play") { (view: VideoView) in view.play() }
+//             Command("play") { (view: VideoView, _) in view.play() }
 //         }
 //     }
 // }

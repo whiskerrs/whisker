@@ -12,7 +12,7 @@ use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
 use whisker::runtime::view::{
     BindType, create_element_by_name, set_attribute_bool, set_event_listener, set_root,
-    try_invoke_element_method, with_installed_renderer,
+    try_invoke_element_command, with_installed_renderer,
 };
 use whisker::{
     ElementModuleDefinition, ElementProviderMetadata, ElementRegistry, ElementTag,
@@ -2258,8 +2258,8 @@ fn external_element_properties_events_and_commands_share_the_retained_frame_path
         set_attribute_bool(root, "checked", true);
         set_event_listener(root, "change", BindType::Bind, Box::new(|_| {}));
         assert_eq!(
-            try_invoke_element_method(root, "toggle", WhiskerValue::args([])),
-            Some(WhiskerValue::Null)
+            try_invoke_element_command(root, "toggle", WhiskerValue::args([])),
+            Some(Ok(()))
         );
         set_root(root);
     });

@@ -4,8 +4,8 @@
 //! It is the wire representation for everything that crosses the
 //! Rust ⇄ native boundary as data rather than a handle:
 //!
-//!   - **module function args / returns** (`ElementRef::invoke`,
-//!     `PlatformModule::invoke`) — raw values, with no typed-arg
+//!   - **module function args / returns** (`PlatformModule::invoke`) and
+//!     **element command parameters** (`ElementRef::command`) — raw values, with no typed-arg
 //!     deserialization at the boundary, and
 //!   - **event payloads** — the body Lynx hands a tap / touch /
 //!     animation handler, delivered to the Rust closure as a
@@ -112,12 +112,10 @@ impl WhiskerValue {
         WhiskerValue::Map(m)
     }
 
-    /// Build the `{ "args": [ … ] }` params object that Whisker module
-    /// element methods (`@WhiskerUIMethod`) decode — their forwarders
-    /// read positional arguments from `params.args`. Built-in Lynx
-    /// methods read named fields directly and use [`map`](Self::map)
-    /// instead; this helper is for module-element handles like
-    /// `VideoHandle` invoking through the unified `ElementRef::invoke`.
+    /// Build a named `args` array. This is useful for service-module
+    /// payloads that intentionally model positional values inside one
+    /// [`WhiskerValue`]. Element commands use their declared single
+    /// parameter value directly.
     pub fn args<I>(items: I) -> Self
     where
         I: IntoIterator<Item = WhiskerValue>,
@@ -284,8 +282,7 @@ impl<'de> Deserialize<'de> for WhiskerValue {
     }
 }
 
-/// Failure surface for the `#[whisker::module_component]`-generated
-/// proxy methods and `ElementRef::invoke_typed`.
+/// Failure surface for module function calls.
 ///
 /// Wraps the UTF-8 description the bridge returned via
 /// [`WhiskerValue::Error`] (unknown module / missing method /
@@ -363,10 +360,7 @@ where
     }
 }
 
-// TryFrom impls — used by `ElementRef::invoke_typed<T>` so authors
-// can write `r.invoke_typed::<f64>("currentTime", vec![])`. The
-// `Error` payload is a `String` so it folds cleanly into
-// `RefError::DispatchFailed.message` without an extra map step.
+// TryFrom impls support typed wrappers around module function results.
 
 impl TryFrom<WhiskerValue> for () {
     type Error = String;

@@ -4,7 +4,7 @@
 // registration block in `WhiskerWebView+Generated.swift` that registers
 // `definitionLazy.view!.viewClass` with `LynxComponentRegistry` under
 // "whisker-webview:WebView", then calls `module.registerWithLynx()` so
-// every `Prop(...)` setter and `Function(...)` method installs via the
+// every `Prop(...)` setter and `Command(...)` handler installs via the
 // Obj-C-runtime path.
 //
 // The `WhiskerWebViewView` Lynx UI subclass lives in `WhiskerWebView.swift`.
@@ -60,61 +60,32 @@ public final class WebViewModule: Module {
                     "message"
                 )
 
-                // ---- Imperative methods ----------------------------------
-                //
-                // The result-returning methods still use the sync `Function`
-                // form: Lynx's `<name>:withResult:` dispatch calls the
-                // closure and hands the returned `WhiskerValue` straight to
-                // the Rust-side `invoke_typed` awaiter.
+                // ---- One-way View commands -------------------------------
 
-                Function("reload") { (view: WhiskerWebViewView, _: [WhiskerValue]) -> WhiskerValue in
+                Command("reload") { (view: WhiskerWebViewView, _: WhiskerValue) in
                     view.reloadPage()
-                    return .null
                 }
-                Function("goBack") { (view: WhiskerWebViewView, _: [WhiskerValue]) -> WhiskerValue in
+                Command("goBack") { (view: WhiskerWebViewView, _: WhiskerValue) in
                     view.goBackPage()
-                    return .null
                 }
-                Function("goForward") { (view: WhiskerWebViewView, _: [WhiskerValue]) -> WhiskerValue in
+                Command("goForward") { (view: WhiskerWebViewView, _: WhiskerValue) in
                     view.goForwardPage()
-                    return .null
                 }
-                Function("stopLoading") { (view: WhiskerWebViewView, _: [WhiskerValue]) -> WhiskerValue in
+                Command("stopLoading") { (view: WhiskerWebViewView, _: WhiskerValue) in
                     view.stopLoadingPage()
-                    return .null
                 }
 
-                Function("postMessage") { (view: WhiskerWebViewView, args: [WhiskerValue]) -> WhiskerValue in
-                    if let data = args.first?.asString {
+                Command("postMessage") { (view: WhiskerWebViewView, parameters: WhiskerValue) in
+                    if let data = parameters.asString {
                         view.postMessageToPage(data)
                     }
-                    return .null
                 }
 
-                // One method name serves both `invoke` (ignores the return)
-                // and `invoke_typed` (awaits the `.map(["value": ...])`), so
-                // returning the value covers both without branching.
-                Function("evaluateJavaScript") { (view: WhiskerWebViewView, args: [WhiskerValue]) -> WhiskerValue in
-                    guard let script = args.first?.asString else {
-                        return .map(["value": .string("")])
+                Command("evaluateJavaScript") { (view: WhiskerWebViewView, parameters: WhiskerValue) in
+                    guard let script = parameters.asString else {
+                        return
                     }
-                    return view.evaluateJavaScript(script)
-                }
-
-                // Async so the WKWebView completion can carry the JS
-                // result back through the promise.
-                AsyncFunction("evaluateJavaScriptWithResult") { (view: WhiskerWebViewView, args: [WhiskerValue], promise: WhiskerPromise) in
-                    guard let script = args.first?.asString else {
-                        return promise.reject("evaluateJavaScriptWithResult: missing script argument")
-                    }
-                    view.evaluateJavaScript(script, resolving: promise)
-                }
-
-                Function("canGoBack") { (view: WhiskerWebViewView, _: [WhiskerValue]) -> WhiskerValue in
-                    return view.canGoBackResult()
-                }
-                Function("canGoForward") { (view: WhiskerWebViewView, _: [WhiskerValue]) -> WhiskerValue in
-                    return view.canGoForwardResult()
+                    view.evaluateJavaScript(script)
                 }
             }
         }

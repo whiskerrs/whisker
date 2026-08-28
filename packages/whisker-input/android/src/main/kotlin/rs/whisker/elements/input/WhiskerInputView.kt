@@ -502,9 +502,6 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         emitInput("")
     }
 
-    /** Return the EditText's current text — used by `getValue`. */
-    fun currentText(): String = view?.text?.toString() ?: ""
-
     // -------------------------------------------------------------------------
     // CSS text-style interception
     // -------------------------------------------------------------------------

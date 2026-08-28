@@ -13,7 +13,7 @@
 //         Name("Video")
 //         View(VideoView::class.java) {
 //             Prop("src") { view: VideoView, value: String -> view.setSrc(value) }
-//             Function("play") { view: VideoView -> view.play() }
+//             Command("play") { view: VideoView, _ -> view.play() }
 //         }
 //     }
 // }
