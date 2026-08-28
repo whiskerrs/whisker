@@ -185,6 +185,7 @@ final class HostConformanceTests: XCTestCase {
         scrollView.layoutIfNeeded()
         XCTAssertTrue(scrollView.layer.mask != nil)
         XCTAssertNil(scrollView.contentView.layer.mask)
+        XCTAssertEqual(scrollView.layer.mask?.frame.minY, scrollView.bounds.minY)
     }
 
     func testUIKitTouchTypesMapToProtocolPointerKinds() {

@@ -14,6 +14,7 @@ final class WhiskerNodeView: UIView {
     private let defaultChildrenHost = WhiskerChildrenHostView(frame: .zero)
     private lazy var paintView = HostNodePaintView(painter: boxPainter)
     private let overflowMask = CAShapeLayer()
+    private var overflowMaskScrollOrigin = CGPoint.zero
     private let clipPathMask = CAShapeLayer()
     private var clipPath: HostClipPath?
     private var boxShadows: [HostBoxShadow] = []
@@ -27,6 +28,7 @@ final class WhiskerNodeView: UIView {
     private(set) var cursorKeyword: Int32 = 0
     private var pointerDelegate: AnyObject?
     private var pointerInteraction: AnyObject?
+    private var scrollOffsetObservation: NSKeyValueObservation?
     private var whiskerVisible = true
 
     init(element: String) {
@@ -122,6 +124,12 @@ final class WhiskerNodeView: UIView {
     func mountedContentDidInstall() {
         mountedElement?.view.layer.zPosition = 2
         bringSubviewToFront(defaultChildrenHost)
+        scrollOffsetObservation = (mountedElement?.view as? UIScrollView)?.observe(
+            \.contentOffset,
+            options: [.new]
+        ) { [weak self] scrollView, _ in
+            self?.updateOverflowMaskPosition(scrollView)
+        }
         updateOverflowMask()
     }
 
@@ -366,6 +374,18 @@ final class WhiskerNodeView: UIView {
         overflowMask.backgroundColor = UIColor.clear.cgColor
         overflowMask.fillColor = UIColor.white.cgColor
         host.layer.mask = overflowMask
+        overflowMaskScrollOrigin = (host as? UIScrollView)?.bounds.origin ?? .zero
+    }
+
+    /// `UIScrollView` scrolls by changing `bounds.origin`. A layer mask uses
+    /// that moving coordinate space, so keep the already-built path aligned
+    /// with the viewport without rebuilding its rounded geometry per event.
+    private func updateOverflowMaskPosition(_ scrollView: UIScrollView) {
+        let next = scrollView.bounds.origin
+        defer { overflowMaskScrollOrigin = next }
+        guard scrollView.layer.mask === overflowMask else { return }
+        overflowMask.frame.origin.x += next.x - overflowMaskScrollOrigin.x
+        overflowMask.frame.origin.y += next.y - overflowMaskScrollOrigin.y
     }
 
     /// Returns the stationary view that owns the element's clipping viewport.
