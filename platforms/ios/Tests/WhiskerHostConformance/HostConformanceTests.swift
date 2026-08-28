@@ -157,7 +157,8 @@ final class HostConformanceTests: XCTestCase {
             elementType: 3,
             name: WhiskerBuiltInElements.scrollViewName,
             childPolicy: .elements,
-            measurement: .none
+            measurement: .none,
+            events: [WhiskerEventBinding(id: 1, name: "scroll", detail: .map)]
         )
         XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
         let mounted = try XCTUnwrap(WhiskerElementRegistry.mount(3) { _, _ in })
