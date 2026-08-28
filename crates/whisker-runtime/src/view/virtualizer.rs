@@ -6,8 +6,9 @@
 //! spacer Views to preserve the complete scroll extent. Hosts therefore need
 //! no list-specific ABI, view class, recycling contract, or data source.
 
+use std::cell::Cell;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -108,6 +109,90 @@ struct MountedEntry {
     handle: Element,
 }
 
+struct LayoutIndex<T, K> {
+    items: Vec<T>,
+    keys: Vec<K>,
+    /// Prefix offsets. `offsets[i]` is the start of item `i` and the final
+    /// entry is the complete estimated extent.
+    offsets: Vec<f32>,
+    generation: u64,
+}
+
+impl<T, K> LayoutIndex<T, K>
+where
+    K: Eq + Hash + Clone,
+{
+    fn new() -> Self {
+        Self {
+            items: Vec::new(),
+            keys: Vec::new(),
+            offsets: vec![0.0],
+            generation: 0,
+        }
+    }
+
+    fn replace(&mut self, items: Vec<T>, meta: impl Fn(&T) -> ItemMeta<K>) {
+        let mut unique_keys = HashSet::with_capacity(items.len());
+        self.keys.clear();
+        self.keys.reserve(items.len());
+        self.offsets.clear();
+        self.offsets.reserve(items.len() + 1);
+        self.offsets.push(0.0);
+        for item in &items {
+            let item = meta(item);
+            assert!(
+                unique_keys.insert(item.key.clone()),
+                "virtualized List keys must be unique"
+            );
+            let main_axis_size = item.main_axis_size();
+            self.keys.push(item.key);
+            self.offsets
+                .push(self.offsets.last().copied().unwrap_or(0.0) + main_axis_size);
+        }
+        self.items = items;
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    fn window(&self, geometry: ScrollGeometry) -> LayoutWindow {
+        let item_count = self.items.len();
+        let first_visible = self.offsets[1..]
+            .partition_point(|end| *end <= geometry.offset)
+            .min(item_count);
+        let start = first_visible.saturating_sub(DEFAULT_OVERSCAN_ITEMS);
+        let visible_end = geometry.offset + geometry.viewport.max(0.0);
+        let first_after_viewport = self.offsets[..item_count]
+            .partition_point(|item_start| *item_start < visible_end)
+            .max(first_visible.saturating_add(1).min(item_count));
+        let end = first_after_viewport
+            .saturating_add(DEFAULT_OVERSCAN_ITEMS)
+            .min(item_count);
+        let total_extent = self.offsets.last().copied().unwrap_or(0.0);
+
+        LayoutWindow {
+            generation: self.generation,
+            start,
+            end,
+            leading_extent: self.offsets[start],
+            trailing_extent: total_extent - self.offsets[end],
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct LayoutWindow {
+    generation: u64,
+    start: usize,
+    end: usize,
+    leading_extent: f32,
+    trailing_extent: f32,
+}
+
+impl LayoutWindow {
+    fn identity(self) -> (u64, usize, usize) {
+        (self.generation, self.start, self.end)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ScrollGeometry {
     offset: f32,
@@ -146,83 +231,70 @@ pub fn virtualize<T, K>(
     let meta = Rc::new(meta);
     let children = Rc::new(children);
     let geometry = Rc::new(RefCell::new(ScrollGeometry::default()));
+    let layout = Rc::new(RefCell::new(LayoutIndex::<T, K>::new()));
     let mounted: Rc<RefCell<HashMap<K, MountedEntry>>> = Rc::new(RefCell::new(HashMap::new()));
+    let rendered_window = Rc::new(Cell::new(None::<(u64, usize, usize)>));
 
     let reconcile: Rc<dyn Fn()> = {
-        let each = Rc::clone(&each);
-        let meta = Rc::clone(&meta);
         let children = Rc::clone(&children);
         let geometry = Rc::clone(&geometry);
+        let layout = Rc::clone(&layout);
         let mounted = Rc::clone(&mounted);
+        let rendered_window = Rc::clone(&rendered_window);
         Rc::new(move || {
-            let items = each();
-            let metadata = items.iter().map(|item| meta(item)).collect::<Vec<_>>();
-            let sizes = metadata
-                .iter()
-                .map(ItemMeta::main_axis_size)
-                .collect::<Vec<_>>();
             let geometry = *geometry.borrow();
+            let (window, desired) = {
+                let layout = layout.borrow();
+                let window = layout.window(geometry);
+                if rendered_window.get() == Some(window.identity()) {
+                    return;
+                }
+                let desired = (window.start..window.end)
+                    .map(|index| (layout.keys[index].clone(), layout.items[index].clone()))
+                    .collect::<Vec<_>>();
+                (window, desired)
+            };
 
-            let mut cursor = 0.0;
-            let first_visible = sizes
-                .iter()
-                .position(|size| {
-                    let visible = cursor + *size > geometry.offset;
-                    cursor += *size;
-                    visible
-                })
-                .unwrap_or(sizes.len());
-            let start = first_visible.saturating_sub(DEFAULT_OVERSCAN_ITEMS);
-            let visible_end = geometry.offset + geometry.viewport.max(0.0);
-            let mut extent = sizes.iter().take(start).sum::<f32>();
-            let mut end = start;
-            while end < sizes.len()
-                && (extent < visible_end || end < first_visible.saturating_add(1))
-            {
-                extent += sizes[end];
-                end += 1;
-            }
-            end = end.saturating_add(DEFAULT_OVERSCAN_ITEMS).min(sizes.len());
-
-            set_spacer_size(leading_spacer, sizes[..start].iter().sum());
-            set_spacer_size(trailing_spacer, sizes[end..].iter().sum());
+            set_spacer_size(leading_spacer, window.leading_extent);
+            set_spacer_size(trailing_spacer, window.trailing_extent);
 
             let mut old = std::mem::take(&mut *mounted.borrow_mut());
-            let mut next = HashMap::with_capacity(end.saturating_sub(start));
-            let mut order = Vec::with_capacity(end.saturating_sub(start));
-            for index in start..end {
-                let key = metadata[index].key.clone();
+            let mut next = HashMap::with_capacity(desired.len());
+            let mut order = Vec::with_capacity(desired.len() + 2);
+            order.push(leading_spacer);
+            for (key, item) in desired {
                 let entry = if let Some(entry) = old.remove(&key) {
                     entry
                 } else {
                     let owner = Owner::new(None);
-                    let handle = owner.with(|| children(items[index].clone()));
+                    let handle = owner.with(|| children(item));
                     MountedEntry { owner, handle }
                 };
-                order.push((key.clone(), entry.handle));
+                order.push(entry.handle);
                 next.insert(key, entry);
             }
+            order.push(trailing_spacer);
 
             for (_, entry) in old.drain() {
                 remove_child(scroll_view, entry.handle);
                 entry.owner.dispose();
             }
-            let attached = children_of(scroll_view);
-            for entry in next.values() {
-                if attached.contains(&entry.handle) {
-                    remove_child(scroll_view, entry.handle);
-                }
-            }
-            for (index, (_, handle)) in order.into_iter().enumerate() {
-                insert_child_at(scroll_view, handle, index + 1);
-            }
+            sync_child_order(scroll_view, &order);
             *mounted.borrow_mut() = next;
+            rendered_window.set(Some(window.identity()));
         })
     };
 
     {
+        let each = Rc::clone(&each);
+        let meta = Rc::clone(&meta);
+        let layout = Rc::clone(&layout);
         let reconcile = Rc::clone(&reconcile);
-        effect(move || reconcile());
+        effect(move || {
+            let items = each();
+            layout.borrow_mut().replace(items, |item| meta(item));
+            reconcile();
+        });
     }
 
     {
@@ -249,6 +321,24 @@ pub fn virtualize<T, K>(
         remove_child(scroll_view, leading_spacer);
         remove_child(scroll_view, trailing_spacer);
     });
+}
+
+/// Makes the current child sequence match `target` while leaving every
+/// already-correct child attached. During ordinary scrolling this removes the
+/// rows that left one edge and inserts only rows entering the opposite edge.
+fn sync_child_order(parent: Element, target: &[Element]) {
+    let mut current = children_of(parent);
+    for (index, child) in target.iter().copied().enumerate() {
+        if current.get(index) == Some(&child) {
+            continue;
+        }
+        if let Some(previous) = current.iter().position(|candidate| *candidate == child) {
+            remove_child(parent, child);
+            current.remove(previous);
+        }
+        insert_child_at(parent, child, index);
+        current.insert(index, child);
+    }
 }
 
 fn set_spacer_size(element: Element, size: f32) {

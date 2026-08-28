@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::rc::Rc;
 
@@ -185,6 +185,165 @@ fn list_virtualizes_through_scroll_view_and_reacts_to_host_scroll_geometry() {
     assert!(renderer.frames().last().unwrap().packet.operations.iter().any(
         |operation| matches!(operation, Operation::SetText { content, .. } if content.payload.text == "row-50")
     ));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(42).unwrap(),
+        StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+    );
+    let source_reads = Rc::new(Cell::new(0));
+    let metadata_reads = Rc::new(Cell::new(0));
+
+    with_installed_renderer(surface.renderer(), || {
+        let source_reads = Rc::clone(&source_reads);
+        let metadata_reads = Rc::clone(&metadata_reads);
+        let root = owner.with(|| {
+            render! {
+                list(
+                    style: css!(width: percent(100), height: px(100)),
+                    each: move || {
+                        source_reads.set(source_reads.get() + 1);
+                        (0_u32..100_000).collect::<Vec<_>>()
+                    },
+                    meta: move |row: &u32| {
+                        metadata_reads.set(metadata_reads.get() + 1);
+                        ItemMeta::key(*row).estimated_size(44)
+                    },
+                    children: |row: u32| render! {
+                        text(
+                            style: css!(height: px(44), font_size: px(20)),
+                            value: format!("row-{row}"),
+                        )
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(source_reads.get(), 1);
+    assert_eq!(metadata_reads.get(), 100_000);
+
+    let registrations = surface.element_registrations();
+    let scroll_type = registrations
+        .iter()
+        .find(|registration| registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME)
+        .unwrap()
+        .element_type;
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let scroll_node = renderer.frames()[0]
+        .packet
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::CreateNode {
+                node, element_type, ..
+            } if *element_type == scroll_type => Some(*node),
+            _ => None,
+        })
+        .unwrap();
+
+    // First deliver the real Host viewport. The List starts with a bounded
+    // fallback viewport so this normalization frame is not part of the
+    // steady-state scrolling measurement.
+    with_installed_renderer(surface.renderer(), || {
+        surface
+            .dispatch_input(&InputEvent {
+                surface: surface.surface(),
+                timestamp_ms: 16.0,
+                kind: InputEventKind::Named("scroll".to_owned()),
+                pointer: None,
+                target: Some(scroll_node),
+                detail: WhiskerValue::map([
+                    ("scrollTop", WhiskerValue::Float(0.0)),
+                    ("viewportHeight", WhiskerValue::Float(100.0)),
+                    ("scrollHeight", WhiskerValue::Float(4_400_000.0)),
+                ]),
+            })
+            .unwrap();
+        whisker::flush();
+    });
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            2,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    with_installed_renderer(surface.renderer(), || {
+        surface
+            .dispatch_input(&InputEvent {
+                surface: surface.surface(),
+                timestamp_ms: 32.0,
+                kind: InputEventKind::Named("scroll".to_owned()),
+                pointer: None,
+                target: Some(scroll_node),
+                detail: WhiskerValue::map([
+                    ("scrollTop", WhiskerValue::Float(132.0)),
+                    ("viewportHeight", WhiskerValue::Float(100.0)),
+                    ("scrollHeight", WhiskerValue::Float(4_400_000.0)),
+                ]),
+            })
+            .unwrap();
+        whisker::flush();
+    });
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            3,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        source_reads.get(),
+        1,
+        "scrolling must use the cached source snapshot"
+    );
+    assert_eq!(
+        metadata_reads.get(),
+        100_000,
+        "scrolling must use the cached layout index"
+    );
+    let structural_operations = renderer.frames()[2]
+        .packet
+        .operations
+        .iter()
+        .filter(|operation| {
+            matches!(
+                operation,
+                Operation::InsertChild { .. }
+                    | Operation::RemoveChild { .. }
+                    | Operation::MoveChild { .. }
+            )
+        })
+        .count();
+    assert!(
+        structural_operations <= 8,
+        "steady-state scrolling should mutate window edges, got {structural_operations} structural operations"
+    );
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 

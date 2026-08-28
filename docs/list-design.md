@@ -78,6 +78,12 @@ window, preserves surviving owners, and disposes items that leave the window.
 The old Lynx native item provider, numeric signs, list action stream, and
 list-specific FFI are removed.
 
+The source snapshot, stable keys, and prefix offsets are rebuilt only when the
+reactive item source changes. A Host scroll event finds the visible window with
+binary searches over that index and performs only the entering/leaving edge
+mutations. Scroll work is therefore `O(log n + w)` for `n` logical items and a
+mounted window of `w` items; it does not clone or rescan the complete source.
+
 ## Layout feedback
 
 The initial window uses `estimated_size` (44 logical pixels when omitted).
@@ -106,6 +112,7 @@ FramePacket/input event` seam before implementation.
 
 ## Complexity target
 
-- Layout metadata: `O(n)`.
+- Source/index rebuild after data changes: `O(n)`.
+- Steady-state scroll reconciliation: `O(log n + visible + overscan)`.
 - Mounted element subtrees: `O(visible + overscan)`.
 - Host-specific List code and List-specific ABI: zero.

@@ -1,0 +1,15 @@
+[package]
+name = "list-benchmark"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Cross-platform 100k-row workload for profiling Whisker's Rust-owned List."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+
+[dev-dependencies]
+whisker-engine = { workspace = true }
