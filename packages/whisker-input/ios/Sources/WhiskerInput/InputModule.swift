@@ -25,7 +25,7 @@ public final class InputModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {
             Name("Input")
-            View(WhiskerInputView.self) {
+            View("whisker-input:Input", WhiskerInputView.self) {
 
                 // ---- Value + placeholder ----------------------------------
 

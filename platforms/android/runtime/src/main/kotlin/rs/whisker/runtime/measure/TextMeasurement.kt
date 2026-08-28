@@ -15,8 +15,10 @@ import android.text.style.LeadingMarginSpan
 import android.view.View
 import java.text.Bidi
 import kotlin.math.ceil
+import rs.whisker.runtime.WhiskerAvailableSpace
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerMeasureRequest
+import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.resolveWhiskerTypeface
 
 /** Intrinsic measurement implementation shared by all Android Host frames. */
@@ -59,10 +61,12 @@ internal class HostMeasurementProvider(private val context: Context) {
             WhiskerMeasureRequest(
                 if (availableWidthKind == DEFINITE) availableWidth else null,
                 if (availableHeightKind == DEFINITE) availableHeight else null,
+                WhiskerAvailableSpace.entries[availableWidthKind],
+                WhiskerAvailableSpace.entries[availableHeightKind],
                 if (knownMask and WIDTH != 0) knownWidth else null,
                 if (knownMask and HEIGHT != 0) knownHeight else null,
                 payloadVersion,
-                payload,
+                WhiskerValue.Bytes(payload),
             ),
         ) ?: return floatArrayOf(UNSUPPORTED, UNSUPPORTED_FEATURE, 0f, 0f, 0f, 0f, 0f)
         return ready(

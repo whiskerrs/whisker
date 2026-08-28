@@ -161,14 +161,15 @@ func render(
                 do {
                     let module = \(instance)
                     let def = module.definitionLazy
-                    if let name = def.name {
+                    guard let name = def.name else {
+                        preconditionFailure("ModuleDefinition requires Name")
+                    }
                         // Phase L-2c — every DSL module records its
                         // fully-qualified name so `sendEvent` /
                         // observer-hook routing can find it.
                         let qname = name.contains("/") ? name : "\(tagPrefix)" + name
                         module.qualifiedName = qname
-                        module.registerWithWhisker()
-                    }
+                    module.registerWithWhisker()
                 }
 
             """

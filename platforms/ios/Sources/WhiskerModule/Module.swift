@@ -61,6 +61,7 @@ open class Module {
             #endif
             return
         }
+        guard definitionLazy.events.contains(event), payload.isData else { return }
         WhiskerModuleEventCenter.dispatchSend(
             module: qname,
             event: event,

@@ -9,6 +9,7 @@ import rs.whisker.runtime.WhiskerValue
 @WhiskerModule
 public class ToggleModule : Module() {
     override fun definition(): ModuleDefinition = ModuleDefinition {
+        Name("WhiskerToggle")
         View("whisker.toggle/Toggle", ToggleView::class.java) {
             Prop("checked") { view: ToggleView, value ->
                 view.setChecked(value.asBool() ?: false)
@@ -17,6 +18,9 @@ public class ToggleModule : Module() {
                 view.setDisabled(value.asBool() ?: false)
             }
             Events("change")
+            Command("setChecked") { view: ToggleView, parameters ->
+                view.setChecked(parameters.asBool() ?: false)
+            }
         }
         Function("echo") { args -> args.firstOrNull() ?: WhiskerValue.Null }
         AsyncFunction("echoAsync") { args, promise ->

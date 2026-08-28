@@ -18,7 +18,7 @@ public final class VideoModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {
             Name("Video")
-            View(VideoView.self) {
+            View("whisker-video:Video", VideoView.self) {
                 Prop("src") { (view: VideoView, value: WhiskerValue) in
                     view.setSrc(value.asString ?? "")
                 }

@@ -109,24 +109,33 @@ use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{
-    Expr, ExprLit, FnArg, GenericArgument, Ident, ItemFn, Lit, LitStr, Pat, PathArguments, Token,
-    Type, TypePath, TypeTuple, Visibility, parse2,
+    Expr, ExprLit, FnArg, GenericArgument, Ident, ItemFn, Lit, LitBool, LitStr, Pat, PathArguments,
+    Token, Type, TypePath, TypeTuple, Visibility, parse2,
 };
 
 enum ModuleComponentArgs {
     Legacy(LitStr),
-    Schema { name: LitStr, measurement: Ident },
+    Schema {
+        name: LitStr,
+        measurement: Ident,
+        text_style: bool,
+        commands: Vec<(LitStr, Ident)>,
+    },
 }
 
 struct SchemaArgs {
     name: LitStr,
     measurement: Ident,
+    text_style: bool,
+    commands: Vec<(LitStr, Ident)>,
 }
 
 impl Parse for SchemaArgs {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut name = None;
         let mut measurement = None;
+        let mut text_style = None;
+        let mut commands = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -158,10 +167,45 @@ impl Parse for SchemaArgs {
                     }
                     measurement = Some(input.parse()?);
                 }
+                "text_style" => {
+                    if text_style.is_some() {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "duplicate `text_style` argument",
+                        ));
+                    }
+                    text_style = Some(input.parse::<LitBool>()?.value);
+                }
+                "commands" => {
+                    if commands.is_some() {
+                        return Err(syn::Error::new(key.span(), "duplicate `commands` argument"));
+                    }
+                    let content;
+                    syn::bracketed!(content in input);
+                    let mut declarations = Vec::new();
+                    while !content.is_empty() {
+                        let tuple;
+                        syn::parenthesized!(tuple in content);
+                        let name: LitStr = tuple.parse()?;
+                        tuple.parse::<Token![,]>()?;
+                        let kind: Ident = tuple.parse()?;
+                        if !tuple.is_empty() {
+                            return Err(
+                                tuple.error("command entry must be `(\"name\", ValueKind)`")
+                            );
+                        }
+                        declarations.push((name, kind));
+                        if content.is_empty() {
+                            break;
+                        }
+                        content.parse::<Token![,]>()?;
+                    }
+                    commands = Some(declarations);
+                }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "unsupported module_component argument; expected `name` or `measurement`",
+                        "unsupported module_component argument; expected `name`, `measurement`, `text_style`, or `commands`",
                     ));
                 }
             }
@@ -176,6 +220,8 @@ impl Parse for SchemaArgs {
             name: name.ok_or_else(|| syn::Error::new(input.span(), "missing `name` argument"))?,
             measurement: measurement
                 .ok_or_else(|| syn::Error::new(input.span(), "missing `measurement` argument"))?,
+            text_style: text_style.unwrap_or(false),
+            commands: commands.unwrap_or_default(),
         })
     }
 }
@@ -188,6 +234,8 @@ fn parse_args(attr: TokenStream2) -> syn::Result<ModuleComponentArgs> {
     Ok(ModuleComponentArgs::Schema {
         name: args.name,
         measurement: args.measurement,
+        text_style: args.text_style,
+        commands: args.commands,
     })
 }
 
@@ -318,8 +366,22 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             },
             quote! {},
         ),
-        ModuleComponentArgs::Schema { name, measurement } => {
-            let schema = match schema_tokens(&schema_mod, vis, name, measurement, &props, true) {
+        ModuleComponentArgs::Schema {
+            name,
+            measurement,
+            text_style,
+            commands,
+        } => {
+            let schema = match schema_tokens(
+                &schema_mod,
+                vis,
+                name,
+                measurement,
+                *text_style,
+                commands,
+                &props,
+                true,
+            ) {
                 Ok(schema) => schema,
                 Err(error) => return error.to_compile_error(),
             };
@@ -439,7 +501,12 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
 /// only their Host-independent schema uses the shared declaration compiler.
 pub fn expand_builtin(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     let args = match parse_args(attr) {
-        Ok(ModuleComponentArgs::Schema { name, measurement }) => (name, measurement),
+        Ok(ModuleComponentArgs::Schema {
+            name,
+            measurement,
+            text_style,
+            commands,
+        }) => (name, measurement, text_style, commands),
         Ok(ModuleComponentArgs::Legacy(name)) => {
             return syn::Error::new(
                 name.span(),
@@ -494,7 +561,16 @@ pub fn expand_builtin(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     }
 
     let schema_mod = format_ident!("{}_schema", signature.ident);
-    match schema_tokens(&schema_mod, visibility, &args.0, &args.1, &props, false) {
+    match schema_tokens(
+        &schema_mod,
+        visibility,
+        &args.0,
+        &args.1,
+        args.2,
+        &args.3,
+        &props,
+        false,
+    ) {
         Ok(tokens) => tokens,
         Err(error) => error.to_compile_error(),
     }
@@ -505,6 +581,8 @@ fn schema_tokens(
     visibility: &Visibility,
     name: &LitStr,
     measurement: &Ident,
+    text_style: bool,
+    command_declarations: &[(LitStr, Ident)],
     props: &[Prop],
     named_provider: bool,
 ) -> syn::Result<TokenStream2> {
@@ -537,6 +615,7 @@ fn schema_tokens(
     let mut constants = Vec::new();
     let mut properties = Vec::new();
     let mut events = Vec::new();
+    let mut commands = Vec::new();
 
     for prop in props {
         match &prop.kind {
@@ -579,6 +658,56 @@ fn schema_tokens(
         }
     }
 
+    let mut command_names = std::collections::HashSet::new();
+    for (index, (command_name, value_kind)) in command_declarations.iter().enumerate() {
+        if command_name.value().trim().is_empty() {
+            return Err(syn::Error::new(
+                command_name.span(),
+                "command name must not be empty",
+            ));
+        }
+        if !command_names.insert(command_name.value()) {
+            return Err(syn::Error::new(
+                command_name.span(),
+                "duplicate command name",
+            ));
+        }
+        let kind = value_kind.to_string();
+        if !matches!(
+            kind.as_str(),
+            "Null" | "Bool" | "Int" | "Float" | "String" | "Bytes" | "Array" | "Map"
+        ) {
+            return Err(syn::Error::new(
+                value_kind.span(),
+                "command ValueKind must be Null, Bool, Int, Float, String, Bytes, Array, or Map",
+            ));
+        }
+        let id = u32::try_from(index + 1).expect("command list fits u32");
+        let constant = format_ident!(
+            "{}_COMMAND",
+            command_name
+                .value()
+                .chars()
+                .map(|character| if character.is_ascii_alphanumeric() {
+                    character.to_ascii_uppercase()
+                } else {
+                    '_'
+                })
+                .collect::<String>()
+        );
+        constants.push(quote! {
+            pub const #constant: ::whisker::CommandId =
+                ::whisker::CommandId::new(#id).unwrap();
+        });
+        commands.push(quote! {
+            ::whisker::ElementCommandSchema {
+                command: #constant,
+                name: #command_name.into(),
+                arguments: ::whisker::ElementValueKind::#value_kind,
+            }
+        });
+    }
+
     let provider = named_provider.then(|| {
         quote! {
             /// Builds the custom element metadata registered during bootstrap.
@@ -602,9 +731,10 @@ fn schema_tokens(
                     name: NAME.into(),
                     child_policy: #child_policy,
                     measurement: ::whisker::ElementMeasurement::#measurement,
+                    text_style: #text_style,
                     properties: ::std::vec![#(#properties),*],
                     events: ::std::vec![#(#events),*],
-                    commands: ::std::vec![],
+                    commands: ::std::vec![#(#commands),*],
                 }
             }
 

@@ -57,7 +57,7 @@ impl WhiskerModule for SvgModule {
     type Definition = ModuleDefinition;
 
     fn definition() -> Self::Definition {
-        ModuleDefinition::new().view(
+        ModuleDefinition::new().name("whisker-svg:Svg").view(
             WebViewDefinition::new(
                 "whisker-svg:Svg",
                 |document, _emitter| {

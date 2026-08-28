@@ -2,7 +2,7 @@
 
 use crate::{
     CommandId, ElementTypeId, MeasurementPayloadError, NodeId, PointerId, PreparedContentId,
-    PropertyId, ResultId, SurfaceId, TextMeasurePayload, WhiskerValue,
+    PropertyId, SurfaceId, TextMeasurePayload, TextMeasureStyle, WhiskerValue,
 };
 
 /// Backend-independent color used by semantic paint operations.
@@ -302,7 +302,7 @@ pub enum TextContentError {
 pub const PROTOCOL_MAJOR: u16 = 1;
 
 /// Protocol minor version implemented by this semantic model.
-pub const PROTOCOL_MINOR: u16 = 2;
+pub const PROTOCOL_MINOR: u16 = 3;
 
 /// A negotiated frame protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -475,6 +475,60 @@ impl TextContent {
     }
 }
 
+/// Resolved inherited text style delivered to a native text-capable element.
+///
+/// Unlike [`TextContent`], this value carries no child text and does not imply
+/// that the element participates in Whisker's built-in text shaping path.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextStyleSnapshot {
+    /// Resolved metric-affecting font values.
+    pub style: TextMeasureStyle,
+    /// Optional BCP-47 locale hint.
+    pub locale: Option<String>,
+    /// Resolved base direction.
+    pub direction: crate::MeasureTextDirection,
+    /// Resolved inline alignment.
+    pub alignment: crate::MeasureTextAlignment,
+    /// Resolved text paint inherited by the native content implementation.
+    pub paint: TextPaint,
+}
+
+impl TextStyleSnapshot {
+    /// Validates shaping and paint values using the same rules as built-in
+    /// text content.
+    pub fn validate(&self) -> Result<(), TextContentError> {
+        TextContent {
+            payload: TextMeasurePayload {
+                text: String::new(),
+                style: self.style.clone(),
+                locale: self.locale.clone(),
+                direction: self.direction,
+                alignment: self.alignment,
+                indent: Default::default(),
+                wrap: crate::MeasureTextWrap::Wrap,
+                word_break: Default::default(),
+                max_lines: None,
+                overflow: crate::MeasureTextOverflow::Clip,
+            },
+            paint: self.paint.clone(),
+            prepared_content: None,
+        }
+        .validate()
+    }
+}
+
+impl From<&TextContent> for TextStyleSnapshot {
+    fn from(content: &TextContent) -> Self {
+        Self {
+            style: content.payload.style.clone(),
+            locale: content.payload.locale.clone(),
+            direction: content.payload.direction,
+            alignment: content.payload.alignment,
+            paint: content.paint.clone(),
+        }
+    }
+}
+
 /// A semantic mutation within a [`FramePacket`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
@@ -585,6 +639,14 @@ pub enum Operation {
         /// Resolved text inputs used for both measurement and painting.
         content: TextContent,
     },
+    /// Delivers resolved inherited text style to a native text-capable
+    /// element without changing its content.
+    SetTextStyle {
+        /// Target node.
+        node: NodeId,
+        /// Resolved inherited snapshot.
+        style: TextStyleSnapshot,
+    },
     /// Sets replaced image content for an image-capable element.
     SetImage {
         /// Target node.
@@ -651,8 +713,6 @@ pub enum Operation {
         command: CommandId,
         /// Typed command arguments.
         arguments: WhiskerValue,
-        /// Optional asynchronous result correlation.
-        result: Option<ResultId>,
     },
 }
 
@@ -672,6 +732,7 @@ impl Operation {
             | Self::SetVisibility { node, .. }
             | Self::SetZOrder { node, .. }
             | Self::SetText { node, .. }
+            | Self::SetTextStyle { node, .. }
             | Self::SetImage { node, .. }
             | Self::SetProperty { node, .. }
             | Self::ClearProperty { node, .. }
@@ -1034,7 +1095,6 @@ mod tests {
                 node: target,
                 command,
                 arguments: WhiskerValue::Null,
-                result: None,
             },
         ];
 

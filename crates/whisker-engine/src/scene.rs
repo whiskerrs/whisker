@@ -1,14 +1,14 @@
 //! Retained scene state and coalescing frame journal.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error;
 use std::fmt;
 
 use whisker_protocol::{
     BackgroundLayer, BoxClip, BoxPaint, CommandId, Cursor, ElementTypeId, FrameHeader, FrameMode,
     FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, NodeId, Operation, OverflowClip,
-    PointerId, PropertyId, ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError,
-    Transform, Visibility, VisualEffects, WhiskerValue,
+    PointerId, PropertyId, ProtocolVersion, SurfaceId, TextContent, TextContentError,
+    TextStyleSnapshot, Transform, Visibility, VisualEffects, WhiskerValue,
 };
 
 /// A retained logical node owned by a [`Scene`].
@@ -27,6 +27,7 @@ pub struct SceneNode {
     visibility: Option<Visibility>,
     z_order: Option<i32>,
     text: Option<TextContent>,
+    text_style: Option<TextStyleSnapshot>,
     properties: BTreeMap<PropertyId, WhiskerValue>,
     event_mask: Option<u64>,
     hit_test: Option<HitTestBehavior>,
@@ -50,6 +51,7 @@ impl SceneNode {
             visibility: None,
             z_order: None,
             text: None,
+            text_style: None,
             properties: BTreeMap::new(),
             event_mask: None,
             hit_test: None,
@@ -81,6 +83,11 @@ impl SceneNode {
     /// Returns retained plain-text presentation when this is a text node.
     pub const fn text(&self) -> Option<&TextContent> {
         self.text.as_ref()
+    }
+
+    /// Returns the resolved inherited text style retained for native content.
+    pub const fn text_style(&self) -> Option<&TextStyleSnapshot> {
+        self.text_style.as_ref()
     }
 
     /// Returns retained background and border paint.
@@ -206,11 +213,6 @@ pub enum SceneError {
     InvalidBackgroundLayers,
     /// One or more visual-effect values were invalid.
     InvalidVisualEffects,
-    /// A pending command result identifier was reused.
-    DuplicateResultId {
-        /// Duplicate result identifier.
-        result: ResultId,
-    },
     /// The scene cannot allocate another node identifier.
     NodeIdExhausted,
     /// The scene cannot advance its accepted revision.
@@ -241,6 +243,7 @@ enum DirtySlot {
     Visibility(NodeId),
     ZOrder(NodeId),
     Text(NodeId),
+    TextStyle(NodeId),
     Property(NodeId, PropertyId),
     EventMask(NodeId),
     HitTest(NodeId),
@@ -252,7 +255,6 @@ enum DirtySlot {
 struct ChangeJournal {
     operations: Vec<Operation>,
     coalesced: HashMap<DirtySlot, usize>,
-    result_ids: HashSet<ResultId>,
 }
 
 impl ChangeJournal {
@@ -274,7 +276,6 @@ impl ChangeJournal {
     fn clear(&mut self) {
         self.operations.clear();
         self.coalesced.clear();
-        self.result_ids.clear();
     }
 }
 
@@ -752,6 +753,31 @@ impl Scene {
         Ok(())
     }
 
+    /// Sets a resolved inherited text-style snapshot when it differs from
+    /// retained state.
+    pub fn set_text_style(
+        &mut self,
+        node: NodeId,
+        style: TextStyleSnapshot,
+    ) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        style
+            .validate()
+            .map_err(|error| SceneError::InvalidText { error })?;
+        if self.require_node(node)?.text_style.as_ref() == Some(&style) {
+            return Ok(());
+        }
+        self.nodes
+            .get_mut(&node)
+            .expect("node checked above")
+            .text_style = Some(style.clone());
+        self.journal.push_coalesced(
+            DirtySlot::TextStyle(node),
+            Operation::SetTextStyle { node, style },
+        );
+        Ok(())
+    }
+
     /// Sets a typed property when it differs from retained state.
     pub fn set_property(
         &mut self,
@@ -906,20 +932,13 @@ impl Scene {
         node: NodeId,
         command: CommandId,
         arguments: WhiskerValue,
-        result: Option<ResultId>,
     ) -> Result<(), SceneError> {
         self.ensure_mutable()?;
         self.require_node(node)?;
-        if let Some(result) = result
-            && !self.journal.result_ids.insert(result)
-        {
-            return Err(SceneError::DuplicateResultId { result });
-        }
         self.journal.push_barrier(Operation::InvokeCommand {
             node,
             command,
             arguments,
-            result,
         });
         Ok(())
     }
@@ -1133,6 +1152,12 @@ impl Scene {
                     content: content.clone(),
                 });
             }
+            if let Some(style) = &state.text_style {
+                operations.push(Operation::SetTextStyle {
+                    node: *node,
+                    style: style.clone(),
+                });
+            }
             for (property, value) in &state.properties {
                 operations.push(Operation::SetProperty {
                     node: *node,
@@ -1209,10 +1234,6 @@ mod tests {
 
     fn command(value: u32) -> CommandId {
         CommandId::new(value).expect("test command")
-    }
-
-    fn result_id(value: u64) -> ResultId {
-        ResultId::new(value).expect("test result")
     }
 
     fn text_content(text: &str) -> TextContent {
@@ -1376,12 +1397,7 @@ mod tests {
             .set_pointer_capture(root, pointer(1))
             .expect("pointer capture");
         scene
-            .invoke_command(
-                root,
-                command(1),
-                WhiskerValue::Array(Vec::new()),
-                Some(result_id(1)),
-            )
+            .invoke_command(root, command(1), WhiskerValue::Array(Vec::new()))
             .expect("command");
 
         let root_state = scene.node(root).expect("root state");
@@ -1533,7 +1549,7 @@ mod tests {
             .expect("equal capture");
 
         scene
-            .invoke_command(root, command(1), WhiskerValue::Null, None)
+            .invoke_command(root, command(1), WhiskerValue::Null)
             .expect("barrier command");
         scene.set_opacity(root, 0.8).expect("post-barrier opacity");
 
@@ -1694,7 +1710,7 @@ mod tests {
             Err(SceneError::FramePending)
         );
         assert_eq!(
-            scene.invoke_command(root, command(1), WhiskerValue::Null, None),
+            scene.invoke_command(root, command(1), WhiskerValue::Null),
             Err(SceneError::FramePending)
         );
         assert_eq!(
@@ -1752,7 +1768,7 @@ mod tests {
         let mut scene = Scene::new(surface());
         let doomed = scene.create_node(element_type(1)).expect("doomed node");
         scene
-            .invoke_command(doomed, command(1), WhiskerValue::Null, Some(result_id(1)))
+            .invoke_command(doomed, command(1), WhiskerValue::Null)
             .expect("queued command");
         scene.delete_node(doomed).expect("delete command target");
         let snapshot = prepared(&mut scene);
@@ -1854,7 +1870,7 @@ mod tests {
             scene.set_hit_test(missing, HitTestBehavior::Auto),
             scene.set_pointer_capture(missing, pointer(1)),
             scene.release_pointer_capture(missing, pointer(1)),
-            scene.invoke_command(missing, command(1), WhiskerValue::Null, None),
+            scene.invoke_command(missing, command(1), WhiskerValue::Null),
             scene.remove_child(missing, node(1)),
             scene.remove_child(node(1), missing),
         ];
@@ -1911,14 +1927,6 @@ mod tests {
         let nan_error = scene.set_opacity(root, f32::NAN).expect_err("NaN opacity");
         assert_eq!(format!("{nan_error:?}"), "InvalidOpacity { opacity: NaN }");
 
-        let result = result_id(1);
-        scene
-            .invoke_command(root, command(1), WhiskerValue::Null, Some(result))
-            .expect("first result");
-        assert_eq!(
-            scene.invoke_command(root, command(1), WhiskerValue::Null, Some(result)),
-            Err(SceneError::DuplicateResultId { result })
-        );
         assert!(
             SceneError::NonFiniteNumber
                 .to_string()
@@ -1951,19 +1959,6 @@ mod tests {
             scene.require_snapshot(),
             Err(SceneError::SceneEpochExhausted)
         );
-    }
-
-    #[test]
-    fn result_identifier_can_be_reused_after_acceptance() {
-        let (mut scene, mut renderer, root, _) = initialized_scene();
-        let result = result_id(1);
-        scene
-            .invoke_command(root, command(1), WhiskerValue::Null, Some(result))
-            .expect("first frame result");
-        present_and_accept(&mut scene, &mut renderer);
-        scene
-            .invoke_command(root, command(1), WhiskerValue::Null, Some(result))
-            .expect("next frame result");
     }
 
     #[test]

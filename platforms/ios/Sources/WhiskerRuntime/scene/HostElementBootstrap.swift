@@ -20,6 +20,7 @@ enum HostElementBootstrap {
                 name: hostString(value.name),
                 childPolicy: [WhiskerChildPolicy.none, .elements, .plainText][Int(value.child_policy)],
                 measurement: [WhiskerMeasurement.none, .text, .replacedContent, .custom][Int(value.measurement)],
+                textStyle: value.text_style != 0,
                 properties: decodeMembers(value.properties, value.property_count).map {
                     WhiskerPropertyBinding(id: $0.id, name: $0.name, value: $0.kind)
                 },

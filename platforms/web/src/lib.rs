@@ -15,6 +15,14 @@ pub use wasm_bindgen;
 pub use web_sys;
 /// Shared value used by Web module properties, functions, and events.
 pub use whisker_value::WhiskerValue;
+/// Available-space constraint exposed to Web module measurers.
+pub type WhiskerAvailableSpace = whisker_protocol::AvailableSpace;
+/// Intrinsic measurement request exposed to Web module authors.
+pub type WhiskerMeasureRequest = whisker_protocol::ModuleMeasureRequest;
+/// Logical size returned by a Web module measurer.
+pub type WhiskerMeasuredSize = whisker_protocol::MeasuredSize;
+/// Resolved inherited text style delivered to Web module content.
+pub type WhiskerTextStyle = whisker_protocol::TextStyleSnapshot;
 
 mod application;
 mod dom;

@@ -4,6 +4,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen_futures::spawn_local;
 use whisker::runtime::RuntimeWakeHandle;
+use whisker::runtime::module::RustModuleRuntime;
 use whisker::{Element, ElementRegistry, RuntimeInstance, SurfaceRuntime, WhiskerModule};
 use whisker_engine::LayoutOptions;
 use whisker_protocol::{
@@ -42,10 +43,10 @@ pub fn run(config: WebAppConfig, application: fn() -> Element) -> Result<(), Web
 
     let mount = APPLICATION.with(|slot| {
         let mut slot = slot.borrow_mut();
-        slot.as_mut()
-            .expect("application was installed")
-            .runtime
-            .mount(application)
+        let application_host = slot.as_mut().expect("application was installed");
+        application_host
+            .modules
+            .with_host(|| application_host.runtime.mount(application))
             .map(|_| ())
             .map_err(|error| WebError(format!("mount Whisker application: {error}")))
     });
@@ -117,6 +118,7 @@ struct WebApplication {
     measurements: DomMeasurementProvider,
     frames: DomFrameSink,
     resources: WebResourceService,
+    modules: RustModuleRuntime,
     viewport: (f32, f32, f32),
     viewport_epoch: u32,
     environment_epoch: u64,
@@ -124,17 +126,22 @@ struct WebApplication {
 
 impl WebApplication {
     fn new(mut config: WebAppConfig) -> Result<Self, WebError> {
-        let mut element_factories = BuiltInElementModule::definition().into_factories();
+        let built_ins = BuiltInElementModule::definition();
+        let mut module_definitions = vec![built_ins];
+        module_definitions.append(&mut config.module_definitions);
+        let module_services = module_definitions
+            .iter()
+            .map(|definition| definition.service_definition().clone());
+        let modules = RustModuleRuntime::new(module_services, request_frame)
+            .map_err(|error| WebError(format!("bind Web modules: {error}")))?;
+        let element_factories = module_definitions
+            .into_iter()
+            .flat_map(WebModuleDefinition::into_factories)
+            .collect::<Vec<_>>();
         let elements = ElementRegistry::standard_builder()
             .register_modules(config.element_modules.drain(..))
             .build()
             .map_err(|error| WebError(format!("build element registry: {error}")))?;
-        element_factories.extend(
-            config
-                .module_definitions
-                .drain(..)
-                .flat_map(WebModuleDefinition::into_factories),
-        );
         let window = browser_window()?;
         let document = window
             .document()
@@ -162,7 +169,11 @@ impl WebApplication {
         Ok(Self {
             root: root.clone(),
             runtime: RuntimeInstance::new(surface, wake),
-            measurements: DomMeasurementProvider::new(document.clone()),
+            measurements: DomMeasurementProvider::with_elements(
+                document.clone(),
+                &registrations,
+                &element_factories,
+            )?,
             frames: DomFrameSink::new_with_resources(
                 document,
                 root,
@@ -172,6 +183,7 @@ impl WebApplication {
                 resource_store,
             )?,
             resources,
+            modules,
             viewport,
             viewport_epoch: 1,
             environment_epoch: 1,
@@ -180,15 +192,20 @@ impl WebApplication {
 
     fn drive_frame(&mut self, timestamp_ms: f64) -> Result<(), WebError> {
         self.start_resource_commands();
+        self.modules.with_host(|| {
+            self.modules.dispatch_pending_events();
+        });
         for event in self.frames.take_events() {
-            self.runtime
-                .dispatch_input(&InputEvent {
-                    surface: self.runtime.surface().surface(),
-                    timestamp_ms,
-                    kind: InputEventKind::Named(event.name),
-                    pointer: None,
-                    target: Some(event.target),
-                    detail: event.detail,
+            self.modules
+                .with_host(|| {
+                    self.runtime.dispatch_input(&InputEvent {
+                        surface: self.runtime.surface().surface(),
+                        timestamp_ms,
+                        kind: InputEventKind::Named(event.name),
+                        pointer: None,
+                        target: Some(event.target),
+                        detail: event.detail,
+                    })
                 })
                 .map_err(|error| WebError(format!("dispatch Web provider event: {error}")))?;
         }
@@ -199,17 +216,22 @@ impl WebApplication {
             self.environment_epoch = self.environment_epoch.wrapping_add(1).max(1);
         }
         let drive = self
-            .runtime
-            .drive_frame(
-                timestamp_ms,
-                StyleEnvironment::new(self.viewport.0, self.viewport.1, self.viewport.2, 16.0),
-                self.environment_epoch,
-                self.viewport_epoch,
-                &mut self.measurements,
-                &mut self.frames,
-                LayoutOptions::default(),
-            )
+            .modules
+            .with_host(|| {
+                self.runtime.drive_frame(
+                    timestamp_ms,
+                    StyleEnvironment::new(self.viewport.0, self.viewport.1, self.viewport.2, 16.0),
+                    self.environment_epoch,
+                    self.viewport_epoch,
+                    &mut self.measurements,
+                    &mut self.frames,
+                    LayoutOptions::default(),
+                )
+            })
             .map_err(|error| WebError(format!("drive Web frame: {error}")))?;
+        self.modules.with_host(|| {
+            self.modules.dispatch_pending_events();
+        });
         self.start_resource_commands();
         if drive.needs_frame {
             request_frame();
@@ -231,8 +253,8 @@ impl WebApplication {
                             .ok_or_else(|| WebError("a Web application is not mounted".into()))?;
                         for event in events {
                             application
-                                .runtime
-                                .dispatch_resource_event(&event)
+                                .modules
+                                .with_host(|| application.runtime.dispatch_resource_event(&event))
                                 .map_err(|error| {
                                     WebError(format!("dispatch Web resource event: {error}"))
                                 })?;
@@ -277,15 +299,19 @@ fn install_pointer_listeners(root: &web_sys::Element) -> Result<(), WebError> {
                     let application = slot
                         .as_ref()
                         .ok_or_else(|| WebError("Web application is not mounted".into()))?;
-                    dispatch_pointer(
-                        &application.runtime,
-                        InputPoint {
-                            x: bounds.left() as f32,
-                            y: bounds.top() as f32,
-                        },
-                        input,
-                    )
-                    .map(|_| ())
+                    application
+                        .modules
+                        .with_host(|| {
+                            dispatch_pointer(
+                                &application.runtime,
+                                InputPoint {
+                                    x: bounds.left() as f32,
+                                    y: bounds.top() as f32,
+                                },
+                                input,
+                            )
+                        })
+                        .map(|_| ())
                 });
                 if let Err(error) = result {
                     web_sys::console::error_1(&error.to_string().into());

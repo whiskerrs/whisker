@@ -245,12 +245,18 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6
         Operation::SetText { content, .. } if content.paint.uses_extended_features() => {
             Some(RenderCapability::TextEffects)
         }
+        Operation::SetTextStyle { style, .. } if style.paint.uses_extended_features() => {
+            Some(RenderCapability::TextEffects)
+        }
         Operation::SetImage { .. } => Some(RenderCapability::ImageContent),
         Operation::SetCursor { .. } => Some(RenderCapability::Cursor),
         _ => None,
     };
     let second = match operation {
         Operation::SetText { content, .. } if content.payload.style.uses_extended_typography() => {
+            Some(RenderCapability::TextTypography)
+        }
+        Operation::SetTextStyle { style, .. } if style.style.uses_extended_typography() => {
             Some(RenderCapability::TextTypography)
         }
         _ => None,

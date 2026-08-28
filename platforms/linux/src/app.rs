@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use whisker::runtime::RuntimeWakeHandle;
+use whisker::runtime::module::RustModuleDefinition;
 use whisker::{Element, ElementModuleDefinition, ElementRegistry, RuntimeInstance, SurfaceRuntime};
 use whisker_desktop::{
     BuiltInElementModule, DesktopElementFactory, DesktopFrameContext, DesktopModuleDefinition,
@@ -99,6 +100,7 @@ pub struct LinuxAppConfig {
     /// Host-independent element schemas selected from Rust module crates.
     pub element_modules: Vec<ElementModuleDefinition>,
     element_factories: Vec<DesktopElementFactory>,
+    module_services: Vec<RustModuleDefinition>,
 }
 
 impl LinuxAppConfig {
@@ -111,6 +113,7 @@ impl LinuxAppConfig {
             module_definitions: Vec::new(),
             element_modules: Vec::new(),
             element_factories: Vec::new(),
+            module_services: Vec::new(),
         }
     }
 
@@ -141,17 +144,21 @@ impl Error for LinuxError {}
 
 /// Runs a standalone Whisker application in a native Linux window.
 pub fn run(mut config: LinuxAppConfig, application: fn() -> Element) -> Result<(), LinuxError> {
-    let mut element_factories = BuiltInElementModule::definition().into_factories();
+    let built_ins = BuiltInElementModule::definition();
+    config
+        .module_services
+        .push(built_ins.service_definition().clone());
+    let mut element_factories = built_ins.into_factories();
     let elements = ElementRegistry::standard_builder()
         .register_modules(config.element_modules.drain(..))
         .build()
         .map_err(|error| LinuxError(format!("build element registry: {error}")))?;
-    element_factories.extend(
+    for definition in config.module_definitions.drain(..) {
         config
-            .module_definitions
-            .drain(..)
-            .flat_map(DesktopModuleDefinition::into_factories),
-    );
+            .module_services
+            .push(definition.service_definition().clone());
+        element_factories.extend(definition.into_factories());
+    }
     config.element_factories = element_factories;
     let event_loop = EventLoop::<HostEvent>::with_user_event()
         .build()
@@ -240,12 +247,12 @@ impl LinuxApplication {
             surface_id,
             &element_registrations,
             &self.config.element_factories,
+            self.config.module_services.clone(),
             wake.clone(),
         ))
         .map_err(|error| LinuxError(error.to_string()))?;
         let mut runtime = RuntimeInstance::new(surface, wake);
-        runtime
-            .mount(self.application)
+        host.with_modules(|| runtime.mount(self.application))
             .map_err(|error| LinuxError(format!("mount Whisker application: {error}")))?;
         self.host = Some(host);
         self.runtime = Some(runtime);
@@ -314,7 +321,12 @@ impl LinuxApplication {
         let Some(runtime) = &self.runtime else {
             return;
         };
-        if let Err(error) = runtime.dispatch_input(&event) {
+        if let Err(error) = self
+            .host
+            .as_ref()
+            .expect("mounted Desktop runtime has a Host")
+            .with_modules(|| runtime.dispatch_input(&event))
+        {
             self.frame_failed = true;
             eprintln!("dispatch Linux input failed: {error}");
         } else {
@@ -349,7 +361,9 @@ impl ApplicationHandler<HostEvent> for LinuxApplication {
         match event {
             WindowEvent::CloseRequested => {
                 if let Some(runtime) = &mut self.runtime {
-                    let _ = runtime.unmount();
+                    if let Some(host) = &self.host {
+                        let _ = host.with_modules(|| runtime.unmount());
+                    }
                 }
                 event_loop.exit();
             }

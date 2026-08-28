@@ -23,7 +23,7 @@ import rs.whisker.runtime.WhiskerValue
 class WebViewModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("WebView")
-        View(WhiskerWebView::class.java) {
+        View("whisker-webview:WebView", WhiskerWebView::class.java) {
 
             // ---- content props -------------------------------------------
 

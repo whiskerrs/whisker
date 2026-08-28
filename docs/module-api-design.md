@@ -92,9 +92,9 @@ In words:
 
 Every shape below uses one of two Rust-side macros:
 
-- `#[whisker::module_component("Name")]` — declares a **native view**
-  element for `render!`. The Lynx tag is `<crate-name>:Name` (the crate
-  name is auto-prepended). Shapes 1 and 2 use it.
+- `#[whisker::module_component(name = "package/Name", ...)]` — declares a
+  **Host view** element and its portable schema for `render!`. The element
+  name is explicit, stable, and versionless. Shapes 1 and 2 use it.
 - `whisker::module!("Name")` — resolves a **function module** handle
   (`PlatformModule`) you `.invoke(method, args)` / `.on_event(...)` on.
   Shapes 3, 4 and 5 build their typed wrappers over it. The name is
@@ -103,14 +103,21 @@ Every shape below uses one of two Rust-side macros:
 There is **no** `#[whisker::platform_module]` attribute — function
 modules are plain Rust wrappers over `module!`, not macro-generated.
 
-The matching **native** half (Swift / Kotlin) is written with the
-`definition()` ModuleDefinition DSL — *not* annotations. A module
-subclass overrides `definition()` and returns a `ModuleDefinition {
-Name(...); View(...); Prop(...); Function(...) }` block; the
-per-platform codegen plugin discovers the subclass and registers a
-dispatch shim under the crate-namespaced key that `module!` /
-`module_component` resolve to. (The older `@WhiskerModule` /
-`@WhiskerComponent` / `@WhiskerProp` annotation framing is gone.)
+The matching **Host** half is written with the `definition()`
+`ModuleDefinition` DSL. A module subclass overrides `definition()` and returns
+a `ModuleDefinition { Name(...); View(...); Prop(...); Command(...) }` block.
+Android KSP and the iOS build plugin only discover and register these handwritten
+definitions; they do not generate their contract. The Rust schema and Host
+definition are independently compiled and matched by strings at bootstrap.
+Desktop and Web use ordinary Rust Host crates with the same definition shape.
+
+Android/iOS use `Function` and `AsyncFunction` only at module level. A
+`View` block exposes one-way `Command`s; result-bearing element commands are
+not part of version 1. Web/Desktop use the same vocabulary through their Rust
+builders. `Prop` always has separate set and clear callbacks, and all values
+are `WhiskerValue`. A `TextStyle` hook receives the resolved inherited text
+style. A synchronous `Measurement` hook returns an intrinsic size or reports
+the request unsupported.
 
 ```swift
 // iOS — packages/whisker-local-store/ios/.../LocalStoreModule.swift
@@ -130,8 +137,11 @@ public final class LocalStoreModule: Module {
 ## Shape 1 — Pure Component
 
 ```rust
-#[whisker::module_component("Image")]
-pub fn image(src: Signal<String>, mode: Signal<ImageMode>, style: Signal<String>) {}
+#[whisker::module_component(
+    name = "whisker.image/Image",
+    measurement = ReplacedContent,
+)]
+pub fn image(src: Signal<String>, mode: Signal<ImageMode>, style: whisker::Style) {}
 ```
 
 ```rust
@@ -165,8 +175,12 @@ there's nothing to observe.
 ## Shape 2 — Component + ref-bound handle
 
 ```rust
-#[whisker::module_component("Video")]
-pub fn video(src: Signal<String>, style: Signal<String>) {}
+#[whisker::module_component(
+    name = "whisker.video/Video",
+    measurement = None,
+    commands = [("play", Null), ("pause", Null), ("seek", Float)],
+)]
+pub fn video(src: Signal<String>, style: whisker::Style) {}
 
 #[derive(Copy, Clone)]
 pub struct VideoHandle { r: ElementRef }
@@ -174,9 +188,11 @@ pub struct VideoHandle { r: ElementRef }
 impl VideoHandle {
     pub fn new() -> Self;
     pub fn r(&self) -> ElementRef;     // attach via `Video(ref: handle.r())`
-    pub fn play(&self);
-    pub fn pause(&self);
-    pub fn seek(&self, secs: f64);
+    pub fn play(&self) { let _ = self.r.command("play", WhiskerValue::Null); }
+    pub fn pause(&self) { let _ = self.r.command("pause", WhiskerValue::Null); }
+    pub fn seek(&self, secs: f64) {
+        let _ = self.r.command("seek", WhiskerValue::Float(secs));
+    }
 }
 ```
 

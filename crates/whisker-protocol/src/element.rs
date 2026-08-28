@@ -112,6 +112,9 @@ pub struct ElementSchema {
     pub child_policy: ChildPolicy,
     /// Intrinsic measurement behavior.
     pub measurement: ElementMeasurement,
+    /// Whether the Host content implementation consumes resolved inherited
+    /// text style independently from plain-text content.
+    pub text_style: bool,
     /// Typed element-specific properties.
     pub properties: Vec<ElementPropertySchema>,
     /// Typed node-scoped events.
@@ -134,6 +137,7 @@ impl ElementSchema {
             name: self.name,
             child_policy: self.child_policy,
             measurement: self.measurement,
+            text_style: self.text_style,
             properties: self.properties,
             events: self.events,
             commands: self.commands,
@@ -188,6 +192,9 @@ pub struct ElementRegistration {
     pub child_policy: ChildPolicy,
     /// Intrinsic measurement behavior.
     pub measurement: ElementMeasurement,
+    /// Whether the Host content implementation consumes resolved inherited
+    /// text style independently from plain-text content.
+    pub text_style: bool,
     /// Typed element-specific properties.
     pub properties: Vec<ElementPropertySchema>,
     /// Typed node-scoped events.
@@ -209,6 +216,7 @@ impl ElementRegistration {
             name: self.name.clone(),
             child_policy: self.child_policy,
             measurement: self.measurement,
+            text_style: self.text_style,
             properties: self.properties.clone(),
             events: self.events.clone(),
             commands: self.commands.clone(),
@@ -364,6 +372,7 @@ mod tests {
             name: "whisker.ui/Text".into(),
             child_policy: ChildPolicy::PlainText,
             measurement: ElementMeasurement::Text,
+            text_style: false,
             properties: Vec::new(),
             events: Vec::new(),
             commands: Vec::new(),

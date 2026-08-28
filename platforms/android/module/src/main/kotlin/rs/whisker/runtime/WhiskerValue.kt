@@ -61,6 +61,14 @@ public sealed class WhiskerValue {
     }
     public fun asBytes(): ByteArray? = (this as? Bytes)?.value
 
+    /** Whether this value is transferable application data rather than a call failure. */
+    public fun isData(): Boolean = when (this) {
+        is Array -> value.all { it.isData() }
+        is Map -> value.values.all { it.isData() }
+        is Err -> false
+        else -> true
+    }
+
     public companion object {
         /**
          * Convert a Java Object[] (from the JNI bridge) into a

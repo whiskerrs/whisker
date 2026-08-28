@@ -36,11 +36,12 @@ pub use frame::{
     BorderLineStyle, BoxClip, BoxPaint, FrameHeader, FrameMode, FramePacket, HitTestBehavior,
     LayoutGeometry, LayoutRect, Operation, OverflowClip, PROTOCOL_MAJOR, PROTOCOL_MINOR,
     PaintColor, PaintCornerRadius, PaintCorners, PaintEdges, PaintLengthPercentage,
-    ProtocolVersion, TextContent, TextContentError, TextPaint, Transform, Visibility,
+    ProtocolVersion, TextContent, TextContentError, TextPaint, TextStyleSnapshot, Transform,
+    Visibility,
 };
 pub use id::{
     CommandId, ElementTypeId, EventId, MeasurementKey, MeasurementRequestId, NodeId, PointerId,
-    PreparedContentId, PropertyId, ResourceId, ResultId, SurfaceId,
+    PreparedContentId, PropertyId, ResourceId, SurfaceId,
 };
 pub use input::{
     InputEvent, InputEventError, InputEventKind, InputPoint, PointerInput, PointerKind,
@@ -52,7 +53,7 @@ pub use measurement::{
     MeasureTextIndent, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasuredSize,
     MeasurementBatchError, MeasurementKind, MeasurementMetrics, MeasurementPayload,
     MeasurementPayloadError, MeasurementReady, MeasurementRequest, MeasurementResponse,
-    MeasurementSpec, NativeControlMeasurePayload, PendingMeasurePolicy,
+    MeasurementSpec, ModuleMeasureRequest, NativeControlMeasurePayload, PendingMeasurePolicy,
     ReplacedContentMeasurePayload, TextMeasurePayload, TextMeasureStyle,
     UnsupportedMeasurementReason, validate_measurement_batch,
 };

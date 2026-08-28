@@ -8,7 +8,7 @@ let package = Package(
         .library(name: "WhiskerToggle", targets: ["WhiskerToggle"]),
     ],
     dependencies: [
-        .package(path: "../.."),
+        .package(name: "whisker", path: "../.."),
     ],
     targets: [
         .target(

@@ -23,7 +23,7 @@ public final class SvgModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {
             Name("Svg")
-            View(WhiskerSvgView.self) {
+            View("whisker.svg/Svg", WhiskerSvgView.self) {
                 Prop("display-list") { (view: WhiskerSvgView, value: WhiskerValue) in
                     view.setDisplayList(value.asString ?? "")
                 }

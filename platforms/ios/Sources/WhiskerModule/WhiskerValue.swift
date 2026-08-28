@@ -52,6 +52,16 @@ public enum WhiskerValue: Equatable {
 /// reads coerce between `.int` / `.float`; everything else returns
 /// `nil` on a case mismatch.
 public extension WhiskerValue {
+    /// Whether this value is transferable application data rather than a call failure.
+    var isData: Bool {
+        switch self {
+        case .array(let values): return values.allSatisfy(\.isData)
+        case .map(let values): return values.values.allSatisfy(\.isData)
+        case .error: return false
+        default: return true
+        }
+    }
+
     var asString: String? {
         if case .string(let s) = self { return s }
         return nil

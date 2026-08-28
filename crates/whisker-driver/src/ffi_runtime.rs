@@ -14,8 +14,8 @@ use whisker_engine::whisker_protocol::{
     Operation, PaintBox, PaintColor, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand,
     PointerId, PointerInput, PointerKind, PreparedContentId, RadialGradientExtent,
     RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode,
-    ResourceId, ResourceKind, ResourceSource, SurfaceId, UnsupportedMeasurementReason,
-    VisualEffects, WhiskerValue,
+    ResourceId, ResourceKind, ResourceSource, SurfaceId, TextContent, TextMeasurePayload,
+    UnsupportedMeasurementReason, VisualEffects, WhiskerValue,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
@@ -621,7 +621,8 @@ impl MobileBootstrapOwned {
                     ElementMeasurement::ReplacedContent => 2,
                     ElementMeasurement::Custom => 3,
                 },
-                _pad: [0; 2],
+                text_style: u8::from(registration.text_style),
+                _pad: 0,
                 name,
                 properties: property_ptr,
                 property_count,
@@ -1645,114 +1646,44 @@ impl MobileFrameOwned {
                     raw.integer = *z_order;
                 }
                 Operation::SetText { node, content } => {
-                    if content.paint.decoration.lines.overline
-                        || (content.paint.decoration.lines.underline
-                            && content.paint.decoration.lines.line_through)
-                        || !matches!(
-                            content.paint.decoration.thickness,
-                            whisker_engine::whisker_protocol::TextDecorationThickness::Auto
-                        )
-                        || content.paint.shadows.len() > 1
-                    {
-                        return Err(MobileFrameError);
-                    }
                     raw.tag = OP_TEXT;
                     raw.node = node.get();
-                    let shadow = content.paint.shadows.first();
-                    let shadow_color = match shadow {
-                        Some(value) => mobile_color(&value.color, &mut strings),
-                        None => mobile_color(&PaintColor::default(), &mut strings),
+                    raw.payload = push_mobile_text(
+                        content,
+                        &mut strings,
+                        &mut text_font_families,
+                        &mut font_features,
+                        &mut font_variations,
+                        &mut texts,
+                    )?;
+                }
+                Operation::SetTextStyle { node, style } => {
+                    raw.tag = OP_TEXT_STYLE;
+                    raw.node = node.get();
+                    let content = TextContent {
+                        payload: TextMeasurePayload {
+                            text: String::new(),
+                            style: style.style.clone(),
+                            locale: style.locale.clone(),
+                            direction: style.direction,
+                            alignment: style.alignment,
+                            indent: Default::default(),
+                            wrap: MeasureTextWrap::Wrap,
+                            word_break: MeasureTextWordBreak::Normal,
+                            max_lines: None,
+                            overflow: MeasureTextOverflow::Clip,
+                        },
+                        paint: style.paint.clone(),
+                        prepared_content: None,
                     };
-                    let decoration_color =
-                        mobile_color(&content.paint.decoration.color, &mut strings);
-                    font_features.push(mobile_font_features(&content.payload.style.features));
-                    let features = font_features.last().unwrap();
-                    font_variations.push(mobile_font_variations(&content.payload.style.variations));
-                    let variations = font_variations.last().unwrap();
-                    text_font_families.push(
-                        content
-                            .payload
-                            .style
-                            .font_families
-                            .iter()
-                            .map(|family| match family {
-                                MeasureFontFamily::System => push_string(&mut strings, "system"),
-                                MeasureFontFamily::Named(value) => push_string(&mut strings, value),
-                            })
-                            .collect::<Vec<_>>()
-                            .into_boxed_slice(),
-                    );
-                    let families = text_font_families.last().unwrap();
-                    texts.push(Box::new(MobileText {
-                        text: push_string(&mut strings, &content.payload.text),
-                        font_families: nonempty_ptr(families),
-                        font_family_count: families.len(),
-                        font_size: content.payload.style.font_size,
-                        font_weight: content.payload.style.font_weight,
-                        font_style: match content.payload.style.font_style {
-                            MeasureFontStyle::Normal => 0,
-                            MeasureFontStyle::Italic => 1,
-                            MeasureFontStyle::Oblique => 2,
-                        },
-                        wrap: u8::from(matches!(content.payload.wrap, MeasureTextWrap::Wrap)),
-                        word_break: match content.payload.word_break {
-                            MeasureTextWordBreak::Normal => 0,
-                            MeasureTextWordBreak::BreakAll => 1,
-                            MeasureTextWordBreak::KeepAll => 2,
-                        },
-                        overflow: u8::from(matches!(
-                            content.payload.overflow,
-                            MeasureTextOverflow::Ellipsis
-                        )),
-                        max_lines: content.payload.max_lines.unwrap_or(0),
-                        line_height: match content.payload.style.line_height {
-                            MeasureLineHeight::Normal => 0.0,
-                            MeasureLineHeight::LogicalPixels(value) => value,
-                        },
-                        letter_spacing: content.payload.style.letter_spacing,
-                        font_features: nonempty_ptr(features),
-                        font_feature_count: features.len(),
-                        font_variations: nonempty_ptr(variations),
-                        font_variation_count: variations.len(),
-                        font_optical_sizing: u8::from(matches!(
-                            content.payload.style.optical_sizing,
-                            whisker_engine::whisker_protocol::FontOpticalSizing::None
-                        )),
-                        _font_pad: [0; 7],
-                        color: mobile_color(&content.paint.foreground, &mut strings),
-                        shadow_offset_x: shadow.map_or(0.0, |value| value.offset_x),
-                        shadow_offset_y: shadow.map_or(0.0, |value| value.offset_y),
-                        shadow_blur_radius: shadow.map_or(0.0, |value| value.blur_radius),
-                        shadow_flags: u32::from(shadow.is_some()),
-                        shadow_color,
-                        decoration_flags: u32::from(content.paint.decoration.lines.underline)
-                            | (u32::from(content.paint.decoration.lines.line_through) << 1),
-                        decoration_style: match content.paint.decoration.style {
-                            whisker_engine::whisker_protocol::TextDecorationStyle::Solid => 0,
-                            whisker_engine::whisker_protocol::TextDecorationStyle::Double => 1,
-                            whisker_engine::whisker_protocol::TextDecorationStyle::Dotted => 2,
-                            whisker_engine::whisker_protocol::TextDecorationStyle::Dashed => 3,
-                            whisker_engine::whisker_protocol::TextDecorationStyle::Wavy => 4,
-                        },
-                        decoration_color,
-                        alignment: match content.payload.alignment {
-                            whisker_engine::whisker_protocol::MeasureTextAlignment::Start => 0,
-                            whisker_engine::whisker_protocol::MeasureTextAlignment::End => 1,
-                            whisker_engine::whisker_protocol::MeasureTextAlignment::Left => 2,
-                            whisker_engine::whisker_protocol::MeasureTextAlignment::Right => 3,
-                            whisker_engine::whisker_protocol::MeasureTextAlignment::Center => 4,
-                        },
-                        indent_logical_pixels: content.payload.indent.logical_pixels,
-                        indent_percentage: content.payload.indent.percentage,
-                        prepared_content: content.prepared_content.map_or(0, |value| value.get()),
-                        direction: match content.payload.direction {
-                            MeasureTextDirection::Auto => 0,
-                            MeasureTextDirection::LeftToRight => 1,
-                            MeasureTextDirection::RightToLeft => 2,
-                        },
-                        _direction_pad: 0,
-                    }));
-                    raw.payload = texts.last().unwrap().as_ref() as *const _ as *const c_void;
+                    raw.payload = push_mobile_text(
+                        &content,
+                        &mut strings,
+                        &mut text_font_families,
+                        &mut font_features,
+                        &mut font_variations,
+                        &mut texts,
+                    )?;
                 }
                 Operation::SetProperty {
                     node,
@@ -1807,12 +1738,11 @@ impl MobileFrameOwned {
                     node,
                     command,
                     arguments,
-                    result,
                 } => {
                     raw.tag = OP_COMMAND;
                     raw.node = node.get();
                     raw.member = command.get();
-                    raw.wide = result.map_or(0, |value| value.get());
+                    raw.wide = 0;
                     values.push(Box::new(arena.encode(arguments)));
                     raw.payload = values.last().unwrap().as_ref() as *const _ as *const c_void;
                 }
@@ -1998,6 +1928,120 @@ fn mobile_paint(
         ],
     }
 }
+fn push_mobile_text(
+    content: &TextContent,
+    strings: &mut Vec<CString>,
+    text_font_families: &mut Vec<Box<[WhiskerStringRef]>>,
+    font_features: &mut Vec<Box<[MobileFontFeature]>>,
+    font_variations: &mut Vec<Box<[MobileFontVariation]>>,
+    texts: &mut Vec<Box<MobileText>>,
+) -> Result<*const c_void, MobileFrameError> {
+    if content.paint.decoration.lines.overline
+        || (content.paint.decoration.lines.underline && content.paint.decoration.lines.line_through)
+        || !matches!(
+            content.paint.decoration.thickness,
+            whisker_engine::whisker_protocol::TextDecorationThickness::Auto
+        )
+        || content.paint.shadows.len() > 1
+    {
+        return Err(MobileFrameError);
+    }
+    let shadow = content.paint.shadows.first();
+    let shadow_color = match shadow {
+        Some(value) => mobile_color(&value.color, strings),
+        None => mobile_color(&PaintColor::default(), strings),
+    };
+    let decoration_color = mobile_color(&content.paint.decoration.color, strings);
+    font_features.push(mobile_font_features(&content.payload.style.features));
+    let features = font_features.last().expect("pushed font features");
+    font_variations.push(mobile_font_variations(&content.payload.style.variations));
+    let variations = font_variations.last().expect("pushed font variations");
+    text_font_families.push(
+        content
+            .payload
+            .style
+            .font_families
+            .iter()
+            .map(|family| match family {
+                MeasureFontFamily::System => push_string(strings, "system"),
+                MeasureFontFamily::Named(value) => push_string(strings, value),
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+    let families = text_font_families.last().expect("pushed font families");
+    texts.push(Box::new(MobileText {
+        text: push_string(strings, &content.payload.text),
+        font_families: nonempty_ptr(families),
+        font_family_count: families.len(),
+        font_size: content.payload.style.font_size,
+        font_weight: content.payload.style.font_weight,
+        font_style: match content.payload.style.font_style {
+            MeasureFontStyle::Normal => 0,
+            MeasureFontStyle::Italic => 1,
+            MeasureFontStyle::Oblique => 2,
+        },
+        wrap: u8::from(matches!(content.payload.wrap, MeasureTextWrap::Wrap)),
+        word_break: match content.payload.word_break {
+            MeasureTextWordBreak::Normal => 0,
+            MeasureTextWordBreak::BreakAll => 1,
+            MeasureTextWordBreak::KeepAll => 2,
+        },
+        overflow: u8::from(matches!(
+            content.payload.overflow,
+            MeasureTextOverflow::Ellipsis
+        )),
+        max_lines: content.payload.max_lines.unwrap_or(0),
+        line_height: match content.payload.style.line_height {
+            MeasureLineHeight::Normal => 0.0,
+            MeasureLineHeight::LogicalPixels(value) => value,
+        },
+        letter_spacing: content.payload.style.letter_spacing,
+        font_features: nonempty_ptr(features),
+        font_feature_count: features.len(),
+        font_variations: nonempty_ptr(variations),
+        font_variation_count: variations.len(),
+        font_optical_sizing: u8::from(matches!(
+            content.payload.style.optical_sizing,
+            whisker_engine::whisker_protocol::FontOpticalSizing::None
+        )),
+        _font_pad: [0; 7],
+        color: mobile_color(&content.paint.foreground, strings),
+        shadow_offset_x: shadow.map_or(0.0, |value| value.offset_x),
+        shadow_offset_y: shadow.map_or(0.0, |value| value.offset_y),
+        shadow_blur_radius: shadow.map_or(0.0, |value| value.blur_radius),
+        shadow_flags: u32::from(shadow.is_some()),
+        shadow_color,
+        decoration_flags: u32::from(content.paint.decoration.lines.underline)
+            | (u32::from(content.paint.decoration.lines.line_through) << 1),
+        decoration_style: match content.paint.decoration.style {
+            whisker_engine::whisker_protocol::TextDecorationStyle::Solid => 0,
+            whisker_engine::whisker_protocol::TextDecorationStyle::Double => 1,
+            whisker_engine::whisker_protocol::TextDecorationStyle::Dotted => 2,
+            whisker_engine::whisker_protocol::TextDecorationStyle::Dashed => 3,
+            whisker_engine::whisker_protocol::TextDecorationStyle::Wavy => 4,
+        },
+        decoration_color,
+        alignment: match content.payload.alignment {
+            whisker_engine::whisker_protocol::MeasureTextAlignment::Start => 0,
+            whisker_engine::whisker_protocol::MeasureTextAlignment::End => 1,
+            whisker_engine::whisker_protocol::MeasureTextAlignment::Left => 2,
+            whisker_engine::whisker_protocol::MeasureTextAlignment::Right => 3,
+            whisker_engine::whisker_protocol::MeasureTextAlignment::Center => 4,
+        },
+        indent_logical_pixels: content.payload.indent.logical_pixels,
+        indent_percentage: content.payload.indent.percentage,
+        prepared_content: content.prepared_content.map_or(0, |value| value.get()),
+        direction: match content.payload.direction {
+            MeasureTextDirection::Auto => 0,
+            MeasureTextDirection::LeftToRight => 1,
+            MeasureTextDirection::RightToLeft => 2,
+        },
+        _direction_pad: 0,
+    }));
+    Ok(texts.last().expect("pushed mobile text").as_ref() as *const _ as *const c_void)
+}
+
 fn mobile_color(value: &PaintColor, strings: &mut Vec<CString>) -> MobileColor {
     match value {
         PaintColor::Named(name) => MobileColor {
@@ -2084,7 +2128,7 @@ mod tests {
     use whisker_engine::whisker_protocol::{
         BackgroundLayer, FontFeature, FontOpticalSizing, FontTag, FontVariation, FrameHeader,
         GradientStop, PaintCoordinate, PaintPosition, ProtocolVersion, TextContent,
-        TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow,
+        TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, TextStyleSnapshot,
     };
 
     #[test]
@@ -2476,6 +2520,42 @@ mod tests {
         assert_eq!(text.font_optical_sizing, 0);
         assert_eq!(text.alignment, 1);
         assert_eq!(text.direction, 2);
+    }
+
+    #[test]
+    fn mobile_frame_encodes_resolved_text_style_as_its_own_operation() {
+        let content = text_with_shadow(Vec::new());
+        let style = TextStyleSnapshot {
+            style: content.payload.style,
+            locale: content.payload.locale,
+            direction: MeasureTextDirection::LeftToRight,
+            alignment: whisker_engine::whisker_protocol::MeasureTextAlignment::Center,
+            paint: content.paint,
+        };
+        let packet = FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![Operation::SetTextStyle {
+                node: NodeId::new(1).unwrap(),
+                style,
+            }],
+        };
+
+        let frame = MobileFrameOwned::new(&packet).unwrap();
+        let operation = &frame._operations[0];
+        assert_eq!(operation.tag, OP_TEXT_STYLE);
+        let text = unsafe { &*operation.payload.cast::<MobileText>() };
+        assert_eq!(text.text.len, 0);
+        assert_eq!(text.direction, 1);
+        assert_eq!(text.alignment, 4);
     }
 
     #[test]

@@ -69,6 +69,7 @@ public abstract class Module {
      */
     public fun sendEvent(event: String, payload: WhiskerValue = WhiskerValue.Null) {
         val qname = qualifiedName ?: return
+        if (event !in definitionLazy.events || !payload.isData()) return
         WhiskerModuleEventCenter.dispatchSend(qname, event, payload)
     }
 

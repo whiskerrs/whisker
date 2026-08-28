@@ -376,6 +376,23 @@ impl DomFrameSink {
                 self.sync_text(*node)?;
                 paint::text::apply(&text, content)?;
             }
+            Operation::SetTextStyle { node, style } => {
+                let element_type = self.node_types.get(node).copied().ok_or_else(|| {
+                    WebError(format!("DOM projection is missing node {}", node.get()))
+                })?;
+                let registration = &self.elements.binding(element_type)?.registration;
+                if !registration.text_style {
+                    return Err(WebError(format!(
+                        "DOM Host received text style for non-consuming node {}",
+                        node.get()
+                    )));
+                }
+                self.native_nodes
+                    .get_mut(node)
+                    .ok_or_else(|| WebError(format!("DOM node {} is not native", node.get())))?
+                    .set_text_style(style)
+                    .map_err(|error| js_error("set native DOM text style", error))?;
+            }
             Operation::SetHitTest { node, behavior } => {
                 let disabled = matches!(
                     behavior,

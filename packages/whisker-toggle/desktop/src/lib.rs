@@ -1,11 +1,15 @@
 //! Desktop Host implementation for `whisker-toggle`.
 
-use whisker_desktop::{DesktopViewDefinition, ModuleDefinition, WhiskerModule, WhiskerValue};
+use whisker_desktop::{
+    DesktopEventEmitter, DesktopNativeEvent, DesktopViewDefinition, ModuleDefinition,
+    WhiskerModule, WhiskerValue,
+};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct ToggleDesktopView {
     checked: bool,
     disabled: bool,
+    events: DesktopEventEmitter,
 }
 
 struct ToggleModule;
@@ -16,8 +20,14 @@ impl WhiskerModule for ToggleModule {
     type Definition = ModuleDefinition;
 
     fn definition() -> Self::Definition {
-        ModuleDefinition::new().view(
-            DesktopViewDefinition::new("whisker.toggle/Toggle", ToggleDesktopView::default)
+        ModuleDefinition::new()
+            .name("whisker-toggle:WhiskerToggle")
+            .view(
+                DesktopViewDefinition::new("whisker.toggle/Toggle", |events| ToggleDesktopView {
+                    checked: false,
+                    disabled: false,
+                    events,
+                })
                 .prop(
                     "checked",
                     |view, value| {
@@ -38,8 +48,18 @@ impl WhiskerModule for ToggleModule {
                     },
                     |view| view.disabled = false,
                 )
-                .event("change"),
-        )
+                .event("change")
+                .command("setChecked", |view, parameters| {
+                    let WhiskerValue::Bool(checked) = parameters else {
+                        unreachable!("Desktop Host validates Toggle command parameters")
+                    };
+                    view.checked = *checked;
+                    view.events.emit(DesktopNativeEvent {
+                        event: "change".into(),
+                        detail: WhiskerValue::map([("checked", WhiskerValue::Bool(view.checked))]),
+                    });
+                }),
+            )
     }
 }
 

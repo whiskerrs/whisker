@@ -186,15 +186,14 @@ public class WhiskerModuleProcessor(
                 w.appendLine("            val $defLocal = $instanceLocal.definitionLazy")
                 w.appendLine("            val $nameLocal = $defLocal.name")
                 w.appendLine("            val $viewLocal = $defLocal.view")
-                w.appendLine("            if ($nameLocal != null) {")
+                w.appendLine("            requireNotNull($nameLocal) { \"ModuleDefinition requires Name\" }")
                 // Every module records its fully-qualified name so event and
                 // function routing can find the same instance.
                 val tagPrefix = if (crateName != null) "$crateName:" else ""
-                w.appendLine("                val qualifiedName = if ('/' in $nameLocal) $nameLocal else \"$tagPrefix\" + $nameLocal")
-                w.appendLine("                $instanceLocal.qualifiedName = qualifiedName")
+                w.appendLine("            val qualifiedName = if ('/' in $nameLocal) $nameLocal else \"$tagPrefix\" + $nameLocal")
+                w.appendLine("            $instanceLocal.qualifiedName = qualifiedName")
                 val crateArg = if (crateName != null) "\"$crateName\"" else "null"
-                w.appendLine("                $instanceLocal.registerWithWhisker($crateArg)")
-                w.appendLine("            }")
+                w.appendLine("            $instanceLocal.registerWithWhisker($crateArg)")
                 w.appendLine("        }")
             }
 

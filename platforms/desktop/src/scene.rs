@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use whisker::runtime::RuntimeWakeHandle;
 use whisker_engine::FrameSink;
 use whisker_protocol::{
     ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BoxClip,
@@ -13,7 +14,9 @@ use whisker_protocol::{
     WhiskerValue,
 };
 
-use crate::element::{DesktopElementContent, DesktopElementError, DesktopElementRegistry};
+use crate::element::{
+    DesktopElementContent, DesktopElementError, DesktopElementRegistry, DesktopEventEmitter,
+};
 use crate::paint::box_paint::{ResolvedRadii, resolve_box_geometry, resolve_radii};
 
 #[derive(Clone, Debug)]
@@ -322,17 +325,28 @@ pub(crate) struct DesktopScene {
     validation: SceneProjection,
     elements: DesktopElementRegistry,
     nodes: HashMap<NodeId, RenderNode>,
-    pending_events: Vec<DesktopProviderEvent>,
+    pending_events: Arc<Mutex<Vec<DesktopProviderEvent>>>,
+    event_wake: RuntimeWakeHandle,
     raster_resources: HashSet<ResourceId>,
 }
 
 impl DesktopScene {
+    #[cfg(test)]
     pub(crate) fn new(surface: SurfaceId, elements: DesktopElementRegistry) -> Self {
+        Self::new_with_wake(surface, elements, RuntimeWakeHandle::new(|| {}))
+    }
+
+    pub(crate) fn new_with_wake(
+        surface: SurfaceId,
+        elements: DesktopElementRegistry,
+        event_wake: RuntimeWakeHandle,
+    ) -> Self {
         Self {
             validation: SceneProjection::new(surface),
             elements,
             nodes: HashMap::new(),
-            pending_events: Vec::new(),
+            pending_events: Arc::new(Mutex::new(Vec::new())),
+            event_wake,
             raster_resources: HashSet::new(),
         }
     }
@@ -346,7 +360,26 @@ impl DesktopScene {
     }
 
     pub(crate) fn take_events(&mut self) -> Vec<DesktopProviderEvent> {
-        std::mem::take(&mut self.pending_events)
+        let pending = std::mem::take(&mut *self.pending_events.lock().unwrap());
+        pending
+            .into_iter()
+            .filter_map(|event| {
+                let state = self.nodes.get(&event.target)?;
+                let resolved = self.elements.event(
+                    state.element_type,
+                    event.target,
+                    &event.name,
+                    &event.detail,
+                );
+                debug_assert!(resolved.is_ok(), "native element emitted invalid event");
+                let (name, mask) = resolved.ok()?;
+                (state.event_mask & mask != 0).then_some(DesktopProviderEvent {
+                    target: event.target,
+                    name,
+                    detail: event.detail,
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn cursor_at(&self, point: [f32; 2]) -> Option<whisker_protocol::CursorKeyword> {
@@ -720,7 +753,8 @@ impl DesktopScene {
         for operation in &packet.operations {
             match operation {
                 Operation::CreateNode { node, element_type } => {
-                    self.elements.create(*element_type)?;
+                    self.elements
+                        .create(*element_type, DesktopEventEmitter::default())?;
                     types.insert(*node, *element_type);
                 }
                 Operation::InsertChild { parent, .. } => {
@@ -745,8 +779,18 @@ impl DesktopScene {
                     }
                     if let Some(element_type) = types.get(node).copied() {
                         self.elements
-                            .create(element_type)?
+                            .create(element_type, DesktopEventEmitter::default())?
                             .set_text(*node, content.clone())?;
+                    }
+                }
+                Operation::SetTextStyle { node, style } => {
+                    if let Some(element_type) = types.get(node).copied() {
+                        if !self.elements.receives_text_style(element_type)? {
+                            return Err(DesktopPresentError::Unsupported("text-style"));
+                        }
+                        self.elements
+                            .create(element_type, DesktopEventEmitter::default())?
+                            .set_text_style(*node, style)?;
                     }
                 }
                 Operation::SetProperty {
@@ -827,14 +871,25 @@ impl DesktopScene {
     fn apply_operations(&mut self, packet: &FramePacket) {
         if packet.header.mode == FrameMode::Snapshot {
             self.nodes.clear();
-            self.pending_events.clear();
+            self.pending_events.lock().unwrap().clear();
         }
         for operation in &packet.operations {
             match operation {
                 Operation::CreateNode { node, element_type } => {
+                    let pending_events = Arc::clone(&self.pending_events);
+                    let event_wake = self.event_wake.clone();
+                    let target = *node;
+                    let events = DesktopEventEmitter::new(move |event| {
+                        pending_events.lock().unwrap().push(DesktopProviderEvent {
+                            target,
+                            name: event.event,
+                            detail: event.detail,
+                        });
+                        event_wake.wake();
+                    });
                     let content = self
                         .elements
-                        .create(*element_type)
+                        .create(*element_type, events)
                         .expect("element operations were validated before commit");
                     self.nodes.insert(
                         *node,
@@ -967,6 +1022,14 @@ impl DesktopScene {
                         .set_text(*node, content.clone())
                         .expect("element content operation was validated before commit");
                 }
+                Operation::SetTextStyle { node, style } => {
+                    self.nodes
+                        .get_mut(node)
+                        .expect("validated node")
+                        .content
+                        .set_text_style(*node, style)
+                        .expect("text-style operation was validated before commit");
+                }
                 Operation::SetProperty {
                     node,
                     property,
@@ -997,27 +1060,10 @@ impl DesktopScene {
                     ..
                 } => {
                     let state = self.nodes.get_mut(node).expect("validated node");
-                    let element_type = state.element_type;
-                    let event_mask = state.event_mask;
-                    let event = state
+                    state
                         .content
                         .invoke_command(*node, *command, arguments)
                         .expect("element command was validated before commit");
-                    if let Some(event) = event {
-                        let resolved =
-                            self.elements
-                                .event(element_type, *node, &event.event, &event.detail);
-                        debug_assert!(resolved.is_ok(), "native element emitted invalid event");
-                        if let Ok((name, mask)) = resolved
-                            && event_mask & mask != 0
-                        {
-                            self.pending_events.push(DesktopProviderEvent {
-                                target: *node,
-                                name,
-                                detail: event.detail,
-                            });
-                        }
-                    }
                 }
                 Operation::SetHitTest { node, behavior } => {
                     self.nodes
@@ -1482,6 +1528,8 @@ pub(crate) fn is_transparent(color: &PaintColor) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use crate::element::{
         DesktopElementFactory, DesktopNativeElement, DesktopNativeEvent, built_in_element_factories,
@@ -1614,10 +1662,11 @@ mod tests {
     const CHANGE: EventId = EventId::new(1).unwrap();
     const TOGGLE: CommandId = CommandId::new(1).unwrap();
 
-    #[derive(Debug, Default)]
+    #[derive(Debug)]
     struct ToggleNative {
         checked: bool,
         disabled: bool,
+        events: DesktopEventEmitter,
     }
 
     impl DesktopNativeElement for ToggleNative {
@@ -1640,24 +1689,20 @@ mod tests {
             }
         }
 
-        fn invoke_command(
-            &mut self,
-            command: CommandId,
-            _arguments: &WhiskerValue,
-        ) -> Option<DesktopNativeEvent> {
+        fn invoke_command(&mut self, command: CommandId, _arguments: &WhiskerValue) {
             assert_eq!(command, TOGGLE);
             if self.disabled {
-                return None;
+                return;
             }
             self.checked = !self.checked;
-            Some(DesktopNativeEvent {
+            self.events.emit(DesktopNativeEvent {
                 event: "change".into(),
                 detail: WhiskerValue::map([("checked", WhiskerValue::Bool(self.checked))]),
-            })
+            });
         }
     }
 
-    fn toggle_scene() -> (DesktopScene, ElementTypeId) {
+    fn toggle_scene_with_wake(event_wake: RuntimeWakeHandle) -> (DesktopScene, ElementTypeId) {
         let element_type = ElementTypeId::new(20).unwrap();
         let mut registrations = standard_element_registrations();
         registrations.push(ElementRegistration {
@@ -1665,6 +1710,7 @@ mod tests {
             name: "whisker.test/Toggle".into(),
             child_policy: whisker_protocol::ChildPolicy::None,
             measurement: ElementMeasurement::None,
+            text_style: false,
             properties: vec![
                 ElementPropertySchema {
                     property: CHECKED,
@@ -1689,22 +1735,38 @@ mod tests {
             }],
         });
         let mut factories = built_in_element_factories();
-        factories.push(DesktopElementFactory::native("whisker.test/Toggle", || {
-            Box::<ToggleNative>::default()
-        }));
+        factories.push(DesktopElementFactory::native(
+            "whisker.test/Toggle",
+            |events| {
+                Box::new(ToggleNative {
+                    checked: false,
+                    disabled: false,
+                    events,
+                })
+            },
+        ));
         (
-            DesktopScene::new(
+            DesktopScene::new_with_wake(
                 SurfaceId::new(1).unwrap(),
                 DesktopElementRegistry::bind(&registrations, &factories).unwrap(),
+                event_wake,
             ),
             element_type,
         )
     }
 
+    fn toggle_scene() -> (DesktopScene, ElementTypeId) {
+        toggle_scene_with_wake(RuntimeWakeHandle::new(|| {}))
+    }
+
     #[test]
     fn native_toggle_applies_properties_invokes_command_and_routes_change() {
         let node = id(1);
-        let (mut scene, element_type) = toggle_scene();
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let wake_count = Arc::clone(&wakes);
+        let (mut scene, element_type) = toggle_scene_with_wake(RuntimeWakeHandle::new(move || {
+            wake_count.fetch_add(1, Ordering::Relaxed);
+        }));
         assert_eq!(
             scene.present(&packet(
                 FrameMode::Snapshot,
@@ -1725,7 +1787,6 @@ mod tests {
                         node,
                         command: TOGGLE,
                         arguments: WhiskerValue::Null,
-                        result: None,
                     },
                 ],
             )),
@@ -1739,6 +1800,7 @@ mod tests {
                 detail: WhiskerValue::map([("checked", WhiskerValue::Bool(false),)]),
             }]
         );
+        assert_eq!(wakes.load(Ordering::Relaxed), 1);
     }
 
     #[test]

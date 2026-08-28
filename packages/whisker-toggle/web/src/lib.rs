@@ -28,66 +28,77 @@ impl WhiskerModule for ToggleModule {
     type Definition = ModuleDefinition;
 
     fn definition() -> Self::Definition {
-        ModuleDefinition::new().view(
-            WebViewDefinition::new(
-                "whisker.toggle/Toggle",
-                |document, emitter| {
-                    let input = document
-                        .create_element("input")?
-                        .dyn_into::<web_sys::HtmlInputElement>()?;
-                    input.set_type("checkbox");
-                    let event_input = input.clone();
-                    let event_emitter = emitter.clone();
-                    let change = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
-                        event_emitter.emit(WebNativeEvent {
-                            event: "change".into(),
-                            detail: WhiskerValue::map([(
-                                "checked",
-                                WhiskerValue::Bool(event_input.checked()),
-                            )]),
+        ModuleDefinition::new()
+            .name("whisker-toggle:WhiskerToggle")
+            .view(
+                WebViewDefinition::new(
+                    "whisker.toggle/Toggle",
+                    |document, emitter| {
+                        let input = document
+                            .create_element("input")?
+                            .dyn_into::<web_sys::HtmlInputElement>()?;
+                        input.set_type("checkbox");
+                        let event_input = input.clone();
+                        let event_emitter = emitter.clone();
+                        let change = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                            event_emitter.emit(WebNativeEvent {
+                                event: "change".into(),
+                                detail: WhiskerValue::map([(
+                                    "checked",
+                                    WhiskerValue::Bool(event_input.checked()),
+                                )]),
+                            });
                         });
-                    });
-                    input.add_event_listener_with_callback(
-                        "change",
-                        change.as_ref().unchecked_ref(),
-                    )?;
-                    Ok(ToggleWebView { input, change })
-                },
-                |view| view.input.clone().unchecked_into(),
-            )
-            .prop(
-                "checked",
-                |view, value| {
-                    let WhiskerValue::Bool(value) = value else {
+                        input.add_event_listener_with_callback(
+                            "change",
+                            change.as_ref().unchecked_ref(),
+                        )?;
+                        Ok(ToggleWebView { input, change })
+                    },
+                    |view| view.input.clone().unchecked_into(),
+                )
+                .prop(
+                    "checked",
+                    |view, value| {
+                        let WhiskerValue::Bool(value) = value else {
+                            return Err(wasm_bindgen::JsValue::from_str(
+                                "Toggle checked property must be boolean",
+                            ));
+                        };
+                        view.input.set_checked(*value);
+                        Ok(())
+                    },
+                    |view| {
+                        view.input.set_checked(false);
+                        Ok(())
+                    },
+                )
+                .prop(
+                    "disabled",
+                    |view, value| {
+                        let WhiskerValue::Bool(value) = value else {
+                            return Err(wasm_bindgen::JsValue::from_str(
+                                "Toggle disabled property must be boolean",
+                            ));
+                        };
+                        view.input.set_disabled(*value);
+                        Ok(())
+                    },
+                    |view| {
+                        view.input.set_disabled(false);
+                        Ok(())
+                    },
+                )
+                .event("change")
+                .command("setChecked", |view, parameters| {
+                    let WhiskerValue::Bool(checked) = parameters else {
                         return Err(wasm_bindgen::JsValue::from_str(
-                            "Toggle checked property must be boolean",
+                            "Toggle setChecked parameters must be boolean",
                         ));
                     };
-                    view.input.set_checked(*value);
+                    view.input.set_checked(*checked);
                     Ok(())
-                },
-                |view| {
-                    view.input.set_checked(false);
-                    Ok(())
-                },
+                }),
             )
-            .prop(
-                "disabled",
-                |view, value| {
-                    let WhiskerValue::Bool(value) = value else {
-                        return Err(wasm_bindgen::JsValue::from_str(
-                            "Toggle disabled property must be boolean",
-                        ));
-                    };
-                    view.input.set_disabled(*value);
-                    Ok(())
-                },
-                |view| {
-                    view.input.set_disabled(false);
-                    Ok(())
-                },
-            )
-            .event("change"),
-        )
     }
 }

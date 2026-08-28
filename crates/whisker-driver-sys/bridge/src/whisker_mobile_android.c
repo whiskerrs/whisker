@@ -143,7 +143,8 @@ static bool bootstrap_host(void* data, const WhiskerMobileBootstrap* bootstrap) 
         jintArray ck = member_ints(env, item->commands, item->command_count, true, false);
         jobjectArray cn = member_names(env, item->commands, item->command_count);
         (*env)->CallVoidMethod(env, view, g_register_element, (jint)item->element_type, name,
-            (jint)item->child_policy, (jint)item->measurement, pi, pk, pn, ei, ek, en, ci, ck, cn);
+            (jint)item->child_policy, (jint)item->measurement, (jint)item->text_style,
+            pi, pk, pn, ei, ek, en, ci, ck, cn);
         jobject refs[] = {name, pi, pk, pn, ei, ek, en, ci, ck, cn};
         for (size_t j = 0; j < sizeof(refs) / sizeof(refs[0]); ++j) if (refs[j]) (*env)->DeleteLocalRef(env, refs[j]);
     }
@@ -563,7 +564,7 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 break;
             }
             case WHISKER_OP_TRANSFORM: numbers = floats(env, op->payload, op->payload_count); break;
-            case WHISKER_OP_TEXT: {
+            case WHISKER_OP_TEXT: case WHISKER_OP_TEXT_STYLE: {
                 const WhiskerMobileText* p = op->payload; if (!p) { ok = false; break; }
                 if (p->font_optical_sizing > 1 ||
                     p->direction > 2 || p->alignment > 4 ||
@@ -828,7 +829,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
 #define METHOD(slot,name,sig) slot=(*env)->GetMethodID(env,g_view_class,name,sig); if(!slot){clear_exception(env);return JNI_ERR;}
     METHOD(g_request_frame,"requestFrameFromNative","()V")
     METHOD(g_begin_bootstrap,"beginBootstrapFromNative","()V")
-    METHOD(g_register_element,"registerElementFromNative","(ILjava/lang/String;II[I[I[Ljava/lang/String;[I[I[Ljava/lang/String;[I[I[Ljava/lang/String;)V")
+    METHOD(g_register_element,"registerElementFromNative","(ILjava/lang/String;III[I[I[Ljava/lang/String;[I[I[Ljava/lang/String;[I[I[Ljava/lang/String;)V")
     METHOD(g_finish_bootstrap,"finishBootstrapFromNative","()Z")
     METHOD(g_begin_frame,"beginFrameFromNative","(IIJJ)I")
     METHOD(g_current_revision,"currentRevisionFromNative","()J")

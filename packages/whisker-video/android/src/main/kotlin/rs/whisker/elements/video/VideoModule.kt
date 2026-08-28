@@ -21,7 +21,7 @@ import rs.whisker.runtime.WhiskerValue
 class VideoModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Video")
-        View(VideoView::class.java) {
+        View("whisker-video:Video", VideoView::class.java) {
             Prop("src") { view: VideoView, value ->
                 view.setSrc(value.asString() ?: "")
             }

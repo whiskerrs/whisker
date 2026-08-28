@@ -14,14 +14,10 @@
 //!   `text(value: ...)` can observe. The hot-path
 //!   [`ElementRef::invoke`] reads via `get_untracked()` so imperative
 //!   dispatch never accidentally subscribes its caller.
-//! - **One invoke shape** — `invoke(method, args: WhiskerValue) ->
-//!   WhiskerValue` (sync, fire-and-forget) + `invoke_async` /
-//!   `invoke_typed<T>` (async, result-returning), mirroring
-//!   `PlatformModule::invoke` / `invoke_async`. `args` is a single
-//!   `WhiskerValue` passed straight through as the method's params
-//!   object; the result comes back as a `WhiskerValue`. `invoke_typed`
-//!   surfaces "not bound" / "platform-side error" as [`RefError`]
-//!   variants; `invoke` collapses both into [`WhiskerValue::Error`].
+//! - **One command shape** — `command(name, parameters: WhiskerValue) ->
+//!   Result<(), RefError>`. Element commands are ordered, one-way frame
+//!   operations. Result-bearing element calls are not part of module v1;
+//!   service modules provide `invoke` / `invoke_async` when a value is needed.
 //!
 //! ## Where `ElementRef` appears
 //!
@@ -184,9 +180,7 @@ pub struct UiInfo {
 
 /// Errors that can surface from imperative element-method dispatch.
 ///
-/// Returned by [`ElementRef::invoke_typed`]. The fire-and-forget
-/// [`ElementRef::invoke`] collapses both variants into
-/// `WhiskerValue::Error` instead.
+/// Returned by [`ElementRef::command`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RefError {
@@ -277,7 +271,31 @@ impl ElementRef {
         Signal::Dynamic(computed(move || inner.with(|opt| opt.is_some())))
     }
 
-    /// Invoke a UI method on the bound element, **fire-and-forget**.
+    /// Queues a one-way command on the bound element.
+    ///
+    /// The command is schema-validated and ordered with the next frame. A
+    /// successful return means it was enqueued; Host execution happens later
+    /// and cannot synchronously return a value.
+    pub fn command(&self, command: &str, parameters: WhiskerValue) -> Result<(), RefError> {
+        let Some(element) = self.inner.get_untracked() else {
+            return Err(RefError::NotBound);
+        };
+        if !parameters.is_data() {
+            return Err(RefError::DispatchFailed {
+                method: command.into(),
+                message: "element command parameters cannot contain Error values".into(),
+            });
+        }
+        match invoke_element_method(element, command, parameters) {
+            WhiskerValue::Error(message) => Err(RefError::DispatchFailed {
+                method: command.into(),
+                message,
+            }),
+            _ => Ok(()),
+        }
+    }
+
+    /// Compatibility wrapper for the pre-v1 fire-and-forget API.
     /// `args` is a single [`WhiskerValue`] passed straight through as the
     /// method's params object — a [`map`](WhiskerValue::map) of named
     /// fields for built-in Lynx methods (`scrollTo`'s `offset` /
@@ -285,44 +303,27 @@ impl ElementRef {
     /// elements (`@WhiskerUIMethod` reads `params.args`). The platform
     /// result isn't available synchronously, so this returns immediately
     /// with `WhiskerValue::Null` (or `WhiskerValue::Error` when unbound);
-    /// use [`invoke_typed`](Self::invoke_typed) when you need the result.
-    ///
-    /// Mirrors `PlatformModule::invoke` — the same
-    /// `(method, WhiskerValue) -> WhiskerValue` shape, so element and
-    /// module dispatch read alike.
+    #[doc(hidden)]
     pub fn invoke(&self, method: &str, args: WhiskerValue) -> WhiskerValue {
-        let Some(elem) = self.inner.get_untracked() else {
-            return WhiskerValue::Error(format!(
-                "ElementRef::invoke(\"{method}\"): ref is not bound to a \
-                 mounted element"
-            ));
-        };
-        invoke_element_method(elem, method, args)
+        match self.command(method, args) {
+            Ok(()) => WhiskerValue::Null,
+            Err(error) => WhiskerValue::Error(error.to_string()),
+        }
     }
 
-    /// Async, **result-returning** invoke — the platform method's return
-    /// value arrives via Lynx's UI-method callback (typically on the UI
-    /// thread). `args` is the same single [`WhiskerValue`] params object
-    /// as [`invoke`](Self::invoke). Returns the raw result
-    /// [`WhiskerValue`], with `WhiskerValue::Error` for "not bound" /
-    /// dispatch failure. Mirrors `PlatformModule::invoke_async`.
-    ///
-    /// Run from an event handler / effect via `spawn_local`, or use the
-    /// typed [`invoke_typed`](Self::invoke_typed).
-    pub async fn invoke_async(&self, method: &str, args: WhiskerValue) -> WhiskerValue {
-        let Some(elem) = self.inner.get_untracked() else {
-            return WhiskerValue::Error(format!(
-                "ElementRef::invoke_async(\"{method}\"): ref is not bound to a \
-                 mounted element"
-            ));
-        };
-        invoke_element_method(elem, method, args)
+    /// Result-bearing element calls are deferred beyond module v1.
+    #[doc(hidden)]
+    pub async fn invoke_async(&self, method: &str, _args: WhiskerValue) -> WhiskerValue {
+        WhiskerValue::Error(format!(
+            "ElementRef::invoke_async(\"{method}\") is unsupported in whisker-module v1; use a service AsyncFunction"
+        ))
     }
 
     /// Async invoke that deserializes the result into `T`. `NotBound`
     /// when unbound; `DispatchFailed` on a platform error or a
     /// result-shape mismatch. The building block the typed handle
     /// methods (`ScrollViewHandle::get_scroll_info`, …) build on.
+    #[doc(hidden)]
     pub async fn invoke_typed<T: DeserializeOwned>(
         &self,
         method: &str,

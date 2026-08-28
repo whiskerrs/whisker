@@ -268,10 +268,12 @@ private func measureCustomElement(
                 ? CGFloat(request.available_width) : nil,
             availableHeight: request.available_height_kind == 0
                 ? CGFloat(request.available_height) : nil,
+            availableWidthKind: [.definite, .minContent, .maxContent][Int(request.available_width_kind)],
+            availableHeightKind: [.definite, .minContent, .maxContent][Int(request.available_height_kind)],
             knownWidth: request.known_mask & 1 != 0 ? CGFloat(request.known_width) : nil,
             knownHeight: request.known_mask & 2 != 0 ? CGFloat(request.known_height) : nil,
             payloadVersion: request.payload_version,
-            payload: payload
+            payload: .bytes(payload)
         )
     )
     if let custom {

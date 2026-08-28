@@ -34,7 +34,7 @@ pub use paint::{LoweredPaint, lower_color, lower_paint, lower_transform};
 pub use recording::{FrameSink, RecordedFrame, RecordingRenderer};
 pub use scene::{Scene, SceneError, SceneNode};
 pub use surface::{LayoutUpdate, SurfaceEngine, SurfaceError, SurfacePresentError};
-pub use text::{LoweredPlainText, PlainTextInput, lower_plain_text};
+pub use text::{LoweredPlainText, PlainTextInput, lower_plain_text, lower_text_style};
 pub use whisker_layout;
 pub use whisker_protocol;
 pub use whisker_style;

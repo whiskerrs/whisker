@@ -21,7 +21,7 @@ public final class WebViewModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {
             Name("WebView")
-            View(WhiskerWebViewView.self) {
+            View("whisker-webview:WebView", WhiskerWebViewView.self) {
 
                 // ---- Content props ---------------------------------------
 

@@ -20,7 +20,7 @@ import rs.whisker.runtime.WhiskerValue
 class InputModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Input")
-        View(WhiskerInputView::class.java) {
+        View("whisker-input:Input", WhiskerInputView::class.java) {
             // ---- text-content props ----------------------------------------
 
             Prop("value") { view: WhiskerInputView, value ->

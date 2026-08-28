@@ -293,6 +293,10 @@ impl MeasurementProvider for NativeTextHost {
         responses: &mut Vec<MeasurementResponse>,
     ) -> Result<(), Self::Error> {
         for request in requests {
+            if let Ok(Some(response)) = self.elements.measure(request) {
+                responses.push(response);
+                continue;
+            }
             let response = match (
                 self.elements.measurement(request.element_type),
                 &request.payload,
