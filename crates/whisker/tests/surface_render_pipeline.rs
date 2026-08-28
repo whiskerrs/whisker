@@ -34,6 +34,21 @@ struct TextHost {
     calls: Vec<Vec<MeasurementRequest>>,
 }
 
+struct CloneTrackedRow {
+    index: u32,
+    clone_count: Rc<Cell<usize>>,
+}
+
+impl Clone for CloneTrackedRow {
+    fn clone(&self) -> Self {
+        self.clone_count.set(self.clone_count.get() + 1);
+        Self {
+            index: self.index,
+            clone_count: Rc::clone(&self.clone_count),
+        }
+    }
+}
+
 #[whisker::module_component(
     name = "whisker.test/AutoRegistered",
     measurement = None,
@@ -198,26 +213,33 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
     );
     let source_reads = Rc::new(Cell::new(0));
     let metadata_reads = Rc::new(Cell::new(0));
+    let item_clones = Rc::new(Cell::new(0));
 
     with_installed_renderer(surface.renderer(), || {
         let source_reads = Rc::clone(&source_reads);
         let metadata_reads = Rc::clone(&metadata_reads);
+        let item_clones = Rc::clone(&item_clones);
         let root = owner.with(|| {
             render! {
                 list(
                     style: css!(width: percent(100), height: px(100)),
                     each: move || {
                         source_reads.set(source_reads.get() + 1);
-                        (0_u32..100_000).collect::<Vec<_>>()
+                        (0_u32..100_000)
+                            .map(|index| CloneTrackedRow {
+                                index,
+                                clone_count: Rc::clone(&item_clones),
+                            })
+                            .collect::<Vec<_>>()
                     },
-                    meta: move |row: &u32| {
+                    meta: move |row: &CloneTrackedRow| {
                         metadata_reads.set(metadata_reads.get() + 1);
-                        ItemMeta::key(*row).estimated_size(44)
+                        ItemMeta::key(row.index).estimated_size(44)
                     },
-                    children: |row: u32| render! {
+                    children: |row: CloneTrackedRow| render! {
                         text(
                             style: css!(height: px(44), font_size: px(20)),
-                            value: format!("row-{row}"),
+                            value: format!("row-{}", row.index),
                         )
                     },
                 )
@@ -288,6 +310,7 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
             LayoutOptions::default(),
         )
         .unwrap();
+    item_clones.set(0);
 
     with_installed_renderer(surface.renderer(), || {
         surface
@@ -327,6 +350,11 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
         100_000,
         "scrolling must use the cached layout index"
     );
+    assert_eq!(
+        item_clones.get(),
+        3,
+        "only the three rows entering the mounted window should be cloned"
+    );
     let structural_operations = renderer.frames()[2]
         .packet
         .operations
@@ -344,6 +372,140 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
         structural_operations <= 8,
         "steady-state scrolling should mutate window edges, got {structural_operations} structural operations"
     );
+
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn recycled_list_rebinds_compatible_slots_without_recreating_nodes() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(43).unwrap(),
+        StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+    );
+    let item_builds = Rc::new(Cell::new(0));
+
+    with_installed_renderer(surface.renderer(), || {
+        let item_builds = Rc::clone(&item_builds);
+        let root = owner.with(|| {
+            render! {
+                list(
+                    style: css!(width: percent(100), height: px(100)),
+                    each: || (0_u32..100_000).collect::<Vec<_>>(),
+                    meta: |row: &u32| ItemMeta::key(*row)
+                        .estimated_size(44)
+                        .reuse_identifier("row"),
+                    recycled_children: move |row: ReadSignal<u32>| {
+                        item_builds.set(item_builds.get() + 1);
+                        let value = computed(move || format!("recycled-row-{}", row.get()));
+                        render! {
+                            text(
+                                style: css!(height: px(44), font_size: px(20)),
+                                value: value,
+                            )
+                        }
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+
+    let registrations = surface.element_registrations();
+    let scroll_type = registrations
+        .iter()
+        .find(|registration| registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME)
+        .unwrap()
+        .element_type;
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let scroll_node = renderer.frames()[0]
+        .packet
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::CreateNode {
+                node, element_type, ..
+            } if *element_type == scroll_type => Some(*node),
+            _ => None,
+        })
+        .unwrap();
+
+    let dispatch_scroll = |offset: f64| {
+        with_installed_renderer(surface.renderer(), || {
+            surface
+                .dispatch_input(&InputEvent {
+                    surface: surface.surface(),
+                    timestamp_ms: offset,
+                    kind: InputEventKind::Named("scroll".to_owned()),
+                    pointer: None,
+                    target: Some(scroll_node),
+                    detail: WhiskerValue::map([
+                        ("scrollTop", WhiskerValue::Float(offset)),
+                        ("viewportHeight", WhiskerValue::Float(100.0)),
+                        ("scrollHeight", WhiskerValue::Float(4_400_000.0)),
+                    ]),
+                })
+                .unwrap();
+            whisker::flush();
+        });
+    };
+
+    dispatch_scroll(132.0);
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            2,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    item_builds.set(0);
+    dispatch_scroll(264.0);
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            3,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        item_builds.get(),
+        0,
+        "matching recycled slots must not rerun the item builder"
+    );
+    assert!(
+        renderer.frames()[2]
+            .packet
+            .operations
+            .iter()
+            .all(|operation| {
+                !matches!(
+                    operation,
+                    Operation::CreateNode { .. } | Operation::DeleteNode { .. }
+                )
+            })
+    );
+    assert!(renderer.frames()[2].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetText { content, .. } if content.payload.text == "recycled-row-8")
+    ));
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 

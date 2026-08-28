@@ -37,7 +37,7 @@ pub use into_view::{
 };
 #[doc(hidden)]
 pub use renderer::__reset_children_mirror_for_tests;
-pub use virtualizer::{ItemMeta, virtualize};
+pub use virtualizer::{ItemMeta, virtualize, virtualize_recycled};
 
 // Element-manipulation + lifecycle surface the `render!` macro expands
 // against and that framework-extension authors (custom control flow,

@@ -19,7 +19,7 @@ use whisker_style::{
 use whisker_value::WhiskerValue;
 
 use crate::element::ElementTag;
-use crate::reactive::{Owner, effect, on_cleanup};
+use crate::reactive::{Owner, ReadSignal, RwSignal, effect, on_cleanup};
 
 use super::handle::Element;
 use super::renderer::{
@@ -109,12 +109,31 @@ struct MountedEntry {
     handle: Element,
 }
 
+struct RecycledEntry<T: 'static> {
+    owner: Owner,
+    handle: Element,
+    item: RwSignal<T>,
+    reuse_class: u32,
+    recyclable: bool,
+}
+
+#[derive(Clone)]
+struct RecyclePolicy {
+    /// Interned within one List. Zero represents the default class (`None`).
+    reuse_class: u32,
+    recyclable: bool,
+}
+
 struct LayoutIndex<T, K> {
     items: Vec<T>,
     keys: Vec<K>,
     /// Prefix offsets. `offsets[i]` is the start of item `i` and the final
     /// entry is the complete estimated extent.
     offsets: Vec<f32>,
+    /// Allocated only by the opt-in recycled-slot path. Plain `children:`
+    /// lists do not pay per-item memory for future recycling metadata.
+    recycle_policies: Option<Vec<RecyclePolicy>>,
+    reuse_classes: Option<HashMap<String, u32>>,
     generation: u64,
 }
 
@@ -122,11 +141,13 @@ impl<T, K> LayoutIndex<T, K>
 where
     K: Eq + Hash + Clone,
 {
-    fn new() -> Self {
+    fn new(recycled_slots: bool) -> Self {
         Self {
             items: Vec::new(),
             keys: Vec::new(),
             offsets: vec![0.0],
+            recycle_policies: recycled_slots.then(Vec::new),
+            reuse_classes: recycled_slots.then(HashMap::new),
             generation: 0,
         }
     }
@@ -138,6 +159,10 @@ where
         self.offsets.clear();
         self.offsets.reserve(items.len() + 1);
         self.offsets.push(0.0);
+        if let Some(policies) = &mut self.recycle_policies {
+            policies.clear();
+            policies.reserve(items.len());
+        }
         for item in &items {
             let item = meta(item);
             assert!(
@@ -145,12 +170,46 @@ where
                 "virtualized List keys must be unique"
             );
             let main_axis_size = item.main_axis_size();
+            let reuse_class = if self.recycle_policies.is_some() {
+                match item.reuse_identifier.as_ref() {
+                    Some(identifier) => {
+                        let classes = self
+                            .reuse_classes
+                            .as_mut()
+                            .expect("recycled List must intern reuse identifiers");
+                        if let Some(class) = classes.get(identifier) {
+                            *class
+                        } else {
+                            let next = u32::try_from(classes.len() + 1)
+                                .expect("List reuse identifier count exceeds u32");
+                            classes.insert(identifier.clone(), next);
+                            next
+                        }
+                    }
+                    None => 0,
+                }
+            } else {
+                0
+            };
+            if let Some(policies) = &mut self.recycle_policies {
+                policies.push(RecyclePolicy {
+                    reuse_class,
+                    recyclable: item.recyclable,
+                });
+            }
             self.keys.push(item.key);
             self.offsets
                 .push(self.offsets.last().copied().unwrap_or(0.0) + main_axis_size);
         }
         self.items = items;
         self.generation = self.generation.wrapping_add(1);
+    }
+
+    fn recycle_policy(&self, index: usize) -> &RecyclePolicy {
+        &self
+            .recycle_policies
+            .as_ref()
+            .expect("recycled List must retain slot policies")[index]
     }
 
     fn window(&self, geometry: ScrollGeometry) -> LayoutWindow {
@@ -231,9 +290,9 @@ pub fn virtualize<T, K>(
     let meta = Rc::new(meta);
     let children = Rc::new(children);
     let geometry = Rc::new(RefCell::new(ScrollGeometry::default()));
-    let layout = Rc::new(RefCell::new(LayoutIndex::<T, K>::new()));
+    let layout = Rc::new(RefCell::new(LayoutIndex::<T, K>::new(false)));
     let mounted: Rc<RefCell<HashMap<K, MountedEntry>>> = Rc::new(RefCell::new(HashMap::new()));
-    let rendered_window = Rc::new(Cell::new(None::<(u64, usize, usize)>));
+    let rendered_window = Rc::new(Cell::new(None::<LayoutWindow>));
 
     let reconcile: Rc<dyn Fn()> = {
         let children = Rc::clone(&children);
@@ -243,45 +302,102 @@ pub fn virtualize<T, K>(
         let rendered_window = Rc::clone(&rendered_window);
         Rc::new(move || {
             let geometry = *geometry.borrow();
-            let (window, desired) = {
+            let window = {
                 let layout = layout.borrow();
                 let window = layout.window(geometry);
-                if rendered_window.get() == Some(window.identity()) {
+                if rendered_window
+                    .get()
+                    .is_some_and(|rendered| rendered.identity() == window.identity())
+                {
                     return;
                 }
-                let desired = (window.start..window.end)
-                    .map(|index| (layout.keys[index].clone(), layout.items[index].clone()))
-                    .collect::<Vec<_>>();
-                (window, desired)
+                window
             };
 
             set_spacer_size(leading_spacer, window.leading_extent);
             set_spacer_size(trailing_spacer, window.trailing_extent);
 
-            let mut old = std::mem::take(&mut *mounted.borrow_mut());
-            let mut next = HashMap::with_capacity(desired.len());
-            let mut order = Vec::with_capacity(desired.len() + 2);
-            order.push(leading_spacer);
-            for (key, item) in desired {
-                let entry = if let Some(entry) = old.remove(&key) {
-                    entry
-                } else {
-                    let owner = Owner::new(None);
-                    let handle = owner.with(|| children(item));
-                    MountedEntry { owner, handle }
-                };
-                order.push(entry.handle);
-                next.insert(key, entry);
-            }
-            order.push(trailing_spacer);
+            let previous = rendered_window.get();
+            if let Some(previous) = previous.filter(|old| old.generation == window.generation) {
+                let layout = layout.borrow();
+                let mut mounted = mounted.borrow_mut();
 
-            for (_, entry) in old.drain() {
-                remove_child(scroll_view, entry.handle);
-                entry.owner.dispose();
+                // Within one source generation indices and keys are stable.
+                // Visit only the ranges that differ; retained rows require no
+                // clone, hash lookup, child-order snapshot, or Host operation.
+                visit_range_difference(
+                    previous.start,
+                    previous.end,
+                    window.start,
+                    window.end,
+                    |index| {
+                        let entry = mounted
+                            .remove(&layout.keys[index])
+                            .expect("a leaving List row must be mounted");
+                        remove_child(scroll_view, entry.handle);
+                        entry.owner.dispose();
+                    },
+                );
+                visit_range_difference(
+                    window.start,
+                    window.end,
+                    previous.start,
+                    previous.end,
+                    |index| {
+                        let key = layout.keys[index].clone();
+                        let owner = Owner::new(None);
+                        let handle = owner.with(|| children(layout.items[index].clone()));
+                        let replaced = mounted.insert(key, MountedEntry { owner, handle });
+                        debug_assert!(replaced.is_none());
+                        insert_child_at(scroll_view, handle, index - window.start + 1);
+                    },
+                );
+                rendered_window.set(Some(window));
+                return;
             }
+
+            // A source replacement may reorder keys arbitrarily. Preserve keyed
+            // entries still in the new window and dispose the rest.
+            let mut order = Vec::with_capacity(window.end - window.start + 2);
+            order.push(leading_spacer);
+            {
+                let layout = layout.borrow();
+                let mut mounted = mounted.borrow_mut();
+                let desired_keys = layout.keys[window.start..window.end]
+                    .iter()
+                    .cloned()
+                    .collect::<HashSet<_>>();
+                let stale_keys = mounted
+                    .keys()
+                    .filter(|key| !desired_keys.contains(*key))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for key in stale_keys {
+                    if let Some(entry) = mounted.remove(&key) {
+                        remove_child(scroll_view, entry.handle);
+                        entry.owner.dispose();
+                    }
+                }
+
+                for index in window.start..window.end {
+                    let key = &layout.keys[index];
+                    if !mounted.contains_key(key) {
+                        let owner = Owner::new(None);
+                        let handle = owner.with(|| children(layout.items[index].clone()));
+                        mounted.insert(key.clone(), MountedEntry { owner, handle });
+                    }
+                    order.push(
+                        mounted
+                            .get(key)
+                            .expect("the desired List row must be mounted")
+                            .handle,
+                    );
+                }
+            }
+
+            order.push(trailing_spacer);
             sync_child_order(scroll_view, &order);
-            *mounted.borrow_mut() = next;
-            rendered_window.set(Some(window.identity()));
+            rendered_window.set(Some(window));
         })
     };
 
@@ -321,6 +437,281 @@ pub fn virtualize<T, K>(
         remove_child(scroll_view, leading_spacer);
         remove_child(scroll_view, trailing_spacer);
     });
+}
+
+/// Installs the opt-in recycled-slot List path.
+///
+/// Unlike [`virtualize`], the item builder receives a stable signal. Rows that
+/// leave and enter during one reconciliation exchange slots with a matching
+/// `reuse_identifier`; updating the signal rebinds reactive props while the
+/// element subtree and Host views keep their identity. No detached slots are
+/// retained across frames, so scene size remains bounded by the mounted window.
+pub fn virtualize_recycled<T, K>(
+    scroll_view: Element,
+    each: impl Fn() -> Vec<T> + 'static,
+    meta: impl Fn(&T) -> ItemMeta<K> + 'static,
+    children: impl Fn(ReadSignal<T>) -> Element + 'static,
+) where
+    T: Clone + 'static,
+    K: Eq + Hash + Clone + 'static,
+{
+    let leading_spacer = create_element(ElementTag::View);
+    let trailing_spacer = create_element(ElementTag::View);
+    append_child(scroll_view, leading_spacer);
+    append_child(scroll_view, trailing_spacer);
+
+    let each = Rc::new(each);
+    let meta = Rc::new(meta);
+    let children: Rc<dyn Fn(ReadSignal<T>) -> Element> = Rc::new(children);
+    let geometry = Rc::new(RefCell::new(ScrollGeometry::default()));
+    let layout = Rc::new(RefCell::new(LayoutIndex::<T, K>::new(true)));
+    let mounted: Rc<RefCell<HashMap<K, RecycledEntry<T>>>> = Rc::new(RefCell::new(HashMap::new()));
+    let rendered_window = Rc::new(Cell::new(None::<LayoutWindow>));
+
+    let reconcile: Rc<dyn Fn()> = {
+        let children = Rc::clone(&children);
+        let geometry = Rc::clone(&geometry);
+        let layout = Rc::clone(&layout);
+        let mounted = Rc::clone(&mounted);
+        let rendered_window = Rc::clone(&rendered_window);
+        Rc::new(move || {
+            let geometry = *geometry.borrow();
+            let window = {
+                let layout = layout.borrow();
+                let window = layout.window(geometry);
+                if rendered_window
+                    .get()
+                    .is_some_and(|rendered| rendered.identity() == window.identity())
+                {
+                    return;
+                }
+                window
+            };
+
+            set_spacer_size(leading_spacer, window.leading_extent);
+            set_spacer_size(trailing_spacer, window.trailing_extent);
+
+            let previous = rendered_window.get();
+            if let Some(previous) = previous.filter(|old| old.generation == window.generation) {
+                let layout = layout.borrow();
+                let mut mounted = mounted.borrow_mut();
+                let mut pool = Vec::new();
+
+                visit_range_difference(
+                    previous.start,
+                    previous.end,
+                    window.start,
+                    window.end,
+                    |index| {
+                        let entry = mounted
+                            .remove(&layout.keys[index])
+                            .expect("a leaving recycled List row must be mounted");
+                        remove_child(scroll_view, entry.handle);
+                        if entry.recyclable {
+                            pool.push(entry);
+                        } else {
+                            entry.owner.dispose();
+                        }
+                    },
+                );
+                visit_range_difference(
+                    window.start,
+                    window.end,
+                    previous.start,
+                    previous.end,
+                    |index| {
+                        let policy = layout.recycle_policy(index);
+                        let item = layout.items[index].clone();
+                        let entry = if let Some(mut entry) = take_recycled_entry(&mut pool, policy)
+                        {
+                            entry.item.set(item);
+                            entry.recyclable = policy.recyclable;
+                            entry
+                        } else {
+                            new_recycled_entry(item, policy, children.as_ref())
+                        };
+                        let handle = entry.handle;
+                        let replaced = mounted.insert(layout.keys[index].clone(), entry);
+                        debug_assert!(replaced.is_none());
+                        insert_child_at(scroll_view, handle, index - window.start + 1);
+                    },
+                );
+                for entry in pool {
+                    entry.owner.dispose();
+                }
+                rendered_window.set(Some(window));
+                return;
+            }
+
+            let layout = layout.borrow();
+            let mut mounted = mounted.borrow_mut();
+            let mut pool = Vec::new();
+            let desired_keys = layout.keys[window.start..window.end]
+                .iter()
+                .cloned()
+                .collect::<HashSet<_>>();
+            let stale_keys = mounted
+                .keys()
+                .filter(|key| !desired_keys.contains(*key))
+                .cloned()
+                .collect::<Vec<_>>();
+            for key in stale_keys {
+                let entry = mounted
+                    .remove(&key)
+                    .expect("a stale recycled List row must be mounted");
+                remove_child(scroll_view, entry.handle);
+                if entry.recyclable {
+                    pool.push(entry);
+                } else {
+                    entry.owner.dispose();
+                }
+            }
+
+            let mut order = Vec::with_capacity(window.end - window.start + 2);
+            order.push(leading_spacer);
+            for index in window.start..window.end {
+                let key = &layout.keys[index];
+                let policy = layout.recycle_policy(index);
+                let incompatible = mounted
+                    .get(key)
+                    .is_some_and(|entry| entry.reuse_class != policy.reuse_class);
+                if incompatible {
+                    let entry = mounted
+                        .remove(key)
+                        .expect("the incompatible recycled row must be mounted");
+                    remove_child(scroll_view, entry.handle);
+                    if entry.recyclable {
+                        pool.push(entry);
+                    } else {
+                        entry.owner.dispose();
+                    }
+                }
+
+                if let Some(entry) = mounted.get_mut(key) {
+                    entry.item.set(layout.items[index].clone());
+                    entry.recyclable = policy.recyclable;
+                } else {
+                    let item = layout.items[index].clone();
+                    let entry = if let Some(mut entry) = take_recycled_entry(&mut pool, policy) {
+                        entry.item.set(item);
+                        entry.recyclable = policy.recyclable;
+                        entry
+                    } else {
+                        new_recycled_entry(item, policy, children.as_ref())
+                    };
+                    mounted.insert(key.clone(), entry);
+                }
+                order.push(
+                    mounted
+                        .get(key)
+                        .expect("the desired recycled List row must be mounted")
+                        .handle,
+                );
+            }
+            order.push(trailing_spacer);
+            sync_child_order(scroll_view, &order);
+            for entry in pool {
+                entry.owner.dispose();
+            }
+            rendered_window.set(Some(window));
+        })
+    };
+
+    {
+        let each = Rc::clone(&each);
+        let meta = Rc::clone(&meta);
+        let layout = Rc::clone(&layout);
+        let reconcile = Rc::clone(&reconcile);
+        effect(move || {
+            let items = each();
+            layout.borrow_mut().replace(items, |item| meta(item));
+            reconcile();
+        });
+    }
+
+    {
+        let geometry = Rc::clone(&geometry);
+        let reconcile = Rc::clone(&reconcile);
+        set_event_listener(
+            scroll_view,
+            "scroll",
+            BindType::Bind,
+            Box::new(move |event| {
+                if let Some(next) = scroll_geometry(&event) {
+                    *geometry.borrow_mut() = next;
+                    reconcile();
+                }
+            }),
+        );
+    }
+
+    on_cleanup(move || {
+        for (_, entry) in mounted.borrow_mut().drain() {
+            remove_child(scroll_view, entry.handle);
+            entry.owner.dispose();
+        }
+        remove_child(scroll_view, leading_spacer);
+        remove_child(scroll_view, trailing_spacer);
+    });
+}
+
+fn new_recycled_entry<T: Clone + 'static>(
+    item: T,
+    policy: &RecyclePolicy,
+    children: &dyn Fn(ReadSignal<T>) -> Element,
+) -> RecycledEntry<T> {
+    let owner = Owner::new(None);
+    let (item, handle) = owner.with(|| {
+        let item = RwSignal::new(item);
+        let handle = children(item.read_only());
+        (item, handle)
+    });
+    RecycledEntry {
+        owner,
+        handle,
+        item,
+        reuse_class: policy.reuse_class,
+        recyclable: policy.recyclable,
+    }
+}
+
+fn take_recycled_entry<T: 'static>(
+    pool: &mut Vec<RecycledEntry<T>>,
+    policy: &RecyclePolicy,
+) -> Option<RecycledEntry<T>> {
+    if !policy.recyclable {
+        return None;
+    }
+    let position = pool
+        .iter()
+        .rposition(|entry| entry.reuse_class == policy.reuse_class)?;
+    Some(pool.swap_remove(position))
+}
+
+/// Visits the indices in `[start, end)` that are not covered by
+/// `[other_start, other_end)`, without allocating an intermediate range set.
+#[inline]
+fn visit_range_difference(
+    start: usize,
+    end: usize,
+    other_start: usize,
+    other_end: usize,
+    mut visit: impl FnMut(usize),
+) {
+    let overlap_start = start.max(other_start);
+    let overlap_end = end.min(other_end);
+    if overlap_start >= overlap_end {
+        for index in start..end {
+            visit(index);
+        }
+        return;
+    }
+    for index in start..overlap_start {
+        visit(index);
+    }
+    for index in overlap_end..end {
+        visit(index);
+    }
 }
 
 /// Makes the current child sequence match `target` while leaving every
@@ -384,6 +775,41 @@ fn scroll_geometry(event: &WhiskerValue) -> Option<ScrollGeometry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visits_only_indices_outside_the_other_range() {
+        let collect = |range: (usize, usize), other: (usize, usize)| {
+            let mut visited = Vec::new();
+            visit_range_difference(range.0, range.1, other.0, other.1, |index| {
+                visited.push(index);
+            });
+            visited
+        };
+
+        assert_eq!(collect((3, 10), (5, 8)), vec![3, 4, 8, 9]);
+        assert_eq!(collect((3, 6), (8, 10)), vec![3, 4, 5]);
+        assert_eq!(collect((3, 6), (0, 10)), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn recycled_index_interns_reuse_identifiers_once() {
+        let mut index = LayoutIndex::new(true);
+        index.replace(vec![0_u32, 1, 2], |item| {
+            ItemMeta::key(*item).reuse_identifier(if item & 1 == 0 { "even" } else { "odd" })
+        });
+
+        assert_eq!(index.reuse_classes.as_ref().unwrap().len(), 2);
+        let policies = index.recycle_policies.as_ref().unwrap();
+        assert_eq!(policies[0].reuse_class, policies[2].reuse_class);
+        assert_ne!(policies[0].reuse_class, policies[1].reuse_class);
+
+        let mut plain = LayoutIndex::new(false);
+        plain.replace(vec![0_u32], |item| {
+            ItemMeta::key(*item).reuse_identifier("ignored")
+        });
+        assert!(plain.recycle_policies.is_none());
+        assert!(plain.reuse_classes.is_none());
+    }
 
     #[test]
     fn reads_wrapped_scroll_geometry() {

@@ -320,6 +320,7 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             | ("list", "key")
             | ("list", "meta")
             | ("list", "children")
+            | ("list", "recycled_children")
     )
 }
 

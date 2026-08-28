@@ -74,15 +74,26 @@ Three identities must remain separate:
    item type/reuse identifier.
 
 The foundation implements the first two. It mounts only a bounded keyed
-window, preserves surviving owners, and disposes items that leave the window.
-The old Lynx native item provider, numeric signs, list action stream, and
-list-specific FFI are removed.
+window and preserves surviving owners. Plain `children:` disposes items that
+leave the window. The opt-in `recycled_children:` path gives each presentation
+slot a stable `ReadSignal<T>`; a leaving slot can be rebound to an entering item
+with the same interned `reuse_identifier`. Reactive props update from that
+signal while the Rust owner, element handles, and Host views retain identity.
+`recyclable(false)` forces disposal instead. Unused slots are disposed before
+the frame is presented, so detached nodes never accumulate in the retained
+scene. A recycled builder must produce one stable subtree shape per
+`reuse_identifier`, and every item-derived prop must read the slot signal (or a
+`computed` derived from it). The old Lynx native item provider, numeric signs,
+list action stream, and list-specific FFI are removed.
 
 The source snapshot, stable keys, and prefix offsets are rebuilt only when the
 reactive item source changes. A Host scroll event finds the visible window with
 binary searches over that index and performs only the entering/leaving edge
-mutations. Scroll work is therefore `O(log n + w)` for `n` logical items and a
-mounted window of `w` items; it does not clone or rescan the complete source.
+mutations. Within one source generation it visits the range difference rather
+than rescanning retained rows, inserts entering children directly at their
+final positions, and clones only entering items. Scroll work is therefore
+`O(log n + delta)` for `n` logical items and `delta` entering/leaving items; it
+does not clone or rescan the complete source.
 
 ## Layout feedback
 
@@ -113,6 +124,6 @@ FramePacket/input event` seam before implementation.
 ## Complexity target
 
 - Source/index rebuild after data changes: `O(n)`.
-- Steady-state scroll reconciliation: `O(log n + visible + overscan)`.
+- Steady-state scroll reconciliation: `O(log n + entering + leaving)`.
 - Mounted element subtrees: `O(visible + overscan)`.
 - Host-specific List code and List-specific ABI: zero.

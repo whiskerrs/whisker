@@ -1609,6 +1609,37 @@ pub mod __tags {
                 children: f.into(),
             }
         }
+
+        /// Opts into cross-key presentation-slot recycling.
+        ///
+        /// The closure receives a stable [`ReadSignal`](crate::ReadSignal)
+        /// instead of an owned item. When a compatible row enters as another
+        /// row leaves, List updates that signal and reuses the existing Rust
+        /// owner, element subtree, and Host views. Pass the signal directly to
+        /// component props or derive values with [`computed`](crate::computed)
+        /// so the reused subtree responds to the new item. The closure must
+        /// build one stable element shape per `reuse_identifier`; item-based
+        /// structural variants need distinct identifiers.
+        pub fn recycled_children<T: 'static, F>(
+            self,
+            f: F,
+        ) -> list<
+            EachF,
+            MetaF,
+            ::whisker_runtime::view::ItemFn<::whisker_runtime::reactive::ReadSignal<T>>,
+        >
+        where
+            F: ::std::convert::Into<
+                    ::whisker_runtime::view::ItemFn<::whisker_runtime::reactive::ReadSignal<T>>,
+                >,
+        {
+            list {
+                handle: self.handle,
+                each: self.each,
+                meta: self.meta,
+                children: f.into(),
+            }
+        }
     }
     // ---- Finaliser, only on fully-populated state ----
     impl<T, K>
@@ -1637,6 +1668,35 @@ pub mod __tags {
                 move || each.call(),
                 move |t: &T| meta.call(t),
                 move |t: T| children.call(t),
+            );
+
+            handle
+        }
+    }
+
+    impl<T, K>
+        list<
+            ::whisker_runtime::view::EachFn<T>,
+            ::whisker_runtime::view::MetaFn<T, K>,
+            ::whisker_runtime::view::ItemFn<::whisker_runtime::reactive::ReadSignal<T>>,
+        >
+    where
+        T: ::std::clone::Clone + 'static,
+        K: ::std::cmp::Eq + ::std::hash::Hash + ::std::clone::Clone + 'static,
+    {
+        /// Finalises a List whose compatible item slots can be rebound.
+        #[allow(non_snake_case)]
+        pub fn __h(self) -> Element {
+            let handle = self.handle;
+            let each = self.each;
+            let meta = self.meta;
+            let children = self.children;
+
+            ::whisker_runtime::view::virtualize_recycled(
+                handle,
+                move || each.call(),
+                move |t: &T| meta.call(t),
+                move |item| children.call(item),
             );
 
             handle
