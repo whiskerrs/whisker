@@ -868,6 +868,13 @@ mod tests {
             prepared_content: None,
         };
         assert_eq!(content.validate(), Ok(()));
+        let snapshot = TextStyleSnapshot::from(&content);
+        assert_eq!(snapshot.style, content.payload.style);
+        assert_eq!(snapshot.locale, content.payload.locale);
+        assert_eq!(snapshot.direction, content.payload.direction);
+        assert_eq!(snapshot.alignment, content.payload.alignment);
+        assert_eq!(snapshot.paint, content.paint);
+        assert_eq!(snapshot.validate(), Ok(()));
         content.paint.foreground = PaintColor::Named(String::new());
         assert_eq!(content.validate(), Err(TextContentError::InvalidPaint));
         content.paint.foreground = PaintColor::default();
@@ -1049,6 +1056,24 @@ mod tests {
                     },
                     paint: TextPaint::default(),
                     prepared_content: None,
+                },
+            },
+            Operation::SetTextStyle {
+                node: target,
+                style: TextStyleSnapshot {
+                    style: crate::TextMeasureStyle {
+                        font_families: vec![crate::MeasureFontFamily::System],
+                        font_size: 14.0,
+                        font_weight: 400,
+                        font_style: crate::MeasureFontStyle::Normal,
+                        line_height: crate::MeasureLineHeight::Normal,
+                        letter_spacing: 0.0,
+                        ..crate::TextMeasureStyle::default()
+                    },
+                    locale: None,
+                    direction: crate::MeasureTextDirection::Auto,
+                    alignment: crate::MeasureTextAlignment::Start,
+                    paint: TextPaint::default(),
                 },
             },
             Operation::SetImage {

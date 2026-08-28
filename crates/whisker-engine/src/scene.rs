@@ -1209,7 +1209,7 @@ mod tests {
         LayoutRect, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
         MeasureTextOverflow, MeasureTextWrap, PaintBox, PaintColor, PaintCorners, PaintEdges,
         PaintImage, PaintLengthPercentage, PaintPosition, ResourceId, TextContentError,
-        TextMeasurePayload, TextMeasureStyle, ValidationError,
+        TextMeasurePayload, TextMeasureStyle, TextStyleSnapshot, ValidationError,
     };
 
     fn surface() -> SurfaceId {
@@ -1381,6 +1381,10 @@ mod tests {
         scene.set_z_order(root, -1).expect("z order");
         let text = text_content("hello");
         scene.set_text(root, text.clone()).expect("text");
+        let text_style = TextStyleSnapshot::from(&text);
+        scene
+            .set_text_style(root, text_style.clone())
+            .expect("text style");
         scene
             .set_property(root, property(1), WhiskerValue::String("red".into()))
             .expect("property");
@@ -1406,6 +1410,7 @@ mod tests {
         assert_eq!(root_state.children(), &[child]);
         assert_eq!(root_state.layout(), Some(rect.into()));
         assert_eq!(root_state.text(), Some(&text));
+        assert_eq!(root_state.text_style(), Some(&text_style));
         assert_eq!(root_state.box_paint(), Some(&paint));
         assert_eq!(root_state.visual_effects(), &effects);
         assert_eq!(root_state.clip(), Some(clip));
@@ -1446,6 +1451,13 @@ mod tests {
                 operation,
                 Operation::SetVisualEffects { node, effects: actual }
                     if *node == root && actual == &effects
+            )
+        }));
+        assert!(packet.operations.iter().any(|operation| {
+            matches!(
+                operation,
+                Operation::SetTextStyle { node, style }
+                    if *node == root && style == &text_style
             )
         }));
         assert!(!scene.has_pending_work());
@@ -1524,6 +1536,19 @@ mod tests {
         let text = text_content("updated");
         scene.set_text(root, text.clone()).expect("text");
         scene.set_text(root, text).expect("equal text");
+        let mut first_text_style = TextStyleSnapshot::from(&text_content("first style"));
+        let mut second_text_style = first_text_style.clone();
+        first_text_style.paint.foreground = PaintColor::Named("red".into());
+        second_text_style.paint.foreground = PaintColor::Named("blue".into());
+        scene
+            .set_text_style(root, first_text_style)
+            .expect("first text style");
+        scene
+            .set_text_style(root, second_text_style.clone())
+            .expect("coalesced text style");
+        scene
+            .set_text_style(root, second_text_style)
+            .expect("equal text style");
         scene
             .set_property(root, property(1), WhiskerValue::Int(1))
             .expect("first property");
@@ -1652,6 +1677,13 @@ mod tests {
         assert_eq!(scene.set_opacity(root, 0.7), Err(SceneError::FramePending));
         assert_eq!(
             scene.set_text(root, text_content("pending")),
+            Err(SceneError::FramePending)
+        );
+        assert_eq!(
+            scene.set_text_style(
+                root,
+                TextStyleSnapshot::from(&text_content("pending style"))
+            ),
             Err(SceneError::FramePending)
         );
         assert_eq!(
@@ -1864,6 +1896,10 @@ mod tests {
             scene.set_visibility(missing, Visibility::Visible),
             scene.set_z_order(missing, 0),
             scene.set_text(missing, text_content("missing")),
+            scene.set_text_style(
+                missing,
+                TextStyleSnapshot::from(&text_content("missing style")),
+            ),
             scene.set_property(missing, property(1), WhiskerValue::Null),
             scene.clear_property(missing, property(1)),
             scene.set_event_mask(missing, 0),
@@ -1908,6 +1944,16 @@ mod tests {
         invalid_text.payload.style.font_families.clear();
         assert_eq!(
             scene.set_text(root, invalid_text),
+            Err(SceneError::InvalidText {
+                error: TextContentError::InvalidMeasurement(
+                    whisker_protocol::MeasurementPayloadError::InvalidFontFamily,
+                ),
+            })
+        );
+        let mut invalid_text_style = TextStyleSnapshot::from(&text_content("invalid style"));
+        invalid_text_style.style.font_families.clear();
+        assert_eq!(
+            scene.set_text_style(root, invalid_text_style),
             Err(SceneError::InvalidText {
                 error: TextContentError::InvalidMeasurement(
                     whisker_protocol::MeasurementPayloadError::InvalidFontFamily,

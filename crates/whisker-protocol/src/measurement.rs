@@ -868,6 +868,29 @@ mod tests {
         );
         assert_eq!(module.payload_version, 3);
         assert_eq!(module.payload, WhiskerValue::Bytes(vec![1, 2, 3]));
+
+        request.payload = MeasurementPayload::NativeControl(NativeControlMeasurePayload {
+            control_type: 2,
+            version: 4,
+            state: vec![5, 6],
+        });
+        let module = ModuleMeasureRequest::from(&request);
+        assert_eq!(module.payload_version, 4);
+        assert_eq!(module.payload, WhiskerValue::Bytes(vec![5, 6]));
+
+        for payload in [
+            MeasurementPayload::Text(text_payload()),
+            MeasurementPayload::ReplacedContent(ReplacedContentMeasurePayload::default()),
+            MeasurementPayload::EmbeddedSurface(EmbeddedSurfaceMeasurePayload {
+                surface: SurfaceId::new(2).expect("embedded surface"),
+                preferred_size: None,
+            }),
+        ] {
+            request.payload = payload;
+            let module = ModuleMeasureRequest::from(&request);
+            assert_eq!(module.payload_version, 0);
+            assert_eq!(module.payload, WhiskerValue::Null);
+        }
     }
 
     #[test]

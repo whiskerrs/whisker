@@ -1009,6 +1009,10 @@ mod tests {
                     node: root,
                     content: text_content("hello"),
                 },
+                Operation::SetTextStyle {
+                    node: root,
+                    style: crate::TextStyleSnapshot::from(&text_content("styled")),
+                },
                 Operation::SetImage {
                     node: root,
                     content: crate::ImageContent {
@@ -1152,6 +1156,10 @@ mod tests {
                 node: missing,
                 content: text_content("missing"),
             },
+            Operation::SetTextStyle {
+                node: missing,
+                style: crate::TextStyleSnapshot::from(&text_content("missing style")),
+            },
             Operation::SetImage {
                 node: missing,
                 content: crate::ImageContent {
@@ -1275,6 +1283,23 @@ mod tests {
             }],
         )
         .expect_err("invalid text payload");
+        assert_eq!(
+            error,
+            ValidationError::InvalidText {
+                error: TextContentError::InvalidMeasurement(
+                    crate::MeasurementPayloadError::InvalidFontFamily,
+                ),
+            }
+        );
+        assert_eq!(scene.revision(), 1);
+
+        let mut style = crate::TextStyleSnapshot::from(&text_content("invalid style"));
+        style.style.font_families.clear();
+        let error = apply_next(
+            &mut scene,
+            vec![Operation::SetTextStyle { node: root, style }],
+        )
+        .expect_err("invalid inherited text style");
         assert_eq!(
             error,
             ValidationError::InvalidText {

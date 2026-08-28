@@ -419,7 +419,7 @@ mod tests {
         MeasureTextWrap, NodeId, ObjectFit, PaintBox, PaintColor, PaintCoordinate,
         PaintCornerRadius, PaintImage, PaintLengthPercentage, PaintPosition, ResourceId, SurfaceId,
         TextContent, TextDecorationLines, TextMeasurePayload, TextMeasureStyle, TextPaint,
-        VisualEffects,
+        TextStyleSnapshot, VisualEffects,
     };
 
     fn packet(operations: Vec<Operation>) -> FramePacket {
@@ -935,6 +935,13 @@ mod tests {
             overline: false,
             line_through: false,
         };
+        let text_style = TextStyleSnapshot {
+            style: style.clone(),
+            locale: None,
+            direction: MeasureTextDirection::Auto,
+            alignment: crate::MeasureTextAlignment::Start,
+            paint: text_paint.clone(),
+        };
         let operations = vec![
             Operation::SetBoxPaint { node, paint },
             Operation::SetBackgroundLayers {
@@ -975,6 +982,10 @@ mod tests {
                     paint: text_paint,
                     prepared_content: None,
                 },
+            },
+            Operation::SetTextStyle {
+                node,
+                style: text_style,
             },
             Operation::SetImage {
                 node,

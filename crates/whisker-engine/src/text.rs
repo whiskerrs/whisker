@@ -288,6 +288,10 @@ mod tests {
             lowered.measurement().payload,
             MeasurementPayload::Text(lowered.content().payload.clone())
         );
+        assert_eq!(
+            lower_text_style(style.computed()),
+            TextStyleSnapshot::from(lowered.content())
+        );
 
         let same = lower_plain_text(&input, style.computed());
         assert_eq!(lowered, same);

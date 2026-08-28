@@ -324,10 +324,12 @@ impl Drop for ModulePromise {
 }
 
 /// Event channel available to Rust Host module handlers.
+type ModuleEventSink = Rc<dyn Fn(&str, &str, WhiskerValue) -> bool>;
+
 #[derive(Clone)]
 pub struct ModuleEventEmitter {
     module: String,
-    emit: Rc<dyn Fn(&str, &str, WhiskerValue) -> bool>,
+    emit: ModuleEventSink,
 }
 
 impl ModuleEventEmitter {

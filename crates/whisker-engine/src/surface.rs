@@ -1453,6 +1453,24 @@ mod tests {
         surface
             .set_plain_text(root, &PlainTextInput::new("animated"), style)
             .unwrap();
+        surface.set_text_style(root, style).unwrap();
+        let text_style = lower_text_style(style);
+        assert_eq!(surface.node(root).unwrap().text_style(), Some(&text_style));
+        surface
+            .set_text_style_snapshot(root, text_style.clone())
+            .unwrap();
+        assert_eq!(
+            surface.set_text_style(missing, style),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        assert_eq!(
+            surface.set_text_style_snapshot(missing, text_style),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
         let mut text = surface.node(root).unwrap().text().unwrap().clone();
         text.paint.foreground = whisker_protocol::PaintColor::Srgba {
             red: 255,

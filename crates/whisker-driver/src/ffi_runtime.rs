@@ -1928,6 +1928,9 @@ fn mobile_paint(
         ],
     }
 }
+// Each operation retains a raw pointer to its text until the Host consumes the
+// complete frame, so every text value needs an address that survives Vec growth.
+#[allow(clippy::vec_box)]
 fn push_mobile_text(
     content: &TextContent,
     strings: &mut Vec<CString>,

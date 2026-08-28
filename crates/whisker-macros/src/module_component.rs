@@ -130,6 +130,13 @@ struct SchemaArgs {
     commands: Vec<(LitStr, Ident)>,
 }
 
+struct SchemaDefinition<'a> {
+    name: &'a LitStr,
+    measurement: &'a Ident,
+    text_style: bool,
+    commands: &'a [(LitStr, Ident)],
+}
+
 impl Parse for SchemaArgs {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut name = None;
@@ -372,16 +379,13 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             text_style,
             commands,
         } => {
-            let schema = match schema_tokens(
-                &schema_mod,
-                vis,
+            let definition = SchemaDefinition {
                 name,
                 measurement,
-                *text_style,
+                text_style: *text_style,
                 commands,
-                &props,
-                true,
-            ) {
+            };
+            let schema = match schema_tokens(&schema_mod, vis, &definition, &props, true) {
                 Ok(schema) => schema,
                 Err(error) => return error.to_compile_error(),
             };
@@ -561,16 +565,13 @@ pub fn expand_builtin(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     }
 
     let schema_mod = format_ident!("{}_schema", signature.ident);
-    match schema_tokens(
-        &schema_mod,
-        visibility,
-        &args.0,
-        &args.1,
-        args.2,
-        &args.3,
-        &props,
-        false,
-    ) {
+    let definition = SchemaDefinition {
+        name: &args.0,
+        measurement: &args.1,
+        text_style: args.2,
+        commands: &args.3,
+    };
+    match schema_tokens(&schema_mod, visibility, &definition, &props, false) {
         Ok(tokens) => tokens,
         Err(error) => error.to_compile_error(),
     }
@@ -579,13 +580,16 @@ pub fn expand_builtin(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
 fn schema_tokens(
     schema_mod: &Ident,
     visibility: &Visibility,
-    name: &LitStr,
-    measurement: &Ident,
-    text_style: bool,
-    command_declarations: &[(LitStr, Ident)],
+    definition: &SchemaDefinition<'_>,
     props: &[Prop],
     named_provider: bool,
 ) -> syn::Result<TokenStream2> {
+    let SchemaDefinition {
+        name,
+        measurement,
+        text_style,
+        commands: command_declarations,
+    } = definition;
     let measurement_name = measurement.to_string();
     if !matches!(
         measurement_name.as_str(),
