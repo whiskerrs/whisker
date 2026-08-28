@@ -14,6 +14,8 @@ import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.input.HostPointerInput
 import rs.whisker.runtime.input.normalizePointerInput
 import rs.whisker.runtime.measure.HostMeasurementProvider
+import rs.whisker.runtime.measure.HostMeasureBatchAbi
+import rs.whisker.runtime.measure.HostMeasureBatchResponse
 import rs.whisker.runtime.module.HostModuleDispatcher
 import rs.whisker.runtime.paint.HostRasterResourceStore
 import rs.whisker.runtime.resource.HostResourceAbiEvent
@@ -520,27 +522,24 @@ class WhiskerView(context: Context) :
         }
     }
 
-    @Suppress("LongParameterList")
-    fun measureFromNative(
-        elementType: Int, kind: Int,
-        knownWidth: Float, knownHeight: Float, knownMask: Int,
-        availableWidth: Float, availableHeight: Float, availableWidthKind: Int, availableHeightKind: Int,
-        text: String, fontFamilies: Array<String>, fontSize: Float, fontWeight: Int,
-        fontStyle: Int, wrap: Int, wordBreak: Int, overflow: Int, letterSpacing: Float,
-        lineHeight: Float, indentLogicalPixels: Float, indentPercentage: Float,
-        maxLines: Int, fontSettings: Array<String>, fontFeatureCount: Int,
-        fontOpticalSizing: Int, payloadVersion: Int, payload: ByteArray,
-        intrinsicWidth: Float, intrinsicHeight: Float, intrinsicMask: Int,
-        direction: Int, alignment: Int,
-    ): FloatArray = measurements.measure(
-        elementType, kind,
-        knownWidth, knownHeight, knownMask,
-        availableWidth, availableHeight, availableWidthKind, availableHeightKind,
-        text, fontFamilies, fontSize, fontWeight,
-        fontStyle, wrap, wordBreak, overflow, letterSpacing,
-        lineHeight, indentLogicalPixels, indentPercentage,
-        maxLines, fontSettings, fontFeatureCount, fontOpticalSizing, payloadVersion, payload,
-        intrinsicWidth, intrinsicHeight, intrinsicMask, direction, alignment,
+    /** Processes one native intrinsic-measurement batch in a single Host call. */
+    fun measureBatchFromNative(
+        requestLongs: LongArray,
+        requestInts: IntArray,
+        requestFloats: FloatArray,
+        requestStrings: Array<String>,
+        fontFamilies: Array<Array<String>>,
+        fontSettings: Array<Array<String>>,
+        payloads: Array<ByteArray>,
+    ): HostMeasureBatchResponse = HostMeasureBatchAbi.measure(
+        measurements,
+        requestLongs,
+        requestInts,
+        requestFloats,
+        requestStrings,
+        fontFamilies,
+        fontSettings,
+        payloads,
     )
 
     private external fun nativeCreate(width: Float, height: Float, scale: Float): Long
