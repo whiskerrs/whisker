@@ -62,6 +62,7 @@ struct RenderNode {
     presentation: CommonPresentation,
     content: DesktopElementContent,
     event_mask: u64,
+    scroll_offset: [f32; 2],
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -305,6 +306,15 @@ pub(crate) enum PaintCommand<'a> {
         transform: Transform,
         opacity: f32,
     },
+    Raster {
+        node: NodeId,
+        rect: LayoutRect,
+        rasterizer: &'a dyn crate::DesktopNativeElement,
+        clip: LogicalClip,
+        shape_clips: ShapeClipStack,
+        transform: Transform,
+        opacity: f32,
+    },
 }
 
 #[derive(Debug)]
@@ -340,6 +350,18 @@ impl DesktopScene {
     }
 
     pub(crate) fn cursor_at(&self, point: [f32; 2]) -> Option<whisker_protocol::CursorKeyword> {
+        let node = self.hit_test(point)?;
+        Some(
+            self.nodes
+                .get(&node)
+                .expect("hit-tested Desktop node remains live")
+                .presentation
+                .cursor
+                .fallback,
+        )
+    }
+
+    pub(crate) fn hit_test(&self, point: [f32; 2]) -> Option<NodeId> {
         let mut roots = self
             .nodes
             .iter()
@@ -355,15 +377,15 @@ impl DesktopScene {
         roots
             .into_iter()
             .rev()
-            .find_map(|(node, _)| self.cursor_at_node(node, point, [0.0, 0.0]))
+            .find_map(|(node, _)| self.hit_test_node(node, point, [0.0, 0.0]))
     }
 
-    fn cursor_at_node(
+    fn hit_test_node(
         &self,
         node: NodeId,
         point: [f32; 2],
         parent_origin: [f32; 2],
-    ) -> Option<whisker_protocol::CursorKeyword> {
+    ) -> Option<NodeId> {
         let state = self.nodes.get(&node)?;
         let presentation = &state.presentation;
         if presentation.hit_test == HitTestBehavior::None {
@@ -377,6 +399,14 @@ impl DesktopScene {
         let clipped = (presentation.clip.horizontal == OverflowClip::Hidden && !contains_x)
             || (presentation.clip.vertical == OverflowClip::Hidden && !contains_y);
         if presentation.hit_test != HitTestBehavior::BoxOnly && !clipped {
+            let child_origin = if state.content.is_scroll_container() {
+                [
+                    origin[0] - state.scroll_offset[0],
+                    origin[1] - state.scroll_offset[1],
+                ]
+            } else {
+                origin
+            };
             let mut children = presentation
                 .children
                 .iter()
@@ -393,8 +423,8 @@ impl DesktopScene {
                 .collect::<Vec<_>>();
             children.sort_by_key(|(_, z_order, index)| (*z_order, *index));
             for (child, _, _) in children.into_iter().rev() {
-                if let Some(cursor) = self.cursor_at_node(child, point, origin) {
-                    return Some(cursor);
+                if let Some(target) = self.hit_test_node(child, point, child_origin) {
+                    return Some(target);
                 }
             }
         }
@@ -402,7 +432,62 @@ impl DesktopScene {
             && contains_x
             && contains_y
             && presentation.hit_test != HitTestBehavior::DescendantsOnly)
-            .then_some(presentation.cursor.fallback)
+            .then_some(node)
+    }
+
+    pub(crate) fn scroll_at(&mut self, point: [f32; 2], delta: [f32; 2]) -> bool {
+        let Some(hit) = self.hit_test(point) else {
+            return false;
+        };
+        let mut current = Some(hit);
+        while let Some(node) = current {
+            let is_scroll = self
+                .nodes
+                .get(&node)
+                .is_some_and(|state| state.content.is_scroll_container());
+            if is_scroll {
+                let max = self.max_scroll_offset(node);
+                let state = self.nodes.get_mut(&node).expect("scroll hit remains live");
+                let next = [0.0, (state.scroll_offset[1] + delta[1]).clamp(0.0, max[1])];
+                let changed = next != state.scroll_offset;
+                state.scroll_offset = next;
+                return changed;
+            }
+            current = self
+                .nodes
+                .get(&node)
+                .and_then(|state| state.presentation.parent);
+        }
+        false
+    }
+
+    fn max_scroll_offset(&self, node: NodeId) -> [f32; 2] {
+        let state = self.nodes.get(&node).expect("scroll node remains live");
+        let viewport = state.presentation.layout.content_box;
+        let content_height = state
+            .presentation
+            .children
+            .iter()
+            .filter_map(|child| self.nodes.get(child))
+            .fold(viewport.height, |extent, child| {
+                let rect = child.presentation.layout.border_box;
+                extent.max(rect.y + rect.height)
+            });
+        [0.0, (content_height - viewport.height).max(0.0)]
+    }
+
+    fn clamp_scroll_offsets(&mut self) {
+        let scroll_nodes = self
+            .nodes
+            .iter()
+            .filter_map(|(node, state)| state.content.is_scroll_container().then_some(*node))
+            .collect::<Vec<_>>();
+        for node in scroll_nodes {
+            let max = self.max_scroll_offset(node);
+            let state = self.nodes.get_mut(&node).expect("scroll node remains live");
+            state.scroll_offset[0] = state.scroll_offset[0].clamp(0.0, max[0]);
+            state.scroll_offset[1] = state.scroll_offset[1].clamp(0.0, max[1]);
+        }
     }
 
     pub(crate) fn paint_commands(&self) -> Vec<PaintCommand<'_>> {
@@ -570,6 +655,17 @@ impl DesktopScene {
                 opacity,
             });
         }
+        if visible && let Some(rasterizer) = node.content.rasterizer() {
+            commands.push(PaintCommand::Raster {
+                node: id,
+                rect: content,
+                rasterizer,
+                clip: descendant_clip.intersect(content, true, true),
+                shape_clips: descendant_shape_clips.clone(),
+                transform,
+                opacity,
+            });
+        }
 
         let mut children = node
             .presentation
@@ -588,10 +684,18 @@ impl DesktopScene {
             .collect::<Vec<_>>();
         children.sort_by_key(|(_, z, index)| (*z, *index));
         for (child, _, _) in children {
+            let child_origin = if node.content.is_scroll_container() {
+                [
+                    border.x - node.scroll_offset[0],
+                    border.y - node.scroll_offset[1],
+                ]
+            } else {
+                [border.x, border.y]
+            };
             self.collect_commands(
                 child,
                 PresentationContext {
-                    origin: [border.x, border.y],
+                    origin: child_origin,
                     transform,
                     clip: descendant_clip,
                     shape_clips: descendant_shape_clips.clone(),
@@ -739,6 +843,7 @@ impl DesktopScene {
                             presentation: CommonPresentation::default(),
                             content,
                             event_mask: 0,
+                            scroll_offset: [0.0; 2],
                         },
                     );
                 }
@@ -934,6 +1039,7 @@ impl DesktopScene {
                 }
             }
         }
+        self.clamp_scroll_offsets();
     }
 
     fn delete_subtree(&mut self, node: NodeId) {
@@ -1711,6 +1817,85 @@ mod tests {
             scene.nodes[&node].presentation.background_layers,
             vec![layer]
         );
+    }
+
+    #[test]
+    fn scroll_container_offsets_paint_and_hit_testing_inside_its_viewport() {
+        let scroll = id(1);
+        let content = id(2);
+        let target = id(3);
+        let mut scene = scene(SurfaceId::new(1).unwrap());
+        scene
+            .present(&packet(
+                FrameMode::Snapshot,
+                0,
+                1,
+                vec![
+                    Operation::CreateNode {
+                        node: scroll,
+                        element_type: element_type(whisker::SCROLL_VIEW_ELEMENT_NAME),
+                    },
+                    Operation::CreateNode {
+                        node: content,
+                        element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+                    },
+                    Operation::CreateNode {
+                        node: target,
+                        element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+                    },
+                    Operation::InsertChild {
+                        parent: scroll,
+                        child: content,
+                        index: 0,
+                    },
+                    Operation::InsertChild {
+                        parent: content,
+                        child: target,
+                        index: 0,
+                    },
+                    Operation::SetLayout {
+                        node: scroll,
+                        geometry: geometry(0.0, 0.0, 100.0, 100.0),
+                    },
+                    Operation::SetLayout {
+                        node: content,
+                        geometry: geometry(0.0, 0.0, 100.0, 300.0),
+                    },
+                    Operation::SetLayout {
+                        node: target,
+                        geometry: geometry(0.0, 150.0, 100.0, 40.0),
+                    },
+                    Operation::SetClip {
+                        node: scroll,
+                        clip: BoxClip {
+                            horizontal: OverflowClip::Hidden,
+                            vertical: OverflowClip::Hidden,
+                        },
+                    },
+                    Operation::SetBoxPaint {
+                        node: target,
+                        paint: paint(PaintColor::Srgba {
+                            red: 255,
+                            green: 0,
+                            blue: 0,
+                            alpha: 1.0,
+                        }),
+                    },
+                ],
+            ))
+            .unwrap();
+
+        assert_eq!(scene.hit_test([10.0, 60.0]), Some(content));
+        assert!(scene.scroll_at([10.0, 60.0], [0.0, 120.0]));
+        assert_eq!(scene.nodes[&scroll].scroll_offset, [0.0, 120.0]);
+        assert_eq!(scene.hit_test([10.0, 60.0]), Some(target));
+        assert!(scene.paint_commands().iter().any(|command| {
+            matches!(
+                command,
+                PaintCommand::Box { rect, .. }
+                    if rect.x == 0.0 && rect.y == 30.0 && rect.width == 100.0
+            )
+        }));
     }
 
     #[test]

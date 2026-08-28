@@ -9,7 +9,7 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Whisker SVG widget — `Svg(content: …, color: …, style: …)`. Compiles inline SVG XML to the v1 display-list byte stream defined in `SPEC.md` and hands it to the iOS / Android replayer modules over `WhiskerValue::Bytes` (base64-cased through the existing string Prop pipeline to avoid C ABI churn)."
+description = "Whisker SVG widget with native Android, iOS, Web, and Desktop host renderers."
 
 # Explicit include — mirrors whisker-image / whisker-safe-area:
 # `cargo publish` ships the Kotlin + Swift platform sources next to
@@ -30,7 +30,11 @@ include = [
 crate-type = ["rlib"]
 
 # Module-system opt-in marker — same as whisker-image / whisker-video.
-[package.metadata.whisker]
+[package.metadata.whisker.desktop]
+package = "whisker-svg-desktop-host"
+
+[package.metadata.whisker.web]
+package = "whisker-svg-web-host"
 
 [dependencies]
 whisker = { workspace = true }

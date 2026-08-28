@@ -733,21 +733,22 @@ impl SurfaceRuntime {
             }
             event.validate().map_err(RuntimeInputError::InvalidInput)?;
             let root = state.root.ok_or(RuntimeInputError::MissingRoot)?;
-            let target = if let Some(target) = event.target {
+            let captured = event
+                .pointer
+                .and_then(|pointer| state.surface.pointer_capture_target(pointer.id));
+            let target = if let Some(captured) = captured {
+                Some(captured)
+            } else if let Some(target) = event.target {
                 if state.surface.node(target).is_none() {
                     return Err(RuntimeInputError::UnknownTarget { node: target });
                 }
                 Some(target)
             } else if let Some(pointer) = event.pointer {
-                if let Some(captured) = state.surface.pointer_capture_target(pointer.id) {
-                    Some(captured)
-                } else {
-                    state
-                        .surface
-                        .hit_test(root, pointer.position)
-                        .map_err(RuntimeBindingError::from)
-                        .map_err(RuntimeInputError::Binding)?
-                }
+                state
+                    .surface
+                    .hit_test(root, pointer.position)
+                    .map_err(RuntimeBindingError::from)
+                    .map_err(RuntimeInputError::Binding)?
             } else {
                 None
             };

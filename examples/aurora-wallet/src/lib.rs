@@ -31,6 +31,11 @@ const NEGATIVE: Color = Color::hex(0xFF6B6B); // expense
 const CURRENCY: &str = "$"; // try "€" / "£" / "¥"
 const USER: &str = "Alex"; // greeting name
 const CARD_RADIUS: i32 = 24; // balance-card corner radius
+const TOP_PADDING: i32 = if cfg!(any(target_os = "android", target_os = "ios")) {
+    64
+} else {
+    20
+};
 // ─────────────────────────────────────────────────────────────────────
 
 fn muted() -> Color {
@@ -87,7 +92,7 @@ pub fn app() -> Element {
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 padding: px(20),
-                padding_top: px(64),
+                padding_top: px(TOP_PADDING),
                 padding_bottom: px(40),
             )) {
                 // ── Header ───────────────────────────────────────────
@@ -145,7 +150,10 @@ pub fn app() -> Element {
                             style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(14)),
                             value: "Total balance",
                         )
-                        view(on_tap: move |_| hidden.set(!hidden.get())) {
+                        view(
+                            on_tap: move |_| hidden.set(!hidden.get()),
+                            on_click: move |_| hidden.set(!hidden.get()),
+                        ) {
                             Icon(svg: eye_icon, color: "#FFFFFF", size: "18")
                         }
                     }
@@ -245,7 +253,11 @@ fn segment(label: &'static str, index: usize, selected: RwSignal<usize>) -> Elem
     });
 
     render! {
-        view(style: pill_style, on_tap: move |_| selected.set(index)) {
+        view(
+            style: pill_style,
+            on_tap: move |_| selected.set(index),
+            on_click: move |_| selected.set(index),
+        ) {
             text(style: label_style, value: label)
         }
     }

@@ -20,10 +20,16 @@ pub(crate) fn set_style(
     property: &str,
     value: &str,
 ) -> Result<(), WebError> {
-    let html = element
-        .dyn_ref::<web_sys::HtmlElement>()
-        .ok_or_else(|| WebError("Whisker DOM node is not an HtmlElement".into()))?;
-    html.style()
+    let style = if let Some(html) = element.dyn_ref::<web_sys::HtmlElement>() {
+        html.style()
+    } else if let Some(svg) = element.dyn_ref::<web_sys::SvgElement>() {
+        svg.style()
+    } else {
+        return Err(WebError(
+            "Whisker DOM node exposes no CSS style declaration".into(),
+        ));
+    };
+    style
         .set_property(property, value)
         .map_err(|error| js_error(&format!("set CSS property {property}"), error))
 }

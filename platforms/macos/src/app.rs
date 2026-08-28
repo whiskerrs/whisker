@@ -13,7 +13,7 @@ use whisker_protocol::{CursorKeyword, InputEvent, SurfaceId};
 use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{ElementState, MouseButton, TouchPhase, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::window::{CursorIcon, Window, WindowAttributes, WindowId};
 
@@ -72,6 +72,16 @@ fn touch_phase(value: TouchPhase) -> DesktopPointerPhase {
         TouchPhase::Moved => DesktopPointerPhase::Move,
         TouchPhase::Ended => DesktopPointerPhase::Up,
         TouchPhase::Cancelled => DesktopPointerPhase::Cancel,
+    }
+}
+
+fn scroll_delta(value: MouseScrollDelta, scale: f64) -> [f32; 2] {
+    match value {
+        MouseScrollDelta::LineDelta(x, y) => [-x * 40.0, -y * 40.0],
+        MouseScrollDelta::PixelDelta(position) => {
+            let logical = position.to_logical::<f32>(scale);
+            [-logical.x, -logical.y]
+        }
     }
 }
 
@@ -297,7 +307,10 @@ impl MacosApplication {
         self.request_frame();
     }
 
-    fn dispatch_input(&mut self, event: InputEvent) {
+    fn dispatch_input(&mut self, mut event: InputEvent) {
+        if let Some(host) = &self.host {
+            host.target_input(&mut event);
+        }
         let Some(runtime) = &self.runtime else {
             return;
         };
@@ -373,6 +386,17 @@ impl ApplicationHandler<HostEvent> for MacosApplication {
                     state == ElementState::Pressed,
                 ) {
                     self.dispatch_input(input);
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                if let (Some(window), Some(position), Some(host)) =
+                    (&self.window, self.pointer.mouse_position(), &mut self.host)
+                    && host.scroll_at(
+                        [position.x, position.y],
+                        scroll_delta(delta, window.scale_factor()),
+                    )
+                {
+                    self.request_frame();
                 }
             }
             WindowEvent::Touch(touch) => {

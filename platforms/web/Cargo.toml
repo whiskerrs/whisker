@@ -40,6 +40,7 @@ web-sys = { version = "0.3", features = [
     "Node",
     "Performance",
     "PointerEvent",
+    "SvgElement",
     "Url",
     "Window",
 ] }

@@ -65,6 +65,14 @@ impl DesktopSurface {
     ) -> Option<whisker_protocol::CursorKeyword> {
         self.scene.cursor_at(logical_position)
     }
+
+    pub(crate) fn hit_test(&self, logical_position: [f32; 2]) -> Option<whisker_protocol::NodeId> {
+        self.scene.hit_test(logical_position)
+    }
+
+    pub(crate) fn scroll_at(&mut self, logical_position: [f32; 2], delta: [f32; 2]) -> bool {
+        self.scene.scroll_at(logical_position, delta)
+    }
 }
 
 impl FrameSink for DesktopSurface {

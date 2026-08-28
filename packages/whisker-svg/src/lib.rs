@@ -33,11 +33,10 @@
 //! the v1 display-list byte stream defined in
 //! `packages/whisker-svg/SPEC.md`. The bytes are base64-encoded
 //! and sent through the standard Whisker `apply_attr` stringified-
-//! value path — Whisker's existing C ABI doesn't expose a "binary
-//! Prop" channel, and the iOS / Android replayer modules accept
-//! the base64 directly. A future PR can swap the transport without
-//! touching the platform replayer logic (the base64 layer is paint
-//! around the `display_list` Prop only).
+//! value path — Whisker's existing module contract doesn't expose
+//! a binary Prop channel, and each host replayer accepts the base64
+//! directly. A future transport can change this without touching
+//! the platform replay logic.
 //!
 //! ## Tinting
 //!
@@ -55,6 +54,8 @@
 //!   (view: `WhiskerSvgView.swift`, decoder: `DisplayListReplayer.swift`)
 //! - Android: `packages/whisker-svg/android/src/main/kotlin/rs/whisker/modules/svg/SvgModule.kt`
 //!   (view: `WhiskerSvgView.kt`, decoder: `DisplayListReplayer.kt`)
+//! - Web: `packages/whisker-svg/web/src/lib.rs`
+//! - Desktop: `packages/whisker-svg/desktop/src/lib.rs`
 
 // Modules below are `#[doc(hidden)]` — `pub` for the `tests/` crate
 // integration tests, but not part of the SemVer surface. The

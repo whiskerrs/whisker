@@ -109,6 +109,11 @@ impl DesktopPointerAdapter {
         }
     }
 
+    /// Last logical cursor position observed by this surface.
+    pub const fn mouse_position(&self) -> Option<InputPoint> {
+        self.mouse_position
+    }
+
     /// Normalizes a mouse cursor update at a logical window position.
     pub fn cursor_moved(&mut self, timestamp_ms: f64, position: [f32; 2]) -> InputEvent {
         let position = InputPoint {
