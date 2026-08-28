@@ -26,6 +26,10 @@ import rs.whisker.runtime.scene.HostNode
 import rs.whisker.runtime.scene.HostScene
 import rs.whisker.runtime.scene.HostSceneOperation
 
+private const val HOST_SCENE_OPERATION_STRIDE = 10
+private const val HOST_APPLY_ACCEPTED = 0
+private const val HOST_APPLY_REJECTED = 2
+
 /** The single Android View that owns a Whisker runtime and its native scene. */
 class WhiskerView(context: Context) :
     WhiskerContainerView(context),
@@ -276,6 +280,75 @@ class WhiskerView(context: Context) :
     ): Int = scene.beginFrame(mode, epoch, baseRevision, targetRevision)
 
     fun currentRevisionFromNative(): Long = scene.currentRevision()
+
+    /**
+     * Accepts one complete scene transaction through a single JNI method invocation.
+     *
+     * Each operation occupies ten longs in [metadata]: tag, flags, node, parent, child,
+     * index, member, integer, scalar bits, and wide. Variable-sized typed payloads remain
+     * in parallel arrays so JNI owns them for the duration of this call.
+     */
+    @Suppress("LongParameterList")
+    fun presentFrameFromNative(
+        mode: Int,
+        epoch: Int,
+        baseRevision: Long,
+        targetRevision: Long,
+        metadata: LongArray,
+        numbers: Array<FloatArray?>,
+        texts: Array<String?>,
+        names: Array<Array<String>?>,
+        values: Array<WhiskerValue?>,
+        response: LongArray,
+    ): Boolean {
+        if (response.size < 2) return false
+        val operationCount = metadata.size / HOST_SCENE_OPERATION_STRIDE
+        if (
+            metadata.size % HOST_SCENE_OPERATION_STRIDE != 0 ||
+            numbers.size != operationCount ||
+            texts.size != operationCount ||
+            names.size != operationCount ||
+            values.size != operationCount
+        ) {
+            response[0] = HOST_APPLY_REJECTED.toLong()
+            response[1] = scene.currentRevision()
+            return true
+        }
+
+        val beginStatus = scene.beginFrame(mode, epoch, baseRevision, targetRevision)
+        if (beginStatus != HOST_APPLY_ACCEPTED) {
+            response[0] = beginStatus.toLong()
+            response[1] = scene.currentRevision()
+            return true
+        }
+
+        repeat(operationCount) { index ->
+            val offset = index * HOST_SCENE_OPERATION_STRIDE
+            scene.stage(
+                HostSceneOperation(
+                    tag = metadata[offset].toInt(),
+                    flags = metadata[offset + 1].toInt(),
+                    node = metadata[offset + 2],
+                    parent = metadata[offset + 3],
+                    child = metadata[offset + 4],
+                    index = metadata[offset + 5].toInt(),
+                    member = metadata[offset + 6].toInt(),
+                    integer = metadata[offset + 7].toInt(),
+                    scalar = Float.fromBits(metadata[offset + 8].toInt()),
+                    wide = metadata[offset + 9],
+                    numbers = numbers[index],
+                    text = texts[index],
+                    names = names[index],
+                    value = values[index],
+                ),
+            )
+        }
+
+        val accepted = scene.commit()
+        response[0] = (if (accepted) HOST_APPLY_ACCEPTED else HOST_APPLY_REJECTED).toLong()
+        response[1] = if (accepted) targetRevision else scene.currentRevision()
+        return true
+    }
 
     /** Registers an already decoded raster. Acquisition and eviction are separate Host concerns. */
     fun registerRasterResourceFromNative(resourceId: Long, bitmap: Bitmap): Boolean =

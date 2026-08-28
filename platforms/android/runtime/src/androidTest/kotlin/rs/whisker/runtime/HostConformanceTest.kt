@@ -165,6 +165,89 @@ class HostConformanceTest {
     }
 
     @Test
+    fun acceptsHeterogeneousOperationsAsOneTransactionalFrameBatch() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val view = WhiskerView(context)
+                val metadata = longArrayOf(
+                    // create node 1 as the built-in View element
+                    1, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+                    // assign both border and content geometry
+                    6, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+                    // apply opacity after layout
+                    10, 0, 1, 0, 0, 0, 0, 0, 0.4f.toRawBits().toLong(), 0,
+                )
+                val response = LongArray(2)
+
+                assertTrue(
+                    view.presentFrameFromNative(
+                        mode = 0,
+                        epoch = 3,
+                        baseRevision = 0,
+                        targetRevision = 9,
+                        metadata = metadata,
+                        numbers = arrayOf(
+                            null,
+                            floatArrayOf(10f, 20f, 30f, 40f, 0f, 0f, 30f, 40f),
+                            null,
+                        ),
+                        texts = arrayOfNulls(3),
+                        names = arrayOfNulls(3),
+                        values = arrayOfNulls(3),
+                        response = response,
+                    ),
+                )
+                assertEquals(0L, response[0])
+                assertEquals(9L, response[1])
+                assertEquals(9L, view.currentRevisionFromNative())
+                assertEquals(0.4f, view.getChildAt(0).alpha, 0.001f)
+
+                val snapshotResponse = LongArray(2)
+                assertTrue(
+                    view.presentFrameFromNative(
+                        mode = 1,
+                        epoch = 3,
+                        baseRevision = 8,
+                        targetRevision = 10,
+                        metadata = LongArray(0),
+                        numbers = emptyArray(),
+                        texts = emptyArray(),
+                        names = emptyArray(),
+                        values = emptyArray(),
+                        response = snapshotResponse,
+                    ),
+                )
+                assertEquals(1L, snapshotResponse[0])
+                assertEquals(9L, snapshotResponse[1])
+                assertEquals(0.4f, view.getChildAt(0).alpha, 0.001f)
+
+                val rejectedResponse = LongArray(2)
+                assertTrue(
+                    view.presentFrameFromNative(
+                        mode = 1,
+                        epoch = 3,
+                        baseRevision = 9,
+                        targetRevision = 10,
+                        metadata = longArrayOf(
+                            10, 0, 1, 0, 0, 0, 0, 0,
+                            Float.NaN.toRawBits().toLong(), 0,
+                        ),
+                        numbers = arrayOf(null),
+                        texts = arrayOfNulls(1),
+                        names = arrayOfNulls(1),
+                        values = arrayOfNulls(1),
+                        response = rejectedResponse,
+                    ),
+                )
+                assertEquals(2L, rejectedResponse[0])
+                assertEquals(9L, rejectedResponse[1])
+                assertEquals(0.4f, view.getChildAt(0).alpha, 0.001f)
+            }
+    }
+
+    @Test
     fun rejectsAnUnregisteredBackgroundResourceTransactionally() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()

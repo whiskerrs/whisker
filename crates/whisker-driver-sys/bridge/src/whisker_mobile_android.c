@@ -15,8 +15,10 @@ typedef struct { jobject surface; void* runtime; } WhiskerAndroidView;
 static JavaVM* g_vm;
 static jclass g_view_class;
 static jmethodID g_request_frame, g_begin_bootstrap, g_register_element, g_finish_bootstrap;
-static jmethodID g_begin_frame, g_current_revision, g_stage_operation, g_commit_frame, g_measure;
+static jmethodID g_present_frame, g_current_revision, g_measure;
 static jmethodID g_resource_command, g_invoke_module, g_observe_module;
+
+enum { WHISKER_ANDROID_OPERATION_STRIDE = 10 };
 
 void whisker_mobile_bridge_anchor(void) {}
 
@@ -282,31 +284,33 @@ static jobjectArray font_settings(JNIEnv* env,
 }
 
 static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMobileApplyResponse* response) {
-    if (frame == NULL || response == NULL || frame->abi_major != WHISKER_MOBILE_ABI_MAJOR) return false;
+    if (frame == NULL || response == NULL || frame->abi_major != WHISKER_MOBILE_ABI_MAJOR ||
+        frame->operation_count > INT32_MAX / WHISKER_ANDROID_OPERATION_STRIDE ||
+        (frame->operations == NULL) != (frame->operation_count == 0)) return false;
     bool attached; JNIEnv* env = whisker_env(&attached); jobject view = env != NULL ? local_view(env, data) : NULL;
     if (view == NULL) return false;
-    jint begin = (*env)->CallIntMethod(env, view, g_begin_frame, (jint)frame->mode,
-        (jint)frame->scene_epoch, (jlong)frame->base_revision, (jlong)frame->target_revision);
-    if (clear_exception(env)) begin = WHISKER_APPLY_REJECTED;
-    if (begin == WHISKER_APPLY_NEED_SNAPSHOT) {
-        jlong revision = (*env)->CallLongMethod(env, view, g_current_revision);
-        if (clear_exception(env)) {
-            (*env)->DeleteLocalRef(env, view);
-            if (attached) (*g_vm)->DetachCurrentThread(g_vm);
-            return false;
-        }
-        response->status = WHISKER_APPLY_NEED_SNAPSHOT; response->revision = (uint64_t)revision;
-        (*env)->DeleteLocalRef(env, view); if (attached) (*g_vm)->DetachCurrentThread(g_vm); return true;
-    }
-    if (begin != WHISKER_APPLY_ACCEPTED) {
-        response->status = WHISKER_APPLY_REJECTED;
-        response->revision = (uint64_t)(*env)->CallLongMethod(env, view, g_current_revision);
-        bool failed = clear_exception(env);
-        (*env)->DeleteLocalRef(env, view);
-        if (attached) (*g_vm)->DetachCurrentThread(g_vm);
-        return !failed;
-    }
+
+    const jsize operation_count = (jsize)frame->operation_count;
+    const jsize metadata_count = operation_count * WHISKER_ANDROID_OPERATION_STRIDE;
+    jlongArray metadata = (*env)->NewLongArray(env, metadata_count);
+    jclass float_array_class = (*env)->FindClass(env, "[F");
+    jclass string_class = (*env)->FindClass(env, "java/lang/String");
+    jclass string_array_class = (*env)->FindClass(env, "[Ljava/lang/String;");
+    jclass value_class = (*env)->FindClass(env, "rs/whisker/runtime/WhiskerValue");
+    jobjectArray number_batches = float_array_class == NULL ? NULL
+        : (*env)->NewObjectArray(env, operation_count, float_array_class, NULL);
+    jobjectArray texts = string_class == NULL ? NULL
+        : (*env)->NewObjectArray(env, operation_count, string_class, NULL);
+    jobjectArray name_batches = string_array_class == NULL ? NULL
+        : (*env)->NewObjectArray(env, operation_count, string_array_class, NULL);
+    jobjectArray values = value_class == NULL ? NULL
+        : (*env)->NewObjectArray(env, operation_count, value_class, NULL);
+    jlongArray result = (*env)->NewLongArray(env, 2);
+    jlong* metadata_values = malloc(
+        (metadata_count > 0 ? (size_t)metadata_count : 1) * sizeof(jlong));
     bool ok = true;
+    if (metadata == NULL || number_batches == NULL || texts == NULL || name_batches == NULL ||
+        values == NULL || result == NULL || metadata_values == NULL || clear_exception(env)) ok = false;
     for (size_t i = 0; i < frame->operation_count && ok; ++i) {
         const WhiskerMobileOperation* op = &frame->operations[i];
         jfloatArray numbers = NULL; jstring text = NULL; jobjectArray names = NULL; jobject value = NULL;
@@ -618,27 +622,67 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
             case WHISKER_OP_PROPERTY: case WHISKER_OP_COMMAND: value = raw_to_value(env, op->payload); break;
         }
         if (!ok) break;
-        ok = (*env)->CallBooleanMethod(env, view, g_stage_operation,
-            (jint)op->tag,(jint)staged_flags,(jlong)op->node,(jlong)op->parent,(jlong)op->child,
-            (jint)op->index,(jint)op->member,(jint)op->integer,(jfloat)staged_scalar,(jlong)op->wide,
-            numbers,text,names,value) == JNI_TRUE && !clear_exception(env);
+        const size_t offset = i * WHISKER_ANDROID_OPERATION_STRIDE;
+        uint32_t scalar_bits;
+        memcpy(&scalar_bits, &staged_scalar, sizeof(scalar_bits));
+        metadata_values[offset] = (jlong)op->tag;
+        metadata_values[offset + 1] = (jlong)staged_flags;
+        metadata_values[offset + 2] = (jlong)op->node;
+        metadata_values[offset + 3] = (jlong)op->parent;
+        metadata_values[offset + 4] = (jlong)op->child;
+        metadata_values[offset + 5] = (jlong)op->index;
+        metadata_values[offset + 6] = (jlong)op->member;
+        metadata_values[offset + 7] = (jlong)op->integer;
+        metadata_values[offset + 8] = (jlong)scalar_bits;
+        metadata_values[offset + 9] = (jlong)op->wide;
+        (*env)->SetObjectArrayElement(env, number_batches, (jsize)i, numbers);
+        (*env)->SetObjectArrayElement(env, texts, (jsize)i, text);
+        (*env)->SetObjectArrayElement(env, name_batches, (jsize)i, names);
+        (*env)->SetObjectArrayElement(env, values, (jsize)i, value);
+        if (clear_exception(env)) ok = false;
         if (numbers) (*env)->DeleteLocalRef(env, numbers); if (text) (*env)->DeleteLocalRef(env, text);
         if (names) (*env)->DeleteLocalRef(env, names); if (value) (*env)->DeleteLocalRef(env, value);
     }
-    if (ok) ok = (*env)->CallBooleanMethod(env, view, g_commit_frame) == JNI_TRUE && !clear_exception(env);
+    if (ok && metadata_count > 0) {
+        (*env)->SetLongArrayRegion(env, metadata, 0, metadata_count, metadata_values);
+        if (clear_exception(env)) ok = false;
+    }
+    if (ok) ok = (*env)->CallBooleanMethod(env, view, g_present_frame,
+        (jint)frame->mode, (jint)frame->scene_epoch,
+        (jlong)frame->base_revision, (jlong)frame->target_revision,
+        metadata, number_batches, texts, name_batches, values, result) == JNI_TRUE &&
+        !clear_exception(env);
     if (ok) {
-        response->status = WHISKER_APPLY_ACCEPTED;
-        response->revision = frame->target_revision;
-    } else {
+        jlong result_values[2];
+        (*env)->GetLongArrayRegion(env, result, 0, 2, result_values);
+        ok = !clear_exception(env) && result_values[0] >= WHISKER_APPLY_ACCEPTED &&
+            result_values[0] <= WHISKER_APPLY_REJECTED;
+        if (ok) {
+            response->status = (uint8_t)result_values[0];
+            response->revision = (uint64_t)result_values[1];
+        }
+    }
+    if (!ok) {
         response->status = WHISKER_APPLY_REJECTED;
         response->revision = (uint64_t)(*env)->CallLongMethod(env, view, g_current_revision);
         if (clear_exception(env)) {
-            (*env)->DeleteLocalRef(env, view);
-            if (attached) (*g_vm)->DetachCurrentThread(g_vm);
-            return false;
+            ok = false;
+        } else {
+            ok = true;
         }
     }
-    (*env)->DeleteLocalRef(env, view); if (attached) (*g_vm)->DetachCurrentThread(g_vm); return true;
+    free(metadata_values);
+    if (result) (*env)->DeleteLocalRef(env, result);
+    if (values) (*env)->DeleteLocalRef(env, values);
+    if (name_batches) (*env)->DeleteLocalRef(env, name_batches);
+    if (texts) (*env)->DeleteLocalRef(env, texts);
+    if (number_batches) (*env)->DeleteLocalRef(env, number_batches);
+    if (value_class) (*env)->DeleteLocalRef(env, value_class);
+    if (string_array_class) (*env)->DeleteLocalRef(env, string_array_class);
+    if (string_class) (*env)->DeleteLocalRef(env, string_class);
+    if (float_array_class) (*env)->DeleteLocalRef(env, float_array_class);
+    if (metadata) (*env)->DeleteLocalRef(env, metadata);
+    (*env)->DeleteLocalRef(env, view); if (attached) (*g_vm)->DetachCurrentThread(g_vm); return ok;
 }
 
 static bool measure_host(void* data, const WhiskerMobileMeasureRequest* requests, size_t count,
@@ -831,10 +875,8 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     METHOD(g_begin_bootstrap,"beginBootstrapFromNative","()V")
     METHOD(g_register_element,"registerElementFromNative","(ILjava/lang/String;III[I[I[Ljava/lang/String;[I[I[Ljava/lang/String;[I[I[Ljava/lang/String;)V")
     METHOD(g_finish_bootstrap,"finishBootstrapFromNative","()Z")
-    METHOD(g_begin_frame,"beginFrameFromNative","(IIJJ)I")
+    METHOD(g_present_frame,"presentFrameFromNative","(IIJJ[J[[F[Ljava/lang/String;[[Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;[J)Z")
     METHOD(g_current_revision,"currentRevisionFromNative","()J")
-    METHOD(g_stage_operation,"stageOperationFromNative","(IIJJJIIIFJ[FLjava/lang/String;[Ljava/lang/String;Lrs/whisker/runtime/WhiskerValue;)Z")
-    METHOD(g_commit_frame,"commitFrameFromNative","()Z")
     METHOD(g_measure,"measureFromNative","(IIFFIFFIILjava/lang/String;[Ljava/lang/String;FIIIIIFFFFI[Ljava/lang/String;III[BFFIII)[F")
     METHOD(g_resource_command,"resourceCommandFromNative","(IIIJJLjava/lang/String;[B)Z")
     METHOD(g_invoke_module,"invokeModuleFromNative","(Ljava/lang/String;Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;ZJJ)Z")
