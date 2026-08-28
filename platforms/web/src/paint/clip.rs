@@ -7,23 +7,47 @@ pub(crate) fn apply(
     clip: BoxClip,
     scroll_content: bool,
 ) -> Result<(), WebError> {
-    set_style(
-        element,
-        "overflow-x",
-        overflow(clip.horizontal, scroll_content),
-    )?;
-    set_style(
-        element,
-        "overflow-y",
-        overflow(clip.vertical, scroll_content),
-    )
+    let [horizontal, vertical] = overflow(clip, scroll_content);
+    set_style(element, "overflow-x", horizontal)?;
+    set_style(element, "overflow-y", vertical)
 }
 
-fn overflow(value: OverflowClip, scroll_content: bool) -> &'static str {
-    match (value, scroll_content) {
-        (OverflowClip::Hidden, true) => "hidden",
-        (OverflowClip::Visible, true) => "auto",
-        (OverflowClip::Hidden, false) => "clip",
-        (OverflowClip::Visible, false) => "visible",
+fn overflow(clip: BoxClip, scroll_content: bool) -> [&'static str; 2] {
+    if scroll_content {
+        // A built-in ScrollView is a vertical native scroll container. Its
+        // base style clips overflowing content, but that clip must not replace
+        // the Host's scrolling mechanism with CSS `overflow: hidden`.
+        return ["hidden", "auto"];
+    }
+    [overflow_axis(clip.horizontal), overflow_axis(clip.vertical)]
+}
+
+fn overflow_axis(value: OverflowClip) -> &'static str {
+    match value {
+        OverflowClip::Hidden => "clip",
+        OverflowClip::Visible => "visible",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scroll_container_keeps_vertical_native_scrolling_enabled() {
+        let hidden = BoxClip {
+            horizontal: OverflowClip::Hidden,
+            vertical: OverflowClip::Hidden,
+        };
+        assert_eq!(overflow(hidden, true), ["hidden", "auto"]);
+    }
+
+    #[test]
+    fn ordinary_elements_follow_the_protocol_clip() {
+        let mixed = BoxClip {
+            horizontal: OverflowClip::Hidden,
+            vertical: OverflowClip::Visible,
+        };
+        assert_eq!(overflow(mixed, false), ["clip", "visible"]);
     }
 }

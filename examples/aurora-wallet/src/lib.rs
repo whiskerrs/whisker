@@ -31,6 +31,11 @@ const NEGATIVE: Color = Color::hex(0xFF6B6B); // expense
 const CURRENCY: &str = "$"; // try "€" / "£" / "¥"
 const USER: &str = "Alex"; // greeting name
 const CARD_RADIUS: i32 = 24; // balance-card corner radius
+const TOP_PADDING: i32 = if cfg!(any(target_os = "android", target_os = "ios")) {
+    64
+} else {
+    20
+};
 // ─────────────────────────────────────────────────────────────────────
 
 fn muted() -> Color {
@@ -87,7 +92,7 @@ pub fn app() -> Element {
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 padding: px(20),
-                padding_top: px(64),
+                padding_top: px(TOP_PADDING),
                 padding_bottom: px(40),
             )) {
                 // ── Header ───────────────────────────────────────────
