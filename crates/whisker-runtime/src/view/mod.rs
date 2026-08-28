@@ -54,13 +54,12 @@ pub use renderer::{
     set_update_list_info,
 };
 
-// Renderer-wiring internals. Public because `whisker-driver` (and test
-// renderers) link against them across the crate boundary and the macro
+// Renderer-wiring internals. Public because Hosts and test renderers link
+// against them across the crate boundary and macro
 // expansions name them by path — but NOT part of the app- or
 // module-author API, hence `#[doc(hidden)]`.
 #[doc(hidden)]
 pub use renderer::{
     DynRenderer, EventDispatchPlan, PHANTOM_BASE, current_renderer_id, element_sign,
-    install_renderer, module_component_ptr, try_invoke_element_method, uninstall_renderer,
-    with_installed_renderer,
+    install_renderer, try_invoke_element_method, uninstall_renderer, with_installed_renderer,
 };

@@ -14,7 +14,7 @@ Whisker itself**.
   from source, run an example on a device, and submit a change" guide.
   **Read this first if you're new.**
 - [`architecture.md`](architecture.md) — how the workspace is sliced
-  into crates, the runtime layers, the Lynx bridge, and how the
+  into crates, the runtime layers, the mobile FFI Driver, and how the
   `whisker run` dev loop wires them together. **Start here.**
 - [`reactivity-design.md`](reactivity-design.md) — the design and
   rationale of the fine-grained reactive runtime (signals, effects,
@@ -33,9 +33,6 @@ Whisker itself**.
   signal-based animation engine (`AnimationController` + `Tween`), how it
   differs from Lynx's discrete CSS-keyframe animator, and how it backs the
   router's transitions.
-- [`lynx-integration.md`](lynx-integration.md) — how Whisker integrates
-  and distributes its Lynx fork (iOS SwiftPM binary targets, Android
-  Maven AARs) and the fork's release process.
 - [`ios-spm-distribution.md`](ios-spm-distribution.md) — how iOS apps
   resolve the runtime from the remote SwiftPM package, version lockstep,
   and the monorepo-dev caveat.

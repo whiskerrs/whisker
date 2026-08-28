@@ -12,8 +12,8 @@
 //
 // ## C ABI bridge
 //
-// The bridge layer (whisker_bridge_ios.mm) hands the Swift dispatch
-// shim raw `WhiskerValueRaw` arrays. `WhiskerValue.decodeArray(_:
+// The FFI Driver hands the Swift dispatch shim raw `WhiskerValueRaw`
+// arrays. `WhiskerValue.decodeArray(_:
 // count:)` walks the C struct array and produces `[WhiskerValue]`.
 // `WhiskerValue.toRaw()` does the reverse, allocating Swift-owned
 // strings / bytes / nested arrays / maps. The producer releases them
@@ -22,16 +22,15 @@
 // ## Discriminant alignment
 //
 // The discriminants below must stay aligned with `WhiskerValueType`
-// in `whisker_bridge.h`. Drift between the two silently corrupts the
+// in `whisker_value.h`. Drift between the two silently corrupts the
 // payload union.
 
 import Foundation
 // `@_exported` so module-author Swift files can `import WhiskerRuntime`
 // alone and still see the C ABI types (`WhiskerValueRaw`,
-// `WhiskerStringRef`, `whisker_bridge_register_module_dispatch`, …)
-// that the codegen-emitted `@_cdecl` dispatch shim references.
+// `WhiskerStringRef`, etc.) that the Host dispatch shim references.
 // Without re-exporting, every module .swift file would need its own
-// `import WhiskerDriver`.
+// C module import.
 @_exported import WhiskerCBridge
 
 public enum WhiskerValue: Equatable {
@@ -290,11 +289,10 @@ private func decodeMap(_ map: WhiskerValueMap) -> [String: WhiskerValue] {
 // MARK: - NSDictionary <-> WhiskerValue
 
 public extension WhiskerValue {
-    /// Decode the params `NSDictionary` Lynx's `LynxUIMethodProcessor`
-    /// hands a method dispatcher into the `[WhiskerValue]` shape user
-    /// code expects.
+    /// Decode a Foundation params dictionary into the `[WhiskerValue]`
+    /// shape user code expects.
     ///
-    /// Convention: `whisker_bridge_invoke_element_method` packs the
+    /// Convention: element command dispatch packs the
     /// Rust-side `&[WhiskerValue]` into `{"args": [...]}` — a single
     /// key `args` holding an `NSArray` of positionally-encoded
     /// entries. Each entry decodes via [WhiskerValue.from(nsObject:)]
@@ -308,7 +306,7 @@ public extension WhiskerValue {
     }
 
     /// Recursive `Any` -> `WhiskerValue` conversion for entries
-    /// inside Lynx-supplied NSDictionary / NSArray payloads.
+    /// inside NSDictionary / NSArray payloads.
     /// `NSNumber` -> int / float / bool depending on its objCType;
     /// `NSDictionary` -> `.map`; `NSArray` -> `.array`; everything
     /// else falls through to `.error`.
@@ -340,9 +338,7 @@ public extension WhiskerValue {
     }
 
     /// Encode a `WhiskerValue` into an Obj-C-compatible `Any?`
-    /// suitable for handing to Lynx's `LynxUIMethodCallbackBlock`
-    /// (`callback(code, id _Nullable data)`). The bridge then passes
-    /// the value back through Lynx's standard callback JNI path.
+    /// suitable for handing to a native Host callback.
     ///
     /// `bytes` becomes `Data` (`NSData` on the Obj-C side). `error`
     /// becomes `["error": message]` since the callback already has

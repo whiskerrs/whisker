@@ -1,11 +1,9 @@
-//! Platform-neutral runtime behind the Android and iOS C entry points.
+//! Safe retained runtime behind the Android and iOS C entry points.
 
 use std::ffi::{CString, c_void};
 
-use whisker_driver::mobile_abi::*;
-use whisker_driver::module::{
-    InvokeModuleCallback, MobileModuleHost, ObserveModuleCallback, with_mobile_module_host,
-};
+use crate::abi::*;
+use crate::ffi_module::{InvokeModuleCallback, ObserveModuleCallback, module_host};
 use whisker_engine::whisker_protocol::{
     ApplyResult, AvailableSpace, BackgroundAttachment, BackgroundSize, BlendMode, BorderLineStyle,
     ChildPolicy, ClipShape, ElementMeasurement, ElementRegistration, ElementValueKind, FillRule,
@@ -21,10 +19,9 @@ use whisker_engine::whisker_protocol::{
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
-use whisker_runtime::RuntimeWakeHandle;
+use whisker_runtime::module::{ModuleHost, with_module_host};
 use whisker_runtime::view::Element;
-
-use crate::{RuntimeInstance, SurfaceRuntime};
+use whisker_runtime::{RuntimeInstance, RuntimeWakeHandle, SurfaceRuntime};
 
 #[cfg(target_os = "android")]
 fn mobile_error(message: impl std::fmt::Display) {
@@ -55,7 +52,7 @@ pub type RequestFrameCallback = extern "C" fn(*mut c_void);
 
 struct MobileRuntime {
     runtime: RuntimeInstance,
-    modules: std::sync::Arc<MobileModuleHost>,
+    modules: std::rc::Rc<ModuleHost>,
     measurement: MobileMeasurementHost,
     sink: MobileFrameSink,
     resources: MobileResourceHost,
@@ -113,7 +110,7 @@ pub fn create(
     application: impl FnOnce() -> Element,
 ) -> *mut c_void {
     #[cfg(target_os = "android")]
-    whisker_driver::ensure_mobile_bridge_linked();
+    crate::ensure_mobile_bridge_linked();
     let Some(viewport) = Viewport::new(width, height, scale) else {
         return std::ptr::null_mut();
     };
@@ -124,15 +121,15 @@ pub fn create(
         viewport.environment(),
     );
     let mut runtime = RuntimeInstance::new(surface, wake);
-    let modules = MobileModuleHost::new(module_data, invoke_module, observe_module);
-    if let Err(error) = with_mobile_module_host(&modules, || runtime.mount(application)) {
+    let modules = module_host(module_data, invoke_module, observe_module);
+    if let Err(error) = with_module_host(&modules, || runtime.mount(application)) {
         mobile_error(format_args!("Whisker mobile mount failed: {error}"));
         return std::ptr::null_mut();
     }
     let registrations = runtime.surface().element_registrations();
     let owned_bootstrap = MobileBootstrapOwned::new(&registrations);
     if !bootstrap(bootstrap_data, &owned_bootstrap.value) {
-        let _ = with_mobile_module_host(&modules, || runtime.unmount());
+        let _ = with_module_host(&modules, || runtime.unmount());
         return std::ptr::null_mut();
     }
     let mut mobile = Box::new(MobileRuntime {
@@ -155,8 +152,8 @@ pub fn create(
         viewport,
     });
     if !mobile.drain_resource_commands() {
-        let modules = std::sync::Arc::clone(&mobile.modules);
-        let _ = with_mobile_module_host(&modules, || mobile.runtime.unmount());
+        let modules = std::rc::Rc::clone(&mobile.modules);
+        let _ = with_module_host(&modules, || mobile.runtime.unmount());
         return std::ptr::null_mut();
     }
     request_frame(request_data);
@@ -183,8 +180,8 @@ pub unsafe fn tick(
         mobile.environment_epoch = mobile.environment_epoch.saturating_add(1);
         mobile.viewport_epoch = mobile.viewport_epoch.saturating_add(1);
     }
-    let modules = std::sync::Arc::clone(&mobile.modules);
-    let frame_result = with_mobile_module_host(&modules, || {
+    let modules = std::rc::Rc::clone(&mobile.modules);
+    let frame_result = with_module_host(&modules, || {
         mobile.runtime.drive_frame(
             timestamp_ms,
             viewport.environment(),
@@ -215,8 +212,8 @@ pub unsafe fn destroy(handle: *mut c_void) {
         return;
     }
     let mut mobile = unsafe { Box::from_raw(handle.cast::<MobileRuntime>()) };
-    let modules = std::sync::Arc::clone(&mobile.modules);
-    let _ = with_mobile_module_host(&modules, || mobile.runtime.unmount());
+    let modules = std::rc::Rc::clone(&mobile.modules);
+    let _ = with_module_host(&modules, || mobile.runtime.unmount());
 }
 
 /// # Safety
@@ -250,8 +247,8 @@ pub unsafe fn dispatch_event(
         target: Some(node),
         detail: unsafe { decode_value(detail) },
     };
-    let modules = std::sync::Arc::clone(&mobile.modules);
-    with_mobile_module_host(&modules, || mobile.runtime.dispatch_input(&event))
+    let modules = std::rc::Rc::clone(&mobile.modules);
+    with_module_host(&modules, || mobile.runtime.dispatch_input(&event))
         .map(|value| value.consumed)
         .unwrap_or_else(|error| {
             eprintln!("Whisker mobile event failed: {error}");
@@ -292,8 +289,8 @@ pub unsafe fn dispatch_pointer(
     ) else {
         return false;
     };
-    let modules = std::sync::Arc::clone(&mobile.modules);
-    with_mobile_module_host(&modules, || mobile.runtime.dispatch_input(&event))
+    let modules = std::rc::Rc::clone(&mobile.modules);
+    with_module_host(&modules, || mobile.runtime.dispatch_input(&event))
         .map(|value| value.consumed)
         .unwrap_or_else(|error| {
             eprintln!("Whisker mobile pointer input failed: {error}");
@@ -370,8 +367,8 @@ pub unsafe fn dispatch_module_event(
         return false;
     };
     let payload = unsafe { decode_value(payload) };
-    let modules = std::sync::Arc::clone(&mobile.modules);
-    with_mobile_module_host(&modules, || modules.dispatch_event(module, event, payload))
+    let modules = std::rc::Rc::clone(&mobile.modules);
+    with_module_host(&modules, || modules.dispatch_event(module, event, payload))
 }
 
 /// # Safety
@@ -1121,6 +1118,9 @@ impl FrameSink for MobileFrameSink {
     }
 }
 
+// Every Box provides a stable pointee while the outer Vec grows; the borrowed
+// C frame stores pointers into these allocations for the callback duration.
+#[allow(clippy::vec_box)]
 struct MobileFrameOwned {
     value: MobileFrame,
     _arena: RawValueArena,

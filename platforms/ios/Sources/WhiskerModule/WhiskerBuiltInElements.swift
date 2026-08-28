@@ -44,7 +44,7 @@ public final class WhiskerScrollContainerView: UIScrollView {
     }
 }
 
-/** Native text element with the Lynx single-line decoration contract. */
+/** Native text element implementing Whisker's single-line decoration contract. */
 public final class WhiskerTextLabel: UILabel {
     private var whiskerIndent = WhiskerTextIndent()
     private var appliedIndent: CGFloat?

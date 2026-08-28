@@ -11,12 +11,12 @@ use crate::ElementRegistryError;
 use crate::background_resources::{
     BackgroundProjection, BackgroundResourceError, BackgroundResourceManager,
 };
-use crate::runtime::element::ElementTag;
-use crate::runtime::value::WhiskerValue;
-use crate::runtime::view::{BindType, DynRenderer, Element};
+use crate::element::ElementTag;
 use crate::transform_interpolation::interpolate_transform_style;
 #[cfg(test)]
 use crate::transform_interpolation::{identity_transform_function, interpolate_transform_function};
+use crate::value::WhiskerValue;
+use crate::view::{BindType, DynRenderer, Element};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior, InputEvent,
@@ -344,7 +344,7 @@ impl<MeasurementError: Error + 'static> Error for RuntimeLayoutError<Measurement
     }
 }
 
-/// First-class runtime for one retained surface populated by [`render!`](crate::render).
+/// First-class runtime for one retained surface populated by the authoring renderer.
 ///
 /// Clones share one single-threaded surface. Install [`Self::renderer`] through
 /// `whisker_runtime::view::with_installed_renderer`, build the declarative tree,
@@ -792,7 +792,7 @@ impl SurfaceRuntime {
     ) -> Result<(), RuntimeResourceError> {
         let mut state = self.state.borrow_mut();
         state.enqueue_resource_command(command, false)?;
-        crate::runtime::runtime_wake::wake_runtime();
+        crate::runtime_wake::wake_runtime();
         Ok(())
     }
 
@@ -1847,7 +1847,7 @@ impl BindingState {
 
     fn record(&mut self, result: Result<(), RuntimeBindingError>) {
         match result {
-            Ok(()) => crate::runtime::runtime_wake::wake_runtime(),
+            Ok(()) => crate::runtime_wake::wake_runtime(),
             Err(error) if self.error.is_none() => self.error = Some(error),
             Err(_) => {}
         }
@@ -2546,7 +2546,7 @@ impl BindingState {
         entry.pending_motion_events.extend(canceled);
         entry.animations = animations;
         if needs_frame {
-            crate::runtime::runtime_wake::wake_runtime();
+            crate::runtime_wake::wake_runtime();
         }
         Ok(())
     }
@@ -2716,7 +2716,7 @@ impl BindingState {
             entry.layout_transitions = None;
         }
         if started {
-            crate::runtime::runtime_wake::wake_runtime();
+            crate::runtime_wake::wake_runtime();
         }
         Ok(())
     }
@@ -2790,7 +2790,7 @@ impl BindingState {
             start_emitted: false,
         }));
         self.surface.set_opacity(node, previous_current)?;
-        crate::runtime::runtime_wake::wake_runtime();
+        crate::runtime_wake::wake_runtime();
         Ok(())
     }
 
@@ -2895,7 +2895,7 @@ impl BindingState {
         }
         self.surface.set_box_paint(node, current)?;
         if started {
-            crate::runtime::runtime_wake::wake_runtime();
+            crate::runtime_wake::wake_runtime();
         }
         Ok(())
     }
@@ -2959,7 +2959,7 @@ impl BindingState {
             current_progress: 0.0,
             start_emitted: false,
         }));
-        crate::runtime::runtime_wake::wake_runtime();
+        crate::runtime_wake::wake_runtime();
         Ok(())
     }
 
@@ -3051,7 +3051,7 @@ impl BindingState {
             .current
             .clone();
         Self::apply_transform_update(node, &current, &mut self.surface)?;
-        crate::runtime::runtime_wake::wake_runtime();
+        crate::runtime_wake::wake_runtime();
         Ok(())
     }
 

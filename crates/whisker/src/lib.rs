@@ -101,28 +101,19 @@ pub trait WhiskerModule {
     fn definition() -> Self::Definition;
 }
 
-pub use whisker_driver::{
-    AnimateOp, AnimateOptions, BoundingClientRect, ElementHandle, ElementRef, ListHandle,
-    ListScrollAlign, RefError, ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo,
-    VisibleCell, VisibleCells, animate_cancel, animate_start, invoke_element_animate,
+pub mod back;
+mod element_ref;
+pub mod focus;
+
+pub use element_ref::{
+    BoundingClientRect, ElementHandle, ElementRef, ListHandle, ListScrollAlign, RefError,
+    ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo, VisibleCell, VisibleCells,
 };
 
 #[doc(hidden)]
 #[cfg(any(target_os = "android", target_os = "ios"))]
-pub use whisker_driver::module as __mobile_module;
-pub use whisker_driver::module::PlatformModule;
-
-/// The process-global focused-element registry (Whisker's analogue of
-/// React Native's `TextInput.State.currentlyFocusedInput()`). Focusable
-/// elements record themselves here; navigation code reads it to blur or
-/// restore the specific field that was focused.
-pub use whisker_driver::focus;
-
-/// Platform back-action interception (Whisker's analogue of React
-/// Native's `BackHandler`): [`back::on_back`] captures the Android
-/// back button / gesture while its guard lives, [`back::exit_app`]
-/// triggers the platform's default leave-the-app behavior.
-pub use whisker_driver::back;
+pub use whisker_driver::ffi_module as __driver_module;
+pub use whisker_runtime::module::PlatformModule;
 
 /// The universal tagged-union value model. Crosses the native
 /// boundary as both module args/returns and event payloads, so it
@@ -185,37 +176,20 @@ pub use whisker_runtime::{RuntimeDispatcher, runtime_dispatcher};
 // Frame-driving internal used by the host tick loop, not app code.
 #[doc(hidden)]
 pub use whisker_runtime::tasks::run_until_stalled;
-mod background_resources;
 mod control_flow;
-mod element_registry;
-#[doc(hidden)]
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub mod mobile_runtime;
-mod runtime_instance;
-mod standard_ui;
 mod style;
-mod surface_runtime;
-mod transform_interpolation;
 
 pub mod attrs;
 
-pub use element_registry::{
-    ElementAuthoringBinding, ElementModuleDefinition, ElementProviderMetadata, ElementRegistry,
-    ElementRegistryBuilder, ElementRegistryError,
-};
-pub use runtime_instance::{
-    RuntimeDrive, RuntimeDriveError, RuntimeEventError, RuntimeInstance, RuntimeLifecycle,
-    RuntimeLifecycleError,
-};
-pub use standard_ui::{
-    SCROLL_VIEW_ELEMENT_NAME, TEXT_ELEMENT_NAME, VIEW_ELEMENT_NAME, scroll_view_element_binding,
-    text_element_binding, view_element_binding,
-};
 pub use style::{Style, apply_style};
-pub use surface_runtime::{
-    InputDispatch, ResourceEventApply, RuntimeBindingError, RuntimeFrame, RuntimeFrameError,
-    RuntimeInputError, RuntimeLayoutError, RuntimePresentError, RuntimeResourceError,
-    SurfaceRuntime, standard_element_registrations,
+pub use whisker_runtime::{
+    ElementAuthoringBinding, ElementModuleDefinition, ElementProviderMetadata, ElementRegistry,
+    ElementRegistryBuilder, ElementRegistryError, InputDispatch, ResourceEventApply,
+    RuntimeBindingError, RuntimeDrive, RuntimeDriveError, RuntimeEventError, RuntimeFrame,
+    RuntimeFrameError, RuntimeInputError, RuntimeInstance, RuntimeLayoutError, RuntimeLifecycle,
+    RuntimeLifecycleError, RuntimePresentError, RuntimeResourceError, SCROLL_VIEW_ELEMENT_NAME,
+    SurfaceRuntime, TEXT_ELEMENT_NAME, VIEW_ELEMENT_NAME, scroll_view_element_binding,
+    standard_element_registrations, text_element_binding, view_element_binding,
 };
 
 pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
@@ -1714,12 +1688,12 @@ pub mod __tags {
     }
 }
 
-/// Marshal a closure onto the legacy Lynx main thread.
+/// Marshal a closure onto the active runtime thread.
 ///
-/// New retained-renderer integrations should capture
+/// Host integrations should capture
 /// [`runtime_dispatcher()`] while a [`RuntimeInstance`] is executing and post
-/// through that instance-aware handle. This process-global function remains
-/// for the Lynx host during migration.
+/// through that instance-aware handle. This process-global helper remains for
+/// compatibility with code that has not yet captured a dispatcher.
 ///
 /// ```ignore
 /// let dispatcher = runtime_dispatcher().unwrap();
@@ -1732,18 +1706,18 @@ pub use whisker_runtime::main_thread::run_on_main_thread;
 
 /// Whisker platform module invocation entry point.
 ///
-/// API surface for calling platform-side modules across the C bridge:
+/// API surface for calling Host modules through the active Host binding:
 /// the [`WhiskerValue`] tagged-union type plus the
 /// [`invoke`](platform_module::invoke) /
 /// [`invoke_async`](platform_module::invoke_async) entry points. The
-/// platform side is an Obj-C class on iOS / Kotlin class on Android,
-/// both inheriting from Lynx's `LynxModule`.
+/// platform side may be Swift/Kotlin over FFI or a direct Rust implementation.
 ///
 /// The `#[whisker::platform_module]` proc macro generates type-safe
 /// Rust proxies that wrap `invoke` / `invoke_async`; reach into this
 /// module directly only when you need the raw [`WhiskerValue`] enum.
 pub mod platform_module {
-    pub use whisker_driver::module::{WhiskerModuleError, WhiskerValue, invoke, invoke_async};
+    pub use whisker_runtime::module::{invoke, invoke_async};
+    pub use whisker_runtime::value::{WhiskerModuleError, WhiskerValue};
 }
 
 /// Internal runtime entry points used by code the `#[whisker::main]` macro
@@ -1774,6 +1748,7 @@ pub mod __main_runtime {
     #[cfg(feature = "hot-reload")]
     #[inline(always)]
     pub fn call_user_app(f: fn() -> Element) -> Element {
+        init_tokio_runtime();
         // `move` is load-bearing: without it, `|| f()` captures `f` by
         // *reference* (the body only reads `f`, and `f`'s `Copy`-ness is
         // not enough to flip Rust to by-value capture). Subsecond's
@@ -1794,8 +1769,28 @@ pub mod __main_runtime {
     #[cfg(not(feature = "hot-reload"))]
     #[inline(always)]
     pub fn call_user_app(f: fn() -> Element) -> Element {
+        init_tokio_runtime();
         f()
     }
+
+    #[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+    fn init_tokio_runtime() {
+        use std::sync::Once;
+        static START: Once = Once::new();
+        START.call_once(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .worker_threads(2)
+                .thread_name("whisker-tokio")
+                .build()
+                .expect("whisker: build tokio runtime");
+            let runtime: &'static tokio::runtime::Runtime = Box::leak(Box::new(runtime));
+            std::mem::forget(runtime.enter());
+        });
+    }
+
+    #[cfg(not(all(feature = "tokio", not(target_arch = "wasm32"))))]
+    fn init_tokio_runtime() {}
 
     /// Same dispatch shape as [`call_user_app`], for the
     /// `__whisker_app_body_hash` fn the `#[whisker::main]` macro
@@ -1821,13 +1816,11 @@ pub mod __main_runtime {
     }
 }
 
-/// Internal platform-neutral mobile entry points generated by
-/// [`main`](crate::main). This is intentionally hidden from application code;
-/// Android and iOS call the exported C functions instead.
+/// Internal FFI runtime entry points generated by [`main`](crate::main).
 #[doc(hidden)]
 #[cfg(any(target_os = "android", target_os = "ios"))]
-pub mod __mobile_runtime {
-    pub use crate::mobile_runtime::{
+pub mod __driver_runtime {
+    pub use whisker_driver::ffi_runtime::{
         create, destroy, dispatch_event, dispatch_module_event, dispatch_pointer,
         dispatch_resource_event, tick,
     };
@@ -1835,7 +1828,8 @@ pub mod __mobile_runtime {
 
 /// Stable C-ABI types referenced by code emitted from [`main`](crate::main).
 #[doc(hidden)]
-pub use whisker_driver::mobile_abi as __mobile_abi;
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub use whisker_driver::abi as __driver_abi;
 
 /// Hot-reload dispatcher namespace exposed for the `#[component]`
 /// macro. With the `hot-reload` feature on, this re-exports

@@ -179,19 +179,19 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             scale: f32,
             request_frame: extern "C" fn(*mut ::std::ffi::c_void),
             request_frame_data: *mut ::std::ffi::c_void,
-            bootstrap: ::whisker::__mobile_abi::BootstrapCallback,
+            bootstrap: ::whisker::__driver_abi::BootstrapCallback,
             bootstrap_data: *mut ::std::ffi::c_void,
-            measure: ::whisker::__mobile_abi::MeasureCallback,
+            measure: ::whisker::__driver_abi::MeasureCallback,
             measure_data: *mut ::std::ffi::c_void,
-            present_frame: ::whisker::__mobile_abi::PresentFrameCallback,
+            present_frame: ::whisker::__driver_abi::PresentFrameCallback,
             present_frame_data: *mut ::std::ffi::c_void,
-            resource_command: ::whisker::__mobile_abi::ResourceCommandCallback,
+            resource_command: ::whisker::__driver_abi::ResourceCommandCallback,
             resource_data: *mut ::std::ffi::c_void,
-            invoke_module: ::whisker::__mobile_module::InvokeModuleCallback,
-            observe_module: ::whisker::__mobile_module::ObserveModuleCallback,
+            invoke_module: ::whisker::__driver_module::InvokeModuleCallback,
+            observe_module: ::whisker::__driver_module::ObserveModuleCallback,
             module_data: *mut ::std::ffi::c_void,
         ) -> *mut ::std::ffi::c_void {
-            ::whisker::__mobile_runtime::create(
+            ::whisker::__driver_runtime::create(
                 width,
                 height,
                 scale,
@@ -222,7 +222,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             scale: f32,
         ) -> bool {
             unsafe {
-                ::whisker::__mobile_runtime::tick(
+                ::whisker::__driver_runtime::tick(
                     handle,
                     timestamp_ms,
                     width,
@@ -237,7 +237,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         pub unsafe extern "C" fn whisker_view_destroy(
             handle: *mut ::std::ffi::c_void,
         ) {
-            unsafe { ::whisker::__mobile_runtime::destroy(handle) }
+            unsafe { ::whisker::__driver_runtime::destroy(handle) }
         }
 
         #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -248,10 +248,10 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             node: u64,
             name: *const u8,
             name_len: usize,
-            detail: *const ::whisker::__mobile_abi::WhiskerValueRaw,
+            detail: *const ::whisker::__driver_abi::WhiskerValueRaw,
         ) -> bool {
             unsafe {
-                ::whisker::__mobile_runtime::dispatch_event(
+                ::whisker::__driver_runtime::dispatch_event(
                     handle,
                     timestamp_ms,
                     node,
@@ -276,7 +276,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             changed_button: i16,
         ) -> bool {
             unsafe {
-                ::whisker::__mobile_runtime::dispatch_pointer(
+                ::whisker::__driver_runtime::dispatch_pointer(
                     handle,
                     timestamp_ms,
                     event,
@@ -298,10 +298,10 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             module_len: usize,
             event: *const u8,
             event_len: usize,
-            payload: *const ::whisker::__mobile_abi::WhiskerValueRaw,
+            payload: *const ::whisker::__driver_abi::WhiskerValueRaw,
         ) -> bool {
             unsafe {
-                ::whisker::__mobile_runtime::dispatch_module_event(
+                ::whisker::__driver_runtime::dispatch_module_event(
                     handle,
                     module,
                     module_len,
@@ -316,10 +316,10 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_dispatch_resource_event(
             handle: *mut ::std::ffi::c_void,
-            event: *const ::whisker::__mobile_abi::MobileResourceEvent,
+            event: *const ::whisker::__driver_abi::MobileResourceEvent,
         ) -> bool {
             unsafe {
-                ::whisker::__mobile_runtime::dispatch_resource_event(handle, event)
+                ::whisker::__driver_runtime::dispatch_resource_event(handle, event)
             }
         }
 

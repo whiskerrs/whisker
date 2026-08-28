@@ -14,7 +14,7 @@ import android.text.style.LeadingMarginSpan
 import android.widget.TextView
 import kotlin.math.max
 
-/** Native text element with Lynx-compatible single-line decorations. */
+/** Native text element implementing Whisker's single-line decorations. */
 public class WhiskerTextView(context: Context) : TextView(context) {
     private var whiskerTextValue: String = ""
     private var whiskerTextIndent: WhiskerTextIndent = WhiskerTextIndent()

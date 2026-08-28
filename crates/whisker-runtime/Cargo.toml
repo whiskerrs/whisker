@@ -9,7 +9,7 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Core runtime for Whisker: reactive primitives, element tree, Lynx integration."
+description = "Host-independent Whisker runtime: reactivity, retained elements, layout, and frames."
 
 [dependencies]
 # Generational slot map for reactive node / owner storage. Generational
@@ -31,3 +31,4 @@ serde = { workspace = true }
 whisker-style = { workspace = true }
 whisker-value = { workspace = true }
 whisker-protocol = { workspace = true }
+whisker-engine = { workspace = true }

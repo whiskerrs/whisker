@@ -5810,7 +5810,9 @@ dependencies = [
 name = "whisker"
 version = "0.12.0"
 dependencies = [
+ "serde",
  "serde_json",
+ "tokio",
  "whisker-animation",
  "whisker-config",
  "whisker-css",
@@ -6013,21 +6015,15 @@ dependencies = [
 name = "whisker-driver"
 version = "0.12.0"
 dependencies = [
- "futures-channel",
- "serde",
- "serde_json",
- "tokio",
- "whisker-dev-runtime",
  "whisker-driver-sys",
+ "whisker-engine",
  "whisker-runtime",
- "whisker-subsecond",
 ]
 
 [[package]]
 name = "whisker-driver-sys"
 version = "0.12.0"
 dependencies = [
- "anyhow",
  "cc",
 ]
 
@@ -6259,6 +6255,7 @@ dependencies = [
  "futures-util",
  "serde",
  "slotmap",
+ "whisker-engine",
  "whisker-protocol",
  "whisker-style",
  "whisker-value",

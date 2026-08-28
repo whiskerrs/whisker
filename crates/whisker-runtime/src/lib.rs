@@ -9,27 +9,51 @@
 //! - [`view`] — element-handle + type-erased renderer (`DynRenderer`)
 //!   the `render!` macro emits against. Includes `Show` / `For`
 //!   control flow.
-//! - [`runtime_wake`] — host's "wake up" callback, registered by
-//!   `whisker-driver::bootstrap` and pinged by the reactive
+//! - [`runtime_wake`] — Host's "wake up" callback, pinged by the reactive
 //!   scheduler when new work appears.
 //! - [`main_thread`] — `run_on_main_thread`, the worker-thread →
 //!   TASM-thread marshaling primitive used to update signals from
 //!   background work (HTTP fetch, channels, etc.).
 
 pub mod anim_hook;
+mod background_resources;
 mod dispatch;
 pub mod element;
+mod element_registry;
 pub mod event;
 pub mod main_thread;
+pub mod module;
 pub mod reactive;
 mod runtime_context;
+mod runtime_instance;
 pub mod runtime_wake;
+mod standard_ui;
+mod surface_runtime;
 pub mod tasks;
+mod transform_interpolation;
 pub mod value;
 pub mod view;
 
 #[doc(hidden)]
 pub use dispatch::drain_runtime_dispatches;
 pub use dispatch::{RuntimeDispatcher, runtime_dispatcher};
+pub use element::ElementTag;
+pub use element_registry::{
+    ElementAuthoringBinding, ElementModuleDefinition, ElementProviderMetadata, ElementRegistry,
+    ElementRegistryBuilder, ElementRegistryError,
+};
 pub use runtime_context::RuntimeContext;
+pub use runtime_instance::{
+    RuntimeDrive, RuntimeDriveError, RuntimeEventError, RuntimeInstance, RuntimeLifecycle,
+    RuntimeLifecycleError,
+};
 pub use runtime_wake::{RuntimeWake, RuntimeWakeHandle};
+pub use standard_ui::{
+    SCROLL_VIEW_ELEMENT_NAME, TEXT_ELEMENT_NAME, VIEW_ELEMENT_NAME, scroll_view_element_binding,
+    text_element_binding, view_element_binding,
+};
+pub use surface_runtime::{
+    InputDispatch, ResourceEventApply, RuntimeBindingError, RuntimeFrame, RuntimeFrameError,
+    RuntimeInputError, RuntimeLayoutError, RuntimePresentError, RuntimeResourceError,
+    SurfaceRuntime, standard_element_registrations,
+};

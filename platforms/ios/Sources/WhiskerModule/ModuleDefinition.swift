@@ -1,10 +1,8 @@
 // `ModuleDefinition` DSL surface (iOS).
 //
 // Modeled after Expo Modules' `ModuleDefinition`
-// (https://docs.expo.dev/modules/module-api/) but emits direct
-// registrations against Lynx's prop / method dispatch tables
-// instead of routing through `@LynxProp` / `@LynxUIMethod`
-// reflection.
+// (https://docs.expo.dev/modules/module-api/) but emits direct Host
+// registrations without a renderer SDK dependency.
 //
 // ## Syntax
 //
@@ -52,7 +50,7 @@
 //
 // The `Module` base class collects the `ModuleDefinition` at init
 // time; the `WhiskerModuleCodegen` plugin's `@WhiskerModule`
-// discovery wires it into Lynx's prop / method dispatch tables.
+// discovery wires it into the generated Host registry.
 
 import Foundation
 
@@ -84,13 +82,12 @@ public struct WhiskerConstantsComponent: WhiskerDefinitionComponent {
     public init(_ values: [String: WhiskerValue]) { self.values = values }
 }
 
-/// View block — registers a Lynx UI subclass + its `Prop` /
+/// View block — registers a native View class + its `Prop` /
 /// `Function` / `Events` sub-components. Exactly one expected for
 /// view-bearing modules; absent entirely for function-only modules.
 public struct WhiskerViewComponent: WhiskerDefinitionComponent {
     /// Type-erased to AnyClass so the call site doesn't need to
-    /// generic the parent struct. The concrete class is the Lynx
-    /// UI subclass (typically a `LynxUI<UIView>` subclass).
+    /// generic the parent struct. The concrete class is a Host View.
     public let viewClass: AnyClass?
     let factory: WhiskerElementFactory?
     public let components: [WhiskerDefinitionComponent]
@@ -117,7 +114,7 @@ public struct WhiskerViewComponent: WhiskerDefinitionComponent {
 // MARK: - View-block components (also legal at module-level for function-only modules)
 
 /// Type-erased setter the framework calls on prop dispatch.
-/// `view` is the Lynx UI instance the value was set on; `value`
+/// `view` is the native element instance the value was set on; `value`
 /// is the raw `WhiskerValue` — no auto-deserialization, the author
 /// destructures it, e.g. `value.asString()`.
 public typealias WhiskerPropSetter = (_ view: AnyObject, _ value: WhiskerValue) -> Void
@@ -143,7 +140,7 @@ public struct WhiskerPropComponent: WhiskerDefinitionComponent {
 /// `WhiskerValue`s from the Rust call site — no auto-deserialization,
 /// the author destructures, e.g. `args[0].asDouble()`; the result is
 /// a raw `WhiskerValue` (`.null` for "no result"). `view` is `nil` for module-level
-/// `Function`s, the Lynx UI instance for view-block `Function`s.
+/// `Function`s, the native element instance for view-block `Function`s.
 public typealias WhiskerFunctionHandler = (_ view: AnyObject?, _ args: [WhiskerValue]) -> WhiskerValue
 
 /// Sync function component. Same shape inside a `View(...)`
@@ -167,9 +164,8 @@ public typealias WhiskerAsyncFunctionHandler =
     (_ view: AnyObject?, _ args: [WhiskerValue], _ promise: WhiskerPromise) -> Void
 
 /// Async function component — the async parallel of
-/// `WhiskerFunctionComponent`. Dispatched through the C bridge's
-/// async path (`whisker_bridge_invoke_module_async`), which hands the
-/// handler a `WhiskerPromise` wrapping the completion callback.
+/// `WhiskerFunctionComponent`. The Host hands the handler a
+/// `WhiskerPromise` wrapping the FFI completion callback.
 public struct WhiskerAsyncFunctionComponent: WhiskerDefinitionComponent {
     public let name: String
     public let handler: WhiskerAsyncFunctionHandler
@@ -384,7 +380,7 @@ public func Constants(_ values: [String: WhiskerValue]) -> WhiskerDefinitionComp
     WhiskerConstantsComponent(values)
 }
 
-/// `View(MyView.self) { ... }` — registers a Lynx UI subclass +
+/// `View(MyView.self) { ... }` — registers a native View class +
 /// its inner DSL block (Prop / Function / Events).
 public func View<V: AnyObject>(
     _ viewClass: V.Type,

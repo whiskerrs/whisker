@@ -81,9 +81,7 @@ public sealed class WhiskerValue {
 
 /**
  * Encode a [WhiskerValue] into a Java-compatible nested
- * map/list/primitive tree suitable for handing to Lynx's
- * `Callback.invoke(code, result)`. The host JS / bridge then sees the
- * value via Lynx's standard `Callback` -> JNI marshalling.
+ * map/list/primitive tree suitable for handing to the JNI Host adapter.
  *
  * `Bytes` is emitted as a `ByteArray` (passes through JNI as
  * `byte[]`). `Err` becomes a `mapOf("error" to message)` since
