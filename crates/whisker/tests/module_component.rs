@@ -135,6 +135,8 @@ pub fn x_container(style: Signal<String>, children: ::whisker::Children) {}
 #[whisker::module_component(
     name = "whisker.test/GeneratedSchema",
     measurement = Custom,
+    text_style = true,
+    commands = [("focus", Null)],
 )]
 pub fn generated_schema(
     enabled: Signal<bool>,
@@ -164,6 +166,13 @@ fn named_form_generates_the_host_independent_schema_and_ids() {
         provider.schema.measurement,
         whisker::ElementMeasurement::Custom
     );
+    assert!(provider.schema.text_style);
+    assert_eq!(provider.schema.commands.len(), 1);
+    assert_eq!(provider.schema.commands[0].name, "focus");
+    assert_eq!(
+        provider.schema.commands[0].arguments,
+        whisker::ElementValueKind::Null
+    );
     assert_eq!(provider.schema.properties.len(), 2);
     assert_eq!(
         provider.schema.properties[0].property,
@@ -187,7 +196,6 @@ fn named_form_generates_the_host_independent_schema_and_ids() {
         generated_schema_schema::CHANGE_EVENT
     );
     assert_eq!(provider.schema.events[0].detail, None);
-    assert!(provider.schema.commands.is_empty());
     assert_eq!(provider.schema.validate(), Ok(()));
 }
 

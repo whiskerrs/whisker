@@ -33,7 +33,7 @@ public final class ImageModule: Module {
                     promise.resolve(.null)
                 }
             }
-            View(WhiskerImageView.self) {
+            View("whisker-image:Image", WhiskerImageView.self) {
                 Prop("src") { (view: WhiskerImageView, value: WhiskerValue) in
                     view.setSrc(value.asString ?? "")
                 }

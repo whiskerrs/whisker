@@ -66,6 +66,7 @@ public struct WhiskerElementRegistration {
     public let name: String
     public let childPolicy: WhiskerChildPolicy
     public let measurement: WhiskerMeasurement
+    public let textStyle: Bool
     public let properties: [WhiskerPropertyBinding]
     public let events: [WhiskerEventBinding]
     public let commands: [WhiskerCommandBinding]
@@ -75,6 +76,7 @@ public struct WhiskerElementRegistration {
         name: String,
         childPolicy: WhiskerChildPolicy,
         measurement: WhiskerMeasurement,
+        textStyle: Bool = false,
         properties: [WhiskerPropertyBinding] = [],
         events: [WhiskerEventBinding] = [],
         commands: [WhiskerCommandBinding] = []
@@ -91,6 +93,7 @@ public struct WhiskerElementRegistration {
         self.name = name
         self.childPolicy = childPolicy
         self.measurement = measurement
+        self.textStyle = textStyle
         self.properties = properties
         self.events = events
         self.commands = commands

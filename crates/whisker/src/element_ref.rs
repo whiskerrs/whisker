@@ -12,16 +12,12 @@
 //!   in the reactive runtime so [`ElementRef::bound`] returns a
 //!   `Signal<bool>` that `effect(...)` / `computed(...)` /
 //!   `text(value: ...)` can observe. The hot-path
-//!   [`ElementRef::invoke`] reads via `get_untracked()` so imperative
+//!   [`ElementRef::command`] reads via `get_untracked()` so imperative
 //!   dispatch never accidentally subscribes its caller.
-//! - **One invoke shape** — `invoke(method, args: WhiskerValue) ->
-//!   WhiskerValue` (sync, fire-and-forget) + `invoke_async` /
-//!   `invoke_typed<T>` (async, result-returning), mirroring
-//!   `PlatformModule::invoke` / `invoke_async`. `args` is a single
-//!   `WhiskerValue` passed straight through as the method's params
-//!   object; the result comes back as a `WhiskerValue`. `invoke_typed`
-//!   surfaces "not bound" / "platform-side error" as [`RefError`]
-//!   variants; `invoke` collapses both into [`WhiskerValue::Error`].
+//! - **One command shape** — `command(name, parameters: WhiskerValue) ->
+//!   Result<(), RefError>`. Element commands are ordered, one-way frame
+//!   operations. Result-bearing element calls are not part of module v1;
+//!   service modules provide `invoke` / `invoke_async` when a value is needed.
 //!
 //! ## Where `ElementRef` appears
 //!
@@ -32,168 +28,21 @@
 //! code sees [`ElementHandle`], [`ScrollViewHandle`], [`TextHandle`],
 //! and similar typed handles — never `ElementRef` directly.
 
-use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use whisker_runtime::reactive::{RwSignal, Signal, computed};
 use whisker_runtime::view::Element;
 
 use whisker_runtime::value::WhiskerValue;
 
-/// Result of [`ElementHandle::bounding_client_rect`] — the element's
-/// layout box in LynxView coordinates (Lynx's `boundingClientRect`
-/// UI method). Every field is `#[serde(default)]`, so any key the
-/// platform omits reads back as `0.0` rather than failing the decode.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
-#[non_exhaustive]
-pub struct BoundingClientRect {
-    #[serde(default)]
-    pub left: f64,
-    #[serde(default)]
-    pub top: f64,
-    #[serde(default)]
-    pub right: f64,
-    #[serde(default)]
-    pub bottom: f64,
-    #[serde(default)]
-    pub width: f64,
-    #[serde(default)]
-    pub height: f64,
-}
-
-/// Result of [`ScrollViewHandle::get_scroll_info`] — the current
-/// scroll offset and scrollable range of a `<scroll-view>` (Lynx's
-/// `getScrollInfo` UI method). Every field is `#[serde(default)]`, so
-/// whichever subset the platform's scroll UI reports populates and
-/// the rest read back `0.0`: `UIScrollView` fills
-/// `scroll_x`/`scroll_y`/`scroll_range`; the internal scroller fills
-/// `scroll_x`/`scroll_y` plus `scroll_width`/`scroll_height`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct ScrollInfo {
-    #[serde(default)]
-    pub scroll_x: f64,
-    #[serde(default)]
-    pub scroll_y: f64,
-    #[serde(default)]
-    pub scroll_range: f64,
-    #[serde(default)]
-    pub scroll_width: f64,
-    #[serde(default)]
-    pub scroll_height: f64,
-}
-
-/// Result of [`ListHandle::get_visible_cells`] — the cells currently
-/// attached/visible in a `<list>` (Lynx's `getVisibleCells`). Field set
-/// confirmed on-device (see `docs/list-design.md`). **Result-returning,
-/// so async — and may not resolve on Android until a fork build wires
-/// the result channel (see the `whisker-driver` element-method notes).**
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct VisibleCells {
-    /// Index of the first attached cell.
-    #[serde(default)]
-    pub from: i64,
-    /// Index of the last attached cell.
-    #[serde(default)]
-    pub to: i64,
-    /// Per-cell info for the currently attached cells.
-    #[serde(default)]
-    pub attached_cells: Vec<VisibleCell>,
-}
-
-/// One attached cell inside a [`VisibleCells`] result.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct VisibleCell {
-    /// Adapter index of the cell.
-    #[serde(default)]
-    pub index: i64,
-    /// The cell's `item-key`.
-    #[serde(default)]
-    pub item_key: String,
-    /// Layout box (when reported).
-    #[serde(default)]
-    pub left: f64,
-    #[serde(default)]
-    pub top: f64,
-    #[serde(default)]
-    pub width: f64,
-    #[serde(default)]
-    pub height: f64,
-}
-
-/// Result of [`TextHandle::get_text_bounding_rect`] — the layout boxes
-/// of a `<text>` substring (Lynx's `getTextBoundingRect`). `bounding_rect`
-/// is the union box covering `[start, end)`; `boxes` is the per-line
-/// box list. All rects are in LynxView coordinates (same shape as
-/// [`BoundingClientRect`]).
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct TextBoundingRect {
-    #[serde(default)]
-    pub bounding_rect: BoundingClientRect,
-    #[serde(default)]
-    pub boxes: Vec<BoundingClientRect>,
-}
-
-/// Internal decode target for `getSelectedText` — the platform returns
-/// `{ "selectedText": "…" }`; [`TextHandle::get_selected_text`] unwraps
-/// it to the bare `String`.
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SelectedTextResult {
-    #[serde(default)]
-    selected_text: String,
-}
-
-/// Result of [`ElementHandle::request_ui_info`] — the element's id,
-/// layout box, size, and scroll offset in one call (Lynx's
-/// `requestUIInfo`, requesting the `id` / `rect` / `size` /
-/// `scrollOffset` fields). Every field is `#[serde(default)]`, so
-/// whichever the platform reports populates and the rest read back
-/// empty / `0.0`. (`rect` + `size` overlap
-/// [`BoundingClientRect`]; `scroll_left` / `scroll_top` overlap
-/// [`ScrollInfo`] — `requestUIInfo` just bundles them.)
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct UiInfo {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub left: f64,
-    #[serde(default)]
-    pub top: f64,
-    #[serde(default)]
-    pub right: f64,
-    #[serde(default)]
-    pub bottom: f64,
-    #[serde(default)]
-    pub width: f64,
-    #[serde(default)]
-    pub height: f64,
-    #[serde(default)]
-    pub scroll_left: f64,
-    #[serde(default)]
-    pub scroll_top: f64,
-}
-
 /// Errors that can surface from imperative element-method dispatch.
 ///
-/// Returned by [`ElementRef::invoke_typed`]. The fire-and-forget
-/// [`ElementRef::invoke`] collapses both variants into
-/// `WhiskerValue::Error` instead.
+/// Returned by [`ElementRef::command`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RefError {
     /// Ref isn't bound to a mounted element. Either the component
     /// hasn't been rendered yet, or it has unmounted. Most UI
     /// fire-and-forget callers want to silently ignore this — that's
-    /// what `let _ = sys.invoke(...);` inside a bridge `effect`
+    /// what `let _ = sys.command(...);` inside a bridge `effect`
     /// provides.
     NotBound,
     /// Platform side surfaced a dispatch error (unknown method, type
@@ -277,72 +126,22 @@ impl ElementRef {
         Signal::Dynamic(computed(move || inner.with(|opt| opt.is_some())))
     }
 
-    /// Invoke a UI method on the bound element, **fire-and-forget**.
-    /// `args` is a single [`WhiskerValue`] passed straight through as the
-    /// method's params object — a [`map`](WhiskerValue::map) of named
-    /// fields for built-in Lynx methods (`scrollTo`'s `offset` /
-    /// `smooth`, …), or [`WhiskerValue::args`] for Whisker module
-    /// elements (`@WhiskerUIMethod` reads `params.args`). The platform
-    /// result isn't available synchronously, so this returns immediately
-    /// with `WhiskerValue::Null` (or `WhiskerValue::Error` when unbound);
-    /// use [`invoke_typed`](Self::invoke_typed) when you need the result.
+    /// Queues a one-way command on the bound element.
     ///
-    /// Mirrors `PlatformModule::invoke` — the same
-    /// `(method, WhiskerValue) -> WhiskerValue` shape, so element and
-    /// module dispatch read alike.
-    pub fn invoke(&self, method: &str, args: WhiskerValue) -> WhiskerValue {
-        let Some(elem) = self.inner.get_untracked() else {
-            return WhiskerValue::Error(format!(
-                "ElementRef::invoke(\"{method}\"): ref is not bound to a \
-                 mounted element"
-            ));
-        };
-        invoke_element_method(elem, method, args)
-    }
-
-    /// Async, **result-returning** invoke — the platform method's return
-    /// value arrives via Lynx's UI-method callback (typically on the UI
-    /// thread). `args` is the same single [`WhiskerValue`] params object
-    /// as [`invoke`](Self::invoke). Returns the raw result
-    /// [`WhiskerValue`], with `WhiskerValue::Error` for "not bound" /
-    /// dispatch failure. Mirrors `PlatformModule::invoke_async`.
-    ///
-    /// Run from an event handler / effect via `spawn_local`, or use the
-    /// typed [`invoke_typed`](Self::invoke_typed).
-    pub async fn invoke_async(&self, method: &str, args: WhiskerValue) -> WhiskerValue {
-        let Some(elem) = self.inner.get_untracked() else {
-            return WhiskerValue::Error(format!(
-                "ElementRef::invoke_async(\"{method}\"): ref is not bound to a \
-                 mounted element"
-            ));
-        };
-        invoke_element_method(elem, method, args)
-    }
-
-    /// Async invoke that deserializes the result into `T`. `NotBound`
-    /// when unbound; `DispatchFailed` on a platform error or a
-    /// result-shape mismatch. The building block the typed handle
-    /// methods (`ScrollViewHandle::get_scroll_info`, …) build on.
-    pub async fn invoke_typed<T: DeserializeOwned>(
-        &self,
-        method: &str,
-        args: WhiskerValue,
-    ) -> Result<T, RefError> {
-        if !self.is_bound() {
+    /// The command is schema-validated and ordered with the next frame. A
+    /// successful return means it was enqueued; Host execution happens later
+    /// and cannot synchronously return a value.
+    pub fn command(&self, command: &str, parameters: WhiskerValue) -> Result<(), RefError> {
+        let Some(element) = self.inner.get_untracked() else {
             return Err(RefError::NotBound);
+        };
+        if !parameters.is_data() {
+            return Err(RefError::DispatchFailed {
+                method: command.into(),
+                message: "element command parameters cannot contain Error values".into(),
+            });
         }
-        match self.invoke_async(method, args).await {
-            WhiskerValue::Error(message) => Err(RefError::DispatchFailed {
-                method: method.into(),
-                message,
-            }),
-            other => other
-                .deserialize_into::<T>()
-                .map_err(|message| RefError::DispatchFailed {
-                    method: method.into(),
-                    message,
-                }),
-        }
+        invoke_element_command(element, command, parameters)
     }
 
     /// Bind the ref to `handle`. Invoked by `#[whisker::platform_
@@ -369,9 +168,7 @@ impl ElementRef {
 
     /// Clear the ref. Invoked at element unmount via the
     /// `on_cleanup(...)` hook emitted by `#[module_component]`
-    /// so subsequent `invoke_typed` calls return
-    /// `Err(RefError::NotBound)` rather than dispatching against a
-    /// recycled `Element` ID.
+    /// so subsequent commands cannot dispatch against a recycled `Element` ID.
     ///
     /// `try_set` because the underlying signal may have already been
     /// disposed by the time this cleanup fires: `Owner::dispose`
@@ -384,29 +181,24 @@ impl ElementRef {
     pub fn __unbind(&self) {
         let _ = self.inner.try_set(None);
     }
-
-    /// Deprecated public alias for [`__bind`](Self::__bind). Don't
-    /// call from author code.
-    #[doc(hidden)]
-    pub fn bind(&self, handle: Element) {
-        self.__bind(handle);
-    }
-
-    /// Deprecated public alias for [`__unbind`](Self::__unbind). Don't
-    /// call from author code.
-    #[doc(hidden)]
-    pub fn clear(&self) {
-        self.__unbind();
-    }
 }
 
-fn invoke_element_method(handle: Element, method: &str, params: WhiskerValue) -> WhiskerValue {
-    whisker_runtime::view::try_invoke_element_method(handle, method, params).unwrap_or_else(|| {
-        WhiskerValue::Error(format!(
-            "invoke_element_method({method}): element {} has no Host method binding",
-            handle.id()
-        ))
-    })
+fn invoke_element_command(
+    handle: Element,
+    command: &str,
+    parameters: WhiskerValue,
+) -> Result<(), RefError> {
+    match whisker_runtime::view::try_invoke_element_command(handle, command, parameters) {
+        Some(Ok(())) => Ok(()),
+        Some(Err(message)) => Err(RefError::DispatchFailed {
+            method: command.into(),
+            message,
+        }),
+        None => Err(RefError::DispatchFailed {
+            method: command.into(),
+            message: format!("element {} has no Host command binding", handle.id()),
+        }),
+    }
 }
 
 impl Default for ElementRef {
@@ -431,60 +223,24 @@ impl std::fmt::Debug for ElementRef {
 //
 // The shared generic methods come from `generic_element_methods!`,
 // invoked inside each handle's `impl` so they land as real inherent
-// methods rather than through a `Deref` — an explicit per-handle
-// surface. Action methods use the fire-and-forget `invoke`; result
-// methods use the async `invoke_typed`.
+// methods rather than through a `Deref` — an explicit per-handle surface.
 
 /// Generates the generic UI methods shared by every element handle (each
 /// wraps a `self.r: ElementRef`). Invoked inside each handle's `impl`.
 macro_rules! generic_element_methods {
     () => {
-        /// `boundingClientRect` — the element's layout box in LynxView
-        /// coordinates (async; the result arrives via Lynx's UI-method
-        /// callback, typically on the UI thread).
-        pub async fn bounding_client_rect(&self) -> Result<BoundingClientRect, RefError> {
-            self.r
-                .invoke_typed::<BoundingClientRect>("boundingClientRect", WhiskerValue::Null)
-                .await
-        }
-
-        /// `takeScreenshot` — a base64-encoded image of the element
-        /// (async). Returns the encoded string.
-        pub async fn take_screenshot(&self) -> Result<String, RefError> {
-            self.r
-                .invoke_typed::<String>("takeScreenshot", WhiskerValue::Null)
-                .await
-        }
-
-        /// `requestUIInfo` — the element's id, layout box, size, and
-        /// scroll offset bundled into one async call (requests the
-        /// `id` / `rect` / `size` / `scrollOffset` fields).
-        pub async fn request_ui_info(&self) -> Result<UiInfo, RefError> {
-            self.r
-                .invoke_typed::<UiInfo>(
-                    "requestUIInfo",
-                    WhiskerValue::map([
-                        ("id", WhiskerValue::Bool(true)),
-                        ("rect", WhiskerValue::Bool(true)),
-                        ("size", WhiskerValue::Bool(true)),
-                        ("scrollOffset", WhiskerValue::Bool(true)),
-                    ]),
-                )
-                .await
-        }
-
         /// `requestAccessibilityFocus` — move the platform accessibility
         /// focus (TalkBack / VoiceOver) to this element. Fire-and-forget;
         /// a no-op when accessibility is disabled.
         pub fn request_accessibility_focus(&self) {
             let _ = self
                 .r
-                .invoke("requestAccessibilityFocus", WhiskerValue::Null);
+                .command("requestAccessibilityFocus", WhiskerValue::Null);
         }
     };
 }
 
-/// Imperative handle to any mounted element — the generic Lynx UI
+/// Imperative handle to any mounted element — the generic Host UI
 /// methods that work regardless of tag. Allocate with
 /// [`ElementHandle::new`], bind via `view(ref: handle.r())` (or `text`,
 /// `scroll_view`, …) in `render!`, then call the methods below.
@@ -494,17 +250,6 @@ macro_rules! generic_element_methods {
 ///
 /// ```ignore
 /// let card = ElementHandle::new();
-/// effect({
-///     let card = card;
-///     move || if card.r().bound().get() {
-///         spawn_local(async move {
-///             if let Ok(rect) = card.bounding_client_rect().await {
-///                 println!("card is {}x{}", rect.width, rect.height);
-///             }
-///         });
-///     }
-/// });
-///
 /// render! { view(ref: card.r()) { /* … */ } }
 /// ```
 #[derive(Copy, Clone)]
@@ -537,7 +282,7 @@ impl Default for ElementHandle {
 
 /// Imperative handle to a mounted `<scroll-view>`. Allocate with
 /// [`ScrollViewHandle::new`], bind via `scroll_view(ref: handle.r())`
-/// in `render!`, then query scroll state.
+/// in `render!`, then issue scroll commands.
 ///
 /// `Copy` (the inner `ElementRef` is an arena handle), so it can be
 /// captured by value into multiple event closures.
@@ -562,15 +307,6 @@ impl ScrollViewHandle {
 
     generic_element_methods!();
 
-    /// `getScrollInfo` — current scroll offset (`scroll_x`/`scroll_y`)
-    /// and scrollable range. Async: resolves once the platform reports
-    /// the values back over the bridge.
-    pub async fn get_scroll_info(&self) -> Result<ScrollInfo, RefError> {
-        self.r
-            .invoke_typed::<ScrollInfo>("getScrollInfo", WhiskerValue::Null)
-            .await
-    }
-
     /// `scrollTo` — scroll to an absolute `offset` (logical pixels)
     /// along the scroll axis. `smooth` animates the scroll.
     ///
@@ -579,7 +315,7 @@ impl ScrollViewHandle {
     /// (a string decodes to 0), and iOS's `toPtFromIDUnitValue` accepts
     /// a bare number as points — so a number is the one form both honor.
     pub fn scroll_to(&self, offset: f64, smooth: bool) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "scrollTo",
             WhiskerValue::map([
                 ("offset", WhiskerValue::Float(offset)),
@@ -591,7 +327,7 @@ impl ScrollViewHandle {
     /// `scrollTo` by child `index` — scroll so the child at `index`
     /// aligns to the scroll start. `smooth` animates the scroll.
     pub fn scroll_to_index(&self, index: i32, smooth: bool) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "scrollTo",
             WhiskerValue::map([
                 ("index", WhiskerValue::Int(index as i64)),
@@ -609,7 +345,7 @@ impl ScrollViewHandle {
     /// [`scroll_to`](Self::scroll_to) (Android `getDouble` + iOS
     /// `dipToPx` / `toPtFromIDUnitValue`).
     pub fn scroll_by(&self, offset: f64) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "scrollBy",
             WhiskerValue::map([("offset", WhiskerValue::Float(offset))]),
         );
@@ -624,7 +360,7 @@ impl ScrollViewHandle {
     /// (`getDouble("rate") / 60`) and iOS `LynxUIScroller`
     /// (`[rate doubleValue] / 60`).
     pub fn auto_scroll(&self, rate: f64) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "autoScroll",
             WhiskerValue::map([
                 ("start", WhiskerValue::Bool(true)),
@@ -636,7 +372,7 @@ impl ScrollViewHandle {
     /// `autoScroll` with `start: false` — stop an in-progress auto-scroll
     /// started by [`auto_scroll`](Self::auto_scroll).
     pub fn stop_auto_scroll(&self) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "autoScroll",
             WhiskerValue::map([("start", WhiskerValue::Bool(false))]),
         );
@@ -673,7 +409,7 @@ impl ListScrollAlign {
 
 /// Imperative handle to a mounted `<list>`. Allocate with
 /// [`ListHandle::new`], bind via `list(ref: handle.r())` in `render!`,
-/// then drive scrolling or query the visible cells. Mirrors
+/// then drive scrolling. Mirrors
 /// [`ScrollViewHandle`] but targets the `<list>` UI methods.
 ///
 /// `Copy` (the inner `ElementRef` is an arena handle), so it can be
@@ -707,7 +443,7 @@ impl ListHandle {
     /// the target index directly). For alignment / extra offset use
     /// [`scroll_to_position_with`](Self::scroll_to_position_with).
     pub fn scroll_to_position(&self, index: i32, smooth: bool) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "scrollToPosition",
             WhiskerValue::map([
                 ("position", WhiskerValue::Int(index as i64)),
@@ -727,7 +463,7 @@ impl ListHandle {
         offset: f64,
         smooth: bool,
     ) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "scrollToPosition",
             WhiskerValue::map([
                 ("position", WhiskerValue::Int(index as i64)),
@@ -741,7 +477,7 @@ impl ListHandle {
     /// `scrollBy` — scroll by a relative `offset` (logical pixels) from
     /// the current position along the scroll axis.
     pub fn scroll_by(&self, offset: f64) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "scrollBy",
             WhiskerValue::map([("offset", WhiskerValue::Float(offset))]),
         );
@@ -750,7 +486,7 @@ impl ListHandle {
     /// `autoScroll` — start auto-scrolling at `rate` logical pixels per
     /// second. Pair with [`stop_auto_scroll`](Self::stop_auto_scroll).
     pub fn auto_scroll(&self, rate: f64) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "autoScroll",
             WhiskerValue::map([
                 ("start", WhiskerValue::Bool(true)),
@@ -761,18 +497,10 @@ impl ListHandle {
 
     /// `autoScroll` with `start: false` — stop an in-progress auto-scroll.
     pub fn stop_auto_scroll(&self) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "autoScroll",
             WhiskerValue::map([("start", WhiskerValue::Bool(false))]),
         );
-    }
-
-    /// `getVisibleCells` — info about the cells currently attached to the
-    /// viewport. Async: resolves once the platform reports back.
-    pub async fn get_visible_cells(&self) -> Result<VisibleCells, RefError> {
-        self.r
-            .invoke_typed::<VisibleCells>("getVisibleCells", WhiskerValue::Null)
-            .await
     }
 }
 
@@ -784,13 +512,7 @@ impl Default for ListHandle {
 
 /// Imperative handle to a mounted `<text>`. Allocate with
 /// [`TextHandle::new`], bind via `text(ref: handle.r())` in `render!`,
-/// then drive / read text selection.
-///
-/// **Android note:** the geometry methods (`get_text_bounding_rect`,
-/// `set_text_selection`, `get_selected_text`) need a real text `Layout`,
-/// which a *flattened* text doesn't have — they come back empty / error.
-/// Set `flatten: false` on the `<text>` if you call them on Android. iOS
-/// extracts boxes regardless.
+/// then drive text selection.
 ///
 /// `Copy` (the inner `ElementRef` is an arena handle), so it can be
 /// captured by value into multiple event closures.
@@ -815,34 +537,6 @@ impl TextHandle {
 
     generic_element_methods!();
 
-    /// `getSelectedText` — the currently-selected substring of the text
-    /// (empty if nothing is selected). Async result.
-    pub async fn get_selected_text(&self) -> Result<String, RefError> {
-        self.r
-            .invoke_typed::<SelectedTextResult>("getSelectedText", WhiskerValue::Null)
-            .await
-            .map(|r| r.selected_text)
-    }
-
-    /// `getTextBoundingRect` — the layout box(es) of the substring
-    /// `[start, end)` (character indices). Async result; the union box
-    /// is `bounding_rect`, per-line boxes are `boxes`.
-    pub async fn get_text_bounding_rect(
-        &self,
-        start: i32,
-        end: i32,
-    ) -> Result<TextBoundingRect, RefError> {
-        self.r
-            .invoke_typed::<TextBoundingRect>(
-                "getTextBoundingRect",
-                WhiskerValue::map([
-                    ("start", WhiskerValue::Int(start as i64)),
-                    ("end", WhiskerValue::Int(end as i64)),
-                ]),
-            )
-            .await
-    }
-
     /// `setTextSelection` — highlight the text between
     /// `(start_x, start_y)` and `(end_x, end_y)` (logical pixels,
     /// relative to the text component). Fire-and-forget.
@@ -851,7 +545,7 @@ impl TextHandle {
     /// `params.getDouble`, iOS with `toPtFromIDUnitValue` (which takes a
     /// bare number as points) — a number is the form both honor.
     pub fn set_text_selection(&self, start_x: f64, start_y: f64, end_x: f64, end_y: f64) {
-        let _ = self.r.invoke(
+        let _ = self.r.command(
             "setTextSelection",
             WhiskerValue::map([
                 ("startX", WhiskerValue::Float(start_x)),
@@ -866,37 +560,5 @@ impl TextHandle {
 impl Default for TextHandle {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bounding_client_rect_deserializes_from_value_map() {
-        // Mirrors what Lynx's `boundingClientRect` returns through the
-        // async invoke path.
-        let v = WhiskerValue::map([
-            ("left", WhiskerValue::Float(10.0)),
-            ("top", WhiskerValue::Float(20.0)),
-            ("right", WhiskerValue::Float(110.0)),
-            ("bottom", WhiskerValue::Float(70.0)),
-            ("width", WhiskerValue::Float(100.0)),
-            ("height", WhiskerValue::Float(50.0)),
-        ]);
-        let rect: BoundingClientRect = v.deserialize_into().expect("deserialize rect");
-        assert_eq!(rect.left, 10.0);
-        assert_eq!(rect.width, 100.0);
-        assert_eq!(rect.height, 50.0);
-    }
-
-    #[test]
-    fn bounding_client_rect_missing_fields_default_to_zero() {
-        // Int widens to f64 and missing keys default to 0.0.
-        let v = WhiskerValue::map([("width", WhiskerValue::Int(42))]);
-        let rect: BoundingClientRect = v.deserialize_into().expect("partial rect");
-        assert_eq!(rect.width, 42.0);
-        assert_eq!(rect.height, 0.0);
     }
 }

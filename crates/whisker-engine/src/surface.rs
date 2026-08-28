@@ -6,8 +6,8 @@ use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot,
 use whisker_protocol::{
     ApplyResult, BoxPaint, CommandId, Cursor, CursorKeyword, ElementTypeId, FramePacket,
     HitTestBehavior, InputPoint, LayoutGeometry, MeasurementMetrics, MeasurementReady,
-    MeasurementResponse, MeasurementSpec, NodeId, PointerId, PropertyId, ResultId, SurfaceId,
-    TextContent, WhiskerValue,
+    MeasurementResponse, MeasurementSpec, NodeId, PointerId, PropertyId, SurfaceId, TextContent,
+    WhiskerValue,
 };
 use whisker_style::{
     ComputedLayoutStyle, ComputedStyle, ComputedTransformStyle, CursorValue, PointerEventsValue,
@@ -16,8 +16,8 @@ use whisker_style::{
 
 use crate::{
     DeferredMeasurementApply, FrameSink, LayoutProgress, MeasurementApply, MeasurementError,
-    PlainTextInput, Scene, SceneError, SceneNode, lower_paint, lower_plain_text, lower_transform,
-    measurement::MeasurementCoordinator,
+    PlainTextInput, Scene, SceneError, SceneNode, lower_paint, lower_plain_text, lower_text_style,
+    lower_transform, measurement::MeasurementCoordinator,
 };
 
 const fn lower_hit_test(value: PointerEventsValue) -> HitTestBehavior {
@@ -309,10 +309,9 @@ impl SurfaceEngine {
         node: NodeId,
         command: CommandId,
         arguments: WhiskerValue,
-        result: Option<ResultId>,
     ) -> Result<(), SurfaceError> {
         self.scene
-            .invoke_command(node, command, arguments, result)
+            .invoke_command(node, command, arguments)
             .map_err(SurfaceError::Scene)
     }
 
@@ -360,6 +359,30 @@ impl SurfaceEngine {
     ) -> Result<(), SurfaceError> {
         self.scene
             .set_text(node, content)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Delivers resolved inherited text style to a native text-capable
+    /// element independently from plain-text child content.
+    pub fn set_text_style(
+        &mut self,
+        node: NodeId,
+        style: &ComputedStyle,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .set_text_style(node, lower_text_style(style))
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Replaces an already-lowered native text-style snapshot. Runtime-owned
+    /// paint animation uses this without re-resolving inherited values.
+    pub fn set_text_style_snapshot(
+        &mut self,
+        node: NodeId,
+        style: whisker_protocol::TextStyleSnapshot,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .set_text_style(node, style)
             .map_err(SurfaceError::Scene)
     }
 
@@ -1430,6 +1453,24 @@ mod tests {
         surface
             .set_plain_text(root, &PlainTextInput::new("animated"), style)
             .unwrap();
+        surface.set_text_style(root, style).unwrap();
+        let text_style = lower_text_style(style);
+        assert_eq!(surface.node(root).unwrap().text_style(), Some(&text_style));
+        surface
+            .set_text_style_snapshot(root, text_style.clone())
+            .unwrap();
+        assert_eq!(
+            surface.set_text_style(missing, style),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        assert_eq!(
+            surface.set_text_style_snapshot(missing, text_style),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
         let mut text = surface.node(root).unwrap().text().unwrap().clone();
         text.paint.foreground = whisker_protocol::PaintColor::Srgba {
             red: 255,
@@ -1538,11 +1579,11 @@ mod tests {
 
         let command = CommandId::new(1).unwrap();
         assert_eq!(
-            surface.invoke_command(root, command, WhiskerValue::Null, None),
+            surface.invoke_command(root, command, WhiskerValue::Null),
             Ok(())
         );
         assert_eq!(
-            surface.invoke_command(missing, command, WhiskerValue::Null, None),
+            surface.invoke_command(missing, command, WhiskerValue::Null),
             Err(SurfaceError::Scene(SceneError::UnknownNode {
                 node: missing
             }))

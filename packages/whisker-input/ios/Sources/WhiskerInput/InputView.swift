@@ -494,7 +494,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         applyTextAlignment()
     }
 
-    // MARK: - Imperative handle targets (called by InputModule's Function closures)
+    // MARK: - Imperative handle targets (called by InputModule's Command handlers)
 
     /// Focus the field and raise the keyboard.
     public func focusField() {
@@ -514,11 +514,6 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         applyText("")
         cachedText = ""
         emitInput("")
-    }
-
-    /// Synchronous read of the current text for `getValue`.
-    public func currentText() -> String {
-        return cachedText
     }
 
     // MARK: - Event emission helpers
@@ -546,8 +541,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     // runloop tick instead would cost every event a tick of latency.
 
     private func emitInput(_ text: String) {
-        // Update owned state before dispatch, so a handler that reads back
-        // through `getValue` sees the new text.
+        // Update owned state before dispatch so controlled props observe it.
         cachedText = text
         WhiskerCustomEvent.dispatch(from: self, name: "input", params: detailPayload(text))
     }

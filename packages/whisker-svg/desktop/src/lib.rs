@@ -97,8 +97,8 @@ impl WhiskerModule for SvgModule {
     type Definition = ModuleDefinition;
 
     fn definition() -> Self::Definition {
-        ModuleDefinition::new().view(
-            DesktopViewDefinition::new("whisker-svg:Svg", SvgDesktopView::default)
+        ModuleDefinition::new().name("whisker-svg:Svg").view(
+            DesktopViewDefinition::new("whisker-svg:Svg", |_| SvgDesktopView::default())
                 .prop(
                     "display-list",
                     |view, value| {

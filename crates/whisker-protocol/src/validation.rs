@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::{
-    ElementTypeId, FrameMode, FramePacket, NodeId, Operation, PROTOCOL_MAJOR, ResultId, SurfaceId,
+    ElementTypeId, FrameMode, FramePacket, NodeId, Operation, PROTOCOL_MAJOR, SurfaceId,
     TextContentError,
 };
 
@@ -148,11 +148,6 @@ pub enum ValidationError {
         /// Stable invalid-input category.
         error: TextContentError,
     },
-    /// One packet reused a command result identifier.
-    DuplicateResultId {
-        /// Duplicate result correlation.
-        result: ResultId,
-    },
 }
 
 impl fmt::Display for ValidationError {
@@ -238,9 +233,8 @@ impl SceneProjection {
         };
         next.scene_epoch = Some(packet.header.scene_epoch);
 
-        let mut result_ids = HashSet::new();
         for operation in &packet.operations {
-            next.apply_operation(operation, &mut result_ids)?;
+            next.apply_operation(operation)?;
         }
 
         next.revision = packet.header.target_revision;
@@ -290,11 +284,7 @@ impl SceneProjection {
         Ok(())
     }
 
-    fn apply_operation(
-        &mut self,
-        operation: &Operation,
-        result_ids: &mut HashSet<ResultId>,
-    ) -> Result<(), ValidationError> {
+    fn apply_operation(&mut self, operation: &Operation) -> Result<(), ValidationError> {
         match operation {
             Operation::CreateNode { node, element_type } => {
                 if !self.allocated_nodes.insert(*node) {
@@ -363,19 +353,20 @@ impl SceneProjection {
                     .validate()
                     .map_err(|error| ValidationError::InvalidText { error })?;
             }
+            Operation::SetTextStyle { node, style } => {
+                self.require_node(*node)?;
+                style
+                    .validate()
+                    .map_err(|error| ValidationError::InvalidText { error })?;
+            }
             Operation::SetImage { node, content } => {
                 self.require_node(*node)?;
                 if !content.validate() {
                     return Err(ValidationError::InvalidImageContent);
                 }
             }
-            Operation::InvokeCommand { node, result, .. } => {
+            Operation::InvokeCommand { node, .. } => {
                 self.require_node(*node)?;
-                if let Some(result) = result
-                    && !result_ids.insert(*result)
-                {
-                    return Err(ValidationError::DuplicateResultId { result: *result });
-                }
             }
             Operation::SetClip { node, .. }
             | Operation::SetVisibility { node, .. }
@@ -537,7 +528,7 @@ mod tests {
         CommandId, ElementTypeId, FrameHeader, HitTestBehavior, MeasureFontFamily,
         MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
         MeasureTextWrap, ObjectFit, Operation, PaintPosition, PointerId, PropertyId,
-        ProtocolVersion, ResourceId, ResultId, TextContent, TextContentError, TextMeasurePayload,
+        ProtocolVersion, ResourceId, TextContent, TextContentError, TextMeasurePayload,
         TextMeasureStyle, Transform, Visibility, WhiskerValue,
     };
 
@@ -848,24 +839,6 @@ mod tests {
     }
 
     #[test]
-    fn command_result_ids_are_unique_within_a_packet() {
-        let (mut scene, root, _) = initial_tree();
-        let result = ResultId::new(9).expect("test result ID");
-        let command = crate::CommandId::new(1).expect("test command");
-        let invoke = || Operation::InvokeCommand {
-            node: root,
-            command,
-            arguments: crate::WhiskerValue::Null,
-            result: Some(result),
-        };
-        let error = scene
-            .apply(&packet(FrameMode::Delta, 1, 1, 2, vec![invoke(), invoke()]))
-            .expect_err("duplicate result must be rejected");
-        assert_eq!(error, ValidationError::DuplicateResultId { result });
-        assert_eq!(scene.revision(), 1);
-    }
-
-    #[test]
     fn replacement_snapshot_requires_a_new_epoch() {
         let (mut scene, _, _) = initial_tree();
         let error = scene
@@ -973,7 +946,6 @@ mod tests {
         let property = PropertyId::new(1).expect("test property");
         let pointer = PointerId::new(1).expect("test pointer");
         let command = CommandId::new(1).expect("test command");
-        let result = ResultId::new(1).expect("test result");
 
         let outcome = apply_next(
             &mut scene,
@@ -1037,6 +1009,10 @@ mod tests {
                     node: root,
                     content: text_content("hello"),
                 },
+                Operation::SetTextStyle {
+                    node: root,
+                    style: crate::TextStyleSnapshot::from(&text_content("styled")),
+                },
                 Operation::SetImage {
                     node: root,
                     content: crate::ImageContent {
@@ -1081,13 +1057,6 @@ mod tests {
                     node: root,
                     command,
                     arguments: WhiskerValue::Array(Vec::new()),
-                    result: None,
-                },
-                Operation::InvokeCommand {
-                    node: root,
-                    command,
-                    arguments: WhiskerValue::Null,
-                    result: Some(result),
                 },
             ],
         )
@@ -1187,6 +1156,10 @@ mod tests {
                 node: missing,
                 content: text_content("missing"),
             },
+            Operation::SetTextStyle {
+                node: missing,
+                style: crate::TextStyleSnapshot::from(&text_content("missing style")),
+            },
             Operation::SetImage {
                 node: missing,
                 content: crate::ImageContent {
@@ -1204,7 +1177,6 @@ mod tests {
                 node: missing,
                 command: CommandId::new(1).expect("test command"),
                 arguments: WhiskerValue::Null,
-                result: None,
             },
         ];
 
@@ -1311,6 +1283,23 @@ mod tests {
             }],
         )
         .expect_err("invalid text payload");
+        assert_eq!(
+            error,
+            ValidationError::InvalidText {
+                error: TextContentError::InvalidMeasurement(
+                    crate::MeasurementPayloadError::InvalidFontFamily,
+                ),
+            }
+        );
+        assert_eq!(scene.revision(), 1);
+
+        let mut style = crate::TextStyleSnapshot::from(&text_content("invalid style"));
+        style.style.font_families.clear();
+        let error = apply_next(
+            &mut scene,
+            vec![Operation::SetTextStyle { node: root, style }],
+        )
+        .expect_err("invalid inherited text style");
         assert_eq!(
             error,
             ValidationError::InvalidText {

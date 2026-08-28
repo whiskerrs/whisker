@@ -285,6 +285,343 @@ impl Drop for ModuleSubscription {
     }
 }
 
+/// Promise handed to a Rust Host `AsyncFunction` implementation.
+///
+/// The first settlement wins. Dropping an unsettled promise completes the
+/// invocation with an error so the Rust caller cannot wait forever.
+pub struct ModulePromise {
+    result: Option<ModuleResult>,
+}
+
+impl ModulePromise {
+    fn new(result: ModuleResult) -> Self {
+        Self {
+            result: Some(result),
+        }
+    }
+
+    /// Completes the invocation with one transferable value.
+    pub fn resolve(mut self, value: WhiskerValue) {
+        if let Some(result) = self.result.take() {
+            result(value);
+        }
+    }
+
+    /// Completes the invocation with a Host error.
+    pub fn reject(self, message: impl Into<String>) {
+        self.resolve(WhiskerValue::Error(message.into()));
+    }
+}
+
+impl Drop for ModulePromise {
+    fn drop(&mut self) {
+        if let Some(result) = self.result.take() {
+            result(WhiskerValue::Error(
+                "Host AsyncFunction dropped its promise without settling".into(),
+            ));
+        }
+    }
+}
+
+/// Event channel available to Rust Host module handlers.
+type ModuleEventSink = Rc<dyn Fn(&str, &str, WhiskerValue) -> bool>;
+
+#[derive(Clone)]
+pub struct ModuleEventEmitter {
+    module: String,
+    emit: ModuleEventSink,
+}
+
+impl ModuleEventEmitter {
+    /// Enqueues one declared service event for delivery on the next runtime
+    /// drive. Returns `false` when the event was not declared by the module.
+    pub fn emit(&self, event: &str, payload: WhiskerValue) -> bool {
+        if !payload.is_data() {
+            return false;
+        }
+        (self.emit)(&self.module, event, payload)
+    }
+}
+
+type HostFunction = Rc<dyn Fn(&[WhiskerValue], &ModuleEventEmitter) -> WhiskerValue>;
+type HostAsyncFunction = Rc<dyn Fn(&[WhiskerValue], ModulePromise, &ModuleEventEmitter)>;
+type ObserverHook = Rc<dyn Fn(&ModuleEventEmitter)>;
+
+/// Service portion shared by the Desktop and Web `ModuleDefinition` APIs.
+///
+/// Element factories stay in their target crates. This value contains only
+/// the portable `Name`, `Function`, `AsyncFunction`, event, and observer
+/// declarations used by Rust Hosts.
+#[derive(Clone, Default)]
+pub struct RustModuleDefinition {
+    name: Option<String>,
+    functions: HashMap<String, HostFunction>,
+    async_functions: HashMap<String, HostAsyncFunction>,
+    events: std::collections::HashSet<String>,
+    on_start: HashMap<String, ObserverHook>,
+    on_stop: HashMap<String, ObserverHook>,
+}
+
+impl std::fmt::Debug for RustModuleDefinition {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RustModuleDefinition")
+            .field("name", &self.name)
+            .field("functions", &self.functions.keys())
+            .field("async_functions", &self.async_functions.keys())
+            .field("events", &self.events)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RustModuleDefinition {
+    /// Declares the package-qualified service module name.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        assert!(self.name.replace(name).is_none(), "duplicate module Name");
+        self
+    }
+
+    /// Declares one synchronous service function.
+    pub fn function(
+        mut self,
+        name: impl Into<String>,
+        handler: impl Fn(&[WhiskerValue], &ModuleEventEmitter) -> WhiskerValue + 'static,
+    ) -> Self {
+        let name = name.into();
+        assert!(!name.trim().is_empty(), "module Function name is empty");
+        assert!(
+            self.functions
+                .insert(name.clone(), Rc::new(handler))
+                .is_none(),
+            "duplicate module Function {name}"
+        );
+        self
+    }
+
+    /// Declares one deferred service function.
+    pub fn async_function(
+        mut self,
+        name: impl Into<String>,
+        handler: impl Fn(&[WhiskerValue], ModulePromise, &ModuleEventEmitter) + 'static,
+    ) -> Self {
+        let name = name.into();
+        assert!(
+            !name.trim().is_empty(),
+            "module AsyncFunction name is empty"
+        );
+        assert!(
+            self.async_functions
+                .insert(name.clone(), Rc::new(handler))
+                .is_none(),
+            "duplicate module AsyncFunction {name}"
+        );
+        self
+    }
+
+    /// Declares one service-scoped event.
+    pub fn event(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        assert!(!name.trim().is_empty(), "module Event name is empty");
+        assert!(
+            self.events.insert(name.clone()),
+            "duplicate module Event {name}"
+        );
+        self
+    }
+
+    /// Declares the first-subscriber hook for one event.
+    pub fn on_start_observing(
+        mut self,
+        event: impl Into<String>,
+        hook: impl Fn(&ModuleEventEmitter) + 'static,
+    ) -> Self {
+        let event = event.into();
+        assert!(
+            self.on_start.insert(event.clone(), Rc::new(hook)).is_none(),
+            "duplicate OnStartObserving for {event}"
+        );
+        self
+    }
+
+    /// Declares the last-subscriber hook for one event.
+    pub fn on_stop_observing(
+        mut self,
+        event: impl Into<String>,
+        hook: impl Fn(&ModuleEventEmitter) + 'static,
+    ) -> Self {
+        let event = event.into();
+        assert!(
+            self.on_stop.insert(event.clone(), Rc::new(hook)).is_none(),
+            "duplicate OnStopObserving for {event}"
+        );
+        self
+    }
+
+    /// Returns the required module identity.
+    pub fn module_name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let name = self
+            .name
+            .as_deref()
+            .ok_or_else(|| "ModuleDefinition requires exactly one Name".to_string())?;
+        if name.trim().is_empty() {
+            return Err("ModuleDefinition Name is empty".into());
+        }
+        if let Some(duplicate) = self
+            .functions
+            .keys()
+            .find(|function| self.async_functions.contains_key(*function))
+        {
+            return Err(format!(
+                "Function and AsyncFunction both declare `{duplicate}` on `{name}`"
+            ));
+        }
+        for event in self.on_start.keys().chain(self.on_stop.keys()) {
+            if !self.events.contains(event) {
+                return Err(format!(
+                    "observer hook references undeclared event `{event}` on `{name}`"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct PendingModuleEvent {
+    module: String,
+    event: String,
+    payload: WhiskerValue,
+}
+
+struct RustModuleRuntimeInner {
+    definitions: HashMap<String, RustModuleDefinition>,
+    pending: RefCell<Vec<PendingModuleEvent>>,
+    wake: Rc<dyn Fn()>,
+}
+
+/// Bound service-module registry used by direct Rust Hosts.
+pub struct RustModuleRuntime {
+    inner: Rc<RustModuleRuntimeInner>,
+    host: Rc<ModuleHost>,
+}
+
+impl RustModuleRuntime {
+    /// Validates module declarations and creates the runtime binding.
+    pub fn new(
+        definitions: impl IntoIterator<Item = RustModuleDefinition>,
+        wake: impl Fn() + 'static,
+    ) -> Result<Self, String> {
+        let mut by_name = HashMap::new();
+        for definition in definitions {
+            definition.validate()?;
+            let name = definition
+                .module_name()
+                .expect("validated module has a Name")
+                .to_owned();
+            if by_name.insert(name.clone(), definition).is_some() {
+                return Err(format!("duplicate Host module `{name}`"));
+            }
+        }
+        let inner = Rc::new(RustModuleRuntimeInner {
+            definitions: by_name,
+            pending: RefCell::new(Vec::new()),
+            wake: Rc::new(wake),
+        });
+        let invoke_inner = Rc::downgrade(&inner);
+        let observe_inner = Rc::downgrade(&inner);
+        let host = ModuleHost::new(
+            move |module, method, args, is_async, result| {
+                let Some(inner) = invoke_inner.upgrade() else {
+                    return false;
+                };
+                let Some(definition) = inner.definitions.get(module) else {
+                    return false;
+                };
+                let emitter = inner.emitter(module);
+                if is_async {
+                    let Some(function) = definition.async_functions.get(method) else {
+                        return false;
+                    };
+                    function(args, ModulePromise::new(result), &emitter);
+                    true
+                } else {
+                    let Some(function) = definition.functions.get(method) else {
+                        return false;
+                    };
+                    result(function(args, &emitter));
+                    true
+                }
+            },
+            move |module, event, observing| {
+                let Some(inner) = observe_inner.upgrade() else {
+                    return;
+                };
+                let Some(definition) = inner.definitions.get(module) else {
+                    return;
+                };
+                let hook = if observing {
+                    definition.on_start.get(event)
+                } else {
+                    definition.on_stop.get(event)
+                };
+                if let Some(hook) = hook {
+                    hook(&inner.emitter(module));
+                }
+            },
+        );
+        Ok(Self { inner, host })
+    }
+
+    /// Runs application/runtime work with this registry installed.
+    pub fn with_host<T>(&self, work: impl FnOnce() -> T) -> T {
+        with_module_host(&self.host, work)
+    }
+
+    /// Delivers queued Host events to Rust subscribers without re-entering
+    /// application code from the originating Host callback.
+    pub fn dispatch_pending_events(&self) -> usize {
+        let pending = std::mem::take(&mut *self.inner.pending.borrow_mut());
+        let count = pending.len();
+        for event in pending {
+            self.host
+                .dispatch_event(&event.module, &event.event, event.payload);
+        }
+        count
+    }
+}
+
+impl RustModuleRuntimeInner {
+    fn emitter(self: &Rc<Self>, module: &str) -> ModuleEventEmitter {
+        let weak = Rc::downgrade(self);
+        ModuleEventEmitter {
+            module: module.to_owned(),
+            emit: Rc::new(move |module, event, payload| {
+                let Some(inner) = weak.upgrade() else {
+                    return false;
+                };
+                let declared = inner
+                    .definitions
+                    .get(module)
+                    .is_some_and(|definition| definition.events.contains(event));
+                if declared {
+                    inner.pending.borrow_mut().push(PendingModuleEvent {
+                        module: module.to_owned(),
+                        event: event.to_owned(),
+                        payload,
+                    });
+                    (inner.wake)();
+                }
+                declared
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,5 +644,86 @@ mod tests {
         });
         assert_eq!(value, WhiskerValue::Int(7));
         assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn rust_host_definition_supports_functions_events_and_observer_lifecycle() {
+        let starts = Rc::new(Cell::new(0));
+        let stops = Rc::new(Cell::new(0));
+        let wakes = Rc::new(Cell::new(0));
+        let definition = RustModuleDefinition::default()
+            .name("demo:Echo")
+            .function("echo", |args, _| args[0].clone())
+            .async_function("echoAsync", |args, promise, _| {
+                promise.resolve(args[0].clone());
+            })
+            .event("ready")
+            .on_start_observing("ready", {
+                let starts = Rc::clone(&starts);
+                move |events| {
+                    starts.set(starts.get() + 1);
+                    assert!(events.emit("ready", WhiskerValue::String("now".into())));
+                }
+            })
+            .on_stop_observing("ready", {
+                let stops = Rc::clone(&stops);
+                move |_| stops.set(stops.get() + 1)
+            });
+        let runtime = RustModuleRuntime::new([definition], {
+            let wakes = Rc::clone(&wakes);
+            move || wakes.set(wakes.get() + 1)
+        })
+        .unwrap();
+
+        runtime.with_host(|| {
+            assert_eq!(
+                PlatformModule::named("demo:Echo").invoke("echo", vec![WhiskerValue::Int(9)]),
+                WhiskerValue::Int(9)
+            );
+        });
+
+        let payload = Rc::new(RefCell::new(None));
+        let subscription = runtime.with_host(|| {
+            let payload = Rc::clone(&payload);
+            PlatformModule::named("demo:Echo").on_event("ready", move |value| {
+                *payload.borrow_mut() = Some(value);
+            })
+        });
+        assert_eq!(starts.get(), 1);
+        assert_eq!(wakes.get(), 1);
+        runtime.with_host(|| assert_eq!(runtime.dispatch_pending_events(), 1));
+        assert_eq!(*payload.borrow(), Some(WhiskerValue::String("now".into())));
+        drop(subscription);
+        assert_eq!(stops.get(), 1);
+    }
+
+    #[test]
+    fn rust_host_definition_requires_name_and_declared_observer_events() {
+        assert!(
+            RustModuleRuntime::new([RustModuleDefinition::default()], || {})
+                .err()
+                .expect("definition without Name must fail")
+                .contains("Name")
+        );
+        let undeclared = RustModuleDefinition::default()
+            .name("demo:Bad")
+            .on_start_observing("missing", |_| {});
+        assert!(
+            RustModuleRuntime::new([undeclared], || {})
+                .err()
+                .expect("observer for undeclared event must fail")
+                .contains("undeclared event")
+        );
+
+        let duplicate_function = RustModuleDefinition::default()
+            .name("demo:Bad")
+            .function("load", |_, _| WhiskerValue::Null)
+            .async_function("load", |_, promise, _| promise.resolve(WhiskerValue::Null));
+        assert!(
+            RustModuleRuntime::new([duplicate_function], || {})
+                .err()
+                .expect("sync and async members must share one namespace")
+                .contains("both declare")
+        );
     }
 }

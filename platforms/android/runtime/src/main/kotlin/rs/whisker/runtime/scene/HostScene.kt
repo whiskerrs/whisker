@@ -25,6 +25,7 @@ import rs.whisker.runtime.WhiskerTextOverflow
 import rs.whisker.runtime.WhiskerTextShadow
 import rs.whisker.runtime.WhiskerTextWordBreak
 import rs.whisker.runtime.WhiskerValue
+import rs.whisker.runtime.styleSnapshot
 import rs.whisker.runtime.paint.HostBackgroundGeometry
 import rs.whisker.runtime.paint.HostBackgroundBox
 import rs.whisker.runtime.paint.HostBackgroundLayer
@@ -205,8 +206,10 @@ internal class HostScene(
                 operation.scalar !in 0f..1f
             ) return false
             11 -> if (operation.node !in existing || operation.integer !in 0..1) return false
-            13 -> {
+            13, 27 -> {
                 val values = operation.numbers ?: return false
+                val registration = elementTypes[operation.node]
+                    ?.let(WhiskerElementRegistry::registration) ?: return false
                 if (
                     operation.node !in existing || operation.text == null ||
                     values.size < 37 || operation.names?.size ?: 0 < 3 ||
@@ -219,8 +222,10 @@ internal class HostScene(
                     values[36].toInt() !in 0..2 ||
                     values[36] != values[36].toInt().toFloat()
                 ) return false
+                if (operation.tag == 13 && registration.childPolicy != WhiskerChildPolicy.PlainText) return false
+                if (operation.tag == 27 && !registration.textStyle) return false
             }
-            14 -> if (operation.node !in existing || operation.value == null) return false
+            14, 18 -> if (operation.node !in existing || operation.value == null) return false
             21 -> if (!validBackgroundLayers(operation, existing)) return false
             else -> return false
         }
@@ -275,11 +280,20 @@ internal class HostScene(
                 requireNotNull(operation.numbers),
                 requireNotNull(operation.names),
             )
+            27 -> applyText(
+                nodes[id] ?: return,
+                requireNotNull(operation.text),
+                requireNotNull(operation.numbers),
+                requireNotNull(operation.names),
+                styleOnly = true,
+            )
             14 -> (nodes[id] ?: return).mountedElement
                 ?.setProperty(operation.member, requireNotNull(operation.value))
             15 -> (nodes[id] ?: return).mountedElement?.clearProperty(operation.member)
             16 -> (nodes[id] ?: return).mountedElement?.setEventMask(operation.wide)
             17 -> (nodes[id] ?: return).setHitTestBehavior(operation.integer)
+            18 -> (nodes[id] ?: return).mountedElement
+                ?.invokeCommand(operation.member, requireNotNull(operation.value))
             21 -> applyBackgroundLayers(nodes[id] ?: return, operation)
             22 -> applyBoxShadows(nodes[id] ?: return, operation)
             23 -> applyClipPath(nodes[id] ?: return, operation)
@@ -390,7 +404,13 @@ internal class HostScene(
         refreshClipPath(node)
     }
 
-    private fun applyText(node: HostNode, text: String, values: FloatArray, names: Array<String>) {
+    private fun applyText(
+        node: HostNode,
+        text: String,
+        values: FloatArray,
+        names: Array<String>,
+        styleOnly: Boolean = false,
+    ) {
         require(values.size >= 37)
         require(values[0].isFinite() && values[0] > 0f)
         require(values[1] in 1f..1000f && values[1] == values[1].toInt().toFloat())
@@ -417,9 +437,7 @@ internal class HostScene(
             WhiskerFontVariation(it.first, it.second.toFloat())
         }
         val mounted = requireNotNull(node.mountedElement)
-        require(
-            mounted.setText(
-                WhiskerTextContent(
+        val content = WhiskerTextContent(
                     value = text,
                     fontFamilies = families,
                     fontSize = values[0],
@@ -472,10 +490,9 @@ internal class HostScene(
                             rgba(values[12], values[13], values[14], values[15])
                         },
                     ),
-                ),
-            ),
-        ) {
-            "text operation sent to element ${mounted.registration.name} without a text implementation"
+                )
+        require(if (styleOnly) mounted.setTextStyle(content.styleSnapshot()) else mounted.setText(content)) {
+            "text operation sent to element ${mounted.registration.name} without the declared text implementation"
         }
     }
 

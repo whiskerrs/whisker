@@ -13,7 +13,7 @@
 //         Name("Video")
 //         View(VideoView::class.java) {
 //             Prop("src") { view: VideoView, value: String -> view.setSrc(value) }
-//             Function("play") { view: VideoView -> view.play() }
+//             Command("play") { view: VideoView, _ -> view.play() }
 //         }
 //     }
 // }
@@ -69,6 +69,7 @@ public abstract class Module {
      */
     public fun sendEvent(event: String, payload: WhiskerValue = WhiskerValue.Null) {
         val qname = qualifiedName ?: return
+        if (event !in definitionLazy.events || !payload.isData()) return
         WhiskerModuleEventCenter.dispatchSend(qname, event, payload)
     }
 

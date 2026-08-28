@@ -20,7 +20,7 @@ import rs.whisker.runtime.WhiskerValue
 class InputModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Input")
-        View(WhiskerInputView::class.java) {
+        View("whisker-input:Input", WhiskerInputView::class.java) {
             // ---- text-content props ----------------------------------------
 
             Prop("value") { view: WhiskerInputView, value ->
@@ -80,41 +80,25 @@ class InputModule : Module() {
             // inside WhiskerInputView. Documents the emittable set.
             Events("input", "change", "focus", "blur", "submit")
 
-            // ---- callable UI methods ---------------------------------------
+            // ---- one-way View commands -------------------------------------
 
-            Function("focus") { view: WhiskerInputView, _ ->
+            Command("focus") { view: WhiskerInputView, _ ->
                 view.focusField()
-                WhiskerValue.Null
             }
-            Function("blur") { view: WhiskerInputView, _ ->
+            Command("blur") { view: WhiskerInputView, _ ->
                 view.blurField()
-                WhiskerValue.Null
             }
             // `clear` fires `input` so the bound signal sees the change as
             // though the user had typed it.
-            Function("clear") { view: WhiskerInputView, _ ->
+            Command("clear") { view: WhiskerInputView, _ ->
                 view.clearField()
-                WhiskerValue.Null
             }
             // The view applies the cursor-diff guard and suppresses the
             // resulting afterTextChanged, which is not a user edit.
-            Function("setValue") { view: WhiskerInputView, args ->
-                // The Lynx bridge packs args as { "args": [map] }; the map
-                // carries { "value": "<text>" }.
-                val map = (args.getOrNull(0) as? WhiskerValue.Map)?.value
+            Command("setValue") { view: WhiskerInputView, parameters ->
+                val map = (parameters as? WhiskerValue.Map)?.value
                 val text = map?.get("value")?.asString() ?: ""
                 view.setValueExternal(text)
-                WhiskerValue.Null
-            }
-            // TODO: Android result-returning custom element methods need
-            // the `invoke_async` bridge path in `lynx_native_renderer.cc`,
-            // compiled iOS-only in Lynx 3.8.0-whisker.1 (memory note
-            // `whisker_element_method_results_need_async`). Until the fork
-            // wires it, Rust receives a DispatchFailed error here.
-            Function("getValue") { view: WhiskerInputView, _ ->
-                WhiskerValue.Map(
-                    mapOf("value" to WhiskerValue.Str(view.currentText()))
-                )
             }
         }
     }

@@ -128,10 +128,12 @@ final class HostScene {
             case UInt32(WHISKER_OP_MOVE):
                 guard stagedParents[operation.child] == operation.parent else { return false }
             case UInt32(WHISKER_OP_LAYOUT), UInt32(WHISKER_OP_PAINT),
-                 UInt32(WHISKER_OP_PROPERTY):
+                 UInt32(WHISKER_OP_PROPERTY), UInt32(WHISKER_OP_COMMAND):
                 guard existing.contains(operation.node), operation.payload != nil else { return false }
-            case UInt32(WHISKER_OP_TEXT):
+            case UInt32(WHISKER_OP_TEXT), UInt32(WHISKER_OP_TEXT_STYLE):
                 guard existing.contains(operation.node),
+                      let registration = elementTypes[operation.node]
+                        .flatMap({ WhiskerElementRegistry.registration($0) }),
                       let text = operation.payload?
                         .assumingMemoryBound(to: WhiskerMobileText.self).pointee,
                       text.decoration_flags <= 2,
@@ -161,6 +163,10 @@ final class HostScene {
                         + text.font_variation_count <= 4_096,
                       text.indent_logical_pixels.isFinite,
                       text.indent_percentage.isFinite else { return false }
+                if operation.tag == UInt32(WHISKER_OP_TEXT),
+                   !registration.childPolicy.acceptsPlainText { return false }
+                if operation.tag == UInt32(WHISKER_OP_TEXT_STYLE),
+                   !registration.textStyle { return false }
             case UInt32(WHISKER_OP_TRANSFORM):
                 guard existing.contains(operation.node), operation.payload != nil,
                       operation.payload_count == 16 else { return false }
@@ -401,6 +407,11 @@ final class HostScene {
                 .assumingMemoryBound(to: WhiskerMobileText.self).pointee
             else { return false }
             applyText(nodes[id], payload)
+        case UInt32(WHISKER_OP_TEXT_STYLE):
+            guard let payload = operation.payload?
+                .assumingMemoryBound(to: WhiskerMobileText.self).pointee
+            else { return false }
+            applyText(nodes[id], payload, styleOnly: true)
         case UInt32(WHISKER_OP_PROPERTY):
             guard let payload = operation.payload?
                 .assumingMemoryBound(to: WhiskerValueRaw.self).pointee
@@ -413,6 +424,14 @@ final class HostScene {
             nodes[id]?.mountedElement?.clearProperty(Int(operation.member))
         case UInt32(WHISKER_OP_EVENT_MASK):
             nodes[id]?.mountedElement?.setEventMask(operation.wide)
+        case UInt32(WHISKER_OP_COMMAND):
+            guard let payload = operation.payload?
+                .assumingMemoryBound(to: WhiskerValueRaw.self).pointee
+            else { return false }
+            nodes[id]?.mountedElement?.invokeCommand(
+                Int(operation.member),
+                parameters: WhiskerValue.from(raw: payload)
+            )
         default:
             return false
         }
@@ -539,9 +558,13 @@ final class HostScene {
         node.setNeedsDisplay()
     }
 
-    private func applyText(_ node: WhiskerNodeView?, _ content: WhiskerMobileText) {
+    private func applyText(
+        _ node: WhiskerNodeView?,
+        _ content: WhiskerMobileText,
+        styleOnly: Bool = false
+    ) {
         guard let node, let mounted = node.mountedElement else { return }
-        guard mounted.setText(WhiskerTextContent(
+        let decoded = WhiskerTextContent(
             value: hostString(content.text),
             fontFamilies: hostFontFamilies(content),
             fontSize: CGFloat(content.font_size),
@@ -615,9 +638,13 @@ final class HostScene {
                 blurRadius: CGFloat(content.shadow_blur_radius),
                 color: parsePaintColor(content.shadow_color)
             )
-        )) else {
+        )
+        let accepted = styleOnly
+            ? mounted.setTextStyle(WhiskerTextStyle(content: decoded))
+            : mounted.setText(decoded)
+        guard accepted else {
             preconditionFailure(
-                "text operation sent to element \(mounted.registration.name) without a text implementation"
+                "text operation sent to element \(mounted.registration.name) without the declared text implementation"
             )
         }
     }

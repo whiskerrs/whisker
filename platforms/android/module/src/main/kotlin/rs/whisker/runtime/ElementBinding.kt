@@ -57,6 +57,7 @@ public class WhiskerElementRegistration(
     public val name: String,
     public val childPolicy: WhiskerChildPolicy,
     public val measurement: WhiskerMeasurement,
+    public val textStyle: Boolean = false,
     public val properties: List<WhiskerPropertyBinding> = emptyList(),
     public val events: List<WhiskerEventBinding> = emptyList(),
     public val commands: List<WhiskerCommandBinding> = emptyList(),

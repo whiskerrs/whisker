@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     ElementTypeId, LayoutRect, MeasurementKey, MeasurementRequestId, NodeId, PreparedContentId,
-    SurfaceId,
+    SurfaceId, WhiskerValue,
 };
 
 /// Content category whose intrinsic dimensions are supplied by a measurement provider.
@@ -548,6 +548,45 @@ pub struct MeasurementRequest {
     pub payload: MeasurementPayload,
 }
 
+/// Host-module view of an intrinsic measurement request.
+///
+/// Correlation keys, scene nodes, element IDs, and environment epochs are
+/// runtime control data and are intentionally absent. Module authors receive
+/// only layout constraints and their versioned payload.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModuleMeasureRequest {
+    /// Dimensions already fixed by layout.
+    pub known_dimensions: [Option<f32>; 2],
+    /// Remaining width and height availability, including min/max-content.
+    pub available_space: [AvailableSpace; 2],
+    /// Version of module-owned payload bytes, or zero when no payload exists.
+    pub payload_version: u16,
+    /// Module-owned application data affecting intrinsic size.
+    pub payload: WhiskerValue,
+}
+
+impl From<&MeasurementRequest> for ModuleMeasureRequest {
+    fn from(request: &MeasurementRequest) -> Self {
+        let (payload_version, payload) = match &request.payload {
+            MeasurementPayload::NativeControl(payload) => {
+                (payload.version, WhiskerValue::Bytes(payload.state.clone()))
+            }
+            MeasurementPayload::Custom(payload) => {
+                (payload.version, WhiskerValue::Bytes(payload.data.clone()))
+            }
+            MeasurementPayload::Text(_)
+            | MeasurementPayload::ReplacedContent(_)
+            | MeasurementPayload::EmbeddedSurface(_) => (0, WhiskerValue::Null),
+        };
+        Self {
+            known_dimensions: request.constraints.known_dimensions,
+            available_space: request.constraints.available_space,
+            payload_version,
+            payload,
+        }
+    }
+}
+
 /// Final or provisional intrinsic content metrics.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeasurementMetrics {
@@ -810,6 +849,47 @@ mod tests {
             key: request.key,
             environment_epoch: request.environment_epoch,
             metrics: MeasurementMetrics::from_size(MeasuredSize::default()),
+        }
+    }
+
+    #[test]
+    fn module_request_exposes_constraints_and_payload_without_runtime_ids() {
+        let mut request = request(7, 9);
+        request.constraints.known_dimensions = [Some(40.0), None];
+        request.payload = MeasurementPayload::Custom(CustomMeasurePayload {
+            version: 3,
+            data: vec![1, 2, 3],
+        });
+        let module = ModuleMeasureRequest::from(&request);
+        assert_eq!(module.known_dimensions, [Some(40.0), None]);
+        assert_eq!(
+            module.available_space,
+            [AvailableSpace::MaxContent, AvailableSpace::MinContent]
+        );
+        assert_eq!(module.payload_version, 3);
+        assert_eq!(module.payload, WhiskerValue::Bytes(vec![1, 2, 3]));
+
+        request.payload = MeasurementPayload::NativeControl(NativeControlMeasurePayload {
+            control_type: 2,
+            version: 4,
+            state: vec![5, 6],
+        });
+        let module = ModuleMeasureRequest::from(&request);
+        assert_eq!(module.payload_version, 4);
+        assert_eq!(module.payload, WhiskerValue::Bytes(vec![5, 6]));
+
+        for payload in [
+            MeasurementPayload::Text(text_payload()),
+            MeasurementPayload::ReplacedContent(ReplacedContentMeasurePayload::default()),
+            MeasurementPayload::EmbeddedSurface(EmbeddedSurfaceMeasurePayload {
+                surface: SurfaceId::new(2).expect("embedded surface"),
+                preferred_size: None,
+            }),
+        ] {
+            request.payload = payload;
+            let module = ModuleMeasureRequest::from(&request);
+            assert_eq!(module.payload_version, 0);
+            assert_eq!(module.payload, WhiskerValue::Null);
         }
     }
 

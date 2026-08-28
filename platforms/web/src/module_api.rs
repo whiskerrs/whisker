@@ -2,10 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
+use whisker::runtime::module::{ModuleEventEmitter, ModulePromise, RustModuleDefinition};
 use whisker::{ElementModuleDefinition, WhiskerModule};
 use whisker_protocol::{CommandId, ElementRegistration, PropertyId};
 
-use crate::{WebError, WhiskerValue};
+use crate::{WebError, WhiskerMeasureRequest, WhiskerMeasuredSize, WhiskerTextStyle, WhiskerValue};
 
 /// Configuration for one browser surface.
 #[derive(Clone, Debug)]
@@ -47,6 +48,7 @@ impl WebAppConfig {
 /// Rust/Web counterpart of the Swift/Kotlin `ModuleDefinition` DSL.
 #[derive(Clone, Debug, Default)]
 pub struct WebModuleDefinition {
+    service: RustModuleDefinition,
     factories: Vec<WebElementFactory>,
 }
 
@@ -57,6 +59,58 @@ impl WebModuleDefinition {
     /// Starts an empty Web module declaration.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Declares the package-qualified service module name.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.service = self.service.name(name);
+        self
+    }
+
+    /// Declares one synchronous service function.
+    pub fn function(
+        mut self,
+        name: impl Into<String>,
+        handler: impl Fn(&[WhiskerValue], &ModuleEventEmitter) -> WhiskerValue + 'static,
+    ) -> Self {
+        self.service = self.service.function(name, handler);
+        self
+    }
+
+    /// Declares one deferred service function.
+    pub fn async_function(
+        mut self,
+        name: impl Into<String>,
+        handler: impl Fn(&[WhiskerValue], ModulePromise, &ModuleEventEmitter) + 'static,
+    ) -> Self {
+        self.service = self.service.async_function(name, handler);
+        self
+    }
+
+    /// Declares one service-scoped event.
+    pub fn event(mut self, name: impl Into<String>) -> Self {
+        self.service = self.service.event(name);
+        self
+    }
+
+    /// Declares the first-subscriber hook for one service event.
+    pub fn on_start_observing(
+        mut self,
+        event: impl Into<String>,
+        hook: impl Fn(&ModuleEventEmitter) + 'static,
+    ) -> Self {
+        self.service = self.service.on_start_observing(event, hook);
+        self
+    }
+
+    /// Declares the last-subscriber hook for one service event.
+    pub fn on_stop_observing(
+        mut self,
+        event: impl Into<String>,
+        hook: impl Fn(&ModuleEventEmitter) + 'static,
+    ) -> Self {
+        self.service = self.service.on_stop_observing(event, hook);
+        self
     }
 
     /// Adds an independently declared Host View matched by stable name.
@@ -76,6 +130,11 @@ impl WebModuleDefinition {
     /// Consumes the declaration and returns its DOM factories.
     pub fn into_factories(self) -> Vec<WebElementFactory> {
         self.factories
+    }
+
+    /// Returns the portable service declaration bound by the browser runtime.
+    pub fn service_definition(&self) -> &RustModuleDefinition {
+        &self.service
     }
 }
 
@@ -97,6 +156,10 @@ type WebElementGetter<T> = Rc<dyn Fn(&T) -> web_sys::Element>;
 type WebPropSetter<T> = Rc<dyn Fn(&mut T, &WhiskerValue) -> Result<(), wasm_bindgen::JsValue>>;
 type WebPropClearer<T> = Rc<dyn Fn(&mut T) -> Result<(), wasm_bindgen::JsValue>>;
 type WebCommandHandler<T> = Rc<dyn Fn(&mut T, &WhiskerValue) -> Result<(), wasm_bindgen::JsValue>>;
+type WebTextStyleUpdater<T> =
+    Rc<dyn Fn(&mut T, &WhiskerTextStyle) -> Result<(), wasm_bindgen::JsValue>>;
+pub(crate) type WebMeasurementHandler =
+    Rc<dyn Fn(&WhiskerMeasureRequest) -> Option<WhiskerMeasuredSize>>;
 
 struct WebPropBinding<T> {
     set: WebPropSetter<T>,
@@ -120,6 +183,8 @@ pub struct WebViewDefinition<T> {
     properties: HashMap<String, WebPropBinding<T>>,
     events: HashSet<String>,
     commands: HashMap<String, WebCommandHandler<T>>,
+    text_style: Option<WebTextStyleUpdater<T>>,
+    measurement: Option<WebMeasurementHandler>,
     plain_text: bool,
     scroll_content: bool,
 }
@@ -143,6 +208,8 @@ where
             properties: HashMap::new(),
             events: HashSet::new(),
             commands: HashMap::new(),
+            text_style: None,
+            measurement: None,
             plain_text: false,
             scroll_content: false,
         }
@@ -212,11 +279,58 @@ where
         self
     }
 
+    /// Declares that this DOM content object consumes resolved inherited text
+    /// style independently from plain-text children.
+    pub fn text_style(
+        mut self,
+        update: impl Fn(&mut T, &WhiskerTextStyle) -> Result<(), wasm_bindgen::JsValue> + 'static,
+    ) -> Self {
+        assert!(
+            self.text_style.replace(Rc::new(update)).is_none(),
+            "duplicate Web TextStyle binding for {}",
+            self.name
+        );
+        self
+    }
+
+    /// Supplies synchronous Host intrinsic measurement for Custom or
+    /// ReplacedContent schemas. `None` means unsupported for this request.
+    pub fn measurement(
+        mut self,
+        measure: impl Fn(&WhiskerMeasureRequest) -> Option<WhiskerMeasuredSize> + 'static,
+    ) -> Self {
+        assert!(
+            self.measurement.replace(Rc::new(measure)).is_none(),
+            "duplicate Web Measurement binding for {}",
+            self.name
+        );
+        self
+    }
+
     fn bind(&self, registration: &ElementRegistration) -> Result<WebNativeConstructor, String> {
         if registration.child_policy.accepts_plain_text() != self.plain_text {
             return Err(format!(
                 "plain-text policy differs: Host={}, Rust={:?}",
                 self.plain_text, registration.child_policy
+            ));
+        }
+        if registration.text_style != self.text_style.is_some() {
+            return Err(format!(
+                "text-style capability differs: Host={}, Rust={}",
+                self.text_style.is_some(),
+                registration.text_style
+            ));
+        }
+        let needs_host_measurement = matches!(
+            registration.measurement,
+            whisker_protocol::ElementMeasurement::ReplacedContent
+                | whisker_protocol::ElementMeasurement::Custom
+        );
+        if needs_host_measurement != self.measurement.is_some() {
+            return Err(format!(
+                "measurement capability differs: Host={}, Rust={:?}",
+                self.measurement.is_some(),
+                registration.measurement
             ));
         }
         let schema_properties = registration
@@ -267,6 +381,7 @@ where
             element: Rc::clone(&self.element),
             properties,
             commands,
+            text_style: self.text_style.clone(),
         });
         Ok(Rc::new(move |document, emitter| {
             Ok(Box::new(DeclaredWebElement {
@@ -294,6 +409,7 @@ struct BoundWebViewDefinition<T> {
     element: WebElementGetter<T>,
     properties: HashMap<PropertyId, WebPropBinding<T>>,
     commands: HashMap<CommandId, WebCommandHandler<T>>,
+    text_style: Option<WebTextStyleUpdater<T>>,
 }
 
 struct DeclaredWebElement<T> {
@@ -349,6 +465,13 @@ where
             .expect("Web Host validates command IDs");
         handler(&mut self.state, arguments)
     }
+
+    fn set_text_style(&mut self, style: &WhiskerTextStyle) -> Result<(), wasm_bindgen::JsValue> {
+        match &self.definition.text_style {
+            Some(update) => update(&mut self.state, style),
+            None => Ok(()),
+        }
+    }
 }
 
 /// DOM factory embedded for one element module.
@@ -358,6 +481,7 @@ pub struct WebElementFactory {
     pub(crate) kind: WebElementFactoryKind,
     pub(crate) text_content: bool,
     pub(crate) scroll_content: bool,
+    pub(crate) measurer: Option<WebMeasurementHandler>,
 }
 
 impl WebElementFactory {
@@ -368,6 +492,7 @@ impl WebElementFactory {
             kind: WebElementFactoryKind::Tag(tag_name.into()),
             text_content: false,
             scroll_content: false,
+            measurer: None,
         }
     }
 
@@ -386,6 +511,7 @@ impl WebElementFactory {
             kind: WebElementFactoryKind::Native(Rc::new(create)),
             text_content: false,
             scroll_content: false,
+            measurer: None,
         }
     }
 
@@ -398,11 +524,13 @@ impl WebElementFactory {
     where
         T: 'static,
     {
+        let measurer = definition.measurement.clone();
         Self {
             name: name.into(),
             kind: WebElementFactoryKind::Declared(Rc::new(definition)),
             text_content,
             scroll_content,
+            measurer,
         }
     }
 
@@ -411,6 +539,19 @@ impl WebElementFactory {
             return Err(WebError(format!(
                 "DOM factory {} plain-text policy differs: Host={}, Rust={:?}",
                 registration.name, self.text_content, registration.child_policy
+            )));
+        }
+        let needs_host_measurement = matches!(
+            registration.measurement,
+            whisker_protocol::ElementMeasurement::ReplacedContent
+                | whisker_protocol::ElementMeasurement::Custom
+        );
+        if needs_host_measurement != self.measurer.is_some() {
+            return Err(WebError(format!(
+                "DOM factory {} measurement capability differs: Host={}, Rust={:?}",
+                registration.name,
+                self.measurer.is_some(),
+                registration.measurement
             )));
         }
         let kind = match &self.kind {
@@ -429,6 +570,7 @@ impl WebElementFactory {
             kind,
             text_content: self.text_content,
             scroll_content: self.scroll_content,
+            measurer: self.measurer.clone(),
         })
     }
 }
@@ -541,6 +683,11 @@ pub trait WebNativeElement: fmt::Debug + 'static {
         command: CommandId,
         arguments: &WhiskerValue,
     ) -> Result<(), wasm_bindgen::JsValue>;
+
+    /// Applies resolved inherited text style when declared by the schema.
+    fn set_text_style(&mut self, _style: &WhiskerTextStyle) -> Result<(), wasm_bindgen::JsValue> {
+        Ok(())
+    }
 }
 
 /// Built-in element implementations contributed by the Web platform.
@@ -559,6 +706,7 @@ impl WhiskerModule for BuiltInElementModule {
         }
 
         WebModuleDefinition::new()
+            .name("whisker.ui")
             .view(WebViewDefinition::new("whisker.ui/View", div, Clone::clone))
             .view(WebViewDefinition::new("whisker.ui/Text", div, Clone::clone).plain_text())
             .view(
@@ -579,7 +727,9 @@ mod element_registry_tests {
     use crate::scene::element_registry::DomElementRegistry;
     use whisker::ElementRegistry;
     use whisker_protocol::{
-        ElementMeasurement, ElementPropertySchema, ElementSchema, ElementTypeId, ElementValueKind,
+        AvailableSpace, CustomMeasurePayload, ElementMeasurement, ElementPropertySchema,
+        ElementSchema, ElementTypeId, ElementValueKind, MeasureConstraints, MeasuredSize,
+        MeasurementKey, MeasurementPayload, MeasurementRequest, NodeId,
     };
 
     #[test]
@@ -592,6 +742,7 @@ mod element_registry_tests {
                 name: "whisker.test/Badge".into(),
                 child_policy: whisker_protocol::ChildPolicy::Elements,
                 measurement: ElementMeasurement::None,
+                text_style: false,
                 properties: Vec::new(),
                 events: Vec::new(),
                 commands: Vec::new(),
@@ -629,6 +780,7 @@ mod element_registry_tests {
             name: "whisker.test/Toggle".into(),
             child_policy: whisker_protocol::ChildPolicy::None,
             measurement: ElementMeasurement::None,
+            text_style: false,
             properties: vec![ElementPropertySchema {
                 property: PropertyId::new(1).unwrap(),
                 name: "checked".into(),
@@ -649,5 +801,46 @@ mod element_registry_tests {
         assert!(error.0.contains("contract mismatch"));
         assert!(error.0.contains("misspelled"));
         assert!(error.0.contains("checked"));
+    }
+
+    #[test]
+    fn declared_text_style_and_measurement_are_part_of_the_web_contract() {
+        let registration = ElementRegistration {
+            element_type: ElementTypeId::new(21).unwrap(),
+            name: "whisker.test/NativeInput".into(),
+            child_policy: whisker_protocol::ChildPolicy::None,
+            measurement: ElementMeasurement::Custom,
+            text_style: true,
+            properties: Vec::new(),
+            events: Vec::new(),
+            commands: Vec::new(),
+        };
+        let definition = WebViewDefinition::new(
+            "whisker.test/NativeInput",
+            |_, _| Ok(()),
+            |_| unreachable!("binding does not instantiate the DOM object"),
+        )
+        .text_style(|_, _| Ok(()))
+        .measurement(|_| Some(MeasuredSize::new(90.0, 28.0)));
+        let factory = definition.into_web_factory().bind(&registration).unwrap();
+        let request = MeasurementRequest {
+            key: MeasurementKey::new(1).unwrap(),
+            node: NodeId::new(1).unwrap(),
+            element_type: registration.element_type,
+            environment_epoch: 5,
+            constraints: MeasureConstraints {
+                known_dimensions: [None, None],
+                available_space: [AvailableSpace::MaxContent; 2],
+            },
+            payload: MeasurementPayload::Custom(CustomMeasurePayload {
+                version: 1,
+                data: Vec::new(),
+            }),
+        };
+        let module_request = WhiskerMeasureRequest::from(&request);
+        assert!(matches!(
+            factory.measurer.unwrap()(&module_request),
+            Some(size) if size == MeasuredSize::new(90.0, 28.0)
+        ));
     }
 }

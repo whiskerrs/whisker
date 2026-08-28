@@ -32,6 +32,12 @@ where
 #[derive(Clone)]
 pub struct RuntimeWakeHandle(Arc<dyn RuntimeWake>);
 
+impl std::fmt::Debug for RuntimeWakeHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("RuntimeWakeHandle(..)")
+    }
+}
+
 impl RuntimeWakeHandle {
     /// Wraps one Host wake-up endpoint.
     pub fn new(wake: impl RuntimeWake) -> Self {

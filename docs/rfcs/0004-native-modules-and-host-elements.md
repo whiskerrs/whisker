@@ -503,7 +503,7 @@ public func definition() -> ModuleDefinition {
   View("whisker.input/TextInput", TextInputView.self) {
     Prop("value") { view, value in view.reconcileValue(value) }
     Events("change", "selectionChange")
-    Function("focus") { view, _ in view.focus(); return .null }
+    Command("focus") { view, _ in view.focus() }
   }
 }
 ```
@@ -518,12 +518,119 @@ The declarations map as follows:
 - module-level `Function`/`AsyncFunction` -> typed native service interface;
 - `View` -> Host factory named for one negotiated element schema;
 - `Prop` -> numeric `PropertyId` patch;
-- `Command` or view-local function -> numeric `CommandId` and optional
-  `ResultId`;
+- view-local `Command` -> numeric `CommandId` with no result in version 1;
 - `Events` in a `View` -> node-scoped typed event IDs;
 - module-level events -> service subscription lifecycle;
 - `TextStyle` -> common resolved text-style channel;
 - `Measurement` -> the element's intrinsic measurement provider.
+
+### Version 1 authoring contract
+
+`ModuleDefinition` has one semantic shape on Android, iOS, Web, and Desktop.
+Syntax remains language-idiomatic, but the public vocabulary and behavior are
+the same:
+
+```text
+ModuleDefinition
+|- Name                         exactly one, required
+|- Function*                   synchronous service call
+|- AsyncFunction*              deferred service call
+|- Events*                     service-scoped events
+|- OnStartObserving*           first-subscriber transition
+|- OnStopObserving*            last-subscriber transition
+`- View*
+   |- Prop*                    set plus distinct clear callback
+   |- Events*                  node-scoped events
+   |- Command*                 ordered, one-way node command
+   |- TextStyle?               resolved inherited text style
+   `- Measurement?             intrinsic-size provider
+```
+
+`Name` never falls back to the first `View` name. A local service name is
+qualified as `<cargo-crate>:<Name>` by mobile build composition. Ordinary Rust
+Desktop/Web Host crates declare that resulting qualified name directly because
+they use Cargo dependency resolution rather than mobile discovery codegen.
+Every `View` uses an explicit, versionless, package-qualified element name such
+as `whisker.video/Video`; element and service identities are separate.
+
+All application data crossing this boundary is composed from `WhiskerValue`.
+Properties and events carry one value, service functions carry a positional
+list of values, and element commands carry one parameter value. Function
+results and asynchronous settlements carry one value. `Error` is a call
+failure result and is invalid as a property, constant, command parameter, or
+event body. `ClearProperty` remains a control operation and is never encoded
+as `Null`.
+
+Element commands are deliberately one-way in version 1. They are enqueued in
+the next frame transaction and therefore cannot honestly return a synchronous
+Host value from `ElementRef::command`. Query/result commands require an
+asynchronous `ResultId` lifecycle and are deferred until that lifecycle is
+specified and implemented on all four Hosts. Native `View` blocks consequently
+use `Command`, not `Function` or `AsyncFunction`; service-level functions keep
+the latter names. `ElementRef::command` reports only whether the command could
+be validated and enqueued.
+
+`Constants` is not part of version 1. The old mobile declaration was not
+connected to a Rust consumer and keeping declaration-only API would falsely
+claim cross-platform support. Static data may be returned from a service
+`Function`; a future constants API must define discovery, caching, and
+immutability before it is added.
+
+Element event masks support at most 64 declared events in version 1. This is a
+visible schema validation limit rather than a Host-specific truncation.
+
+### Host element content capabilities
+
+The Rust element schema remains authoritative for `child_policy` and
+`measurement`, and additionally declares whether the element consumes the
+resolved inherited text style. The portable content hooks are:
+
+```text
+measure(request) -> size | Unsupported
+set_text(content)
+set_text_style(resolved_style)
+```
+
+A `Custom` or Host-backed `ReplacedContent` measurement declaration requires a
+Host measurer. A plain-text child policy requires `set_text`. A text-style
+consumer requires `set_text_style`, including a leaf native `TextInput` that
+has no text children. These requirements are validated during bootstrap.
+
+Version 1 module measurers are synchronous on every Host: they return a size or
+report the request as unsupported. The core measurement transaction continues
+to support `Pending` for Host-owned text/resources, but a deferred module
+measurer is not exposed until its completion, cancellation, and invalidation
+contract is defined consistently for Kotlin, Swift, Web, and Desktop.
+The module callback receives only known dimensions, per-axis
+`Definite`/`MinContent`/`MaxContent` availability, and a versioned
+`WhiskerValue` payload. The initial wire producer maps legacy opaque payloads
+to `Bytes` and absence to `Null`; module authors never receive a separate
+platform byte/string/boolean union. Runtime correlation keys, node IDs,
+element IDs, and environment epochs remain private control data and are not
+exposed differently by each Host.
+
+Where element children mount is still Host-local. Android `ViewGroup`, iOS
+content `UIView`, a DOM mount element, and a Desktop scroll/raster realization
+are permitted platform extensions to the factory; they do not alter the
+portable `ModuleDefinition` schema.
+
+### Execution and lifetime
+
+- one module instance has application/process lifetime;
+- one element instance has retained-node lifetime;
+- element creation, mutation, and destruction are Host-UI-thread-affine;
+- a synchronous service function settles before its dispatch call returns;
+- an asynchronous function owns a one-shot promise and may complete later;
+- module and element events enqueue work and never re-enter arbitrary Rust
+  application code from inside frame presentation;
+- observer hooks run only on listener-count transitions from zero to one and
+  one to zero;
+- deletion or generation change invalidates stale events, measurements, and
+  commands.
+
+Code generation remains discovery-only. It may instantiate and register an
+annotated module, but must not generate public contracts, inspect executable
+DSL bodies, or make native compilation depend on a prior Rust schema export.
 
 ### Independently compiled declarations and runtime negotiation
 
@@ -807,8 +914,8 @@ doing expensive work twice.
 - bundled image with known dimensions: `ReplacedContent` metadata; no Host FFI
   is needed.
 - network/custom image: explicit dimensions or aspect ratio are preferred.
-  A module may opt into pending intrinsic size with an explicit placeholder
-  policy.
+  Version 1 modules invalidate and re-render after metadata arrives; a future
+  deferred-measurement API may add an explicit placeholder policy.
 - `GoogleMap`, `WebView`, and video: normally have no useful intrinsic size;
   they require explicit, flex, or parent-constrained geometry. Resource
   readiness does not redefine their viewport unless the schema says so.
@@ -1221,6 +1328,13 @@ path was removed directly rather than standardized.
     does not emit public Host contracts or Rust schema copies.
 18. Gradle and Xcode own native build graphs and may invoke Whisker helper
     tools as declared tasks/phases.
+19. Every module declares exactly one `Name`; a View name is never a module-name
+    fallback.
+20. View-local imperative API is `Command` and is one-way in version 1;
+    service-only `Function` and `AsyncFunction` retain result semantics.
+21. `Constants` and result-bearing element commands are not part of the
+    component model. Observable View state uses events/props; service-like
+    requests use module-level `Function` or `AsyncFunction`.
 
 ## Deferred details
 

@@ -11,7 +11,7 @@
 //         Name("Video")
 //         View(VideoView.self) {
 //             Prop("src") { (view: VideoView, value: String) in view.setSrc(value) }
-//             Function("play") { (view: VideoView) in view.play() }
+//             Command("play") { (view: VideoView, _) in view.play() }
 //         }
 //     }
 // }
@@ -61,6 +61,7 @@ open class Module {
             #endif
             return
         }
+        guard definitionLazy.events.contains(event), payload.isData else { return }
         WhiskerModuleEventCenter.dispatchSend(
             module: qname,
             event: event,

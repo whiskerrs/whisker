@@ -3,24 +3,35 @@ import UIKit
 
 public typealias WhiskerElementEventSink = (WhiskerEventBinding, WhiskerValue) -> Void
 
+/// Taffy available-space constraint on one measurement axis.
+public enum WhiskerAvailableSpace: Equatable {
+    case definite, minContent, maxContent
+}
+
 public struct WhiskerMeasureRequest {
     public let availableWidth: CGFloat?
     public let availableHeight: CGFloat?
+    public let availableWidthKind: WhiskerAvailableSpace
+    public let availableHeightKind: WhiskerAvailableSpace
     public let knownWidth: CGFloat?
     public let knownHeight: CGFloat?
     public let payloadVersion: UInt16
-    public let payload: Data
+    public let payload: WhiskerValue
 
     public init(
         availableWidth: CGFloat?,
         availableHeight: CGFloat?,
+        availableWidthKind: WhiskerAvailableSpace,
+        availableHeightKind: WhiskerAvailableSpace,
         knownWidth: CGFloat?,
         knownHeight: CGFloat?,
         payloadVersion: UInt16,
-        payload: Data
+        payload: WhiskerValue
     ) {
         self.availableWidth = availableWidth
         self.availableHeight = availableHeight
+        self.availableWidthKind = availableWidthKind
+        self.availableHeightKind = availableHeightKind
         self.knownWidth = knownWidth
         self.knownHeight = knownHeight
         self.payloadVersion = payloadVersion
@@ -102,6 +113,41 @@ public struct WhiskerTextContent {
         self.overflow = overflow
         self.decoration = decoration
         self.shadow = shadow
+    }
+}
+
+/// Resolved inherited text style delivered independently from text content.
+public struct WhiskerTextStyle {
+    public let fontFamilies: [String]
+    public let fontSize: CGFloat
+    public let fontWeight: Int
+    public let fontStyle: WhiskerTextFontStyle
+    public let lineHeight: CGFloat?
+    public let letterSpacing: CGFloat
+    public let fontFeatures: [WhiskerFontFeature]
+    public let fontVariations: [WhiskerFontVariation]
+    public let fontOpticalSizing: WhiskerFontOpticalSizing
+    public let color: UIColor
+    public let direction: WhiskerTextDirection
+    public let alignment: WhiskerTextAlignment
+    public let decoration: WhiskerTextDecoration?
+    public let shadow: WhiskerTextShadow?
+
+    public init(content: WhiskerTextContent) {
+        fontFamilies = content.fontFamilies
+        fontSize = content.fontSize
+        fontWeight = content.fontWeight
+        fontStyle = content.fontStyle
+        lineHeight = content.lineHeight
+        letterSpacing = content.letterSpacing
+        fontFeatures = content.fontFeatures
+        fontVariations = content.fontVariations
+        fontOpticalSizing = content.fontOpticalSizing
+        color = content.color
+        direction = content.direction
+        alignment = content.alignment
+        decoration = content.decoration
+        shadow = content.shadow
     }
 }
 
@@ -189,8 +235,10 @@ public final class WhiskerMountedElement {
     public let view: UIView
     private let nativeElement: WhiskerNativeElement?
     private let textUpdater: ((UIView, WhiskerTextContent) -> Void)?
+    private let textStyleUpdater: ((UIView, WhiskerTextStyle) -> Void)?
     private let childrenHostProvider: ((UIView) -> UIView)?
     private let properties: [Int: WhiskerPropComponent]
+    private let commands: [Int: WhiskerCommandComponent]
     private let eventsByName: [String: WhiskerEventBinding]
     private let eventSink: WhiskerElementEventSink
     private var eventMask: UInt64 = 0
@@ -199,8 +247,10 @@ public final class WhiskerMountedElement {
         registration: WhiskerElementRegistration,
         view: UIView,
         textUpdater: ((UIView, WhiskerTextContent) -> Void)?,
+        textStyleUpdater: ((UIView, WhiskerTextStyle) -> Void)?,
         childrenHost: ((UIView) -> UIView)?,
         properties: [Int: WhiskerPropComponent],
+        commands: [Int: WhiskerCommandComponent],
         eventsByName: [String: WhiskerEventBinding],
         eventSink: @escaping WhiskerElementEventSink
     ) {
@@ -208,8 +258,10 @@ public final class WhiskerMountedElement {
         self.view = view
         self.nativeElement = view as? WhiskerNativeElement
         self.textUpdater = textUpdater
+        self.textStyleUpdater = textStyleUpdater
         self.childrenHostProvider = childrenHost
         self.properties = properties
+        self.commands = commands
         self.eventsByName = eventsByName
         self.eventSink = eventSink
         nativeElement?.installWhiskerEventSink { [weak self] name, detail in
@@ -224,12 +276,23 @@ public final class WhiskerMountedElement {
     /// Clear is a distinct protocol operation; it is not converted to `.null`.
     public func clearProperty(_ id: Int) { properties[id]?.clearer(view) }
 
+    public func invokeCommand(_ id: Int, parameters: WhiskerValue) {
+        commands[id]?.handler(view, parameters)
+    }
+
     public func setEventMask(_ mask: UInt64) { eventMask = mask }
 
     @discardableResult
     public func setText(_ content: WhiskerTextContent) -> Bool {
         guard let textUpdater else { return false }
         textUpdater(view, content)
+        return true
+    }
+
+    @discardableResult
+    public func setTextStyle(_ style: WhiskerTextStyle) -> Bool {
+        guard let textStyleUpdater else { return false }
+        textStyleUpdater(view, style)
         return true
     }
 
@@ -241,6 +304,7 @@ public final class WhiskerMountedElement {
 public struct WhiskerElementFactory {
     public let name: String
     fileprivate let textUpdater: ((UIView, WhiskerTextContent) -> Void)?
+    fileprivate let textStyleUpdater: ((UIView, WhiskerTextStyle) -> Void)?
     fileprivate let childrenHost: ((UIView) -> UIView)?
     fileprivate let measurer: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)?
     fileprivate let makeView: () -> UIView
@@ -248,6 +312,7 @@ public struct WhiskerElementFactory {
     public init(
         name: String,
         textUpdater: ((UIView, WhiskerTextContent) -> Void)? = nil,
+        textStyleUpdater: ((UIView, WhiskerTextStyle) -> Void)? = nil,
         childrenHost: ((UIView) -> UIView)? = nil,
         measurer: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)? = nil,
         makeView: @escaping () -> UIView
@@ -255,9 +320,36 @@ public struct WhiskerElementFactory {
         precondition(!name.isEmpty && !name.contains("@"))
         self.name = name
         self.textUpdater = textUpdater
+        self.textStyleUpdater = textStyleUpdater
         self.childrenHost = childrenHost
         self.measurer = measurer
         self.makeView = makeView
+    }
+
+    fileprivate func withTextStyleUpdater(
+        _ updater: ((UIView, WhiskerTextStyle) -> Void)?
+    ) -> WhiskerElementFactory {
+        WhiskerElementFactory(
+            name: name,
+            textUpdater: textUpdater,
+            textStyleUpdater: updater ?? textStyleUpdater,
+            childrenHost: childrenHost,
+            measurer: measurer,
+            makeView: makeView
+        )
+    }
+
+    fileprivate func withMeasurer(
+        _ provider: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)?
+    ) -> WhiskerElementFactory {
+        WhiskerElementFactory(
+            name: name,
+            textUpdater: textUpdater,
+            textStyleUpdater: textStyleUpdater,
+            childrenHost: childrenHost,
+            measurer: provider ?? measurer,
+            makeView: makeView
+        )
     }
 }
 
@@ -265,12 +357,14 @@ private struct WhiskerDeclaredElement {
     let factory: WhiskerElementFactory
     let properties: [String: WhiskerPropComponent]
     let events: Set<String>
+    let commands: [String: WhiskerCommandComponent]
 }
 
 private struct WhiskerBoundElement {
     let registration: WhiskerElementRegistration
     let factory: WhiskerElementFactory
     let properties: [Int: WhiskerPropComponent]
+    let commands: [Int: WhiskerCommandComponent]
 }
 
 public enum WhiskerModuleRegistry {
@@ -291,7 +385,7 @@ public enum WhiskerElementRegistry {
     private static var boundByType: [Int: WhiskerBoundElement] = [:]
 
     public static func register(_ factory: WhiskerElementFactory) {
-        register(factory, properties: [:], events: [])
+        register(factory, properties: [:], events: [], commands: [:])
     }
 
     fileprivate static func register(_ view: WhiskerViewComponent, fallbackName: String) {
@@ -300,7 +394,15 @@ public enum WhiskerElementRegistry {
             let props = view.components.compactMap { $0 as? WhiskerPropComponent }
             let properties = Dictionary(uniqueKeysWithValues: props.map { ($0.name, $0) })
             let events = Set(view.components.compactMap { $0 as? WhiskerEventsComponent }.flatMap(\.names))
-            register(factory, properties: properties, events: events)
+            let commands = Dictionary(uniqueKeysWithValues: view.components.compactMap { $0 as? WhiskerCommandComponent }.map { ($0.name, $0) })
+            let textStyle = view.components.compactMap { $0 as? WhiskerTextStyleComponent }.first
+            let measurement = view.components.compactMap { $0 as? WhiskerMeasurementComponent }.first
+            register(
+                factory.withTextStyleUpdater(textStyle?.handler).withMeasurer(measurement?.handler),
+                properties: properties,
+                events: events,
+                commands: commands
+            )
             return
         }
         guard let viewClass = view.viewClass else {
@@ -312,23 +414,30 @@ public enum WhiskerElementRegistry {
         let props = view.components.compactMap { $0 as? WhiskerPropComponent }
         let properties = Dictionary(uniqueKeysWithValues: props.map { ($0.name, $0) })
         let events = Set(view.components.compactMap { $0 as? WhiskerEventsComponent }.flatMap(\.names))
+        let commands = Dictionary(uniqueKeysWithValues: view.components.compactMap { $0 as? WhiskerCommandComponent }.map { ($0.name, $0) })
+        let textStyle = view.components.compactMap { $0 as? WhiskerTextStyleComponent }.first
+        let measurement = view.components.compactMap { $0 as? WhiskerMeasurementComponent }.first
         register(
             WhiskerElementFactory(
                 name: name,
+                textStyleUpdater: textStyle?.handler,
+                measurer: measurement?.handler,
                 makeView: elementType.makeWhiskerView
             ),
             properties: properties,
-            events: events
+            events: events,
+            commands: commands
         )
     }
 
     private static func register(
         _ factory: WhiskerElementFactory,
         properties: [String: WhiskerPropComponent],
-        events: Set<String>
+        events: Set<String>,
+        commands: [String: WhiskerCommandComponent]
     ) {
         precondition(declarations[factory.name] == nil, "duplicate Host element \(factory.name)")
-        declarations[factory.name] = WhiskerDeclaredElement(factory: factory, properties: properties, events: events)
+        declarations[factory.name] = WhiskerDeclaredElement(factory: factory, properties: properties, events: events, commands: commands)
     }
 
     /** Match Host strings to Rust registrations and compile compact dispatch tables. */
@@ -339,21 +448,29 @@ public enum WhiskerElementRegistry {
             guard let declaration = declarations[registration.name] else {
                 return false
             }
+            let needsHostMeasurer = registration.measurement == .replacedContent
+                || registration.measurement == .custom
             guard registration.childPolicy.acceptsPlainText == (declaration.factory.textUpdater != nil),
-                  registration.measurement == .none || registration.measurement == .text || declaration.factory.measurer != nil
+                  registration.textStyle == (declaration.factory.textStyleUpdater != nil),
+                  needsHostMeasurer == (declaration.factory.measurer != nil)
             else { return false }
             let rustProps = Dictionary(uniqueKeysWithValues: registration.properties.map { ($0.name, $0) })
             guard Set(rustProps.keys) == Set(declaration.properties.keys),
                   Set(registration.events.map(\.name)) == declaration.events,
+                  Set(registration.commands.map(\.name)) == Set(declaration.commands.keys),
                   result[registration.elementType] == nil
             else { return false }
             let properties = Dictionary(uniqueKeysWithValues: registration.properties.map {
                 ($0.id, declaration.properties[$0.name]!)
             })
+            let commands = Dictionary(uniqueKeysWithValues: registration.commands.map {
+                ($0.id, declaration.commands[$0.name]!)
+            })
             result[registration.elementType] = WhiskerBoundElement(
                 registration: registration,
                 factory: declaration.factory,
-                properties: properties
+                properties: properties,
+                commands: commands
             )
         }
         boundByType = result
@@ -369,8 +486,10 @@ public enum WhiskerElementRegistry {
             registration: element.registration,
             view: element.factory.makeView(),
             textUpdater: element.factory.textUpdater,
+            textStyleUpdater: element.factory.textStyleUpdater,
             childrenHost: element.factory.childrenHost,
             properties: element.properties,
+            commands: element.commands,
             eventsByName: Dictionary(uniqueKeysWithValues: element.registration.events.map { ($0.name, $0) }),
             eventSink: eventSink
         )
@@ -392,7 +511,9 @@ public extension Module {
     func registerWithWhisker() {
         let definition = definitionLazy
         definition.validateElementDeclaration()
-        guard let name = definition.name else { return }
+        guard let name = definition.name else {
+            preconditionFailure("ModuleDefinition requires Name")
+        }
         if qualifiedName == nil { qualifiedName = name }
         WhiskerModuleRegistry.register(self)
         definition.views.forEach { WhiskerElementRegistry.register($0, fallbackName: qualifiedName!) }

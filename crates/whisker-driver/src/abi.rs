@@ -15,7 +15,7 @@ pub use ffi::{
 };
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 26;
+pub const MOBILE_ABI_MINOR: u16 = 27;
 
 pub const POINTER_DOWN: u32 = 0;
 pub const POINTER_MOVE: u32 = 1;
@@ -59,6 +59,7 @@ pub const OP_CLIP_PATH: u32 = 23;
 pub const OP_BACKDROP_BLUR: u32 = 24;
 pub const OP_IMAGE_RENDERING: u32 = 25;
 pub const OP_CURSOR: u32 = 26;
+pub const OP_TEXT_STYLE: u32 = 27;
 
 pub const IMAGE_RENDERING_AUTO: i32 = 0;
 pub const IMAGE_RENDERING_PIXELATED: i32 = 1;
@@ -419,7 +420,8 @@ pub struct MobileElementRegistration {
     pub element_type: u32,
     pub child_policy: u8,
     pub measurement: u8,
-    pub _pad: [u8; 2],
+    pub text_style: u8,
+    pub _pad: u8,
     pub name: WhiskerStringRef,
     pub properties: *const MobileMemberRegistration,
     pub property_count: usize,

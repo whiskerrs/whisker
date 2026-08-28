@@ -10,7 +10,7 @@ use whisker_protocol::{
     MeasureLineHeight, MeasureTextAlignment, MeasureTextDirection, MeasureTextIndent,
     MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasurementPayload,
     MeasurementSpec, PendingMeasurePolicy, TextContent, TextMeasurePayload, TextMeasureStyle,
-    TextPaint, TextShadow,
+    TextPaint, TextShadow, TextStyleSnapshot,
 };
 use whisker_style::{
     ComputedLineHeight, ComputedStyle, ComputedTextIndent, DirectionValue, FontFamilyValue,
@@ -210,6 +210,12 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &ComputedStyle) -> Lowere
     }
 }
 
+/// Lowers inherited text values for a native text-capable element without
+/// creating plain-text content or a measurement registration.
+pub fn lower_text_style(style: &ComputedStyle) -> TextStyleSnapshot {
+    TextStyleSnapshot::from(lower_plain_text(&PlainTextInput::new(""), style).content())
+}
+
 fn content_hash(text: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
@@ -281,6 +287,10 @@ mod tests {
         assert_eq!(
             lowered.measurement().payload,
             MeasurementPayload::Text(lowered.content().payload.clone())
+        );
+        assert_eq!(
+            lower_text_style(style.computed()),
+            TextStyleSnapshot::from(lowered.content())
         );
 
         let same = lower_plain_text(&input, style.computed());

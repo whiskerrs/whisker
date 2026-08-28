@@ -245,12 +245,18 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6
         Operation::SetText { content, .. } if content.paint.uses_extended_features() => {
             Some(RenderCapability::TextEffects)
         }
+        Operation::SetTextStyle { style, .. } if style.paint.uses_extended_features() => {
+            Some(RenderCapability::TextEffects)
+        }
         Operation::SetImage { .. } => Some(RenderCapability::ImageContent),
         Operation::SetCursor { .. } => Some(RenderCapability::Cursor),
         _ => None,
     };
     let second = match operation {
         Operation::SetText { content, .. } if content.payload.style.uses_extended_typography() => {
+            Some(RenderCapability::TextTypography)
+        }
+        Operation::SetTextStyle { style, .. } if style.style.uses_extended_typography() => {
             Some(RenderCapability::TextTypography)
         }
         _ => None,
@@ -413,7 +419,7 @@ mod tests {
         MeasureTextWrap, NodeId, ObjectFit, PaintBox, PaintColor, PaintCoordinate,
         PaintCornerRadius, PaintImage, PaintLengthPercentage, PaintPosition, ResourceId, SurfaceId,
         TextContent, TextDecorationLines, TextMeasurePayload, TextMeasureStyle, TextPaint,
-        VisualEffects,
+        TextStyleSnapshot, VisualEffects,
     };
 
     fn packet(operations: Vec<Operation>) -> FramePacket {
@@ -929,6 +935,13 @@ mod tests {
             overline: false,
             line_through: false,
         };
+        let text_style = TextStyleSnapshot {
+            style: style.clone(),
+            locale: None,
+            direction: MeasureTextDirection::Auto,
+            alignment: crate::MeasureTextAlignment::Start,
+            paint: text_paint.clone(),
+        };
         let operations = vec![
             Operation::SetBoxPaint { node, paint },
             Operation::SetBackgroundLayers {
@@ -969,6 +982,10 @@ mod tests {
                     paint: text_paint,
                     prepared_content: None,
                 },
+            },
+            Operation::SetTextStyle {
+                node,
+                style: text_style,
             },
             Operation::SetImage {
                 node,

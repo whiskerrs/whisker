@@ -51,11 +51,6 @@ define_id!(
     "Identifies a node-scoped event declared by an element schema"
 );
 define_id!(
-    ResultId,
-    u64,
-    "Correlates an asynchronous command result with its invocation"
-);
-define_id!(
     PointerId,
     u64,
     "Identifies one Host pointer stream for capture operations"

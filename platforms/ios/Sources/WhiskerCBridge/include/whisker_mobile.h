@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include "whisker_value.h"
 
-enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 26 };
+enum { WHISKER_MOBILE_ABI_MAJOR = 2, WHISKER_MOBILE_ABI_MINOR = 27 };
 enum { WHISKER_APPLY_ACCEPTED = 0, WHISKER_APPLY_NEED_SNAPSHOT = 1, WHISKER_APPLY_REJECTED = 2 };
 enum { WHISKER_FRAME_SNAPSHOT = 0, WHISKER_FRAME_DELTA = 1 };
 enum {
@@ -16,7 +16,8 @@ enum {
   WHISKER_OP_CLEAR_PROPERTY, WHISKER_OP_EVENT_MASK, WHISKER_OP_HIT_TEST,
   WHISKER_OP_CAPTURE, WHISKER_OP_RELEASE_CAPTURE, WHISKER_OP_COMMAND,
   WHISKER_OP_BACKGROUND_LAYERS, WHISKER_OP_BOX_SHADOWS, WHISKER_OP_CLIP_PATH,
-  WHISKER_OP_BACKDROP_BLUR, WHISKER_OP_IMAGE_RENDERING, WHISKER_OP_CURSOR
+  WHISKER_OP_BACKDROP_BLUR, WHISKER_OP_IMAGE_RENDERING, WHISKER_OP_CURSOR,
+  WHISKER_OP_TEXT_STYLE
 };
 enum {
   WHISKER_IMAGE_RENDERING_AUTO = 0, WHISKER_IMAGE_RENDERING_PIXELATED = 1,
@@ -173,7 +174,7 @@ typedef struct {
   uint32_t id; uint8_t value_kind, optional_kind, _pad[2]; WhiskerStringRef name;
 } WhiskerMobileMemberRegistration;
 typedef struct {
-  uint32_t element_type; uint8_t child_policy, measurement, _pad[2]; WhiskerStringRef name;
+  uint32_t element_type; uint8_t child_policy, measurement, text_style, _pad; WhiskerStringRef name;
   const WhiskerMobileMemberRegistration* properties; size_t property_count;
   const WhiskerMobileMemberRegistration* events; size_t event_count;
   const WhiskerMobileMemberRegistration* commands; size_t command_count;

@@ -12,6 +12,7 @@ use whisker::event::CustomEvent;
 #[whisker::module_component(
     name = "whisker.toggle/Toggle",
     measurement = None,
+    commands = [("setChecked", Bool)],
 )]
 pub fn toggle(
     checked: Signal<bool>,
@@ -44,7 +45,8 @@ mod tests {
         assert!(!provider.schema.name.contains('@'));
         assert_eq!(provider.schema.properties.len(), 2);
         assert_eq!(provider.schema.events.len(), 1);
-        assert!(provider.schema.commands.is_empty());
+        assert_eq!(provider.schema.commands.len(), 1);
+        assert_eq!(provider.schema.commands[0].name, "setChecked");
         assert_eq!(provider.schema.events[0].detail, None);
         assert_eq!(provider.schema.validate(), Ok(()));
     }

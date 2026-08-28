@@ -7,10 +7,15 @@ import java.util.concurrent.ConcurrentHashMap
 
 public typealias WhiskerElementEventSink = (WhiskerEventBinding, WhiskerValue) -> Unit
 
+/** Taffy available-space constraint on one measurement axis. */
+public enum class WhiskerAvailableSpace { DEFINITE, MIN_CONTENT, MAX_CONTENT }
+
 public data class WhiskerMeasureRequest(
     val availableWidth: Float?, val availableHeight: Float?,
+    val availableWidthKind: WhiskerAvailableSpace,
+    val availableHeightKind: WhiskerAvailableSpace,
     val knownWidth: Float?, val knownHeight: Float?,
-    val payloadVersion: Int, val payload: ByteArray,
+    val payloadVersion: Int, val payload: WhiskerValue,
 )
 
 public data class WhiskerMeasuredSize(val width: Float, val height: Float)
@@ -37,6 +42,41 @@ public data class WhiskerTextContent(
     public val overflow: WhiskerTextOverflow = WhiskerTextOverflow.CLIP,
     public val decoration: WhiskerTextDecoration? = null,
     public val shadow: WhiskerTextShadow? = null,
+)
+
+/** Resolved inherited text style delivered independently from text content. */
+public data class WhiskerTextStyle(
+    public val fontSize: Float,
+    public val fontWeight: Int,
+    public val fontFamilies: List<String> = listOf("system"),
+    public val fontStyle: WhiskerFontStyle = WhiskerFontStyle.NORMAL,
+    public val lineHeight: Float? = null,
+    public val letterSpacing: Float = 0f,
+    public val fontFeatures: List<WhiskerFontFeature> = emptyList(),
+    public val fontVariations: List<WhiskerFontVariation> = emptyList(),
+    public val fontOpticalSizing: WhiskerFontOpticalSizing = WhiskerFontOpticalSizing.NONE,
+    public val color: Int,
+    public val direction: WhiskerTextDirection = WhiskerTextDirection.AUTO,
+    public val alignment: WhiskerTextAlignment = WhiskerTextAlignment.START,
+    public val decoration: WhiskerTextDecoration? = null,
+    public val shadow: WhiskerTextShadow? = null,
+)
+
+public fun WhiskerTextContent.styleSnapshot(): WhiskerTextStyle = WhiskerTextStyle(
+    fontSize = fontSize,
+    fontWeight = fontWeight,
+    fontFamilies = fontFamilies,
+    fontStyle = fontStyle,
+    lineHeight = lineHeight,
+    letterSpacing = letterSpacing,
+    fontFeatures = fontFeatures,
+    fontVariations = fontVariations,
+    fontOpticalSizing = fontOpticalSizing,
+    color = color,
+    direction = direction,
+    alignment = alignment,
+    decoration = decoration,
+    shadow = shadow,
 )
 
 public data class WhiskerFontFeature(public val tag: String, public val value: Long)
@@ -82,8 +122,10 @@ public class WhiskerMountedElement internal constructor(
     public val registration: WhiskerElementRegistration,
     public val view: View,
     private val textUpdater: ((View, WhiskerTextContent) -> Unit)?,
+    private val textStyleUpdater: ((View, WhiskerTextStyle) -> Unit)?,
     private val childrenHost: ((View) -> android.view.ViewGroup)?,
     private val properties: Map<Int, WhiskerPropComponent>,
+    private val commands: Map<Int, WhiskerCommandComponent>,
     private val eventsByName: Map<String, WhiskerEventBinding>,
     eventSink: WhiskerElementEventSink,
 ) {
@@ -106,11 +148,21 @@ public class WhiskerMountedElement internal constructor(
         properties[id]?.clearer?.invoke(view)
     }
 
+    public fun invokeCommand(id: Int, parameters: WhiskerValue) {
+        commands[id]?.handler?.invoke(view, parameters)
+    }
+
     public fun setEventMask(mask: Long) { eventMask = mask }
 
     public fun setText(content: WhiskerTextContent): Boolean {
         val update = textUpdater ?: return false
         update(view, content)
+        return true
+    }
+
+    public fun setTextStyle(style: WhiskerTextStyle): Boolean {
+        val update = textStyleUpdater ?: return false
+        update(view, style)
         return true
     }
 
@@ -123,6 +175,7 @@ public class WhiskerMountedElement internal constructor(
 public class WhiskerElementFactory(
     public val name: String,
     internal val textUpdater: ((View, WhiskerTextContent) -> Unit)? = null,
+    internal val textStyleUpdater: ((View, WhiskerTextStyle) -> Unit)? = null,
     internal val childrenHost: ((View) -> android.view.ViewGroup)? = null,
     internal val measurer: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)? = null,
     internal val makeView: (Context) -> View,
@@ -132,18 +185,43 @@ public class WhiskerElementFactory(
             "Host element name must be non-empty and versionless"
         }
     }
+
+
+    internal fun withTextStyleUpdater(
+        updater: ((View, WhiskerTextStyle) -> Unit)?,
+    ): WhiskerElementFactory = WhiskerElementFactory(
+        name = name,
+        textUpdater = textUpdater,
+        textStyleUpdater = updater ?: textStyleUpdater,
+        childrenHost = childrenHost,
+        measurer = measurer,
+        makeView = makeView,
+    )
+
+    internal fun withMeasurer(
+        provider: ((WhiskerMeasureRequest) -> WhiskerMeasuredSize?)?,
+    ): WhiskerElementFactory = WhiskerElementFactory(
+        name = name,
+        textUpdater = textUpdater,
+        textStyleUpdater = textStyleUpdater,
+        childrenHost = childrenHost,
+        measurer = provider ?: measurer,
+        makeView = makeView,
+    )
 }
 
 private data class WhiskerDeclaredElement(
     val factory: WhiskerElementFactory,
     val properties: Map<String, WhiskerPropComponent>,
     val events: Set<String>,
+    val commands: Map<String, WhiskerCommandComponent>,
 )
 
 private data class WhiskerBoundElement(
     val registration: WhiskerElementRegistration,
     val factory: WhiskerElementFactory,
     val properties: Map<Int, WhiskerPropComponent>,
+    val commands: Map<Int, WhiskerCommandComponent>,
 )
 
 /** Process-wide Host declaration registry and per-surface negotiated table. */
@@ -155,7 +233,7 @@ public object WhiskerElementRegistry {
 
     @JvmStatic
     public fun register(factory: WhiskerElementFactory) {
-        register(factory, emptyMap(), emptySet())
+        register(factory, emptyMap(), emptySet(), emptyMap())
     }
 
     internal fun register(view: WhiskerViewComponent, fallbackName: String) {
@@ -163,7 +241,15 @@ public object WhiskerElementRegistry {
         view.factory?.let { factory ->
             val properties = view.components.filterIsInstance<WhiskerPropComponent>().associateBy { it.name }
             val events = view.components.filterIsInstance<WhiskerEventsComponent>().flatMap { it.names }.toSet()
-            register(factory, properties, events)
+            val commands = view.components.filterIsInstance<WhiskerCommandComponent>().associateBy { it.name }
+            val textStyle = view.components.filterIsInstance<WhiskerTextStyleComponent>().singleOrNull()
+            val measurement = view.components.filterIsInstance<WhiskerMeasurementComponent>().singleOrNull()
+            register(
+                factory.withTextStyleUpdater(textStyle?.handler).withMeasurer(measurement?.handler),
+                properties,
+                events,
+                commands,
+            )
             return
         }
         val declaredClass = requireNotNull(view.viewClass) { "$name View declaration needs a class or factory" }
@@ -174,13 +260,19 @@ public object WhiskerElementRegistry {
         val viewClass = declaredClass as Class<out View>
         val properties = view.components.filterIsInstance<WhiskerPropComponent>().associateBy { it.name }
         val events = view.components.filterIsInstance<WhiskerEventsComponent>().flatMap { it.names }.toSet()
+        val commands = view.components.filterIsInstance<WhiskerCommandComponent>().associateBy { it.name }
+        val textStyle = view.components.filterIsInstance<WhiskerTextStyleComponent>().singleOrNull()
+        val measurement = view.components.filterIsInstance<WhiskerMeasurementComponent>().singleOrNull()
         register(
             WhiskerElementFactory(
                 name = name,
+                textStyleUpdater = textStyle?.handler,
+                measurer = measurement?.handler,
                 makeView = { context -> viewClass.getConstructor(Context::class.java).newInstance(context) },
             ),
             properties,
             events,
+            commands,
         )
     }
 
@@ -188,8 +280,9 @@ public object WhiskerElementRegistry {
         factory: WhiskerElementFactory,
         properties: Map<String, WhiskerPropComponent>,
         events: Set<String>,
+        commands: Map<String, WhiskerCommandComponent>,
     ) {
-        require(declarations.putIfAbsent(factory.name, WhiskerDeclaredElement(factory, properties, events)) == null) {
+        require(declarations.putIfAbsent(factory.name, WhiskerDeclaredElement(factory, properties, events, commands)) == null) {
             "element factory already registered for ${factory.name}"
         }
     }
@@ -210,8 +303,13 @@ public object WhiskerElementRegistry {
             if ((registration.childPolicy == WhiskerChildPolicy.PlainText) != (declaration.factory.textUpdater != null)) {
                 return reject("child policy mismatch for `${registration.name}`: Rust=${registration.childPolicy}, Host text updater=${declaration.factory.textUpdater != null}")
             }
-            if (registration.measurement != WhiskerMeasurement.None && registration.measurement != WhiskerMeasurement.Text && declaration.factory.measurer == null) {
-                return reject("missing Host measurer for `${registration.name}` (${registration.measurement})")
+            if (registration.textStyle != (declaration.factory.textStyleUpdater != null)) {
+                return reject("text-style capability mismatch for `${registration.name}`: Rust=${registration.textStyle}, Host=${declaration.factory.textStyleUpdater != null}")
+            }
+            val needsHostMeasurer = registration.measurement == WhiskerMeasurement.ReplacedContent ||
+                registration.measurement == WhiskerMeasurement.Custom
+            if (needsHostMeasurer != (declaration.factory.measurer != null)) {
+                return reject("measurement capability mismatch for `${registration.name}`: Rust=${registration.measurement}, Host measurer=${declaration.factory.measurer != null}")
             }
             val rustProps = registration.properties.associateBy { it.name }
             if (rustProps.keys != declaration.properties.keys) {
@@ -221,10 +319,17 @@ public object WhiskerElementRegistry {
             if (rustEvents != declaration.events) {
                 return reject("event mismatch for `${registration.name}`: Rust=${rustEvents.sorted()}, Host=${declaration.events.sorted()}")
             }
+            val rustCommands = registration.commands.map { it.name }.toSet()
+            if (rustCommands != declaration.commands.keys) {
+                return reject("command mismatch for `${registration.name}`: Rust=${rustCommands.sorted()}, Host=${declaration.commands.keys.sorted()}")
+            }
             val properties = registration.properties.associate { property ->
                 property.id to requireNotNull(declaration.properties[property.name])
             }
-            val bound = WhiskerBoundElement(registration, declaration.factory, properties)
+            val commands = registration.commands.associate { command ->
+                command.id to requireNotNull(declaration.commands[command.name])
+            }
+            val bound = WhiskerBoundElement(registration, declaration.factory, properties, commands)
             if (byType.put(registration.elementType, bound) != null) {
                 return reject("duplicate Rust element type ${registration.elementType}")
             }
@@ -249,8 +354,10 @@ public object WhiskerElementRegistry {
             element.registration,
             view,
             element.factory.textUpdater,
+            element.factory.textStyleUpdater,
             element.factory.childrenHost,
             element.properties,
+            element.commands,
             element.registration.events.associateBy { it.name },
             eventSink,
         )
@@ -269,7 +376,7 @@ public object WhiskerElementRegistry {
 public fun Module.registerWithWhisker(crateName: String? = null) {
     val def = definitionLazy
     def.validateElementDeclaration()
-    val name = def.name ?: return
+    val name = requireNotNull(def.name) { "ModuleDefinition requires Name" }
     val qualifiedName = this.qualifiedName
         ?: if (crateName.isNullOrEmpty() || '/' in name) name else "$crateName:$name"
     this.qualifiedName = qualifiedName
@@ -282,14 +389,14 @@ public fun Module.registerWithWhisker(crateName: String? = null) {
         WhiskerModuleRegistry.registerDispatch(qualifiedName) { method, args ->
             val function = functions[method]
                 ?: return@registerDispatch WhiskerValue.Err("unknown method `$method` on module `$name`")
-            function.handler(null, args.asList())
+            function.handler(args.asList())
         }
     }
     val asyncFunctions = def.asyncFunctions.associateBy { it.name }
     if (asyncFunctions.isNotEmpty()) {
         WhiskerModuleRegistry.registerDispatchAsync(qualifiedName) { method, args, promise ->
             val function = asyncFunctions[method] ?: return@registerDispatchAsync false
-            function.handler(null, args.asList(), promise)
+            function.handler(args.asList(), promise)
             true
         }
     }

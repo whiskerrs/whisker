@@ -14,7 +14,7 @@ extension Module {
             return .error("unknown method `\(method)`")
         }
         // Module-level functions get `nil` for the view argument.
-        return fn.handler(nil, args)
+        return fn.handler(args)
     }
 
     /// Dispatch a module-level `AsyncFunction` by name, handing it a
@@ -31,7 +31,7 @@ extension Module {
         else {
             return false
         }
-        fn.handler(nil, args, promise)
+            fn.handler(args, promise)
         return true
     }
 

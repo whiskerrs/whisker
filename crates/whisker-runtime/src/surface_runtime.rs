@@ -1772,6 +1772,13 @@ impl BoundElementKind {
         }
     }
 
+    fn receives_text_style(&self) -> bool {
+        matches!(
+            self,
+            Self::Registered { registration } if registration.text_style
+        )
+    }
+
     fn registration(&self) -> Option<&ElementRegistration> {
         match self {
             Self::RawText => None,
@@ -1966,6 +1973,9 @@ impl BindingState {
         let mut resource_commands = Vec::new();
         for update in &updates {
             surface.update_computed_style(update.node, update.resolved.computed())?;
+            if self.element(update.element)?.kind.receives_text_style() {
+                surface.set_text_style(update.node, update.resolved.computed())?;
+            }
             let background = background_resources.reconcile_node(
                 update.node,
                 &update.resolved.computed().paint().background_images,
@@ -2277,7 +2287,9 @@ impl BindingState {
             .iter()
             .filter_map(|(element, entry)| {
                 let node = entry.node?;
-                entry.text.as_ref()?;
+                if entry.text.is_none() && !entry.kind.receives_text_style() {
+                    return None;
+                }
                 Self::active_text_color(*element, elements).map(|color| (*element, node, color))
             })
             .collect()
@@ -2288,13 +2300,19 @@ impl BindingState {
         surface: &mut SurfaceEngine,
     ) -> Result<(), RuntimeBindingError> {
         for (element, node, color) in updates {
-            let mut content = surface
+            if let Some(mut content) = surface.node(node).and_then(|node| node.text()).cloned() {
+                content.paint.foreground = color.into_paint();
+                surface.set_text_content(node, content)?;
+            } else if let Some(mut style) = surface
                 .node(node)
-                .and_then(|node| node.text())
+                .and_then(|node| node.text_style())
                 .cloned()
-                .ok_or(RuntimeBindingError::UnknownElement { element })?;
-            content.paint.foreground = color.into_paint();
-            surface.set_text_content(node, content)?;
+            {
+                style.paint.foreground = color.into_paint();
+                surface.set_text_style_snapshot(node, style)?;
+            } else {
+                return Err(RuntimeBindingError::UnknownElement { element });
+            }
         }
         Ok(())
     }
@@ -3073,6 +3091,9 @@ impl BindingState {
         };
         let resolved = resolve_style(&entry.effective_specified(), parent_style, self.environment)?;
         surface.update_computed_style(node, resolved.computed())?;
+        if entry.kind.receives_text_style() {
+            surface.set_text_style(node, resolved.computed())?;
+        }
         let background = background_resources.reconcile_node(
             node,
             &resolved.computed().paint().background_images,
@@ -3385,7 +3406,7 @@ impl BindingState {
         element: Element,
         name: &str,
         params: &WhiskerValue,
-    ) -> Result<WhiskerValue, RuntimeBindingError> {
+    ) -> Result<(), RuntimeBindingError> {
         let (node, command, expected) = {
             let entry = self.element(element)?;
             let registration = entry.kind.registration().ok_or_else(|| {
@@ -3415,9 +3436,8 @@ impl BindingState {
                 expected,
             }
         })?;
-        self.surface
-            .invoke_command(node, command, arguments, None)?;
-        Ok(WhiskerValue::Null)
+        self.surface.invoke_command(node, command, arguments)?;
+        Ok(())
     }
 }
 
@@ -3797,22 +3817,22 @@ impl DynRenderer for SurfaceRuntime {
         state.record(result);
     }
 
-    fn invoke_element_method(
+    fn invoke_element_command(
         &self,
         handle: Element,
-        method: &str,
-        params: WhiskerValue,
-    ) -> Option<WhiskerValue> {
+        command: &str,
+        parameters: WhiskerValue,
+    ) -> Option<Result<(), String>> {
         let mut state = self.state.borrow_mut();
-        Some(match state.invoke_command(handle, method, &params) {
-            Ok(value) => {
+        Some(match state.invoke_command(handle, command, &parameters) {
+            Ok(()) => {
                 state.record(Ok(()));
-                value
+                Ok(())
             }
             Err(error) => {
                 let message = error.to_string();
                 state.record(Err(error));
-                WhiskerValue::Error(message)
+                Err(message)
             }
         })
     }

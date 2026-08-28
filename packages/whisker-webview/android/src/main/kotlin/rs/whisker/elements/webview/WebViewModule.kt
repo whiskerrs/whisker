@@ -23,7 +23,7 @@ import rs.whisker.runtime.WhiskerValue
 class WebViewModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("WebView")
-        View(WhiskerWebView::class.java) {
+        View("whisker-webview:WebView", WhiskerWebView::class.java) {
 
             // ---- content props -------------------------------------------
 
@@ -71,58 +71,32 @@ class WebViewModule : Module() {
                 "progress",
             )
 
-            // ---- callable UI methods -------------------------------------
+            // ---- one-way View commands ----------------------------------
 
-            Function("reload") { view: WhiskerWebView, _ ->
+            Command("reload") { view: WhiskerWebView, _ ->
                 view.reload()
-                WhiskerValue.Null
             }
 
-            Function("goBack") { view: WhiskerWebView, _ ->
+            Command("goBack") { view: WhiskerWebView, _ ->
                 view.goBack()
-                WhiskerValue.Null
             }
 
-            Function("goForward") { view: WhiskerWebView, _ ->
+            Command("goForward") { view: WhiskerWebView, _ ->
                 view.goForward()
-                WhiskerValue.Null
             }
 
-            Function("stopLoading") { view: WhiskerWebView, _ ->
+            Command("stopLoading") { view: WhiskerWebView, _ ->
                 view.stopLoading()
-                WhiskerValue.Null
             }
 
-            Function("postMessage") { view: WhiskerWebView, args ->
-                val data = args.getOrNull(0)?.asString() ?: ""
+            Command("postMessage") { view: WhiskerWebView, parameters ->
+                val data = parameters.asString() ?: ""
                 view.postMessageToPage(data)
-                WhiskerValue.Null
             }
 
-            // Fire-and-forget; the result-returning form is the
-            // AsyncFunction below.
-            Function("evaluateJavaScript") { view: WhiskerWebView, args ->
-                val script = args.getOrNull(0)?.asString() ?: ""
+            Command("evaluateJavaScript") { view: WhiskerWebView, parameters ->
+                val script = parameters.asString() ?: ""
                 view.evaluateJs(script)
-            }
-
-            // Async so the WebView's ValueCallback can carry the JS
-            // result back through the promise.
-            AsyncFunction("evaluateJavaScriptWithResult") { view: WhiskerWebView, args, promise ->
-                val script = args.getOrNull(0)?.asString()
-                if (script == null) {
-                    promise.reject("evaluateJavaScriptWithResult: missing script argument")
-                } else {
-                    view.evaluateJsWithResult(script, promise)
-                }
-            }
-
-            Function("canGoBack") { view: WhiskerWebView, _ ->
-                view.queryCanGoBack()
-            }
-
-            Function("canGoForward") { view: WhiskerWebView, _ ->
-                view.queryCanGoForward()
             }
         }
     }

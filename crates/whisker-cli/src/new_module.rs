@@ -192,7 +192,7 @@ struct Vars<'a> {
     ident: &'a str,
     /// DSL module class, e.g. `FooModule`.
     module_class: &'a str,
-    /// View-bearing Lynx UI subclass, e.g. `FooView`.
+    /// View-bearing Host UI subclass, e.g. `FooView`.
     view_class: &'a str,
     /// Stable package-qualified element name shared by all Hosts.
     element_name: &'a str,
@@ -601,11 +601,13 @@ public final class {module_class}: Module {{
     public override func definition() -> ModuleDefinition {{
         ModuleDefinition {{
             View("{element_name}", {view_class}.self) {{
-                // Declare Prop / Function entries here, e.g.:
-                //   Prop("title") {{ (view: {view_class}, value: String) in
-                //       view.setTitle(value)
+                // Declare Prop / Command entries here, e.g.:
+                //   Prop("title") {{ (view: {view_class}, value: WhiskerValue) in
+                //       view.setTitle(value.asString ?? "")
                 //   }}
-                //   Function("focus") {{ (view: {view_class}) in view.focus() }}
+                //   Command("focus") {{ (view: {view_class}, _: WhiskerValue) in
+                //       view.focus()
+                //   }}
             }}
         }}
     }}
@@ -619,9 +621,9 @@ public final class {module_class}: Module {{
 
 fn swift_view(v: &Vars) -> String {
     format!(
-        r#"// `{view_class}` — the Lynx UI subclass backing `{name}:{tag}`.
-// Instantiated by Lynx via the behavior `{module_class}.definition()`
-// registers. `@objc({view_class})` pins the Obj-C class name so the
+        r#"// `{view_class}` — the Host UI subclass backing `{name}:{tag}`.
+// Instantiated through the View declaration in `{module_class}.definition()`.
+// `@objc({view_class})` pins the Obj-C class name so the
 // codegen plugin's `NSClassFromString` lookup resolves it.
 
 import UIKit
@@ -659,16 +661,19 @@ package rs.whisker.modules.{ns}
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerModule
+import rs.whisker.runtime.WhiskerValue
 
 @WhiskerModule
 class {module_class} : Module() {{
     override fun definition() = ModuleDefinition {{
         View("{element_name}", {view_class}::class.java) {{
-            // Declare Prop / Function entries here, e.g.:
-            //   Prop("title") {{ view: {view_class}, value: String ->
-            //       view.setTitle(value)
+            // Declare Prop / Command entries here, e.g.:
+            //   Prop("title") {{ view: {view_class}, value: WhiskerValue ->
+            //       view.setTitle(value.asString() ?: "")
             //   }}
-            //   Function("focus") {{ view: {view_class} -> view.focus() }}
+            //   Command("focus") {{ view: {view_class}, _: WhiskerValue ->
+            //       view.focus()
+            //   }}
         }}
     }}
 }}
@@ -682,9 +687,9 @@ class {module_class} : Module() {{
 
 fn kotlin_view(v: &Vars) -> String {
     format!(
-        r#"// `{view_class}` -- the Lynx UI subclass backing `{name}:{tag}`.
-// Instantiated by the Lynx behavior `{module_class}.definition()`
-// registers. The single-arg `(WhiskerContext)` constructor matches
+        r#"// `{view_class}` -- the Host UI subclass backing `{name}:{tag}`.
+// Instantiated through the View declaration in `{module_class}.definition()`.
+// The single-arg `(WhiskerContext)` constructor matches
 // the convention the KSP registration code expects.
 
 package rs.whisker.modules.{ns}

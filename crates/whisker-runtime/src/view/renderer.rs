@@ -280,12 +280,12 @@ pub trait DynRenderer {
 
     /// Handles an element command through the retained semantic frame path.
     /// Renderers without command support leave the default `None`.
-    fn invoke_element_method(
+    fn invoke_element_command(
         &self,
         _handle: Element,
-        _method: &str,
-        _params: WhiskerValue,
-    ) -> Option<WhiskerValue> {
+        _command: &str,
+        _parameters: WhiskerValue,
+    ) -> Option<Result<(), String>> {
         None
     }
 
@@ -984,16 +984,16 @@ pub fn set_event_listener(
 /// Gives the installed renderer the first opportunity to handle an element
 /// command. `None` asks the driver to use its legacy bridge path.
 #[doc(hidden)]
-pub fn try_invoke_element_method(
+pub fn try_invoke_element_command(
     handle: Element,
-    method: &str,
-    params: WhiskerValue,
-) -> Option<WhiskerValue> {
+    command: &str,
+    parameters: WhiskerValue,
+) -> Option<Result<(), String>> {
     if is_phantom(handle) {
         return None;
     }
     with_renderer(
-        |renderer| renderer.invoke_element_method(handle, method, params),
+        |renderer| renderer.invoke_element_command(handle, command, parameters),
         None,
     )
 }

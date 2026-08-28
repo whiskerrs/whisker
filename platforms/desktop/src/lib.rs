@@ -14,6 +14,7 @@ use std::fmt;
 
 use whisker::RuntimeInstance;
 use whisker::runtime::RuntimeWakeHandle;
+use whisker::runtime::module::{RustModuleDefinition, RustModuleRuntime};
 use whisker_engine::LayoutOptions;
 use whisker_protocol::{ElementRegistration, InputEvent, InputEventKind, ResourceId, SurfaceId};
 use whisker_style::StyleEnvironment;
@@ -22,6 +23,14 @@ use whisker_style::StyleEnvironment;
 pub use whisker::WhiskerModule;
 /// Shared value used by Desktop module properties, functions, and events.
 pub use whisker_value::WhiskerValue;
+/// Available-space constraint exposed to Desktop module measurers.
+pub type WhiskerAvailableSpace = whisker_protocol::AvailableSpace;
+/// Intrinsic measurement request exposed to Desktop module authors.
+pub type WhiskerMeasureRequest = whisker_protocol::ModuleMeasureRequest;
+/// Logical size returned by a Desktop module measurer.
+pub type WhiskerMeasuredSize = whisker_protocol::MeasuredSize;
+/// Resolved inherited text style delivered to Desktop module content.
+pub type WhiskerTextStyle = whisker_protocol::TextStyleSnapshot;
 
 mod element;
 mod gpu;
@@ -38,13 +47,14 @@ mod host_conformance_tests;
 
 use element::DesktopElementRegistry;
 pub use element::{
-    BuiltInElementModule, DesktopElementFactory, DesktopModuleDefinition, DesktopNativeElement,
-    DesktopNativeEvent, DesktopRaster, DesktopRasterError, DesktopViewDefinition,
-    DesktopViewImplementation,
+    BuiltInElementModule, DesktopElementFactory, DesktopEventEmitter, DesktopModuleDefinition,
+    DesktopNativeElement, DesktopNativeEvent, DesktopRaster, DesktopRasterError,
+    DesktopViewDefinition, DesktopViewImplementation,
 };
 pub use input::{
     DesktopMouseButton, DesktopPointerAdapter, DesktopPointerEvent, DesktopPointerPhase,
 };
+pub use whisker::runtime::module::{ModuleEventEmitter, ModulePromise};
 /// Desktop Host module declaration, named consistently with native Hosts.
 pub type ModuleDefinition = DesktopModuleDefinition;
 use gpu::RasterResource;
@@ -98,6 +108,7 @@ pub struct DesktopRuntime {
     surface: DesktopSurface,
     resources: DesktopResourceService,
     resource_events: Vec<whisker_protocol::ResourceEvent>,
+    modules: RustModuleRuntime,
 }
 
 impl DesktopRuntime {
@@ -112,13 +123,23 @@ impl DesktopRuntime {
         surface: SurfaceId,
         elements: &[ElementRegistration],
         element_factories: &[DesktopElementFactory],
+        module_definitions: impl IntoIterator<Item = RustModuleDefinition>,
         resource_wake: RuntimeWakeHandle,
     ) -> Result<Self, DesktopError> {
         let elements = DesktopElementRegistry::bind(elements, element_factories)
             .map_err(|error| DesktopError(format!("bind Desktop elements: {error}")))?;
-        let surface = DesktopSurface::new(target, physical_size, surface, elements.clone())
-            .await
-            .map_err(|error| DesktopError(format!("initialize Desktop renderer: {error}")))?;
+        let surface = DesktopSurface::new(
+            target,
+            physical_size,
+            surface,
+            elements.clone(),
+            resource_wake.clone(),
+        )
+        .await
+        .map_err(|error| DesktopError(format!("initialize Desktop renderer: {error}")))?;
+        let module_wake = resource_wake.clone();
+        let modules = RustModuleRuntime::new(module_definitions, move || module_wake.wake())
+            .map_err(|error| DesktopError(format!("bind Desktop modules: {error}")))?;
         Ok(Self {
             measurements: NativeTextHost::new(elements),
             surface,
@@ -126,7 +147,13 @@ impl DesktopRuntime {
                 resource_wake.wake();
             }),
             resource_events: Vec::new(),
+            modules,
         })
+    }
+
+    /// Runs application work with this Desktop service-module registry active.
+    pub fn with_modules<T>(&self, work: impl FnOnce() -> T) -> T {
+        self.modules.with_host(work)
     }
 
     /// Reconfigures the GPU surface after an OS resize notification.
@@ -200,6 +227,9 @@ impl DesktopRuntime {
         context: DesktopFrameContext,
     ) -> Result<DesktopFrameResult, DesktopError> {
         validate_context(context)?;
+        self.modules.with_host(|| {
+            self.modules.dispatch_pending_events();
+        });
         self.drain_runtime_resource_commands(runtime)?;
         let dispatched_resource_event = self.dispatch_pending_resource_events(runtime)?;
         let environment = StyleEnvironment::new(
@@ -208,33 +238,40 @@ impl DesktopRuntime {
             context.scale,
             14.0,
         );
-        let drive = runtime.drive_frame(
-            context.timestamp_ms,
-            environment,
-            context.environment_epoch,
-            context.viewport_epoch,
-            &mut self.measurements,
-            &mut self.surface,
-            LayoutOptions::default(),
-        );
+        let drive = self.modules.with_host(|| {
+            runtime.drive_frame(
+                context.timestamp_ms,
+                environment,
+                context.environment_epoch,
+                context.viewport_epoch,
+                &mut self.measurements,
+                &mut self.surface,
+                LayoutOptions::default(),
+            )
+        });
         self.drain_runtime_resource_commands(runtime)?;
         let drive = drive.map_err(|error| DesktopError(format!("drive Desktop frame: {error}")))?;
         let events = self.surface.take_events();
         let dispatched_provider_event = !events.is_empty();
         for event in events {
-            runtime
-                .dispatch_input(&InputEvent {
-                    surface: runtime.surface().surface(),
-                    timestamp_ms: context.timestamp_ms,
-                    kind: InputEventKind::Named(event.name),
-                    pointer: None,
-                    target: Some(event.target),
-                    detail: event.detail,
+            self.modules
+                .with_host(|| {
+                    runtime.dispatch_input(&InputEvent {
+                        surface: runtime.surface().surface(),
+                        timestamp_ms: context.timestamp_ms,
+                        kind: InputEventKind::Named(event.name),
+                        pointer: None,
+                        target: Some(event.target),
+                        detail: event.detail,
+                    })
                 })
                 .map_err(|error| {
                     DesktopError(format!("dispatch Desktop provider event: {error}"))
                 })?;
         }
+        self.modules.with_host(|| {
+            self.modules.dispatch_pending_events();
+        });
         self.surface
             .paint(
                 &mut self.measurements,

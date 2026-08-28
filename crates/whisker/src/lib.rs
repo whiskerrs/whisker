@@ -106,8 +106,7 @@ mod element_ref;
 pub mod focus;
 
 pub use element_ref::{
-    BoundingClientRect, ElementHandle, ElementRef, ListHandle, ListScrollAlign, RefError,
-    ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo, VisibleCell, VisibleCells,
+    ElementHandle, ElementRef, ListHandle, ListScrollAlign, RefError, ScrollViewHandle, TextHandle,
 };
 
 #[doc(hidden)]
@@ -839,8 +838,7 @@ pub mod __tags {
         // ---- Ref --------------------------------------------------------
 
         /// Bind an [`ElementRef`](crate::ElementRef) to this element so
-        /// its methods (`bounding_client_rect`, `take_screenshot`, …)
-        /// can be invoked after mount. `render!` routes the `ref:`
+        /// its commands can be invoked after mount. `render!` routes the `ref:`
         /// kwarg here (`view(ref: my_ref) { … }`).
         fn bind_ref(self, r: crate::ElementRef) -> Self {
             r.__bind(self.__element());
@@ -1898,9 +1896,8 @@ pub mod __hot {
 ///   [`WhenFn`], [`Fallback`]).
 /// - **Refs** — [`ElementRef`] (construct with `ElementRef::new()`),
 ///   and the typed
-///   handle / return types ([`ElementHandle`], [`ScrollViewHandle`],
-///   [`TextHandle`], [`BoundingClientRect`], [`ScrollInfo`],
-///   [`TextBoundingRect`], [`RefError`]).
+///   handles ([`ElementHandle`], [`ScrollViewHandle`], [`TextHandle`],
+///   [`RefError`]).
 /// - **CSS** — [`Css`](crate::css::Css), the builder API,
 ///   numeric extension traits (`8.px()`, `45.deg()`, …), and the
 ///   `css!` macro.
@@ -1931,12 +1928,9 @@ pub mod prelude {
         on_mount, provide_context, resource, resource_sync, run_blocking, run_on_main_thread,
         runtime_dispatcher, signal, spawn_local, use_context, with_context,
     };
-    pub use crate::{
-        BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,
-        TextBoundingRect, TextHandle,
-    };
     pub use crate::{EachFn, Fallback, ItemFn, ItemMeta, KeyFn, MetaFn, WhenFn};
     pub use crate::{Element, ElementTag};
+    pub use crate::{ElementHandle, ElementRef, RefError, ScrollViewHandle, TextHandle};
     pub use crate::{ForEach, ForEachProps, Show, ShowProps};
     pub use crate::{component, main, render};
     // The `css!` macro coexists with the `crate::css` module

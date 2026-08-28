@@ -8,13 +8,11 @@
 //!   emits `on_cleanup(move || r.__unbind())`).
 //! - `bound()` is reactive: an `effect(...)` observing it re-runs on
 //!   mount and on unmount.
-//! - `RefError::NotBound` is returned by `try_invoke` when unbound.
-//! - `invoke_typed::<T>` round-trips primitives through `TryFrom<
-//!   WhiskerValue>` (the bridge path is stubbed below — the typed
-//!   conversion is exercised in isolation).
+//! - `RefError::NotBound` is returned by `command` when unbound.
+//! - Primitive `WhiskerValue` conversions remain independently tested.
 //!
 //! No real C bridge: the in-memory `Recorder` swallows element ops,
-//! and `invoke_element_method` returns an Error for unmounted refs,
+//! and element-command dispatch returns an Error for unmounted refs,
 //! so we focus on the binding-state machinery rather than dispatch.
 
 use std::cell::RefCell;
@@ -182,20 +180,14 @@ fn bound_signal_is_reactive() {
 }
 
 #[test]
-fn invoke_on_unbound_ref_returns_error_variant() {
+fn command_on_unbound_ref_returns_not_bound() {
     use whisker::platform_module::WhiskerValue;
     with_test_env(|| {
         let r = ElementRef::new();
-        let v = r.invoke("play", WhiskerValue::Null);
-        match v {
-            WhiskerValue::Error(msg) => {
-                assert!(
-                    msg.contains("not bound"),
-                    "error message should mention not-bound: got {msg:?}"
-                );
-            }
-            other => panic!("expected Error variant, got {other:?}"),
-        }
+        assert_eq!(
+            r.command("play", WhiskerValue::Null),
+            Err(RefError::NotBound)
+        );
     });
 }
 
@@ -203,8 +195,7 @@ fn invoke_on_unbound_ref_returns_error_variant() {
 fn try_from_whisker_value_f64_rejects_string() {
     use whisker::platform_module::WhiskerValue;
     // `TryFrom<WhiskerValue>`'s primitive conversions are a public
-    // surface even though `invoke_typed::<T>` goes through serde: a
-    // String must not silently coerce to f64.
+    // module-result surface: a String must not silently coerce to f64.
     let bad_payload = WhiskerValue::String("not-a-number".into());
     let result: Result<f64, _> = f64::try_from(bad_payload);
     let msg = result.expect_err("String can't convert to f64");

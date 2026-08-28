@@ -394,6 +394,7 @@ mod tests {
             name: name.into(),
             child_policy: ChildPolicy::Elements,
             measurement: ElementMeasurement::None,
+            text_style: false,
             properties: Vec::new(),
             events: Vec::new(),
             commands: Vec::new(),

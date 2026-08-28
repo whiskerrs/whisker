@@ -23,6 +23,7 @@ fn element_schema(
         name: name.to_owned(),
         child_policy,
         measurement,
+        text_style: false,
         properties: Vec::new(),
         events: Vec::new(),
         commands: Vec::new(),

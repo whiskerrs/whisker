@@ -1,3 +1,4 @@
+use whisker::runtime::RuntimeWakeHandle;
 use whisker_engine::FrameSink;
 use whisker_protocol::{ApplyResult, FramePacket, RenderCapabilities, ResourceId, SurfaceId};
 
@@ -20,9 +21,10 @@ impl DesktopSurface {
         physical_size: [u32; 2],
         surface: SurfaceId,
         elements: DesktopElementRegistry,
+        event_wake: RuntimeWakeHandle,
     ) -> Result<Self, GpuError> {
         Ok(Self {
-            scene: DesktopScene::new(surface, elements),
+            scene: DesktopScene::new_with_wake(surface, elements, event_wake),
             gpu: GpuRenderer::new(target, physical_size).await?,
         })
     }

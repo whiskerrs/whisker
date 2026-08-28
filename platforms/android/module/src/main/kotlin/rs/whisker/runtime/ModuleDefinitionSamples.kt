@@ -17,24 +17,26 @@ internal object ModuleDefinitionSamples {
         fun play() { /* noop */ }
         fun pause() { /* noop */ }
         fun seek(seconds: Double) { /* noop */ }
+        fun setFontSize(value: Float) { /* noop */ }
     }
 
     internal fun videoModuleDefinition(): ModuleDefinition = ModuleDefinition {
         Name("Video")
 
-        Constants("maxResolution" to WhiskerValue.Str("1080p"))
-
-        View(FakeVideoView::class.java) {
+        View("sample/Video", FakeVideoView::class.java) {
             Prop("src") { view: FakeVideoView, value ->
                 view.setSrc(value.asString() ?: "")
             }
-            Function("play") { view: FakeVideoView, _ -> view.play(); WhiskerValue.Null }
-            Function("pause") { view: FakeVideoView, _ -> view.pause(); WhiskerValue.Null }
-            Function("seek") { view: FakeVideoView, args ->
-                view.seek(args.getOrNull(0)?.asDouble() ?: 0.0)
-                WhiskerValue.Null
+            Command("play") { view: FakeVideoView, _ -> view.play() }
+            Command("pause") { view: FakeVideoView, _ -> view.pause() }
+            Command("seek") { view: FakeVideoView, parameters ->
+                view.seek(parameters.asDouble() ?: 0.0)
             }
             Events("onCompleted")
+            TextStyle { view: FakeVideoView, style -> view.setFontSize(style.fontSize) }
+            Measurement { request ->
+                WhiskerMeasuredSize(request.knownWidth ?: 160f, request.knownHeight ?: 90f)
+            }
         }
     }
 

@@ -23,6 +23,7 @@ internal class HostElementBootstrap {
         name: String,
         childPolicy: Int,
         measurement: Int,
+        textStyle: Int,
         propertyIds: IntArray,
         propertyKinds: IntArray,
         propertyNames: Array<String>,
@@ -39,6 +40,7 @@ internal class HostElementBootstrap {
             name,
             WhiskerChildPolicy.entries[childPolicy],
             WhiskerMeasurement.entries[measurement],
+            textStyle != 0,
             propertyIds.indices.map {
                 WhiskerPropertyBinding(propertyIds[it], propertyNames[it], kinds[propertyKinds[it]])
             },

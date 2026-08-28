@@ -7,14 +7,19 @@ use std::fmt;
 use std::sync::Arc;
 
 use whisker::WhiskerModule;
+use whisker::runtime::module::{ModuleEventEmitter, ModulePromise, RustModuleDefinition};
 use whisker_protocol::{
     ChildPolicy, CommandId, ElementMeasurement, ElementRegistration, ElementRegistrationError,
-    ElementTypeId, EventId, NodeId, PropertyId, TextContent, WhiskerValue,
+    ElementTypeId, EventId, MeasurementMetrics, MeasurementRequest, MeasurementResponse, NodeId,
+    PropertyId, TextContent, UnsupportedMeasurementReason, WhiskerValue,
 };
+
+use crate::{WhiskerMeasureRequest, WhiskerMeasuredSize, WhiskerTextStyle};
 
 /// Rust-native counterpart of the Swift/Kotlin `ModuleDefinition` DSL.
 #[derive(Clone, Debug, Default)]
 pub struct DesktopModuleDefinition {
+    service: RustModuleDefinition,
     factories: Vec<DesktopElementFactory>,
 }
 
@@ -22,6 +27,58 @@ impl DesktopModuleDefinition {
     /// Starts an empty Desktop module declaration.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Declares the package-qualified service module name.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.service = self.service.name(name);
+        self
+    }
+
+    /// Declares one synchronous service function.
+    pub fn function(
+        mut self,
+        name: impl Into<String>,
+        handler: impl Fn(&[WhiskerValue], &ModuleEventEmitter) -> WhiskerValue + 'static,
+    ) -> Self {
+        self.service = self.service.function(name, handler);
+        self
+    }
+
+    /// Declares one deferred service function.
+    pub fn async_function(
+        mut self,
+        name: impl Into<String>,
+        handler: impl Fn(&[WhiskerValue], ModulePromise, &ModuleEventEmitter) + 'static,
+    ) -> Self {
+        self.service = self.service.async_function(name, handler);
+        self
+    }
+
+    /// Declares one service-scoped event.
+    pub fn event(mut self, name: impl Into<String>) -> Self {
+        self.service = self.service.event(name);
+        self
+    }
+
+    /// Declares the first-subscriber hook for one service event.
+    pub fn on_start_observing(
+        mut self,
+        event: impl Into<String>,
+        hook: impl Fn(&ModuleEventEmitter) + 'static,
+    ) -> Self {
+        self.service = self.service.on_start_observing(event, hook);
+        self
+    }
+
+    /// Declares the last-subscriber hook for one service event.
+    pub fn on_stop_observing(
+        mut self,
+        event: impl Into<String>,
+        hook: impl Fn(&ModuleEventEmitter) + 'static,
+    ) -> Self {
+        self.service = self.service.on_stop_observing(event, hook);
+        self
     }
 
     /// Adds an independently declared Host View matched by stable name.
@@ -42,6 +99,11 @@ impl DesktopModuleDefinition {
     pub fn into_factories(self) -> Vec<DesktopElementFactory> {
         self.factories
     }
+
+    /// Returns the portable service declaration bound by the Desktop runtime.
+    pub fn service_definition(&self) -> &RustModuleDefinition {
+        &self.service
+    }
 }
 
 /// Converts one Desktop `View` declaration into its Host factory.
@@ -58,8 +120,10 @@ impl DesktopViewImplementation for DesktopElementFactory {
 
 type DesktopPropSetter<T> = Arc<dyn Fn(&mut T, &WhiskerValue) + Send + Sync>;
 type DesktopPropClearer<T> = Arc<dyn Fn(&mut T) + Send + Sync>;
-type DesktopCommandHandler<T> =
-    Arc<dyn Fn(&mut T, &WhiskerValue) -> Option<DesktopNativeEvent> + Send + Sync>;
+type DesktopCommandHandler<T> = Arc<dyn Fn(&mut T, &WhiskerValue) + Send + Sync>;
+type DesktopTextStyleUpdater<T> = Arc<dyn Fn(&mut T, &WhiskerTextStyle) + Send + Sync>;
+type DesktopMeasurementHandler =
+    Arc<dyn Fn(&WhiskerMeasureRequest) -> Option<WhiskerMeasuredSize> + Send + Sync>;
 type DesktopRasterizer<T> = Arc<dyn Fn(&T, u32, u32) -> Option<DesktopRaster> + Send + Sync>;
 
 struct DesktopPropBinding<T> {
@@ -79,10 +143,12 @@ impl<T> Clone for DesktopPropBinding<T> {
 /// The `View { Prop / Events / Command }` portion of a Desktop declaration.
 pub struct DesktopViewDefinition<T> {
     name: String,
-    create: Arc<dyn Fn() -> T + Send + Sync>,
+    create: Arc<dyn Fn(DesktopEventEmitter) -> T + Send + Sync>,
     properties: HashMap<String, DesktopPropBinding<T>>,
     events: HashSet<String>,
     commands: HashMap<String, DesktopCommandHandler<T>>,
+    text_style: Option<DesktopTextStyleUpdater<T>>,
+    measurement: Option<DesktopMeasurementHandler>,
     rasterizer: Option<DesktopRasterizer<T>>,
     plain_text: bool,
     scroll_content: bool,
@@ -93,13 +159,18 @@ where
     T: 'static,
 {
     /// Declares how a Desktop content object is created for each mounted node.
-    pub fn new(name: impl Into<String>, create: impl Fn() -> T + Send + Sync + 'static) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        create: impl Fn(DesktopEventEmitter) -> T + Send + Sync + 'static,
+    ) -> Self {
         Self {
             name: name.into(),
             create: Arc::new(create),
             properties: HashMap::new(),
             events: HashSet::new(),
             commands: HashMap::new(),
+            text_style: None,
+            measurement: None,
             rasterizer: None,
             plain_text: false,
             scroll_content: false,
@@ -161,7 +232,7 @@ where
     pub fn command(
         mut self,
         command: impl Into<String>,
-        handler: impl Fn(&mut T, &WhiskerValue) -> Option<DesktopNativeEvent> + Send + Sync + 'static,
+        handler: impl Fn(&mut T, &WhiskerValue) + Send + Sync + 'static,
     ) -> Self {
         let command = command.into();
         assert!(!command.trim().is_empty(), "Desktop command name is empty");
@@ -170,6 +241,34 @@ where
                 .insert(command.clone(), Arc::new(handler))
                 .is_none(),
             "duplicate Desktop command binding for {command}"
+        );
+        self
+    }
+
+    /// Declares that this native content object consumes resolved inherited
+    /// text style independently from plain-text children.
+    pub fn text_style(
+        mut self,
+        update: impl Fn(&mut T, &WhiskerTextStyle) + Send + Sync + 'static,
+    ) -> Self {
+        assert!(
+            self.text_style.replace(Arc::new(update)).is_none(),
+            "duplicate Desktop TextStyle binding for {}",
+            self.name
+        );
+        self
+    }
+
+    /// Supplies synchronous Host intrinsic measurement for Custom or
+    /// ReplacedContent schemas. `None` means unsupported for this request.
+    pub fn measurement(
+        mut self,
+        measure: impl Fn(&WhiskerMeasureRequest) -> Option<WhiskerMeasuredSize> + Send + Sync + 'static,
+    ) -> Self {
+        assert!(
+            self.measurement.replace(Arc::new(measure)).is_none(),
+            "duplicate Desktop Measurement binding for {}",
+            self.name
         );
         self
     }
@@ -193,6 +292,24 @@ where
             return Err(format!(
                 "plain-text policy differs: Host={}, Rust={:?}",
                 self.plain_text, registration.child_policy
+            ));
+        }
+        if registration.text_style != self.text_style.is_some() {
+            return Err(format!(
+                "text-style capability differs: Host={}, Rust={}",
+                self.text_style.is_some(),
+                registration.text_style
+            ));
+        }
+        let needs_host_measurement = matches!(
+            registration.measurement,
+            ElementMeasurement::ReplacedContent | ElementMeasurement::Custom
+        );
+        if needs_host_measurement != self.measurement.is_some() {
+            return Err(format!(
+                "measurement capability differs: Host={}, Rust={:?}",
+                self.measurement.is_some(),
+                registration.measurement
             ));
         }
         let schema_properties = registration
@@ -242,12 +359,13 @@ where
             create: Arc::clone(&self.create),
             properties,
             commands,
+            text_style: self.text_style.clone(),
             rasterizer: self.rasterizer.clone(),
             scroll_content: self.scroll_content,
         });
-        Ok(Arc::new(move || {
+        Ok(Arc::new(move |events| {
             Box::new(DeclaredDesktopElement {
-                state: (definition.create)(),
+                state: (definition.create)(events),
                 definition: definition.clone(),
             })
         }))
@@ -266,9 +384,10 @@ where
 }
 
 struct BoundDesktopViewDefinition<T> {
-    create: Arc<dyn Fn() -> T + Send + Sync>,
+    create: Arc<dyn Fn(DesktopEventEmitter) -> T + Send + Sync>,
     properties: HashMap<PropertyId, DesktopPropBinding<T>>,
     commands: HashMap<CommandId, DesktopCommandHandler<T>>,
+    text_style: Option<DesktopTextStyleUpdater<T>>,
     rasterizer: Option<DesktopRasterizer<T>>,
     scroll_content: bool,
 }
@@ -306,17 +425,19 @@ where
         (binding.clear)(&mut self.state);
     }
 
-    fn invoke_command(
-        &mut self,
-        command: CommandId,
-        arguments: &WhiskerValue,
-    ) -> Option<DesktopNativeEvent> {
+    fn invoke_command(&mut self, command: CommandId, arguments: &WhiskerValue) {
         let handler = self
             .definition
             .commands
             .get(&command)
             .expect("Desktop Host validates command IDs");
-        handler(&mut self.state, arguments)
+        handler(&mut self.state, arguments);
+    }
+
+    fn set_text_style(&mut self, style: &WhiskerTextStyle) {
+        if let Some(update) = &self.definition.text_style {
+            update(&mut self.state, style);
+        }
     }
 
     fn rasterize(&self, width: u32, height: u32) -> Option<DesktopRaster> {
@@ -345,6 +466,7 @@ pub struct DesktopElementFactory {
     name: String,
     kind: DesktopElementFactoryKind,
     plain_text: bool,
+    measurer: Option<DesktopMeasurementHandler>,
 }
 
 impl DesktopElementFactory {
@@ -367,7 +489,7 @@ impl DesktopElementFactory {
     /// module-owned native Desktop object.
     pub fn native<F>(name: impl Into<String>, create: F) -> Self
     where
-        F: Fn() -> Box<dyn DesktopNativeElement> + Send + Sync + 'static,
+        F: Fn(DesktopEventEmitter) -> Box<dyn DesktopNativeElement> + Send + Sync + 'static,
     {
         Self::new(
             name,
@@ -396,6 +518,7 @@ impl DesktopElementFactory {
             name: name.into(),
             kind,
             plain_text,
+            measurer: None,
         }
     }
 
@@ -419,6 +542,24 @@ impl DesktopElementFactory {
                 ),
             });
         }
+        let measurer = match &self.kind {
+            DesktopElementFactoryKind::Declared(definition) => definition.measurer(),
+            _ => self.measurer.clone(),
+        };
+        let needs_host_measurement = matches!(
+            registration.measurement,
+            ElementMeasurement::ReplacedContent | ElementMeasurement::Custom
+        );
+        if needs_host_measurement != measurer.is_some() {
+            return Err(DesktopElementError::FactoryContractMismatch {
+                name: registration.name.clone(),
+                reason: format!(
+                    "measurement capability differs: Host={}, Rust={:?}",
+                    measurer.is_some(),
+                    registration.measurement
+                ),
+            });
+        }
         let kind = match &self.kind {
             DesktopElementFactoryKind::Declared(definition) => {
                 DesktopElementFactoryKind::Native(definition.bind(registration).map_err(
@@ -434,16 +575,17 @@ impl DesktopElementFactory {
             name: self.name.clone(),
             kind,
             plain_text: self.plain_text,
+            measurer,
         })
     }
 
-    fn create(&self) -> DesktopElementContent {
+    fn create(&self, events: DesktopEventEmitter) -> DesktopElementContent {
         match &self.kind {
             DesktopElementFactoryKind::Presentation => DesktopElementContent::Empty,
             DesktopElementFactoryKind::Text => DesktopElementContent::Text(None),
             DesktopElementFactoryKind::ScrollContainer => DesktopElementContent::ScrollContainer,
             DesktopElementFactoryKind::Native(create) => DesktopElementContent::Native {
-                implementation: create(),
+                implementation: create(events),
                 text: None,
                 plain_text: self.plain_text,
             },
@@ -464,10 +606,13 @@ impl fmt::Debug for DesktopElementFactory {
     }
 }
 
-type NativeConstructor = Arc<dyn Fn() -> Box<dyn DesktopNativeElement> + Send + Sync>;
+type NativeConstructor =
+    Arc<dyn Fn(DesktopEventEmitter) -> Box<dyn DesktopNativeElement> + Send + Sync>;
 
 trait DesktopDeclaredFactory: Send + Sync {
     fn bind(&self, registration: &ElementRegistration) -> Result<NativeConstructor, String>;
+
+    fn measurer(&self) -> Option<DesktopMeasurementHandler>;
 }
 
 impl<T> DesktopDeclaredFactory for DesktopViewDefinition<T>
@@ -476,6 +621,10 @@ where
 {
     fn bind(&self, registration: &ElementRegistration) -> Result<NativeConstructor, String> {
         DesktopViewDefinition::bind(self, registration)
+    }
+
+    fn measurer(&self) -> Option<DesktopMeasurementHandler> {
+        self.measurement.clone()
     }
 }
 
@@ -495,6 +644,36 @@ pub struct DesktopNativeEvent {
     pub event: String,
     /// Typed event detail routed to the Rust listener.
     pub detail: WhiskerValue,
+}
+
+/// Cloneable event channel handed to each Desktop-native element instance.
+///
+/// Events are queued and delivered at the next runtime frame boundary. This
+/// keeps native callbacks from re-entering Rust application code.
+#[derive(Clone)]
+pub struct DesktopEventEmitter(Arc<dyn Fn(DesktopNativeEvent) + Send + Sync>);
+
+impl DesktopEventEmitter {
+    pub(crate) fn new(emit: impl Fn(DesktopNativeEvent) + Send + Sync + 'static) -> Self {
+        Self(Arc::new(emit))
+    }
+
+    /// Queues a declared element event for Rust delivery.
+    pub fn emit(&self, event: DesktopNativeEvent) {
+        (self.0)(event);
+    }
+}
+
+impl Default for DesktopEventEmitter {
+    fn default() -> Self {
+        Self(Arc::new(|_| {}))
+    }
+}
+
+impl fmt::Debug for DesktopEventEmitter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("DesktopEventEmitter(..)")
+    }
 }
 
 /// RGBA8 content produced by a module-owned Desktop element.
@@ -605,12 +784,12 @@ pub trait DesktopNativeElement: fmt::Debug + 'static {
     /// Restores one negotiated property to its implementation default.
     fn clear_property(&mut self, property: PropertyId);
 
-    /// Executes one negotiated command and optionally emits an event.
-    fn invoke_command(
-        &mut self,
-        command: CommandId,
-        arguments: &WhiskerValue,
-    ) -> Option<DesktopNativeEvent>;
+    /// Executes one negotiated one-way command.
+    fn invoke_command(&mut self, command: CommandId, arguments: &WhiskerValue);
+
+    /// Applies resolved inherited text style when the element schema declares
+    /// text-style consumption.
+    fn set_text_style(&mut self, _style: &WhiskerTextStyle) {}
 
     /// Produces element-owned pixels for the requested physical bounds.
     ///
@@ -641,9 +820,10 @@ impl WhiskerModule for BuiltInElementModule {
 
     fn definition() -> Self::Definition {
         DesktopModuleDefinition::new()
-            .view(DesktopViewDefinition::new("whisker.ui/View", || ()))
-            .view(DesktopViewDefinition::new("whisker.ui/Text", || ()).plain_text())
-            .view(DesktopViewDefinition::new("whisker.ui/ScrollView", || ()).scroll_container())
+            .name("whisker.ui")
+            .view(DesktopViewDefinition::new("whisker.ui/View", |_| ()))
+            .view(DesktopViewDefinition::new("whisker.ui/Text", |_| ()).plain_text())
+            .view(DesktopViewDefinition::new("whisker.ui/ScrollView", |_| ()).scroll_container())
     }
 }
 
@@ -716,6 +896,22 @@ impl DesktopElementContent {
         }
     }
 
+    pub(crate) fn set_text_style(
+        &mut self,
+        node: NodeId,
+        style: &WhiskerTextStyle,
+    ) -> Result<(), DesktopElementError> {
+        match self {
+            Self::Native { implementation, .. } => {
+                implementation.set_text_style(style);
+                Ok(())
+            }
+            Self::Empty | Self::Text(_) | Self::ScrollContainer => {
+                Err(DesktopElementError::UnexpectedText { node })
+            }
+        }
+    }
+
     pub(crate) fn set_property(
         &mut self,
         node: NodeId,
@@ -754,10 +950,11 @@ impl DesktopElementContent {
         node: NodeId,
         command: CommandId,
         arguments: &WhiskerValue,
-    ) -> Result<Option<DesktopNativeEvent>, DesktopElementError> {
+    ) -> Result<(), DesktopElementError> {
         match self {
             Self::Native { implementation, .. } => {
-                Ok(implementation.invoke_command(command, arguments))
+                implementation.invoke_command(command, arguments);
+                Ok(())
             }
             Self::Empty | Self::Text(_) | Self::ScrollContainer => {
                 Err(DesktopElementError::UnsupportedCommand { node, command })
@@ -846,8 +1043,9 @@ impl DesktopElementRegistry {
     pub(crate) fn create(
         &self,
         element_type: ElementTypeId,
+        events: DesktopEventEmitter,
     ) -> Result<DesktopElementContent, DesktopElementError> {
-        Ok(self.binding(element_type)?.factory.create())
+        Ok(self.binding(element_type)?.factory.create(events))
     }
 
     pub(crate) fn child_policy(
@@ -862,6 +1060,38 @@ impl DesktopElementRegistry {
         element_type: ElementTypeId,
     ) -> Result<ElementMeasurement, DesktopElementError> {
         Ok(self.binding(element_type)?.measurement)
+    }
+
+    pub(crate) fn measure(
+        &self,
+        request: &MeasurementRequest,
+    ) -> Result<Option<MeasurementResponse>, DesktopElementError> {
+        Ok(self
+            .binding(request.element_type)?
+            .factory
+            .measurer
+            .as_ref()
+            .map(
+                |measure| match measure(&WhiskerMeasureRequest::from(request)) {
+                    Some(size) => MeasurementResponse::Ready {
+                        key: request.key,
+                        environment_epoch: request.environment_epoch,
+                        metrics: MeasurementMetrics::from_size(size),
+                    },
+                    None => MeasurementResponse::Unsupported {
+                        key: request.key,
+                        environment_epoch: request.environment_epoch,
+                        reason: UnsupportedMeasurementReason::Feature,
+                    },
+                },
+            ))
+    }
+
+    pub(crate) fn receives_text_style(
+        &self,
+        element_type: ElementTypeId,
+    ) -> Result<bool, DesktopElementError> {
+        Ok(self.binding(element_type)?.registration.text_style)
     }
 
     pub(crate) fn validate_property(
@@ -1022,7 +1252,9 @@ impl Error for DesktopElementError {}
 mod tests {
     use whisker::{ElementRegistry, SurfaceRuntime, standard_element_registrations};
     use whisker_protocol::{
-        ElementMeasurement, ElementPropertySchema, ElementSchema, ElementValueKind, SurfaceId,
+        AvailableSpace, CustomMeasurePayload, ElementMeasurement, ElementPropertySchema,
+        ElementSchema, ElementValueKind, MeasureConstraints, MeasuredSize, MeasurementKey,
+        MeasurementPayload, SurfaceId,
     };
     use whisker_style::StyleEnvironment;
 
@@ -1055,7 +1287,9 @@ mod tests {
         let factories = built_in_element_factories();
         let registry = DesktopElementRegistry::bind(&registrations, &factories).unwrap();
         for registration in &registrations {
-            let content = registry.create(registration.element_type).unwrap();
+            let content = registry
+                .create(registration.element_type, DesktopEventEmitter::default())
+                .unwrap();
             assert_eq!(
                 content.is_scroll_container(),
                 registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME,
@@ -1113,6 +1347,7 @@ mod tests {
             name: "whisker.test/Badge".into(),
             child_policy: ChildPolicy::Elements,
             measurement: ElementMeasurement::None,
+            text_style: false,
             properties: Vec::new(),
             events: Vec::new(),
             commands: Vec::new(),
@@ -1129,7 +1364,7 @@ mod tests {
         let desktop = DesktopElementRegistry::bind(elements.registrations(), &factories).unwrap();
 
         assert!(matches!(
-            desktop.create(badge.element_type),
+            desktop.create(badge.element_type, DesktopEventEmitter::default()),
             Ok(DesktopElementContent::Empty)
         ));
         assert_eq!(badge.name, "whisker.test/Badge");
@@ -1142,6 +1377,7 @@ mod tests {
             name: "whisker.test/Toggle".into(),
             child_policy: ChildPolicy::None,
             measurement: ElementMeasurement::None,
+            text_style: false,
             properties: vec![ElementPropertySchema {
                 property: PropertyId::new(1).unwrap(),
                 name: "checked".into(),
@@ -1150,7 +1386,7 @@ mod tests {
             events: Vec::new(),
             commands: Vec::new(),
         };
-        let definition = DesktopViewDefinition::new("whisker.test/Toggle", || ()).prop(
+        let definition = DesktopViewDefinition::new("whisker.test/Toggle", |_| ()).prop(
             "misspelled",
             |_, _| {},
             |_| {},
@@ -1162,5 +1398,69 @@ mod tests {
             Err(DesktopElementError::FactoryContractMismatch { name, .. })
                 if name == "whisker.test/Toggle"
         ));
+    }
+
+    #[test]
+    fn declared_text_style_and_measurement_reach_the_module_handlers() {
+        let registration = ElementRegistration {
+            element_type: ElementTypeId::new(21).unwrap(),
+            name: "whisker.test/NativeInput".into(),
+            child_policy: ChildPolicy::None,
+            measurement: ElementMeasurement::Custom,
+            text_style: true,
+            properties: Vec::new(),
+            events: Vec::new(),
+            commands: Vec::new(),
+        };
+        let font_size = Arc::new(std::sync::Mutex::new(None));
+        let observed_font_size = Arc::clone(&font_size);
+        let definition = DesktopViewDefinition::new("whisker.test/NativeInput", |_| ())
+            .text_style(move |_, style| {
+                *observed_font_size.lock().unwrap() = Some(style.style.font_size);
+            })
+            .measurement(|_| Some(MeasuredSize::new(80.0, 24.0)));
+        let registry = DesktopElementRegistry::bind(
+            std::slice::from_ref(&registration),
+            &[definition.into_desktop_factory()],
+        )
+        .unwrap();
+        let request = MeasurementRequest {
+            key: MeasurementKey::new(1).unwrap(),
+            node: NodeId::new(1).unwrap(),
+            element_type: registration.element_type,
+            environment_epoch: 9,
+            constraints: MeasureConstraints {
+                known_dimensions: [None, None],
+                available_space: [AvailableSpace::MaxContent; 2],
+            },
+            payload: MeasurementPayload::Custom(CustomMeasurePayload {
+                version: 1,
+                data: Vec::new(),
+            }),
+        };
+        assert!(matches!(
+            registry.measure(&request).unwrap(),
+            Some(MeasurementResponse::Ready {
+                environment_epoch: 9,
+                metrics,
+                ..
+            }) if metrics.size == MeasuredSize::new(80.0, 24.0)
+        ));
+
+        let mut content = registry
+            .create(registration.element_type, DesktopEventEmitter::default())
+            .unwrap();
+        let mut style = WhiskerTextStyle {
+            style: whisker_protocol::TextMeasureStyle::default(),
+            locale: None,
+            direction: whisker_protocol::MeasureTextDirection::Auto,
+            alignment: whisker_protocol::MeasureTextAlignment::Start,
+            paint: whisker_protocol::TextPaint::default(),
+        };
+        style.style.font_size = 18.0;
+        content
+            .set_text_style(NodeId::new(1).unwrap(), &style)
+            .unwrap();
+        assert_eq!(*font_size.lock().unwrap(), Some(18.0));
     }
 }

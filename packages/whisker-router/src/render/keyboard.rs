@@ -54,12 +54,12 @@ thread_local! {
 /// Blur a specific field. A no-op when the element is unmounted, which is
 /// exactly why targeting the captured departing field is race-free.
 fn blur(el: ElementRef) {
-    let _ = el.invoke("blur", WhiskerValue::Null);
+    let _ = el.command("blur", WhiskerValue::Null);
 }
 
 /// Focus a specific field (raises the keyboard).
 fn focus(el: ElementRef) {
-    let _ = el.invoke("focus", WhiskerValue::Null);
+    let _ = el.command("focus", WhiskerValue::Null);
 }
 
 /// A back gesture began: blur the currently-focused field and remember it

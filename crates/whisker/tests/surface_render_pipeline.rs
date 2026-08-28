@@ -12,7 +12,7 @@ use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
 use whisker::runtime::view::{
     BindType, create_element_by_name, set_attribute_bool, set_event_listener, set_root,
-    try_invoke_element_method, with_installed_renderer,
+    try_invoke_element_command, with_installed_renderer,
 };
 use whisker::{
     ElementModuleDefinition, ElementProviderMetadata, ElementRegistry, ElementTag,
@@ -43,6 +43,7 @@ fn auto_registered(enabled: Signal<bool>, style: whisker::Style) {}
 #[whisker::module_component(
     name = "whisker.test/NativeLabel",
     measurement = Text,
+    text_style = true,
 )]
 fn native_label(children: whisker::TextChildren) {}
 
@@ -153,6 +154,7 @@ fn custom_plain_text_children_lower_to_measurement_and_set_text() {
         .find(|registration| registration.name == native_label_schema::NAME)
         .unwrap();
     assert_eq!(registration.child_policy, whisker::ChildPolicy::PlainText);
+    assert!(registration.text_style);
 
     let mut host = TextHost::default();
     let mut renderer = RecordingRenderer::new(surface.surface());
@@ -170,6 +172,16 @@ fn custom_plain_text_children_lower_to_measurement_and_set_text() {
     assert!(renderer.frames()[0].packet.operations.iter().any(|operation| {
         matches!(operation, Operation::SetText { content, .. } if content.payload.text == "custom text")
     }));
+    assert!(
+        renderer.frames()[0]
+            .packet
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(operation, Operation::SetTextStyle { style, .. }
+            if style.style.font_size == 20.0)
+            })
+    );
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
@@ -2161,6 +2173,7 @@ fn module_element_uses_the_same_retained_frame_path_as_builtins() {
                 name: "example.maps/Map".into(),
                 child_policy: whisker::ChildPolicy::Elements,
                 measurement: ElementMeasurement::None,
+                text_style: false,
                 properties: Vec::new(),
                 events: Vec::new(),
                 commands: Vec::new(),
@@ -2215,6 +2228,7 @@ fn external_element_properties_events_and_commands_share_the_retained_frame_path
             name: "whisker.test/Toggle".into(),
             child_policy: whisker::ChildPolicy::None,
             measurement: ElementMeasurement::None,
+            text_style: false,
             properties: vec![ElementPropertySchema {
                 property: checked,
                 name: "checked".into(),
@@ -2244,8 +2258,8 @@ fn external_element_properties_events_and_commands_share_the_retained_frame_path
         set_attribute_bool(root, "checked", true);
         set_event_listener(root, "change", BindType::Bind, Box::new(|_| {}));
         assert_eq!(
-            try_invoke_element_method(root, "toggle", WhiskerValue::args([])),
-            Some(WhiskerValue::Null)
+            try_invoke_element_command(root, "toggle", WhiskerValue::args([])),
+            Some(Ok(()))
         );
         set_root(root);
     });

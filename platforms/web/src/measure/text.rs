@@ -1,18 +1,58 @@
+use std::collections::HashMap;
+
 use whisker_engine::MeasurementProvider;
 use whisker_protocol::{
-    AvailableSpace, MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
-    MeasurementResponse, PreparedContentId, SurfaceId,
+    AvailableSpace, ElementMeasurement, ElementRegistration, ElementTypeId, MeasuredSize,
+    MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse,
+    PreparedContentId, SurfaceId, UnsupportedMeasurementReason,
 };
 
+use crate::module_api::{WebElementFactory, WebMeasurementHandler};
 use crate::{WebError, js_error, paint, px, set_style};
 
 pub(crate) struct DomMeasurementProvider {
     document: web_sys::Document,
+    element_measurements: HashMap<ElementTypeId, ElementMeasurement>,
+    module_measurements: HashMap<ElementTypeId, WebMeasurementHandler>,
 }
 
 impl DomMeasurementProvider {
     pub(crate) fn new(document: web_sys::Document) -> Self {
-        Self { document }
+        Self {
+            document,
+            element_measurements: HashMap::new(),
+            module_measurements: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn with_elements(
+        document: web_sys::Document,
+        registrations: &[ElementRegistration],
+        factories: &[WebElementFactory],
+    ) -> Result<Self, WebError> {
+        let factories = factories
+            .iter()
+            .map(|factory| (factory.name.as_str(), factory))
+            .collect::<HashMap<_, _>>();
+        let mut provider = Self::new(document);
+        for registration in registrations {
+            let factory = factories.get(registration.name.as_str()).ok_or_else(|| {
+                WebError(format!(
+                    "missing DOM factory for element {}",
+                    registration.name
+                ))
+            })?;
+            let factory = factory.bind(registration)?;
+            provider
+                .element_measurements
+                .insert(registration.element_type, registration.measurement);
+            if let Some(measure) = factory.measurer {
+                provider
+                    .module_measurements
+                    .insert(registration.element_type, measure);
+            }
+        }
+        Ok(provider)
     }
 }
 
@@ -30,17 +70,34 @@ impl MeasurementProvider for DomMeasurementProvider {
             .body()
             .ok_or_else(|| WebError("document body is unavailable".into()))?;
         for request in requests {
+            if let Some(measure) = self.module_measurements.get(&request.element_type) {
+                responses.push(match measure(&request.into()) {
+                    Some(size) => MeasurementResponse::Ready {
+                        key: request.key,
+                        environment_epoch: request.environment_epoch,
+                        metrics: MeasurementMetrics::from_size(size),
+                    },
+                    None => MeasurementResponse::Unsupported {
+                        key: request.key,
+                        environment_epoch: request.environment_epoch,
+                        reason: UnsupportedMeasurementReason::Feature,
+                    },
+                });
+                continue;
+            }
             let MeasurementPayload::Text(text) = &request.payload else {
-                responses.push(MeasurementResponse::Ready {
+                let reason = if self
+                    .element_measurements
+                    .contains_key(&request.element_type)
+                {
+                    UnsupportedMeasurementReason::Kind
+                } else {
+                    UnsupportedMeasurementReason::Element
+                };
+                responses.push(MeasurementResponse::Unsupported {
                     key: request.key,
                     environment_epoch: request.environment_epoch,
-                    metrics: MeasurementMetrics {
-                        size: MeasuredSize::new(0.0, 0.0),
-                        first_baseline: None,
-                        last_baseline: None,
-                        overflow: None,
-                        prepared_content: None,
-                    },
+                    reason,
                 });
                 continue;
             };

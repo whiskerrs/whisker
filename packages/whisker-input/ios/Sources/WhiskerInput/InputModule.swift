@@ -4,7 +4,7 @@
 // registration block in `WhiskerInput+Generated.swift` that registers
 // `definitionLazy.view!.viewClass` with `LynxComponentRegistry` under
 // "whisker-input:Input", then calls `module.registerWithLynx()` so every
-// `Prop(...)` setter and `Function(...)` method installs via the
+// `Prop(...)` setter and `Command(...)` handler installs via the
 // Obj-C-runtime path.
 //
 // The `WhiskerInputView` Lynx UI subclass lives in `InputView.swift`;
@@ -25,7 +25,7 @@ public final class InputModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {
             Name("Input")
-            View(WhiskerInputView.self) {
+            View("whisker-input:Input", WhiskerInputView.self) {
 
                 // ---- Value + placeholder ----------------------------------
 
@@ -125,31 +125,21 @@ public final class InputModule: Module {
                 // dispatch happens in `InputView.swift`.
                 Events("input", "change", "focus", "blur", "submit")
 
-                // ---- Imperative methods ----------------------------------
+                // ---- One-way View commands -------------------------------
 
-                Function("focus") { (view: WhiskerInputView, _: [WhiskerValue]) -> WhiskerValue in
+                Command("focus") { (view: WhiskerInputView, _: WhiskerValue) in
                     view.focusField()
-                    return .null
                 }
-                Function("blur") { (view: WhiskerInputView, _: [WhiskerValue]) -> WhiskerValue in
+                Command("blur") { (view: WhiskerInputView, _: WhiskerValue) in
                     view.blurField()
-                    return .null
                 }
-                Function("clear") { (view: WhiskerInputView, _: [WhiskerValue]) -> WhiskerValue in
+                Command("clear") { (view: WhiskerInputView, _: WhiskerValue) in
                     view.clearField()
-                    return .null
                 }
-                Function("setValue") { (view: WhiskerInputView, args: [WhiskerValue]) -> WhiskerValue in
-                    // The first positional arg is the map the Rust side sent
-                    // as `WhiskerValue::map([("value", ...)])`.
-                    if case .map(let m) = args.first, let s = m["value"]?.asString {
+                Command("setValue") { (view: WhiskerInputView, parameters: WhiskerValue) in
+                    if case .map(let m) = parameters, let s = m["value"]?.asString {
                         view.setValue(s)
                     }
-                    return .null
-                }
-                Function("getValue") { (view: WhiskerInputView, _: [WhiskerValue]) -> WhiskerValue in
-                    // Shape must match the Rust `GetValueResult` struct.
-                    return .map(["value": .string(view.currentText())])
                 }
             }
         }

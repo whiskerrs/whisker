@@ -496,13 +496,10 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// gestures, and `ref` can be used without adding component-specific schema
 /// entries. A declared `style` parameter remains supported for compatibility
 /// and is excluded from the schema.
-/// The legacy string-literal form remains available while existing Lynx
-/// modules migrate.
-///
 /// Imperative methods on a mounted element are dispatched through
 /// the element's `ElementRef` (`ref:` prop) via
-/// `ElementRef::invoke(method, args)` — there is no separate
-/// element-method declaration macro.
+/// `ElementRef::command(name, parameters)`. Commands must be declared
+/// in the macro's `commands = [("name", ValueKind)]` schema.
 ///
 /// Call-site shape mirrors built-in tags + user components:
 ///
