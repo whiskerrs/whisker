@@ -37,7 +37,7 @@ use serde::de::DeserializeOwned;
 use whisker_runtime::reactive::{RwSignal, Signal, computed};
 use whisker_runtime::view::Element;
 
-use crate::module::WhiskerValue;
+use whisker_runtime::value::WhiskerValue;
 
 /// Result of [`ElementHandle::bounding_client_rect`] — the element's
 /// layout box in LynxView coordinates (Lynx's `boundingClientRect`
@@ -297,7 +297,7 @@ impl ElementRef {
                  mounted element"
             ));
         };
-        crate::invoke_element_method_with_params(elem, method, args)
+        invoke_element_method(elem, method, args)
     }
 
     /// Async, **result-returning** invoke — the platform method's return
@@ -316,7 +316,7 @@ impl ElementRef {
                  mounted element"
             ));
         };
-        crate::invoke_element_method_async_with_params(elem, method, args).await
+        invoke_element_method(elem, method, args)
     }
 
     /// Async invoke that deserializes the result into `T`. `NotBound`
@@ -398,6 +398,15 @@ impl ElementRef {
     pub fn clear(&self) {
         self.__unbind();
     }
+}
+
+fn invoke_element_method(handle: Element, method: &str, params: WhiskerValue) -> WhiskerValue {
+    whisker_runtime::view::try_invoke_element_method(handle, method, params).unwrap_or_else(|| {
+        WhiskerValue::Error(format!(
+            "invoke_element_method({method}): element {} has no Host method binding",
+            handle.id()
+        ))
+    })
 }
 
 impl Default for ElementRef {

@@ -278,11 +278,8 @@ pub trait DynRenderer {
         EventDispatchPlan::default()
     }
 
-    /// Handles an element command without crossing the legacy Lynx bridge.
-    ///
-    /// Retained-surface renderers return `Some` and lower the call into their
-    /// semantic frame protocol. Bridge renderers leave the default `None`, so
-    /// `whisker-driver` can continue with its platform-pointer path.
+    /// Handles an element command through the retained semantic frame path.
+    /// Renderers without command support leave the default `None`.
     fn invoke_element_method(
         &self,
         _handle: Element,
@@ -294,20 +291,6 @@ pub trait DynRenderer {
 
     fn set_root(&self, root: Element);
     fn flush(&self);
-
-    /// Opaque platform pointer the C bridge associates with this
-    /// `Element` handle (cast from `*mut WhiskerElement` for the
-    /// Lynx bridge renderer; `0` for renderers without a native
-    /// backing).
-    ///
-    /// Used by `whisker-driver`'s `ElementRef::invoke` to call
-    /// `whisker_bridge_invoke_element_method` without the runtime
-    /// crate having to know about the bridge's C types. Renderers
-    /// that don't have a native pointer return `0`, which the
-    /// driver surfaces as `WhiskerValue::Error` to the caller.
-    fn module_component_ptr(&self, _handle: Element) -> usize {
-        0
-    }
 }
 
 thread_local! {
@@ -1040,19 +1023,4 @@ pub fn set_root(root: Element) {
 
 pub fn flush() {
     with_renderer(|r| r.flush(), ())
-}
-
-/// Opaque platform pointer for `handle` — used by `whisker-driver`'s
-/// `ElementRef::invoke` to call the C bridge without leaking the
-/// bridge's `WhiskerElement*` type into the runtime crate's public
-/// surface. Returns `0` if no renderer is installed or the renderer
-/// doesn't have a native pointer for `handle`.
-pub fn module_component_ptr(handle: Element) -> usize {
-    if is_phantom(handle) {
-        return 0;
-    }
-    CURRENT_RENDERER.with_borrow(|slot| match slot.as_ref() {
-        Some(r) => r.module_component_ptr(handle),
-        None => 0,
-    })
 }

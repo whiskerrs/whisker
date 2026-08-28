@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "whisker_bridge.h"
+#include "whisker_value.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,7 +31,14 @@ enum {
   WHISKER_BACKGROUND_LINEAR = 0, WHISKER_BACKGROUND_RADIAL = 1,
   WHISKER_BACKGROUND_CONIC = 2, WHISKER_BACKGROUND_RESOURCE = 3
 };
-enum { WHISKER_BACKGROUND_SIZE_AUTO = 0, WHISKER_BACKGROUND_SIZE_EXPLICIT = 1 };
+enum {
+  WHISKER_BACKGROUND_SIZE_AUTO = 0,
+  WHISKER_BACKGROUND_SIZE_EXPLICIT = 1,
+  WHISKER_BACKGROUND_SIZE_COVER = 2,
+  WHISKER_BACKGROUND_SIZE_CONTAIN = 3,
+  WHISKER_BACKGROUND_SIZE_WIDTH = 4,
+  WHISKER_BACKGROUND_SIZE_HEIGHT = 5
+};
 enum {
   WHISKER_BACKGROUND_REPEAT = 0, WHISKER_BACKGROUND_NO_REPEAT = 1,
   WHISKER_BACKGROUND_SPACE = 2, WHISKER_BACKGROUND_ROUND = 3
@@ -283,6 +290,8 @@ typedef bool (*WhiskerMobilePresentFrameCallback)(void*, const WhiskerMobileFram
                                                   WhiskerMobileApplyResponse*);
 typedef bool (*WhiskerMobileResourceCommandCallback)(void*, const WhiskerMobileResourceCommand*);
 typedef void (*WhiskerMobileModuleResultCallback)(void*, const WhiskerValueRaw*);
+/* true transfers the result callback to the Host, which must call it exactly
+ * once. false means the callback was neither called nor retained. */
 typedef bool (*WhiskerMobileInvokeModuleCallback)(void*, const uint8_t*, size_t,
   const uint8_t*, size_t, const WhiskerValueRaw*, size_t, bool,
   WhiskerMobileModuleResultCallback, void*);

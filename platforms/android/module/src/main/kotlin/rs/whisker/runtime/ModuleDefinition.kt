@@ -42,7 +42,7 @@
 // ```
 //
 // The KSP codegen walks every `@WhiskerModule` declaration and turns
-// `definition()` into Lynx prop / method registrations.
+// `definition()` into generated Host registrations.
 
 package rs.whisker.runtime
 
@@ -68,11 +68,10 @@ public data class WhiskerConstantsComponent(public val values: Map<String, Whisk
     WhiskerDefinitionComponent
 
 /**
- * `View(Foo::class.java) { ... }` — registers a Lynx UI subclass
+ * `View(Foo::class.java) { ... }` — registers a native View class
  * + its inner DSL block (Prop / Function / Events). The class is
  * type-erased to `Class<*>` so the parent struct isn't generic;
- * the concrete class is the Lynx UI subclass (typically a
- * [WhiskerUI] subclass).
+ * the concrete class is typically a [WhiskerUI] subclass.
  */
 public data class WhiskerViewComponent(
     public val viewClass: Class<*>? = null,
@@ -83,7 +82,7 @@ public data class WhiskerViewComponent(
 
 /**
  * Type-erased prop setter the framework calls on prop dispatch.
- * `view` is the Lynx UI instance; `value` is the raw
+ * `view` is the native element instance; `value` is the raw
  * [WhiskerValue] — no auto-deserialization, the author destructures
  * it, e.g. `value.asString()`.
  */
@@ -98,7 +97,7 @@ public data class WhiskerPropComponent(
 
 /**
  * Type-erased function handler. `view` is `null` for module-level
- * [Function]s, the Lynx UI instance for view-block [Function]s.
+ * [Function]s, the native element instance for view-block [Function]s.
  * `args` are the raw positional [WhiskerValue]s from the Rust call
  * site — no auto-deserialization, the author destructures, e.g.
  * `args[0].asDouble()`; the return is a raw [WhiskerValue]
@@ -205,8 +204,8 @@ public class WhiskerModuleDefinitionBuilder {
         WhiskerConstantsComponent(values).also { components.add(it) }
 
     /**
-     * `View(MyView::class.java) { ... }` — registers a Lynx UI
-     * subclass + its inner DSL block (Prop / Function / Events).
+     * `View(MyView::class.java) { ... }` — registers a native View
+     * class + its inner DSL block (Prop / Function / Events).
      */
     public fun View(
         viewClass: Class<*>,

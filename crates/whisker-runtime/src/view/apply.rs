@@ -52,7 +52,7 @@ where
 /// dispatch on many UIs (`<list>`, `<scroll-view>`, …) gates
 /// branches on `value.IsNumber()` / `value.IsBool()`, so a
 /// stringified attr from [`apply_attr`] silently no-ops in those
-/// branches. See `crates/whisker-driver-sys/bridge/src/whisker_bridge_common.cc`
+/// branches. Retained Hosts receive the typed value through the frame protocol.
 /// for the bridge-side rationale.
 pub fn apply_attr_int<V>(h: Element, name: &'static str, v: V)
 where

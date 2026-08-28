@@ -58,7 +58,7 @@ public data class WhiskerTextIndent(
     public val percentage: Float = 0f,
 )
 
-/** One inherited Lynx text decoration. */
+/** One inherited Whisker text decoration. */
 public data class WhiskerTextDecoration(
     public val line: WhiskerTextDecorationLine,
     public val style: WhiskerTextDecorationStyle,

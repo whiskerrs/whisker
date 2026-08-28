@@ -526,8 +526,6 @@ stack synthesis, and the full interactive/predictive-back polish.
 - Cold deep-link: synthesising a sensible back stack when entering deep
   into a nested structure (use `Switch(default:)` + declaration order as
   the seed).
-- Rendering substrate: implemented in-Lynx (single runtime, shared
-  state) for now; the API is intended to keep the door open to a future
-  native-container substrate (Lynx multi-surface) without changing
-  `routes!`. See `docs/lynx-integration.md` for the multi-surface
-  investigation.
+- Rendering substrate: one retained Whisker surface with shared state. The API
+  keeps routing independent of the Host composition boundary so a future
+  multi-surface container does not require changing `routes!`.

@@ -7,10 +7,10 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::runtime::RuntimeContext;
-use crate::runtime::reactive::{self, Owner};
-use crate::runtime::runtime_wake::RuntimeWakeHandle;
-use crate::runtime::view::{self, Element};
+use crate::RuntimeContext;
+use crate::reactive::{self, Owner};
+use crate::runtime_wake::RuntimeWakeHandle;
+use crate::view::{self, Element};
 use crate::{
     InputDispatch, ResourceEventApply, RuntimeFrame, RuntimeFrameError, RuntimeInputError,
     RuntimeResourceError, SurfaceRuntime,
@@ -254,7 +254,7 @@ impl RuntimeInstance {
         let surface = self.surface.clone();
         let (owner, root) = self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
-                crate::runtime::drain_runtime_dispatches();
+                crate::drain_runtime_dispatches();
                 let owner = Owner::new(None);
                 let root = owner.with(application);
                 view::set_root(root);
@@ -292,7 +292,7 @@ impl RuntimeInstance {
         let surface = self.surface.clone();
         self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
-                crate::runtime::drain_runtime_dispatches();
+                crate::drain_runtime_dispatches();
                 owner.resume();
             });
         });
@@ -358,7 +358,7 @@ impl RuntimeInstance {
         let surface = self.surface.clone();
         self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
-                crate::runtime::drain_runtime_dispatches();
+                crate::drain_runtime_dispatches();
                 let dispatch = self
                     .dispatch_input_active(event)
                     .map_err(RuntimeEventError::Input)?;
@@ -390,7 +390,7 @@ impl RuntimeInstance {
         let apply = self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
                 if self.lifecycle == RuntimeLifecycle::Running {
-                    crate::runtime::drain_runtime_dispatches();
+                    crate::drain_runtime_dispatches();
                 }
                 surface
                     .apply_measurement_ready(ready)
@@ -459,12 +459,12 @@ impl RuntimeInstance {
                 surface
                     .update_environment(environment)
                     .map_err(RuntimeDriveError::Environment)?;
-                crate::runtime::drain_runtime_dispatches();
+                crate::drain_runtime_dispatches();
                 self.drain_pending_input()
                     .map_err(RuntimeDriveError::Input)?;
-                crate::runtime::anim_hook::step(timestamp_ms);
+                crate::anim_hook::step(timestamp_ms);
                 reactive::flush();
-                crate::runtime::tasks::run_until_stalled();
+                crate::tasks::run_until_stalled();
                 reactive::flush();
                 reactive::flush_mounts();
                 surface
@@ -527,7 +527,7 @@ impl RuntimeInstance {
             };
             self.dispatch_input_active(&event)?;
         }
-        crate::runtime::runtime_wake::wake_runtime();
+        crate::runtime_wake::wake_runtime();
         Ok(())
     }
 
