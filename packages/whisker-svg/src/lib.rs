@@ -21,7 +21,7 @@
 //!                       stroke="currentColor" stroke-width="2" fill="none"/>
 //!             </svg>"#,
 //!             color: "#1d9bf0",
-//!             style: "width: 24px; height: 24px;",
+//!             style: css!(width: px(24), height: px(24)),
 //!         )
 //!     }
 //! }
@@ -95,7 +95,7 @@ use whisker::runtime::view::Element;
 /// - `color` — CSS-style colour applied to any `fill="currentColor"` /
 ///   `stroke="currentColor"` paint inside the SVG. Defaults to the
 ///   host's inherited foreground colour.
-/// - `style` — standard Whisker inline-style string for the host
+/// - `style` — structured Whisker CSS declarations for the host
 ///   `<view>`. Width / height MUST be set here (or via flex), the
 ///   replayer scales the SVG's viewBox to fill these bounds with
 ///   `preserveAspectRatio="xMidYMid meet"` semantics.

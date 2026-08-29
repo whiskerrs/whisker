@@ -57,15 +57,13 @@ pub fn ranked_card(podcast: Podcast, rank: u32) -> Element {
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                 )) {
-                    // `text-maxline` is a Lynx-only extension not in
-                    // the typed css! builder; `.raw(...)` appends it.
                     text(
                         style: css!(
                             font_size: theme::T_CARD_TITLE,
                             color: theme::TEXT_PRIMARY,
                             font_weight: FontWeight::Numeric(500),
                             text_overflow: TextOverflow::Ellipsis,
-                        ).raw("text-maxline", "1"),
+                        ),
                         value: title_text,
                     )
                     text(
@@ -74,7 +72,7 @@ pub fn ranked_card(podcast: Podcast, rank: u32) -> Element {
                             color: theme::TEXT_SECONDARY,
                             margin_top: px(2),
                             text_overflow: TextOverflow::Ellipsis,
-                        ).raw("text-maxline", "2"),
+                        ),
                         value: subtitle_text,
                     )
                 }

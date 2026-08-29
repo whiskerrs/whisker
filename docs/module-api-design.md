@@ -148,7 +148,7 @@ pub fn image(src: Signal<String>, mode: Signal<ImageMode>, style: whisker::Style
 ```rust
 // Usage
 render! {
-    Image(src: "https://…", mode: ImageMode::AspectFill, style: "width: 200px")
+    Image(src: "https://…", mode: ImageMode::AspectFill, style: css!(width: px(200)))
 }
 ```
 
@@ -202,7 +202,7 @@ impl VideoHandle {
 let video = VideoHandle::new();
 render! {
     view {
-        Video(ref: video.r(), src: "clip.mp4", style: "height: 200px")
+        Video(ref: video.r(), src: "clip.mp4", style: css!(height: px(200)))
         view(on_tap: move |_| video.play()) { text(value: "play") }
     }
 }

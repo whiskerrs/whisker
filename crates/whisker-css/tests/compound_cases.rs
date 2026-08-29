@@ -163,16 +163,6 @@ fn empty_style_is_empty_string() {
 }
 
 #[test]
-fn raw_escape_hatch_coexists_with_typed() {
-    let s = Css::new()
-        .padding(px(8))
-        .raw("-webkit-tap-highlight-color", "transparent");
-    let css = s.to_string();
-    assert!(css.contains("padding-top: 8px"));
-    assert!(css.contains("-webkit-tap-highlight-color: transparent"));
-}
-
-#[test]
 fn merge_overlays_other_onto_self() {
     let base = Css::new().padding(px(4)).color(Color::hex(0x000000));
     let overlay = Css::new().color(Color::hex(0xFFFFFF));

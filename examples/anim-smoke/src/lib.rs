@@ -13,7 +13,7 @@
 //! per-frame transforms for *both* timing strategies (forward/reverse,
 //! idle when done).
 
-use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent};
+use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent, TransformFn};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker::{AnimConfig, animated};
@@ -60,8 +60,8 @@ fn root() -> Element {
                     margin_left: px(4),
                     border_radius: px(10),
                     background_color: Color::hex(0x7C5CFF),
-                )
-                .raw("transform", format!("translateX({}px)", curve_x.get()))))
+                    transform: TransformFn::TranslateX(px(curve_x.get()).into()),
+                )))
             }
 
             // Row 2 — spring box.
@@ -79,8 +79,8 @@ fn root() -> Element {
                     margin_left: px(4),
                     border_radius: px(10),
                     background_color: Color::hex(0x29D6C5),
-                )
-                .raw("transform", format!("translateX({}px)", spring_x.get()))))
+                    transform: TransformFn::TranslateX(px(spring_x.get()).into()),
+                )))
             }
 
             // Toggle button: flip direction and drive BOTH controllers.

@@ -14,7 +14,7 @@
 
 use bsky_ui_kit::PostCard;
 use whisker::ListHandle;
-use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, JustifyContent};
+use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, JustifyContent, PositionKind};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_icons::{Icon, lucide};
@@ -337,9 +337,15 @@ fn search_screen() -> Element {
                     on_submit: move |v: String| query.set(v),
                     placeholder_color: "#8B98A5",
                     caret_color: "#1083FE",
-                    style: "width: 100%; height: 40px; border-radius: 10px; \
-                            background-color: #16191F; color: #FFFFFF; font-size: 16px; \
-                            padding-left: 14px; padding-right: 14px;",
+                    style: Css::new()
+                        .width(percent(100))
+                        .height(px(40))
+                        .border_radius(px(10))
+                        .background_color(Color::hex(0x16191f))
+                        .color(Color::hex(0xffffff))
+                        .font_size(px(16))
+                        .padding_left(px(14))
+                        .padding_right(px(14)),
                 )
             }
             view(style: css!(
@@ -1651,9 +1657,15 @@ fn login_screen() -> Element {
                 spell_check: false,
                 placeholder_color: "#8B98A5",
                 caret_color: "#1083FE",
-                style: "height: 48px; border-radius: 10px; \
-                        background-color: #16191F; color: #FFFFFF; font-size: 16px; \
-                        padding-left: 14px; padding-right: 14px; margin-bottom: 12px;",
+                style: Css::new()
+                    .height(px(48))
+                    .border_radius(px(10))
+                    .background_color(Color::hex(0x16191f))
+                    .color(Color::hex(0xffffff))
+                    .font_size(px(16))
+                    .padding_left(px(14))
+                    .padding_right(px(14))
+                    .margin_bottom(px(12)),
             )
             Show(when: move || !error.get().is_empty(), fallback: || render! { fragment() }) {
                 text(
@@ -1770,7 +1782,7 @@ fn auth_screen() -> Element {
                 WebView(
                     url: auth_url,
                     on_navigation: on_nav.clone(),
-                    style: "flex-grow: 1;",
+                    style: css!(flex_grow: 1.0),
                 )
             }
         }
@@ -1870,8 +1882,8 @@ fn timeline_screen() -> Element {
             flex_direction: FlexDirection::Column,
             background_color: theme::BG,
             padding_top: px(insets.get().top as f32),
+            position: PositionKind::Relative,
         )
-        .raw("position", "relative")
     });
 
     render! {
@@ -1931,10 +1943,10 @@ fn compose_fab() -> Element {
                 display: Display::Flex,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-            )
-            .raw("position", "absolute")
-            .raw("right", "16px")
-            .raw("bottom", "16px"),
+                position: PositionKind::Absolute,
+                right: px(16),
+                bottom: px(16),
+            ),
             on_tap: move |_| {
                 let _ = nav.navigate("/compose");
             },
@@ -2287,7 +2299,11 @@ fn compose_screen() -> Element {
                 auto_focus: true,
                 placeholder_color: "#8B98A5",
                 caret_color: "#1083FE",
-                style: "flex-grow: 1; padding: 16px; color: #FFFFFF; font-size: 18px;",
+                style: Css::new()
+                    .flex_grow(1.0)
+                    .padding(px(16))
+                    .color(Color::hex(0xffffff))
+                    .font_size(px(18)),
             )
             Show(when: move || !error.get().is_empty(), fallback: || render! { fragment() }) {
                 text(

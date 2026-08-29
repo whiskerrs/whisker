@@ -23,8 +23,8 @@
 //! fn app() -> Element {
 //!     let url = RwSignal::new("https://example.com".to_string());
 //!     render! {
-//!         view(style: "flex-direction: column; flex-grow: 1;") {
-//!             WebView(url: url, style: "flex-grow: 1;")
+//!         view(style: css!(flex_direction: FlexDirection::Column, flex_grow: 1.0)) {
+//!             WebView(url: url, style: css!(flex_grow: 1.0))
 //!             // `url.set("https://other.com")` navigates the view.
 //!         }
 //!     }
@@ -40,7 +40,7 @@
 //!
 //! ```ignore
 //! let html = "<h1>Hi</h1>".to_string();
-//! render! { WebView(html: html, style: "flex-grow: 1;") }
+//! render! { WebView(html: html, style: css!(flex_grow: 1.0)) }
 //! ```
 //!
 //! ### JS bridge round-trip
@@ -65,9 +65,9 @@
 //! ```ignore
 //! let webview = WebViewRef::new();
 //! render! {
-//!     view(style: "flex-direction: column;") {
-//!         WebView(url: url, webview_ref: webview.clone(), style: "flex-grow: 1;")
-//!         view(style: "flex-direction: row;") {
+//!     view(style: css!(flex_direction: FlexDirection::Column)) {
+//!         WebView(url: url, webview_ref: webview.clone(), style: css!(flex_grow: 1.0))
+//!         view(style: css!(flex_direction: FlexDirection::Row)) {
 //!             text(value: "Reload", on_tap: {
 //!                 let w = webview.clone();
 //!                 move |_| w.reload()
@@ -93,7 +93,7 @@
 //! | `on_navigation`     | `Fn(String)`               | —                             | An internal navigation was requested; carries the URL. Fires for BOTH allowed and denied (off-whitelist / non-http(s), e.g. a custom-scheme OAuth redirect) attempts — filter by URL/scheme if you only care about one. |
 //! | `on_progress`       | `Fn(f32)`                  | —                             | Load progress `0.0..=1.0`. |
 //! | `on_error`          | `Fn(WebViewError)`         | —                             | Navigation failed (url / code / description). |
-//! | `style`             | `Signal<String>`           | `""`                          | Standard Whisker CSS style string. |
+//! | `style`             | `Style`                    | empty                         | Structured Whisker CSS declarations. |
 //! | `webview_ref`       | [`WebViewRef`]             | —                             | Imperative handle (see [Methods](#methods)). |
 //!
 //! ## JS bridge

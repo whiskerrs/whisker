@@ -10,7 +10,7 @@
 //! #[whisker::main]
 //! fn app() -> Element {
 //!     render! {
-//!         view(style: "flex-grow: 1; background: white;") {
+//!         view(style: css!(flex_grow: 1.0, background_color: Color::hex(0xffffff))) {
 //!             text(value: "Hello, Whisker")
 //!         }
 //!     }
@@ -198,11 +198,11 @@ pub use whisker_runtime::view::{
 };
 
 /// Built-in tag builders. The `render!` macro lowers each built-in
-/// element invocation (`view(style: "x", on_tap: move |_| {})`) into a
+/// element invocation (`view(style: css!(flex_grow: 1.0), on_tap: move |_| {})`) into a
 /// builder method chain on one of these types
 /// (`__tags::view().style(|| "x").on_tap(|| {}).__h()`). Methods
 /// internally invoke the imperative runtime primitives
-/// (`create_element`, `set_inline_styles`, …).
+/// (`create_element`, `set_specified_style`, …).
 ///
 /// **Why a builder chain instead of struct-init or imperative
 /// codegen:** rust-analyzer's auto-completion picks up methods on
@@ -258,19 +258,19 @@ pub mod __tags {
 
         // ---- Styling ----------------------------------------------------
 
-        /// Inline CSS (`SetRawInlineStyles`).
+        /// Structured CSS declarations.
         ///
         /// Accepts any value that converts into [`crate::Style`] — a
-        /// [`whisker_css::Css`] builder, a `String` / `&str` raw CSS
-        /// literal, or a reactive [`ReadSignal`](crate::ReadSignal)
-        /// / [`RwSignal`](crate::RwSignal) of either form. Reactive variants re-apply the CSS via the
+        /// [`whisker_css::Css`] builder, or a reactive
+        /// [`ReadSignal`](crate::ReadSignal) / [`RwSignal`](crate::RwSignal)
+        /// carrying `Css`. Reactive variants re-apply the declarations via the
         /// element's internal `effect` whenever the underlying
         /// signal changes.
         ///
         /// ```ignore
-        /// view(style: "padding: 8px; background: red;")
-        /// view(style: Css::new().padding(8.px()).background(NamedColor::Red))
-        /// view(style: computed(move || format!("opacity: {}", alpha.get())))
+        /// view(style: css!(padding: px(8), background_color: Color::hex(0xff0000)))
+        /// view(style: Css::new().padding(px(8)).background_color(Color::hex(0xff0000)))
+        /// view(style: computed(move || Css::new().opacity(alpha.get())))
         /// ```
         fn style<V>(self, v: V) -> Self
         where
@@ -867,7 +867,7 @@ pub mod __tags {
     /// ```ignore
     /// render! {
     ///     view(
-    ///         style: "flex-direction: column; padding: 16px;",
+    ///         style: css!(flex_direction: FlexDirection::Column, padding: px(16)),
     ///         on_tap: move |_| println!("tapped"),
     ///     ) {
     ///         text(value: "Title")
@@ -904,7 +904,7 @@ pub mod __tags {
     /// let count = signal(0_i32);
     /// render! {
     ///     text {
-    ///         style: "font-size: 18px; color: black;",
+    ///         style: css!(font_size: px(18), color: Color::hex(0x000000)),
     ///         value: computed(move || format!("count: {}", count.get())),
     ///     }
     /// }
@@ -1068,7 +1068,7 @@ pub mod __tags {
     /// ```ignore
     /// render! {
     ///     scroll_view {
-    ///         style: "flex: 1;",
+    ///         style: css!(flex_grow: 1.0),
     ///         scroll_orientation: ScrollOrientation::Vertical,
     ///         on_scroll: |e| println!("y = {}", e.detail.scroll_top),
     ///         view { /* ... long content ... */ }

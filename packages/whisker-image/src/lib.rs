@@ -35,7 +35,7 @@
 //!         Image(
 //!             src: "https://example.com/cover.jpg",
 //!             mode: ImageMode::AspectFill,
-//!             style: "width: 240px; height: 240px; border-radius: 8px;",
+//!             style: css!(width: px(240), height: px(240), border_radius: px(8)),
 //!         )
 //!     }
 //! }
@@ -50,7 +50,7 @@
 //! - `headers` — extra request headers for remote sources, as a JSON
 //!   object. Hot-link protection is what this is for: those hosts 403
 //!   without the `Referer` their own pages send.
-//! - `style` — standard Whisker style string. Width / height must be
+//! - `style` — structured Whisker CSS declarations. Width / height must be
 //!   set on the element (or via flex sizing) — Kingfisher / Coil
 //!   target-size the fetched bitmap against the rendered size, so an
 //!   element with `width: 0; height: 0;` would never paint.
@@ -220,7 +220,7 @@ pub fn image(
     /// that isn't a JSON object of strings is ignored.
     #[prop(default = String::new().into())]
     headers: Signal<String>,
-    /// Standard Whisker style string. Width / height must be set on the
+    /// Structured Whisker CSS declarations. Width / height must be set on the
     /// element (or via flex sizing) — the platform image loaders
     /// target-size the fetched bitmap against the rendered size.
     style: Option<whisker::Style>,

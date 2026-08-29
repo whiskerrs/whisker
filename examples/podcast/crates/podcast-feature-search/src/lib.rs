@@ -222,10 +222,13 @@ fn search_input_bar(query: RwSignal<String>) -> Element {
                 text: query,
                 placeholder: "Podcasts, shows, episodes...",
                 return_key: ReturnKey::Search,
-                // Style as a raw string -- matches the whisker-input
-                // example pattern; sidesteps Css->Style->Option coercion.
-                style: "flex-grow: 1; flex-shrink: 1; margin-left: 8px; \
-                        font-size: 15px; color: #ffffff; min-height: 24px;",
+                style: Css::new()
+                    .flex_grow(1.0)
+                    .flex_shrink(1.0)
+                    .margin_left(px(8))
+                    .font_size(px(15))
+                    .color(Color::hex(0xffffff))
+                    .min_height(px(24)),
                 placeholder_color: "#8E8E93",
             )
         }
@@ -385,7 +388,7 @@ fn result_row(podcast: Podcast) -> Element {
                         color: theme::TEXT_PRIMARY,
                         font_weight: FontWeight::Numeric(600),
                         text_overflow: TextOverflow::Ellipsis,
-                    ).raw("text-maxline", "1"),
+                    ),
                     value: title,
                 )
                 text(
@@ -394,7 +397,7 @@ fn result_row(podcast: Podcast) -> Element {
                         color: theme::TEXT_SECONDARY,
                         margin_top: px(2),
                         text_overflow: TextOverflow::Ellipsis,
-                    ).raw("text-maxline", "1"),
+                    ),
                     value: artist,
                 )
             }

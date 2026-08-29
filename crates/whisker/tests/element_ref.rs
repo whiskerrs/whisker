@@ -53,7 +53,6 @@ impl DynRenderer for Recorder {
     }
     fn release_element(&self, _h: Element) {}
     fn set_attribute(&self, _h: Element, _k: &str, _v: &str) {}
-    fn set_inline_styles(&self, _h: Element, _css: &str) {}
     fn append_child(&self, _p: Element, _c: Element) {}
     fn remove_child(&self, _p: Element, _c: Element) {}
     fn set_event_listener(

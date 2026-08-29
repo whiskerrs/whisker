@@ -5,7 +5,7 @@
 //! same `<Name>Props` struct, same hand-rolled builder, same
 //! PascalCase alias — but the function body is **auto-generated**
 //! rather than supplied by the user. Each declared parameter becomes
-//! either a component-specific attribute, an inline-style write, a
+//! either a component-specific attribute, a structured-style write, a
 //! component-specific event handler, or the children list on the
 //! underlying element, depending on its name + type. The generated
 //! builder also implements Whisker's common `ElementBuilder` API, so
@@ -22,7 +22,7 @@
 //! pub fn input(
 //!     value: Signal<String>,                // → SetAttribute("value", …) — Static / Dynamic dispatch
 //!     placeholder: Signal<String>,          // → SetAttribute("placeholder", …)
-//!     style: Signal<String>,                // → SetRawInlineStyles(…)
+//!     style: whisker::Style,                // → SetSpecifiedStyle(…)
 //!     checked: Signal<bool>,                // → SetAttribute("checked", "true" / "false") via ToString
 //!     on_focus: (),                         // → event::bind_unit("focus", Fn())
 //!     on_input: TouchEvent,                 // → event::bind_typed::<TouchEvent>("input", Fn(TouchEvent))
@@ -46,7 +46,7 @@
 //! | any          | `Children`           | Children block                     |
 //! | `on_*`       | `()`                 | Event handler, payload ignored     |
 //! | `on_*`       | `E: Deserialize`     | Event handler, body deserialized into `E` (`TouchEvent`, `WhiskerValue`, …) |
-//! | `style`      | `Signal<String>` etc.| Inline-styles (SetRawInlineStyles) |
+//! | `style`      | `whisker::Style`      | Structured style (SetSpecifiedStyle) |
 //! | other        | `Signal<T>`          | Attribute, dispatch on Static/Dynamic |
 //! | other        | `T`                  | Attribute, static set-once         |
 //!

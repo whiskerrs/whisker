@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use whisker::css::ToCss;
 use whisker::runtime::reactive::Owner;
 
 use crate::core::{
@@ -585,7 +586,8 @@ fn pop_settles_survivor_to_active_pose() {
             crate::render::transition::Direction::Push,
         ));
         assert_eq!(
-            pose.transform, "translateX(0%)",
+            pose.transform.to_css_string(),
+            "translateX(0%)",
             "survivor settled to active 0% pose; role={role:?} progress={progress}"
         );
     });
@@ -1232,8 +1234,9 @@ fn predictive_pose_material_shape() {
 
     // At rest (value 1.0): identity, square.
     let rest = predictive_pose(Role::Top, 1.0, SwipeEdge::Left);
+    let rest_transform = rest.transform.to_css_string();
     assert!(
-        rest.transform.contains("scale(1)"),
+        rest_transform.contains("scale(1, 1)"),
         "scale 1 at rest: {rest:?}"
     );
     assert_eq!(rest.radius_px, 0.0, "square at rest");
@@ -1241,8 +1244,9 @@ fn predictive_pose_material_shape() {
     // Preview max (value 0.5): top shrunk to 0.9 (shared-element card),
     // rounded to the device radius, shifted toward the swipe edge.
     let preview = predictive_pose(Role::Top, 0.5, SwipeEdge::Left);
+    let preview_transform = preview.transform.to_css_string();
     assert!(
-        preview.transform.contains("scale(0.9)"),
+        preview_transform.contains("scale(0.9, 0.9)"),
         "shrinks to 0.9 at preview max: {preview:?}"
     );
     assert!(
@@ -1250,13 +1254,16 @@ fn predictive_pose_material_shape() {
         "rounds to the device radius at preview max: {preview:?}"
     );
     assert!(
-        preview.transform.contains("translateX(6%)"),
+        preview_transform.contains("translateX(6%)"),
         "left-edge swipe shifts the card right: {preview:?}"
     );
     // Right-edge swipe shifts the card the other way (negative translateX).
     let preview_right = predictive_pose(Role::Top, 0.5, SwipeEdge::Right);
     assert!(
-        preview_right.transform.contains("translateX(-6%)"),
+        preview_right
+            .transform
+            .to_css_string()
+            .contains("translateX(-6%)"),
         "right-edge swipe shifts the card left: {preview_right:?}"
     );
     // The shrink is DECELERATED (more apparent early): at value 0.75 the
@@ -1278,28 +1285,33 @@ fn predictive_pose_material_shape() {
     // peeks from the left during the drag, then slides in to fully present
     // and grows back to full size on commit.
     let under_preview = predictive_pose(Role::Under, 0.5, SwipeEdge::Left);
+    let under_preview_transform = under_preview.transform.to_css_string();
     assert!(
-        under_preview.transform.contains("scale(0.9)"),
+        under_preview_transform.contains("scale(0.9, 0.9)"),
         "under scales with the card to 0.9 at preview: {under_preview:?}"
     );
     assert!(
-        under_preview.transform.contains("translateX(-60%)"),
+        under_preview_transform.contains("translateX(-60%)"),
         "under peeks from the left: {under_preview:?}"
     );
     // Mid-drag (value 0.75) the under screen is held at the SAME -60% peek —
     // it only scales while the finger is down, it does not slide.
     let under_mid = predictive_pose(Role::Under, 0.75, SwipeEdge::Left);
     assert!(
-        under_mid.transform.contains("translateX(-60%)"),
+        under_mid
+            .transform
+            .to_css_string()
+            .contains("translateX(-60%)"),
         "under is fixed at the peek mid-drag (scale only, no slide): {under_mid:?}"
     );
     let under_committed = predictive_pose(Role::Under, 0.0, SwipeEdge::Left);
+    let under_committed_transform = under_committed.transform.to_css_string();
     assert!(
-        under_committed.transform.contains("translateX(0%)"),
+        under_committed_transform.contains("translateX(0%)"),
         "under slides to present on commit: {under_committed:?}"
     );
     assert!(
-        under_committed.transform.contains("scale(1)"),
+        under_committed_transform.contains("scale(1, 1)"),
         "under grows back to full size on commit: {under_committed:?}"
     );
     assert!(
@@ -1401,6 +1413,9 @@ fn one_transition_poses_all_four_directional_slots() {
         Direction, Pose, PoseContext, PoseMode, Role, RouteTransition, Transition, pose_for,
     };
 
+    use whisker::css::TransformFn;
+    use whisker::css::ext::percent;
+
     // A single asymmetric transition that tags each (role × direction) case —
     // the four Jetpack-Compose slots expressed by ONE `Transition`.
     struct Asym;
@@ -1410,12 +1425,12 @@ fn one_transition_poses_all_four_directional_slots() {
         }
         fn pose(&self, ctx: PoseContext) -> Pose {
             let slot = match (ctx.role, ctx.direction) {
-                (Role::Top, Direction::Push) => "enter",
-                (Role::Under, Direction::Push) => "exit",
-                (Role::Top, Direction::Pop) => "pop_exit",
-                (Role::Under, Direction::Pop) => "pop_enter",
+                (Role::Top, Direction::Push) => 1.0,
+                (Role::Under, Direction::Push) => 2.0,
+                (Role::Top, Direction::Pop) => 3.0,
+                (Role::Under, Direction::Pop) => 4.0,
             };
-            Pose::new(slot.to_string(), 1.0)
+            Pose::new(TransformFn::TranslateX(percent(slot).into()), 1.0)
         }
     }
 
@@ -1423,10 +1438,22 @@ fn one_transition_poses_all_four_directional_slots() {
     let push = PoseMode::Transition(t.clone(), Direction::Push);
     let pop = PoseMode::Transition(t, Direction::Pop);
 
-    assert_eq!(pose_for(&push, Role::Top, 0.5).transform, "enter");
-    assert_eq!(pose_for(&push, Role::Under, 0.5).transform, "exit");
-    assert_eq!(pose_for(&pop, Role::Top, 0.5).transform, "pop_exit");
-    assert_eq!(pose_for(&pop, Role::Under, 0.5).transform, "pop_enter");
+    assert_eq!(
+        pose_for(&push, Role::Top, 0.5).transform.to_css_string(),
+        "translateX(1%)"
+    );
+    assert_eq!(
+        pose_for(&push, Role::Under, 0.5).transform.to_css_string(),
+        "translateX(2%)"
+    );
+    assert_eq!(
+        pose_for(&pop, Role::Top, 0.5).transform.to_css_string(),
+        "translateX(3%)"
+    );
+    assert_eq!(
+        pose_for(&pop, Role::Under, 0.5).transform.to_css_string(),
+        "translateX(4%)"
+    );
 }
 
 // Renderer-level reproduction of the `replace` content-attach path.
@@ -1457,18 +1484,6 @@ mod replace_repro {
         /// A positioned insert whose reference wasn't a live child — the
         /// on-device silent drop. Non-empty = the bug is reproduced.
         violations: Vec<String>,
-    }
-
-    /// Pull the `display` value out of an inline-style string, if present.
-    fn parse_display(css: &str) -> Option<String> {
-        for decl in css.split(';') {
-            let mut it = decl.splitn(2, ':');
-            let k = it.next()?.trim();
-            if k == "display" {
-                return it.next().map(|v| v.trim().to_string());
-            }
-        }
-        None
     }
 
     #[derive(Clone, Default)]
@@ -1566,16 +1581,31 @@ mod replace_repro {
                 .or_default()
                 .insert(key.to_string(), value.to_string());
         }
-        fn set_inline_styles(&self, handle: Element, css: &str) {
-            // Record `display` transitions so tests can assert Switch
-            // branch visibility + mount ordering.
-            if let Some(d) = parse_display(css) {
+        fn set_specified_style(
+            &self,
+            handle: Element,
+            style: &whisker_style::SpecifiedStyle,
+        ) -> bool {
+            use whisker_style::{DisplayValue, StyleProperty, StyleValue};
+
+            let display = style.resolved().iter().find_map(|declaration| {
+                if declaration.property() != StyleProperty::Display {
+                    return None;
+                }
+                match declaration.value() {
+                    StyleValue::Display(DisplayValue::Flex) => Some("flex".to_string()),
+                    StyleValue::Display(DisplayValue::None) => Some("none".to_string()),
+                    _ => None,
+                }
+            });
+            if let Some(d) = display {
                 let mut inner = self.0.borrow_mut();
                 inner
                     .ops
                     .push(format!("style {} display={}", handle.id(), d));
                 inner.display.insert(handle, d);
             }
+            true
         }
         fn append_child(&self, parent: Element, child: Element) {
             let mut inner = self.0.borrow_mut();

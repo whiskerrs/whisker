@@ -3,8 +3,7 @@
 //! Verifies the proc-macro lowers a tag-name + prop list into:
 //! - `XxxProps::builder().<prop>(v).build()` shape
 //! - a body that calls `view::create_element_by_name(tag)`
-//! - per-prop `apply_styles` / `apply_attr` (Static set-once,
-//!   Dynamic effect-wrapped) routing
+//! - structured `apply_style` plus per-prop `apply_attr` routing
 //!
 //! The in-memory `Recorder` captures every dispatched op into
 //! `Op::*` so assertions can verify the underlying tag-name + per-
@@ -20,12 +19,31 @@ use whisker::runtime::view::{DynRenderer, Element, install_renderer, uninstall_r
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
-    CreateByName { id: u32, tag_name: String },
-    Create { id: u32, tag: ElementTag },
-    SetAttr { id: u32, key: String, value: String },
-    SetStyles { id: u32, css: String },
-    Append { parent: u32, child: u32 },
-    Event { id: u32, name: String },
+    CreateByName {
+        id: u32,
+        tag_name: String,
+    },
+    Create {
+        id: u32,
+        tag: ElementTag,
+    },
+    SetAttr {
+        id: u32,
+        key: String,
+        value: String,
+    },
+    SetSpecifiedStyle {
+        id: u32,
+        style: whisker_engine::whisker_style::SpecifiedStyle,
+    },
+    Append {
+        parent: u32,
+        child: u32,
+    },
+    Event {
+        id: u32,
+        name: String,
+    },
 }
 
 #[derive(Default)]
@@ -66,11 +84,16 @@ impl DynRenderer for Recorder {
             value: v.into(),
         });
     }
-    fn set_inline_styles(&self, h: Element, css: &str) {
-        self.log.borrow_mut().push(Op::SetStyles {
+    fn set_specified_style(
+        &self,
+        h: Element,
+        style: &whisker_engine::whisker_style::SpecifiedStyle,
+    ) -> bool {
+        self.log.borrow_mut().push(Op::SetSpecifiedStyle {
             id: h.id(),
-            css: css.into(),
+            style: style.clone(),
         });
+        true
     }
     fn append_child(&self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Append {
@@ -112,7 +135,7 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 pub fn x_zero_props() {}
 
 #[whisker::module_component("x-styled")]
-pub fn x_styled(style: Signal<String>) {}
+pub fn x_styled(style: whisker::Style) {}
 
 #[whisker::module_component("x-input")]
 pub fn x_input(value: Signal<String>, placeholder: Signal<String>) {}
@@ -130,7 +153,7 @@ pub fn x_input_payload(value: Signal<String>, on_input: ::whisker::WhiskerValue)
 pub fn x_typed_input(on_change: ::whisker::event::TouchEvent) {}
 
 #[whisker::module_component("x-container")]
-pub fn x_container(style: Signal<String>, children: ::whisker::Children) {}
+pub fn x_container(style: whisker::Style, children: ::whisker::Children) {}
 
 #[whisker::module_component(
     name = "whisker.test/GeneratedSchema",
@@ -248,7 +271,7 @@ fn module_component_builder_inherits_common_element_api() {
             GeneratedSchema(
                 enabled: true,
                 label: "generated",
-                style: "width: 10px;",
+                style: css!(width: px(10)),
                 id: "generated-id",
                 accessibility_label: "Generated element",
                 on_tap: |_event| {},
@@ -320,7 +343,7 @@ fn zero_props_component_inherits_style_and_common_element_api() {
     with_recorder_and_owner(|log| {
         let _handle = render! {
             XZeroProps(
-                style: "width: 12px;",
+                style: css!(width: px(12)),
                 id: "zero-props",
                 on_tap: |_event| {},
             )
@@ -328,7 +351,7 @@ fn zero_props_component_inherits_style_and_common_element_api() {
         let operations = log.borrow();
         assert!(operations.iter().any(|operation| matches!(
             operation,
-            Op::SetStyles { css, .. } if css == "width: 12px;"
+            Op::SetSpecifiedStyle { style, .. } if style.len() == 1
         )));
         assert!(operations.iter().any(|operation| matches!(
             operation,
@@ -342,51 +365,44 @@ fn zero_props_component_inherits_style_and_common_element_api() {
 }
 
 #[test]
-fn style_prop_routes_through_set_inline_styles() {
-    // The `style` prop must call set_inline_styles (Lynx's
-    // SetRawInlineStyles), not set_attribute — as built-in
-    // `view(style: …)` does.
+fn style_prop_routes_through_structured_style() {
     with_recorder_and_owner(|log| {
         let _h = render! {
-            XStyled(style: "background: red; height: 8px;")
+            XStyled(style: css!(background_color: Color::Named(NamedColor::Red), height: px(8)))
         };
         let styles: Vec<_> = log
             .borrow()
             .iter()
             .filter_map(|op| match op {
-                Op::SetStyles { css, .. } => Some(css.clone()),
+                Op::SetSpecifiedStyle { style, .. } => Some(style.clone()),
                 _ => None,
             })
             .collect();
-        assert_eq!(styles, vec!["background: red; height: 8px;".to_string()]);
+        assert_eq!(styles.len(), 1);
+        assert_eq!(styles[0].len(), 2);
     });
 }
 
 #[test]
 fn dynamic_style_re_runs_on_signal_change() {
     with_recorder_and_owner(|log| {
-        let (color, set_color) = signal("red".to_string()).split();
-        let css = computed(move || format!("background: {};", color.get()));
+        let (color, set_color) = signal(NamedColor::Red).split();
+        let css = computed(move || Css::new().background_color(Color::Named(color.get())));
         let _h = render! {
             XStyled(style: css)
         };
-        set_color.set("blue".into());
+        set_color.set(NamedColor::Blue);
         flush();
         let styles: Vec<_> = log
             .borrow()
             .iter()
             .filter_map(|op| match op {
-                Op::SetStyles { css, .. } => Some(css.clone()),
+                Op::SetSpecifiedStyle { style, .. } => Some(style.clone()),
                 _ => None,
             })
             .collect();
-        assert_eq!(
-            styles,
-            vec![
-                "background: red;".to_string(),
-                "background: blue;".to_string()
-            ]
-        );
+        assert_eq!(styles.len(), 2);
+        assert_ne!(styles[0], styles[1]);
     });
 }
 
@@ -530,7 +546,7 @@ fn children_prop_attaches_inner_view() {
     // `.children(Rc::new(move || { … }))` setter call.
     with_recorder_and_owner(|log| {
         let _h = render! {
-            XContainer(style: "padding: 10px;") {
+            XContainer(style: css!(padding: px(10))) {
                 text(value: "child 1")
                 text(value: "child 2")
             }

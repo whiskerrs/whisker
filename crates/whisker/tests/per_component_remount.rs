@@ -29,7 +29,6 @@ use whisker::{ElementTag, flush};
 enum Op {
     Create { id: u32, tag: ElementTag },
     SetAttr { id: u32, key: String, value: String },
-    SetStyles { id: u32, css: String },
     Append { parent: u32, child: u32 },
     Remove { parent: u32, child: u32 },
     Event { id: u32, name: String },
@@ -74,12 +73,6 @@ impl DynRenderer for Recorder {
             id: h.id(),
             key: k.into(),
             value: v.into(),
-        });
-    }
-    fn set_inline_styles(&self, h: Element, css: &str) {
-        self.log.borrow_mut().push(Op::SetStyles {
-            id: h.id(),
-            css: css.into(),
         });
     }
     fn append_child(&self, p: Element, c: Element) {

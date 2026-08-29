@@ -11,25 +11,33 @@
 //! * **Multiline** — a `lines: 4` notes area.
 //! * **Secure** — a masked password field.
 
+use whisker::css::{FlexDirection, FontWeight};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_input::{Input, KeyboardType};
 
-const BG: &str = "#101012";
-const CARD_BG: &str = "#1c1c1f";
-const FG: &str = "#f0f0f3";
+const BG: u32 = 0x101012;
+const CARD_BG: u32 = 0x1c1c1f;
+const FG: u32 = 0xf0f0f3;
 const MUTED: &str = "#9a9aa2";
 const ACCENT: &str = "#ff5577";
 
 #[whisker::main]
 pub fn app() -> Element {
-    let page_style = format!(
-        "background-color: {BG}; flex-grow: 1; flex-shrink: 1; \
-         display: flex; flex-direction: column; \
-         padding-top: 56px; padding-left: 20px; padding-right: 20px;",
-    );
-    let header_style =
-        format!("color: {FG}; font-size: 22px; font-weight: 700; margin-bottom: 20px;",);
+    let page_style = Css::new()
+        .background_color(Color::hex(BG))
+        .flex_grow(1.0)
+        .flex_shrink(1.0)
+        .display_flex()
+        .flex_direction(FlexDirection::Column)
+        .padding_top(px(56))
+        .padding_left(px(20))
+        .padding_right(px(20));
+    let header_style = Css::new()
+        .color(Color::hex(FG))
+        .font_size(px(22))
+        .font_weight(FontWeight::Numeric(700))
+        .margin_bottom(px(20));
 
     render! {
         view(style: page_style) {
@@ -47,7 +55,10 @@ pub fn app() -> Element {
 #[component]
 fn two_way_demo() -> Element {
     let text = RwSignal::new(String::new());
-    let preview = format!("color: {MUTED}; font-size: 14px; margin-top: 6px;");
+    let preview = Css::new()
+        .color(Color::hex(0x9a9aa2))
+        .font_size(px(14))
+        .margin_top(px(6));
 
     render! {
         view(style: section_style()) {
@@ -92,11 +103,13 @@ fn controlled_demo() -> Element {
 #[component]
 fn multiline_demo() -> Element {
     let notes = RwSignal::new(String::new());
-    let area_style = format!(
-        "background-color: {CARD_BG}; color: {FG}; \
-         font-size: 16px; border-radius: 10px; \
-         padding: 12px; min-height: 96px;",
-    );
+    let area_style = Css::new()
+        .background_color(Color::hex(CARD_BG))
+        .color(Color::hex(FG))
+        .font_size(px(16))
+        .border_radius(px(10))
+        .padding(px(12))
+        .min_height(px(96));
 
     render! {
         view(style: section_style()) {
@@ -135,18 +148,28 @@ fn secure_demo() -> Element {
 
 // ---- Shared styling --------------------------------------------------------
 
-fn section_style() -> String {
-    "display: flex; flex-direction: column; margin-bottom: 24px;".to_string()
+fn section_style() -> Css {
+    Css::new()
+        .display_flex()
+        .flex_direction(FlexDirection::Column)
+        .margin_bottom(px(24))
 }
 
-fn label_style() -> String {
-    format!("color: {FG}; font-size: 13px; font-weight: 600; margin-bottom: 8px;")
+fn label_style() -> Css {
+    Css::new()
+        .color(Color::hex(FG))
+        .font_size(px(13))
+        .font_weight(FontWeight::Numeric(600))
+        .margin_bottom(px(8))
 }
 
-fn field_style() -> String {
-    format!(
-        "background-color: {CARD_BG}; color: {FG}; \
-         font-size: 16px; height: 48px; border-radius: 10px; \
-         padding-left: 12px; padding-right: 12px;",
-    )
+fn field_style() -> Css {
+    Css::new()
+        .background_color(Color::hex(CARD_BG))
+        .color(Color::hex(FG))
+        .font_size(px(16))
+        .height(px(48))
+        .border_radius(px(10))
+        .padding_left(px(12))
+        .padding_right(px(12))
 }

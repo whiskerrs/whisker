@@ -11,7 +11,7 @@
 //! All stand on the recursive [`mount_node`](crate::render::node) engine;
 //! they differ only in *which* [`NodePath`] they hand it.
 
-use whisker::css::{Display, FlexDirection};
+use whisker::css::{Display, FlexDirection, PositionKind};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker::{Children, component, provide_context, render, use_context};
@@ -82,7 +82,8 @@ pub fn router(routes: RouteSet, children: Children) -> Element {
             flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
-        ).raw("position", "relative")) {}
+            position: PositionKind::Relative,
+        )) {}
     };
     provide_context(RouterRoot(root));
     // The tree is drawn by `children` (an Outlet / Tabs / Stack), NOT here —

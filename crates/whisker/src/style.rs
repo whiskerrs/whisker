@@ -2,16 +2,14 @@
 //! built-in element tag.
 //!
 //! The element builder's `style(...)` method accepts any value that
-//! converts into a [`Style`], which absorbs three source families:
+//! converts into a [`Style`], covering two structured source families:
 //!
 //! 1. A [`whisker_css::Css`] builder value (`Css::new().padding(8.px())`).
-//! 2. A raw CSS string (`String` or `&str` / `&String`).
-//! 3. A reactive [`ReadSignal<T>`] / [`RwSignal<T>`] of either form.
+//! 2. A reactive [`ReadSignal<Css>`] / [`RwSignal<Css>`].
 //!
-//! One wrapper lets the same `view(style: ...)` keyword accept every
-//! shape without callers calling `.to_css_string()` themselves.
-//! Reactive paths re-fire the attribute apply inside the element's
-//! `effect`, matching every other `Signal<T>`-driven prop.
+//! Raw CSS strings are deliberately rejected at compile time. Reactive paths
+//! re-fire the structured style apply inside the element's `effect`, matching
+//! every other `Signal<T>`-driven prop.
 //!
 //! `Style` is defined in the `whisker` umbrella crate (rather than
 //! in `whisker-css`) so the `Css` crate stays `whisker-runtime`-free
@@ -19,7 +17,7 @@
 
 use std::rc::Rc;
 
-use whisker_css::{Css, ToCss};
+use whisker_css::Css;
 use whisker_engine::whisker_style::{
     DisplayValue, FlexDirectionValue, GridAutoFlowValue, GridMaxTrackSizingValue,
     GridMinTrackSizingValue, GridRepetitionCountValue, GridTemplateComponentValue,
@@ -27,8 +25,8 @@ use whisker_engine::whisker_style::{
     SizeValue, SpecifiedStyle, StyleProperty, StyleValue,
 };
 use whisker_runtime::reactive::{ReadSignal, RwSignal, effect};
+use whisker_runtime::view::set_specified_style;
 use whisker_runtime::view::{Element, ScrollAxis, VirtualGridLayout, VirtualListLayout};
-use whisker_runtime::view::{set_inline_styles, set_specified_style};
 
 /// Value the `style:` builder method receives.
 ///
@@ -36,27 +34,50 @@ use whisker_runtime::view::{set_inline_styles, set_specified_style};
 /// shares the same closure rather than re-boxing it. This lets
 /// the `#[component]` / `#[module_component]` macros store a `Style`
 /// prop and re-clone it on every re-invoke (hot-reload remount path).
+///
+/// Raw CSS is intentionally not part of the authoring contract:
+///
+/// ```compile_fail
+/// use whisker::Style;
+///
+/// let _: Style = "padding: 8px".into();
+/// ```
+///
+/// ```compile_fail
+/// use whisker::Style;
+///
+/// let _: Style = String::from("padding: 8px").into();
+/// ```
+///
+/// ```compile_fail
+/// use whisker::{ReadSignal, Style};
+///
+/// fn apply(value: ReadSignal<String>) {
+///     let _: Style = value.into();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use whisker::{RwSignal, Style};
+///
+/// fn apply(value: RwSignal<String>) {
+///     let _: Style = value.into();
+/// }
+/// ```
 #[derive(Clone)]
 pub enum Style {
     /// Typed declarations that can flow directly into the new scene engine.
     Typed(Css),
-    /// CSS source the builder applies once, at element-construction
-    /// time. Raw string inputs use this compatibility variant.
-    Static(String),
     /// Typed declarations produced by a reactive subscription.
     DynamicTyped(Rc<dyn Fn() -> Css + 'static>),
-    /// CSS source produced by a reactive subscription. The shared
-    /// closure is called inside an `effect` and re-fires whenever
-    /// any signal it reads changes.
-    Dynamic(Rc<dyn Fn() -> String + 'static>),
 }
 
 impl Default for Style {
-    /// An empty static style — what an element would see if no
+    /// An empty structured style — what an element would see if no
     /// `style:` prop were declared. Lets the macros emit
     /// `self.style.unwrap_or_default()` for an omitted style prop.
     fn default() -> Self {
-        Style::Static(String::new())
+        Style::Typed(Css::new())
     }
 }
 
@@ -74,39 +95,14 @@ impl From<&Css> for Style {
     }
 }
 
-impl From<String> for Style {
-    fn from(s: String) -> Self {
-        Style::Static(s)
-    }
-}
-
-impl From<&str> for Style {
-    fn from(s: &str) -> Self {
-        Style::Static(s.to_string())
-    }
-}
-
-impl From<&String> for Style {
-    fn from(s: &String) -> Self {
-        Style::Static(s.clone())
-    }
-}
-
 // ---- Reactive sources -------------------------------------------------------
 //
-// One impl per (`ReadSignal` × `RwSignal`) × (`Css` × `String`) pair.
-// Hand-written rather than blanket to keep coherence out of it and the
-// type-inference error on an unsupported `T` sharp.
+// One impl per signal family. Hand-written rather than blanket to keep
+// coherence out of it and the type-inference error on unsupported values sharp.
 
 impl From<ReadSignal<Css>> for Style {
     fn from(sig: ReadSignal<Css>) -> Self {
         Style::DynamicTyped(Rc::new(move || sig.get()))
-    }
-}
-
-impl From<ReadSignal<String>> for Style {
-    fn from(sig: ReadSignal<String>) -> Self {
-        Style::Dynamic(Rc::new(move || sig.get()))
     }
 }
 
@@ -116,25 +112,12 @@ impl From<RwSignal<Css>> for Style {
     }
 }
 
-impl From<RwSignal<String>> for Style {
-    fn from(sig: RwSignal<String>) -> Self {
-        Style::from(sig.read_only())
-    }
-}
-
-/// Apply a [`Style`] to a Lynx element. The `Static` branch sets the
-/// inline-styles attribute once; the `Dynamic` branch wraps the
-/// closure in an `effect` so it re-applies whenever any signal it
-/// reads fires.
+/// Apply a structured [`Style`] to an element.
 pub fn apply_style(h: Element, v: impl Into<Style>) {
     match v.into() {
-        Style::Typed(css) => apply_typed_or_legacy(h, &css),
-        Style::Static(css) => set_inline_styles(h, &css),
+        Style::Typed(css) => apply_structured_style(h, &css),
         Style::DynamicTyped(f) => {
-            effect(move || apply_typed_or_legacy(h, &f()));
-        }
-        Style::Dynamic(f) => {
-            effect(move || set_inline_styles(h, &f()));
+            effect(move || apply_structured_style(h, &f()));
         }
     }
 }
@@ -199,14 +182,6 @@ pub(crate) fn apply_list_content_style(
                 }
                 set_specified_style(element, &base.clone().merge(specified));
             });
-            VirtualListLayout::Linear
-        }
-        Some(Style::Static(css)) => {
-            set_inline_styles(element, &css);
-            VirtualListLayout::Linear
-        }
-        Some(Style::Dynamic(f)) => {
-            effect(move || set_inline_styles(element, &f()));
             VirtualListLayout::Linear
         }
     }
@@ -452,13 +427,14 @@ fn fixed_pixel_gap(value: &StyleValue) -> Option<f32> {
     value.is_finite().then_some(value.max(0.0))
 }
 
-fn apply_typed_or_legacy(h: Element, css: &Css) {
-    if let Ok(specified) = css.to_specified_style()
-        && whisker_runtime::view::set_specified_style(h, &specified)
-    {
-        return;
-    }
-    set_inline_styles(h, &css.to_css_string());
+fn apply_structured_style(h: Element, css: &Css) {
+    let specified = css
+        .to_specified_style()
+        .unwrap_or_else(|error| panic!("style must use structured CSS: {error}"));
+    // Renderer primitives intentionally remain no-ops when no renderer is
+    // installed so pure reactive/unit tests can mount trees without a Host.
+    // Real SurfaceRuntime-backed Hosts accept this typed path.
+    let _ = set_specified_style(h, &specified);
 }
 
 #[cfg(test)]
@@ -466,12 +442,10 @@ mod tests {
     use super::*;
     use whisker_css::ext::*;
 
-    fn css(d: Style) -> String {
+    fn css(d: Style) -> Css {
         match d {
-            Style::Typed(s) => s.to_css_string(),
-            Style::Static(s) => s,
-            Style::DynamicTyped(f) => f().to_css_string(),
-            Style::Dynamic(f) => f(),
+            Style::Typed(s) => s,
+            Style::DynamicTyped(f) => f(),
         }
     }
 
@@ -479,7 +453,7 @@ mod tests {
     fn from_css_serializes_via_to_css_string() {
         let s = Css::new().padding(px(8));
         let out = css(s.into());
-        assert!(out.contains("padding-top: 8px"));
+        assert_eq!(out.to_specified_style().unwrap().len(), 4);
     }
 
     #[test]
@@ -487,31 +461,7 @@ mod tests {
         let s = Css::new().padding(px(8));
         let style: Style = (&s).into();
         let out = css(style);
-        assert!(out.contains("padding-top: 8px"));
+        assert_eq!(out.to_specified_style().unwrap().len(), 4);
         assert!(!s.is_empty());
     }
-
-    #[test]
-    fn from_str_passes_through_verbatim() {
-        let out = css("color: red;".into());
-        assert_eq!(out, "color: red;");
-    }
-
-    #[test]
-    fn from_string_consumes_and_returns_same_text() {
-        let out = css(String::from("color: blue;").into());
-        assert_eq!(out, "color: blue;");
-    }
-
-    #[test]
-    fn from_string_ref_clones() {
-        let owner = String::from("color: green;");
-        let out = css((&owner).into());
-        assert_eq!(out, "color: green;");
-        assert_eq!(owner, "color: green;");
-    }
-
-    // The reactive `From` impls need the runtime arena, which this
-    // standalone test environment doesn't bootstrap; the static cases
-    // above cover the discriminant + serialization paths.
 }
