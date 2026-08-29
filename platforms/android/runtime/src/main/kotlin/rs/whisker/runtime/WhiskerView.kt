@@ -60,6 +60,14 @@ class WhiskerView(context: Context) :
     private var backdropCaptureTarget: HostNode? = null
     private var backdropCaptureReached = false
     private var pointerInputObserver: ((HostPointerInput) -> Unit)? = null
+    private val pendingContinuousEvents = PendingContinuousEvents()
+    private var continuousEventFlushPending = false
+    private val continuousEventFlush = Runnable {
+        val pending = pendingContinuousEvents.drain()
+        if (nativeHandle == 0L || pending.isEmpty()) return@Runnable
+        pending.forEach(::dispatchElementEventNow)
+        requestFrameFromNative()
+    }
 
     init {
         WhiskerApplication.initialize(context)
@@ -88,6 +96,14 @@ class WhiskerView(context: Context) :
         val target = backdropCaptureTarget ?: return false
         if (node === target) backdropCaptureReached = true
         return backdropCaptureReached
+    }
+
+    override fun dispatchDraw(canvas: Canvas) {
+        super.dispatchDraw(canvas)
+        if (backdropCaptureTarget == null && continuousEventFlushPending) {
+            continuousEventFlushPending = false
+            mainHandler.post(continuousEventFlush)
+        }
     }
 
     override fun onAttachedToWindow() {
@@ -121,9 +137,12 @@ class WhiskerView(context: Context) :
         if (nativeHandle != 0L) nativeDestroy(nativeHandle)
         nativeHandle = 0L
         frameScheduled = false
+        continuousEventFlushPending = false
         choreographer.removeFrameCallback(this)
+        mainHandler.removeCallbacks(continuousEventFlush)
         WhiskerModuleEventCenter.installEventSink(null)
         scene.clear()
+        pendingContinuousEvents.clear()
         WhiskerAppContext.popRuntimeOwner(this)
         super.onDetachedFromWindow()
     }
@@ -136,7 +155,10 @@ class WhiskerView(context: Context) :
             requestFrameFromNative()
         } else {
             frameScheduled = false
+            continuousEventFlushPending = false
             choreographer.removeFrameCallback(this)
+            mainHandler.removeCallbacks(continuousEventFlush)
+            pendingContinuousEvents.clear()
         }
     }
 
@@ -475,16 +497,37 @@ class WhiskerView(context: Context) :
 
     private fun dispatchElementEvent(node: Long, name: String, detail: WhiskerValue) {
         scene.dispatchOrDefer {
-            val handle = nativeHandle
-            if (handle != 0L) {
-                nativeDispatchEvent(
-                    handle,
-                    node,
-                    name,
-                    detail,
-                    android.os.SystemClock.uptimeMillis().toDouble(),
-                )
+            val event = PendingElementEvent(
+                node,
+                name,
+                detail,
+                android.os.SystemClock.uptimeMillis().toDouble(),
+            )
+            if (name == "scroll") {
+                pendingContinuousEvents.offer(event)
+                scheduleContinuousEventFlush()
+                return@dispatchOrDefer
             }
+            dispatchElementEventNow(event)
+        }
+    }
+
+    private fun scheduleContinuousEventFlush() {
+        if (nativeHandle == 0L) return
+        continuousEventFlushPending = true
+        postInvalidateOnAnimation()
+    }
+
+    private fun dispatchElementEventNow(event: PendingElementEvent) {
+        val handle = nativeHandle
+        if (handle != 0L) {
+            nativeDispatchEvent(
+                handle,
+                event.node,
+                event.name,
+                event.detail,
+                event.timestampMs,
+            )
         }
     }
 

@@ -193,6 +193,9 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         "cdylib"
     };
     let mut cmd = Command::new("cargo");
+    if b.profile == Profile::Debug {
+        configure_development_profile(&mut cmd, b.package);
+    }
     cmd.arg("rustc")
         .args(["--target", triple])
         .args(["-p", b.package])
@@ -282,6 +285,16 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         ));
     }
     Ok(so_path)
+}
+
+/// Keep the app crate quick to compile and hot-patch while running framework
+/// and dependency code at a speed suitable for a UI event loop.
+fn configure_development_profile(cmd: &mut Command, package: &str) {
+    cmd.args(["--config", "profile.dev.opt-level=2"]);
+    cmd.args([
+        "--config",
+        &format!("profile.dev.package.{package:?}.opt-level=0"),
+    ]);
 }
 
 fn configure_minimum_release_profile(cmd: &mut Command) {
@@ -835,6 +848,26 @@ pub fn resolve_java_home() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn development_profile_optimizes_dependencies_but_not_the_app_crate() {
+        let mut command = Command::new("cargo");
+        configure_development_profile(&mut command, "list-benchmark");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            [
+                "--config",
+                "profile.dev.opt-level=2",
+                "--config",
+                "profile.dev.package.\"list-benchmark\".opt-level=0",
+            ],
+        );
+    }
 
     #[test]
     fn generated_entrypoint_registers_the_built_in_element_module() {
