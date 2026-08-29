@@ -1423,6 +1423,12 @@ mod tests {
         scene
             .set_text_style(root, text_style.clone())
             .expect("text style");
+        let accessibility = Accessibility::new()
+            .label("Greeting")
+            .role(whisker_protocol::AccessibilityRole::Header);
+        scene
+            .set_accessibility(root, accessibility.clone())
+            .expect("accessibility");
         scene
             .set_property(root, property(1), WhiskerValue::String("red".into()))
             .expect("property");
@@ -1449,6 +1455,7 @@ mod tests {
         assert_eq!(root_state.layout(), Some(rect.into()));
         assert_eq!(root_state.text(), Some(&text));
         assert_eq!(root_state.text_style(), Some(&text_style));
+        assert_eq!(root_state.accessibility(), Some(&accessibility));
         assert_eq!(root_state.box_paint(), Some(&paint));
         assert_eq!(root_state.visual_effects(), &effects);
         assert_eq!(root_state.clip(), Some(clip));
@@ -1496,6 +1503,13 @@ mod tests {
                 operation,
                 Operation::SetTextStyle { node, style }
                     if *node == root && style == &text_style
+            )
+        }));
+        assert!(packet.operations.iter().any(|operation| {
+            matches!(
+                operation,
+                Operation::SetAccessibility { node, accessibility: actual }
+                    if *node == root && actual == &accessibility
             )
         }));
         assert!(!scene.has_pending_work());
@@ -1587,6 +1601,13 @@ mod tests {
         scene
             .set_text_style(root, second_text_style)
             .expect("equal text style");
+        let accessibility = Accessibility::new().label("Updated");
+        scene
+            .set_accessibility(root, accessibility.clone())
+            .expect("accessibility");
+        scene
+            .set_accessibility(root, accessibility)
+            .expect("equal accessibility");
         scene
             .set_property(root, property(1), WhiskerValue::Int(1))
             .expect("first property");
@@ -1722,6 +1743,10 @@ mod tests {
                 root,
                 TextStyleSnapshot::from(&text_content("pending style"))
             ),
+            Err(SceneError::FramePending)
+        );
+        assert_eq!(
+            scene.set_accessibility(root, Accessibility::new()),
             Err(SceneError::FramePending)
         );
         assert_eq!(
@@ -1938,6 +1963,7 @@ mod tests {
                 missing,
                 TextStyleSnapshot::from(&text_content("missing style")),
             ),
+            scene.set_accessibility(missing, Accessibility::new()),
             scene.set_property(missing, property(1), WhiskerValue::Null),
             scene.clear_property(missing, property(1)),
             scene.set_event_mask(missing, 0),

@@ -1569,6 +1569,21 @@ mod tests {
             }))
         );
 
+        let accessibility = Accessibility::new().label("Interactive content");
+        surface
+            .set_accessibility(root, accessibility.clone())
+            .unwrap();
+        assert_eq!(
+            surface.node(root).unwrap().accessibility(),
+            Some(&accessibility)
+        );
+        assert_eq!(
+            surface.set_accessibility(missing, Accessibility::new()),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+
         let property = PropertyId::new(1).unwrap();
         assert_eq!(
             surface.set_property(root, property, WhiskerValue::Bool(true)),

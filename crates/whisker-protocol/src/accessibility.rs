@@ -276,36 +276,87 @@ mod tests {
     use super::*;
 
     #[test]
+    fn accessibility_roles_have_stable_protocol_names() {
+        assert_eq!(AccessibilityRole::Group.as_str(), "group");
+        assert_eq!(AccessibilityRole::Text.as_str(), "text");
+        assert_eq!(AccessibilityRole::Button.as_str(), "button");
+        assert_eq!(AccessibilityRole::Link.as_str(), "link");
+        assert_eq!(AccessibilityRole::Image.as_str(), "image");
+        assert_eq!(AccessibilityRole::Header.as_str(), "header");
+        assert_eq!(AccessibilityRole::Checkbox.as_str(), "checkbox");
+        assert_eq!(AccessibilityRole::Radio.as_str(), "radio");
+        assert_eq!(AccessibilityRole::Switch.as_str(), "switch");
+        assert_eq!(AccessibilityRole::Adjustable.as_str(), "adjustable");
+        assert_eq!(AccessibilityRole::SearchBox.as_str(), "searchbox");
+        assert_eq!(AccessibilityRole::Tab.as_str(), "tab");
+    }
+
+    #[test]
+    fn accessibility_checked_states_have_stable_protocol_names() {
+        assert_eq!(AccessibilityChecked::Unchecked.as_str(), "false");
+        assert_eq!(AccessibilityChecked::Checked.as_str(), "true");
+        assert_eq!(AccessibilityChecked::Mixed.as_str(), "mixed");
+    }
+
+    #[test]
     fn accessibility_has_a_stable_value_shape() {
-        let value = Accessibility::new()
+        let actual = Accessibility::new()
             .label("Play")
+            .hint("Starts playback")
             .role(AccessibilityRole::Button)
+            .identifier("play-button")
+            .hidden(true)
+            .modal(true)
             .state(
                 AccessibilityState::new()
                     .disabled(true)
                     .selected(false)
-                    .checked(AccessibilityChecked::Checked),
+                    .checked(AccessibilityChecked::Checked)
+                    .expanded(false),
             )
             .to_value();
-        let WhiskerValue::Map(value) = value else {
-            panic!("accessibility must encode as a map");
-        };
-        assert_eq!(
-            value.get("label"),
-            Some(&WhiskerValue::String("Play".into()))
-        );
-        assert_eq!(
-            value.get("role"),
-            Some(&WhiskerValue::String("button".into()))
-        );
-        let WhiskerValue::Map(state) = value.get("state").unwrap() else {
-            panic!("accessibility state must encode as a map");
-        };
-        assert_eq!(state.get("disabled"), Some(&WhiskerValue::Bool(true)));
-        assert_eq!(state.get("selected"), Some(&WhiskerValue::Bool(false)));
-        assert_eq!(
-            state.get("checked"),
-            Some(&WhiskerValue::String("true".into()))
-        );
+        let expected = WhiskerValue::map([
+            ("label", WhiskerValue::String("Play".into())),
+            ("hint", WhiskerValue::String("Starts playback".into())),
+            ("role", WhiskerValue::String("button".into())),
+            ("identifier", WhiskerValue::String("play-button".into())),
+            ("hidden", WhiskerValue::Bool(true)),
+            ("modal", WhiskerValue::Bool(true)),
+            (
+                "state",
+                WhiskerValue::map([
+                    ("disabled", WhiskerValue::Bool(true)),
+                    ("selected", WhiskerValue::Bool(false)),
+                    ("checked", WhiskerValue::String("true".into())),
+                    ("expanded", WhiskerValue::Bool(false)),
+                ]),
+            ),
+        ]);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn empty_accessibility_encodes_absent_values_as_null() {
+        let actual = Accessibility::new().to_value();
+        let expected = WhiskerValue::map([
+            ("label", WhiskerValue::Null),
+            ("hint", WhiskerValue::Null),
+            ("role", WhiskerValue::Null),
+            ("identifier", WhiskerValue::Null),
+            ("hidden", WhiskerValue::Bool(false)),
+            ("modal", WhiskerValue::Bool(false)),
+            (
+                "state",
+                WhiskerValue::map([
+                    ("disabled", WhiskerValue::Null),
+                    ("selected", WhiskerValue::Null),
+                    ("checked", WhiskerValue::Null),
+                    ("expanded", WhiskerValue::Null),
+                ]),
+            ),
+        ]);
+
+        assert_eq!(actual, expected);
     }
 }
