@@ -1,31 +1,30 @@
-//! A stable 100,000-row workload for profiling the Rust-owned List pipeline.
+//! A stable 100,000-cell Grid workload for profiling the Rust-owned List pipeline.
 
-use whisker::css::{FlexDirection, FontWeight};
+use whisker::css::{FlexDirection, FontWeight, GridTemplate, GridTrack};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
 const ITEM_COUNT: u32 = 100_000;
-const ROW_HEIGHT: i32 = 72;
+const COLUMN_COUNT: u32 = 2;
+const GRID_ROW_COUNT: u32 = ITEM_COUNT / COLUMN_COUNT;
+const GRID_ROW_HEIGHT: i32 = 132;
 
 #[component]
-fn benchmark_row(row: Signal<u32>) -> Element {
-    let title = computed(move || format!("Transaction #{:06}", row.get()));
-    let subtitle = computed(move || format!("Stable key {} · recycled Rust slot", row.get()));
+fn benchmark_card(item: Signal<u32>) -> Element {
+    let title = computed(move || format!("Transaction #{:06}", item.get()));
+    let subtitle = computed(move || format!("Stable key {} · recycled slot", item.get()));
     let amount = computed(move || {
-        let row = row.get();
-        format!("+${}.{:02}", row % 10_000, row % 100)
+        let item = item.get();
+        format!("+${}.{:02}", item % 10_000, item % 100)
     });
 
     render! {
         view(style: css!(
             width: percent(100),
-            height: px(ROW_HEIGHT),
-            flex_shrink: 0.0,
+            height: px(116),
             flex_direction: FlexDirection::Column,
-            padding_top: px(8),
-            padding_right: px(16),
-            padding_bottom: px(8),
-            padding_left: px(16),
+            padding: px(12),
+            border_radius: px(12),
             background_color: Color::hex(0x111827),
         )) {
             text(
@@ -48,6 +47,32 @@ fn benchmark_row(row: Signal<u32>) -> Element {
     }
 }
 
+#[component]
+fn benchmark_grid_row(row: Signal<u32>) -> Element {
+    let first = computed(move || row.get() * COLUMN_COUNT);
+    let second = computed(move || row.get() * COLUMN_COUNT + 1);
+
+    render! {
+        view(style: Css::new()
+            .display_grid()
+            .width(percent(100))
+            .height(px(GRID_ROW_HEIGHT))
+            .grid_template_columns(GridTemplate::tracks([
+                GridTrack::fraction(1.0),
+                GridTrack::fraction(1.0),
+            ]))
+            .column_gap(px(12))
+            .padding_top(px(8))
+            .padding_right(px(12))
+            .padding_bottom(px(8))
+            .padding_left(px(12))
+        ) {
+            benchmark_card(item: first)
+            benchmark_card(item: second)
+        }
+    }
+}
+
 #[whisker::main]
 pub fn app() -> Element {
     render! {
@@ -58,9 +83,13 @@ pub fn app() -> Element {
         )) {
             view(style: css!(
                 width: percent(100),
-                height: px(72),
+                height: px(104),
                 flex_shrink: 0.0,
-                padding: px(16),
+                flex_direction: FlexDirection::Column,
+                padding_top: px(36),
+                padding_right: px(16),
+                padding_bottom: px(12),
+                padding_left: px(16),
                 background_color: Color::hex(0x18181B),
             )) {
                 text(
@@ -69,20 +98,22 @@ pub fn app() -> Element {
                         font_size: px(18),
                         font_weight: FontWeight::Bold,
                     ),
-                    value: "Whisker List · 100,000 rows",
+                    value: "Whisker List · 100,000 cells",
                 )
                 text(
                     style: css!(color: Color::hex(0xA1A1AA), font_size: px(12)),
-                    value: "Profile a release build while flinging in both directions",
+                    value: "2-column CSS Grid · Rust-owned virtualized rows",
                 )
             }
             list(
                 style: css!(flex_grow: 1.0, width: percent(100)),
-                each: || (0..ITEM_COUNT).collect::<Vec<_>>(),
+                each: || (0..GRID_ROW_COUNT).collect::<Vec<_>>(),
                 meta: |row: &u32| ItemMeta::key(*row)
-                    .estimated_size(ROW_HEIGHT)
-                    .reuse_identifier("transaction-row"),
-                recycled_children: |row: ReadSignal<u32>| render! { benchmark_row(row: row) },
+                    .estimated_size(GRID_ROW_HEIGHT)
+                    .reuse_identifier("transaction-grid-row"),
+                recycled_children: |row: ReadSignal<u32>| render! {
+                    benchmark_grid_row(row: row)
+                },
             )
         }
     }

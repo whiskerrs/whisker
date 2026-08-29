@@ -1,11 +1,13 @@
 # Whisker List benchmark
 
 This example is a repeatable, profiler-oriented workload for the Rust-owned
-`List`. It renders 100,000 logical rows while only materializing the viewport
-window. Each mounted row contains a box and three text nodes so scrolling
-exercises layout, text, paint, FramePacket generation, and Host application.
-The rows use `recycled_children:`: their `ReadSignal<u32>` is rebound while
-compatible Rust owners, element handles, and Host views retain identity.
+`List`. It renders 100,000 logical cells in a two-column CSS Grid while only
+materializing the viewport window. List virtualizes 50,000 fixed-height Grid
+rows; each mounted row uses Taffy Grid to place two cards, and each card owns
+three text nodes. Scrolling therefore exercises virtualization, Grid layout,
+text, paint, FramePacket generation, and Host application together. The rows
+use `recycled_children:`: their `ReadSignal<u32>` is rebound while compatible
+Rust owners, element handles, and Host views retain identity.
 
 Run it from this directory:
 
