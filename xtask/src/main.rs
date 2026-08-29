@@ -6,13 +6,20 @@ use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail};
 
+mod mobile_abi;
+
 fn main() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
     match (arguments.next().as_deref(), arguments.next().as_deref()) {
         (Some("host-conformance"), Some(host)) if arguments.next().is_none() => {
             host_conformance(host)
         }
-        _ => bail!("usage: cargo xtask host-conformance <desktop|web|android|ios>"),
+        (Some("mobile-abi"), Some(mode)) if arguments.next().is_none() => {
+            mobile_abi::run(&workspace_root()?, mode)
+        }
+        _ => bail!(
+            "usage: cargo xtask host-conformance <desktop|web|android|ios>\n       cargo xtask mobile-abi <generate|check>"
+        ),
     }
 }
 

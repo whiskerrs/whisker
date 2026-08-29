@@ -1,41 +1,15 @@
 import Foundation
 import WhiskerModule
 
-typealias WhiskerRequestFrame = @convention(c) (UnsafeMutableRawPointer?) -> Void
-typealias WhiskerBootstrapHost = @convention(c) (
-    UnsafeMutableRawPointer?, UnsafePointer<WhiskerMobileBootstrap>?
-) -> Bool
-typealias WhiskerMeasureHost = @convention(c) (
-    UnsafeMutableRawPointer?, UnsafePointer<WhiskerMobileMeasureRequest>?, Int,
-    UnsafeMutablePointer<WhiskerMobileMeasureResponse>?
-) -> Bool
-typealias WhiskerPresentFrame = @convention(c) (
-    UnsafeMutableRawPointer?, UnsafePointer<WhiskerMobileFrame>?,
-    UnsafeMutablePointer<WhiskerMobileApplyResponse>?
-) -> Bool
-typealias WhiskerResourceCommandHost = @convention(c) (
-    UnsafeMutableRawPointer?, UnsafePointer<WhiskerMobileResourceCommand>?
-) -> Bool
-typealias WhiskerModuleResult = @convention(c) (
-    UnsafeMutableRawPointer?, UnsafePointer<WhiskerValueRaw>?
-) -> Void
-typealias WhiskerInvokeModule = @convention(c) (
-    UnsafeMutableRawPointer?,
-    UnsafePointer<UInt8>?, Int,
-    UnsafePointer<UInt8>?, Int,
-    UnsafePointer<WhiskerValueRaw>?, Int,
-    Bool,
-    WhiskerModuleResult,
-    UnsafeMutableRawPointer?
-) -> Bool
-typealias WhiskerObserveModule = @convention(c) (
-    UnsafeMutableRawPointer?,
-    UnsafePointer<UInt8>?, Int,
-    UnsafePointer<UInt8>?, Int,
-    Bool
-) -> Void
+typealias WhiskerRequestFrame = WhiskerMobileRequestFrameCallback
+typealias WhiskerBootstrapHost = WhiskerMobileBootstrapCallback
+typealias WhiskerMeasureHost = WhiskerMobileMeasureCallback
+typealias WhiskerPresentFrame = WhiskerMobilePresentFrameCallback
+typealias WhiskerResourceCommandHost = WhiskerMobileResourceCommandCallback
+typealias WhiskerModuleResult = WhiskerMobileModuleResultCallback
+typealias WhiskerInvokeModule = WhiskerMobileInvokeModuleCallback
+typealias WhiskerObserveModule = WhiskerMobileObserveModuleCallback
 
-@_silgen_name("whisker_view_create")
 func whiskerViewCreate(
     _ width: Float, _ height: Float, _ scale: Float,
     _ requestFrame: WhiskerRequestFrame, _ requestData: UnsafeMutableRawPointer?,
@@ -45,25 +19,37 @@ func whiskerViewCreate(
     _ resourceCommand: WhiskerResourceCommandHost, _ resourceData: UnsafeMutableRawPointer?,
     _ invokeModule: WhiskerInvokeModule, _ observeModule: WhiskerObserveModule,
     _ moduleData: UnsafeMutableRawPointer?
-) -> UnsafeMutableRawPointer?
+) -> UnsafeMutableRawPointer? {
+    whisker_view_create(
+        width, height, scale,
+        requestFrame, requestData,
+        bootstrap, bootstrapData,
+        measure, measureData,
+        presentFrame, presentData,
+        resourceCommand, resourceData,
+        invokeModule, observeModule, moduleData
+    )
+}
 
-@_silgen_name("whisker_view_tick")
 func whiskerViewTick(
     _ handle: UnsafeMutableRawPointer?, _ timestampMs: Double,
     _ width: Float, _ height: Float, _ scale: Float
-) -> Bool
+) -> Bool {
+    whisker_view_tick(handle, timestampMs, width, height, scale)
+}
 
-@_silgen_name("whisker_view_destroy")
-func whiskerViewDestroy(_ handle: UnsafeMutableRawPointer?)
+func whiskerViewDestroy(_ handle: UnsafeMutableRawPointer?) {
+    whisker_view_destroy(handle)
+}
 
-@_silgen_name("whisker_view_dispatch_event")
 func whiskerViewDispatchEvent(
     _ handle: UnsafeMutableRawPointer?, _ timestampMs: Double, _ node: UInt64,
     _ name: UnsafePointer<UInt8>?, _ nameLength: Int,
     _ detail: UnsafePointer<WhiskerValueRaw>?
-) -> Bool
+) -> Bool {
+    whisker_view_dispatch_event(handle, timestampMs, node, name, nameLength, detail)
+}
 
-@_silgen_name("whisker_view_dispatch_pointer")
 func whiskerViewDispatchPointer(
     _ handle: UnsafeMutableRawPointer?,
     _ timestampMs: Double,
@@ -74,7 +60,12 @@ func whiskerViewDispatchPointer(
     _ y: Float,
     _ buttons: UInt32,
     _ changedButton: Int16
-) -> Bool
+) -> Bool {
+    whisker_view_dispatch_pointer(
+        handle, timestampMs, event, pointerID, pointerKind,
+        x, y, buttons, changedButton
+    )
+}
 
 struct WhiskerPointerDispatch: Equatable {
     let timestampMs: Double
@@ -112,19 +103,23 @@ func dispatchWhiskerPointer(
     )
 }
 
-@_silgen_name("whisker_view_dispatch_module_event")
 func whiskerViewDispatchModuleEvent(
     _ handle: UnsafeMutableRawPointer?,
     _ module: UnsafePointer<UInt8>?, _ moduleLength: Int,
     _ event: UnsafePointer<UInt8>?, _ eventLength: Int,
     _ payload: UnsafePointer<WhiskerValueRaw>?
-) -> Bool
+) -> Bool {
+    whisker_view_dispatch_module_event(
+        handle, module, moduleLength, event, eventLength, payload
+    )
+}
 
-@_silgen_name("whisker_view_dispatch_resource_event")
 func whiskerViewDispatchResourceEvent(
     _ handle: UnsafeMutableRawPointer?,
     _ event: UnsafePointer<WhiskerMobileResourceEvent>?
-) -> Bool
+) -> Bool {
+    whisker_view_dispatch_resource_event(handle, event)
+}
 
 let whiskerIOSRequestFrame: WhiskerRequestFrame = { data in
     guard let data else { return }
@@ -171,6 +166,7 @@ let whiskerIOSInvokeModule: WhiskerInvokeModule = {
         let data,
         let moduleBytes,
         let methodBytes,
+        let result,
         let module = String(
             bytes: UnsafeBufferPointer(start: moduleBytes, count: moduleLength),
             encoding: .utf8

@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "whisker_mobile.h"
+#include "whisker_android_jni.h"
 
 typedef struct { jobject surface; void* runtime; } WhiskerAndroidView;
 
@@ -29,8 +30,6 @@ enum {
     MEASURE_RESPONSE_INT_STRIDE = 3,
     MEASURE_RESPONSE_FLOAT_STRIDE = 4,
 };
-
-enum { WHISKER_ANDROID_OPERATION_STRIDE = 10 };
 
 void whisker_mobile_bridge_anchor(void) {}
 
@@ -639,16 +638,16 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
         const size_t offset = i * WHISKER_ANDROID_OPERATION_STRIDE;
         uint32_t scalar_bits;
         memcpy(&scalar_bits, &staged_scalar, sizeof(scalar_bits));
-        metadata_values[offset] = (jlong)op->tag;
-        metadata_values[offset + 1] = (jlong)staged_flags;
-        metadata_values[offset + 2] = (jlong)op->node;
-        metadata_values[offset + 3] = (jlong)op->parent;
-        metadata_values[offset + 4] = (jlong)op->child;
-        metadata_values[offset + 5] = (jlong)op->index;
-        metadata_values[offset + 6] = (jlong)op->member;
-        metadata_values[offset + 7] = (jlong)op->integer;
-        metadata_values[offset + 8] = (jlong)scalar_bits;
-        metadata_values[offset + 9] = (jlong)op->wide;
+        metadata_values[offset + WHISKER_ANDROID_OPERATION_TAG] = (jlong)op->tag;
+        metadata_values[offset + WHISKER_ANDROID_OPERATION_FLAGS] = (jlong)staged_flags;
+        metadata_values[offset + WHISKER_ANDROID_OPERATION_NODE] = (jlong)op->node;
+        metadata_values[offset + WHISKER_ANDROID_OPERATION_PARENT] = (jlong)op->parent;
+        metadata_values[offset + WHISKER_ANDROID_OPERATION_CHILD] = (jlong)op->child;
+        metadata_values[offset + WHISKER_ANDROID_OPERATION_INDEX] = (jlong)op->index;
+        metadata_values[offset + WHISKER_ANDROID_OPERATION_MEMBER] = (jlong)op->member;
+        metadata_values[offset + WHISKER_ANDROID_OPERATION_INTEGER] = (jlong)op->integer;
+        metadata_values[offset + WHISKER_ANDROID_OPERATION_SCALAR] = (jlong)scalar_bits;
+        metadata_values[offset + WHISKER_ANDROID_OPERATION_WIDE] = (jlong)op->wide;
         (*env)->SetObjectArrayElement(env, number_batches, (jsize)i, numbers);
         (*env)->SetObjectArrayElement(env, texts, (jsize)i, text);
         (*env)->SetObjectArrayElement(env, name_batches, (jsize)i, names);

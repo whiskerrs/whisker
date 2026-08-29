@@ -52,6 +52,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  mobile-abi:
+    name: Mobile ABI source of truth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask mobile-abi check
+      - name: Compile generated C and C++ interfaces
+        run: |
+          clang -std=c11 -pedantic-errors -fsyntax-only \
+            -include crates/whisker-driver-sys/bridge/include/whisker_mobile.h \
+            -x c /dev/null
+          clang++ -std=c++17 -pedantic-errors -fsyntax-only \
+            -include crates/whisker-driver-sys/bridge/include/whisker_mobile.h \
+            -x c++ /dev/null
+      - run: cargo test -p whisker-driver-sys -p whisker-driver
+
   msrv:
     name: MSRV (rust 1.85)
     runs-on: ubuntu-latest

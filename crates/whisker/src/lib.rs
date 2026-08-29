@@ -107,9 +107,6 @@ pub mod focus;
 
 pub use element_ref::{ElementHandle, ElementRef, RefError, ScrollViewHandle, TextHandle};
 
-#[doc(hidden)]
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub use whisker_driver::ffi_module as __driver_module;
 pub use whisker_runtime::module::PlatformModule;
 
 pub use attrs::ScrollSnap;

@@ -12,6 +12,7 @@ pub mod abi;
 pub mod ffi_module;
 #[doc(hidden)]
 pub mod ffi_runtime;
+mod value_codec;
 
 /// Forces Android's JNI glue archive into the final application library.
 #[cfg(target_os = "android")]

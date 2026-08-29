@@ -11,6 +11,8 @@ import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
 import rs.whisker.runtime.WhiskerValue
+import rs.whisker.runtime.bridge.AndroidFrameBatch
+import rs.whisker.runtime.bridge.MobileAbi
 import rs.whisker.runtime.input.HostPointerInput
 import rs.whisker.runtime.input.normalizePointerInput
 import rs.whisker.runtime.measure.HostMeasurementProvider
@@ -28,9 +30,8 @@ import rs.whisker.runtime.scene.HostNode
 import rs.whisker.runtime.scene.HostScene
 import rs.whisker.runtime.scene.HostSceneOperation
 
-private const val HOST_SCENE_OPERATION_STRIDE = 10
-private const val HOST_APPLY_ACCEPTED = 0
-private const val HOST_APPLY_REJECTED = 2
+private const val HOST_APPLY_ACCEPTED = MobileAbi.APPLY_ACCEPTED
+private const val HOST_APPLY_REJECTED = MobileAbi.APPLY_REJECTED
 
 /** The single Android View that owns a Whisker runtime and its native scene. */
 class WhiskerView(context: Context) :
@@ -326,9 +327,9 @@ class WhiskerView(context: Context) :
         response: LongArray,
     ): Boolean {
         if (response.size < 2) return false
-        val operationCount = metadata.size / HOST_SCENE_OPERATION_STRIDE
+        val operationCount = metadata.size / AndroidFrameBatch.STRIDE
         if (
-            metadata.size % HOST_SCENE_OPERATION_STRIDE != 0 ||
+            metadata.size % AndroidFrameBatch.STRIDE != 0 ||
             numbers.size != operationCount ||
             texts.size != operationCount ||
             names.size != operationCount ||
@@ -347,19 +348,19 @@ class WhiskerView(context: Context) :
         }
 
         repeat(operationCount) { index ->
-            val offset = index * HOST_SCENE_OPERATION_STRIDE
+            val offset = index * AndroidFrameBatch.STRIDE
             scene.stage(
                 HostSceneOperation(
-                    tag = metadata[offset].toInt(),
-                    flags = metadata[offset + 1].toInt(),
-                    node = metadata[offset + 2],
-                    parent = metadata[offset + 3],
-                    child = metadata[offset + 4],
-                    index = metadata[offset + 5].toInt(),
-                    member = metadata[offset + 6].toInt(),
-                    integer = metadata[offset + 7].toInt(),
-                    scalar = Float.fromBits(metadata[offset + 8].toInt()),
-                    wide = metadata[offset + 9],
+                    tag = metadata[offset + AndroidFrameBatch.TAG].toInt(),
+                    flags = metadata[offset + AndroidFrameBatch.FLAGS].toInt(),
+                    node = metadata[offset + AndroidFrameBatch.NODE],
+                    parent = metadata[offset + AndroidFrameBatch.PARENT],
+                    child = metadata[offset + AndroidFrameBatch.CHILD],
+                    index = metadata[offset + AndroidFrameBatch.INDEX].toInt(),
+                    member = metadata[offset + AndroidFrameBatch.MEMBER].toInt(),
+                    integer = metadata[offset + AndroidFrameBatch.INTEGER].toInt(),
+                    scalar = Float.fromBits(metadata[offset + AndroidFrameBatch.SCALAR].toInt()),
+                    wide = metadata[offset + AndroidFrameBatch.WIDE],
                     numbers = numbers[index],
                     text = texts[index],
                     names = names[index],

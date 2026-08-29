@@ -38,7 +38,7 @@ through a narrow FFI Driver; Desktop and Web compose the same runtime directly.
                                    └─ Android/iOS only ─► whisker-driver
                                                         └─► whisker-driver-sys
                                          (safe FFI adapter)    (raw borrowed
-                                                                 value ABI)
+                                                                 mobile ABI)
 
    whisker-protocol
    (Host-independent frame, measurement, and input model with strict batch
@@ -117,8 +117,8 @@ through a narrow FFI Driver; Desktop and Web compose the same runtime directly.
 | `whisker-runtime` | Complete Host-independent runtime: signals/effects, renderer-agnostic view operations, element registry, `SurfaceRuntime`, `RuntimeInstance`, module dispatch, events, tasks, wake handles, and background-to-UI dispatch. `RuntimeContext` isolates each mounted instance while the Host drives short transactions on one UI thread. | `whisker`, all Hosts, `whisker-driver` |
 | `whisker-style` | Renderer-independent typed inline-style model and stable common-property registry. It owns declaration composition, fixed inheritance for seven text properties, and computed text plus box/flex layout inputs without exposing Taffy types. | `whisker-css`, future UI modules, `whisker-layout`, and `whisker-engine` |
 | `whisker-css` | Compatibility authoring facade for the existing `css!` API plus the temporary Lynx CSS serializer. It constructs and re-exports `whisker-style` identities rather than owning renderer semantics. | `whisker` |
-| `whisker-driver-sys` | Raw layout-compatible `WhiskerValue` ABI plus Android's JNI entry shim. It contains no renderer, runtime ownership, or C++ bridge. Unsafe-only. | `whisker-driver` |
-| `whisker-driver` | Safe Android/iOS FFI adapter. It owns the opaque runtime handle, borrowed ABI conversion, native callback adapters, and delegates lifecycle/frame/input work to `whisker-runtime`. | `whisker` on Android/iOS only |
+| `whisker-driver-sys` | Single Rust source of truth for the raw, borrowed Android/iOS ABI: version/tag constants, C-layout frame/measurement/resource/module values, callbacks, exported entry points, and Android's JNI entry shim. Checked-in C, Swift-imported, and Kotlin representations are generated and drift-checked from it. It contains no renderer or runtime ownership. Unsafe-only. | `whisker-driver` |
+| `whisker-driver` | Safe Android/iOS FFI adapter. It owns the opaque runtime handle, borrowed-value conversion, native callback adapters, and delegates lifecycle/frame/input work to `whisker-runtime`. It does not redefine the wire ABI. | `whisker` on Android/iOS only |
 | `whisker-dev-runtime` | Development WebSocket/log support used by tooling paths. It is not a runtime or Host abstraction. | development tooling |
 | `whisker-macros` | `#[whisker::main]`, `#[component]`, `#[module_component]`, and the `render!` DSL. | `whisker` |
 | `whisker-cli` | The `whisker` / `cargo-whisker` binary: `run`, `doctor`, `new`, `new-module`. Resolves Config via the `whisker.rs` probe; hands a flat Config to dev-server. | (binary) |
@@ -273,9 +273,12 @@ are documented in
   a single file read. Regeneration is implicit — the command that needs
   the native tree syncs it first.
 
-- **`whisker-driver-sys` is unsafe-only.** Raw layout-compatible values and
-  the Android link anchor live there; ownership and conversion are confined to
-  safe wrappers in `whisker-driver`. The standard `*-sys` crate pattern.
+- **`whisker-driver-sys` is unsafe-only.** The complete raw mobile ABI and the
+  Android link anchor live there; `cargo xtask mobile-abi generate` materializes
+  checked-in Host declarations, while CI's `mobile-abi check` rejects drift.
+  Application builds consume those checked-in declarations and do not depend
+  on xtask or CNG. Ownership and protocol conversion remain confined to safe
+  wrappers in `whisker-driver`. The standard `*-sys` crate pattern.
 
 - **`whisker-dev-runtime` is feature-gated end-to-end.** Without
   `hot-reload`, the crate compiles to nothing — no tokio, no

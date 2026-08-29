@@ -13,8 +13,10 @@ The iOS application combines two independently built artifacts:
 
 The Swift package contains no copy of the user application and no generated
 Rust binding. Conversely, `WhiskerDriver.framework` contains no UIKit Host
-implementation. Their contract is the typed retained-runtime ABI declared by
-`WhiskerCBridge`.
+implementation. Their contract is the typed retained-runtime ABI owned by
+`whisker-driver-sys` and checked in as the generated `WhiskerCBridge` header.
+The Swift package consumes that header directly; an application build does not
+run Whisker's ABI generator.
 
 The name `WhiskerDriver.framework` describes the link product, while the Rust
 `whisker-driver` crate is specifically the safe FFI adapter inside that product.
