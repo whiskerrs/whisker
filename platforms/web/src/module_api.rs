@@ -643,13 +643,18 @@ pub struct WebNativeEvent {
 
 /// Cloneable event channel handed to each DOM-native element instance.
 #[derive(Clone)]
-pub struct WebEventEmitter(pub(crate) Rc<dyn Fn(WebNativeEvent)>);
+pub struct WebEventEmitter(pub(crate) Rc<dyn Fn(WebNativeEvent, bool)>);
 
 impl WebEventEmitter {
     /// Emits an event after the browser callback returns, at the next runtime
     /// frame boundary.
     pub fn emit(&self, event: WebNativeEvent) {
-        (self.0)(event);
+        (self.0)(event, false);
+    }
+
+    /// Emits a latency-sensitive Host event before the browser's next paint.
+    pub(crate) fn emit_urgent(&self, event: WebNativeEvent) {
+        (self.0)(event, true);
     }
 }
 

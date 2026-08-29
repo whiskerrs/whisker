@@ -30,6 +30,7 @@ use super::renderer::{
 const DEFAULT_ITEM_SIZE: f32 = 44.0;
 const DEFAULT_VIEWPORT_SIZE: f32 = 600.0;
 const DEFAULT_OVERSCAN_ITEMS: usize = 2;
+const DEFAULT_OVERSCAN_VIEWPORTS: f32 = 1.0;
 
 /// Stable identity and layout hints for a virtualized item.
 ///
@@ -217,15 +218,23 @@ where
         let first_visible = self.offsets[1..]
             .partition_point(|end| *end <= geometry.offset)
             .min(item_count);
-        let start = first_visible.saturating_sub(DEFAULT_OVERSCAN_ITEMS);
+        let overscan_extent = geometry.viewport.max(0.0) * DEFAULT_OVERSCAN_VIEWPORTS;
+        let overscan_start = (geometry.offset - overscan_extent).max(0.0);
+        let first_in_overscan = self.offsets[1..]
+            .partition_point(|end| *end <= overscan_start)
+            .min(item_count);
+        let start = first_in_overscan.min(first_visible.saturating_sub(DEFAULT_OVERSCAN_ITEMS));
         let visible_end = geometry.offset + geometry.viewport.max(0.0);
         let first_after_viewport = self.offsets[..item_count]
             .partition_point(|item_start| *item_start < visible_end)
             .max(first_visible.saturating_add(1).min(item_count));
-        let end = first_after_viewport
-            .saturating_add(DEFAULT_OVERSCAN_ITEMS)
-            .min(item_count);
         let total_extent = self.offsets.last().copied().unwrap_or(0.0);
+        let overscan_end = (visible_end + overscan_extent).min(total_extent);
+        let first_after_overscan =
+            self.offsets[..item_count].partition_point(|item_start| *item_start < overscan_end);
+        let end = first_after_overscan
+            .max(first_after_viewport.saturating_add(DEFAULT_OVERSCAN_ITEMS))
+            .min(item_count);
 
         LayoutWindow {
             generation: self.generation,
@@ -823,5 +832,34 @@ mod tests {
         let geometry = scroll_geometry(&event).unwrap();
         assert_eq!(geometry.offset, 120.0);
         assert_eq!(geometry.viewport, 480.0);
+    }
+
+    #[test]
+    fn window_keeps_one_viewport_of_scroll_buffer_on_each_side() {
+        let mut index = LayoutIndex::new(false);
+        index.replace((0_u32..10_000).collect(), |item| {
+            ItemMeta::key(*item).estimated_size(72)
+        });
+
+        let geometry = ScrollGeometry {
+            offset: 72_000.0,
+            viewport: 765.0,
+        };
+        let window = index.window(geometry);
+        let top_buffer = geometry.offset - window.leading_extent;
+        let visible_end = geometry.offset + geometry.viewport;
+        let rendered_end = index.offsets[window.end];
+        let bottom_buffer = rendered_end - visible_end;
+
+        assert!(
+            top_buffer >= geometry.viewport,
+            "top overscan {top_buffer}px must cover one {viewport}px viewport",
+            viewport = geometry.viewport,
+        );
+        assert!(
+            bottom_buffer >= geometry.viewport,
+            "bottom overscan {bottom_buffer}px must cover one {viewport}px viewport",
+            viewport = geometry.viewport,
+        );
     }
 }

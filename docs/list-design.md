@@ -100,7 +100,11 @@ does not clone or rescan the complete source.
 The initial window uses `estimated_size` (44 logical pixels when omitted).
 Leading and trailing spacer Views preserve the complete estimated scroll
 extent. A Host scroll event immediately reconciles the range using the real
-viewport and offset.
+viewport and offset. The mounted range keeps at least one viewport of overscan
+on each available side, with a two-item minimum for very small viewports. The
+Web Host treats scroll input as latency-sensitive and reconciles it in a
+microtask before the browser's next paint; ordinary module events remain
+frame-scheduled.
 
 The next layout slice replaces estimates with Taffy results after a mounted
 item is laid out. Corrections must be applied before presentation and preserve

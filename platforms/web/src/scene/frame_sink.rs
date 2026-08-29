@@ -10,7 +10,7 @@ use whisker_protocol::{
     SceneProjection, SurfaceId,
 };
 
-use crate::application::request_frame;
+use crate::application::{request_frame, request_urgent_frame};
 use crate::scene::element_registry::DomElementRegistry;
 use crate::scene::resource_store::WebResourceStore;
 use crate::{
@@ -209,7 +209,7 @@ impl DomFrameSink {
                     let event_mask = Rc::clone(&event_mask);
                     let pending = Rc::clone(&self.pending_events);
                     let node = *node;
-                    Rc::new(move |event: WebNativeEvent| {
+                    Rc::new(move |event: WebNativeEvent, urgent: bool| {
                         let Some(schema) = registration.event_named(&event.event) else {
                             web_sys::console::error_1(
                                 &format!(
@@ -241,7 +241,11 @@ impl DomFrameSink {
                             name: schema.name.clone(),
                             detail: event.detail,
                         });
-                        request_frame();
+                        if urgent {
+                            request_urgent_frame();
+                        } else {
+                            request_frame();
+                        }
                     })
                 });
                 let (element, native) = match &binding.factory {
@@ -277,7 +281,7 @@ impl DomFrameSink {
                         let Some(html) = scroll_element.dyn_ref::<web_sys::HtmlElement>() else {
                             return;
                         };
-                        emitter.emit(WebNativeEvent {
+                        emitter.emit_urgent(WebNativeEvent {
                             event: "scroll".to_owned(),
                             detail: WhiskerValue::map([
                                 (
