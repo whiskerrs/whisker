@@ -10,6 +10,7 @@ final class HostScene {
     private var nodes: [UInt64: WhiskerNodeView] = [:]
     private var nodeOrder: [UInt64] = []
     private var parents: [UInt64: UInt64] = [:]
+    private var presentationPool: [Int: [WhiskerMountedElement]] = [:]
     private var zOrders: [UInt64: Int32] = [:]
     private var sceneEpoch: UInt32 = 0
     private var revision: UInt64 = 0
@@ -84,7 +85,7 @@ final class HostScene {
     }
 
     func clear() {
-        nodes.values.forEach { $0.mountedElement?.dispose() }
+        nodes.values.forEach(releasePresentation)
         nodes.values.forEach { $0.removeFromSuperview() }
         nodes.removeAll()
         nodeOrder.removeAll()
@@ -252,14 +253,26 @@ final class HostScene {
         let id = operation.node
         switch operation.tag {
         case UInt32(WHISKER_OP_CREATE):
-            guard let registration = WhiskerElementRegistry.registration(Int(operation.member)),
-                  let mounted = WhiskerElementRegistry.mount(
-                      Int(operation.member),
-                      eventSink: { [weak self] event, detail in
-                          self?.emitElementEvent(id, event.name, detail)
-                      }
-                  )
-            else { return false }
+            let elementType = Int(operation.member)
+            guard let registration = WhiskerElementRegistry.registration(elementType) else {
+                return false
+            }
+            let eventSink: WhiskerElementEventSink = { [weak self] event, detail in
+                self?.emitElementEvent(id, event.name, detail)
+            }
+            let mounted: WhiskerMountedElement
+            if var pool = presentationPool[elementType], let reused = pool.popLast() {
+                presentationPool[elementType] = pool
+                reused.prepareForReuse(eventSink: eventSink)
+                mounted = reused
+            } else if let created = WhiskerElementRegistry.mount(
+                elementType,
+                eventSink: eventSink
+            ) {
+                mounted = created
+            } else {
+                return false
+            }
             let node = WhiskerNodeView(element: registration.name)
             node.mountedElement = mounted
             mounted.view.frame = node.bounds
@@ -471,15 +484,31 @@ final class HostScene {
         guard let node = nodes.removeValue(forKey: id) else { return }
         let descendants = nodes.keys.filter { isDescendant($0, of: id) }
         descendants.forEach {
-            nodes.removeValue(forKey: $0)?.mountedElement?.dispose()
+            if let removed = nodes.removeValue(forKey: $0) {
+                releasePresentation(removed)
+            }
             parents.removeValue(forKey: $0)
         }
         let removed = Set(descendants).union([id])
         nodeOrder.removeAll { removed.contains($0) }
         removed.forEach { zOrders.removeValue(forKey: $0) }
         parents.removeValue(forKey: id)
-        node.mountedElement?.dispose()
+        releasePresentation(node)
         node.removeFromSuperview()
+    }
+
+    private func releasePresentation(_ node: WhiskerNodeView) {
+        guard let mounted = node.mountedElement else { return }
+        mounted.view.removeFromSuperview()
+        node.mountedElement = nil
+        mounted.dispose()
+        guard mounted.registration.name == "whisker.ui/View"
+                || mounted.registration.name == "whisker.ui/Text" else { return }
+        var pool = presentationPool[mounted.registration.elementType] ?? []
+        if pool.count < 128 {
+            pool.append(mounted)
+            presentationPool[mounted.registration.elementType] = pool
+        }
     }
 
     private func normalizeZOrder(parent parentID: UInt64?) {

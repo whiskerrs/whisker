@@ -14,3 +14,12 @@ whisker-app = { package = {{user_package_toml}}, path = {{user_crate_path_toml}}
 whisker-macos = {{whisker_macos_dependency}}
 whisker-desktop = {{whisker_desktop_dependency}}
 {{element_module_dependencies}}
+
+# Keep application code quick to rebuild and debuggable while compiling the
+# renderer, text shaper, and their transitive dependencies with enough
+# optimization for interactive frame times.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.{{user_package_toml}}]
+opt-level = 0

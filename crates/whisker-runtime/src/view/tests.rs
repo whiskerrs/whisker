@@ -541,9 +541,6 @@ mod reentrancy {
             Element::from_raw(self.alloc_id())
         }
         fn release_element(&self, _h: Element) {}
-        fn element_sign(&self, h: Element) -> i32 {
-            h.id() as i32
-        }
         fn set_attribute(&self, h: Element, key: &str, value: &str) {
             self.log
                 .borrow_mut()

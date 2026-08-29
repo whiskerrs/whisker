@@ -109,6 +109,7 @@ pub struct DesktopRuntime {
     resources: DesktopResourceService,
     resource_events: Vec<whisker_protocol::ResourceEvent>,
     modules: RustModuleRuntime,
+    last_frame_timestamp_ms: Option<f64>,
 }
 
 impl DesktopRuntime {
@@ -148,6 +149,7 @@ impl DesktopRuntime {
             }),
             resource_events: Vec::new(),
             modules,
+            last_frame_timestamp_ms: None,
         })
     }
 
@@ -181,6 +183,11 @@ impl DesktopRuntime {
     /// Applies a logical wheel/trackpad delta to the nearest scroll container.
     pub fn scroll_at(&mut self, logical_position: [f32; 2], delta: [f32; 2]) -> bool {
         self.surface.scroll_at(logical_position, delta)
+    }
+
+    /// Settles the nearest snapping ScrollView after wheel/trackpad input ends.
+    pub fn settle_scroll_at(&mut self, logical_position: [f32; 2]) -> bool {
+        self.surface.settle_scroll_at(logical_position)
     }
 
     /// Registers one already-decoded RGBA8 raster for later `ResourceId`
@@ -227,32 +234,18 @@ impl DesktopRuntime {
         context: DesktopFrameContext,
     ) -> Result<DesktopFrameResult, DesktopError> {
         validate_context(context)?;
+        let delta_ms = self
+            .last_frame_timestamp_ms
+            .map_or(0.0, |previous| (context.timestamp_ms - previous).max(0.0))
+            .min(100.0) as f32;
+        self.last_frame_timestamp_ms = Some(context.timestamp_ms);
+        self.surface.advance_scroll_animations(delta_ms);
         self.modules.with_host(|| {
             self.modules.dispatch_pending_events();
         });
         self.drain_runtime_resource_commands(runtime)?;
         let dispatched_resource_event = self.dispatch_pending_resource_events(runtime)?;
-        let environment = StyleEnvironment::new(
-            context.logical_width,
-            context.logical_height,
-            context.scale,
-            14.0,
-        );
-        let drive = self.modules.with_host(|| {
-            runtime.drive_frame(
-                context.timestamp_ms,
-                environment,
-                context.environment_epoch,
-                context.viewport_epoch,
-                &mut self.measurements,
-                &mut self.surface,
-                LayoutOptions::default(),
-            )
-        });
-        self.drain_runtime_resource_commands(runtime)?;
-        let drive = drive.map_err(|error| DesktopError(format!("drive Desktop frame: {error}")))?;
         let events = self.surface.take_events();
-        let dispatched_provider_event = !events.is_empty();
         for event in events {
             self.modules
                 .with_host(|| {
@@ -272,6 +265,28 @@ impl DesktopRuntime {
         self.modules.with_host(|| {
             self.modules.dispatch_pending_events();
         });
+        let environment = StyleEnvironment::new(
+            context.logical_width,
+            context.logical_height,
+            context.scale,
+            14.0,
+        );
+        let drive = self.modules.with_host(|| {
+            runtime.drive_frame(
+                context.timestamp_ms,
+                environment,
+                context.environment_epoch,
+                context.viewport_epoch,
+                &mut self.measurements,
+                &mut self.surface,
+                LayoutOptions::default(),
+            )
+        });
+        self.drain_runtime_resource_commands(runtime)?;
+        let drive = drive.map_err(|error| DesktopError(format!("drive Desktop frame: {error}")))?;
+        self.modules.with_host(|| {
+            self.modules.dispatch_pending_events();
+        });
         self.surface
             .paint(
                 &mut self.measurements,
@@ -281,8 +296,8 @@ impl DesktopRuntime {
             .map_err(|error| DesktopError(format!("paint Desktop frame: {error}")))?;
         Ok(DesktopFrameResult {
             needs_frame: drive.needs_frame
-                || dispatched_provider_event
-                || dispatched_resource_event,
+                || dispatched_resource_event
+                || self.surface.has_active_scroll_animations(),
         })
     }
 

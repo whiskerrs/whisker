@@ -280,9 +280,9 @@ fn search_screen() -> Element {
     let draft = RwSignal::new(String::new());
     let query = RwSignal::new(String::new());
     let mode = RwSignal::new(SearchMode::People);
-    // Drives the swipeable pager: `scroll_to_position` on a tab tap, bound
+    // Drives the swipeable pager: keyed `scroll_to` on a tab tap, bound
     // via `ref:` on the horizontal `<list>` below.
-    let pager = ListHandle::new();
+    let pager = ListHandle::<&'static str>::new();
 
     // One resource per result kind. Both fetch on every committed `query`
     // (not gated on the active tab) so both pager pages are populated and
@@ -311,6 +311,8 @@ fn search_screen() -> Element {
     let top_pad =
         computed(move || css!(flex_shrink: 0.0, padding_top: px(insets.get().top as f32 + 8.0)));
 
+    let people_pager = pager.clone();
+    let posts_pager = pager.clone();
     render! {
         view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
             // Search field + segmented control: fixed above the results list
@@ -346,22 +348,21 @@ fn search_screen() -> Element {
                 border_bottom_width: px(1),
                 border_bottom_color: theme::BORDER,
             )) {
-                search_tab(label: "ユーザー", active: computed(move || mode.get() == SearchMode::People), on_tap: std::rc::Rc::new(move || { mode.set(SearchMode::People); pager.scroll_to_position(0, true); }) as std::rc::Rc<dyn Fn()>)
-                search_tab(label: "投稿", active: computed(move || mode.get() == SearchMode::Posts), on_tap: std::rc::Rc::new(move || { mode.set(SearchMode::Posts); pager.scroll_to_position(1, true); }) as std::rc::Rc<dyn Fn()>)
+                search_tab(label: "ユーザー", active: computed(move || mode.get() == SearchMode::People), on_tap: std::rc::Rc::new(move || { mode.set(SearchMode::People); let _ = people_pager.scroll_to(ListScrollTarget::key("people", ScrollAlignment::Start), ScrollBehavior::Smooth); }) as std::rc::Rc<dyn Fn()>)
+                search_tab(label: "投稿", active: computed(move || mode.get() == SearchMode::Posts), on_tap: std::rc::Rc::new(move || { mode.set(SearchMode::Posts); let _ = posts_pager.scroll_to(ListScrollTarget::key("posts", ScrollAlignment::Start), ScrollBehavior::Smooth); }) as std::rc::Rc<dyn Fn()>)
             }
             // Swipeable pager: a horizontal `<list>` of two full-viewport-width
             // pages (People / Posts) with `item_snap` for ViewPager-style
             // paging. Always mounted — swipeable even before a query, with each
             // page showing its own empty state. Swiping snaps to a page →
             // `on_snap` syncs the tab highlight; tapping a tab calls
-            // `scroll_to_position` to page over.
+            // keyed `scroll_to` to page over.
             list(
                 ref: pager.r(),
                 style: css!(flex_grow: 1.0, width: percent(100)),
-                scroll_orientation: ScrollOrientation::Horizontal,
-                item_snap: (0.0, 0.0),
-                on_snap: move |e| {
-                    let m = if e.detail.position <= 0 {
+                axis: ScrollAxis::Horizontal,
+                on_scroll: move |e| {
+                    let m = if e.detail.scroll_left < e.detail.viewport_width * 0.5 {
                         SearchMode::People
                     } else {
                         SearchMode::Posts
@@ -371,15 +372,11 @@ fn search_screen() -> Element {
                     }
                 },
                 each: move || vec![SearchMode::People, SearchMode::Posts],
-                meta: |m: &SearchMode| match m {
-                    SearchMode::People => ItemMeta::key("people".to_string())
-                        .reuse_identifier("page-people")
-                        .recyclable(false),
-                    SearchMode::Posts => ItemMeta::key("posts".to_string())
-                        .reuse_identifier("page-posts")
-                        .recyclable(false),
+                key: |m: &SearchMode| match m {
+                    SearchMode::People => "people",
+                    SearchMode::Posts => "posts",
                 },
-                children: move |m: SearchMode| match m {
+                children: move |m: ReadSignal<SearchMode>| match m.get() {
                     SearchMode::People => render! {
                         view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
                             Show(when: move || !query.get().trim().is_empty(), fallback: || render! { status_pane(message: "ユーザーを検索できます".to_string()) }) {
@@ -451,8 +448,8 @@ fn actor_list(actors: Vec<bsky_domain::ActorView>) -> Element {
                 let actors = actors.clone();
                 move || actors.clone()
             },
-            meta: |a: &bsky_domain::ActorView| ItemMeta::key(a.did.clone()),
-            children: |a: bsky_domain::ActorView| render! { actor_row(actor: a) },
+            key: |a: &bsky_domain::ActorView| a.did.clone(),
+            children: |a: ReadSignal<bsky_domain::ActorView>| render! { actor_row(actor: a.get()) },
         )
     }
 }
@@ -601,8 +598,8 @@ fn notification_list(items: Vec<bsky_domain::Notification>) -> Element {
                 let items = items.clone();
                 move || items.clone()
             },
-            meta: |n: &bsky_domain::Notification| ItemMeta::key(n.uri.clone()),
-            children: |n: bsky_domain::Notification| render! { notification_row(item: n) },
+            key: |n: &bsky_domain::Notification| n.uri.clone(),
+            children: |n: ReadSignal<bsky_domain::Notification>| render! { notification_row(item: n.get()) },
         )
     }
 }
@@ -830,16 +827,11 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
                         );
                         rows
                     },
-                    meta: |r: &ProfileRow| match r {
-                        ProfileRow::Header { .. } => ItemMeta::key("header".to_string())
-                            .reuse_identifier("profile-header")
-                            .estimated_size(320)
-                            .full_span(true),
-                        ProfileRow::Post(p) => ItemMeta::key(p.uri.clone())
-                            .reuse_identifier("post")
-                            .estimated_size(96),
+                    key: |r: &ProfileRow| match r {
+                        ProfileRow::Header { .. } => "header".to_string(),
+                        ProfileRow::Post(p) => p.uri.clone(),
                     },
-                    children: |r: ProfileRow| match r {
+                    children: |r: ReadSignal<ProfileRow>| match r.get() {
                         ProfileRow::Header {
                             profile,
                             my_did,
@@ -1899,8 +1891,8 @@ fn timeline_screen() -> Element {
             ) {
                 list(
                     style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
-                    lower_threshold_item_count: 3,
-                    on_scrolltolower: load_more,
+                    end_reached_threshold: 320.0,
+                    on_end_reached: move || load_more(()),
                     each: move || {
                         let mut all = feed.get().map(|t| t.posts).unwrap_or_default();
                         all.extend(more.get());
@@ -1909,15 +1901,14 @@ fn timeline_screen() -> Element {
                     // Entry identity, not post identity: a post can appear
                     // both as the original and as a repost in one timeline,
                     // and duplicate item-keys corrupt the native list diff.
-                    meta: |p: &bsky_domain::FeedPost| {
-                        let key = match &p.reposted_by {
+                    key: |p: &bsky_domain::FeedPost| {
+                        match &p.reposted_by {
                             Some(by) => format!("{}#repost:{}", p.uri, by.did),
                             None => p.uri.clone(),
-                        };
-                        ItemMeta::key(key).reuse_identifier("post").estimated_size(140)
+                        }
                     },
-                    children: |p: bsky_domain::FeedPost| render! {
-                        PostRow(post: p)
+                    children: |p: ReadSignal<bsky_domain::FeedPost>| render! {
+                        PostRow(post: p.get())
                     },
                 )
             }
@@ -1965,8 +1956,8 @@ fn post_list(posts: Vec<bsky_domain::FeedPost>) -> Element {
                 let posts = posts.clone();
                 move || posts.clone()
             },
-            meta: |p: &bsky_domain::FeedPost| ItemMeta::key(p.uri.clone()),
-            children: |p: bsky_domain::FeedPost| render! { PostRow(post: p) },
+            key: |p: &bsky_domain::FeedPost| p.uri.clone(),
+            children: |p: ReadSignal<bsky_domain::FeedPost>| render! { PostRow(post: p.get()) },
         )
     }
 }

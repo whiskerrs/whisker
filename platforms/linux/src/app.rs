@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::runtime::module::RustModuleDefinition;
@@ -15,7 +15,7 @@ use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{CursorIcon, Window, WindowAttributes, WindowId};
 
 fn cursor_icon(value: CursorKeyword) -> CursorIcon {
@@ -189,6 +189,7 @@ struct LinuxApplication {
     started_at: Instant,
     frame_failed: bool,
     pointer: DesktopPointerAdapter,
+    pending_scroll_settle: Option<(Instant, [f32; 2])>,
 }
 
 impl LinuxApplication {
@@ -212,6 +213,7 @@ impl LinuxApplication {
             started_at: Instant::now(),
             frame_failed: false,
             pointer: DesktopPointerAdapter::new(SurfaceId::new(1).unwrap()),
+            pending_scroll_settle: None,
         }
     }
 
@@ -402,15 +404,25 @@ impl ApplicationHandler<HostEvent> for LinuxApplication {
                     self.dispatch_input(input);
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } => {
+            WindowEvent::MouseWheel { delta, phase, .. } => {
                 if let (Some(window), Some(position), Some(host)) =
                     (&self.window, self.pointer.mouse_position(), &mut self.host)
-                    && host.scroll_at(
-                        [position.x, position.y],
-                        scroll_delta(delta, window.scale_factor()),
-                    )
                 {
-                    self.request_frame();
+                    let point = [position.x, position.y];
+                    let changed = host.scroll_at(point, scroll_delta(delta, window.scale_factor()));
+                    let settled = if phase == TouchPhase::Ended {
+                        self.pending_scroll_settle = None;
+                        host.settle_scroll_at(point)
+                    } else {
+                        if changed {
+                            self.pending_scroll_settle =
+                                Some((Instant::now() + Duration::from_millis(100), point));
+                        }
+                        false
+                    };
+                    if changed || settled {
+                        self.request_frame();
+                    }
                 }
             }
             WindowEvent::Touch(touch) => {
@@ -433,6 +445,24 @@ impl ApplicationHandler<HostEvent> for LinuxApplication {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some((deadline, point)) = self.pending_scroll_settle else {
+            return;
+        };
+        if Instant::now() < deadline {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            return;
+        }
+        self.pending_scroll_settle = None;
+        if self
+            .host
+            .as_mut()
+            .is_some_and(|host| host.settle_scroll_at(point))
+        {
+            self.request_frame();
         }
     }
 }

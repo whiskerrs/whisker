@@ -25,7 +25,7 @@ use std::rc::Rc;
 use super::handle::Element;
 use crate::element::ElementTag;
 use crate::value::WhiskerValue;
-use whisker_protocol::ElementSchema;
+use whisker_protocol::{ElementSchema, LayoutGeometry};
 use whisker_style::SpecifiedStyle;
 
 /// Event-handler propagation type — a faithful 1:1 mapping to Lynx's
@@ -72,23 +72,6 @@ pub struct EventDispatchPlan {
     pub consumed: bool,
     /// Listeners to invoke, in propagation order.
     pub firings: Vec<EventFiring>,
-}
-
-/// One `<list>` diff-action entry as it crosses the renderer: the
-/// resolved (stable) item-key plus the per-item layout metadata Lynx's
-/// adapter ingests from the action stream. For inserts `position` is
-/// the ascending splice point into the post-removal list; for updates
-/// it is the item's index in the FINAL list.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListItemAction {
-    pub position: i32,
-    pub key: String,
-    /// Estimated main-axis size in px; `None` = native default.
-    pub estimated_size: Option<i32>,
-    pub full_span: bool,
-    pub sticky_top: bool,
-    pub sticky_bottom: bool,
-    pub recyclable: bool,
 }
 
 /// Object-safe renderer trait. The renderer owns whatever per-element
@@ -147,74 +130,16 @@ pub trait DynRenderer {
         false
     }
 
-    /// Underlying Lynx sign (`impl_id`) for `handle`, or 0 if the
-    /// renderer doesn't model signs (test renderers) or the handle
-    /// is unknown. The list provider closure needs this to tell the
-    /// C++ list which FiberElement to bind to an `index`. Whisker's
-    /// own [`Element`] is a Vec index inside the renderer and is
-    /// **not** the same number as Lynx's `impl_id`.
-    fn element_sign(&self, _handle: Element) -> i32 {
-        0
-    }
-
-    /// Hand a `<list>` element its item count so the bridge can build
-    /// the `update-list-info` map (positional item-keys `w_<i>`) that
-    /// Lynx's decoupled native list reads its items from. `item_keys`
-    /// are the real (stable) item-keys in current order; `prev_count` is
-    /// the previous call's item count (for the remove+insert diff). The
-    /// `list` virtualizer calls this on every data update. Default no-op
-    /// for test renderers that don't model list virtualisation.
-    ///
-    /// This is the FULL-REPLACE form — it severs every native item's
-    /// identity, so the list cannot hold its scroll position across the
-    /// update. The virtualizer prefers [`update_list_actions`]
-    /// (Self::update_list_actions) and only falls back here.
-    fn set_update_list_info(&self, _handle: Element, _item_keys: &[String], _prev_count: usize) {}
-
-    /// Explicit `<list>` diff actions — the minimal-action form.
-    /// `removals` are ascending indices into the PRE-update item-key
-    /// list (applied first); `inserts` splice into the post-removal
-    /// list at ascending positions, carrying the per-item layout
-    /// metadata (the action stream is the ONLY channel Lynx's adapter
-    /// ingests it from); `updates` refresh a SURVIVING item's metadata
-    /// in place (`position` = its index in the FINAL list). Items
-    /// mentioned in no action keep their native identity, which lets
-    /// the list hold its scroll position across appends.
-    ///
-    /// Returns whether the renderer delivered the actions — `false`
-    /// (the default, also reported when the loaded Lynx predates the
-    /// capi) tells the virtualizer to fall back to the full-replace
-    /// [`set_update_list_info`](Self::set_update_list_info).
-    fn update_list_actions(
-        &self,
-        _handle: Element,
-        _removals: &[i32],
-        _inserts: &[ListItemAction],
-        _updates: &[ListItemAction],
-    ) -> bool {
-        false
+    /// Returns the current typed style when the renderer owns a retained Rust
+    /// scene. Framework control flow uses this only for semantic validation;
+    /// Hosts do not need to expose native presentation state.
+    fn specified_style(&self, _handle: Element) -> Option<SpecifiedStyle> {
+        None
     }
 
     /// Set an object-valued attribute (`{obj[i].0: obj[i].1}` of doubles)
     /// — e.g. `<list>` `item-snap` {factor, offset}. Default no-op.
     fn set_attribute_object(&self, _handle: Element, _key: &str, _obj: &[(String, f64)]) {}
-
-    /// Install a native item provider on a `<list>` element. The
-    /// `provider`'s callbacks are invoked by Lynx's list machinery to
-    /// fetch / recycle item elements on demand. Returns `true` if the
-    /// install reached the bridge — `false` is reported when the
-    /// renderer has no live native handle for `_handle` or doesn't
-    /// model list virtualisation (test renderers default here).
-    /// The default drops `provider` so test code doesn't leak boxed
-    /// closures.
-    fn install_list_native_item_provider(
-        &self,
-        _handle: Element,
-        provider: super::list_provider::NativeItemProvider,
-    ) -> bool {
-        drop(provider);
-        false
-    }
 
     fn append_child(&self, parent: Element, child: Element);
     fn remove_child(&self, parent: Element, child: Element);
@@ -251,6 +176,11 @@ pub trait DynRenderer {
         bind_type: BindType,
         callback: Box<dyn Fn(WhiskerValue) + 'static>,
     );
+
+    /// Observes resolved Rust layout for framework control primitives.
+    /// Ordinary renderers may ignore this; SurfaceRuntime reports after each
+    /// successful Taffy pass without involving a Host event.
+    fn observe_layout(&self, _handle: Element, _callback: Box<dyn Fn(LayoutGeometry) + 'static>) {}
 
     /// Plan how a reported event (`event_name` at `target_sign`,
     /// carrying `body`) propagates through Whisker's reconstructed
@@ -682,39 +612,12 @@ pub fn set_specified_style(handle: Element, style: &SpecifiedStyle) -> bool {
     )
 }
 
-/// See [`DynRenderer::element_sign`]. Returns 0 when no renderer is
-/// installed (e.g. test setups using the mock renderer) or when
-/// `handle` is a phantom (phantoms have no Lynx `impl_id`).
-pub fn element_sign(handle: Element) -> i32 {
+#[doc(hidden)]
+pub fn specified_style(handle: Element) -> Option<SpecifiedStyle> {
     if is_phantom(handle) {
-        return 0;
+        return None;
     }
-    with_renderer(|r| r.element_sign(handle), 0)
-}
-
-pub fn set_update_list_info(handle: Element, item_keys: &[String], prev_count: usize) {
-    if is_phantom(handle) {
-        return;
-    }
-    with_renderer(
-        |r| r.set_update_list_info(handle, item_keys, prev_count),
-        (),
-    )
-}
-
-pub fn update_list_actions(
-    handle: Element,
-    removals: &[i32],
-    inserts: &[ListItemAction],
-    updates: &[ListItemAction],
-) -> bool {
-    if is_phantom(handle) {
-        return false;
-    }
-    with_renderer(
-        |r| r.update_list_actions(handle, removals, inserts, updates),
-        false,
-    )
+    with_renderer(|renderer| renderer.specified_style(handle), None)
 }
 
 pub fn set_attribute_object(handle: Element, key: &str, obj: &[(String, f64)]) {
@@ -722,20 +625,6 @@ pub fn set_attribute_object(handle: Element, key: &str, obj: &[(String, f64)]) {
         return;
     }
     with_renderer(|r| r.set_attribute_object(handle, key, obj), ())
-}
-
-pub fn install_list_native_item_provider(
-    handle: Element,
-    provider: super::list_provider::NativeItemProvider,
-) -> bool {
-    if is_phantom(handle) {
-        drop(provider);
-        return false;
-    }
-    with_renderer(
-        |r| r.install_list_native_item_provider(handle, provider),
-        false,
-    )
 }
 
 /// Append `child` as the last mirror child of `parent`. The Lynx-
@@ -979,6 +868,15 @@ pub fn set_event_listener(
         |r| r.set_event_listener(handle, event_name, bind_type, callback),
         (),
     )
+}
+
+/// Registers an internal resolved-layout observer on one real element.
+pub fn observe_layout(handle: Element, callback: Box<dyn Fn(LayoutGeometry) + 'static>) {
+    if is_phantom(handle) {
+        drop(callback);
+        return;
+    }
+    with_renderer(|renderer| renderer.observe_layout(handle, callback), ())
 }
 
 /// Gives the installed renderer the first opportunity to handle an element

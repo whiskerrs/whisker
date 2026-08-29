@@ -40,6 +40,8 @@ web-sys = { version = "0.3", features = [
     "Node",
     "Performance",
     "PointerEvent",
+    "ScrollBehavior",
+    "ScrollToOptions",
     "SvgElement",
     "Url",
     "Window",

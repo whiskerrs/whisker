@@ -75,6 +75,18 @@ impl DesktopSurface {
     pub(crate) fn scroll_at(&mut self, logical_position: [f32; 2], delta: [f32; 2]) -> bool {
         self.scene.scroll_at(logical_position, delta)
     }
+
+    pub(crate) fn settle_scroll_at(&mut self, logical_position: [f32; 2]) -> bool {
+        self.scene.settle_scroll_at(logical_position)
+    }
+
+    pub(crate) fn advance_scroll_animations(&mut self, delta_ms: f32) -> bool {
+        self.scene.advance_scroll_animations(delta_ms)
+    }
+
+    pub(crate) fn has_active_scroll_animations(&self) -> bool {
+        self.scene.has_active_scroll_animations()
+    }
 }
 
 impl FrameSink for DesktopSurface {

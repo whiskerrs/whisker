@@ -345,6 +345,12 @@ pub struct ScrollDetail {
     /// Total scrollable content height (px).
     #[serde(default)]
     pub scroll_height: f64,
+    /// Visible content width in logical pixels.
+    #[serde(default)]
+    pub viewport_width: f64,
+    /// Visible content height in logical pixels.
+    #[serde(default)]
+    pub viewport_height: f64,
     /// Horizontal delta since the previous scroll event (px).
     #[serde(default)]
     pub delta_x: f64,

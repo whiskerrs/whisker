@@ -111,7 +111,7 @@ pub fn inputs_from(
         whisker_desktop_dependency: format!("{:?}", env!("CARGO_PKG_VERSION")),
         element_modules: Vec::new(),
         minimum_system_version: "12.0".to_string(),
-        template_version: 6,
+        template_version: 7,
     })
 }
 
@@ -259,6 +259,8 @@ mod tests {
         let manifest = std::fs::read_to_string(out.join("Cargo.toml")).unwrap();
         assert!(manifest.contains("package = \"hello\""));
         assert!(manifest.contains("whisker-macos = { path ="));
+        assert!(manifest.contains("[profile.dev.package.\"*\"]\nopt-level = 2"));
+        assert!(manifest.contains("[profile.dev.package.\"hello\"]\nopt-level = 0"));
         let main = std::fs::read_to_string(out.join("src/main.rs")).unwrap();
         assert!(main.contains("whisker_app::__whisker_application"));
         assert!(!main.contains("{{"));

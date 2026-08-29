@@ -88,32 +88,15 @@ attr_enum! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// list
-// ---------------------------------------------------------------------------
-
 attr_enum! {
-    /// Layout mode for a `<list>`.
+    /// Whether one scrolling operation may pass over intermediate snap points.
     ///
-    /// Maps to Lynx's `list-type` attribute.
-    ListType {
-        /// `"single"` — single-column linear list (the default).
-        Single => "single",
-        /// `"flow"` — grid-style flow layout.
-        Flow => "flow",
-        /// `"waterfall"` — staggered / Pinterest-style waterfall.
-        Waterfall => "waterfall",
-    }
-}
-
-attr_enum! {
-    /// `<list>` data-update animation — maps to Lynx's
-    /// `update-animation` attribute.
-    ListUpdateAnimation {
-        /// `"default"` — animate inserts / moves / removes.
-        Default => "default",
-        /// `"none"` — apply data updates without animation.
-        None => "none",
+    /// Maps to CSS `scroll-snap-stop` semantics for a snapping ScrollView.
+    ScrollSnapStop {
+        /// Native momentum may settle on any later snap point.
+        Normal => "normal",
+        /// A single gesture may advance by at most one snap point.
+        Always => "always",
     }
 }
 
@@ -265,10 +248,9 @@ mod tests {
     }
 
     #[test]
-    fn list_type_wire_strings() {
-        assert_eq!(ListType::Single.as_str(), "single");
-        assert_eq!(ListType::Flow.as_str(), "flow");
-        assert_eq!(ListType::Waterfall.as_str(), "waterfall");
+    fn scroll_snap_stop_wire_strings() {
+        assert_eq!(ScrollSnapStop::Normal.as_str(), "normal");
+        assert_eq!(ScrollSnapStop::Always.as_str(), "always");
     }
 
     #[test]

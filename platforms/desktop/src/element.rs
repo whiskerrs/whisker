@@ -125,6 +125,10 @@ type DesktopTextStyleUpdater<T> = Arc<dyn Fn(&mut T, &WhiskerTextStyle) + Send +
 type DesktopMeasurementHandler =
     Arc<dyn Fn(&WhiskerMeasureRequest) -> Option<WhiskerMeasuredSize> + Send + Sync>;
 type DesktopRasterizer<T> = Arc<dyn Fn(&T, u32, u32) -> Option<DesktopRaster> + Send + Sync>;
+type DesktopScrollAxis<T> = Arc<dyn Fn(&T) -> bool + Send + Sync>;
+type DesktopItemSnap<T> = Arc<dyn Fn(&T) -> Option<(f64, f64)> + Send + Sync>;
+type DesktopSnapStop<T> = Arc<dyn Fn(&T) -> bool + Send + Sync>;
+type DesktopScrollEnabled<T> = Arc<dyn Fn(&T) -> bool + Send + Sync>;
 
 struct DesktopPropBinding<T> {
     set: DesktopPropSetter<T>,
@@ -152,6 +156,10 @@ pub struct DesktopViewDefinition<T> {
     rasterizer: Option<DesktopRasterizer<T>>,
     plain_text: bool,
     scroll_content: bool,
+    scroll_horizontal: DesktopScrollAxis<T>,
+    item_snap: DesktopItemSnap<T>,
+    snap_stop_always: DesktopSnapStop<T>,
+    scroll_enabled: DesktopScrollEnabled<T>,
 }
 
 impl<T> DesktopViewDefinition<T>
@@ -174,6 +182,10 @@ where
             rasterizer: None,
             plain_text: false,
             scroll_content: false,
+            scroll_horizontal: Arc::new(|_| false),
+            item_snap: Arc::new(|_| None),
+            snap_stop_always: Arc::new(|_| false),
+            scroll_enabled: Arc::new(|_| true),
         }
     }
 
@@ -187,6 +199,21 @@ where
     /// Declares that the Host object owns transient vertical scroll state.
     pub fn scroll_container(mut self) -> Self {
         self.scroll_content = true;
+        self
+    }
+
+    pub(crate) fn scroll_behavior(
+        mut self,
+        horizontal: impl Fn(&T) -> bool + Send + Sync + 'static,
+        item_snap: impl Fn(&T) -> Option<(f64, f64)> + Send + Sync + 'static,
+        snap_stop_always: impl Fn(&T) -> bool + Send + Sync + 'static,
+        scroll_enabled: impl Fn(&T) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.scroll_content = true;
+        self.scroll_horizontal = Arc::new(horizontal);
+        self.item_snap = Arc::new(item_snap);
+        self.snap_stop_always = Arc::new(snap_stop_always);
+        self.scroll_enabled = Arc::new(scroll_enabled);
         self
     }
 
@@ -362,6 +389,10 @@ where
             text_style: self.text_style.clone(),
             rasterizer: self.rasterizer.clone(),
             scroll_content: self.scroll_content,
+            scroll_horizontal: Arc::clone(&self.scroll_horizontal),
+            item_snap: Arc::clone(&self.item_snap),
+            snap_stop_always: Arc::clone(&self.snap_stop_always),
+            scroll_enabled: Arc::clone(&self.scroll_enabled),
         });
         Ok(Arc::new(move |events| {
             Box::new(DeclaredDesktopElement {
@@ -390,6 +421,10 @@ struct BoundDesktopViewDefinition<T> {
     text_style: Option<DesktopTextStyleUpdater<T>>,
     rasterizer: Option<DesktopRasterizer<T>>,
     scroll_content: bool,
+    scroll_horizontal: DesktopScrollAxis<T>,
+    item_snap: DesktopItemSnap<T>,
+    snap_stop_always: DesktopSnapStop<T>,
+    scroll_enabled: DesktopScrollEnabled<T>,
 }
 
 struct DeclaredDesktopElement<T> {
@@ -453,6 +488,22 @@ where
 
     fn is_scroll_container(&self) -> bool {
         self.definition.scroll_content
+    }
+
+    fn scroll_horizontal(&self) -> bool {
+        (self.definition.scroll_horizontal)(&self.state)
+    }
+
+    fn item_snap(&self) -> Option<(f64, f64)> {
+        (self.definition.item_snap)(&self.state)
+    }
+
+    fn snap_stop_always(&self) -> bool {
+        (self.definition.snap_stop_always)(&self.state)
+    }
+
+    fn scroll_enabled(&self) -> bool {
+        (self.definition.scroll_enabled)(&self.state)
     }
 }
 
@@ -809,6 +860,45 @@ pub trait DesktopNativeElement: fmt::Debug + 'static {
     fn is_scroll_container(&self) -> bool {
         false
     }
+
+    /// Whether wheel deltas should advance the horizontal axis.
+    fn scroll_horizontal(&self) -> bool {
+        false
+    }
+
+    /// Direct-child snap anchor `(factor, logical offset)` when enabled.
+    fn item_snap(&self) -> Option<(f64, f64)> {
+        None
+    }
+
+    /// Whether a single scroll sequence must stop at the next snap point.
+    fn snap_stop_always(&self) -> bool {
+        false
+    }
+
+    /// Whether pointer/wheel gestures may change scroll state.
+    fn scroll_enabled(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug)]
+struct DesktopScrollViewState {
+    horizontal: bool,
+    item_snap: Option<(f64, f64)>,
+    snap_stop_always: bool,
+    scroll_enabled: bool,
+}
+
+impl Default for DesktopScrollViewState {
+    fn default() -> Self {
+        Self {
+            horizontal: false,
+            item_snap: None,
+            snap_stop_always: false,
+            scroll_enabled: true,
+        }
+    }
 }
 
 /// Built-in element implementations contributed by the Desktop platform.
@@ -823,7 +913,64 @@ impl WhiskerModule for BuiltInElementModule {
             .name("whisker.ui")
             .view(DesktopViewDefinition::new("whisker.ui/View", |_| ()))
             .view(DesktopViewDefinition::new("whisker.ui/Text", |_| ()).plain_text())
-            .view(DesktopViewDefinition::new("whisker.ui/ScrollView", |_| ()).scroll_container())
+            .view(
+                DesktopViewDefinition::new("whisker.ui/ScrollView", |_| {
+                    DesktopScrollViewState::default()
+                })
+                .prop(
+                    "scroll-orientation",
+                    |state, value| {
+                        state.horizontal =
+                            matches!(value, WhiskerValue::String(value) if value == "horizontal");
+                    },
+                    |state| state.horizontal = false,
+                )
+                .prop(
+                    "item-snap",
+                    |state, value| {
+                        let WhiskerValue::Map(value) = value else {
+                            state.item_snap = None;
+                            return;
+                        };
+                        let number = |name| match value.get(name) {
+                            Some(WhiskerValue::Float(value)) => Some(*value),
+                            Some(WhiskerValue::Int(value)) => Some(*value as f64),
+                            _ => None,
+                        };
+                        state.item_snap = Some((
+                            number("factor").unwrap_or(0.0).clamp(0.0, 1.0),
+                            number("offset").unwrap_or(0.0),
+                        ));
+                    },
+                    |state| state.item_snap = None,
+                )
+                .prop(
+                    "scroll-snap-stop",
+                    |state, value| {
+                        state.snap_stop_always =
+                            matches!(value, WhiskerValue::String(value) if value == "always");
+                    },
+                    |state| state.snap_stop_always = false,
+                )
+                .prop(
+                    "enable-scroll",
+                    |state, value| {
+                        state.scroll_enabled = matches!(value, WhiskerValue::Bool(true));
+                    },
+                    |state| state.scroll_enabled = true,
+                )
+                .scroll_behavior(
+                    |state| state.horizontal,
+                    |state| state.item_snap,
+                    |state| state.snap_stop_always,
+                    |state| state.scroll_enabled,
+                )
+                // Scene owns the actual scroll offset; these declarations
+                // negotiate the shared command IDs while Scene applies them.
+                .command("scrollTo", |_, _| {})
+                .command("scrollBy", |_, _| {})
+                .event("scroll"),
+            )
     }
 }
 
@@ -846,10 +993,47 @@ pub(crate) enum DesktopElementContent {
 }
 
 impl DesktopElementContent {
+    pub(crate) fn reset_for_presentation_reuse(&mut self) {
+        match self {
+            Self::Text(text) => *text = None,
+            Self::Native { text, .. } => *text = None,
+            Self::Empty | Self::ScrollContainer => {}
+        }
+    }
+
     pub(crate) fn is_scroll_container(&self) -> bool {
         match self {
             Self::ScrollContainer => true,
             Self::Native { implementation, .. } => implementation.is_scroll_container(),
+            Self::Empty | Self::Text(_) => false,
+        }
+    }
+
+    pub(crate) fn scroll_horizontal(&self) -> bool {
+        match self {
+            Self::Native { implementation, .. } => implementation.scroll_horizontal(),
+            Self::Empty | Self::Text(_) | Self::ScrollContainer => false,
+        }
+    }
+
+    pub(crate) fn item_snap(&self) -> Option<(f64, f64)> {
+        match self {
+            Self::Native { implementation, .. } => implementation.item_snap(),
+            Self::Empty | Self::Text(_) | Self::ScrollContainer => None,
+        }
+    }
+
+    pub(crate) fn snap_stop_always(&self) -> bool {
+        match self {
+            Self::Native { implementation, .. } => implementation.snap_stop_always(),
+            Self::Empty | Self::Text(_) | Self::ScrollContainer => false,
+        }
+    }
+
+    pub(crate) fn scroll_enabled(&self) -> bool {
+        match self {
+            Self::Native { implementation, .. } => implementation.scroll_enabled(),
+            Self::ScrollContainer => true,
             Self::Empty | Self::Text(_) => false,
         }
     }
@@ -1046,6 +1230,15 @@ impl DesktopElementRegistry {
         events: DesktopEventEmitter,
     ) -> Result<DesktopElementContent, DesktopElementError> {
         Ok(self.binding(element_type)?.factory.create(events))
+    }
+
+    pub(crate) fn is_builtin_presentation(&self, element_type: ElementTypeId) -> bool {
+        self.binding(element_type).is_ok_and(|binding| {
+            matches!(
+                binding.registration.name.as_str(),
+                "whisker.ui/View" | "whisker.ui/Text"
+            )
+        })
     }
 
     pub(crate) fn child_policy(

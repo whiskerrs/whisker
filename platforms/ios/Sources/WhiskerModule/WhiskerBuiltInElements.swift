@@ -13,8 +13,14 @@ public class WhiskerContainerView: UIView {
 }
 
 /** Vertical native scroll container with a dedicated multi-child content view. */
-public final class WhiskerScrollContainerView: UIScrollView {
+public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegate, WhiskerEventSource {
     public let contentView = WhiskerContainerView(frame: .zero)
+    private var eventSink: ((String, WhiskerValue) -> Void)?
+    private var horizontal = false
+    private var snapFactor: CGFloat?
+    private var snapOffset: CGFloat = 0
+    private var snapStopAlways = false
+    private var scrollSequenceStart: CGPoint?
 
     public override init(frame: CGRect) {
         super.init(frame: frame)
@@ -26,9 +32,95 @@ public final class WhiskerScrollContainerView: UIScrollView {
         contentInsetAdjustmentBehavior = .never
         automaticallyAdjustsScrollIndicatorInsets = false
         addSubview(contentView)
+        delegate = self
     }
 
     public required init?(coder: NSCoder) { nil }
+
+    public func installWhiskerEventSink(_ sink: ((String, WhiskerValue) -> Void)?) {
+        eventSink = sink
+    }
+
+    public func setScrollOrientation(_ value: String) {
+        horizontal = value == "horizontal"
+        showsHorizontalScrollIndicator = horizontal
+        showsVerticalScrollIndicator = !horizontal
+    }
+
+    public func setItemSnap(factor: Double, offset: Double) {
+        snapFactor = CGFloat(factor).clamped(to: 0...1)
+        snapOffset = CGFloat(offset)
+    }
+
+    public func clearItemSnap() {
+        snapFactor = nil
+        snapOffset = 0
+    }
+
+    public func setScrollSnapStop(_ value: String) {
+        snapStopAlways = value == "always"
+    }
+
+    public func scrollToLogicalOffset(_ offset: Double, smooth: Bool) {
+        var target = contentOffset
+        if horizontal { target.x = CGFloat(offset) }
+        else { target.y = CGFloat(offset) }
+        setContentOffset(target, animated: smooth)
+    }
+
+    public func scrollByLogicalOffset(_ offset: Double, smooth: Bool) {
+        let current = horizontal ? contentOffset.x : contentOffset.y
+        scrollToLogicalOffset(Double(current) + offset, smooth: smooth)
+    }
+
+    public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        scrollSequenceStart = contentOffset
+    }
+
+    public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        eventSink?("scroll", .map([
+            "scrollLeft": .float(Double(contentOffset.x)),
+            "scrollTop": .float(Double(contentOffset.y)),
+            "scrollWidth": .float(Double(contentSize.width)),
+            "scrollHeight": .float(Double(contentSize.height)),
+            "viewportWidth": .float(Double(bounds.width)),
+            "viewportHeight": .float(Double(bounds.height)),
+        ]))
+    }
+
+    public func scrollViewWillEndDragging(
+        _ scrollView: UIScrollView,
+        withVelocity velocity: CGPoint,
+        targetContentOffset: UnsafeMutablePointer<CGPoint>
+    ) {
+        guard let factor = snapFactor, !contentView.subviews.isEmpty else { return }
+        let viewport = horizontal ? bounds.width : bounds.height
+        let contentExtent = horizontal ? contentSize.width : contentSize.height
+        let proposed = horizontal ? targetContentOffset.pointee.x : targetContentOffset.pointee.y
+        let maximum = max(0, contentExtent - viewport)
+        let targets = contentView.subviews
+            .map { child -> CGFloat in
+                let frame = child.frame
+                let start = horizontal ? frame.minX : frame.minY
+                let size = horizontal ? frame.width : frame.height
+                return (start + size * factor - viewport * factor + snapOffset)
+                    .clamped(to: 0...maximum)
+            }
+            .sorted()
+        let startPoint = scrollSequenceStart ?? contentOffset
+        let start = horizontal ? startPoint.x : startPoint.y
+        let target: CGFloat
+        if snapStopAlways, proposed > start + .ulpOfOne {
+            target = targets.first(where: { $0 > start + .ulpOfOne }) ?? targets.last ?? proposed
+        } else if snapStopAlways, proposed < start - .ulpOfOne {
+            target = targets.last(where: { $0 < start - .ulpOfOne }) ?? targets.first ?? proposed
+        } else {
+            target = targets.min(by: { abs($0 - proposed) < abs($1 - proposed) }) ?? proposed
+        }
+        scrollSequenceStart = nil
+        if horizontal { targetContentOffset.pointee.x = target }
+        else { targetContentOffset.pointee.y = target }
+    }
 
     public override func layoutSubviews() {
         super.layoutSubviews()
@@ -367,7 +459,66 @@ public final class BuiltInElementModule: Module {
             Name("whisker.ui")
             View(WhiskerBuiltInElements.view())
             View(WhiskerBuiltInElements.text())
-            View(WhiskerBuiltInElements.scrollView())
+            View(WhiskerBuiltInElements.scrollView()) {
+                Prop(
+                    "scroll-orientation",
+                    clear: { (view: WhiskerScrollContainerView) in
+                        view.setScrollOrientation("vertical")
+                    }
+                ) { (view: WhiskerScrollContainerView, value: WhiskerValue) in
+                    view.setScrollOrientation(value.asString ?? "vertical")
+                }
+                Prop(
+                    "item-snap",
+                    clear: { (view: WhiskerScrollContainerView) in view.clearItemSnap() }
+                ) { (view: WhiskerScrollContainerView, value: WhiskerValue) in
+                    guard case .map(let snap) = value else {
+                        view.clearItemSnap()
+                        return
+                    }
+                    view.setItemSnap(
+                        factor: snap["factor"]?.asDouble ?? 0,
+                        offset: snap["offset"]?.asDouble ?? 0
+                    )
+                }
+                Prop(
+                    "scroll-snap-stop",
+                    clear: { (view: WhiskerScrollContainerView) in
+                        view.setScrollSnapStop("normal")
+                    }
+                ) { (view: WhiskerScrollContainerView, value: WhiskerValue) in
+                    view.setScrollSnapStop(value.asString ?? "normal")
+                }
+                Prop(
+                    "enable-scroll",
+                    clear: { (view: WhiskerScrollContainerView) in
+                        view.isScrollEnabled = true
+                    }
+                ) { (view: WhiskerScrollContainerView, value: WhiskerValue) in
+                    view.isScrollEnabled = value.asBool ?? true
+                }
+                Command("scrollTo") { (view: WhiskerScrollContainerView, value: WhiskerValue) in
+                    guard case .map(let arguments) = value else { return }
+                    view.scrollToLogicalOffset(
+                        arguments["offset"]?.asDouble ?? 0,
+                        smooth: arguments["smooth"]?.asBool ?? false
+                    )
+                }
+                Command("scrollBy") { (view: WhiskerScrollContainerView, value: WhiskerValue) in
+                    guard case .map(let arguments) = value else { return }
+                    view.scrollByLogicalOffset(
+                        arguments["offset"]?.asDouble ?? 0,
+                        smooth: arguments["smooth"]?.asBool ?? false
+                    )
+                }
+                Events("scroll")
+            }
         }
+    }
+}
+
+private extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self {
+        min(max(self, range.lowerBound), range.upperBound)
     }
 }

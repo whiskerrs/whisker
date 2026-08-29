@@ -7,6 +7,7 @@ use std::task::Poll;
 use base64::Engine as _;
 use wasm_bindgen::Clamped;
 use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::wasm_bindgen_test;
 use whisker::prelude::*;
 use whisker::runtime::RuntimeWakeHandle;
@@ -63,6 +64,172 @@ fn browser_pointer_metadata_maps_to_protocol_values() {
     assert_ne!(stable_pointer_id(-1), 0);
     assert_ne!(stable_pointer_id(0), stable_pointer_id(-1));
     assert_eq!(stable_pointer_id(-1), stable_pointer_id(-1));
+}
+
+#[wasm_bindgen_test]
+async fn scroll_view_emits_geometry_and_honors_scroll_behavior() {
+    let mut driver = Driver::new();
+    let registry = ElementRegistry::standard();
+    let scroll_registration = registry
+        .registration_for_builtin(whisker::ElementTag::ScrollView)
+        .unwrap();
+    let scroll_type = scroll_registration.element_type;
+    let scroll_to = scroll_registration
+        .command_named("scrollTo")
+        .unwrap()
+        .command;
+    let view_type = registry
+        .registration_for_builtin(whisker::ElementTag::View)
+        .unwrap()
+        .element_type;
+    let scroll = NodeId::new(1).unwrap();
+    let content = NodeId::new(2).unwrap();
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![
+                Operation::CreateNode {
+                    node: scroll,
+                    element_type: scroll_type,
+                },
+                Operation::CreateNode {
+                    node: content,
+                    element_type: view_type,
+                },
+                Operation::InsertChild {
+                    parent: scroll,
+                    child: content,
+                    index: 0,
+                },
+                Operation::SetLayout {
+                    node: scroll,
+                    geometry: LayoutGeometry {
+                        border_box: LayoutRect {
+                            width: 100.0,
+                            height: 80.0,
+                            ..LayoutRect::default()
+                        },
+                        content_box: LayoutRect {
+                            width: 100.0,
+                            height: 80.0,
+                            ..LayoutRect::default()
+                        },
+                    },
+                },
+                Operation::SetLayout {
+                    node: content,
+                    geometry: LayoutGeometry {
+                        border_box: LayoutRect {
+                            width: 100.0,
+                            height: 300.0,
+                            ..LayoutRect::default()
+                        },
+                        content_box: LayoutRect {
+                            width: 100.0,
+                            height: 300.0,
+                            ..LayoutRect::default()
+                        },
+                    },
+                },
+                Operation::SetEventMask {
+                    node: scroll,
+                    event_mask: 1,
+                },
+            ],
+        })
+        .unwrap();
+
+    let element = driver.node(1).dyn_into::<web_sys::HtmlElement>().unwrap();
+    element.set_scroll_top(120);
+    element
+        .dispatch_event(&web_sys::Event::new("scroll").unwrap())
+        .unwrap();
+
+    let events = driver.sink.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].name, "scroll");
+    let WhiskerValue::Map(detail) = &events[0].detail else {
+        panic!("scroll detail must be a map")
+    };
+    assert_eq!(detail.get("scrollTop"), Some(&WhiskerValue::Int(120)));
+    assert_eq!(detail.get("viewportHeight"), Some(&WhiskerValue::Int(80)));
+    assert_eq!(detail.get("scrollHeight"), Some(&WhiskerValue::Int(300)));
+
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 2,
+                base_revision: 1,
+                target_revision: 2,
+                viewport_epoch: 1,
+                mode: FrameMode::Delta,
+            },
+            operations: vec![Operation::InvokeCommand {
+                node: scroll,
+                command: scroll_to,
+                arguments: WhiskerValue::map([
+                    ("offset", WhiskerValue::Float(40.0)),
+                    ("smooth", WhiskerValue::Bool(false)),
+                ]),
+            }],
+        })
+        .unwrap();
+    assert_eq!(element.scroll_top(), 40);
+
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 3,
+                base_revision: 2,
+                target_revision: 3,
+                viewport_epoch: 1,
+                mode: FrameMode::Delta,
+            },
+            operations: vec![Operation::InvokeCommand {
+                node: scroll,
+                command: scroll_to,
+                arguments: WhiskerValue::map([
+                    ("offset", WhiskerValue::Float(200.0)),
+                    ("smooth", WhiskerValue::Bool(true)),
+                ]),
+            }],
+        })
+        .unwrap();
+    for _ in 0..20 {
+        if element.scroll_top() == 200 {
+            break;
+        }
+        wait_ms(50).await;
+    }
+    assert_eq!(element.scroll_top(), 200);
+}
+
+async fn wait_ms(milliseconds: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        web_sys::window()
+            .expect("browser Window")
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, milliseconds)
+            .expect("schedule browser timeout");
+    });
+    JsFuture::from(promise).await.expect("browser timeout");
 }
 
 #[wasm_bindgen_test]

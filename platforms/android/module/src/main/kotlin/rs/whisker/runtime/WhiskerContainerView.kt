@@ -3,11 +3,15 @@ package rs.whisker.runtime
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Rect
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ScrollView
 import kotlin.math.ceil
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
  * Concrete ViewGroup used by Whisker containers.
@@ -109,16 +113,260 @@ public open class WhiskerContainerView(context: Context) : ViewGroup(context) {
     }
 }
 
-/** Native vertical scroll container with a dedicated multi-child content host. */
-public class WhiskerScrollContainerView(context: Context) : ScrollView(context) {
+/** Native two-axis scroll container with a dedicated multi-child content host. */
+public class WhiskerScrollContainerView(context: Context) : FrameLayout(context), WhiskerEventSource {
     public val contentView: WhiskerContainerView = WhiskerContainerView(context)
+    private var eventSink: ((String, WhiskerValue) -> Unit)? = null
+    private var horizontal = false
+    private var snapFactor: Double? = null
+    private var snapOffset = 0.0
+    private var snapStopAlways = false
+    private var userScrollEnabled = true
+    private var scrollSequenceStart: Int? = null
+    private var settleGeneration = 0
+
+    private val verticalScroller = object : ScrollView(context) {
+        override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
+            userScrollEnabled && super.onInterceptTouchEvent(event)
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            if (!userScrollEnabled) return false
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                scrollSequenceStart = scrollY
+            }
+            val handled = super.onTouchEvent(event)
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                scheduleSnap()
+            }
+            return handled
+        }
+
+        override fun fling(velocityY: Int) {
+            if (snapStopAlways && snapFactor != null) {
+                snapToAdjacentChild(velocityY.compareTo(0))
+            } else {
+                super.fling(velocityY)
+                scheduleSnap()
+            }
+        }
+    }
+
+    private val horizontalScroller = object : HorizontalScrollView(context) {
+        override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
+            userScrollEnabled && super.onInterceptTouchEvent(event)
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            if (!userScrollEnabled) return false
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                scrollSequenceStart = scrollX
+            }
+            val handled = super.onTouchEvent(event)
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                scheduleSnap()
+            }
+            return handled
+        }
+
+        override fun fling(velocityX: Int) {
+            if (snapStopAlways && snapFactor != null) {
+                snapToAdjacentChild(velocityX.compareTo(0))
+            } else {
+                super.fling(velocityX)
+                scheduleSnap()
+            }
+        }
+    }
 
     init {
-        isFillViewport = true
         clipToPadding = false
-        addView(
+        verticalScroller.isFillViewport = true
+        horizontalScroller.isFillViewport = true
+        verticalScroller.clipToPadding = false
+        horizontalScroller.clipToPadding = false
+        addView(verticalScroller, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(horizontalScroller, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        verticalScroller.addView(
             contentView,
-            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
+            FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
         )
+        horizontalScroller.visibility = View.GONE
+        verticalScroller.setOnScrollChangeListener { _, _, _, _, _ -> emitScroll() }
+        horizontalScroller.setOnScrollChangeListener { _, _, _, _, _ -> emitScroll() }
+    }
+
+    override fun installWhiskerEventSink(sink: ((String, WhiskerValue) -> Unit)?) {
+        eventSink = sink
+    }
+
+    /** Switches the native scrolling axis without changing the Rust-owned child tree. */
+    public fun setScrollOrientation(value: String) {
+        val nextHorizontal = value == "horizontal"
+        if (horizontal == nextHorizontal) return
+        val old = activeScroller()
+        val oldX = old.scrollX
+        val oldY = old.scrollY
+        (contentView.parent as? ViewGroup)?.removeView(contentView)
+        horizontal = nextHorizontal
+        if (horizontal) {
+            horizontalScroller.addView(
+                contentView,
+                FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT),
+            )
+        } else {
+            verticalScroller.addView(
+                contentView,
+                FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
+            )
+        }
+        verticalScroller.visibility = if (horizontal) View.GONE else View.VISIBLE
+        horizontalScroller.visibility = if (horizontal) View.VISIBLE else View.GONE
+        post { activeScroller().scrollTo(if (horizontal) oldX else 0, if (horizontal) 0 else oldY) }
+    }
+
+    /** Configures direct-child snapping in logical pixels. */
+    public fun setItemSnap(factor: Double, offset: Double) {
+        snapFactor = factor.coerceIn(0.0, 1.0)
+        snapOffset = offset
+    }
+
+    public fun clearItemSnap() {
+        snapFactor = null
+        settleGeneration += 1
+    }
+
+    public fun setScrollSnapStop(value: String) {
+        snapStopAlways = value == "always"
+    }
+
+    /** Enables touch-driven scrolling while keeping imperative commands live. */
+    public fun setUserScrollEnabled(value: Boolean) {
+        userScrollEnabled = value
+        if (!value) {
+            verticalScroller.stopNestedScroll()
+            horizontalScroller.stopNestedScroll()
+        }
+    }
+
+    public fun scrollToLogicalOffset(offset: Double, smooth: Boolean) {
+        val pixels = (offset * resources.displayMetrics.density).roundToInt()
+        if (horizontal) {
+            if (smooth) horizontalScroller.smoothScrollTo(pixels, 0)
+            else horizontalScroller.scrollTo(pixels, 0)
+        } else {
+            if (smooth) verticalScroller.smoothScrollTo(0, pixels)
+            else verticalScroller.scrollTo(0, pixels)
+        }
+    }
+
+    public fun scrollByLogicalOffset(offset: Double, smooth: Boolean) {
+        val pixels = (offset * resources.displayMetrics.density).roundToInt()
+        if (horizontal) {
+            if (smooth) horizontalScroller.smoothScrollBy(pixels, 0)
+            else horizontalScroller.scrollBy(pixels, 0)
+        } else {
+            if (smooth) verticalScroller.smoothScrollBy(0, pixels)
+            else verticalScroller.scrollBy(0, pixels)
+        }
+    }
+
+    override fun scrollTo(x: Int, y: Int) {
+        if (horizontal) {
+            horizontalScroller.scrollTo(x, 0)
+        } else {
+            verticalScroller.scrollTo(0, y)
+        }
+    }
+
+    private fun activeScroller(): View = if (horizontal) horizontalScroller else verticalScroller
+
+    private fun emitScroll() {
+        val density = resources.displayMetrics.density.toDouble()
+        val scroller = activeScroller()
+        eventSink?.invoke(
+            "scroll",
+            WhiskerValue.Map(
+                mapOf(
+                    "scrollLeft" to WhiskerValue.Float(scroller.scrollX / density),
+                    "scrollTop" to WhiskerValue.Float(scroller.scrollY / density),
+                    "scrollWidth" to WhiskerValue.Float(contentView.width / density),
+                    "scrollHeight" to WhiskerValue.Float(contentView.height / density),
+                    "viewportWidth" to WhiskerValue.Float(width / density),
+                    "viewportHeight" to WhiskerValue.Float(height / density),
+                ),
+            ),
+        )
+    }
+
+    private fun scheduleSnap() {
+        if (snapFactor == null) return
+        val generation = ++settleGeneration
+        var previous = if (horizontal) horizontalScroller.scrollX else verticalScroller.scrollY
+        var stableFrames = 0
+        val check = object : Runnable {
+            override fun run() {
+                if (generation != settleGeneration || snapFactor == null) return
+                val current = if (horizontal) horizontalScroller.scrollX else verticalScroller.scrollY
+                if (current == previous) stableFrames += 1 else stableFrames = 0
+                previous = current
+                if (stableFrames >= 2) {
+                    snapToNearestChild()
+                } else {
+                    postDelayed(this, 32L)
+                }
+            }
+        }
+        postDelayed(check, 32L)
+    }
+
+    private fun snapToNearestChild() {
+        val current = if (horizontal) horizontalScroller.scrollX else verticalScroller.scrollY
+        val start = scrollSequenceStart ?: current
+        val targets = snapTargets()
+        val target = (if (snapStopAlways && current > start) {
+            targets.firstOrNull { it > start } ?: targets.lastOrNull()
+        } else if (snapStopAlways && current < start) {
+            targets.lastOrNull { it < start } ?: targets.firstOrNull()
+        } else {
+            targets.minByOrNull { kotlin.math.abs(it - current) }
+        }) ?: return
+        scrollSequenceStart = null
+        if (target == current) return
+        if (horizontal) horizontalScroller.smoothScrollTo(target, 0)
+        else verticalScroller.smoothScrollTo(0, target)
+    }
+
+    private fun snapToAdjacentChild(direction: Int) {
+        val current = if (horizontal) horizontalScroller.scrollX else verticalScroller.scrollY
+        val start = scrollSequenceStart ?: current
+        val targets = snapTargets()
+        val target = when {
+            direction > 0 -> targets.firstOrNull { it > start } ?: targets.lastOrNull()
+            direction < 0 -> targets.lastOrNull { it < start } ?: targets.firstOrNull()
+            else -> targets.minByOrNull { kotlin.math.abs(it - current) }
+        } ?: return
+        scrollSequenceStart = null
+        settleGeneration += 1
+        if (horizontal) horizontalScroller.smoothScrollTo(target, 0)
+        else verticalScroller.smoothScrollTo(0, target)
+    }
+
+    private fun snapTargets(): List<Int> {
+        val factor = snapFactor ?: return emptyList()
+        if (contentView.childCount == 0) return emptyList()
+        val density = resources.displayMetrics.density.toDouble()
+        val viewport = if (horizontal) width else height
+        val contentExtent = if (horizontal) contentView.width else contentView.height
+        val maxOffset = (contentExtent - viewport).coerceAtLeast(0)
+        return (0 until contentView.childCount)
+            .map { contentView.getChildAt(it) }
+            .map { child ->
+                val start = if (horizontal) child.x.toDouble() else child.y.toDouble()
+                val size = if (horizontal) child.width.toDouble() else child.height.toDouble()
+                (start + size * factor - viewport * factor + snapOffset * density)
+                    .toInt()
+                    .coerceIn(0, maxOffset)
+            }
+            .distinct()
+            .sorted()
     }
 }

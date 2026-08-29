@@ -233,14 +233,14 @@ public struct WhiskerTextShadow {
 public final class WhiskerMountedElement {
     public let registration: WhiskerElementRegistration
     public let view: UIView
-    private let nativeElement: WhiskerNativeElement?
+    private let eventSource: WhiskerEventSource?
     private let textUpdater: ((UIView, WhiskerTextContent) -> Void)?
     private let textStyleUpdater: ((UIView, WhiskerTextStyle) -> Void)?
     private let childrenHostProvider: ((UIView) -> UIView)?
     private let properties: [Int: WhiskerPropComponent]
     private let commands: [Int: WhiskerCommandComponent]
     private let eventsByName: [String: WhiskerEventBinding]
-    private let eventSink: WhiskerElementEventSink
+    private var eventSink: WhiskerElementEventSink
     private var eventMask: UInt64 = 0
 
     fileprivate init(
@@ -256,7 +256,7 @@ public final class WhiskerMountedElement {
     ) {
         self.registration = registration
         self.view = view
-        self.nativeElement = view as? WhiskerNativeElement
+        self.eventSource = view as? WhiskerEventSource
         self.textUpdater = textUpdater
         self.textStyleUpdater = textStyleUpdater
         self.childrenHostProvider = childrenHost
@@ -264,7 +264,11 @@ public final class WhiskerMountedElement {
         self.commands = commands
         self.eventsByName = eventsByName
         self.eventSink = eventSink
-        nativeElement?.installWhiskerEventSink { [weak self] name, detail in
+        installEventSink()
+    }
+
+    private func installEventSink() {
+        eventSource?.installWhiskerEventSink { [weak self] name, detail in
             guard let self, let event = self.eventsByName[name] else { return }
             let bit = UInt64(1) << UInt64(event.id - 1)
             if self.eventMask & bit != 0 { self.eventSink(event, detail) }
@@ -297,7 +301,16 @@ public final class WhiskerMountedElement {
     }
 
     public func childrenHost() -> UIView? { childrenHostProvider?(view) }
-    public func dispose() { nativeElement?.installWhiskerEventSink(nil) }
+
+    /** Resets protocol-owned state before a built-in presentation is reused. */
+    public func prepareForReuse(eventSink: @escaping WhiskerElementEventSink) {
+        properties.values.forEach { $0.clearer(view) }
+        eventMask = 0
+        self.eventSink = eventSink
+        installEventSink()
+    }
+
+    public func dispose() { eventSource?.installWhiskerEventSink(nil) }
 }
 
 /** Host-owned declaration. It contains names and behavior, never Rust IDs. */

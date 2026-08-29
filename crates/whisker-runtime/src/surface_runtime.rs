@@ -16,12 +16,12 @@ use crate::transform_interpolation::interpolate_transform_style;
 #[cfg(test)]
 use crate::transform_interpolation::{identity_transform_function, interpolate_transform_function};
 use crate::value::WhiskerValue;
-use crate::view::{BindType, DynRenderer, Element};
+use crate::view::{BindType, DynRenderer, Element, with_installed_renderer};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior, InputEvent,
-    InputEventError, MeasurementReady, NodeId, PaintColor, ResourceCommand, ResourceEvent,
-    ResourceId, ResourceMessageError, SurfaceId,
+    InputEventError, LayoutGeometry, MeasurementReady, NodeId, PaintColor, ResourceCommand,
+    ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
 };
 #[cfg(test)]
 use whisker_engine::whisker_style::ComputedTransformFunction;
@@ -394,6 +394,9 @@ impl SurfaceRuntime {
                 released_resource_generations: HashSet::new(),
                 resource_events: HashMap::new(),
                 background_resources: BackgroundResourceManager::default(),
+                mutation_batch: None,
+                #[cfg(test)]
+                surface_snapshot_count: 0,
             })),
         }
     }
@@ -427,9 +430,27 @@ impl SurfaceRuntime {
         self.state.borrow().error.clone()
     }
 
+    #[cfg(test)]
+    pub(crate) fn reset_surface_snapshot_count(&self) {
+        self.state.borrow_mut().surface_snapshot_count = 0;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn surface_snapshot_count(&self) -> usize {
+        self.state.borrow().surface_snapshot_count
+    }
+
     /// Returns the environment used for viewport-relative style resolution.
     pub fn environment(&self) -> StyleEnvironment {
         self.state.borrow().environment
+    }
+
+    pub(crate) fn begin_mutation_batch(&self) {
+        self.state.borrow_mut().begin_mutation_batch();
+    }
+
+    pub(crate) fn finish_mutation_batch(&self) -> Result<(), RuntimeBindingError> {
+        self.state.borrow_mut().finish_mutation_batch()
     }
 
     /// Samples active Rust-owned transitions at one Host frame timestamp.
@@ -872,22 +893,51 @@ impl SurfaceRuntime {
         provider: &mut Provider,
         options: LayoutOptions,
     ) -> Result<LayoutProgress, RuntimeLayoutError<Provider::Error>> {
-        let mut state = self.state.borrow_mut();
-        if let Some(error) = state.error.clone() {
-            return Err(RuntimeLayoutError::Binding(error));
+        let (layout, notifications) = {
+            let mut state = self.state.borrow_mut();
+            if let Some(error) = state.error.clone() {
+                return Err(RuntimeLayoutError::Binding(error));
+            }
+            state
+                .flush_background_projections()
+                .map_err(RuntimeLayoutError::Binding)?;
+            let root = state.root.ok_or(RuntimeLayoutError::MissingRoot)?;
+            let layout = state
+                .surface
+                .drive_layout(root, viewport, environment_epoch, provider, options)
+                .map_err(RuntimeLayoutError::Measurement)?;
+            let transform_updates =
+                BindingState::active_transform_updates(&state.elements, &state.surface);
+            BindingState::apply_transform_updates(transform_updates, &mut state.surface)
+                .map_err(RuntimeLayoutError::Binding)?;
+            let notifications = if layout.has_layout() {
+                state
+                    .elements
+                    .values()
+                    .filter_map(|entry| {
+                        let geometry = state.surface.last_layout()?.get(entry.node?).copied()?;
+                        Some(
+                            entry
+                                .layout_observers
+                                .iter()
+                                .cloned()
+                                .map(move |callback| (callback, geometry)),
+                        )
+                    })
+                    .flatten()
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            (layout, notifications)
+        };
+        if !notifications.is_empty() {
+            with_installed_renderer(self.renderer(), || {
+                for (callback, geometry) in notifications {
+                    callback(geometry);
+                }
+            });
         }
-        state
-            .flush_background_projections()
-            .map_err(RuntimeLayoutError::Binding)?;
-        let root = state.root.ok_or(RuntimeLayoutError::MissingRoot)?;
-        let layout = state
-            .surface
-            .drive_layout(root, viewport, environment_epoch, provider, options)
-            .map_err(RuntimeLayoutError::Measurement)?;
-        let transform_updates =
-            BindingState::active_transform_updates(&state.elements, &state.surface);
-        BindingState::apply_transform_updates(transform_updates, &mut state.surface)
-            .map_err(RuntimeLayoutError::Binding)?;
         Ok(layout)
     }
 
@@ -957,6 +1007,7 @@ struct BoundElement {
     text: Option<PlainTextInput>,
     raw_text: String,
     listeners: HashMap<String, Vec<RuntimeListener>>,
+    layout_observers: Vec<Rc<dyn Fn(LayoutGeometry) + 'static>>,
     style_initialized: bool,
     opacity_transition: Option<Box<ActiveTransition<f32>>>,
     color_transitions: Option<Box<ActiveColorTransitions>>,
@@ -1836,6 +1887,25 @@ struct BindingState {
     released_resource_generations: HashSet<(ResourceId, u64)>,
     resource_events: HashMap<(ResourceId, u64), ResourceEvent>,
     background_resources: BackgroundResourceManager,
+    mutation_batch: Option<MutationBatch>,
+    #[cfg(test)]
+    surface_snapshot_count: usize,
+}
+
+struct MutationBatch {
+    // Batches are nestable so future runtime boundaries can compose without
+    // accidentally committing an outer event halfway through.
+    depth: usize,
+    // Preserve first-dirtied order for deterministic frame construction.
+    dirty_elements: Vec<Element>,
+    // The first snapshot wins when one handler writes the same style more
+    // than once: transitions run from the pre-event value to the final value.
+    style_changes: Vec<(Element, PendingStyleChange)>,
+}
+
+struct PendingStyleChange {
+    previous: SpecifiedStyle,
+    snapshots: Vec<MotionSnapshot>,
 }
 
 struct EnvironmentStyleUpdate {
@@ -1846,6 +1916,84 @@ struct EnvironmentStyleUpdate {
 }
 
 impl BindingState {
+    fn begin_mutation_batch(&mut self) {
+        if let Some(batch) = &mut self.mutation_batch {
+            batch.depth += 1;
+            return;
+        }
+        self.mutation_batch = Some(MutationBatch {
+            depth: 1,
+            dirty_elements: Vec::new(),
+            style_changes: Vec::new(),
+        });
+    }
+
+    fn finish_mutation_batch(&mut self) -> Result<(), RuntimeBindingError> {
+        let Some(batch) = &mut self.mutation_batch else {
+            return Ok(());
+        };
+        if batch.depth > 1 {
+            batch.depth -= 1;
+            return Ok(());
+        }
+        let batch = self
+            .mutation_batch
+            .take()
+            .expect("the outermost mutation batch remains installed");
+        let roots = self.minimal_dirty_roots(batch.dirty_elements);
+        if let Err(error) = self.apply_subtrees_now(&roots) {
+            for (element, change) in batch.style_changes {
+                if let Some(entry) = self.elements.get_mut(&element) {
+                    entry.specified = change.previous;
+                }
+            }
+            self.record(Err(error.clone()));
+            return Err(error);
+        }
+        let snapshots = batch
+            .style_changes
+            .into_iter()
+            .flat_map(|(_, change)| change.snapshots)
+            .collect::<Vec<_>>();
+        if !snapshots.is_empty()
+            && let Err(error) = self.configure_style_motion(snapshots)
+        {
+            self.record(Err(error.clone()));
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn mark_subtree_dirty(&mut self, element: Element) {
+        let Some(batch) = &mut self.mutation_batch else {
+            return;
+        };
+        if !batch.dirty_elements.contains(&element) {
+            batch.dirty_elements.push(element);
+        }
+    }
+
+    fn minimal_dirty_roots(&self, dirty: Vec<Element>) -> Vec<Element> {
+        let dirty = dirty
+            .into_iter()
+            .filter(|element| self.elements.contains_key(element))
+            .collect::<Vec<_>>();
+        let dirty_set = dirty.iter().copied().collect::<HashSet<_>>();
+        dirty
+            .into_iter()
+            .filter(|element| {
+                let mut parent = self.elements.get(element).and_then(|entry| entry.parent);
+                while let Some(candidate) = parent {
+                    if dirty_set.contains(&candidate) {
+                        return false;
+                    }
+                    parent = self.elements.get(&candidate).and_then(|entry| entry.parent);
+                }
+                true
+            })
+            .collect()
+    }
+
     fn ensure_valid(&self) -> Result<(), RuntimeBindingError> {
         match &self.error {
             Some(error) => Err(error.clone()),
@@ -2105,6 +2253,7 @@ impl BindingState {
                 text,
                 raw_text: String::new(),
                 listeners: HashMap::new(),
+                layout_observers: Vec::new(),
                 style_initialized: false,
                 opacity_transition: None,
                 color_transitions: None,
@@ -2206,26 +2355,46 @@ impl BindingState {
     }
 
     fn apply_subtree(&mut self, element: Element) -> Result<(), RuntimeBindingError> {
-        let parent_style = self
-            .element(element)?
-            .parent
-            .and_then(|parent| self.elements.get(&parent))
-            .and_then(|parent| parent.resolved.as_ref())
-            .map(|resolved| resolved.inherited_for_children().clone());
+        if self.mutation_batch.is_some() {
+            self.element(element)?;
+            self.mark_subtree_dirty(element);
+            return Ok(());
+        }
+        self.apply_subtrees_now(&[element])
+    }
+
+    fn apply_subtrees_now(&mut self, elements: &[Element]) -> Result<(), RuntimeBindingError> {
+        if elements.is_empty() {
+            return Ok(());
+        }
+        #[cfg(test)]
+        {
+            self.surface_snapshot_count += 1;
+        }
+        // One speculative snapshot preserves the existing all-or-nothing
+        // lowering contract for every dirty root in this event.
         let mut surface = self.surface.clone();
         let mut background_resources = self.background_resources.clone();
         let externally_used = self.externally_used_resource_ids();
         let mut updates = Vec::new();
         let mut resource_commands = Vec::new();
-        self.prepare_subtree(
-            element,
-            parent_style.as_ref(),
-            &mut surface,
-            &mut background_resources,
-            &externally_used,
-            &mut updates,
-            &mut resource_commands,
-        )?;
+        for element in elements {
+            let parent_style = self
+                .element(*element)?
+                .parent
+                .and_then(|parent| self.elements.get(&parent))
+                .and_then(|parent| parent.resolved.as_ref())
+                .map(|resolved| resolved.inherited_for_children().clone());
+            self.prepare_subtree(
+                *element,
+                parent_style.as_ref(),
+                &mut surface,
+                &mut background_resources,
+                &externally_used,
+                &mut updates,
+                &mut resource_commands,
+            )?;
+        }
         Self::reapply_active_transitions(&self.elements, &mut surface)?;
 
         self.surface = surface;
@@ -2235,6 +2404,59 @@ impl BindingState {
         }
         self.enqueue_automatic_commands(resource_commands);
         Ok(())
+    }
+
+    fn configure_style_motion(
+        &mut self,
+        snapshots: Vec<MotionSnapshot>,
+    ) -> Result<(), RuntimeBindingError> {
+        for snapshot in &snapshots {
+            self.configure_layout_transitions(
+                snapshot.element,
+                &snapshot.layout_targets,
+                &snapshot.layout_current,
+                snapshot.initialized,
+            )?;
+            if self.element(snapshot.element)?.resolved.as_ref() != Some(&snapshot.resolved) {
+                self.configure_keyframe_animations(snapshot.element)?;
+            }
+            self.configure_opacity_transition(
+                snapshot.element,
+                snapshot.opacity_target,
+                snapshot.opacity_current,
+                snapshot.initialized,
+            )?;
+            self.configure_color_transitions(
+                snapshot.element,
+                &snapshot.box_paint,
+                &snapshot.current_colors,
+                snapshot.initialized,
+            )?;
+            self.configure_transform_transition(
+                snapshot.element,
+                &snapshot.transform_target,
+                &snapshot.transform_current,
+                snapshot.initialized,
+            )?;
+        }
+        {
+            let state = &mut *self;
+            Self::reapply_active_transitions(&state.elements, &mut state.surface)?;
+        }
+        for snapshot in snapshots {
+            if let (Some(target), Some(current)) =
+                (snapshot.text_color_target, snapshot.text_color_current)
+            {
+                self.configure_text_color_transition(
+                    snapshot.element,
+                    target,
+                    current,
+                    snapshot.initialized,
+                )?;
+            }
+        }
+        let text_updates = Self::active_text_color_updates(&self.elements);
+        Self::apply_text_color_updates(text_updates, &mut self.surface)
     }
 
     fn reapply_active_transitions(
@@ -3673,6 +3895,18 @@ impl DynRenderer for SurfaceRuntime {
         state.record(result);
     }
 
+    fn set_attribute_object(&self, handle: Element, key: &str, object: &[(String, f64)]) {
+        let mut state = self.state.borrow_mut();
+        let value = WhiskerValue::Map(
+            object
+                .iter()
+                .map(|(name, value)| (name.clone(), WhiskerValue::Float(*value)))
+                .collect(),
+        );
+        let result = state.set_property_value(handle, key, value);
+        state.record(result);
+    }
+
     fn set_attribute_double(&self, handle: Element, key: &str, value: f64) {
         let mut state = self.state.borrow_mut();
         let result = state.set_property_value(handle, key, WhiskerValue::Float(value));
@@ -3701,64 +3935,55 @@ impl DynRenderer for SurfaceRuntime {
                 return Ok(());
             }
             let previous = entry.specified.clone();
-            let snapshots = state.motion_snapshots(handle)?;
+            let batched = state.mutation_batch.is_some();
+            let capture_change = batched
+                && !state.mutation_batch.as_ref().is_some_and(|batch| {
+                    batch
+                        .style_changes
+                        .iter()
+                        .any(|(element, _)| *element == handle)
+                });
+            let snapshots = (!batched || capture_change)
+                .then(|| state.motion_snapshots(handle))
+                .transpose()?;
             state.element_mut(handle)?.specified = style.clone();
+            if batched {
+                if let Some(snapshots) = snapshots {
+                    state
+                        .mutation_batch
+                        .as_mut()
+                        .expect("a batched style change keeps its transaction")
+                        .style_changes
+                        .push((
+                            handle,
+                            PendingStyleChange {
+                                previous,
+                                snapshots,
+                            },
+                        ));
+                }
+                state.mark_subtree_dirty(handle);
+                return Ok(());
+            }
             if let Err(error) = state.apply_subtree(handle) {
                 state.element_mut(handle)?.specified = previous;
                 return Err(error);
             }
-            for snapshot in &snapshots {
-                state.configure_layout_transitions(
-                    snapshot.element,
-                    &snapshot.layout_targets,
-                    &snapshot.layout_current,
-                    snapshot.initialized,
-                )?;
-                if state.element(snapshot.element)?.resolved.as_ref() != Some(&snapshot.resolved) {
-                    state.configure_keyframe_animations(snapshot.element)?;
-                }
-                state.configure_opacity_transition(
-                    snapshot.element,
-                    snapshot.opacity_target,
-                    snapshot.opacity_current,
-                    snapshot.initialized,
-                )?;
-                state.configure_color_transitions(
-                    snapshot.element,
-                    &snapshot.box_paint,
-                    &snapshot.current_colors,
-                    snapshot.initialized,
-                )?;
-                state.configure_transform_transition(
-                    snapshot.element,
-                    &snapshot.transform_target,
-                    &snapshot.transform_current,
-                    snapshot.initialized,
-                )?;
-            }
-            {
-                let state = &mut *state;
-                BindingState::reapply_active_transitions(&state.elements, &mut state.surface)?;
-            }
-            for snapshot in snapshots {
-                if let (Some(target), Some(current)) =
-                    (snapshot.text_color_target, snapshot.text_color_current)
-                {
-                    state.configure_text_color_transition(
-                        snapshot.element,
-                        target,
-                        current,
-                        snapshot.initialized,
-                    )?;
-                }
-            }
-            let text_updates = BindingState::active_text_color_updates(&state.elements);
-            BindingState::apply_text_color_updates(text_updates, &mut state.surface)?;
-            Ok(())
+            state.configure_style_motion(
+                snapshots.expect("an immediate style change captures motion state"),
+            )
         })();
         let accepted = result.is_ok();
         state.record(result);
         accepted
+    }
+
+    fn specified_style(&self, handle: Element) -> Option<SpecifiedStyle> {
+        self.state
+            .borrow()
+            .elements
+            .get(&handle)
+            .map(|entry| entry.specified.clone())
     }
 
     fn append_child(&self, parent: Element, child: Element) {
@@ -3814,6 +4039,14 @@ impl DynRenderer for SurfaceRuntime {
             state.surface.set_hit_test(node, HitTestBehavior::Auto)?;
             Ok(())
         })();
+        state.record(result);
+    }
+
+    fn observe_layout(&self, handle: Element, callback: Box<dyn Fn(LayoutGeometry) + 'static>) {
+        let mut state = self.state.borrow_mut();
+        let result = state
+            .element_mut(handle)
+            .map(|entry| entry.layout_observers.push(Rc::from(callback)));
         state.record(result);
     }
 

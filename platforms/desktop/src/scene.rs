@@ -66,6 +66,15 @@ struct RenderNode {
     content: DesktopElementContent,
     event_mask: u64,
     scroll_offset: [f32; 2],
+    scroll_sequence_start: Option<[f32; 2]>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SmoothScroll {
+    start: [f32; 2],
+    target: [f32; 2],
+    elapsed_ms: f32,
+    duration_ms: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -325,6 +334,8 @@ pub(crate) struct DesktopScene {
     validation: SceneProjection,
     elements: DesktopElementRegistry,
     nodes: HashMap<NodeId, RenderNode>,
+    smooth_scrolls: HashMap<NodeId, SmoothScroll>,
+    presentation_pool: HashMap<ElementTypeId, Vec<DesktopElementContent>>,
     pending_events: Arc<Mutex<Vec<DesktopProviderEvent>>>,
     event_wake: RuntimeWakeHandle,
     raster_resources: HashSet<ResourceId>,
@@ -345,6 +356,8 @@ impl DesktopScene {
             validation: SceneProjection::new(surface),
             elements,
             nodes: HashMap::new(),
+            smooth_scrolls: HashMap::new(),
+            presentation_pool: HashMap::new(),
             pending_events: Arc::new(Mutex::new(Vec::new())),
             event_wake,
             raster_resources: HashSet::new(),
@@ -469,44 +482,301 @@ impl DesktopScene {
     }
 
     pub(crate) fn scroll_at(&mut self, point: [f32; 2], delta: [f32; 2]) -> bool {
-        let Some(hit) = self.hit_test(point) else {
+        let Some(node) = self.scroll_node_at(point) else {
             return false;
         };
-        let mut current = Some(hit);
-        while let Some(node) = current {
-            let is_scroll = self
-                .nodes
-                .get(&node)
-                .is_some_and(|state| state.content.is_scroll_container());
-            if is_scroll {
-                let max = self.max_scroll_offset(node);
-                let state = self.nodes.get_mut(&node).expect("scroll hit remains live");
-                let next = [0.0, (state.scroll_offset[1] + delta[1]).clamp(0.0, max[1])];
-                let changed = next != state.scroll_offset;
-                state.scroll_offset = next;
-                return changed;
-            }
-            current = self
-                .nodes
-                .get(&node)
-                .and_then(|state| state.presentation.parent);
+        if !self.nodes[&node].content.scroll_enabled() {
+            return false;
         }
-        false
+        self.smooth_scrolls.remove(&node);
+        let horizontal = self.nodes[&node].content.scroll_horizontal();
+        let primary = if horizontal {
+            if delta[0].abs() > f32::EPSILON {
+                delta[0]
+            } else {
+                delta[1]
+            }
+        } else if delta[1].abs() > f32::EPSILON {
+            delta[1]
+        } else {
+            delta[0]
+        };
+        let applied = if horizontal {
+            [primary, 0.0]
+        } else {
+            [0.0, primary]
+        };
+        let max = self.max_scroll_offset(node);
+        let state = self.nodes.get_mut(&node).expect("scroll hit remains live");
+        state
+            .scroll_sequence_start
+            .get_or_insert(state.scroll_offset);
+        let next = [
+            (state.scroll_offset[0] + applied[0]).clamp(0.0, max[0]),
+            (state.scroll_offset[1] + applied[1]).clamp(0.0, max[1]),
+        ];
+        let changed = next != state.scroll_offset;
+        state.scroll_offset = next;
+        if changed {
+            self.emit_scroll(node, next, max);
+        }
+        changed
+    }
+
+    fn apply_scroll_command(
+        &mut self,
+        node: NodeId,
+        command: whisker_protocol::CommandId,
+        arguments: &WhiskerValue,
+    ) -> bool {
+        if command != whisker::SCROLL_TO_COMMAND && command != whisker::SCROLL_BY_COMMAND {
+            return false;
+        }
+        let Some(state) = self.nodes.get(&node) else {
+            return false;
+        };
+        if !state.content.is_scroll_container() {
+            return false;
+        }
+        let WhiskerValue::Map(arguments) = arguments else {
+            return true;
+        };
+        let offset = match arguments.get("offset") {
+            Some(WhiskerValue::Float(value)) => *value as f32,
+            Some(WhiskerValue::Int(value)) => *value as f32,
+            _ => 0.0,
+        };
+        let smooth = matches!(arguments.get("smooth"), Some(WhiskerValue::Bool(true)));
+        let horizontal = state.content.scroll_horizontal();
+        let axis = usize::from(!horizontal);
+        let max = self.max_scroll_offset(node);
+        let current = state.scroll_offset[axis];
+        let target = if command == whisker::SCROLL_BY_COMMAND {
+            current + offset
+        } else {
+            offset
+        }
+        .clamp(0.0, max[axis]);
+        if (target - current).abs() < f32::EPSILON {
+            self.smooth_scrolls.remove(&node);
+            return true;
+        }
+        if smooth {
+            let mut target_offset = state.scroll_offset;
+            target_offset[axis] = target;
+            let distance = (target - current).abs();
+            self.smooth_scrolls.insert(
+                node,
+                SmoothScroll {
+                    start: state.scroll_offset,
+                    target: target_offset,
+                    elapsed_ms: 0.0,
+                    duration_ms: (160.0 + distance * 0.35).clamp(180.0, 420.0),
+                },
+            );
+            self.event_wake.wake();
+            return true;
+        }
+        self.smooth_scrolls.remove(&node);
+        let state = self.nodes.get_mut(&node).expect("scroll node remains live");
+        state.scroll_offset[axis] = target;
+        let next = state.scroll_offset;
+        self.emit_scroll(node, next, max);
+        true
+    }
+
+    pub(crate) fn has_active_scroll_animations(&self) -> bool {
+        !self.smooth_scrolls.is_empty()
+    }
+
+    pub(crate) fn advance_scroll_animations(&mut self, delta_ms: f32) -> bool {
+        if self.smooth_scrolls.is_empty() {
+            return false;
+        }
+        let nodes = self.smooth_scrolls.keys().copied().collect::<Vec<_>>();
+        for node in nodes {
+            let Some(mut animation) = self.smooth_scrolls.get(&node).copied() else {
+                continue;
+            };
+            if !self.nodes.contains_key(&node) {
+                self.smooth_scrolls.remove(&node);
+                continue;
+            }
+            animation.elapsed_ms =
+                (animation.elapsed_ms + delta_ms.max(0.0)).min(animation.duration_ms);
+            let progress = if animation.duration_ms <= f32::EPSILON {
+                1.0
+            } else {
+                animation.elapsed_ms / animation.duration_ms
+            };
+            let inverse = 1.0 - progress;
+            let eased = 1.0 - inverse * inverse * inverse;
+            let max = self.max_scroll_offset(node);
+            let next = [
+                (animation.start[0] + (animation.target[0] - animation.start[0]) * eased)
+                    .clamp(0.0, max[0]),
+                (animation.start[1] + (animation.target[1] - animation.start[1]) * eased)
+                    .clamp(0.0, max[1]),
+            ];
+            let state = self
+                .nodes
+                .get_mut(&node)
+                .expect("animated scroll node remains live");
+            let changed = state.scroll_offset != next;
+            state.scroll_offset = next;
+            if changed {
+                self.emit_scroll(node, next, max);
+            }
+            if progress >= 1.0 {
+                self.smooth_scrolls.remove(&node);
+            } else {
+                self.smooth_scrolls.insert(node, animation);
+            }
+        }
+        !self.smooth_scrolls.is_empty()
+    }
+
+    pub(crate) fn settle_scroll_at(&mut self, point: [f32; 2]) -> bool {
+        let Some(node) = self.scroll_node_at(point) else {
+            return false;
+        };
+        self.smooth_scrolls.remove(&node);
+        let state = &self.nodes[&node];
+        let Some((factor, offset)) = state.content.item_snap() else {
+            self.nodes
+                .get_mut(&node)
+                .expect("scroll hit remains live")
+                .scroll_sequence_start = None;
+            return false;
+        };
+        let horizontal = state.content.scroll_horizontal();
+        let stop_always = state.content.snap_stop_always();
+        let viewport = state.presentation.layout.content_box;
+        let current = state.scroll_offset[usize::from(!horizontal)];
+        let start =
+            state.scroll_sequence_start.unwrap_or(state.scroll_offset)[usize::from(!horizontal)];
+        let max = self.max_scroll_offset(node);
+        let maximum = max[usize::from(!horizontal)];
+        let viewport_extent = if horizontal {
+            viewport.width
+        } else {
+            viewport.height
+        };
+        let factor = factor.clamp(0.0, 1.0) as f32;
+        let offset = offset as f32;
+        let mut targets = state
+            .presentation
+            .children
+            .iter()
+            .filter_map(|child| self.nodes.get(child))
+            .map(|child| {
+                let rect = child.presentation.layout.border_box;
+                let (start, size) = if horizontal {
+                    (rect.x, rect.width)
+                } else {
+                    (rect.y, rect.height)
+                };
+                (start + size * factor - viewport_extent * factor + offset).clamp(0.0, maximum)
+            })
+            .collect::<Vec<_>>();
+        targets.sort_by(f32::total_cmp);
+        targets.dedup_by(|left, right| (*left - *right).abs() < f32::EPSILON);
+        let target = if stop_always && current > start + f32::EPSILON {
+            targets
+                .iter()
+                .copied()
+                .find(|target| *target > start + f32::EPSILON)
+                .or_else(|| targets.last().copied())
+        } else if stop_always && current < start - f32::EPSILON {
+            targets
+                .iter()
+                .rev()
+                .copied()
+                .find(|target| *target < start - f32::EPSILON)
+                .or_else(|| targets.first().copied())
+        } else {
+            targets
+                .into_iter()
+                .min_by(|left, right| (left - current).abs().total_cmp(&(right - current).abs()))
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        let state = self.nodes.get_mut(&node).expect("scroll hit remains live");
+        state.scroll_sequence_start = None;
+        let mut next = state.scroll_offset;
+        next[usize::from(!horizontal)] = target;
+        if next == state.scroll_offset {
+            return false;
+        }
+        state.scroll_offset = next;
+        self.emit_scroll(node, next, max);
+        true
+    }
+
+    fn scroll_node_at(&self, point: [f32; 2]) -> Option<NodeId> {
+        let mut current = self.hit_test(point);
+        while let Some(node) = current {
+            let state = self.nodes.get(&node)?;
+            if state.content.is_scroll_container() {
+                return Some(node);
+            }
+            current = state.presentation.parent;
+        }
+        None
+    }
+
+    fn emit_scroll(&self, node: NodeId, offset: [f32; 2], max: [f32; 2]) {
+        let viewport = self.nodes[&node].presentation.layout.content_box;
+        self.pending_events
+            .lock()
+            .unwrap()
+            .push(DesktopProviderEvent {
+                target: node,
+                name: "scroll".to_owned(),
+                detail: WhiskerValue::map([
+                    ("scrollLeft", WhiskerValue::Float(f64::from(offset[0]))),
+                    ("scrollTop", WhiskerValue::Float(f64::from(offset[1]))),
+                    (
+                        "scrollWidth",
+                        WhiskerValue::Float(f64::from(viewport.width + max[0])),
+                    ),
+                    (
+                        "scrollHeight",
+                        WhiskerValue::Float(f64::from(viewport.height + max[1])),
+                    ),
+                    (
+                        "viewportWidth",
+                        WhiskerValue::Float(f64::from(viewport.width)),
+                    ),
+                    (
+                        "viewportHeight",
+                        WhiskerValue::Float(f64::from(viewport.height)),
+                    ),
+                ]),
+            });
+        self.event_wake.wake();
     }
 
     fn max_scroll_offset(&self, node: NodeId) -> [f32; 2] {
         let state = self.nodes.get(&node).expect("scroll node remains live");
         let viewport = state.presentation.layout.content_box;
-        let content_height = state
+        let (content_width, content_height) = state
             .presentation
             .children
             .iter()
             .filter_map(|child| self.nodes.get(child))
-            .fold(viewport.height, |extent, child| {
+            .fold((viewport.width, viewport.height), |extent, child| {
                 let rect = child.presentation.layout.border_box;
-                extent.max(rect.y + rect.height)
+                (
+                    extent.0.max(rect.x + rect.width),
+                    extent.1.max(rect.y + rect.height),
+                )
             });
-        [0.0, (content_height - viewport.height).max(0.0)]
+        [
+            (content_width - viewport.width).max(0.0),
+            (content_height - viewport.height).max(0.0),
+        ]
     }
 
     fn clamp_scroll_offsets(&mut self) {
@@ -870,7 +1140,10 @@ impl DesktopScene {
 
     fn apply_operations(&mut self, packet: &FramePacket) {
         if packet.header.mode == FrameMode::Snapshot {
-            self.nodes.clear();
+            let nodes = std::mem::take(&mut self.nodes);
+            for (_, node) in nodes {
+                self.recycle_presentation(node);
+            }
             self.pending_events.lock().unwrap().clear();
         }
         for operation in &packet.operations {
@@ -888,9 +1161,14 @@ impl DesktopScene {
                         event_wake.wake();
                     });
                     let content = self
-                        .elements
-                        .create(*element_type, events)
-                        .expect("element operations were validated before commit");
+                        .presentation_pool
+                        .get_mut(element_type)
+                        .and_then(Vec::pop)
+                        .unwrap_or_else(|| {
+                            self.elements
+                                .create(*element_type, events)
+                                .expect("element operations were validated before commit")
+                        });
                     self.nodes.insert(
                         *node,
                         RenderNode {
@@ -899,6 +1177,7 @@ impl DesktopScene {
                             content,
                             event_mask: 0,
                             scroll_offset: [0.0; 2],
+                            scroll_sequence_start: None,
                         },
                     );
                 }
@@ -1059,11 +1338,13 @@ impl DesktopScene {
                     arguments,
                     ..
                 } => {
-                    let state = self.nodes.get_mut(node).expect("validated node");
-                    state
-                        .content
-                        .invoke_command(*node, *command, arguments)
-                        .expect("element command was validated before commit");
+                    if !self.apply_scroll_command(*node, *command, arguments) {
+                        let state = self.nodes.get_mut(node).expect("validated node");
+                        state
+                            .content
+                            .invoke_command(*node, *command, arguments)
+                            .expect("element command was validated before commit");
+                    }
                 }
                 Operation::SetHitTest { node, behavior } => {
                     self.nodes
@@ -1089,6 +1370,7 @@ impl DesktopScene {
     }
 
     fn delete_subtree(&mut self, node: NodeId) {
+        self.smooth_scrolls.remove(&node);
         let Some(removed) = self.nodes.remove(&node) else {
             return;
         };
@@ -1100,8 +1382,21 @@ impl DesktopScene {
                 .children
                 .retain(|candidate| *candidate != node);
         }
-        for child in removed.presentation.children {
+        let children = removed.presentation.children.clone();
+        for child in children {
             self.delete_subtree(child);
+        }
+        self.recycle_presentation(removed);
+    }
+
+    fn recycle_presentation(&mut self, mut node: RenderNode) {
+        if !self.elements.is_builtin_presentation(node.element_type) {
+            return;
+        }
+        node.content.reset_for_presentation_reuse();
+        let pool = self.presentation_pool.entry(node.element_type).or_default();
+        if pool.len() < 256 {
+            pool.push(node.content);
         }
     }
 }
@@ -1897,6 +2192,10 @@ mod tests {
                         node: scroll,
                         element_type: element_type(whisker::SCROLL_VIEW_ELEMENT_NAME),
                     },
+                    Operation::SetEventMask {
+                        node: scroll,
+                        event_mask: 1,
+                    },
                     Operation::CreateNode {
                         node: content,
                         element_type: element_type(whisker::VIEW_ELEMENT_NAME),
@@ -1950,6 +2249,21 @@ mod tests {
         assert_eq!(scene.hit_test([10.0, 60.0]), Some(content));
         assert!(scene.scroll_at([10.0, 60.0], [0.0, 120.0]));
         assert_eq!(scene.nodes[&scroll].scroll_offset, [0.0, 120.0]);
+        assert_eq!(
+            scene.take_events(),
+            vec![DesktopProviderEvent {
+                target: scroll,
+                name: "scroll".to_owned(),
+                detail: WhiskerValue::map([
+                    ("scrollLeft", WhiskerValue::Float(0.0)),
+                    ("scrollTop", WhiskerValue::Float(120.0)),
+                    ("scrollWidth", WhiskerValue::Float(100.0)),
+                    ("scrollHeight", WhiskerValue::Float(300.0)),
+                    ("viewportWidth", WhiskerValue::Float(98.0)),
+                    ("viewportHeight", WhiskerValue::Float(96.0)),
+                ]),
+            }]
+        );
         assert_eq!(scene.hit_test([10.0, 60.0]), Some(target));
         assert!(scene.paint_commands().iter().any(|command| {
             matches!(
@@ -1958,6 +2272,150 @@ mod tests {
                     if rect.x == 0.0 && rect.y == 30.0 && rect.width == 100.0
             )
         }));
+    }
+
+    #[test]
+    fn smooth_scroll_command_advances_on_host_frames() {
+        let scroll = id(1);
+        let content = id(2);
+        let mut scene = scene(SurfaceId::new(1).unwrap());
+        scene
+            .present(&packet(
+                FrameMode::Snapshot,
+                0,
+                1,
+                vec![
+                    Operation::CreateNode {
+                        node: scroll,
+                        element_type: element_type(whisker::SCROLL_VIEW_ELEMENT_NAME),
+                    },
+                    Operation::CreateNode {
+                        node: content,
+                        element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+                    },
+                    Operation::InsertChild {
+                        parent: scroll,
+                        child: content,
+                        index: 0,
+                    },
+                    Operation::SetLayout {
+                        node: scroll,
+                        geometry: geometry(0.0, 0.0, 100.0, 100.0),
+                    },
+                    Operation::SetLayout {
+                        node: content,
+                        geometry: geometry(0.0, 0.0, 100.0, 500.0),
+                    },
+                ],
+            ))
+            .unwrap();
+
+        scene
+            .present(&packet(
+                FrameMode::Delta,
+                1,
+                2,
+                vec![Operation::InvokeCommand {
+                    node: scroll,
+                    command: whisker::SCROLL_TO_COMMAND,
+                    arguments: WhiskerValue::map([
+                        ("offset", WhiskerValue::Float(240.0)),
+                        ("smooth", WhiskerValue::Bool(true)),
+                    ]),
+                }],
+            ))
+            .unwrap();
+
+        assert_eq!(scene.nodes[&scroll].scroll_offset, [0.0, 0.0]);
+        assert!(scene.has_active_scroll_animations());
+        assert!(scene.advance_scroll_animations(100.0));
+        let intermediate = scene.nodes[&scroll].scroll_offset[1];
+        assert!(intermediate > 0.0 && intermediate < 240.0);
+        assert!(!scene.advance_scroll_animations(1_000.0));
+        assert_eq!(scene.nodes[&scroll].scroll_offset, [0.0, 240.0]);
+    }
+
+    #[test]
+    fn snap_stop_always_limits_one_wheel_sequence_to_the_adjacent_child() {
+        let scroll = id(1);
+        let first = id(2);
+        let second = id(3);
+        let third = id(4);
+        let registrations = standard_element_registrations();
+        let scroll_registration = registrations
+            .iter()
+            .find(|registration| registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME)
+            .unwrap();
+        let orientation = scroll_registration
+            .property_named("scroll-orientation")
+            .unwrap()
+            .property;
+        let snap = scroll_registration
+            .property_named("item-snap")
+            .unwrap()
+            .property;
+        let snap_stop = scroll_registration
+            .property_named("scroll-snap-stop")
+            .unwrap()
+            .property;
+        let mut scene = scene(SurfaceId::new(1).unwrap());
+        let mut operations = vec![
+            Operation::CreateNode {
+                node: scroll,
+                element_type: scroll_registration.element_type,
+            },
+            Operation::SetEventMask {
+                node: scroll,
+                event_mask: 1,
+            },
+            Operation::SetProperty {
+                node: scroll,
+                property: orientation,
+                value: WhiskerValue::String("horizontal".into()),
+            },
+            Operation::SetProperty {
+                node: scroll,
+                property: snap,
+                value: WhiskerValue::map([
+                    ("factor", WhiskerValue::Float(0.0)),
+                    ("offset", WhiskerValue::Float(0.0)),
+                ]),
+            },
+            Operation::SetProperty {
+                node: scroll,
+                property: snap_stop,
+                value: WhiskerValue::String("always".into()),
+            },
+            Operation::SetLayout {
+                node: scroll,
+                geometry: geometry(0.0, 0.0, 320.0, 180.0),
+            },
+        ];
+        for (node, x) in [(first, 0.0), (second, 296.0), (third, 592.0)] {
+            operations.extend([
+                Operation::CreateNode {
+                    node,
+                    element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+                },
+                Operation::InsertChild {
+                    parent: scroll,
+                    child: node,
+                    index: node.get() as u32 - 2,
+                },
+                Operation::SetLayout {
+                    node,
+                    geometry: geometry(x, 0.0, 280.0, 180.0),
+                },
+            ]);
+        }
+        scene
+            .present(&packet(FrameMode::Snapshot, 0, 1, operations))
+            .unwrap();
+
+        assert!(scene.scroll_at([10.0, 10.0], [0.0, 500.0]));
+        assert_eq!(scene.nodes[&scroll].scroll_offset, [500.0, 0.0]);
+        assert!(scene.settle_scroll_at([10.0, 10.0]));
+        assert_eq!(scene.nodes[&scroll].scroll_offset, [296.0, 0.0]);
     }
 
     #[test]

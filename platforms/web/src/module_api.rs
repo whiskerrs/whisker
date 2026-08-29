@@ -643,13 +643,18 @@ pub struct WebNativeEvent {
 
 /// Cloneable event channel handed to each DOM-native element instance.
 #[derive(Clone)]
-pub struct WebEventEmitter(pub(crate) Rc<dyn Fn(WebNativeEvent)>);
+pub struct WebEventEmitter(pub(crate) Rc<dyn Fn(WebNativeEvent, bool)>);
 
 impl WebEventEmitter {
     /// Emits an event after the browser callback returns, at the next runtime
     /// frame boundary.
     pub fn emit(&self, event: WebNativeEvent) {
-        (self.0)(event);
+        (self.0)(event, false);
+    }
+
+    /// Emits a latency-sensitive Host event before the browser's next paint.
+    pub(crate) fn emit_urgent(&self, event: WebNativeEvent) {
+        (self.0)(event, true);
     }
 }
 
@@ -705,13 +710,263 @@ impl WhiskerModule for BuiltInElementModule {
             document.create_element("div")
         }
 
+        fn set_scroll_orientation(
+            element: &web_sys::Element,
+            value: &WhiskerValue,
+        ) -> Result<(), wasm_bindgen::JsValue> {
+            let WhiskerValue::String(value) = value else {
+                return Err(wasm_bindgen::JsValue::from_str(
+                    "scroll-orientation must be a string",
+                ));
+            };
+            let horizontal = value == "horizontal";
+            let enabled = element
+                .get_attribute("data-whisker-scroll-enabled")
+                .as_deref()
+                != Some("false");
+            crate::set_style(
+                element,
+                "overflow-x",
+                if horizontal && enabled {
+                    "auto"
+                } else {
+                    "hidden"
+                },
+            )
+            .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))?;
+            crate::set_style(
+                element,
+                "overflow-y",
+                if !horizontal && enabled {
+                    "auto"
+                } else {
+                    "hidden"
+                },
+            )
+            .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))?;
+            element.set_attribute(
+                "data-whisker-scroll-orientation",
+                if horizontal { "horizontal" } else { "vertical" },
+            )?;
+            if element.has_attribute("data-whisker-snap-align") {
+                crate::set_style(
+                    element,
+                    "scroll-snap-type",
+                    if horizontal {
+                        "x mandatory"
+                    } else {
+                        "y mandatory"
+                    },
+                )
+                .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))?;
+            }
+            Ok(())
+        }
+
+        fn set_scroll_enabled(
+            element: &web_sys::Element,
+            value: &WhiskerValue,
+        ) -> Result<(), wasm_bindgen::JsValue> {
+            let WhiskerValue::Bool(enabled) = value else {
+                return Err(wasm_bindgen::JsValue::from_str(
+                    "enable-scroll must be a boolean",
+                ));
+            };
+            element.set_attribute(
+                "data-whisker-scroll-enabled",
+                if *enabled { "true" } else { "false" },
+            )?;
+            let orientation = element
+                .get_attribute("data-whisker-scroll-orientation")
+                .unwrap_or_else(|| "vertical".to_owned());
+            set_scroll_orientation(element, &WhiskerValue::String(orientation))
+        }
+
+        fn set_item_snap(
+            element: &web_sys::Element,
+            value: &WhiskerValue,
+        ) -> Result<(), wasm_bindgen::JsValue> {
+            let WhiskerValue::Map(value) = value else {
+                return Err(wasm_bindgen::JsValue::from_str("item-snap must be a map"));
+            };
+            let factor = match value.get("factor") {
+                Some(WhiskerValue::Float(value)) => *value,
+                Some(WhiskerValue::Int(value)) => *value as f64,
+                _ => 0.0,
+            };
+            let offset = match value.get("offset") {
+                Some(WhiskerValue::Float(value)) => *value,
+                Some(WhiskerValue::Int(value)) => *value as f64,
+                _ => 0.0,
+            };
+            let alignment = if factor < 0.25 {
+                "start"
+            } else if factor < 0.75 {
+                "center"
+            } else {
+                "end"
+            };
+            let axis = if element
+                .get_attribute("data-whisker-scroll-orientation")
+                .as_deref()
+                == Some("horizontal")
+            {
+                "x"
+            } else {
+                "y"
+            };
+            crate::set_style(element, "scroll-snap-type", &format!("{axis} mandatory"))
+                .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))?;
+            element.set_attribute("data-whisker-snap-factor", &factor.to_string())?;
+            element.set_attribute("data-whisker-snap-offset", &offset.to_string())?;
+            crate::set_style(
+                element,
+                if axis == "x" {
+                    "scroll-padding-left"
+                } else {
+                    "scroll-padding-top"
+                },
+                &format!("{}px", (-offset).max(0.0)),
+            )
+            .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))?;
+            element.set_attribute("data-whisker-snap-align", alignment)?;
+            let snap_stop = element
+                .get_attribute("data-whisker-snap-stop")
+                .unwrap_or_else(|| "normal".to_owned());
+            let children = element.children();
+            for index in 0..children.length() {
+                if let Some(child) = children.item(index) {
+                    crate::set_style(&child, "scroll-snap-align", alignment)
+                        .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))?;
+                    crate::set_style(&child, "scroll-snap-stop", &snap_stop)
+                        .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))?;
+                }
+            }
+            Ok(())
+        }
+
+        fn set_scroll_snap_stop(
+            element: &web_sys::Element,
+            value: &WhiskerValue,
+        ) -> Result<(), wasm_bindgen::JsValue> {
+            let WhiskerValue::String(value) = value else {
+                return Err(wasm_bindgen::JsValue::from_str(
+                    "scroll-snap-stop must be a string",
+                ));
+            };
+            let value = if value == "always" {
+                "always"
+            } else {
+                "normal"
+            };
+            element.set_attribute("data-whisker-snap-stop", value)?;
+            let children = element.children();
+            for index in 0..children.length() {
+                if let Some(child) = children.item(index) {
+                    crate::set_style(&child, "scroll-snap-stop", value)
+                        .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))?;
+                }
+            }
+            Ok(())
+        }
+
+        fn scroll(
+            element: &web_sys::Element,
+            value: &WhiskerValue,
+            relative: bool,
+        ) -> Result<(), wasm_bindgen::JsValue> {
+            use wasm_bindgen::JsCast;
+
+            let WhiskerValue::Map(value) = value else {
+                return Err(wasm_bindgen::JsValue::from_str(
+                    "scroll command arguments must be a map",
+                ));
+            };
+            let offset = match value.get("offset") {
+                Some(WhiskerValue::Float(value)) => *value,
+                Some(WhiskerValue::Int(value)) => *value as f64,
+                _ => 0.0,
+            };
+            let smooth = matches!(value.get("smooth"), Some(WhiskerValue::Bool(true)));
+            let Some(element) = element.dyn_ref::<web_sys::HtmlElement>() else {
+                return Err(wasm_bindgen::JsValue::from_str(
+                    "ScrollView command target must be an HtmlElement",
+                ));
+            };
+            let horizontal = element
+                .get_attribute("data-whisker-scroll-orientation")
+                .as_deref()
+                == Some("horizontal");
+            let current = if horizontal {
+                element.scroll_left()
+            } else {
+                element.scroll_top()
+            };
+            let target = if relative {
+                f64::from(current) + offset
+            } else {
+                offset
+            };
+            let options = web_sys::ScrollToOptions::new();
+            options.set_behavior(if smooth {
+                web_sys::ScrollBehavior::Smooth
+            } else {
+                web_sys::ScrollBehavior::Instant
+            });
+            if horizontal {
+                options.set_left(target);
+            } else {
+                options.set_top(target);
+            }
+            element.scroll_to_with_scroll_to_options(&options);
+            Ok(())
+        }
+
         WebModuleDefinition::new()
             .name("whisker.ui")
             .view(WebViewDefinition::new("whisker.ui/View", div, Clone::clone))
             .view(WebViewDefinition::new("whisker.ui/Text", div, Clone::clone).plain_text())
             .view(
                 WebViewDefinition::new("whisker.ui/ScrollView", div, Clone::clone)
-                    .scroll_container(),
+                    .scroll_container()
+                    .prop(
+                        "scroll-orientation",
+                        |element, value| set_scroll_orientation(element, value),
+                        |element| {
+                            set_scroll_orientation(
+                                element,
+                                &WhiskerValue::String("vertical".into()),
+                            )
+                        },
+                    )
+                    .prop(
+                        "item-snap",
+                        |element, value| set_item_snap(element, value),
+                        |element| {
+                            crate::set_style(element, "scroll-snap-type", "none").map_err(
+                                |error| wasm_bindgen::JsValue::from_str(&error.to_string()),
+                            )?;
+                            element.remove_attribute("data-whisker-snap-align")?;
+                            element.remove_attribute("data-whisker-snap-factor")?;
+                            element.remove_attribute("data-whisker-snap-offset")?;
+                            Ok(())
+                        },
+                    )
+                    .prop(
+                        "scroll-snap-stop",
+                        |element, value| set_scroll_snap_stop(element, value),
+                        |element| {
+                            set_scroll_snap_stop(element, &WhiskerValue::String("normal".into()))
+                        },
+                    )
+                    .prop(
+                        "enable-scroll",
+                        |element, value| set_scroll_enabled(element, value),
+                        |element| set_scroll_enabled(element, &WhiskerValue::Bool(true)),
+                    )
+                    .command("scrollTo", |element, value| scroll(element, value, false))
+                    .command("scrollBy", |element, value| scroll(element, value, true))
+                    .event("scroll"),
             )
     }
 }

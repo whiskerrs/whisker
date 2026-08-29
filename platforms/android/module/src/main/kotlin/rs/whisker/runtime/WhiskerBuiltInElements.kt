@@ -101,7 +101,51 @@ public class BuiltInElementModule : Module() {
         Name("whisker.ui")
         View(WhiskerBuiltInElements.view())
         View(WhiskerBuiltInElements.text())
-        View(WhiskerBuiltInElements.scrollView())
+        View(WhiskerBuiltInElements.scrollView()) {
+            Prop(
+                "scroll-orientation",
+                clear = { view: WhiskerScrollContainerView -> view.setScrollOrientation("vertical") },
+            ) { view: WhiskerScrollContainerView, value ->
+                view.setScrollOrientation(value.asString() ?: "vertical")
+            }
+            Prop(
+                "item-snap",
+                clear = WhiskerScrollContainerView::clearItemSnap,
+            ) { view: WhiskerScrollContainerView, value ->
+                val snap = (value as? WhiskerValue.Map)?.value.orEmpty()
+                view.setItemSnap(
+                    snap["factor"]?.asDouble() ?: 0.0,
+                    snap["offset"]?.asDouble() ?: 0.0,
+                )
+            }
+            Prop(
+                "scroll-snap-stop",
+                clear = { view: WhiskerScrollContainerView -> view.setScrollSnapStop("normal") },
+            ) { view: WhiskerScrollContainerView, value ->
+                view.setScrollSnapStop(value.asString() ?: "normal")
+            }
+            Prop(
+                "enable-scroll",
+                clear = { view: WhiskerScrollContainerView -> view.setUserScrollEnabled(true) },
+            ) { view: WhiskerScrollContainerView, value ->
+                view.setUserScrollEnabled(value.asBool() ?: true)
+            }
+            Command("scrollTo") { view: WhiskerScrollContainerView, value ->
+                val arguments = (value as? WhiskerValue.Map)?.value.orEmpty()
+                view.scrollToLogicalOffset(
+                    arguments["offset"]?.asDouble() ?: 0.0,
+                    arguments["smooth"]?.asBool() ?: false,
+                )
+            }
+            Command("scrollBy") { view: WhiskerScrollContainerView, value ->
+                val arguments = (value as? WhiskerValue.Map)?.value.orEmpty()
+                view.scrollByLogicalOffset(
+                    arguments["offset"]?.asDouble() ?: 0.0,
+                    arguments["smooth"]?.asBool() ?: false,
+                )
+            }
+            Events("scroll")
+        }
     }
 }
 

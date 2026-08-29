@@ -68,28 +68,33 @@ pub fn app() -> Element {
                 )
             }
             list(
-                each: || icons::ALL.to_vec(),
-                meta: |(name, _): &(&'static str, &'static str)| {
-                    ItemMeta::key(name.to_string())
+                each: || icons::ALL.chunks(3).map(|row| row.to_vec()).collect::<Vec<_>>(),
+                key: |row: &Vec<(&'static str, &'static str)>| row[0].0,
+                children: |row: ReadSignal<Vec<(&'static str, &'static str)>>| render! {
+                    icon_row(icons: row)
                 },
-                children: |(name, svg): (&'static str, &'static str)| render! {
-                    tile(label: name, svg: svg)
-                },
-                // `list-type: "flow"` activates Lynx's multi-column
-                // flow layout. iOS Lynx reads `span-count`; Android
-                // Lynx reads `column-count` — set both so the same
-                // Rust source grids on each platform.
-                list_type: ListType::Flow,
-                column_count: 3,
-                span_count: 3,
-                // Lynx's `<list>` needs a bounded height to virtualise —
-                // `flex_grow: 1` inside the flex-column page gives it
-                // whatever's left under the header.
                 style: css!(
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                     width: percent(100),
                 ),
+            )
+        }
+    }
+}
+
+#[component]
+fn icon_row(icons: ReadSignal<Vec<(&'static str, &'static str)>>) -> Element {
+    render! {
+        view(style: css!(width: percent(100), flex_direction: FlexDirection::Row)) {
+            ForEach(
+                each: move || icons.get(),
+                key: |(name, _): &(&'static str, &'static str)| *name,
+                children: |(name, svg): (&'static str, &'static str)| render! {
+                    view(style: css!(width: percent(33.333), flex_shrink: 0.0)) {
+                        tile(label: name, svg: svg)
+                    }
+                },
             )
         }
     }

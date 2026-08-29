@@ -129,12 +129,72 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(scrollView.contentInset, .zero)
     }
 
+    func testScrollViewEmitsLogicalScrollGeometry() {
+        let scrollView = WhiskerScrollContainerView(
+            frame: CGRect(x: 0, y: 0, width: 100, height: 80)
+        )
+        scrollView.contentView.addSubview(
+            UIView(frame: CGRect(x: 0, y: 0, width: 100, height: 300))
+        )
+        scrollView.layoutIfNeeded()
+        var detail: WhiskerValue?
+        scrollView.installWhiskerEventSink { name, value in
+            if name == "scroll" { detail = value }
+        }
+
+        scrollView.contentOffset = CGPoint(x: 0, y: 120)
+
+        guard case let .map(values)? = detail else {
+            return XCTFail("scroll must emit a map payload")
+        }
+        XCTAssertEqual(values["scrollTop"], .float(120))
+        XCTAssertEqual(values["viewportHeight"], .float(80))
+        XCTAssertEqual(values["scrollHeight"], .float(300))
+    }
+
+    func testHorizontalScrollViewSettlesOnNearestCarouselItem() {
+        let scrollView = WhiskerScrollContainerView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 180)
+        )
+        scrollView.setScrollOrientation("horizontal")
+        scrollView.setItemSnap(factor: 0, offset: 0)
+        scrollView.setScrollSnapStop("always")
+        for index in 0..<3 {
+            scrollView.contentView.addSubview(
+                UIView(frame: CGRect(x: index * 296, y: 0, width: 280, height: 180))
+            )
+        }
+        scrollView.layoutIfNeeded()
+        scrollView.scrollViewWillBeginDragging(scrollView)
+        var proposed = CGPoint(x: 700, y: 0)
+
+        scrollView.scrollViewWillEndDragging(
+            scrollView,
+            withVelocity: CGPoint(x: 1, y: 0),
+            targetContentOffset: &proposed
+        )
+
+        XCTAssertEqual(proposed.x, 296)
+        XCTAssertEqual(proposed.y, 0)
+    }
+
     func testScrollOverflowClipUsesStationaryViewportInsteadOfMovingContent() throws {
         let registration = WhiskerElementRegistration(
             elementType: 3,
             name: WhiskerBuiltInElements.scrollViewName,
             childPolicy: .elements,
-            measurement: .none
+            measurement: .none,
+            properties: [
+                WhiskerPropertyBinding(id: 1, name: "scroll-orientation", value: .string),
+                WhiskerPropertyBinding(id: 2, name: "item-snap", value: .map),
+                WhiskerPropertyBinding(id: 3, name: "scroll-snap-stop", value: .string),
+                WhiskerPropertyBinding(id: 4, name: "enable-scroll", value: .bool),
+            ],
+            events: [WhiskerEventBinding(id: 1, name: "scroll", detail: .map)],
+            commands: [
+                WhiskerCommandBinding(id: 1, name: "scrollTo", arguments: .map),
+                WhiskerCommandBinding(id: 2, name: "scrollBy", arguments: .map),
+            ]
         )
         XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
         let mounted = try XCTUnwrap(WhiskerElementRegistry.mount(3) { _, _ in })
@@ -161,6 +221,7 @@ final class HostConformanceTests: XCTestCase {
         scrollView.layoutIfNeeded()
         XCTAssertTrue(scrollView.layer.mask != nil)
         XCTAssertNil(scrollView.contentView.layer.mask)
+        XCTAssertEqual(scrollView.layer.mask?.frame.minY, scrollView.bounds.minY)
     }
 
     func testUIKitTouchTypesMapToProtocolPointerKinds() {

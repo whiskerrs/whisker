@@ -26,6 +26,7 @@ use crate::{
 thread_local! {
     static APPLICATION: RefCell<Option<WebApplication>> = const { RefCell::new(None) };
     static FRAME_SCHEDULED: Cell<bool> = const { Cell::new(false) };
+    static URGENT_FRAME_SCHEDULED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Mounts a Whisker application into the current browser document.
@@ -350,6 +351,39 @@ pub(crate) fn request_frame() {
             Some(_) => callback.forget(),
             None => scheduled.set(false),
         }
+    });
+}
+
+/// Drives latency-sensitive Host input after the current browser callback but
+/// before the browser can paint a newer native scroll offset with stale rows.
+pub(crate) fn request_urgent_frame() {
+    let application_is_mounted = APPLICATION.with(|slot| {
+        slot.try_borrow()
+            .is_ok_and(|application| application.is_some())
+    });
+    if !application_is_mounted {
+        return;
+    }
+    URGENT_FRAME_SCHEDULED.with(|scheduled| {
+        if scheduled.replace(true) {
+            return;
+        }
+        spawn_local(async {
+            URGENT_FRAME_SCHEDULED.with(|scheduled| scheduled.set(false));
+            let timestamp_ms = web_sys::window()
+                .and_then(|window| window.performance())
+                .map_or_else(js_sys::Date::now, |performance| performance.now());
+            let result = APPLICATION.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                match slot.as_mut() {
+                    Some(application) => application.drive_frame(timestamp_ms),
+                    None => Ok(()),
+                }
+            });
+            if let Err(error) = result {
+                web_sys::console::error_1(&error.to_string().into());
+            }
+        });
     });
 }
 
