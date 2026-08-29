@@ -52,7 +52,7 @@ const RA_VERSION: &str = "2026-05-18";
 
 /// Whether RA surfaced a completion for builder method `name`.
 ///
-/// The built-in builder methods (`style`, `class`, `on_tap`, …) live on
+/// The built-in builder methods (`style`, `dataset`, `on_tap`, …) live on
 /// the `ElementBuilder` trait, and RA labels trait-provided methods as
 /// `name(as ElementBuilder)` to disambiguate them from inherent ones —
 /// selecting either inserts `name`. So accept either form.
@@ -80,8 +80,12 @@ fn probe() -> Element {
         "expected `style` in completions; got {labels:?}"
     );
     assert!(
-        surfaces_method(&labels, "class"),
-        "expected `class` in completions; got {labels:?}"
+        surfaces_method(&labels, "dataset") && surfaces_method(&labels, "accessibility"),
+        "expected structured common metadata in completions; got {labels:?}"
+    );
+    assert!(
+        !surfaces_method(&labels, "class"),
+        "removed string class API must not be suggested; got {labels:?}"
     );
 }
 

@@ -25,7 +25,8 @@ use whisker_engine::whisker_protocol::{
     CommandId, ElementCommandSchema, ElementEventSchema, ElementMeasurement, ElementPropertySchema,
     ElementSchema, ElementValueKind, EventId, InputEvent, InputEventKind, MeasureTextDirection,
     MeasuredSize, MeasurementMetrics, MeasurementPayload, MeasurementRequest, MeasurementResponse,
-    Operation, PaintColor, PreparedContentId, PropertyId, SurfaceId, WhiskerValue,
+    Operation, PaintColor, PointerId, PointerInput, PointerKind, PreparedContentId, PropertyId,
+    SurfaceId, WhiskerValue,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{LayoutOptions, MeasurementProvider};
@@ -92,6 +93,103 @@ impl MeasurementProvider for TextHost {
         }));
         Ok(())
     }
+}
+
+#[test]
+fn common_metadata_reaches_frames_and_event_targets() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(40).unwrap(),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let received = Rc::new(RefCell::new(None));
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            let received = Rc::clone(&received);
+            render! {
+                view(
+                    id: "account-card",
+                    dataset: Dataset::new().int("account-id", 42).bool("selected", true),
+                    accessibility: Accessibility::new()
+                        .label("Account")
+                        .role(AccessibilityRole::Button),
+                    on_tap: move |event| *received.borrow_mut() = Some(event),
+                    style: css!(width: px(100), height: px(100)),
+                )
+            }
+        });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let packet = &renderer.frames()[0].packet;
+    let node = packet
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::CreateNode { node, .. } => Some(*node),
+            _ => None,
+        })
+        .expect("root node");
+    assert!(packet.operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetAccessibility { node: candidate, accessibility }
+            if *candidate == node
+                && accessibility.label.as_deref() == Some("Account")
+                && accessibility.role == Some(AccessibilityRole::Button)
+    )));
+
+    with_installed_renderer(surface.renderer(), || {
+        surface
+            .dispatch_input(&InputEvent {
+                surface: surface.surface(),
+                timestamp_ms: 12.0,
+                kind: InputEventKind::Tap,
+                pointer: Some(PointerInput {
+                    id: PointerId::new(1).unwrap(),
+                    kind: PointerKind::Touch,
+                    position: whisker_engine::whisker_protocol::InputPoint { x: 10.0, y: 10.0 },
+                    buttons: 1,
+                    changed_button: 0,
+                }),
+                target: Some(node),
+                detail: WhiskerValue::Null,
+            })
+            .unwrap();
+    });
+
+    let event = received.borrow_mut().take().expect("tap callback");
+    assert_eq!(event.pointer_id, 1);
+    assert_eq!(event.pointer_type, "touch");
+    assert_eq!(event.detail.x, 10.0);
+    assert_eq!(event.detail.y, 10.0);
+    assert_eq!(event.changed_touches.len(), 1);
+    for target in [&event.target, &event.current_target] {
+        assert_eq!(target.id, "account-card");
+        assert_eq!(target.uid, node.get() as i64);
+        assert_eq!(
+            target.dataset.get("account-id"),
+            Some(&WhiskerValue::Int(42))
+        );
+        assert_eq!(
+            target.dataset.get("selected"),
+            Some(&WhiskerValue::Bool(true))
+        );
+    }
+    with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
 #[test]
@@ -232,8 +330,8 @@ fn carousel_scroll_contract_reaches_the_host_as_typed_properties() {
         let root = owner.with(|| {
             render! {
                 scroll_view(
-                    scroll_orientation: whisker::attrs::ScrollOrientation::Horizontal,
-                    item_snap: (0.0, 12.0),
+                    axis: whisker::ScrollAxis::Horizontal,
+                    snap: whisker::ScrollSnap::start().with_offset(12.0),
                     scroll_snap_stop: whisker::attrs::ScrollSnapStop::Always,
                     style: css!(width: px(320), height: px(180), flex_direction: FlexDirection::Row),
                 ) {
@@ -1391,7 +1489,7 @@ fn custom_plain_text_children_lower_to_measurement_and_set_text() {
 }
 
 #[test]
-fn builtin_text_accepts_dynamic_into_view_text_children() {
+fn builtin_text_accepts_owned_values() {
     __reset_for_tests();
     let owner = Owner::new(None);
     let surface = SurfaceRuntime::new(
@@ -1401,7 +1499,7 @@ fn builtin_text_accepts_dynamic_into_view_text_children() {
 
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
-            render! { text(style: css!(font_size: px(20))) { { "dynamic".to_string() } } }
+            render! { text(style: css!(font_size: px(20)), value: "dynamic".to_string()) }
         });
         set_root(root);
     });
@@ -1979,9 +2077,9 @@ fn inherited_text_color_transition_is_sampled_on_its_parent() {
         let root = owner.with(|| {
             render! {
                 view(style: colored(NamedColor::Black.into())) {
-                    text(style: css!(font_size: px(20))) { "inherited" }
+                    text(style: css!(font_size: px(20)), value: "inherited")
                     view(style: css!(color: Color::Named(NamedColor::Red))) {
-                        text(style: css!(font_size: px(20))) { "blocked" }
+                        text(style: css!(font_size: px(20)), value: "blocked")
                     }
                 }
             }
@@ -3513,7 +3611,11 @@ fn text_leaf_contract_is_enforced_before_frame_generation() {
     );
 
     with_installed_renderer(surface.renderer(), || {
-        owner.with(|| render! { text { view() } });
+        owner.with(|| {
+            let text = whisker_runtime::view::create_element(whisker::ElementTag::Text);
+            let view = whisker_runtime::view::create_element(whisker::ElementTag::View);
+            whisker_runtime::view::append_child(text, view);
+        });
     });
 
     assert!(matches!(
@@ -3533,7 +3635,12 @@ fn element_children_reject_raw_text_before_frame_generation() {
     );
 
     with_installed_renderer(surface.renderer(), || {
-        owner.with(|| render! { view { "not implicitly wrapped" } });
+        owner.with(|| {
+            let view = whisker_runtime::view::create_element(whisker::ElementTag::View);
+            let raw_text = whisker_runtime::view::create_element(whisker::ElementTag::RawText);
+            whisker_runtime::view::set_attribute(raw_text, "text", "not implicitly wrapped");
+            whisker_runtime::view::append_child(view, raw_text);
+        });
     });
 
     assert!(matches!(

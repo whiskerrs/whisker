@@ -227,7 +227,7 @@ internal class HostScene(
                 if (operation.tag == 13 && registration.childPolicy != WhiskerChildPolicy.PlainText) return false
                 if (operation.tag == 27 && !registration.textStyle) return false
             }
-            14, 18 -> if (operation.node !in existing || operation.value == null) return false
+            14, 18, 28 -> if (operation.node !in existing || operation.value == null) return false
             21 -> if (!validBackgroundLayers(operation, existing)) return false
             else -> return false
         }
@@ -292,6 +292,7 @@ internal class HostScene(
                 requireNotNull(operation.names),
                 styleOnly = true,
             )
+            28 -> applyAccessibility(nodes[id] ?: return, requireNotNull(operation.value))
             14 -> (nodes[id] ?: return).mountedElement
                 ?.setProperty(operation.member, requireNotNull(operation.value))
             15 -> (nodes[id] ?: return).mountedElement?.clearProperty(operation.member)
@@ -311,6 +312,25 @@ internal class HostScene(
             }
             26 -> (nodes[id] ?: return).setCursorKeyword(operation.integer)
         }
+    }
+
+    private fun applyAccessibility(node: HostNode, raw: WhiskerValue) {
+        val value = (raw as? WhiskerValue.Map)?.value ?: return
+        val state = (value["state"] as? WhiskerValue.Map)?.value.orEmpty()
+        node.setAccessibility(
+            HostAccessibility(
+                label = (value["label"] as? WhiskerValue.Str)?.value,
+                hint = (value["hint"] as? WhiskerValue.Str)?.value,
+                role = (value["role"] as? WhiskerValue.Str)?.value,
+                identifier = (value["identifier"] as? WhiskerValue.Str)?.value,
+                hidden = (value["hidden"] as? WhiskerValue.Bool)?.value ?: false,
+                modal = (value["modal"] as? WhiskerValue.Bool)?.value ?: false,
+                disabled = (state["disabled"] as? WhiskerValue.Bool)?.value,
+                selected = (state["selected"] as? WhiskerValue.Bool)?.value,
+                checked = (state["checked"] as? WhiskerValue.Str)?.value,
+                expanded = (state["expanded"] as? WhiskerValue.Bool)?.value,
+            ),
+        )
     }
 
     private fun attachRoots() {

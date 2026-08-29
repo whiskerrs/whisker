@@ -215,35 +215,9 @@ impl std::fmt::Debug for ElementRef {
     }
 }
 
-// The user-facing imperative surface lives on typed handles wrapping an
-// `ElementRef`: `ElementHandle` for the generic UI methods any element
-// supports, plus per-element handles adding their own. Each exposes only
-// what its element supports, so author code can't call
-// `pause_animation()` on a `<scroll-view>`.
-//
-// The shared generic methods come from `generic_element_methods!`,
-// invoked inside each handle's `impl` so they land as real inherent
-// methods rather than through a `Deref` — an explicit per-handle surface.
-
-/// Generates the generic UI methods shared by every element handle (each
-/// wraps a `self.r: ElementRef`). Invoked inside each handle's `impl`.
-macro_rules! generic_element_methods {
-    () => {
-        /// `requestAccessibilityFocus` — move the platform accessibility
-        /// focus (TalkBack / VoiceOver) to this element. Fire-and-forget;
-        /// a no-op when accessibility is disabled.
-        pub fn request_accessibility_focus(&self) {
-            let _ = self
-                .r
-                .command("requestAccessibilityFocus", WhiskerValue::Null);
-        }
-    };
-}
-
-/// Imperative handle to any mounted element — the generic Host UI
-/// methods that work regardless of tag. Allocate with
+/// Imperative handle to any mounted element. Allocate with
 /// [`ElementHandle::new`], bind via `view(ref: handle.r())` (or `text`,
-/// `scroll_view`, …) in `render!`, then call the methods below.
+/// `scroll_view`, …) in `render!`.
 ///
 /// `Copy` (the inner `ElementRef` is an arena handle), so it can be
 /// captured by value into multiple event closures.
@@ -270,8 +244,6 @@ impl ElementHandle {
     pub fn r(&self) -> ElementRef {
         self.r
     }
-
-    generic_element_methods!();
 }
 
 impl Default for ElementHandle {
@@ -305,15 +277,8 @@ impl ScrollViewHandle {
         self.r
     }
 
-    generic_element_methods!();
-
     /// `scrollTo` — scroll to an absolute `offset` (logical pixels)
     /// along the scroll axis. `smooth` animates the scroll.
-    ///
-    /// `offset` is sent as a number, not a `"<n>px"` string: Android's
-    /// `UIScrollView.scrollTo` reads it with `params.getDouble("offset")`
-    /// (a string decodes to 0), and iOS's `toPtFromIDUnitValue` accepts
-    /// a bare number as points — so a number is the one form both honor.
     pub fn scroll_to(&self, offset: f64, smooth: bool) {
         let _ = self.r.command(
             "scrollTo",
@@ -324,57 +289,16 @@ impl ScrollViewHandle {
         );
     }
 
-    /// `scrollTo` by child `index` — scroll so the child at `index`
-    /// aligns to the scroll start. `smooth` animates the scroll.
-    pub fn scroll_to_index(&self, index: i32, smooth: bool) {
-        let _ = self.r.command(
-            "scrollTo",
-            WhiskerValue::map([
-                ("index", WhiskerValue::Int(index as i64)),
-                ("smooth", WhiskerValue::Bool(smooth)),
-            ]),
-        );
-    }
-
     /// `scrollBy` — scroll by a relative `offset` (logical pixels)
-    /// from the current position along the scroll axis. Always instant
-    /// (Lynx's `scrollBy` doesn't honor a `smooth` flag — use
-    /// [`scroll_to`](Self::scroll_to) for animated moves).
-    ///
-    /// `offset` is a number for the same cross-platform reason as
-    /// [`scroll_to`](Self::scroll_to) (Android `getDouble` + iOS
-    /// `dipToPx` / `toPtFromIDUnitValue`).
-    pub fn scroll_by(&self, offset: f64) {
+    /// from the current position along the scroll axis. `smooth` animates
+    /// the scroll.
+    pub fn scroll_by(&self, offset: f64, smooth: bool) {
         let _ = self.r.command(
             "scrollBy",
-            WhiskerValue::map([("offset", WhiskerValue::Float(offset))]),
-        );
-    }
-
-    /// `autoScroll` — start auto-scrolling at `rate` logical pixels per
-    /// second along the scroll axis. Pair with
-    /// [`stop_auto_scroll`](Self::stop_auto_scroll) to halt.
-    ///
-    /// `rate` is a number (px/s): both `<scroll-view>` backends read it
-    /// that way and divide by the frame rate — Android `AndroidScrollView`
-    /// (`getDouble("rate") / 60`) and iOS `LynxUIScroller`
-    /// (`[rate doubleValue] / 60`).
-    pub fn auto_scroll(&self, rate: f64) {
-        let _ = self.r.command(
-            "autoScroll",
             WhiskerValue::map([
-                ("start", WhiskerValue::Bool(true)),
-                ("rate", WhiskerValue::Float(rate)),
+                ("offset", WhiskerValue::Float(offset)),
+                ("smooth", WhiskerValue::Bool(smooth)),
             ]),
-        );
-    }
-
-    /// `autoScroll` with `start: false` — stop an in-progress auto-scroll
-    /// started by [`auto_scroll`](Self::auto_scroll).
-    pub fn stop_auto_scroll(&self) {
-        let _ = self.r.command(
-            "autoScroll",
-            WhiskerValue::map([("start", WhiskerValue::Bool(false))]),
         );
     }
 }
@@ -386,8 +310,7 @@ impl Default for ScrollViewHandle {
 }
 
 /// Imperative handle to a mounted `<text>`. Allocate with
-/// [`TextHandle::new`], bind via `text(ref: handle.r())` in `render!`,
-/// then drive text selection.
+/// [`TextHandle::new`] and bind via `text(ref: handle.r())` in `render!`.
 ///
 /// `Copy` (the inner `ElementRef` is an arena handle), so it can be
 /// captured by value into multiple event closures.
@@ -408,27 +331,6 @@ impl TextHandle {
     /// on mount (`text(ref: handle.r())`).
     pub fn r(&self) -> ElementRef {
         self.r
-    }
-
-    generic_element_methods!();
-
-    /// `setTextSelection` — highlight the text between
-    /// `(start_x, start_y)` and `(end_x, end_y)` (logical pixels,
-    /// relative to the text component). Fire-and-forget.
-    ///
-    /// Coordinates are sent as numbers: Android reads them with
-    /// `params.getDouble`, iOS with `toPtFromIDUnitValue` (which takes a
-    /// bare number as points) — a number is the form both honor.
-    pub fn set_text_selection(&self, start_x: f64, start_y: f64, end_x: f64, end_y: f64) {
-        let _ = self.r.command(
-            "setTextSelection",
-            WhiskerValue::map([
-                ("startX", WhiskerValue::Float(start_x)),
-                ("startY", WhiskerValue::Float(start_y)),
-                ("endX", WhiskerValue::Float(end_x)),
-                ("endY", WhiskerValue::Float(end_y)),
-            ]),
-        );
     }
 }
 

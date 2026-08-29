@@ -302,7 +302,7 @@ pub enum TextContentError {
 pub const PROTOCOL_MAJOR: u16 = 1;
 
 /// Protocol minor version implemented by this semantic model.
-pub const PROTOCOL_MINOR: u16 = 3;
+pub const PROTOCOL_MINOR: u16 = 4;
 
 /// A negotiated frame protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -647,6 +647,13 @@ pub enum Operation {
         /// Resolved inherited snapshot.
         style: TextStyleSnapshot,
     },
+    /// Replaces the common accessibility semantics for a node.
+    SetAccessibility {
+        /// Target node.
+        node: NodeId,
+        /// Complete semantic state; the default value clears semantics.
+        accessibility: crate::Accessibility,
+    },
     /// Sets replaced image content for an image-capable element.
     SetImage {
         /// Target node.
@@ -733,6 +740,7 @@ impl Operation {
             | Self::SetZOrder { node, .. }
             | Self::SetText { node, .. }
             | Self::SetTextStyle { node, .. }
+            | Self::SetAccessibility { node, .. }
             | Self::SetImage { node, .. }
             | Self::SetProperty { node, .. }
             | Self::ClearProperty { node, .. }
@@ -1075,6 +1083,10 @@ mod tests {
                     alignment: crate::MeasureTextAlignment::Start,
                     paint: TextPaint::default(),
                 },
+            },
+            Operation::SetAccessibility {
+                node: target,
+                accessibility: crate::Accessibility::default(),
             },
             Operation::SetImage {
                 node: target,

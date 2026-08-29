@@ -184,6 +184,12 @@ mod tests {
         assert_eq!(definition.elements[1].schema, text_element_binding());
         assert_eq!(definition.elements[2].schema, scroll_view_element_binding());
         assert_eq!(definition.elements[2].schema.properties.len(), 4);
+        assert!(definition.elements[0].schema.properties.is_empty());
+        assert!(definition.elements[0].schema.events.is_empty());
+        assert!(definition.elements[0].schema.commands.is_empty());
+        assert!(definition.elements[1].schema.properties.is_empty());
+        assert!(definition.elements[1].schema.events.is_empty());
+        assert!(definition.elements[1].schema.commands.is_empty());
         assert_eq!(
             definition.elements[2].schema.properties[0].name,
             "scroll-orientation"
@@ -199,6 +205,24 @@ mod tests {
         assert_eq!(
             definition.elements[2].schema.properties[3].name,
             "enable-scroll"
+        );
+        assert_eq!(
+            definition.elements[2]
+                .schema
+                .events
+                .iter()
+                .map(|event| event.name.as_str())
+                .collect::<Vec<_>>(),
+            ["scroll"]
+        );
+        assert_eq!(
+            definition.elements[2]
+                .schema
+                .commands
+                .iter()
+                .map(|command| command.name.as_str())
+                .collect::<Vec<_>>(),
+            ["scrollTo", "scrollBy"]
         );
         assert!(!definition.elements[2].base_style.is_empty());
         assert_eq!(

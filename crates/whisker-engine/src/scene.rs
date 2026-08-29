@@ -5,10 +5,10 @@ use std::error::Error;
 use std::fmt;
 
 use whisker_protocol::{
-    BackgroundLayer, BoxClip, BoxPaint, CommandId, Cursor, ElementTypeId, FrameHeader, FrameMode,
-    FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, NodeId, Operation, OverflowClip,
-    PointerId, PropertyId, ProtocolVersion, SurfaceId, TextContent, TextContentError,
-    TextStyleSnapshot, Transform, Visibility, VisualEffects, WhiskerValue,
+    Accessibility, BackgroundLayer, BoxClip, BoxPaint, CommandId, Cursor, ElementTypeId,
+    FrameHeader, FrameMode, FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, NodeId,
+    Operation, OverflowClip, PointerId, PropertyId, ProtocolVersion, SurfaceId, TextContent,
+    TextContentError, TextStyleSnapshot, Transform, Visibility, VisualEffects, WhiskerValue,
 };
 
 /// A retained logical node owned by a [`Scene`].
@@ -28,6 +28,7 @@ pub struct SceneNode {
     z_order: Option<i32>,
     text: Option<TextContent>,
     text_style: Option<TextStyleSnapshot>,
+    accessibility: Option<Accessibility>,
     properties: BTreeMap<PropertyId, WhiskerValue>,
     event_mask: Option<u64>,
     hit_test: Option<HitTestBehavior>,
@@ -52,6 +53,7 @@ impl SceneNode {
             z_order: None,
             text: None,
             text_style: None,
+            accessibility: None,
             properties: BTreeMap::new(),
             event_mask: None,
             hit_test: None,
@@ -88,6 +90,11 @@ impl SceneNode {
     /// Returns the resolved inherited text style retained for native content.
     pub const fn text_style(&self) -> Option<&TextStyleSnapshot> {
         self.text_style.as_ref()
+    }
+
+    /// Returns the retained common accessibility semantics.
+    pub const fn accessibility(&self) -> Option<&Accessibility> {
+        self.accessibility.as_ref()
     }
 
     /// Returns retained background and border paint.
@@ -244,6 +251,7 @@ enum DirtySlot {
     ZOrder(NodeId),
     Text(NodeId),
     TextStyle(NodeId),
+    Accessibility(NodeId),
     Property(NodeId, PropertyId),
     EventMask(NodeId),
     HitTest(NodeId),
@@ -842,6 +850,30 @@ impl Scene {
         Ok(())
     }
 
+    /// Replaces a node's common accessibility semantics.
+    pub fn set_accessibility(
+        &mut self,
+        node: NodeId,
+        accessibility: Accessibility,
+    ) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        if self.require_node(node)?.accessibility.as_ref() == Some(&accessibility) {
+            return Ok(());
+        }
+        self.nodes
+            .get_mut(&node)
+            .expect("node checked above")
+            .accessibility = Some(accessibility.clone());
+        self.journal.push_coalesced(
+            DirtySlot::Accessibility(node),
+            Operation::SetAccessibility {
+                node,
+                accessibility,
+            },
+        );
+        Ok(())
+    }
+
     /// Sets a node's Host hit-test participation.
     pub fn set_hit_test(
         &mut self,
@@ -1158,6 +1190,12 @@ impl Scene {
                     style: style.clone(),
                 });
             }
+            if let Some(accessibility) = &state.accessibility {
+                operations.push(Operation::SetAccessibility {
+                    node: *node,
+                    accessibility: accessibility.clone(),
+                });
+            }
             for (property, value) in &state.properties {
                 operations.push(Operation::SetProperty {
                     node: *node,
@@ -1385,6 +1423,12 @@ mod tests {
         scene
             .set_text_style(root, text_style.clone())
             .expect("text style");
+        let accessibility = Accessibility::new()
+            .label("Greeting")
+            .role(whisker_protocol::AccessibilityRole::Header);
+        scene
+            .set_accessibility(root, accessibility.clone())
+            .expect("accessibility");
         scene
             .set_property(root, property(1), WhiskerValue::String("red".into()))
             .expect("property");
@@ -1411,6 +1455,7 @@ mod tests {
         assert_eq!(root_state.layout(), Some(rect.into()));
         assert_eq!(root_state.text(), Some(&text));
         assert_eq!(root_state.text_style(), Some(&text_style));
+        assert_eq!(root_state.accessibility(), Some(&accessibility));
         assert_eq!(root_state.box_paint(), Some(&paint));
         assert_eq!(root_state.visual_effects(), &effects);
         assert_eq!(root_state.clip(), Some(clip));
@@ -1458,6 +1503,13 @@ mod tests {
                 operation,
                 Operation::SetTextStyle { node, style }
                     if *node == root && style == &text_style
+            )
+        }));
+        assert!(packet.operations.iter().any(|operation| {
+            matches!(
+                operation,
+                Operation::SetAccessibility { node, accessibility: actual }
+                    if *node == root && actual == &accessibility
             )
         }));
         assert!(!scene.has_pending_work());
@@ -1549,6 +1601,13 @@ mod tests {
         scene
             .set_text_style(root, second_text_style)
             .expect("equal text style");
+        let accessibility = Accessibility::new().label("Updated");
+        scene
+            .set_accessibility(root, accessibility.clone())
+            .expect("accessibility");
+        scene
+            .set_accessibility(root, accessibility)
+            .expect("equal accessibility");
         scene
             .set_property(root, property(1), WhiskerValue::Int(1))
             .expect("first property");
@@ -1684,6 +1743,10 @@ mod tests {
                 root,
                 TextStyleSnapshot::from(&text_content("pending style"))
             ),
+            Err(SceneError::FramePending)
+        );
+        assert_eq!(
+            scene.set_accessibility(root, Accessibility::new()),
             Err(SceneError::FramePending)
         );
         assert_eq!(
@@ -1900,6 +1963,7 @@ mod tests {
                 missing,
                 TextStyleSnapshot::from(&text_content("missing style")),
             ),
+            scene.set_accessibility(missing, Accessibility::new()),
             scene.set_property(missing, property(1), WhiskerValue::Null),
             scene.clear_property(missing, property(1)),
             scene.set_event_mask(missing, 0),

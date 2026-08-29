@@ -228,16 +228,37 @@ definition then binds that schema to its internal `ElementTag`; that tag is not
 part of the public schema identity.
 
 The custom builder owns its element handle from `builder()` onward and
-implements the same internal `ElementBuilder` trait as built-ins. Universal
-Rust authoring features such as `style`, `class`, `id`, accessibility props,
-gesture/lifecycle events, arbitrary attributes, and `ElementRef` binding
-therefore operate on both built-in and custom elements. They are not repeated
-as properties or events in each custom element schema. Only the
-component-specific parameters in the declaration become negotiated Host
-properties and events. `Children` selects element children and `TextChildren`
-selects normalized plain-text content. A declared
-`style` parameter remains accepted for compatibility but is still excluded
-from the schema.
+implements the same internal `ElementBuilder` trait as built-ins. The common
+Rust surface is deliberately small and structured: `style: Style`, `id:
+String`, `dataset: Dataset`, `accessibility: Accessibility`, common events,
+and `ElementRef` binding. These features therefore operate on built-in and
+custom elements without being repeated in every element schema. There is no
+public arbitrary string-attribute escape hatch, `class` API, or `hit_slop`.
+There is likewise no arbitrary event-name escape hatch: common input and
+motion events are typed methods, while provider events exist only when the
+element schema declares them. This makes an event that no Host can emit a
+compile-time error instead of a silent listener.
+Element-specific properties and commands must be declared by the component
+schema; an undeclared built-in builder method is a contract bug. `Children`
+selects element children and `TextChildren` selects normalized plain-text
+content. A declared `style` parameter is accepted as the shared structured
+style surface and is excluded from the negotiated property table.
+
+`Dataset` is a stable-key map whose values are `WhiskerValue`. It is retained
+by the Rust runtime and attached to `target` and `currentTarget` in event
+payloads; it is not serialized as DOM-style string attributes. `id` follows
+the same event-metadata path. This avoids Host-specific conversions such as
+stringifying booleans on Web while preserving a uniform event contract.
+
+`Text` v1 is a plain-text leaf. Its public content API is `value: String`; its
+only content-specific presentation option is `max_lines: u32`, where zero
+clears the limit. Passing element children to `Text`, or a bare string child
+to an element container, is a compile-time error. Raw-text nodes remain a
+lowering detail of `value` and `TextChildren`, not a public element. Rich text
+requires the deferred run model described below.
+`ScrollView` exposes only the schema-backed `axis`, `snap`,
+`scroll_snap_stop`, `scroll_enabled`, and `on_scroll` members. Its imperative
+handle exposes the declared one-way `scrollTo` and `scrollBy` commands.
 
 The schema compiler derives property and event names from the function
 signature. It emits one of three child policies:
@@ -255,6 +276,24 @@ the same policy and frame operation.
 
 The only other explicit layout capability retained in the common contract is
 the intrinsic measurement policy.
+
+### Common accessibility contract
+
+`Accessibility` is a complete replacement value carried by
+`SetAccessibility`; it is not a collection of stringly typed element
+properties. Version 1 includes label, hint, stable automation identifier,
+role, hidden/modal flags, and disabled, selected, checked, and expanded state.
+Roles cover group, text, button, link, image, header, checkbox, radio, switch,
+adjustable, search box, and tab. Built-in and custom elements use the same
+operation and Host wrapper implementation.
+
+Web maps the value to DOM roles and ARIA attributes. Android maps it to the
+common Host node and `AccessibilityNodeInfo`; iOS maps it to the logical node's
+UIKit accessibility fields and traits. Desktop retains the same logical
+semantics in its common presentation so OS adapters can project one AccessKit
+node per Whisker node without involving element modules. Imperative focus and
+custom accessibility actions are not version-1 generic element commands;
+they require a separately specified common focus/action protocol.
 
 ### Child policies
 
@@ -1348,6 +1387,6 @@ or implementation decisions:
   priority model;
 - criteria and state-transfer protocol for any future in-place wrapper
   realization change;
-- the initial cross-platform accessibility role/action schema;
+- the common imperative accessibility focus/action protocol;
 - whether any custom container measurement use case justifies a cycle-safe
   version 2 contract.

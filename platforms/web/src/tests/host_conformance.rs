@@ -24,18 +24,18 @@ use whisker_host_conformance::{
     SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
-    AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
-    BorderLineStyle, BoxClip, BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket,
-    GradientStop, ImageRepeat, LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily,
-    MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
-    MeasureTextWordBreak, MeasureTextWrap, MeasurementKey, MeasurementMetrics, MeasurementPayload,
-    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
-    PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
-    PaintLengthPercentage, PaintPosition, PathCommand, PointerKind, ProtocolVersion,
-    RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent,
-    ResourceId, ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent,
-    TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform, Visibility,
-    WhiskerValue,
+    Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, AvailableSpace,
+    BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
+    BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat,
+    LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily, MeasureFontStyle,
+    MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak,
+    MeasureTextWrap, MeasurementKey, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
+    MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
+    PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
+    PathCommand, PointerKind, ProtocolVersion, RadialGradientExtent, RadialGradientShape,
+    ResourceCommand, ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest,
+    ResourceSource, SurfaceId, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint,
+    TextShadow, Transform, Visibility, WhiskerValue,
 };
 use whisker_style::StyleEnvironment;
 
@@ -64,6 +64,116 @@ fn browser_pointer_metadata_maps_to_protocol_values() {
     assert_ne!(stable_pointer_id(-1), 0);
     assert_ne!(stable_pointer_id(0), stable_pointer_id(-1));
     assert_eq!(stable_pointer_id(-1), stable_pointer_id(-1));
+}
+
+#[wasm_bindgen_test]
+fn accessibility_protocol_maps_to_dom_semantics() {
+    let mut driver = Driver::new();
+    let view_type = ElementRegistry::standard()
+        .registration_for_builtin(whisker::ElementTag::View)
+        .unwrap()
+        .element_type;
+    let node = NodeId::new(1).unwrap();
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![
+                Operation::CreateNode {
+                    node,
+                    element_type: view_type,
+                },
+                Operation::SetAccessibility {
+                    node,
+                    accessibility: Accessibility::new()
+                        .label("Playback")
+                        .hint("Starts the episode")
+                        .identifier("playback-button")
+                        .role(AccessibilityRole::Button)
+                        .modal(true)
+                        .state(
+                            AccessibilityState::new()
+                                .disabled(true)
+                                .selected(true)
+                                .checked(AccessibilityChecked::Mixed)
+                                .expanded(false),
+                        ),
+                },
+            ],
+        })
+        .unwrap();
+
+    let element = driver.node(1);
+    assert_eq!(element.get_attribute("role").as_deref(), Some("button"));
+    assert_eq!(
+        element.get_attribute("aria-label").as_deref(),
+        Some("Playback")
+    );
+    assert_eq!(
+        element.get_attribute("aria-description").as_deref(),
+        Some("Starts the episode")
+    );
+    assert_eq!(
+        element
+            .get_attribute("data-whisker-accessibility-id")
+            .as_deref(),
+        Some("playback-button")
+    );
+    assert_eq!(element.get_attribute("aria-modal").as_deref(), Some("true"));
+    assert_eq!(
+        element.get_attribute("aria-disabled").as_deref(),
+        Some("true")
+    );
+    assert_eq!(
+        element.get_attribute("aria-selected").as_deref(),
+        Some("true")
+    );
+    assert_eq!(
+        element.get_attribute("aria-checked").as_deref(),
+        Some("mixed")
+    );
+    assert_eq!(
+        element.get_attribute("aria-expanded").as_deref(),
+        Some("false")
+    );
+
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 2,
+                base_revision: 1,
+                target_revision: 2,
+                viewport_epoch: 1,
+                mode: FrameMode::Delta,
+            },
+            operations: vec![Operation::SetAccessibility {
+                node,
+                accessibility: Accessibility::new()
+                    .label("Library")
+                    .role(AccessibilityRole::Tab)
+                    .state(AccessibilityState::new().selected(false)),
+            }],
+        })
+        .unwrap();
+    assert_eq!(element.get_attribute("role").as_deref(), Some("tab"));
+    assert_eq!(
+        element.get_attribute("aria-selected").as_deref(),
+        Some("false")
+    );
+    assert_eq!(element.get_attribute("aria-disabled"), None);
 }
 
 #[wasm_bindgen_test]

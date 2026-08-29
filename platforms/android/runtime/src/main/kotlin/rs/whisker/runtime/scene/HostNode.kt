@@ -9,6 +9,8 @@ import android.graphics.RectF
 import android.os.Build
 import android.view.MotionEvent
 import android.view.PointerIcon
+import android.view.View
+import android.view.accessibility.AccessibilityNodeInfo
 import rs.whisker.runtime.WhiskerView
 import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerMountedElement
@@ -33,6 +35,19 @@ internal data class HostGeometry(
     var contentY: Float = 0f,
     var contentWidth: Float = 0f,
     var contentHeight: Float = 0f,
+)
+
+internal data class HostAccessibility(
+    val label: String?,
+    val hint: String?,
+    val role: String?,
+    val identifier: String?,
+    val hidden: Boolean,
+    val modal: Boolean,
+    val disabled: Boolean?,
+    val selected: Boolean?,
+    val checked: String?,
+    val expanded: Boolean?,
 )
 
 /**
@@ -80,6 +95,58 @@ internal class HostNode(
     fun setHitTestBehavior(value: Int) {
         require(value in 0..3)
         hitTestBehavior = value
+    }
+
+    fun setAccessibility(value: HostAccessibility) {
+        val hasSemantics = value.label != null || value.hint != null || value.role != null ||
+            value.disabled != null || value.selected != null || value.checked != null ||
+            value.expanded != null
+        contentDescription = value.label
+        isEnabled = value.disabled != true
+        isSelected = value.selected == true
+        importantForAccessibility = if (value.hidden) {
+            IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        } else if (hasSemantics) {
+            IMPORTANT_FOR_ACCESSIBILITY_YES
+        } else {
+            IMPORTANT_FOR_ACCESSIBILITY_AUTO
+        }
+        if (Build.VERSION.SDK_INT >= 28) isScreenReaderFocusable = hasSemantics
+        if (Build.VERSION.SDK_INT >= 28) {
+            isAccessibilityHeading = value.role == "header"
+            accessibilityPaneTitle = value.label.takeIf { value.modal }
+        }
+        accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                if (Build.VERSION.SDK_INT >= 18) info.viewIdResourceName = value.identifier
+                info.className = when (value.role) {
+                    "button" -> android.widget.Button::class.java.name
+                    "image" -> android.widget.ImageView::class.java.name
+                    "text", "header", "link" -> android.widget.TextView::class.java.name
+                    "checkbox" -> android.widget.CheckBox::class.java.name
+                    "radio" -> android.widget.RadioButton::class.java.name
+                    "switch" -> android.widget.Switch::class.java.name
+                    "adjustable" -> android.widget.SeekBar::class.java.name
+                    "searchbox" -> android.widget.EditText::class.java.name
+                    "tab" -> android.widget.Button::class.java.name
+                    else -> android.view.ViewGroup::class.java.name
+                }
+                if (Build.VERSION.SDK_INT >= 26) info.hintText = value.hint
+                value.checked?.let { checked ->
+                    info.isCheckable = true
+                    info.isChecked = checked == "true"
+                }
+                if (Build.VERSION.SDK_INT >= 30) {
+                    info.stateDescription = when {
+                        value.checked == "mixed" -> "mixed"
+                        value.expanded == true -> "expanded"
+                        value.expanded == false -> "collapsed"
+                        else -> null
+                    }
+                }
+            }
+        }
     }
 
     fun setCursorKeyword(value: Int) {

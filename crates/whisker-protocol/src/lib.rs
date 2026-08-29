@@ -14,6 +14,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod accessibility;
 mod capability;
 mod element;
 mod frame;
@@ -24,6 +25,9 @@ mod resource;
 mod validation;
 mod visual;
 
+pub use accessibility::{
+    Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState,
+};
 pub use capability::{
     CapabilityEntry, CapabilitySupport, DuplicateCapability, RenderCapabilities, RenderCapability,
 };

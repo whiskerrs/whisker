@@ -1685,6 +1685,15 @@ impl MobileFrameOwned {
                         &mut texts,
                     )?;
                 }
+                Operation::SetAccessibility {
+                    node,
+                    accessibility,
+                } => {
+                    raw.tag = OP_ACCESSIBILITY;
+                    raw.node = node.get();
+                    values.push(Box::new(arena.encode(&accessibility.to_value())));
+                    raw.payload = values.last().unwrap().as_ref() as *const _ as *const c_void;
+                }
                 Operation::SetProperty {
                     node,
                     property,

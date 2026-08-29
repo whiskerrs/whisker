@@ -1,12 +1,9 @@
 //! Typed event objects deserialized from the [`WhiskerValue`] body the Rust
 //! runtime or a Host hands an event handler.
 //!
-//! Mirrors Lynx's event hierarchy (see
-//! <https://lynxjs.org/api/lynx-api/event/event.html>):
-//!
 //!   - [`Event`] — base shape every event carries (`type`,
 //!     `timestamp`, `target`, `currentTarget`).
-//!   - [`TouchEvent`] — `tap` / `longpress` / `touchstart` /
+//!   - [`TouchEvent`] — `tap` / `click` / `touchstart` /
 //!     `touchmove` / `touchend` / `touchcancel` / `click`. Adds the
 //!     primary-touch [`Point`] `detail` plus `touches` /
 //!     `changedTouches` arrays.
@@ -37,6 +34,61 @@ use crate::view::{Element, set_event_listener};
 /// `event::bind_unit` — the propagation type these take. Canonical
 /// definition lives in [`crate::view`].
 pub use crate::view::BindType;
+
+/// Structured application metadata attached to an element.
+///
+/// Values use [`WhiskerValue`] so event metadata has the same type model on
+/// every Host instead of stringifying booleans and numbers.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(transparent)]
+pub struct Dataset(BTreeMap<String, WhiskerValue>);
+
+impl Dataset {
+    /// Creates an empty dataset.
+    pub const fn new() -> Self {
+        Self(BTreeMap::new())
+    }
+
+    /// Inserts an arbitrary universal value.
+    pub fn value(mut self, key: impl Into<String>, value: WhiskerValue) -> Self {
+        self.0.insert(key.into(), value);
+        self
+    }
+
+    /// Inserts a string value.
+    pub fn string(self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.value(key, WhiskerValue::String(value.into()))
+    }
+
+    /// Inserts a boolean value.
+    pub fn bool(self, key: impl Into<String>, value: bool) -> Self {
+        self.value(key, WhiskerValue::Bool(value))
+    }
+
+    /// Inserts an integer value.
+    pub fn int(self, key: impl Into<String>, value: i64) -> Self {
+        self.value(key, WhiskerValue::Int(value))
+    }
+
+    /// Inserts a floating-point value.
+    pub fn float(self, key: impl Into<String>, value: f64) -> Self {
+        self.value(key, WhiskerValue::Float(value))
+    }
+
+    /// Returns one value by key.
+    pub fn get(&self, key: &str) -> Option<&WhiskerValue> {
+        self.0.get(key)
+    }
+
+    /// Iterates over entries in stable key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &WhiskerValue)> {
+        self.0.iter()
+    }
+
+    pub(crate) fn as_map(&self) -> &BTreeMap<String, WhiskerValue> {
+        &self.0
+    }
+}
 
 /// Register a **typed** event handler on `handle`.
 ///
@@ -101,9 +153,8 @@ pub struct Target {
     pub id: String,
     /// Lynx Engine's unique element identifier (its "sign").
     pub uid: i64,
-    /// `data-*` attributes attached to the element, keyed without
-    /// the `data-` prefix.
-    pub dataset: BTreeMap<String, WhiskerValue>,
+    /// Structured application metadata attached to the element.
+    pub dataset: Dataset,
 }
 
 // The platform reporter hands over the *raw* event body, where `target`
@@ -159,7 +210,7 @@ impl<'de> Deserialize<'de> for Target {
                     #[serde(default)]
                     uid: i64,
                     #[serde(default)]
-                    dataset: BTreeMap<String, WhiskerValue>,
+                    dataset: Dataset,
                 }
                 let o = Obj::deserialize(de::value::MapAccessDeserializer::new(map))?;
                 Ok(Target {
@@ -173,7 +224,7 @@ impl<'de> Deserialize<'de> for Target {
     }
 }
 
-/// A 2-D point in LynxView coordinates — the `detail` of a
+/// A 2-D point in surface coordinates — the `detail` of a
 /// [`TouchEvent`] (position of the first touch point).
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[non_exhaustive]
@@ -197,7 +248,7 @@ pub struct Touch {
     pub x: f64,
     #[serde(default)]
     pub y: f64,
-    /// Position in LynxView coordinates.
+    /// Position in surface coordinates.
     #[serde(default)]
     pub page_x: f64,
     #[serde(default)]
@@ -209,7 +260,7 @@ pub struct Touch {
     pub client_y: f64,
 }
 
-/// Base event shape — fields present on every Lynx event.
+/// Base event shape — fields present on every Whisker event.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[non_exhaustive]
 pub struct Event {
@@ -228,7 +279,7 @@ pub struct Event {
 }
 
 /// Touch / tap / click event. The `detail` is the first touch
-/// point's LynxView-coordinate position; `touches` /
+/// point's surface-coordinate position; `touches` /
 /// `changed_touches` carry the full per-finger detail.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -242,9 +293,21 @@ pub struct TouchEvent {
     pub target: Target,
     #[serde(default)]
     pub current_target: Target,
-    /// Position of the first touch point (LynxView coordinates).
+    /// Position of the current pointer in surface coordinates.
     #[serde(default)]
     pub detail: Point,
+    /// Stable id for one pointer stream.
+    #[serde(default)]
+    pub pointer_id: i64,
+    /// `"mouse"`, `"touch"`, `"pen"`, or `"unknown"`.
+    #[serde(default)]
+    pub pointer_type: String,
+    /// Host button bitset active for this sample.
+    #[serde(default)]
+    pub buttons: u32,
+    /// Button changed by this sample, or `-1` when not applicable.
+    #[serde(default)]
+    pub button: i16,
     /// All touch points currently on the surface.
     #[serde(default)]
     pub touches: Vec<Touch>,

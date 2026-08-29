@@ -474,6 +474,10 @@ impl DomFrameSink {
                     .set_text_style(style)
                     .map_err(|error| js_error("set native DOM text style", error))?;
             }
+            Operation::SetAccessibility {
+                node,
+                accessibility,
+            } => apply_accessibility(&self.node(*node)?, accessibility)?,
             Operation::SetHitTest { node, behavior } => {
                 let disabled = matches!(
                     behavior,
@@ -733,6 +737,89 @@ impl DomFrameSink {
             }
         }
     }
+}
+
+fn apply_accessibility(
+    element: &web_sys::Element,
+    accessibility: &whisker_protocol::Accessibility,
+) -> Result<(), WebError> {
+    set_optional_attribute(element, "aria-label", accessibility.label.as_deref())?;
+    set_optional_attribute(element, "aria-description", accessibility.hint.as_deref())?;
+    set_optional_attribute(
+        element,
+        "data-whisker-accessibility-id",
+        accessibility.identifier.as_deref(),
+    )?;
+    let role = accessibility.role.map(|role| match role {
+        whisker_protocol::AccessibilityRole::Group => "group",
+        whisker_protocol::AccessibilityRole::Text => "paragraph",
+        whisker_protocol::AccessibilityRole::Button => "button",
+        whisker_protocol::AccessibilityRole::Link => "link",
+        whisker_protocol::AccessibilityRole::Image => "img",
+        whisker_protocol::AccessibilityRole::Header => "heading",
+        whisker_protocol::AccessibilityRole::Checkbox => "checkbox",
+        whisker_protocol::AccessibilityRole::Radio => "radio",
+        whisker_protocol::AccessibilityRole::Switch => "switch",
+        whisker_protocol::AccessibilityRole::Adjustable => "slider",
+        whisker_protocol::AccessibilityRole::SearchBox => "searchbox",
+        whisker_protocol::AccessibilityRole::Tab => "tab",
+        _ => "group",
+    });
+    set_optional_attribute(element, "role", role)?;
+    set_bool_attribute(element, "aria-hidden", accessibility.hidden)?;
+    set_bool_attribute(element, "aria-modal", accessibility.modal)?;
+    set_optional_bool_attribute(element, "aria-disabled", accessibility.state.disabled)?;
+    set_optional_bool_attribute(element, "aria-selected", accessibility.state.selected)?;
+    set_optional_attribute(
+        element,
+        "aria-checked",
+        accessibility.state.checked.map(|checked| checked.as_str()),
+    )?;
+    set_optional_attribute(
+        element,
+        "aria-expanded",
+        accessibility
+            .state
+            .expanded
+            .map(|value| if value { "true" } else { "false" }),
+    )?;
+    Ok(())
+}
+
+fn set_optional_attribute(
+    element: &web_sys::Element,
+    name: &str,
+    value: Option<&str>,
+) -> Result<(), WebError> {
+    if let Some(value) = value {
+        element
+            .set_attribute(name, value)
+            .map_err(|error| js_error("set accessibility attribute", error))
+    } else {
+        element
+            .remove_attribute(name)
+            .map_err(|error| js_error("clear accessibility attribute", error))
+    }
+}
+
+fn set_bool_attribute(element: &web_sys::Element, name: &str, value: bool) -> Result<(), WebError> {
+    if value {
+        set_optional_attribute(element, name, Some("true"))
+    } else {
+        set_optional_attribute(element, name, None)
+    }
+}
+
+fn set_optional_bool_attribute(
+    element: &web_sys::Element,
+    name: &str,
+    value: Option<bool>,
+) -> Result<(), WebError> {
+    set_optional_attribute(
+        element,
+        name,
+        value.map(|value| if value { "true" } else { "false" }),
+    )
 }
 
 fn reset_pooled_element(element: &web_sys::Element) -> Result<(), WebError> {

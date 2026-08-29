@@ -30,6 +30,8 @@ import rs.whisker.runtime.resource.HostResourceFailureCode
 import rs.whisker.runtime.resource.HostResourceSnapshot
 import rs.whisker.runtime.resource.HostResourceState
 import rs.whisker.runtime.measure.HostMeasureBatchAbi
+import rs.whisker.runtime.scene.HostAccessibility
+import rs.whisker.runtime.scene.HostNode
 
 private const val BACKGROUND_PACKED_LAYERS = 256
 
@@ -60,6 +62,42 @@ class HostConformanceTest {
         fun registerBuiltIns() {
             BuiltInElementModule().registerWithWhisker()
         }
+    }
+
+    @Test
+    fun commonAccessibilityMapsToAndroidNodeSemantics() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val node = HostNode(context, WhiskerBuiltInElements.VIEW, null)
+                node.setAccessibility(
+                    HostAccessibility(
+                        label = "Playback",
+                        hint = "Starts the episode",
+                        role = "button",
+                        identifier = "playback-button",
+                        hidden = false,
+                        modal = false,
+                        disabled = true,
+                        selected = true,
+                        checked = "mixed",
+                        expanded = false,
+                    ),
+                )
+
+                assertEquals("Playback", node.contentDescription)
+                assertEquals(false, node.isEnabled)
+                assertEquals(true, node.isSelected)
+                val info = node.createAccessibilityNodeInfo()
+                assertEquals("playback-button", info.viewIdResourceName)
+                assertEquals(android.widget.Button::class.java.name, info.className)
+                assertEquals(true, info.isCheckable)
+                assertEquals(false, info.isChecked)
+                if (Build.VERSION.SDK_INT >= 30) {
+                    assertEquals("mixed", info.stateDescription)
+                }
+            }
     }
 
     @Test

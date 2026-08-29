@@ -4,8 +4,8 @@ use std::{collections::HashMap, error::Error, fmt};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
-    ApplyResult, BoxPaint, CommandId, Cursor, CursorKeyword, ElementTypeId, FramePacket,
-    HitTestBehavior, InputPoint, LayoutGeometry, MeasurementMetrics, MeasurementReady,
+    Accessibility, ApplyResult, BoxPaint, CommandId, Cursor, CursorKeyword, ElementTypeId,
+    FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, MeasurementMetrics, MeasurementReady,
     MeasurementResponse, MeasurementSpec, NodeId, PointerId, PropertyId, SurfaceId, TextContent,
     WhiskerValue,
 };
@@ -277,6 +277,17 @@ impl SurfaceEngine {
     pub fn set_event_mask(&mut self, node: NodeId, mask: u64) -> Result<(), SurfaceError> {
         self.scene
             .set_event_mask(node, mask)
+            .map_err(SurfaceError::Scene)
+    }
+
+    /// Replaces one node's common accessibility semantics.
+    pub fn set_accessibility(
+        &mut self,
+        node: NodeId,
+        accessibility: Accessibility,
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .set_accessibility(node, accessibility)
             .map_err(SurfaceError::Scene)
     }
 
@@ -1553,6 +1564,21 @@ mod tests {
         assert_eq!(surface.node(root).unwrap().event_mask(), Some(5));
         assert_eq!(
             surface.set_event_mask(missing, 1),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+
+        let accessibility = Accessibility::new().label("Interactive content");
+        surface
+            .set_accessibility(root, accessibility.clone())
+            .unwrap();
+        assert_eq!(
+            surface.node(root).unwrap().accessibility(),
+            Some(&accessibility)
+        );
+        assert_eq!(
+            surface.set_accessibility(missing, Accessibility::new()),
             Err(SurfaceError::Scene(SceneError::UnknownNode {
                 node: missing
             }))
