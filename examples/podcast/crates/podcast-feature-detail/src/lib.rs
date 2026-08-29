@@ -161,7 +161,7 @@ fn detail_body(podcast: Podcast) -> Element {
                             height: px(220),
                             border_radius: theme::ARTWORK_RADIUS,
                             background_color: theme::SURFACE,
-                        ).raw("aspect-ratio", "1 / 1"),
+                        ).aspect_ratio(1.0, 1.0),
                         src: artwork_src,
                         mode: ImageMode::AspectFill,
                     )
@@ -173,7 +173,7 @@ fn detail_body(podcast: Podcast) -> Element {
                             margin_top: px(16),
                             text_align: TextAlign::Center,
                             text_overflow: TextOverflow::Ellipsis,
-                        ).raw("text-maxline", "3"),
+                        ),
                         value: title,
                     )
                     text(
@@ -491,7 +491,7 @@ fn episode_row(episode: Episode, show_title: String, show_artwork: String) -> El
                     color: theme::TEXT_PRIMARY,
                     font_weight: FontWeight::Numeric(600),
                     text_overflow: TextOverflow::Ellipsis,
-                ).raw("text-maxline", "2"),
+                ),
                 value: title.clone(),
             )
             text(

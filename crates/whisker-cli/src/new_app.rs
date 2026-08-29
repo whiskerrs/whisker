@@ -177,7 +177,10 @@ fn lib_rs(v: &Vars) -> String {
     format!(
         r##"//! {display} — a Whisker app.
 
-use whisker::css::{{AlignItems, Color, Display, FlexDirection, FontWeight, JustifyContent}};
+use whisker::css::{{
+    AlignItems, Color, ColorStop, Display, FlexDirection, FontWeight, Gradient,
+    JustifyContent, LinearDirection,
+}};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
@@ -208,9 +211,7 @@ fn root() -> Element {{
 
     render! {{
         // Styles use the typed `css!` macro: field names map to CSS
-        // properties and values are checked at compile time. Reach for
-        // `.raw("prop", "value")` for anything the typed builder doesn't
-        // cover yet (here: `gap` and the gradient `background`).
+        // properties and values are checked at compile time.
         view(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
@@ -221,24 +222,30 @@ fn root() -> Element {{
             background_color: Color::hex(0x0b0b0f),
         )) {{
             // A card: column layout, padding, rounded corners, plus a
-            // `gap` and a linear-gradient background via `.raw(...)`.
+            // gap and a typed linear-gradient background.
             view(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 padding: px(32),
                 border_radius: px(20),
-            )
-            .raw("gap", "6px")
-            .raw("background", "linear-gradient(135deg, #7c5cff 0%, #4e9bff 100%)")) {{
+                gap: px(6),
+                background_image: Gradient::Linear {{
+                    direction: LinearDirection::Angle(135.deg().into()),
+                    stops: vec![
+                        ColorStop::at(Color::hex(0x7c5cff), percent(0)),
+                        ColorStop::at(Color::hex(0x4e9bff), percent(100)),
+                    ],
+                }},
+            )) {{
                 text(
                     value: "{display}",
                     style: css!(
                         color: Color::hex(0xffffff),
                         font_size: px(22),
                         font_weight: FontWeight::Bold,
-                    )
-                    .raw("letter-spacing", "0.5px"),
+                        letter_spacing: px(0.5),
+                    ),
                 )
                 text(
                     value: "Edit `Root` and save — hot reload in under a second",
@@ -258,8 +265,8 @@ fn root() -> Element {{
                     display: Display::Flex,
                     flex_direction: FlexDirection::Row,
                     margin_top: px(16),
-                )
-                .raw("gap", "12px")) {{
+                    gap: px(12),
+                )) {{
                     Button(label: "-1", delta: -1, count: count)
                     Button(label: "+1", delta: 1, count: count)
                 }}
@@ -278,8 +285,8 @@ fn button(label: &'static str, delta: i32, count: RwSignal<i32>) -> Element {{
             style: css!(
                 border_radius: px(12),
                 background_color: Color::rgba(255, 255, 255, 0.18),
-            )
-            .raw("padding", "12px 22px"),
+                padding: (px(12), px(22)),
+            ),
             on_tap: move |_| count.set(count.get() + delta),
         ) {{
             text(

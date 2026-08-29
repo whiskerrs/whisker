@@ -29,7 +29,7 @@ mod tests;
 
 pub use apply::{
     apply_attr, apply_attr_bool, apply_attr_f64, apply_attr_int, apply_attr_int_mapped,
-    apply_attr_owned, apply_styles,
+    apply_attr_owned,
 };
 pub use handle::Element;
 pub use into_view::{
@@ -52,7 +52,7 @@ pub use renderer::{
     create_element_by_schema, create_phantom_element, dispatch_event, flush, insert_child_at,
     is_phantom, observe_layout, previous_sibling, release_element, remove_child, set_attribute,
     set_attribute_bool, set_attribute_double, set_attribute_int, set_attribute_object,
-    set_event_listener, set_inline_styles, set_root, set_specified_style,
+    set_event_listener, set_root, set_specified_style,
 };
 
 // Renderer-wiring internals. Public because Hosts and test renderers link

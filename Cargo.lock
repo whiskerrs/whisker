@@ -6279,6 +6279,7 @@ dependencies = [
  "whisker-config",
  "whisker-plugin",
  "whisker-router-macros",
+ "whisker-style",
 ]
 
 [[package]]

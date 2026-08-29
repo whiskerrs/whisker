@@ -11,29 +11,11 @@
 use crate::reactive::{Signal, effect};
 use crate::view::handle::Element;
 use crate::view::renderer::{
-    set_attribute, set_attribute_bool, set_attribute_double, set_attribute_int, set_inline_styles,
+    set_attribute, set_attribute_bool, set_attribute_double, set_attribute_int,
 };
 
-/// Apply an inline-styles value to `h`, picking a static vs reactive
-/// code path based on the [`Signal<T>`] variant. The `Dynamic` case
-/// wraps the read in an `effect` so the
-/// [`ReadSignal<T>::get`](crate::reactive::ReadSignal::get) call
-/// registers the source as a dependency.
-pub fn apply_styles<V, T>(h: Element, v: V)
-where
-    V: ::std::convert::Into<Signal<T>>,
-    T: ::std::string::ToString + ::std::clone::Clone + 'static,
-{
-    match v.into() {
-        Signal::Stored(sv) => sv.with(|t| set_inline_styles(h, &t.to_string())),
-        Signal::Dynamic(sig) => {
-            effect(move || set_inline_styles(h, &sig.get().to_string()));
-        }
-    }
-}
-
 /// Apply a named attribute value to `h`. Same Stored / Dynamic
-/// dispatch as [`apply_styles`].
+/// dispatch as other reactive property helpers.
 pub fn apply_attr<V, T>(h: Element, name: &'static str, v: V)
 where
     V: ::std::convert::Into<Signal<T>>,

@@ -27,9 +27,9 @@ enum Op {
         key: String,
         value: String,
     },
-    SetStyles {
+    SetSpecifiedStyle {
         id: u32,
-        css: String,
+        declarations: usize,
     },
     Append {
         parent: u32,
@@ -80,11 +80,16 @@ impl DynRenderer for Recorder {
             value: v.into(),
         });
     }
-    fn set_inline_styles(&self, h: Element, css: &str) {
-        self.log.borrow_mut().push(Op::SetStyles {
+    fn set_specified_style(
+        &self,
+        h: Element,
+        style: &whisker_engine::whisker_style::SpecifiedStyle,
+    ) -> bool {
+        self.log.borrow_mut().push(Op::SetSpecifiedStyle {
             id: h.id(),
-            css: css.into(),
+            declarations: style.len(),
         });
+        true
     }
     fn append_child(&self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Append {
@@ -207,10 +212,10 @@ fn nested_view_with_text_child() {
 }
 
 #[test]
-fn style_attribute_emits_set_inline_styles() {
+fn style_attribute_emits_structured_style() {
     with_recorder(|log| {
         let _ = render! {
-            view(style: "padding: 16px;")
+            view(style: css!(padding: px(16)))
         };
         let ops = log.borrow();
         assert_eq!(
@@ -220,9 +225,9 @@ fn style_attribute_emits_set_inline_styles() {
                 tag: ElementTag::View
             }
         );
-        assert!(ops.contains(&Op::SetStyles {
+        assert!(ops.contains(&Op::SetSpecifiedStyle {
             id: 0,
-            css: "padding: 16px;".into()
+            declarations: 4,
         }));
     });
 }
@@ -508,23 +513,23 @@ fn dynamic_value_updates_on_signal_write() {
 #[test]
 fn dynamic_style_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
-        let (color, set_color) = signal("red".to_string()).split();
-        let css = computed(move || format!("color: {};", color.get()));
+        let (color, set_color) = signal(NamedColor::Red).split();
+        let css = computed(move || Css::new().color(Color::Named(color.get())));
         let _h = render! {
             view(style: css)
         };
-        set_color.set("blue".into());
+        set_color.set(NamedColor::Blue);
         flush();
 
         let styles: Vec<_> = log
             .borrow()
             .iter()
             .filter_map(|op| match op {
-                Op::SetStyles { css, .. } => Some(css.clone()),
+                Op::SetSpecifiedStyle { declarations, .. } => Some(*declarations),
                 _ => None,
             })
             .collect();
-        assert_eq!(styles, vec!["color: red;", "color: blue;"]);
+        assert_eq!(styles, vec![1, 1]);
     });
 }
 

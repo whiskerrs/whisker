@@ -45,19 +45,13 @@ impl std::error::Error for UnmigratedStyleValue {}
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum PropertyKey {
     Known(StyleProperty),
-    Legacy(&'static str),
     Custom(CustomPropertyName),
 }
 
 impl PropertyKey {
-    fn from_name(name: &'static str) -> Self {
-        StyleProperty::from_css_name(name).map_or(Self::Legacy(name), Self::Known)
-    }
-
     fn name(&self) -> &str {
         match self {
             Self::Known(property) => property.css_name(),
-            Self::Legacy(name) => name,
             Self::Custom(name) => name.as_str(),
         }
     }
@@ -98,14 +92,6 @@ impl CssProp {
         }
     }
 
-    fn legacy(name: &'static str, value: String) -> Self {
-        Self {
-            property: PropertyKey::from_name(name),
-            style_value: None,
-            lynx_value: value,
-        }
-    }
-
     fn custom(name: CustomPropertyName, value: StyleValue, css_value: String) -> Self {
         Self {
             property: PropertyKey::Custom(name),
@@ -119,12 +105,11 @@ impl CssProp {
         self.property.name()
     }
 
-    /// The registered property identity, or `None` for an unknown name added
-    /// through the temporary [`Css::raw`] migration escape hatch.
+    /// The registered property identity, or `None` for a custom property.
     pub fn property(&self) -> Option<StyleProperty> {
         match &self.property {
             PropertyKey::Known(property) => Some(*property),
-            PropertyKey::Legacy(_) | PropertyKey::Custom(_) => None,
+            PropertyKey::Custom(_) => None,
         }
     }
 
@@ -218,20 +203,6 @@ impl Css {
     pub(crate) fn push_raw(mut self, property: StyleProperty, value: impl Into<String>) -> Self {
         self.props.push(CssProp::new(property, value.into()));
         self
-    }
-
-    /// Escape hatch — append a raw CSS declaration without
-    /// type-checking. Use this when Lynx supports a property Whisker
-    /// has not yet wrapped, or when copying a value verbatim from
-    /// hand-written CSS.
-    ///
-    /// `name` should be a `&'static str` because property names are
-    /// part of the CSS grammar, not runtime data. The value is taken
-    /// verbatim and not validated.
-    pub fn raw(self, name: &'static str, value: impl Into<String>) -> Self {
-        let mut this = self;
-        this.props.push(CssProp::legacy(name, value.into()));
-        this
     }
 
     /// Defines an inherited typed CSS custom property.
@@ -347,11 +318,6 @@ impl Css {
                 PropertyKey::Custom(name) => {
                     style = style.push_custom(name.clone(), value);
                 }
-                PropertyKey::Legacy(_) => {
-                    return Err(UnmigratedStyleValue {
-                        property: property.name().to_owned(),
-                    });
-                }
             }
         }
         Ok(style)
@@ -421,8 +387,8 @@ mod tests {
     }
 
     #[test]
-    fn raw_appends_a_declaration() {
-        let s = Css::new().raw("color", "red");
+    fn typed_builder_appends_a_declaration() {
+        let s = Css::new().color(Color::Named(NamedColor::Red));
         assert_eq!(s.to_css_string(), "color: red;");
         assert!(!s.is_empty());
         assert_eq!(s.len(), 1);
@@ -431,17 +397,17 @@ mod tests {
     #[test]
     fn multiple_distinct_properties_keep_order() {
         let s = Css::new()
-            .raw("color", "red")
-            .raw("background-color", "blue");
+            .color(Color::Named(NamedColor::Red))
+            .background_color(Color::Named(NamedColor::Blue));
         assert_eq!(s.to_css_string(), "color: red; background-color: blue;");
     }
 
     #[test]
     fn duplicate_property_uses_last_value() {
         let s = Css::new()
-            .raw("color", "red")
-            .raw("color", "blue")
-            .raw("color", "green");
+            .color(Color::Named(NamedColor::Red))
+            .color(Color::Named(NamedColor::Blue))
+            .color(Color::Named(NamedColor::Green));
         assert_eq!(s.to_css_string(), "color: green;");
         assert_eq!(s.len(), 3);
         assert_eq!(s.resolved().len(), 1);
@@ -452,31 +418,33 @@ mod tests {
         // The last write decides where the property lands in the
         // resolved order.
         let s = Css::new()
-            .raw("color", "red")
-            .raw("background-color", "white")
-            .raw("color", "blue");
+            .color(Color::Named(NamedColor::Red))
+            .background_color(Color::Named(NamedColor::White))
+            .color(Color::Named(NamedColor::Blue));
         assert_eq!(s.to_css_string(), "background-color: white; color: blue;");
     }
 
     #[test]
     fn entries_iterates_all_in_order() {
-        let s = Css::new().raw("color", "red").raw("color", "blue");
+        let s = Css::new()
+            .color(Color::Named(NamedColor::Red))
+            .color(Color::Named(NamedColor::Blue));
         let names: Vec<&str> = s.entries().map(|p| p.name()).collect();
         assert_eq!(names, ["color", "color"]);
     }
 
     #[test]
     fn merge_lets_other_win() {
-        let base = Css::new().raw("color", "red");
-        let overlay = Css::new().raw("color", "blue");
+        let base = Css::new().color(Color::Named(NamedColor::Red));
+        let overlay = Css::new().color(Color::Named(NamedColor::Blue));
         let merged = base.merge(overlay);
         assert_eq!(merged.to_css_string(), "color: blue;");
     }
 
     #[test]
     fn merge_preserves_distinct_props() {
-        let base = Css::new().raw("color", "red");
-        let overlay = Css::new().raw("background-color", "yellow");
+        let base = Css::new().color(Color::Named(NamedColor::Red));
+        let overlay = Css::new().background_color(Color::Named(NamedColor::Yellow));
         let merged = base.merge(overlay);
         assert_eq!(
             merged.to_css_string(),
@@ -486,50 +454,44 @@ mod tests {
 
     #[test]
     fn into_string_via_from_owned() {
-        let s = Css::new().raw("color", "red");
+        let s = Css::new().color(Color::Named(NamedColor::Red));
         let css: String = s.into();
         assert_eq!(css, "color: red;");
     }
 
     #[test]
     fn into_string_via_from_borrowed() {
-        let s = Css::new().raw("color", "red");
+        let s = Css::new().color(Color::Named(NamedColor::Red));
         let css: String = (&s).into();
         assert_eq!(css, "color: red;");
     }
 
     #[test]
     fn display_matches_to_css_string() {
-        let s = Css::new().raw("color", "red").raw("padding", "8px");
+        let s = Css::new()
+            .color(Color::Named(NamedColor::Red))
+            .padding_top(Length::Px(8.0));
         assert_eq!(format!("{s}"), s.to_css_string());
     }
 
     #[test]
     fn style_prop_accessors() {
-        let s = Css::new().raw("color", "red");
+        let s = Css::new().color(Color::Named(NamedColor::Red));
         let prop = s.entries().next().unwrap();
         assert_eq!(prop.name(), "color");
         assert_eq!(prop.property(), Some(StyleProperty::Color));
         assert_eq!(prop.property_id(), Some(StyleProperty::Color.id()));
-        assert_eq!(prop.style_value(), None);
+        assert!(prop.style_value().is_some());
         assert_eq!(prop.value(), "red");
         assert_eq!(prop.to_css_string(), "color: red;");
     }
 
     #[test]
-    fn unknown_raw_property_has_no_registered_identity() {
-        let s = Css::new().raw("future-property", "value");
-        let prop = s.entries().next().unwrap();
-        assert_eq!(prop.name(), "future-property");
-        assert_eq!(prop.property(), None);
-        assert_eq!(prop.property_id(), None);
-    }
-
-    #[test]
-    fn known_raw_and_typed_writes_share_the_same_slot() {
-        let s = Css::new()
-            .push(StyleProperty::Color, Token("red"))
-            .raw("color", "blue");
+    fn compatibility_and_typed_writes_share_the_same_slot() {
+        let s = Css {
+            props: vec![CssProp::new(StyleProperty::Color, "red".to_string())],
+        }
+        .color(Color::Named(NamedColor::Blue));
         assert_eq!(s.resolved().len(), 1);
         assert_eq!(s.to_css_string(), "color: blue;");
     }
@@ -558,14 +520,15 @@ mod tests {
 
     #[test]
     fn compatibility_fragment_reports_the_blocking_property() {
-        let error = Css::new()
-            .raw("future-property", "value")
-            .to_specified_style()
-            .unwrap_err();
-        assert_eq!(error.property(), "future-property");
+        let error = Css {
+            props: vec![CssProp::new(StyleProperty::Color, "red".to_string())],
+        }
+        .to_specified_style()
+        .unwrap_err();
+        assert_eq!(error.property(), "color");
         assert_eq!(
             error.to_string(),
-            "style property `future-property` still requires Lynx CSS compatibility"
+            "style property `color` still requires Lynx CSS compatibility"
         );
     }
 
@@ -873,13 +836,5 @@ mod tests {
         );
         assert_eq!(layout.gap.height.length(), 0.0);
         assert_eq!(layout.gap.height.fraction(), 0.1);
-    }
-
-    struct Token(&'static str);
-
-    impl ToCss for Token {
-        fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
-            dest.write_str(self.0)
-        }
     }
 }

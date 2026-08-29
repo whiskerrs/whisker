@@ -10,16 +10,17 @@
 //! * **prefetch** — three images warmed before any element points at
 //!   them; showing them afterwards should paint from cache.
 
+use whisker::css::{AlignItems, FlexDirection, FontWeight, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_image::{Image, ImageEvent, ImageMode, prefetch};
 
-const BG: &str = "#101012";
-const CARD_BG: &str = "#1c1c1f";
-const FG: &str = "#f0f0f3";
-const MUTED: &str = "#9a9aa2";
-const OK: &str = "#5bd68a";
-const BAD: &str = "#ff5577";
+const BG: u32 = 0x101012;
+const CARD_BG: u32 = 0x1c1c1f;
+const FG: u32 = 0xf0f0f3;
+const MUTED: u32 = 0x9a9aa2;
+const OK: u32 = 0x5bd68a;
+const BAD: u32 = 0xff5577;
 
 /// Answers `200 image/png` with an `Accept` it likes and `406` without.
 const HEADER_PROBE: &str = "https://httpbin.org/image";
@@ -38,22 +39,42 @@ const WARM: [&str; 3] = [
 
 #[whisker::main]
 pub fn app() -> Element {
-    let page = format!(
-        "background-color: {BG}; flex-grow: 1; flex-direction: column; \
-         padding: 16px; padding-top: 64px;"
-    );
-    let card = format!(
-        "background-color: {CARD_BG}; border-radius: 12px; padding: 12px; \
-         margin-bottom: 16px; flex-direction: column;"
-    );
-    let heading = format!("color: {FG}; font-size: 16px; font-weight: bold;");
-    let note = format!("color: {MUTED}; font-size: 13px; margin-top: 4px;");
-    let thumb = "width: 100%; height: 140px; border-radius: 8px; margin-top: 8px;";
-    let button = format!(
-        "background-color: {BAD}; border-radius: 8px; padding: 10px; \
-         align-items: center; justify-content: center; margin-top: 8px;"
-    );
-    let button_text = format!("color: {FG}; font-size: 14px; font-weight: bold;");
+    let page = Css::new()
+        .background_color(Color::hex(BG))
+        .flex_grow(1.0)
+        .flex_direction(FlexDirection::Column)
+        .padding(px(16))
+        .padding_top(px(64));
+    let card = Css::new()
+        .background_color(Color::hex(CARD_BG))
+        .border_radius(px(12))
+        .padding(px(12))
+        .margin_bottom(px(16))
+        .flex_direction(FlexDirection::Column);
+    let heading = Css::new()
+        .color(Color::hex(FG))
+        .font_size(px(16))
+        .font_weight(FontWeight::Bold);
+    let note = Css::new()
+        .color(Color::hex(MUTED))
+        .font_size(px(13))
+        .margin_top(px(4));
+    let thumb = Css::new()
+        .width(percent(100))
+        .height(px(140))
+        .border_radius(px(8))
+        .margin_top(px(8));
+    let button = Css::new()
+        .background_color(Color::hex(BAD))
+        .border_radius(px(8))
+        .padding(px(10))
+        .align_items(AlignItems::Center)
+        .justify_content(JustifyContent::Center)
+        .margin_top(px(8));
+    let button_text = Css::new()
+        .color(Color::hex(FG))
+        .font_size(px(14))
+        .font_weight(FontWeight::Bold);
 
     // Card 1 — the header actually leaving the phone.
     // 0 none, 1 an Accept the host likes, 2 one it refuses. Platforms
@@ -63,12 +84,15 @@ pub fn app() -> Element {
     let accept = RwSignal::new(0u8);
     let probe_status = RwSignal::new("waiting".to_string());
     let probe_style = computed(move || {
-        let colour = if probe_status.get().starts_with("loaded") {
+        let color = if probe_status.get().starts_with("loaded") {
             OK
         } else {
             BAD
         };
-        format!("color: {colour}; font-size: 13px; margin-top: 4px;")
+        Css::new()
+            .color(Color::hex(color))
+            .font_size(px(13))
+            .margin_top(px(4))
     });
 
     // Card 2 / 3 — the two outcomes reported plainly.
@@ -105,7 +129,7 @@ pub fn app() -> Element {
                     on_error: move |event: ImageEvent| {
                         probe_status.set(format!("error: {}", event.error()));
                     },
-                    style: thumb,
+                    style: thumb.clone(),
                 )
                 view(
                     style: button.clone(),
@@ -140,7 +164,7 @@ pub fn app() -> Element {
                     on_error: move |event: ImageEvent| {
                         photo_status.set(format!("error: {}", event.error()));
                     },
-                    style: thumb,
+                    style: thumb.clone(),
                 )
             }
 
@@ -188,10 +212,10 @@ pub fn app() -> Element {
                     )
                 }
                 Show(when: move || warmed.get()) {
-                    view(style: "flex-direction: row; gap: 8px; margin-top: 8px;") {
-                        Image(src: WARM[0], style: "flex-grow: 1; height: 80px;")
-                        Image(src: WARM[1], style: "flex-grow: 1; height: 80px;")
-                        Image(src: WARM[2], style: "flex-grow: 1; height: 80px;")
+                    view(style: Css::new().flex_direction(FlexDirection::Row).gap(px(8)).margin_top(px(8))) {
+                        Image(src: WARM[0], style: css!(flex_grow: 1.0, height: px(80)))
+                        Image(src: WARM[1], style: css!(flex_grow: 1.0, height: px(80)))
+                        Image(src: WARM[2], style: css!(flex_grow: 1.0, height: px(80)))
                     }
                 }
             }

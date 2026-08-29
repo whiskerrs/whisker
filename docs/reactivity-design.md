@@ -305,7 +305,7 @@ fn counter(initial: i32, on_change: WriteSignal<i32>) -> Element {
     on_cleanup(|| log::info!("counter unmounted"));
 
     render! {
-        view(style: "flex-direction: column; padding: 16px;") {
+        view(style: css!(flex_direction: FlexDirection::Column, padding: px(16))) {
             text(value: computed(move || format!("Count: {}", count.get())))
             view(on_tap: move |_| set_count.update(|n| *n += 1)) {
                 text(value: "+")

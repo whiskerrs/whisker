@@ -15,14 +15,16 @@
 //! live inline so a `whisker run` round-trip is the only
 //! verification step.
 
+use whisker::css::{AlignItems, FlexDirection, FlexWrap, FontWeight, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_svg::Svg;
 
-const BG: &str = "#101012";
-const CARD_BG: &str = "#1c1c1f";
-const FG: &str = "#f0f0f3";
-const ACCENT: &str = "#ff5577";
+const BG: u32 = 0x101012;
+const CARD_BG: u32 = 0x1c1c1f;
+const FG: u32 = 0xf0f0f3;
+const FG_TEXT: &str = "#f0f0f3";
+const ACCENT_TEXT: &str = "#ff5577";
 
 // ---- SVG payloads ----------------------------------------------------------
 //
@@ -70,29 +72,37 @@ const SVG_NESTED: &str = r##"<svg viewBox="0 0 24 24">
 
 #[whisker::main]
 pub fn app() -> Element {
-    let page_style = format!(
-        "background-color: {BG}; flex-grow: 1; flex-shrink: 1; \
-         display: flex; flex-direction: column; \
-         padding-top: 48px; padding-bottom: 24px;",
-    );
-    let header_style = format!(
-        "color: {FG}; font-size: 22px; font-weight: 700; \
-         margin-left: 20px; margin-bottom: 16px;",
-    );
-    let grid_style = "display: flex; flex-direction: row; flex-wrap: wrap; \
-                      padding-left: 12px; padding-right: 12px;"
-        .to_string();
+    let page_style = Css::new()
+        .background_color(Color::hex(BG))
+        .flex_grow(1.0)
+        .flex_shrink(1.0)
+        .display_flex()
+        .flex_direction(FlexDirection::Column)
+        .padding_top(px(48))
+        .padding_bottom(px(24));
+    let header_style = Css::new()
+        .color(Color::hex(FG))
+        .font_size(px(22))
+        .font_weight(FontWeight::Numeric(700))
+        .margin_left(px(20))
+        .margin_bottom(px(16));
+    let grid_style = Css::new()
+        .display_flex()
+        .flex_direction(FlexDirection::Row)
+        .flex_wrap(FlexWrap::Wrap)
+        .padding_left(px(12))
+        .padding_right(px(12));
 
     render! {
         view(style: page_style) {
             text(style: header_style, value: "whisker-svg gallery")
             view(style: grid_style) {
-                tile(label: "Rect (solid)",        svg: SVG_RECT,     color: FG)
-                tile(label: "Path (triangle)",     svg: SVG_TRIANGLE, color: FG)
-                tile(label: "Path (cubic curve)",  svg: SVG_CUBIC,    color: FG)
-                tile(label: "Stroke + width",      svg: SVG_STROKE,   color: FG)
-                tile(label: "currentColor tint",   svg: SVG_HEART,    color: ACCENT)
-                tile(label: "Nested <g> transform",svg: SVG_NESTED,   color: FG)
+                tile(label: "Rect (solid)",        svg: SVG_RECT,     color: FG_TEXT)
+                tile(label: "Path (triangle)",     svg: SVG_TRIANGLE, color: FG_TEXT)
+                tile(label: "Path (cubic curve)",  svg: SVG_CUBIC,    color: FG_TEXT)
+                tile(label: "Stroke + width",      svg: SVG_STROKE,   color: FG_TEXT)
+                tile(label: "currentColor tint",   svg: SVG_HEART,    color: ACCENT_TEXT)
+                tile(label: "Nested <g> transform",svg: SVG_NESTED,   color: FG_TEXT)
             }
         }
     }
@@ -103,18 +113,25 @@ pub fn app() -> Element {
 /// only variable in the visual is the SVG itself.
 #[component]
 fn tile(label: String, svg: String, color: String) -> Element {
-    let card_style = "width: 50%; \
-                      display: flex; flex-direction: column; align-items: center; \
-                      padding: 12px;"
-        .to_string();
-    let frame_style = format!(
-        "width: 96px; height: 96px; \
-         background-color: {CARD_BG}; \
-         border-radius: 12px; \
-         display: flex; align-items: center; justify-content: center;",
-    );
-    let svg_style = "width: 64px; height: 64px;".to_string();
-    let caption_style = format!("color: {FG}; font-size: 12px; margin-top: 8px;");
+    let card_style = Css::new()
+        .width(percent(50))
+        .display_flex()
+        .flex_direction(FlexDirection::Column)
+        .align_items(AlignItems::Center)
+        .padding(px(12));
+    let frame_style = Css::new()
+        .width(px(96))
+        .height(px(96))
+        .background_color(Color::hex(CARD_BG))
+        .border_radius(px(12))
+        .display_flex()
+        .align_items(AlignItems::Center)
+        .justify_content(JustifyContent::Center);
+    let svg_style = Css::new().width(px(64)).height(px(64));
+    let caption_style = Css::new()
+        .color(Color::hex(FG))
+        .font_size(px(12))
+        .margin_top(px(8));
 
     render! {
         view(style: card_style) {

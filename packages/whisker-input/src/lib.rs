@@ -22,11 +22,11 @@
 //! fn app() -> Element {
 //!     let text = RwSignal::new(String::new());
 //!     render! {
-//!         view(style: "flex-direction: column;") {
+//!         view(style: css!(flex_direction: FlexDirection::Column)) {
 //!             Input(
 //!                 text: text,
 //!                 placeholder: "Type something…",
-//!                 style: "height: 44px; font-size: 16px;",
+//!                 style: css!(height: px(44), font_size: px(16)),
 //!             )
 //!             // The bound signal updates on every keystroke.
 //!             text(value: move || format!("You typed: {}", text.get()))
@@ -55,7 +55,7 @@
 //! ```ignore
 //! Input(text: notes, multiline: true, lines: 4,
 //!       placeholder: "Notes…",
-//!       style: "min-height: 96px;")
+//!       style: css!(min_height: px(96)))
 //! ```
 //!
 //! ### Secure (password)
@@ -69,7 +69,7 @@
 //! ```ignore
 //! let field = InputRef::new();
 //! render! {
-//!     view(style: "flex-direction: row;") {
+//!     view(style: css!(flex_direction: FlexDirection::Row)) {
 //!         Input(text: text, input_ref: field.clone())
 //!         text(value: "Clear", on_tap: {
 //!             let field = field.clone();
@@ -105,7 +105,7 @@
 //! | `caret_color`      | `Signal<String>`                      | `""`          | Cursor color (CSS color string). |
 //! | `placeholder_color`| `Signal<String>`                      | `""`          | Placeholder text color. |
 //! | `selection_color`  | `Signal<String>`                      | `""`          | Selection-highlight color. |
-//! | `style`            | `Signal<String>`                      | `""`          | Standard Whisker CSS style string. |
+//! | `style`            | `Style`                              | empty          | Structured Whisker CSS declarations. |
 //! | `input_ref`        | [`InputRef`]                          | —             | Imperative handle (see [Methods](#methods)). |
 //!
 //! ## Styling

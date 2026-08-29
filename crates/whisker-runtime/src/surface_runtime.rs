@@ -65,13 +65,6 @@ pub enum RuntimeBindingError {
         /// Child rejected before entering the retained scene.
         child: Element,
     },
-    /// A compatibility-only CSS string reached the typed renderer.
-    UnsupportedRawStyle {
-        /// Styled runtime handle.
-        element: Element,
-        /// Original CSS retained for diagnostics.
-        css: String,
-    },
     /// An attribute has not yet been mapped to a typed element property.
     UnsupportedAttribute {
         /// Target runtime handle.
@@ -3911,17 +3904,6 @@ impl DynRenderer for SurfaceRuntime {
         let mut state = self.state.borrow_mut();
         let result = state.set_property_value(handle, key, WhiskerValue::Float(value));
         state.record(result);
-    }
-
-    fn set_inline_styles(&self, handle: Element, css: &str) {
-        if css.trim().is_empty() {
-            return;
-        }
-        let mut state = self.state.borrow_mut();
-        state.record(Err(RuntimeBindingError::UnsupportedRawStyle {
-            element: handle,
-            css: css.to_owned(),
-        }));
     }
 
     fn set_specified_style(&self, handle: Element, style: &SpecifiedStyle) -> bool {

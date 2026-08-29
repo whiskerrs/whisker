@@ -29,7 +29,7 @@
 //!     let status = player.status();
 //!
 //!     render! {
-//!         view(style: "flex-direction: column; padding: 16px;") {
+//!         view(style: css!(flex_direction: FlexDirection::Column, padding: px(16))) {
 //!             text(value: move || format!(
 //!                 "{:.1}s / {:.1}s",
 //!                 status.get().position,

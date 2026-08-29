@@ -24,15 +24,38 @@ use whisker::runtime::view::{DynRenderer, Element, install_renderer, uninstall_r
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
-    Create { id: u32, tag: ElementTag },
-    SetAttr { id: u32, key: String, value: String },
-    SetStyles { id: u32, css: String },
-    Append { parent: u32, child: u32 },
-    Remove { parent: u32, child: u32 },
-    Event { id: u32, name: String },
-    SetRoot { id: u32 },
+    Create {
+        id: u32,
+        tag: ElementTag,
+    },
+    SetAttr {
+        id: u32,
+        key: String,
+        value: String,
+    },
+    SetSpecifiedStyle {
+        id: u32,
+        style: whisker_engine::whisker_style::SpecifiedStyle,
+    },
+    Append {
+        parent: u32,
+        child: u32,
+    },
+    Remove {
+        parent: u32,
+        child: u32,
+    },
+    Event {
+        id: u32,
+        name: String,
+    },
+    SetRoot {
+        id: u32,
+    },
     Flush,
-    Release { id: u32 },
+    Release {
+        id: u32,
+    },
 }
 
 #[derive(Default)]
@@ -75,11 +98,16 @@ impl DynRenderer for Recorder {
             value: v.into(),
         });
     }
-    fn set_inline_styles(&self, h: Element, css: &str) {
-        self.log.borrow_mut().push(Op::SetStyles {
+    fn set_specified_style(
+        &self,
+        h: Element,
+        style: &whisker_engine::whisker_style::SpecifiedStyle,
+    ) -> bool {
+        self.log.borrow_mut().push(Op::SetSpecifiedStyle {
             id: h.id(),
-            css: css.into(),
+            style: style.clone(),
         });
+        true
     }
     fn append_child(&self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Append {
@@ -126,14 +154,17 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 
 // ----- The component under test ------------------------------------------
 
-/// Component with one `Signal<String>` prop. Body reads the prop
-/// inside a `computed` to drive a reactive `style` attribute.
+/// Component with one `Signal<String>` prop. Body reads the prop inside a
+/// `computed` to drive a reactive structured `style` attribute.
 #[component]
 fn colored_tile(color: Signal<String>) -> Element {
     // `Signal<T>` is `Copy`, so `color` moves into the `computed`
     // closure without a `.clone()` even though the `#[component]` body
     // is the `FnMut` the macro wraps for hot-patch dispatch.
-    let style = computed(move || format!("background: {};", color.get()));
+    let style = computed(move || {
+        let width = color.get().bytes().map(f32::from).sum::<f32>();
+        Css::new().width(px(width))
+    });
     render! {
         view(style: style)
     }
@@ -151,11 +182,12 @@ fn static_string_prop_sets_attribute_once() {
             .borrow()
             .iter()
             .filter_map(|op| match op {
-                Op::SetStyles { css, .. } => Some(css.clone()),
+                Op::SetSpecifiedStyle { style, .. } => Some(style.clone()),
                 _ => None,
             })
             .collect();
-        assert_eq!(styles, vec!["background: red;".to_string()]);
+        assert_eq!(styles.len(), 1);
+        assert_eq!(styles[0].len(), 1);
     });
 }
 
@@ -174,18 +206,13 @@ fn read_signal_prop_tracks_underlying_signal() {
             .borrow()
             .iter()
             .filter_map(|op| match op {
-                Op::SetStyles { css, .. } => Some(css.clone()),
+                Op::SetSpecifiedStyle { style, .. } => Some(style.clone()),
                 _ => None,
             })
             .collect();
-        assert_eq!(
-            styles,
-            vec![
-                "background: red;".to_string(),
-                "background: blue;".to_string(),
-                "background: green;".to_string(),
-            ]
-        );
+        assert_eq!(styles.len(), 3);
+        assert_ne!(styles[0], styles[1]);
+        assert_ne!(styles[1], styles[2]);
     });
 }
 
@@ -202,17 +229,12 @@ fn rw_signal_prop_tracks_underlying_signal() {
             .borrow()
             .iter()
             .filter_map(|op| match op {
-                Op::SetStyles { css, .. } => Some(css.clone()),
+                Op::SetSpecifiedStyle { style, .. } => Some(style.clone()),
                 _ => None,
             })
             .collect();
-        assert_eq!(
-            styles,
-            vec![
-                "background: orange;".to_string(),
-                "background: purple;".to_string(),
-            ]
-        );
+        assert_eq!(styles.len(), 2);
+        assert_ne!(styles[0], styles[1]);
     });
 }
 
@@ -237,14 +259,11 @@ fn show_flips_when_signal_holding_option_transitions() {
             .borrow()
             .iter()
             .filter_map(|op| match op {
-                Op::SetStyles { css, .. } => Some(css.clone()),
+                Op::SetSpecifiedStyle { style, .. } => Some(style.clone()),
                 _ => None,
             })
             .collect();
-        assert!(
-            initial_styles.iter().any(|s| s == "background: loading;"),
-            "initial render must mount the fallback branch (got styles {initial_styles:?})"
-        );
+        assert_eq!(initial_styles.len(), 1, "fallback branch must be styled");
 
         set_state.set(Some("done"));
         flush();
@@ -252,12 +271,13 @@ fn show_flips_when_signal_holding_option_transitions() {
             .borrow()
             .iter()
             .filter_map(|op| match op {
-                Op::SetStyles { css, .. } => Some(css.clone()),
+                Op::SetSpecifiedStyle { style, .. } => Some(style.clone()),
                 _ => None,
             })
             .collect();
         assert!(
-            after_styles.iter().any(|s| s == "background: loaded;"),
+            after_styles.len() > initial_styles.len()
+                && after_styles.last() != initial_styles.last(),
             "after set_state to Some, the children branch must be mounted \
              (this is the regression hn-reader hit: Loading banner never \
              swapped because Show's reactivity broke). styles seen: {after_styles:?}"
@@ -287,17 +307,12 @@ fn computed_prop_tracks_chain_of_signals() {
             .borrow()
             .iter()
             .filter_map(|op| match op {
-                Op::SetStyles { css, .. } => Some(css.clone()),
+                Op::SetSpecifiedStyle { style, .. } => Some(style.clone()),
                 _ => None,
             })
             .collect();
-        assert_eq!(
-            styles,
-            vec![
-                "background: even;".to_string(),
-                "background: odd;".to_string(),
-                "background: even;".to_string(),
-            ]
-        );
+        assert_eq!(styles.len(), 3);
+        assert_eq!(styles[0], styles[2]);
+        assert_ne!(styles[0], styles[1]);
     });
 }

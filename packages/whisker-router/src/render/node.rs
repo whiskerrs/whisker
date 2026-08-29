@@ -25,12 +25,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use whisker::css::ext::{percent, px};
+use whisker::css::{Color, Css, FlexDirection, Overflow, PointerEvents, Position, PositionKind};
 use whisker::runtime::reactive::{Owner, effect};
 use whisker::runtime::view::{
     Element, append_child, create_element, create_phantom_element, remove_child, set_attribute,
-    set_inline_styles,
 };
-use whisker::{AnimationController, ElementTag, computed, provide_context, use_context};
+use whisker::{
+    AnimationController, ElementTag, apply_style, computed, provide_context, use_context,
+};
 
 use crate::core::{NodePath, RouteState, RouteTree};
 use crate::render::components::OutletAnchor;
@@ -173,7 +176,7 @@ fn mount_switch(handle: &RouterHandle, path: NodePath) -> Element {
     // surrounding flex layout, e.g. above a tab bar) rather than against
     // some distant ancestor.
     let container = create_element(ElementTag::View);
-    set_inline_styles(container, &switch_container_style());
+    apply_style(container, switch_container_style());
     let handle = handle.clone();
 
     let branch_count = handle
@@ -185,13 +188,13 @@ fn mount_switch(handle: &RouterHandle, path: NodePath) -> Element {
     // Mount every branch once into its own wrapper; keep them all alive.
     // The wrapper MUST be a real `view` (not a phantom): it carries
     // `display` / `position: absolute` styles, and a phantom is a
-    // style-less transparent bundler whose `set_inline_styles` never
-    // reaches Lynx (so non-selected branches would not hide).
+    // style-less transparent bundler whose layout never reaches the retained
+    // surface (so non-selected branches would not hide).
     let mut wrappers: Vec<Element> = Vec::with_capacity(branch_count);
     for i in 0..branch_count {
         let wrapper = create_element(ElementTag::View);
         // Each branch fills the switch; visibility is toggled below.
-        set_inline_styles(wrapper, &branch_base_style(false));
+        apply_style(wrapper, branch_base_style(false));
         let child = mount_node(&handle, path.child(i));
         append_child(wrapper, child);
         append_child(container, wrapper);
@@ -203,7 +206,7 @@ fn mount_switch(handle: &RouterHandle, path: NodePath) -> Element {
     effect(move || {
         let sel = selected.get().unwrap_or(0);
         for (i, w) in wrappers.iter().enumerate() {
-            set_inline_styles(*w, &branch_base_style(i == sel));
+            apply_style(*w, branch_base_style(i == sel));
         }
     });
 
@@ -212,18 +215,29 @@ fn mount_switch(handle: &RouterHandle, path: NodePath) -> Element {
 
 /// The switch's positioned container: fills its flex slot and anchors the
 /// absolutely-positioned branch wrappers.
-fn switch_container_style() -> String {
-    "position: relative; flex-grow: 1; display: flex; flex-direction: column;".to_string()
+fn switch_container_style() -> Css {
+    Css::new()
+        .position(PositionKind::Relative)
+        .flex_grow(1.0)
+        .display_flex()
+        .flex_direction(FlexDirection::Column)
 }
 
 /// A switch branch wrapper fills the container; only the selected one is
 /// displayed.
-fn branch_base_style(visible: bool) -> String {
-    let display = if visible { "flex" } else { "none" };
-    format!(
-        "display: {display}; flex-direction: column; position: absolute; \
-         left: 0; top: 0; right: 0; bottom: 0;"
-    )
+fn branch_base_style(visible: bool) -> Css {
+    let style = Css::new()
+        .flex_direction(FlexDirection::Column)
+        .position(PositionKind::Absolute)
+        .left(px(0))
+        .top(px(0))
+        .right(px(0))
+        .bottom(px(0));
+    if visible {
+        style.display_flex()
+    } else {
+        style.display_none()
+    }
 }
 
 /// One live history wrapper.
@@ -273,7 +287,7 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
     // wrappers stack against IT (rather than a distant ancestor) and the
     // stack fills its flex slot.
     let slot = create_element(ElementTag::View);
-    set_inline_styles(slot, &stack_container_style());
+    apply_style(slot, stack_container_style());
     let handle = handle.clone();
 
     // Backdrop-dim layer: a black absolute fill that darkens the area
@@ -292,7 +306,7 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
             Some(ctrl) => transition::predictive_dim(ctrl.value().get()),
             None => 0.0,
         });
-        effect(move || set_inline_styles(dim_eff, &dim_style(opacity.get())));
+        effect(move || apply_style(dim_eff, dim_style(opacity.get())));
     }
     append_child(slot, dim);
 
@@ -316,11 +330,16 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
 /// Style for the stack's backdrop-dim layer at `opacity` (0 = invisible).
 /// Always behind the top card; `pointer-events: none` so it never eats
 /// touches.
-fn dim_style(opacity: f32) -> String {
-    format!(
-        "position: absolute; left: 0; top: 0; right: 0; bottom: 0; \
-         background-color: #000000; opacity: {opacity}; pointer-events: none;"
-    )
+fn dim_style(opacity: f32) -> Css {
+    Css::new()
+        .position(PositionKind::Absolute)
+        .left(px(0))
+        .top(px(0))
+        .right(px(0))
+        .bottom(px(0))
+        .background_color(Color::hex(0x000000))
+        .opacity(opacity)
+        .pointer_events(PointerEvents::None)
 }
 
 /// Reconcile the live wrappers against `stack`'s history.
@@ -723,8 +742,8 @@ fn mount_wrapper(
         // transform/opacity AND the clip view's animated corner radius.
         effect(move || {
             let pose = style.get();
-            set_inline_styles(wrapper, &wrapper_style(&pose));
-            set_inline_styles(clip, &clip_view_style(pose.radius_px));
+            apply_style(wrapper, wrapper_style(&pose));
+            apply_style(clip, clip_view_style(pose.radius_px));
         });
 
         let child = mount_node(handle, child_path);
@@ -765,8 +784,8 @@ fn dispose_wrapper(slot: Element, w: StackWrapper) {
 
 /// The stack's positioned container: fills its flex slot and anchors the
 /// absolutely-positioned entry wrappers.
-fn stack_container_style() -> String {
-    "position: relative; flex-grow: 1; display: flex; flex-direction: column;".to_string()
+fn stack_container_style() -> Css {
+    switch_container_style()
 }
 
 /// Base style for a stack wrapper: absolutely-filled, column flow, with
@@ -774,13 +793,18 @@ fn stack_container_style() -> String {
 /// the inner [`clip_view_style`], NOT here — see `mount_wrapper`. The
 /// transform origin is centred so the predictive-back scale shrinks the
 /// card around its middle.
-fn wrapper_style(pose: &Pose) -> String {
-    format!(
-        "position: absolute; left: 0; top: 0; right: 0; bottom: 0; \
-         display: flex; flex-direction: column; \
-         transform-origin: 50% 50%; transform: {}; opacity: {};",
-        pose.transform, pose.opacity,
-    )
+fn wrapper_style(pose: &Pose) -> Css {
+    Css::new()
+        .position(PositionKind::Absolute)
+        .left(px(0))
+        .top(px(0))
+        .right(px(0))
+        .bottom(px(0))
+        .display_flex()
+        .flex_direction(FlexDirection::Column)
+        .transform_origin(Position::Coords(percent(50).into(), percent(50).into()))
+        .transform(pose.transform.clone())
+        .opacity(pose.opacity)
 }
 
 /// Style for the per-screen **clip view** — the direct parent of the
@@ -790,10 +814,15 @@ fn wrapper_style(pose: &Pose) -> String {
 /// predictive-back gesture shrinks the card — Material style. The
 /// `clip-radius` Lynx attribute (set in `mount_wrapper`) is what makes the
 /// rounding actually clip the child.
-fn clip_view_style(radius_px: f32) -> String {
-    format!(
-        "position: absolute; left: 0; top: 0; width: 100%; height: 100%; \
-         display: flex; flex-direction: column; overflow: hidden; \
-         border-radius: {radius_px}px;"
-    )
+fn clip_view_style(radius_px: f32) -> Css {
+    Css::new()
+        .position(PositionKind::Absolute)
+        .left(px(0))
+        .top(px(0))
+        .width(percent(100))
+        .height(percent(100))
+        .display_flex()
+        .flex_direction(FlexDirection::Column)
+        .overflow(Overflow::Hidden)
+        .border_radius(px(radius_px))
 }

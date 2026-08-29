@@ -21,10 +21,6 @@ enum Op {
         key: String,
         value: String,
     },
-    SetStyles {
-        id: u32,
-        css: String,
-    },
     Append {
         parent: u32,
         child: u32,
@@ -104,12 +100,6 @@ impl DynRenderer for RecordingRenderer {
             id: h.id(),
             key: key.into(),
             value: value.into(),
-        });
-    }
-    fn set_inline_styles(&self, h: Element, css: &str) {
-        self.ops.borrow_mut().push(Op::SetStyles {
-            id: h.id(),
-            css: css.into(),
         });
     }
     fn append_child(&self, parent: Element, child: Element) {
@@ -546,7 +536,6 @@ mod reentrancy {
                 .borrow_mut()
                 .push(format!("set_attr {} {}={}", h.id(), key, value));
         }
-        fn set_inline_styles(&self, _h: Element, _css: &str) {}
         fn append_child(&self, parent: Element, child: Element) {
             // Scope the `parent_sign` borrow — never spanning anything
             // re-entrant (matches the renderer contract).

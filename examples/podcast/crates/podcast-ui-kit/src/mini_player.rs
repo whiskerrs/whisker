@@ -129,7 +129,7 @@ pub fn mini_player() -> Element {
                         height: px(40),
                         border_radius: px(6),
                         background_color: Color::rgba(255, 255, 255, 0.15),
-                    ).raw("aspect-ratio", "1 / 1"),
+                    ).aspect_ratio(1.0, 1.0),
                     src: artwork_src,
                     mode: ImageMode::AspectFill,
                 )
@@ -150,7 +150,7 @@ pub fn mini_player() -> Element {
                             color: theme::TEXT_PRIMARY,
                             font_weight: FontWeight::Numeric(600),
                             text_overflow: TextOverflow::Ellipsis,
-                        ).raw("text-maxline", "1"),
+                        ),
                         value: title_text,
                     )
                     text(
@@ -159,7 +159,7 @@ pub fn mini_player() -> Element {
                             color: theme::TEXT_SECONDARY,
                             margin_top: px(2),
                             text_overflow: TextOverflow::Ellipsis,
-                        ).raw("text-maxline", "1"),
+                        ),
                         value: show_text,
                     )
                 }

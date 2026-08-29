@@ -17,12 +17,12 @@
 //! fn app() -> Element {
 //!     let video = VideoHandle::new();
 //!     render! {
-//!         view(style: "flex-direction: column;") {
+//!         view(style: css!(flex_direction: FlexDirection::Column)) {
 //!             Video(ref: video.r(), src: "https://example.com/clip.mp4",
-//!                   style: "width: 100%; height: 240px;")
+//!                   style: css!(width: percent(100), height: px(240)))
 //!             // `VideoHandle` is `Copy`, so each `move ||` closure
 //!             // captures its own copy — no `clone()` / pre-copy.
-//!             view(style: "flex-direction: row;") {
+//!             view(style: css!(flex_direction: FlexDirection::Row)) {
 //!                 text(value: "play",  on_tap: move |_| video.play())
 //!                 text(value: "pause", on_tap: move |_| video.pause())
 //!                 text(value: "+10s",  on_tap: move |_| video.seek(10.0))
@@ -59,7 +59,7 @@ use whisker::{ElementRef, Signal};
 /// `whisker-video:Video` element. The platform-side `@WhiskerModule`
 /// (`VideoModule`) registers a `VideoView` for this tag plus the
 /// `Prop("src")` setter + `play` / `pause` / `seek` commands. `src`
-/// is the media URL; `style` is the standard layout-styling string.
+/// is the media URL; `style` carries structured layout declarations.
 #[whisker::module_component(
     name = "whisker-video:Video",
     measurement = None,

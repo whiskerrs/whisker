@@ -34,11 +34,10 @@ pub fn featured_card(podcast: Podcast) -> Element {
                     font_size: theme::T_CATEGORY,
                     color: theme::TEXT_SECONDARY,
                     font_weight: FontWeight::Numeric(600),
-                ).raw("letter-spacing", "0.5px"),
+                    letter_spacing: px(0.5),
+                ),
                 value: category_label,
             )
-            // `text-maxline` is a Lynx-only extension not in the
-            // typed css! builder; `.raw(...)` appends it verbatim.
             text(
                 style: css!(
                     font_size: theme::T_FEATURED_TITLE,
@@ -46,7 +45,7 @@ pub fn featured_card(podcast: Podcast) -> Element {
                     font_weight: FontWeight::Numeric(600),
                     margin_top: px(6),
                     text_overflow: TextOverflow::Ellipsis,
-                ).raw("text-maxline", "2"),
+                ),
                 value: title_text,
             )
             Image(

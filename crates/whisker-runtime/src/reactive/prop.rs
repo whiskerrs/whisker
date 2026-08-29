@@ -100,8 +100,8 @@ use super::stored::StoredValue;
 // any `T: 'static` — `Signal<String>` included.
 pub enum Signal<T: 'static> {
     /// Plain value, held in an owner-bound [`StoredValue<T>`] arena
-    /// slot. The builder method that consumes this calls
-    /// `set_attribute` / `set_inline_styles` / etc. exactly once
+    /// slot. The builder method that consumes this applies the
+    /// corresponding renderer operation exactly once
     /// with the value. No reactive subscription is set up; reading
     /// the `StoredValue` does not tick the dependency graph.
     Stored(StoredValue<T>),
@@ -140,7 +140,7 @@ impl<T: 'static + Clone> Signal<T> {
     /// ```ignore
     /// #[component]
     /// fn dynamic_tile(color: Signal<String>) -> Element {
-    ///     let style = computed(move || format!("color: {};", color.get()));
+    ///     let style = computed(move || Css::new().color(Color::Named(color.get())));
     ///     //                                                  ^^^^^^^^^^^^
     ///     //                                                  registers sig
     ///     //                                                  with the
@@ -195,8 +195,8 @@ impl<T: 'static + Clone> From<RwSignal<T>> for Signal<T> {
 }
 
 // Without this impl a `&str` literal only reaches
-// `Into<Signal<&str>>` through the blanket `From<T>`, forcing callers
-// to write `.style("foo".to_string())`.
+// `Into<Signal<&str>>` through the blanket `From<T>`, forcing ordinary
+// string-valued props to allocate explicitly at call sites.
 impl From<&str> for Signal<String> {
     fn from(s: &str) -> Self {
         Signal::Stored(StoredValue::new(s.to_string()))

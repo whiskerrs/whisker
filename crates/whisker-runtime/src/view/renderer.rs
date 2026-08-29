@@ -121,11 +121,9 @@ pub trait DynRenderer {
     fn set_attribute_double(&self, handle: Element, key: &str, value: f64) {
         self.set_attribute(handle, key, &value.to_string());
     }
-    fn set_inline_styles(&self, handle: Element, css: &str);
-
     /// Applies renderer-independent typed style and reports whether it was
-    /// accepted. Renderers that still consume Lynx CSS use the default `false`
-    /// result so the caller can fall back to [`Self::set_inline_styles`].
+    /// accepted. The default `false` is useful for lightweight test renderers;
+    /// application-facing style APIs do not fall back to raw CSS.
     fn set_specified_style(&self, _handle: Element, _style: &SpecifiedStyle) -> bool {
         false
     }
@@ -591,17 +589,7 @@ pub fn set_attribute_double(handle: Element, key: &str, value: f64) {
     with_renderer(|r| r.set_attribute_double(handle, key, value), ())
 }
 
-pub fn set_inline_styles(handle: Element, css: &str) {
-    if is_phantom(handle) {
-        return;
-    }
-    with_renderer(|r| r.set_inline_styles(handle, css), ())
-}
-
 /// Attempts to apply renderer-independent typed style.
-///
-/// A `false` result asks the umbrella authoring layer to preserve its legacy
-/// CSS-string fallback for renderers that have not migrated yet.
 pub fn set_specified_style(handle: Element, style: &SpecifiedStyle) -> bool {
     if is_phantom(handle) {
         return true;

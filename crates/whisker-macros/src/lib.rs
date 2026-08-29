@@ -86,7 +86,7 @@ pub fn WhiskerModule(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// #[whisker::main]
 /// fn app() -> Element {
-///     render! { view(style: "flex-grow: 1;") { text(value: "Hello") } }
+///     render! { view(style: css!(flex_grow: 1.0)) { text(value: "Hello") } }
 /// }
 /// ```
 ///
@@ -371,7 +371,7 @@ pub(crate) fn fnv1a64(s: &str) -> u64 {
 ///
 /// let handle = render! {
 ///     view(
-///         style: "padding: 16px;",
+///         style: css!(padding: px(16)),
 ///         on_tap: move |_| println!("tapped"),
 ///     ) {
 ///         text(value: "Hello, world")
@@ -473,15 +473,15 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///     name = "example.ui/Hello",
 ///     measurement = None,
 /// )]
-/// pub fn hello(style: Signal<String>) {}
+/// pub fn hello(style: whisker::Style) {}
 /// ```
 ///
 /// Generates the same Props + builder + PascalCase-alias surface as
 /// `#[component]`, but the function body is **auto-generated**: it
 /// calls `view::create_element_by_name(tag)` and then applies each
-/// declared prop as either an inline-style (for the `style` prop) or
+/// declared prop as either structured CSS (for the `style` prop) or
 /// a SetAttribute (everything else, kebab-cased). Static vs reactive
-/// dispatch goes through the same `apply_styles` / `apply_attr`
+/// dispatch goes through the same `apply_style` / `apply_attr`
 /// helpers built-in tags use, so a `Signal::Dynamic` prop transparently
 /// effect-wraps the attribute write.
 ///
@@ -505,7 +505,7 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// ```ignore
 /// render! {
-///     Hello(style: "width: 100%; height: 8px;")
+///     Hello(style: css!(width: percent(100), height: px(8)))
 /// }
 /// ```
 ///

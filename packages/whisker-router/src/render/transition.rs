@@ -2,10 +2,9 @@
 //!
 //! A transition here is **not** a Lynx keyframe animation (see
 //! `docs/animation-design.md` for why the router uses the continuous
-//! engine instead). It is a pair of pure `progress → CSS` posers driven
+//! engine instead). It is a pair of pure `progress → Pose` functions driven
 //! by an [`AnimationController`]'s `0..1` value, composed into the screen
-//! wrapper's inline `transform` / `opacity` by a `computed` — exactly
-//! the proven `format!("translateX({}px)", x.get())` pattern.
+//! wrapper's typed `transform` / `opacity` by a `computed`.
 //!
 //! ## Progress convention
 //!
@@ -25,6 +24,8 @@
 use std::rc::Rc;
 
 use whisker::AnimConfig;
+use whisker::css::ext::percent;
+use whisker::css::{Number, Transform, TransformFn};
 
 /// A user-extensible screen transition: how a route enters and leaves when
 /// it becomes / stops being the top of its stack.
@@ -359,8 +360,8 @@ pub fn pose_for(mode: &PoseMode, role: Role, progress: f32) -> Pose {
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive] // a pose may grow fields (filter, scrim) — construct via the ctors
 pub struct Pose {
-    /// The `transform` CSS value.
-    pub transform: String,
+    /// The structured `transform` value.
+    pub transform: Transform,
     /// The `opacity` (0..1).
     pub opacity: f32,
     /// The `border-radius` in px the clip view rounds to (0 = square).
@@ -370,9 +371,9 @@ pub struct Pose {
 impl Pose {
     /// A pose with no corner rounding (`radius_px = 0`). The common
     /// constructor for custom [`Transition::pose`] implementations.
-    pub fn new(transform: String, opacity: f32) -> Self {
+    pub fn new(transform: impl Into<Transform>, opacity: f32) -> Self {
         Pose {
-            transform,
+            transform: transform.into(),
             opacity,
             radius_px: 0.0,
         }
@@ -380,13 +381,30 @@ impl Pose {
 
     /// A pose that also rounds the clip view to `radius_px` (used by the
     /// predictive-back card).
-    pub fn with_radius(transform: String, opacity: f32, radius_px: f32) -> Self {
+    pub fn with_radius(transform: impl Into<Transform>, opacity: f32, radius_px: f32) -> Self {
         Pose {
-            transform,
+            transform: transform.into(),
             opacity,
             radius_px,
         }
     }
+}
+
+fn translate_x(x_percent: f32) -> Transform {
+    Transform::new().push(TransformFn::TranslateX(percent(x_percent).into()))
+}
+
+fn translate_y(y_percent: f32) -> Transform {
+    Transform::new().push(TransformFn::TranslateY(percent(y_percent).into()))
+}
+
+fn translate_scale(x_percent: f32, scale: f32) -> Transform {
+    Transform::new()
+        .push(TransformFn::TranslateX(percent(x_percent).into()))
+        .push(TransformFn::Scale(
+            Number::new(scale).into(),
+            Number::new(scale).into(),
+        ))
 }
 
 /// The Material-style **predictive-back** pose for `role` at controller
@@ -433,7 +451,13 @@ pub fn predictive_pose(role: Role, value: f32, edge: SwipeEdge) -> Pose {
             let opacity = 1.0 - dismiss;
             let radius = max_radius * preview;
             Pose::with_radius(
-                format!("translateX({x}%) translateY({y}%) scale({scale})"),
+                Transform::new()
+                    .push(TransformFn::TranslateX(percent(x).into()))
+                    .push(TransformFn::TranslateY(percent(y).into()))
+                    .push(TransformFn::Scale(
+                        Number::new(scale).into(),
+                        Number::new(scale).into(),
+                    )),
                 opacity,
                 radius,
             )
@@ -450,7 +474,7 @@ pub fn predictive_pose(role: Role, value: f32, edge: SwipeEdge) -> Pose {
             // commit. No `preview` term ⇒ the drag scales without sliding.
             let x = -PB_UNDER_PEEK_PCT + dismiss * PB_UNDER_PEEK_PCT;
             let radius = max_radius * preview * (1.0 - dismiss);
-            Pose::with_radius(format!("translateX({x}%) scale({scale})"), 1.0, radius)
+            Pose::with_radius(translate_scale(x, scale), 1.0, radius)
         }
     }
 }
@@ -516,12 +540,12 @@ impl Transition for Slide {
             Role::Top => {
                 // p=0 → fully right (off), p=1 → centred.
                 let x = (1.0 - p) * 100.0;
-                Pose::new(format!("translateX({x}%)"), 1.0)
+                Pose::new(translate_x(x), 1.0)
             }
             Role::Under => {
                 // p=0 → at rest, p=1 → parallaxed left + dimmed.
                 let x = -(p * PARALLAX * 100.0);
-                Pose::new(format!("translateX({x}%)"), 1.0 - p * DIM)
+                Pose::new(translate_x(x), 1.0 - p * DIM)
             }
         }
     }
@@ -546,12 +570,12 @@ impl Transition for SmallSlideFade {
             Role::Top => {
                 // Small slide: ~8% of width from the right, plus a fade in.
                 let x = (1.0 - p) * ANDROID_TOP_SLIDE_PCT;
-                Pose::new(format!("translateX({x}%)"), p)
+                Pose::new(translate_x(x), p)
             }
             Role::Under => {
                 // A slight reverse slide + fade out so the swap reads.
                 let x = -(p * ANDROID_UNDER_SLIDE_PCT);
-                Pose::new(format!("translateX({x}%)"), 1.0 - p * ANDROID_UNDER_DIM)
+                Pose::new(translate_x(x), 1.0 - p * ANDROID_UNDER_DIM)
             }
         }
     }
@@ -574,9 +598,9 @@ impl Transition for Modal {
         match role {
             Role::Top => {
                 let y = (1.0 - p) * 100.0;
-                Pose::new(format!("translateY({y}%)"), 1.0)
+                Pose::new(translate_y(y), 1.0)
             }
-            Role::Under => Pose::new("translateX(0px)".to_string(), 1.0),
+            Role::Under => Pose::new(Transform::new(), 1.0),
         }
     }
 }
@@ -596,8 +620,8 @@ impl Transition for Fade {
         let PoseContext { role, progress, .. } = ctx;
         let p = progress.clamp(0.0, 1.0);
         match role {
-            Role::Top => Pose::new("translateX(0px)".to_string(), p),
-            Role::Under => Pose::new("translateX(0px)".to_string(), 1.0 - p * FADE_UNDER_DIM),
+            Role::Top => Pose::new(Transform::new(), p),
+            Role::Under => Pose::new(Transform::new(), 1.0 - p * FADE_UNDER_DIM),
         }
     }
 }
@@ -624,11 +648,8 @@ impl Transition for NoneTransition {
         match role {
             // Hide the top until it is at least half in so a swap doesn't
             // flash an off-screen frame.
-            Role::Top => Pose::new(
-                "translateX(0px)".to_string(),
-                if p > 0.0 { 1.0 } else { 0.0 },
-            ),
-            Role::Under => Pose::new("translateX(0px)".to_string(), 1.0),
+            Role::Top => Pose::new(Transform::new(), if p > 0.0 { 1.0 } else { 0.0 }),
+            Role::Under => Pose::new(Transform::new(), 1.0),
         }
     }
 }

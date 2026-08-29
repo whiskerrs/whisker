@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn view_emission_uses_builder_chain() {
-        let input: TokenStream2 = quote::quote! { view(style: "x") };
+        let input: TokenStream2 = quote::quote! { view(style: typed_style) };
         let output = super::expand_test(input).to_string();
         assert!(
             output.contains("__view_ctor"),
@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn no_children_emits_bare_chain_expression() {
-        let input: TokenStream2 = quote::quote! { view(style: "x") };
+        let input: TokenStream2 = quote::quote! { view(style: typed_style) };
         let output = super::expand_test(input).to_string();
         assert!(
             !output.contains("let __h"),
@@ -658,7 +658,7 @@ mod tests {
     #[test]
     fn children_block_emits_child_method() {
         let input: TokenStream2 = quote::quote! {
-            view(style: "x") {
+            view(style: typed_style) {
                 view(class: "y")
             }
         };
@@ -672,7 +672,7 @@ mod tests {
     #[test]
     fn nested_children_use_inline_chain() {
         let input: TokenStream2 = quote::quote! {
-            view(style: "outer") {
+            view(style: outer_style) {
                 view(class: "inner")
             }
         };
@@ -687,7 +687,7 @@ mod tests {
     #[test]
     fn children_slot_lowers_to_mount_children() {
         let input: TokenStream2 = quote::quote! {
-            view(style: "x") {
+            view(style: typed_style) {
                 children()
             }
         };
@@ -709,7 +709,7 @@ mod tests {
         // The Rc is borrowed, never moved, so N projections all
         // succeed.
         let input: TokenStream2 = quote::quote! {
-            view(style: "x") {
+            view(style: typed_style) {
                 children()
                 view(class: "sep")
                 children()
@@ -727,7 +727,7 @@ mod tests {
     #[test]
     fn children_slot_sits_inside_child_method_call() {
         let input: TokenStream2 = quote::quote! {
-            view(style: "x") {
+            view(style: typed_style) {
                 children()
             }
         };

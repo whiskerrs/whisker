@@ -65,7 +65,6 @@ impl DynRenderer for Recorder {
             value: v.into(),
         });
     }
-    fn set_inline_styles(&self, _h: Element, _css: &str) {}
     fn append_child(&self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Append {
             parent: p.id(),
