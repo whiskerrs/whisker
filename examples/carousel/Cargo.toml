@@ -1,0 +1,12 @@
+[package]
+name = "carousel"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Cross-platform ScrollView item-snap carousel smoke test."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }

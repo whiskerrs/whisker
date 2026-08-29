@@ -92,6 +92,19 @@ class HostConformanceTest {
     }
 
     @Test
+    fun backdropBlurMatchesTheAdvertisedAndroidVersionBoundary() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                assertEquals(
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
+                    Driver(context, "backdrop-version-boundary").acceptsBackdropBlur(16f),
+                )
+            }
+    }
+
+    @Test
     fun everySharedPaintScenarioUsesTheProductionAndroidView() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
@@ -109,6 +122,9 @@ class HostConformanceTest {
                                 it.getString("type") == "present_scene"
                         }) return@forEach
                     val id = scenario.getString("id")
+                    if (id == "core.backdrop-filter-blur" &&
+                        Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                    ) return@forEach
                     val test = Driver(context, id).execute(testSide)
                     scenario.optJSONObject("reference")?.let { reference ->
                         val expected = Driver(context, id).execute(reference)
@@ -906,10 +922,18 @@ private class Driver(
         val result = checkNotNull(measurements[command.getLong("key")])
         val width = result[2]
         val height = result[3]
-        check(width.isFinite() && width >= command.getDouble("min_width").toFloat())
-        check(width <= command.getDouble("max_width").toFloat())
-        check(height.isFinite() && height >= command.getDouble("min_height").toFloat())
-        check(height <= command.getDouble("max_height").toFloat())
+        val minWidth = command.getDouble("min_width").toFloat()
+        val maxWidth = command.getDouble("max_width").toFloat()
+        val minHeight = command.getDouble("min_height").toFloat()
+        val maxHeight = command.getDouble("max_height").toFloat()
+        check(width.isFinite() && width >= minWidth) {
+            "$id measured width $width is below $minWidth"
+        }
+        check(width <= maxWidth) { "$id measured width $width exceeds $maxWidth" }
+        check(height.isFinite() && height >= minHeight) {
+            "$id measured height $height is below $minHeight"
+        }
+        check(height <= maxHeight) { "$id measured height $height exceeds $maxHeight" }
         // MobileMeasureResponse has a prepared-content ID, but the current Android
         // TextView measurer does not create reusable prepared content. The shared
         // fixture therefore leaves that optional optimization unconstrained.
@@ -920,6 +944,14 @@ private class Driver(
         check(stage(tag = 1, member = 1))
         check(stage(tag = 9, numbers = transform))
         return view.commitFrameFromNative()
+    }
+
+    fun acceptsBackdropBlur(radius: Float): Boolean {
+        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(stage(tag = 1, member = 1))
+        val accepted = stage(tag = 24, scalar = radius)
+        val committed = view.commitFrameFromNative()
+        return accepted && committed
     }
 
     fun rejectOpacity(opacity: Float): Boolean {

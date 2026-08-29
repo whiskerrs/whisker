@@ -109,6 +109,7 @@ pub struct DesktopRuntime {
     resources: DesktopResourceService,
     resource_events: Vec<whisker_protocol::ResourceEvent>,
     modules: RustModuleRuntime,
+    last_frame_timestamp_ms: Option<f64>,
 }
 
 impl DesktopRuntime {
@@ -148,6 +149,7 @@ impl DesktopRuntime {
             }),
             resource_events: Vec::new(),
             modules,
+            last_frame_timestamp_ms: None,
         })
     }
 
@@ -181,6 +183,11 @@ impl DesktopRuntime {
     /// Applies a logical wheel/trackpad delta to the nearest scroll container.
     pub fn scroll_at(&mut self, logical_position: [f32; 2], delta: [f32; 2]) -> bool {
         self.surface.scroll_at(logical_position, delta)
+    }
+
+    /// Settles the nearest snapping ScrollView after wheel/trackpad input ends.
+    pub fn settle_scroll_at(&mut self, logical_position: [f32; 2]) -> bool {
+        self.surface.settle_scroll_at(logical_position)
     }
 
     /// Registers one already-decoded RGBA8 raster for later `ResourceId`
@@ -227,6 +234,12 @@ impl DesktopRuntime {
         context: DesktopFrameContext,
     ) -> Result<DesktopFrameResult, DesktopError> {
         validate_context(context)?;
+        let delta_ms = self
+            .last_frame_timestamp_ms
+            .map_or(0.0, |previous| (context.timestamp_ms - previous).max(0.0))
+            .min(100.0) as f32;
+        self.last_frame_timestamp_ms = Some(context.timestamp_ms);
+        self.surface.advance_scroll_animations(delta_ms);
         self.modules.with_host(|| {
             self.modules.dispatch_pending_events();
         });
@@ -282,7 +295,9 @@ impl DesktopRuntime {
             )
             .map_err(|error| DesktopError(format!("paint Desktop frame: {error}")))?;
         Ok(DesktopFrameResult {
-            needs_frame: drive.needs_frame || dispatched_resource_event,
+            needs_frame: drive.needs_frame
+                || dispatched_resource_event
+                || self.surface.has_active_scroll_animations(),
         })
     }
 

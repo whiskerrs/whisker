@@ -13,8 +13,8 @@ use std::hash::Hash;
 use std::rc::Rc;
 
 use whisker_style::{
-    LengthPercentageValue, LengthUnit, LengthValue, SizeValue, SpecifiedStyle, StyleNumber,
-    StyleProperty, StyleValue,
+    GridPlacementValue, LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue,
+    SizeValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue,
 };
 use whisker_value::WhiskerValue;
 
@@ -22,9 +22,11 @@ use crate::element::ElementTag;
 use crate::reactive::{Owner, ReadSignal, RwSignal, effect, on_cleanup};
 
 use super::handle::Element;
+use super::list::{ListRef, ListScrollTarget, ScrollAlignment, ScrollAxis};
 use super::renderer::{
-    BindType, append_child, children_of, create_element, insert_child_at, remove_child,
-    set_event_listener, set_specified_style,
+    BindType, append_child, children_of, create_element, insert_child_at, observe_layout,
+    remove_child, set_event_listener, set_specified_style, specified_style,
+    try_invoke_element_command,
 };
 
 const DEFAULT_ITEM_SIZE: f32 = 44.0;
@@ -32,97 +34,61 @@ const DEFAULT_VIEWPORT_SIZE: f32 = 600.0;
 const DEFAULT_OVERSCAN_ITEMS: usize = 2;
 const DEFAULT_OVERSCAN_VIEWPORTS: f32 = 1.0;
 
-/// Stable identity and layout hints for a virtualized item.
+/// Internal layout policy selected from `list(content_style: ...)`.
 ///
-/// Only `key` and `estimated_size` participate in the first Rust virtualizer.
-/// The remaining hints stay in the Rust data model for Grid, sticky, and slot
-/// recycling policies; none cross the Host boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ItemMeta<K> {
-    key: K,
-    reuse_identifier: Option<String>,
-    estimated_size: Option<i32>,
-    full_span: bool,
-    sticky_top: bool,
-    sticky_bottom: bool,
-    recyclable: bool,
-}
-
-impl<K> ItemMeta<K> {
-    /// Creates metadata with one stable logical key.
-    pub fn key(key: K) -> Self {
-        Self {
-            key,
-            reuse_identifier: None,
-            estimated_size: None,
-            full_span: false,
-            sticky_top: false,
-            sticky_bottom: false,
-            recyclable: true,
-        }
-    }
-
-    /// Groups items that may share a future recycled presentation slot.
-    pub fn reuse_identifier(mut self, id: impl Into<String>) -> Self {
-        self.reuse_identifier = Some(id.into());
-        self
-    }
-
-    /// Sets the estimated main-axis size in logical pixels.
-    pub fn estimated_size(mut self, px: i32) -> Self {
-        self.estimated_size = Some(px);
-        self
-    }
-
-    /// Marks an item as spanning the complete cross axis in Grid layouts.
-    pub fn full_span(mut self, value: bool) -> Self {
-        self.full_span = value;
-        self
-    }
-
-    /// Marks an item as a leading-edge sticky candidate.
-    pub fn sticky_top(mut self, value: bool) -> Self {
-        self.sticky_top = value;
-        self
-    }
-
-    /// Marks an item as a trailing-edge sticky candidate.
-    pub fn sticky_bottom(mut self, value: bool) -> Self {
-        self.sticky_bottom = value;
-        self
-    }
-
-    /// Controls whether a future slot allocator may recycle this item.
-    pub fn recyclable(mut self, value: bool) -> Self {
-        self.recyclable = value;
-        self
-    }
-
-    fn main_axis_size(&self) -> f32 {
-        self.estimated_size
-            .map(|value| value.max(0) as f32)
-            .unwrap_or(DEFAULT_ITEM_SIZE)
-    }
-}
-
-struct MountedEntry {
-    owner: Owner,
-    handle: Element,
-}
-
-struct RecycledEntry<T: 'static> {
-    owner: Owner,
-    handle: Element,
-    item: RwSignal<T>,
-    reuse_class: u32,
-    recyclable: bool,
-}
-
+/// This is renderer-independent metadata, not a Host List contract. The
+/// ordinary linear policy keeps one item in each virtual track. The Grid
+/// policy groups a fixed number of source-order items into a Taffy Grid row
+/// (or column for a horizontal List).
+#[doc(hidden)]
 #[derive(Clone)]
-struct RecyclePolicy {
-    /// Interned within one List. Zero represents the default class (`None`).
-    reuse_class: u32,
-    recyclable: bool,
+pub enum VirtualListLayout {
+    Linear,
+    Grid(VirtualGridLayout),
+}
+
+/// Taffy style and grouping information for the supported virtual Grid
+/// subset. Unsupported Grid syntax is rejected by the authoring layer before
+/// this reaches the virtualizer.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct VirtualGridLayout {
+    pub items_per_track: usize,
+    pub track_style: SpecifiedStyle,
+    pub cell_style: SpecifiedStyle,
+    pub main_gap: f32,
+}
+
+/// Internal behavior and auxiliary content for one virtualized List.
+#[doc(hidden)]
+pub struct VirtualListOptions<K: 'static> {
+    pub axis: ScrollAxis,
+    pub layout: VirtualListLayout,
+    pub list_ref: Option<ListRef<K>>,
+    pub initial_scroll: Option<ListScrollTarget<K>>,
+    pub start_reached_threshold: f32,
+    pub end_reached_threshold: f32,
+    pub on_start_reached: Option<Rc<dyn Fn()>>,
+    pub on_end_reached: Option<Rc<dyn Fn()>>,
+    pub header: Option<Element>,
+    pub footer: Option<Element>,
+    pub empty: Option<Element>,
+}
+
+type ReconcileCallback = Rc<dyn Fn()>;
+type EntryLayoutObserver<K> = Rc<dyn Fn(&K, Element)>;
+
+struct MountedEntry<T: 'static> {
+    owner: Owner,
+    handle: Element,
+    mount_handle: Element,
+    item: RwSignal<T>,
+}
+
+struct MountedTrack<K> {
+    owner: Owner,
+    handle: Element,
+    keys: Vec<K>,
 }
 
 struct LayoutIndex<T, K> {
@@ -131,126 +97,267 @@ struct LayoutIndex<T, K> {
     /// Prefix offsets. `offsets[i]` is the start of item `i` and the final
     /// entry is the complete estimated extent.
     offsets: Vec<f32>,
-    /// Allocated only by the opt-in recycled-slot path. Plain `children:`
-    /// lists do not pay per-item memory for future recycling metadata.
-    recycle_policies: Option<Vec<RecyclePolicy>>,
-    reuse_classes: Option<HashMap<String, u32>>,
+    sizes: Vec<f32>,
+    measured_sizes: HashMap<K, f32>,
+    header_extent: f32,
+    footer_extent: f32,
+    empty_extent: f32,
+    items_per_track: usize,
+    main_gap: f32,
     generation: u64,
+    source_generation: u64,
 }
 
 impl<T, K> LayoutIndex<T, K>
 where
     K: Eq + Hash + Clone,
 {
-    fn new(recycled_slots: bool) -> Self {
+    fn new(items_per_track: usize, main_gap: f32) -> Self {
         Self {
             items: Vec::new(),
             keys: Vec::new(),
             offsets: vec![0.0],
-            recycle_policies: recycled_slots.then(Vec::new),
-            reuse_classes: recycled_slots.then(HashMap::new),
+            sizes: Vec::new(),
+            measured_sizes: HashMap::new(),
+            header_extent: 0.0,
+            footer_extent: 0.0,
+            empty_extent: 0.0,
+            items_per_track: items_per_track.max(1),
+            main_gap: main_gap.max(0.0),
             generation: 0,
+            source_generation: 0,
         }
     }
 
-    fn replace(&mut self, items: Vec<T>, meta: impl Fn(&T) -> ItemMeta<K>) {
+    fn replace(&mut self, items: Vec<T>, key: impl Fn(&T) -> K) {
         let mut unique_keys = HashSet::with_capacity(items.len());
         self.keys.clear();
         self.keys.reserve(items.len());
         self.offsets.clear();
         self.offsets.reserve(items.len() + 1);
-        self.offsets.push(0.0);
-        if let Some(policies) = &mut self.recycle_policies {
-            policies.clear();
-            policies.reserve(items.len());
-        }
-        for item in &items {
-            let item = meta(item);
+        self.offsets.push(self.header_extent);
+        self.sizes.clear();
+        self.sizes.reserve(items.len());
+        for (index, item) in items.iter().enumerate() {
+            let key = key(item);
             assert!(
-                unique_keys.insert(item.key.clone()),
+                unique_keys.insert(key.clone()),
                 "virtualized List keys must be unique"
             );
-            let main_axis_size = item.main_axis_size();
-            let reuse_class = if self.recycle_policies.is_some() {
-                match item.reuse_identifier.as_ref() {
-                    Some(identifier) => {
-                        let classes = self
-                            .reuse_classes
-                            .as_mut()
-                            .expect("recycled List must intern reuse identifiers");
-                        if let Some(class) = classes.get(identifier) {
-                            *class
-                        } else {
-                            let next = u32::try_from(classes.len() + 1)
-                                .expect("List reuse identifier count exceeds u32");
-                            classes.insert(identifier.clone(), next);
-                            next
-                        }
-                    }
-                    None => 0,
-                }
+            let size = if index % self.items_per_track == 0 {
+                let has_successor = index + self.items_per_track < items.len();
+                self.measured_sizes
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(DEFAULT_ITEM_SIZE + if has_successor { self.main_gap } else { 0.0 })
             } else {
-                0
+                0.0
             };
-            if let Some(policies) = &mut self.recycle_policies {
-                policies.push(RecyclePolicy {
-                    reuse_class,
-                    recyclable: item.recyclable,
-                });
-            }
-            self.keys.push(item.key);
+            self.keys.push(key);
+            self.sizes.push(size);
             self.offsets
-                .push(self.offsets.last().copied().unwrap_or(0.0) + main_axis_size);
+                .push(self.offsets.last().copied().unwrap_or(self.header_extent) + size);
         }
+        self.measured_sizes
+            .retain(|key, _| unique_keys.contains(key));
         self.items = items;
         self.generation = self.generation.wrapping_add(1);
+        self.source_generation = self.source_generation.wrapping_add(1);
     }
 
-    fn recycle_policy(&self, index: usize) -> &RecyclePolicy {
-        &self
-            .recycle_policies
-            .as_ref()
-            .expect("recycled List must retain slot policies")[index]
+    fn update_measurement(&mut self, key: &K, size: f32) -> bool {
+        if !size.is_finite() || size < 0.0 {
+            return false;
+        }
+        let Some(item_index) = self.keys.iter().position(|candidate| candidate == key) else {
+            return false;
+        };
+        let index = self.track_start_item(self.track_for_item(item_index));
+        if (self.sizes[index] - size).abs() < 0.5 {
+            return false;
+        }
+        self.measured_sizes.insert(key.clone(), size);
+        self.sizes[index] = size;
+        for offset_index in index + 1..self.offsets.len() {
+            self.offsets[offset_index] =
+                self.offsets[offset_index - 1] + self.sizes[offset_index - 1];
+        }
+        self.generation = self.generation.wrapping_add(1);
+        true
+    }
+
+    fn update_aux_measurement(&mut self, content: AuxContent, size: f32) -> bool {
+        if !size.is_finite() || size < 0.0 {
+            return false;
+        }
+        let current = match content {
+            AuxContent::Header => &mut self.header_extent,
+            AuxContent::Footer => &mut self.footer_extent,
+            AuxContent::Empty => &mut self.empty_extent,
+        };
+        if (*current - size).abs() < 0.5 {
+            return false;
+        }
+        let delta = size - *current;
+        *current = size;
+        if matches!(content, AuxContent::Header) {
+            for offset in &mut self.offsets {
+                *offset += delta;
+            }
+        }
+        self.generation = self.generation.wrapping_add(1);
+        true
+    }
+
+    fn total_extent(&self) -> f32 {
+        self.offsets.last().copied().unwrap_or(self.header_extent)
+            + self.footer_extent
+            + if self.items.is_empty() {
+                self.empty_extent
+            } else {
+                0.0
+            }
+    }
+
+    fn track_count(&self) -> usize {
+        self.items.len().div_ceil(self.items_per_track)
+    }
+
+    fn track_for_item(&self, item: usize) -> usize {
+        item / self.items_per_track
+    }
+
+    fn track_start_item(&self, track: usize) -> usize {
+        track
+            .saturating_mul(self.items_per_track)
+            .min(self.items.len())
+    }
+
+    fn track_end_item(&self, track: usize) -> usize {
+        self.track_start_item(track.saturating_add(1))
+    }
+
+    fn track_start(&self, track: usize) -> f32 {
+        self.offsets[self.track_start_item(track)]
+    }
+
+    fn track_end(&self, track: usize) -> f32 {
+        self.offsets[self.track_end_item(track)]
+    }
+
+    fn item_start(&self, item: usize) -> Option<f32> {
+        (item < self.items.len()).then(|| self.track_start(self.track_for_item(item)))
+    }
+
+    fn item_end(&self, item: usize) -> Option<f32> {
+        (item < self.items.len()).then(|| self.track_end(self.track_for_item(item)))
+    }
+
+    fn item_offsets(&self) -> (Vec<f32>, Vec<f32>) {
+        let mut starts = Vec::with_capacity(self.items.len());
+        let mut ends = Vec::with_capacity(self.items.len());
+        for item in 0..self.items.len() {
+            starts.push(self.item_start(item).expect("item is in range"));
+            ends.push(self.item_end(item).expect("item is in range"));
+        }
+        (starts, ends)
+    }
+
+    fn first_track_with_end_after(&self, offset: f32) -> usize {
+        let mut low = 0;
+        let mut high = self.track_count();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.track_end(middle) <= offset {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        low
+    }
+
+    fn first_track_with_start_at_or_after(&self, offset: f32) -> usize {
+        let mut low = 0;
+        let mut high = self.track_count();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.track_start(middle) < offset {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        low
+    }
+
+    fn anchor(&self, offset: f32) -> Option<(K, f32)> {
+        let track = self
+            .first_track_with_end_after(offset)
+            .min(self.track_count());
+        let index = self.track_start_item(track);
+        let key = self.keys.get(index)?.clone();
+        Some((key, offset - self.track_start(track)))
+    }
+
+    fn anchored_offset(&self, key: &K, within_item: f32) -> Option<f32> {
+        let index = self.keys.iter().position(|candidate| candidate == key)?;
+        Some(self.item_start(index)? + within_item)
     }
 
     fn window(&self, geometry: ScrollGeometry) -> LayoutWindow {
-        let item_count = self.items.len();
-        let first_visible = self.offsets[1..]
-            .partition_point(|end| *end <= geometry.offset)
-            .min(item_count);
+        let track_count = self.track_count();
+        let first_visible_track = self
+            .first_track_with_end_after(geometry.offset)
+            .min(track_count);
         let overscan_extent = geometry.viewport.max(0.0) * DEFAULT_OVERSCAN_VIEWPORTS;
         let overscan_start = (geometry.offset - overscan_extent).max(0.0);
-        let first_in_overscan = self.offsets[1..]
-            .partition_point(|end| *end <= overscan_start)
-            .min(item_count);
-        let start = first_in_overscan.min(first_visible.saturating_sub(DEFAULT_OVERSCAN_ITEMS));
+        let first_in_overscan = self
+            .first_track_with_end_after(overscan_start)
+            .min(track_count);
+        let start_track =
+            first_in_overscan.min(first_visible_track.saturating_sub(DEFAULT_OVERSCAN_ITEMS));
         let visible_end = geometry.offset + geometry.viewport.max(0.0);
-        let first_after_viewport = self.offsets[..item_count]
-            .partition_point(|item_start| *item_start < visible_end)
-            .max(first_visible.saturating_add(1).min(item_count));
-        let total_extent = self.offsets.last().copied().unwrap_or(0.0);
+        let first_after_viewport = self
+            .first_track_with_start_at_or_after(visible_end)
+            .max(first_visible_track.saturating_add(1).min(track_count));
+        let total_extent = self.total_extent();
         let overscan_end = (visible_end + overscan_extent).min(total_extent);
-        let first_after_overscan =
-            self.offsets[..item_count].partition_point(|item_start| *item_start < overscan_end);
-        let end = first_after_overscan
+        let first_after_overscan = self.first_track_with_start_at_or_after(overscan_end);
+        let end_track = first_after_overscan
             .max(first_after_viewport.saturating_add(DEFAULT_OVERSCAN_ITEMS))
-            .min(item_count);
+            .min(track_count);
+        let start = self.track_start_item(start_track);
+        let end = self.track_start_item(end_track);
 
         LayoutWindow {
             generation: self.generation,
+            source_generation: self.source_generation,
             start,
             end,
-            leading_extent: self.offsets[start],
-            trailing_extent: total_extent - self.offsets[end],
+            start_track,
+            end_track,
+            leading_extent: self.track_start(start_track) - self.header_extent,
+            trailing_extent: self.track_start(track_count) - self.track_start(end_track),
         }
     }
 }
 
 #[derive(Clone, Copy)]
+enum AuxContent {
+    Header,
+    Footer,
+    Empty,
+}
+
+#[derive(Clone, Copy)]
 struct LayoutWindow {
     generation: u64,
+    source_generation: u64,
     start: usize,
     end: usize,
+    start_track: usize,
+    end_track: usize,
     leading_extent: f32,
     trailing_extent: f32,
 }
@@ -278,37 +385,296 @@ impl Default for ScrollGeometry {
 
 /// Installs Rust-side virtualization below an ordinary ScrollView.
 ///
-/// `each`, `meta`, and `children` mirror `ForEach`'s source, identity, and
+/// `each`, `key`, and `children` mirror `ForEach`'s source, identity, and
 /// item-builder split. Host `scroll` events update the mounted window;
 /// reactive source changes run through the same reconciliation path.
 pub fn virtualize<T, K>(
     scroll_view: Element,
+    content: Element,
     each: impl Fn() -> Vec<T> + 'static,
-    meta: impl Fn(&T) -> ItemMeta<K> + 'static,
-    children: impl Fn(T) -> Element + 'static,
+    key: impl Fn(&T) -> K + 'static,
+    children: impl Fn(ReadSignal<T>) -> Element + 'static,
+    options: VirtualListOptions<K>,
 ) where
     T: Clone + 'static,
     K: Eq + Hash + Clone + 'static,
 {
+    let VirtualListOptions {
+        axis,
+        layout: virtual_layout,
+        list_ref,
+        initial_scroll,
+        start_reached_threshold,
+        end_reached_threshold,
+        on_start_reached,
+        on_end_reached,
+        header,
+        footer,
+        empty,
+    } = options;
     let leading_spacer = create_element(ElementTag::View);
     let trailing_spacer = create_element(ElementTag::View);
-    append_child(scroll_view, leading_spacer);
-    append_child(scroll_view, trailing_spacer);
+    append_child(scroll_view, content);
+    if let Some(header) = header {
+        append_child(content, header);
+    }
+    append_child(content, leading_spacer);
+    append_child(content, trailing_spacer);
+    if let Some(footer) = footer {
+        append_child(content, footer);
+    }
 
     let each = Rc::new(each);
-    let meta = Rc::new(meta);
+    let key = Rc::new(key);
     let children = Rc::new(children);
     let geometry = Rc::new(RefCell::new(ScrollGeometry::default()));
-    let layout = Rc::new(RefCell::new(LayoutIndex::<T, K>::new(false)));
-    let mounted: Rc<RefCell<HashMap<K, MountedEntry>>> = Rc::new(RefCell::new(HashMap::new()));
+    let items_per_track = match &virtual_layout {
+        VirtualListLayout::Linear => 1,
+        VirtualListLayout::Grid(grid) => grid.items_per_track,
+    };
+    let main_gap = match &virtual_layout {
+        VirtualListLayout::Linear => 0.0,
+        VirtualListLayout::Grid(grid) => grid.main_gap,
+    };
+    let layout = Rc::new(RefCell::new(LayoutIndex::<T, K>::new(
+        items_per_track,
+        main_gap,
+    )));
+    let mounted: Rc<RefCell<HashMap<K, MountedEntry<T>>>> = Rc::new(RefCell::new(HashMap::new()));
+    let mounted_tracks: Rc<RefCell<HashMap<usize, MountedTrack<K>>>> =
+        Rc::new(RefCell::new(HashMap::new()));
     let rendered_window = Rc::new(Cell::new(None::<LayoutWindow>));
+    let pending_initial_scroll = Rc::new(RefCell::new(initial_scroll));
+    let inside_start_threshold = Rc::new(Cell::new(false));
+    let inside_end_threshold = Rc::new(Cell::new(false));
+    if let Some(list_ref) = &list_ref {
+        list_ref.bind(scroll_view);
+        list_ref.update_geometry(0.0, DEFAULT_VIEWPORT_SIZE);
+    }
+    let reconcile_slot: Rc<RefCell<Option<ReconcileCallback>>> = Rc::new(RefCell::new(None));
+    let observe_entry: EntryLayoutObserver<K> = {
+        let layout = Rc::clone(&layout);
+        let geometry = Rc::clone(&geometry);
+        let reconcile_slot = Rc::clone(&reconcile_slot);
+        let list_ref = list_ref.clone();
+        Rc::new(move |key, handle| {
+            let key = key.clone();
+            let layout = Rc::clone(&layout);
+            let geometry = Rc::clone(&geometry);
+            let reconcile_slot = Rc::clone(&reconcile_slot);
+            let list_ref = list_ref.clone();
+            observe_layout(
+                handle,
+                Box::new(move |layout_geometry| {
+                    let current_geometry = *geometry.borrow();
+                    let (changed, corrected_offset) = {
+                        let mut layout = layout.borrow_mut();
+                        let anchor = layout.anchor(current_geometry.offset);
+                        let measured_size = match axis {
+                            ScrollAxis::Vertical => layout_geometry.border_box.height,
+                            ScrollAxis::Horizontal => layout_geometry.border_box.width,
+                        };
+                        let changed = layout.update_measurement(&key, measured_size.max(0.0));
+                        let corrected_offset = anchor.and_then(|(key, within_item)| {
+                            layout.anchored_offset(&key, within_item)
+                        });
+                        if changed && let Some(list_ref) = &list_ref {
+                            let (starts, ends) = layout.item_offsets();
+                            list_ref.update_layout(
+                                &layout.keys,
+                                &starts,
+                                &ends,
+                                layout.total_extent(),
+                            );
+                        }
+                        (changed, corrected_offset)
+                    };
+                    if changed
+                        && let Some(offset) = corrected_offset
+                        && (offset - current_geometry.offset).abs() >= 0.5
+                    {
+                        geometry.borrow_mut().offset = offset;
+                        if let Some(list_ref) = &list_ref {
+                            list_ref.update_geometry(offset, current_geometry.viewport);
+                        }
+                        let _ = try_invoke_element_command(
+                            scroll_view,
+                            "scrollTo",
+                            WhiskerValue::map([
+                                ("offset", WhiskerValue::Float(f64::from(offset))),
+                                ("smooth", WhiskerValue::Bool(false)),
+                            ]),
+                        );
+                    }
+                    if changed && let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
+                        reconcile();
+                    }
+                }),
+            );
+        })
+    };
+    let observe_track: Rc<dyn Fn(Vec<K>, Element)> = {
+        let layout = Rc::clone(&layout);
+        let geometry = Rc::clone(&geometry);
+        let reconcile_slot = Rc::clone(&reconcile_slot);
+        let list_ref = list_ref.clone();
+        let main_gap = match &virtual_layout {
+            VirtualListLayout::Linear => 0.0,
+            VirtualListLayout::Grid(grid) => grid.main_gap,
+        };
+        Rc::new(move |keys, handle| {
+            let layout = Rc::clone(&layout);
+            let geometry = Rc::clone(&geometry);
+            let reconcile_slot = Rc::clone(&reconcile_slot);
+            let list_ref = list_ref.clone();
+            observe_layout(
+                handle,
+                Box::new(move |layout_geometry| {
+                    let Some(first_key) = keys.first() else {
+                        return;
+                    };
+                    let current_geometry = *geometry.borrow();
+                    let (changed, corrected_offset) = {
+                        let mut layout = layout.borrow_mut();
+                        let anchor = layout.anchor(current_geometry.offset);
+                        let measured_size = match axis {
+                            ScrollAxis::Vertical => layout_geometry.border_box.height,
+                            ScrollAxis::Horizontal => layout_geometry.border_box.width,
+                        };
+                        let track_has_successor = layout
+                            .keys
+                            .iter()
+                            .position(|candidate| candidate == first_key)
+                            .is_some_and(|item| {
+                                layout.track_for_item(item) + 1 < layout.track_count()
+                            });
+                        let extent = measured_size.max(0.0)
+                            + if track_has_successor { main_gap } else { 0.0 };
+                        let changed = layout.update_measurement(first_key, extent);
+                        let corrected_offset = anchor.and_then(|(key, within_item)| {
+                            layout.anchored_offset(&key, within_item)
+                        });
+                        if changed && let Some(list_ref) = &list_ref {
+                            let (starts, ends) = layout.item_offsets();
+                            list_ref.update_layout(
+                                &layout.keys,
+                                &starts,
+                                &ends,
+                                layout.total_extent(),
+                            );
+                        }
+                        (changed, corrected_offset)
+                    };
+                    if changed
+                        && let Some(offset) = corrected_offset
+                        && (offset - current_geometry.offset).abs() >= 0.5
+                    {
+                        geometry.borrow_mut().offset = offset;
+                        if let Some(list_ref) = &list_ref {
+                            list_ref.update_geometry(offset, current_geometry.viewport);
+                        }
+                        let _ = try_invoke_element_command(
+                            scroll_view,
+                            "scrollTo",
+                            WhiskerValue::map([
+                                ("offset", WhiskerValue::Float(f64::from(offset))),
+                                ("smooth", WhiskerValue::Bool(false)),
+                            ]),
+                        );
+                    }
+                    if changed && let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
+                        reconcile();
+                    }
+                }),
+            );
+        })
+    };
 
-    let reconcile: Rc<dyn Fn()> = {
+    let observe_aux: Rc<dyn Fn(AuxContent, Element)> = {
+        let layout = Rc::clone(&layout);
+        let geometry = Rc::clone(&geometry);
+        let reconcile_slot = Rc::clone(&reconcile_slot);
+        let list_ref = list_ref.clone();
+        Rc::new(move |content, handle| {
+            let layout = Rc::clone(&layout);
+            let geometry = Rc::clone(&geometry);
+            let reconcile_slot = Rc::clone(&reconcile_slot);
+            let list_ref = list_ref.clone();
+            observe_layout(
+                handle,
+                Box::new(move |layout_geometry| {
+                    let current_geometry = *geometry.borrow();
+                    let measured_size = match axis {
+                        ScrollAxis::Vertical => layout_geometry.border_box.height,
+                        ScrollAxis::Horizontal => layout_geometry.border_box.width,
+                    };
+                    let (changed, corrected_offset) = {
+                        let mut layout = layout.borrow_mut();
+                        let preserve_item_anchor = !matches!(content, AuxContent::Header)
+                            || current_geometry.offset >= layout.header_extent;
+                        let anchor = preserve_item_anchor
+                            .then(|| layout.anchor(current_geometry.offset))
+                            .flatten();
+                        let changed =
+                            layout.update_aux_measurement(content, measured_size.max(0.0));
+                        let corrected_offset = anchor.and_then(|(key, within_item)| {
+                            layout.anchored_offset(&key, within_item)
+                        });
+                        if changed && let Some(list_ref) = &list_ref {
+                            let (starts, ends) = layout.item_offsets();
+                            list_ref.update_layout(
+                                &layout.keys,
+                                &starts,
+                                &ends,
+                                layout.total_extent(),
+                            );
+                        }
+                        (changed, corrected_offset)
+                    };
+                    if changed
+                        && let Some(offset) = corrected_offset
+                        && (offset - current_geometry.offset).abs() >= 0.5
+                    {
+                        geometry.borrow_mut().offset = offset;
+                        if let Some(list_ref) = &list_ref {
+                            list_ref.update_geometry(offset, current_geometry.viewport);
+                        }
+                        let _ = try_invoke_element_command(
+                            scroll_view,
+                            "scrollTo",
+                            WhiskerValue::map([
+                                ("offset", WhiskerValue::Float(f64::from(offset))),
+                                ("smooth", WhiskerValue::Bool(false)),
+                            ]),
+                        );
+                    }
+                    if changed && let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
+                        reconcile();
+                    }
+                }),
+            );
+        })
+    };
+    if let Some(header) = header {
+        observe_aux(AuxContent::Header, header);
+    }
+    if let Some(footer) = footer {
+        observe_aux(AuxContent::Footer, footer);
+    }
+    if let Some(empty) = empty {
+        observe_aux(AuxContent::Empty, empty);
+    }
+
+    let reconcile: ReconcileCallback = {
         let children = Rc::clone(&children);
         let geometry = Rc::clone(&geometry);
         let layout = Rc::clone(&layout);
         let mounted = Rc::clone(&mounted);
+        let mounted_tracks = Rc::clone(&mounted_tracks);
         let rendered_window = Rc::clone(&rendered_window);
+        let observe_entry = Rc::clone(&observe_entry);
+        let observe_track = Rc::clone(&observe_track);
+        let virtual_layout = virtual_layout.clone();
         Rc::new(move || {
             let geometry = *geometry.borrow();
             let window = {
@@ -323,11 +689,35 @@ pub fn virtualize<T, K>(
                 window
             };
 
-            set_spacer_size(leading_spacer, window.leading_extent);
-            set_spacer_size(trailing_spacer, window.trailing_extent);
+            set_spacer_size(leading_spacer, window.leading_extent, axis);
+            set_spacer_size(trailing_spacer, window.trailing_extent, axis);
+
+            if let VirtualListLayout::Grid(grid) = &virtual_layout {
+                let layout = layout.borrow();
+                reconcile_grid_window(
+                    content,
+                    leading_spacer,
+                    trailing_spacer,
+                    header,
+                    footer,
+                    empty,
+                    window,
+                    &layout,
+                    &mut mounted.borrow_mut(),
+                    &mut mounted_tracks.borrow_mut(),
+                    children.as_ref(),
+                    observe_track.as_ref(),
+                    grid,
+                    axis,
+                );
+                rendered_window.set(Some(window));
+                return;
+            }
 
             let previous = rendered_window.get();
-            if let Some(previous) = previous.filter(|old| old.generation == window.generation) {
+            if let Some(previous) =
+                previous.filter(|old| old.source_generation == window.source_generation)
+            {
                 let layout = layout.borrow();
                 let mut mounted = mounted.borrow_mut();
 
@@ -343,7 +733,7 @@ pub fn virtualize<T, K>(
                         let entry = mounted
                             .remove(&layout.keys[index])
                             .expect("a leaving List row must be mounted");
-                        remove_child(scroll_view, entry.handle);
+                        remove_child(content, entry.handle);
                         entry.owner.dispose();
                     },
                 );
@@ -354,11 +744,14 @@ pub fn virtualize<T, K>(
                     previous.end,
                     |index| {
                         let key = layout.keys[index].clone();
-                        let owner = Owner::new(None);
-                        let handle = owner.with(|| children(layout.items[index].clone()));
-                        let replaced = mounted.insert(key, MountedEntry { owner, handle });
+                        let entry =
+                            new_mounted_entry(layout.items[index].clone(), children.as_ref(), None);
+                        let handle = entry.handle;
+                        observe_entry(&key, handle);
+                        let replaced = mounted.insert(key, entry);
                         debug_assert!(replaced.is_none());
-                        insert_child_at(scroll_view, handle, index - window.start + 1);
+                        let prefix = usize::from(header.is_some()) + 1;
+                        insert_child_at(content, handle, index - window.start + prefix);
                     },
                 );
                 rendered_window.set(Some(window));
@@ -367,7 +760,25 @@ pub fn virtualize<T, K>(
 
             // A source replacement may reorder keys arbitrarily. Preserve keyed
             // entries still in the new window and dispose the rest.
-            let mut order = Vec::with_capacity(window.end - window.start + 2);
+            let mut order = Vec::with_capacity(window.end - window.start + 4);
+            if let Some(header) = header {
+                order.push(header);
+            }
+            if layout.borrow().items.is_empty() {
+                for (_, entry) in mounted.borrow_mut().drain() {
+                    remove_child(content, entry.handle);
+                    entry.owner.dispose();
+                }
+                if let Some(empty) = empty {
+                    order.push(empty);
+                }
+                if let Some(footer) = footer {
+                    order.push(footer);
+                }
+                sync_child_order(content, &order);
+                rendered_window.set(Some(window));
+                return;
+            }
             order.push(leading_spacer);
             {
                 let layout = layout.borrow();
@@ -383,17 +794,20 @@ pub fn virtualize<T, K>(
                     .collect::<Vec<_>>();
                 for key in stale_keys {
                     if let Some(entry) = mounted.remove(&key) {
-                        remove_child(scroll_view, entry.handle);
+                        remove_child(content, entry.handle);
                         entry.owner.dispose();
                     }
                 }
 
                 for index in window.start..window.end {
                     let key = &layout.keys[index];
-                    if !mounted.contains_key(key) {
-                        let owner = Owner::new(None);
-                        let handle = owner.with(|| children(layout.items[index].clone()));
-                        mounted.insert(key.clone(), MountedEntry { owner, handle });
+                    if let Some(entry) = mounted.get_mut(key) {
+                        entry.item.set(layout.items[index].clone());
+                    } else {
+                        let entry =
+                            new_mounted_entry(layout.items[index].clone(), children.as_ref(), None);
+                        observe_entry(key, entry.handle);
+                        mounted.insert(key.clone(), entry);
                     }
                     order.push(
                         mounted
@@ -405,19 +819,63 @@ pub fn virtualize<T, K>(
             }
 
             order.push(trailing_spacer);
-            sync_child_order(scroll_view, &order);
+            if let Some(footer) = footer {
+                order.push(footer);
+            }
+            sync_child_order(content, &order);
             rendered_window.set(Some(window));
         })
     };
+    *reconcile_slot.borrow_mut() = Some(Rc::clone(&reconcile));
 
     {
         let each = Rc::clone(&each);
-        let meta = Rc::clone(&meta);
+        let key = Rc::clone(&key);
         let layout = Rc::clone(&layout);
+        let geometry = Rc::clone(&geometry);
         let reconcile = Rc::clone(&reconcile);
+        let list_ref = list_ref.clone();
+        let pending_initial_scroll = Rc::clone(&pending_initial_scroll);
         effect(move || {
             let items = each();
-            layout.borrow_mut().replace(items, |item| meta(item));
+            let current_geometry = *geometry.borrow();
+            let corrected_offset = {
+                let mut layout = layout.borrow_mut();
+                let anchor = layout.anchor(current_geometry.offset);
+                layout.replace(items, |item| key(item));
+                let initial_offset = pending_initial_scroll
+                    .borrow()
+                    .as_ref()
+                    .and_then(|target| resolve_layout_target(&layout, target, current_geometry));
+                if initial_offset.is_some() {
+                    pending_initial_scroll.borrow_mut().take();
+                }
+                initial_offset.or_else(|| {
+                    anchor.and_then(|(key, within_item)| layout.anchored_offset(&key, within_item))
+                })
+            };
+            if let Some(offset) = corrected_offset
+                && (offset - current_geometry.offset).abs() >= 0.5
+            {
+                geometry.borrow_mut().offset = offset;
+                let _ = try_invoke_element_command(
+                    scroll_view,
+                    "scrollTo",
+                    WhiskerValue::map([
+                        ("offset", WhiskerValue::Float(f64::from(offset))),
+                        ("smooth", WhiskerValue::Bool(false)),
+                    ]),
+                );
+            }
+            if let Some(list_ref) = &list_ref {
+                let layout = layout.borrow();
+                let (starts, ends) = layout.item_offsets();
+                list_ref.update_layout(&layout.keys, &starts, &ends, layout.total_extent());
+                list_ref.update_geometry(
+                    corrected_offset.unwrap_or(current_geometry.offset),
+                    current_geometry.viewport,
+                );
+            }
             reconcile();
         });
     }
@@ -425,276 +883,362 @@ pub fn virtualize<T, K>(
     {
         let geometry = Rc::clone(&geometry);
         let reconcile = Rc::clone(&reconcile);
+        let list_ref = list_ref.clone();
+        let layout = Rc::clone(&layout);
+        let inside_start_threshold = Rc::clone(&inside_start_threshold);
+        let inside_end_threshold = Rc::clone(&inside_end_threshold);
         set_event_listener(
             scroll_view,
             "scroll",
             BindType::Bind,
             Box::new(move |event| {
-                if let Some(next) = scroll_geometry(&event) {
+                if let Some(next) = scroll_geometry(&event, axis) {
                     *geometry.borrow_mut() = next;
+                    if let Some(list_ref) = &list_ref {
+                        list_ref.update_geometry(next.offset, next.viewport);
+                    }
                     reconcile();
+                    let content_extent = layout.borrow().total_extent();
+                    let at_start = next.offset <= start_reached_threshold;
+                    let at_end =
+                        content_extent - (next.offset + next.viewport) <= end_reached_threshold;
+                    let was_at_start = inside_start_threshold.replace(at_start);
+                    let was_at_end = inside_end_threshold.replace(at_end);
+                    if at_start
+                        && !was_at_start
+                        && let Some(callback) = &on_start_reached
+                    {
+                        callback();
+                    }
+                    if at_end
+                        && !was_at_end
+                        && let Some(callback) = &on_end_reached
+                    {
+                        callback();
+                    }
                 }
             }),
         );
     }
 
     on_cleanup(move || {
+        reconcile_slot.borrow_mut().take();
+        for (_, track) in mounted_tracks.borrow_mut().drain() {
+            for key in &track.keys {
+                if let Some(entry) = mounted.borrow().get(key)
+                    && children_of(track.handle).contains(&entry.mount_handle)
+                {
+                    remove_child(track.handle, entry.mount_handle);
+                }
+            }
+            if children_of(content).contains(&track.handle) {
+                remove_child(content, track.handle);
+            }
+            track.owner.dispose();
+        }
         for (_, entry) in mounted.borrow_mut().drain() {
-            remove_child(scroll_view, entry.handle);
+            if children_of(content).contains(&entry.mount_handle) {
+                remove_child(content, entry.mount_handle);
+            }
             entry.owner.dispose();
         }
-        remove_child(scroll_view, leading_spacer);
-        remove_child(scroll_view, trailing_spacer);
+        let attached = children_of(content);
+        if attached.contains(&leading_spacer) {
+            remove_child(content, leading_spacer);
+        }
+        if attached.contains(&trailing_spacer) {
+            remove_child(content, trailing_spacer);
+        }
+        if let Some(header) = header
+            && children_of(content).contains(&header)
+        {
+            remove_child(content, header);
+        }
+        if let Some(footer) = footer
+            && children_of(content).contains(&footer)
+        {
+            remove_child(content, footer);
+        }
+        if let Some(empty) = empty
+            && children_of(content).contains(&empty)
+        {
+            remove_child(content, empty);
+        }
+        remove_child(scroll_view, content);
+        if let Some(list_ref) = &list_ref {
+            list_ref.unbind();
+        }
     });
 }
 
-/// Installs the opt-in recycled-slot List path.
-///
-/// Unlike [`virtualize`], the item builder receives a stable signal. Rows that
-/// leave and enter during one reconciliation exchange slots with a matching
-/// `reuse_identifier`; updating the signal rebinds reactive props while the
-/// element subtree and Host views keep their identity. No detached slots are
-/// retained across frames, so scene size remains bounded by the mounted window.
-pub fn virtualize_recycled<T, K>(
-    scroll_view: Element,
-    each: impl Fn() -> Vec<T> + 'static,
-    meta: impl Fn(&T) -> ItemMeta<K> + 'static,
-    children: impl Fn(ReadSignal<T>) -> Element + 'static,
+fn resolve_layout_target<T, K: Eq + Hash + Clone>(
+    layout: &LayoutIndex<T, K>,
+    target: &ListScrollTarget<K>,
+    geometry: ScrollGeometry,
+) -> Option<f32> {
+    let content_extent = layout.total_extent();
+    let maximum = (content_extent - geometry.viewport).max(0.0);
+    let item_offset = |index: usize, alignment: ScrollAlignment| {
+        let start = layout.item_start(index)?;
+        let end = layout.item_end(index)?;
+        let extent = end - start;
+        Some(match alignment {
+            ScrollAlignment::Start => start,
+            ScrollAlignment::Center => start - (geometry.viewport - extent) * 0.5,
+            ScrollAlignment::End => end - geometry.viewport,
+            ScrollAlignment::Nearest if start < geometry.offset => start,
+            ScrollAlignment::Nearest if end > geometry.offset + geometry.viewport => {
+                end - geometry.viewport
+            }
+            ScrollAlignment::Nearest => geometry.offset,
+        })
+    };
+    let offset = match target {
+        ListScrollTarget::Start => 0.0,
+        ListScrollTarget::End => maximum,
+        ListScrollTarget::Offset(offset) => *offset as f32,
+        ListScrollTarget::Index { index, alignment } => item_offset(*index, *alignment)?,
+        ListScrollTarget::Key { key, alignment } => {
+            let index = layout.keys.iter().position(|candidate| candidate == key)?;
+            item_offset(index, *alignment)?
+        }
+    };
+    Some(offset.clamp(0.0, maximum))
+}
+
+fn new_mounted_entry<T: Clone + 'static>(
+    item: T,
+    children: &dyn Fn(ReadSignal<T>) -> Element,
+    cell_style: Option<&SpecifiedStyle>,
+) -> MountedEntry<T> {
+    let owner = Owner::new(None);
+    let (item, handle, mount_handle) = owner.with(|| {
+        let item = RwSignal::new(item);
+        let handle = children(item.read_only());
+        let mount_handle = if let Some(style) = cell_style {
+            validate_virtual_grid_item(handle);
+            let cell = create_element(ElementTag::View);
+            set_specified_style(cell, style);
+            append_child(cell, handle);
+            cell
+        } else {
+            handle
+        };
+        (item, handle, mount_handle)
+    });
+    MountedEntry {
+        owner,
+        handle,
+        mount_handle,
+        item,
+    }
+}
+
+fn validate_virtual_grid_item(handle: Element) {
+    let Some(style) = specified_style(handle) else {
+        return;
+    };
+    for declaration in style.resolved() {
+        let property = declaration.property();
+        let unsupported_placement = matches!(
+            property,
+            StyleProperty::GridColumnStart
+                | StyleProperty::GridColumnEnd
+                | StyleProperty::GridRowStart
+                | StyleProperty::GridRowEnd
+        ) && !matches!(
+            declaration.value(),
+            StyleValue::GridPlacement(GridPlacementValue::Auto)
+        );
+        let unsupported_order = property == StyleProperty::Order
+            && !matches!(declaration.value(), StyleValue::Integer(0));
+        if unsupported_placement || unsupported_order {
+            panic!(
+                "unsupported virtualized Grid item: `{}` requires explicit placement",
+                property.css_name()
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reconcile_grid_window<T, K>(
+    content: Element,
+    leading_spacer: Element,
+    trailing_spacer: Element,
+    header: Option<Element>,
+    footer: Option<Element>,
+    empty: Option<Element>,
+    window: LayoutWindow,
+    layout: &LayoutIndex<T, K>,
+    mounted: &mut HashMap<K, MountedEntry<T>>,
+    mounted_tracks: &mut HashMap<usize, MountedTrack<K>>,
+    children: &dyn Fn(ReadSignal<T>) -> Element,
+    observe_track: &dyn Fn(Vec<K>, Element),
+    grid: &VirtualGridLayout,
+    axis: ScrollAxis,
 ) where
     T: Clone + 'static,
     K: Eq + Hash + Clone + 'static,
 {
-    let leading_spacer = create_element(ElementTag::View);
-    let trailing_spacer = create_element(ElementTag::View);
-    append_child(scroll_view, leading_spacer);
-    append_child(scroll_view, trailing_spacer);
+    let mut order = Vec::with_capacity(window.end_track - window.start_track + 4);
+    if let Some(header) = header {
+        order.push(header);
+    }
 
-    let each = Rc::new(each);
-    let meta = Rc::new(meta);
-    let children: Rc<dyn Fn(ReadSignal<T>) -> Element> = Rc::new(children);
-    let geometry = Rc::new(RefCell::new(ScrollGeometry::default()));
-    let layout = Rc::new(RefCell::new(LayoutIndex::<T, K>::new(true)));
-    let mounted: Rc<RefCell<HashMap<K, RecycledEntry<T>>>> = Rc::new(RefCell::new(HashMap::new()));
-    let rendered_window = Rc::new(Cell::new(None::<LayoutWindow>));
-
-    let reconcile: Rc<dyn Fn()> = {
-        let children = Rc::clone(&children);
-        let geometry = Rc::clone(&geometry);
-        let layout = Rc::clone(&layout);
-        let mounted = Rc::clone(&mounted);
-        let rendered_window = Rc::clone(&rendered_window);
-        Rc::new(move || {
-            let geometry = *geometry.borrow();
-            let window = {
-                let layout = layout.borrow();
-                let window = layout.window(geometry);
-                if rendered_window
-                    .get()
-                    .is_some_and(|rendered| rendered.identity() == window.identity())
+    if layout.items.is_empty() {
+        for (_, track) in mounted_tracks.drain() {
+            for key in &track.keys {
+                if let Some(entry) = mounted.get(key)
+                    && children_of(track.handle).contains(&entry.mount_handle)
                 {
-                    return;
-                }
-                window
-            };
-
-            set_spacer_size(leading_spacer, window.leading_extent);
-            set_spacer_size(trailing_spacer, window.trailing_extent);
-
-            let previous = rendered_window.get();
-            if let Some(previous) = previous.filter(|old| old.generation == window.generation) {
-                let layout = layout.borrow();
-                let mut mounted = mounted.borrow_mut();
-                let mut pool = Vec::new();
-
-                visit_range_difference(
-                    previous.start,
-                    previous.end,
-                    window.start,
-                    window.end,
-                    |index| {
-                        let entry = mounted
-                            .remove(&layout.keys[index])
-                            .expect("a leaving recycled List row must be mounted");
-                        remove_child(scroll_view, entry.handle);
-                        if entry.recyclable {
-                            pool.push(entry);
-                        } else {
-                            entry.owner.dispose();
-                        }
-                    },
-                );
-                visit_range_difference(
-                    window.start,
-                    window.end,
-                    previous.start,
-                    previous.end,
-                    |index| {
-                        let policy = layout.recycle_policy(index);
-                        let item = layout.items[index].clone();
-                        let entry = if let Some(mut entry) = take_recycled_entry(&mut pool, policy)
-                        {
-                            entry.item.set(item);
-                            entry.recyclable = policy.recyclable;
-                            entry
-                        } else {
-                            new_recycled_entry(item, policy, children.as_ref())
-                        };
-                        let handle = entry.handle;
-                        let replaced = mounted.insert(layout.keys[index].clone(), entry);
-                        debug_assert!(replaced.is_none());
-                        insert_child_at(scroll_view, handle, index - window.start + 1);
-                    },
-                );
-                for entry in pool {
-                    entry.owner.dispose();
-                }
-                rendered_window.set(Some(window));
-                return;
-            }
-
-            let layout = layout.borrow();
-            let mut mounted = mounted.borrow_mut();
-            let mut pool = Vec::new();
-            let desired_keys = layout.keys[window.start..window.end]
-                .iter()
-                .cloned()
-                .collect::<HashSet<_>>();
-            let stale_keys = mounted
-                .keys()
-                .filter(|key| !desired_keys.contains(*key))
-                .cloned()
-                .collect::<Vec<_>>();
-            for key in stale_keys {
-                let entry = mounted
-                    .remove(&key)
-                    .expect("a stale recycled List row must be mounted");
-                remove_child(scroll_view, entry.handle);
-                if entry.recyclable {
-                    pool.push(entry);
-                } else {
-                    entry.owner.dispose();
+                    remove_child(track.handle, entry.mount_handle);
                 }
             }
-
-            let mut order = Vec::with_capacity(window.end - window.start + 2);
-            order.push(leading_spacer);
-            for index in window.start..window.end {
-                let key = &layout.keys[index];
-                let policy = layout.recycle_policy(index);
-                let incompatible = mounted
-                    .get(key)
-                    .is_some_and(|entry| entry.reuse_class != policy.reuse_class);
-                if incompatible {
-                    let entry = mounted
-                        .remove(key)
-                        .expect("the incompatible recycled row must be mounted");
-                    remove_child(scroll_view, entry.handle);
-                    if entry.recyclable {
-                        pool.push(entry);
-                    } else {
-                        entry.owner.dispose();
-                    }
-                }
-
-                if let Some(entry) = mounted.get_mut(key) {
-                    entry.item.set(layout.items[index].clone());
-                    entry.recyclable = policy.recyclable;
-                } else {
-                    let item = layout.items[index].clone();
-                    let entry = if let Some(mut entry) = take_recycled_entry(&mut pool, policy) {
-                        entry.item.set(item);
-                        entry.recyclable = policy.recyclable;
-                        entry
-                    } else {
-                        new_recycled_entry(item, policy, children.as_ref())
-                    };
-                    mounted.insert(key.clone(), entry);
-                }
-                order.push(
-                    mounted
-                        .get(key)
-                        .expect("the desired recycled List row must be mounted")
-                        .handle,
-                );
+            if children_of(content).contains(&track.handle) {
+                remove_child(content, track.handle);
             }
-            order.push(trailing_spacer);
-            sync_child_order(scroll_view, &order);
-            for entry in pool {
-                entry.owner.dispose();
-            }
-            rendered_window.set(Some(window));
-        })
-    };
-
-    {
-        let each = Rc::clone(&each);
-        let meta = Rc::clone(&meta);
-        let layout = Rc::clone(&layout);
-        let reconcile = Rc::clone(&reconcile);
-        effect(move || {
-            let items = each();
-            layout.borrow_mut().replace(items, |item| meta(item));
-            reconcile();
-        });
-    }
-
-    {
-        let geometry = Rc::clone(&geometry);
-        let reconcile = Rc::clone(&reconcile);
-        set_event_listener(
-            scroll_view,
-            "scroll",
-            BindType::Bind,
-            Box::new(move |event| {
-                if let Some(next) = scroll_geometry(&event) {
-                    *geometry.borrow_mut() = next;
-                    reconcile();
-                }
-            }),
-        );
-    }
-
-    on_cleanup(move || {
-        for (_, entry) in mounted.borrow_mut().drain() {
-            remove_child(scroll_view, entry.handle);
+            track.owner.dispose();
+        }
+        for (_, entry) in mounted.drain() {
             entry.owner.dispose();
         }
-        remove_child(scroll_view, leading_spacer);
-        remove_child(scroll_view, trailing_spacer);
-    });
-}
-
-fn new_recycled_entry<T: Clone + 'static>(
-    item: T,
-    policy: &RecyclePolicy,
-    children: &dyn Fn(ReadSignal<T>) -> Element,
-) -> RecycledEntry<T> {
-    let owner = Owner::new(None);
-    let (item, handle) = owner.with(|| {
-        let item = RwSignal::new(item);
-        let handle = children(item.read_only());
-        (item, handle)
-    });
-    RecycledEntry {
-        owner,
-        handle,
-        item,
-        reuse_class: policy.reuse_class,
-        recyclable: policy.recyclable,
+        if let Some(empty) = empty {
+            order.push(empty);
+        }
+        if let Some(footer) = footer {
+            order.push(footer);
+        }
+        sync_child_order(content, &order);
+        return;
     }
-}
 
-fn take_recycled_entry<T: 'static>(
-    pool: &mut Vec<RecycledEntry<T>>,
-    policy: &RecyclePolicy,
-) -> Option<RecycledEntry<T>> {
-    if !policy.recyclable {
-        return None;
-    }
-    let position = pool
+    order.push(leading_spacer);
+    let desired_keys = layout.keys[window.start..window.end]
         .iter()
-        .rposition(|entry| entry.reuse_class == policy.reuse_class)?;
-    Some(pool.swap_remove(position))
+        .cloned()
+        .collect::<HashSet<_>>();
+    let desired_track_keys = (window.start_track..window.end_track)
+        .map(|track| {
+            let start = layout.track_start_item(track);
+            let end = layout.track_end_item(track);
+            (track, layout.keys[start..end].to_vec())
+        })
+        .collect::<HashMap<_, _>>();
+
+    let stale_tracks = mounted_tracks
+        .iter()
+        .filter_map(|(track, mounted_track)| {
+            let keep = desired_track_keys
+                .get(track)
+                .is_some_and(|keys| keys == &mounted_track.keys);
+            (!keep).then_some(*track)
+        })
+        .collect::<Vec<_>>();
+    for track_index in stale_tracks {
+        let track = mounted_tracks
+            .remove(&track_index)
+            .expect("stale Grid track remains mounted");
+        for key in &track.keys {
+            if let Some(entry) = mounted.get(key)
+                && children_of(track.handle).contains(&entry.mount_handle)
+            {
+                remove_child(track.handle, entry.mount_handle);
+            }
+        }
+        if children_of(content).contains(&track.handle) {
+            remove_child(content, track.handle);
+        }
+        track.owner.dispose();
+    }
+
+    let stale_keys = mounted
+        .keys()
+        .filter(|key| !desired_keys.contains(*key))
+        .cloned()
+        .collect::<Vec<_>>();
+    for key in stale_keys {
+        if let Some(entry) = mounted.remove(&key) {
+            entry.owner.dispose();
+        }
+    }
+
+    for track_index in window.start_track..window.end_track {
+        let keys = desired_track_keys
+            .get(&track_index)
+            .expect("desired Grid track keys");
+        let track_handle = if let Some(track) = mounted_tracks.get(&track_index) {
+            track.handle
+        } else {
+            let owner = Owner::new(None);
+            let handle = owner.with(|| create_element(ElementTag::View));
+            mounted_tracks.insert(
+                track_index,
+                MountedTrack {
+                    owner,
+                    handle,
+                    keys: keys.clone(),
+                },
+            );
+            observe_track(keys.clone(), handle);
+            handle
+        };
+        set_specified_style(
+            track_handle,
+            &grid_track_style(grid, axis, track_index + 1 < layout.track_count()),
+        );
+
+        for item_index in layout.track_start_item(track_index)..layout.track_end_item(track_index) {
+            let key = &layout.keys[item_index];
+            if let Some(entry) = mounted.get_mut(key) {
+                entry.item.set(layout.items[item_index].clone());
+            } else {
+                mounted.insert(
+                    key.clone(),
+                    new_mounted_entry(
+                        layout.items[item_index].clone(),
+                        children,
+                        Some(&grid.cell_style),
+                    ),
+                );
+            }
+            let mount_handle = mounted
+                .get(key)
+                .expect("desired Grid item remains mounted")
+                .mount_handle;
+            if !children_of(track_handle).contains(&mount_handle) {
+                append_child(track_handle, mount_handle);
+            }
+        }
+        order.push(track_handle);
+    }
+
+    order.push(trailing_spacer);
+    if let Some(footer) = footer {
+        order.push(footer);
+    }
+    sync_child_order(content, &order);
+}
+
+fn grid_track_style(
+    grid: &VirtualGridLayout,
+    axis: ScrollAxis,
+    has_successor: bool,
+) -> SpecifiedStyle {
+    if !has_successor || grid.main_gap <= 0.0 {
+        return grid.track_style.clone();
+    }
+    let gap = StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(
+        LengthPercentageValue::Length(LengthValue::Dimension {
+            value: StyleNumber::new(grid.main_gap),
+            unit: LengthUnit::Px,
+        }),
+    ));
+    let property = match axis {
+        ScrollAxis::Vertical => StyleProperty::MarginBottom,
+        ScrollAxis::Horizontal => StyleProperty::MarginRight,
+    };
+    grid.track_style.clone().push(property, gap)
 }
 
 /// Visits the indices in `[start, end)` that are not covered by
@@ -739,9 +1283,12 @@ fn sync_child_order(parent: Element, target: &[Element]) {
         insert_child_at(parent, child, index);
         current.insert(index, child);
     }
+    for child in current.drain(target.len()..) {
+        remove_child(parent, child);
+    }
 }
 
-fn set_spacer_size(element: Element, size: f32) {
+fn set_spacer_size(element: Element, size: f32, axis: ScrollAxis) {
     let px = LengthPercentageValue::Length(if size == 0.0 {
         LengthValue::Zero
     } else {
@@ -750,9 +1297,13 @@ fn set_spacer_size(element: Element, size: f32) {
             unit: LengthUnit::Px,
         }
     });
+    let size_property = match axis {
+        ScrollAxis::Vertical => StyleProperty::Height,
+        ScrollAxis::Horizontal => StyleProperty::Width,
+    };
     let style = SpecifiedStyle::new()
         .push(
-            StyleProperty::Height,
+            size_property,
             StyleValue::Size(SizeValue::LengthPercentage(px)),
         )
         .push(
@@ -762,7 +1313,7 @@ fn set_spacer_size(element: Element, size: f32) {
     set_specified_style(element, &style);
 }
 
-fn scroll_geometry(event: &WhiskerValue) -> Option<ScrollGeometry> {
+fn scroll_geometry(event: &WhiskerValue, axis: ScrollAxis) -> Option<ScrollGeometry> {
     let WhiskerValue::Map(event) = event else {
         return None;
     };
@@ -775,9 +1326,13 @@ fn scroll_geometry(event: &WhiskerValue) -> Option<ScrollGeometry> {
         Some(WhiskerValue::Int(value)) => Some(*value as f32),
         _ => None,
     };
+    let (offset, viewport) = match axis {
+        ScrollAxis::Vertical => (number("scrollTop")?, number("viewportHeight")?),
+        ScrollAxis::Horizontal => (number("scrollLeft")?, number("viewportWidth")?),
+    };
     Some(ScrollGeometry {
-        offset: number("scrollTop")?.max(0.0),
-        viewport: number("viewportHeight")?.max(0.0),
+        offset: offset.max(0.0),
+        viewport: viewport.max(0.0),
     })
 }
 
@@ -801,26 +1356,6 @@ mod tests {
     }
 
     #[test]
-    fn recycled_index_interns_reuse_identifiers_once() {
-        let mut index = LayoutIndex::new(true);
-        index.replace(vec![0_u32, 1, 2], |item| {
-            ItemMeta::key(*item).reuse_identifier(if item & 1 == 0 { "even" } else { "odd" })
-        });
-
-        assert_eq!(index.reuse_classes.as_ref().unwrap().len(), 2);
-        let policies = index.recycle_policies.as_ref().unwrap();
-        assert_eq!(policies[0].reuse_class, policies[2].reuse_class);
-        assert_ne!(policies[0].reuse_class, policies[1].reuse_class);
-
-        let mut plain = LayoutIndex::new(false);
-        plain.replace(vec![0_u32], |item| {
-            ItemMeta::key(*item).reuse_identifier("ignored")
-        });
-        assert!(plain.recycle_policies.is_none());
-        assert!(plain.reuse_classes.is_none());
-    }
-
-    #[test]
     fn reads_wrapped_scroll_geometry() {
         let event = WhiskerValue::map([(
             "detail",
@@ -829,20 +1364,29 @@ mod tests {
                 ("viewportHeight", WhiskerValue::Int(480)),
             ]),
         )]);
-        let geometry = scroll_geometry(&event).unwrap();
+        let geometry = scroll_geometry(&event, ScrollAxis::Vertical).unwrap();
         assert_eq!(geometry.offset, 120.0);
         assert_eq!(geometry.viewport, 480.0);
     }
 
     #[test]
+    fn reads_horizontal_scroll_geometry() {
+        let event = WhiskerValue::map([
+            ("scrollLeft", WhiskerValue::Float(240.0)),
+            ("viewportWidth", WhiskerValue::Int(320)),
+        ]);
+        let geometry = scroll_geometry(&event, ScrollAxis::Horizontal).unwrap();
+        assert_eq!(geometry.offset, 240.0);
+        assert_eq!(geometry.viewport, 320.0);
+    }
+
+    #[test]
     fn window_keeps_one_viewport_of_scroll_buffer_on_each_side() {
-        let mut index = LayoutIndex::new(false);
-        index.replace((0_u32..10_000).collect(), |item| {
-            ItemMeta::key(*item).estimated_size(72)
-        });
+        let mut index = LayoutIndex::new(1, 0.0);
+        index.replace((0_u32..10_000).collect(), |item| *item);
 
         let geometry = ScrollGeometry {
-            offset: 72_000.0,
+            offset: 44_000.0,
             viewport: 765.0,
         };
         let window = index.window(geometry);

@@ -49,8 +49,9 @@ pub use runtime_instance::{
 };
 pub use runtime_wake::{RuntimeWake, RuntimeWakeHandle};
 pub use standard_ui::{
-    SCROLL_VIEW_ELEMENT_NAME, TEXT_ELEMENT_NAME, VIEW_ELEMENT_NAME, scroll_view_element_binding,
-    text_element_binding, view_element_binding,
+    SCROLL_BY_COMMAND, SCROLL_ENABLED_PROPERTY, SCROLL_TO_COMMAND, SCROLL_VIEW_ELEMENT_NAME,
+    TEXT_ELEMENT_NAME, VIEW_ELEMENT_NAME, scroll_view_element_binding, text_element_binding,
+    view_element_binding,
 };
 pub use surface_runtime::{
     InputDispatch, ResourceEventApply, RuntimeBindingError, RuntimeFrame, RuntimeFrameError,

@@ -25,7 +25,7 @@ use std::rc::Rc;
 use super::handle::Element;
 use crate::element::ElementTag;
 use crate::value::WhiskerValue;
-use whisker_protocol::ElementSchema;
+use whisker_protocol::{ElementSchema, LayoutGeometry};
 use whisker_style::SpecifiedStyle;
 
 /// Event-handler propagation type — a faithful 1:1 mapping to Lynx's
@@ -130,6 +130,13 @@ pub trait DynRenderer {
         false
     }
 
+    /// Returns the current typed style when the renderer owns a retained Rust
+    /// scene. Framework control flow uses this only for semantic validation;
+    /// Hosts do not need to expose native presentation state.
+    fn specified_style(&self, _handle: Element) -> Option<SpecifiedStyle> {
+        None
+    }
+
     /// Set an object-valued attribute (`{obj[i].0: obj[i].1}` of doubles)
     /// — e.g. `<list>` `item-snap` {factor, offset}. Default no-op.
     fn set_attribute_object(&self, _handle: Element, _key: &str, _obj: &[(String, f64)]) {}
@@ -169,6 +176,11 @@ pub trait DynRenderer {
         bind_type: BindType,
         callback: Box<dyn Fn(WhiskerValue) + 'static>,
     );
+
+    /// Observes resolved Rust layout for framework control primitives.
+    /// Ordinary renderers may ignore this; SurfaceRuntime reports after each
+    /// successful Taffy pass without involving a Host event.
+    fn observe_layout(&self, _handle: Element, _callback: Box<dyn Fn(LayoutGeometry) + 'static>) {}
 
     /// Plan how a reported event (`event_name` at `target_sign`,
     /// carrying `body`) propagates through Whisker's reconstructed
@@ -600,6 +612,14 @@ pub fn set_specified_style(handle: Element, style: &SpecifiedStyle) -> bool {
     )
 }
 
+#[doc(hidden)]
+pub fn specified_style(handle: Element) -> Option<SpecifiedStyle> {
+    if is_phantom(handle) {
+        return None;
+    }
+    with_renderer(|renderer| renderer.specified_style(handle), None)
+}
+
 pub fn set_attribute_object(handle: Element, key: &str, obj: &[(String, f64)]) {
     if is_phantom(handle) {
         return;
@@ -848,6 +868,15 @@ pub fn set_event_listener(
         |r| r.set_event_listener(handle, event_name, bind_type, callback),
         (),
     )
+}
+
+/// Registers an internal resolved-layout observer on one real element.
+pub fn observe_layout(handle: Element, callback: Box<dyn Fn(LayoutGeometry) + 'static>) {
+    if is_phantom(handle) {
+        drop(callback);
+        return;
+    }
+    with_renderer(|renderer| renderer.observe_layout(handle, callback), ())
 }
 
 /// Gives the installed renderer the first opportunity to handle an element

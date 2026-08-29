@@ -2,10 +2,11 @@ use std::convert::Infallible;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
+use whisker::RuntimeInstance;
 use whisker::SurfaceRuntime;
 use whisker::prelude::*;
-use whisker::runtime::reactive::{__reset_for_tests, Owner};
-use whisker::runtime::view::{set_root, with_installed_renderer};
+use whisker::runtime::RuntimeWakeHandle;
+use whisker::runtime::reactive::__reset_for_tests;
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     InputEvent, InputEventKind, MeasurementRequest, MeasurementResponse, Operation, SurfaceId,
@@ -44,26 +45,25 @@ impl MeasurementProvider for NoMeasurement {
 #[ignore = "manual release-mode runtime benchmark"]
 fn scrolls_a_hundred_thousand_row_list() {
     __reset_for_tests();
-    let owner = Owner::new(None);
     let surface = SurfaceRuntime::new(
         SurfaceId::new(91).unwrap(),
         StyleEnvironment::new(390.0, 844.0, 1.0, 14.0),
     );
-    with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| {
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    runtime
+        .mount(|| {
             render! {
                 list(
                     style: css!(width: percent(100), height: px(844)),
                     each: || (0..ITEM_COUNT).collect::<Vec<_>>(),
-                    meta: |row: &u32| ItemMeta::key(*row).estimated_size(ROW_HEIGHT as i32),
-                    recycled_children: |_row: ReadSignal<u32>| render! {
+                    key: |row: &u32| *row,
+                    children: |_row: ReadSignal<u32>| render! {
                         view(style: css!(width: percent(100), height: px(ROW_HEIGHT as i32)))
                     },
                 )
             }
-        });
-        set_root(root);
-    });
+        })
+        .unwrap();
 
     let registrations = surface.element_registrations();
     let scroll_type = registrations
@@ -99,49 +99,46 @@ fn scrolls_a_hundred_thousand_row_list() {
     let mut runtime_elapsed = Duration::ZERO;
     let mut presentation_elapsed = Duration::ZERO;
     let mut operation_count = 0_usize;
-    with_installed_renderer(surface.renderer(), || {
-        for update in 0..UPDATE_COUNT {
-            let row = (update * 7) % (ITEM_COUNT - 20);
-            let offset = f64::from(row) * ROW_HEIGHT;
-            let runtime_started = Instant::now();
-            black_box(
-                surface
-                    .dispatch_input(&InputEvent {
-                        surface: surface.surface(),
-                        timestamp_ms: f64::from(update) * 16.0,
-                        kind: InputEventKind::Named("scroll".to_owned()),
-                        pointer: None,
-                        target: Some(scroll_node),
-                        detail: WhiskerValue::map([
-                            ("scrollTop", WhiskerValue::Float(offset)),
-                            ("viewportHeight", WhiskerValue::Float(844.0)),
-                            (
-                                "scrollHeight",
-                                WhiskerValue::Float(f64::from(ITEM_COUNT) * ROW_HEIGHT),
-                            ),
-                        ]),
-                    })
-                    .unwrap(),
-            );
-            whisker::flush();
-            runtime_elapsed += runtime_started.elapsed();
+    for update in 0..UPDATE_COUNT {
+        let row = (update * 7) % (ITEM_COUNT - 20);
+        let offset = f64::from(row) * ROW_HEIGHT;
+        let runtime_started = Instant::now();
+        black_box(
+            runtime
+                .dispatch_input(&InputEvent {
+                    surface: surface.surface(),
+                    timestamp_ms: f64::from(update) * 16.0,
+                    kind: InputEventKind::Named("scroll".to_owned()),
+                    pointer: None,
+                    target: Some(scroll_node),
+                    detail: WhiskerValue::map([
+                        ("scrollTop", WhiskerValue::Float(offset)),
+                        ("viewportHeight", WhiskerValue::Float(844.0)),
+                        (
+                            "scrollHeight",
+                            WhiskerValue::Float(f64::from(ITEM_COUNT) * ROW_HEIGHT),
+                        ),
+                    ]),
+                })
+                .unwrap(),
+        );
+        runtime_elapsed += runtime_started.elapsed();
 
-            let presentation_started = Instant::now();
-            black_box(
-                surface
-                    .present(update + 2, &mut renderer)
-                    .expect("benchmark FramePacket must remain valid"),
-            );
-            presentation_elapsed += presentation_started.elapsed();
-            operation_count += renderer
-                .frames()
-                .last()
-                .expect("present must record one frame")
-                .packet
-                .operations
-                .len();
-        }
-    });
+        let presentation_started = Instant::now();
+        black_box(
+            surface
+                .present(update + 2, &mut renderer)
+                .expect("benchmark FramePacket must remain valid"),
+        );
+        presentation_elapsed += presentation_started.elapsed();
+        operation_count += renderer
+            .frames()
+            .last()
+            .expect("present must record one frame")
+            .packet
+            .operations
+            .len();
+    }
     let elapsed = started.elapsed();
     eprintln!(
         "{UPDATE_COUNT} scroll updates over {ITEM_COUNT} rows: {elapsed:?} ({:.1} ns/update)",
@@ -153,5 +150,5 @@ fn scrolls_a_hundred_thousand_row_list() {
         presentation_elapsed.as_nanos() as f64 / f64::from(UPDATE_COUNT),
         operation_count as f64 / f64::from(UPDATE_COUNT),
     );
-    with_installed_renderer(surface.renderer(), || owner.dispose());
+    runtime.unmount().unwrap();
 }

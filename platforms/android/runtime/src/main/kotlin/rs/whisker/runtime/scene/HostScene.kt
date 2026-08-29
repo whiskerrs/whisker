@@ -6,6 +6,7 @@ import android.graphics.RectF
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import java.util.ArrayDeque
 import rs.whisker.runtime.WhiskerChildPolicy
 import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerView
@@ -79,6 +80,7 @@ internal class HostScene(
 ) {
     private val nodes = LinkedHashMap<Long, HostNode>()
     private val parents = HashMap<Long, Long>()
+    private val presentationPool = HashMap<Int, ArrayDeque<rs.whisker.runtime.WhiskerMountedElement>>()
     private var sceneEpoch = 0
     private var revision = 0L
     private var stagedSceneEpoch = 0
@@ -141,7 +143,7 @@ internal class HostScene(
     }
 
     fun clear() {
-        nodes.values.forEach { it.mountedElement?.dispose() }
+        nodes.values.toList().forEach(::releasePresentation)
         nodes.clear()
         parents.clear()
         root.removeAllViews()
@@ -239,10 +241,13 @@ internal class HostScene(
                 val registration = requireNotNull(
                     WhiskerElementRegistry.registration(operation.member),
                 )
-                val mounted = requireNotNull(
-                    WhiskerElementRegistry.mount(operation.member, context) { event, detail ->
-                        emitElementEvent(id, event.name, detail)
-                    },
+                val eventSink: rs.whisker.runtime.WhiskerElementEventSink = { event, detail ->
+                    emitElementEvent(id, event.name, detail)
+                }
+                val mounted = presentationPool[operation.member]?.pollFirst()?.also {
+                    it.prepareForReuse(eventSink)
+                } ?: requireNotNull(
+                    WhiskerElementRegistry.mount(operation.member, context, eventSink),
                 )
                 val node = HostNode(context, registration.name, root as? WhiskerView)
                 node.mountedElement = mounted
@@ -354,12 +359,26 @@ internal class HostScene(
         val node = nodes.remove(id) ?: return
         val descendants = nodes.keys.filter { candidate -> isDescendant(candidate, id) }
         descendants.forEach { child ->
-            nodes.remove(child)?.mountedElement?.dispose()
+            nodes.remove(child)?.let(::releasePresentation)
             parents.remove(child)
         }
         parents.remove(id)
         (node.parent as? ViewGroup)?.removeView(node)
-        node.mountedElement?.dispose()
+        releasePresentation(node)
+    }
+
+    private fun releasePresentation(node: HostNode) {
+        (node.parent as? ViewGroup)?.removeView(node)
+        val mounted = node.mountedElement ?: return
+        (mounted.view.parent as? ViewGroup)?.removeView(mounted.view)
+        node.mountedElement = null
+        mounted.dispose()
+        if (
+            mounted.registration.name != "whisker.ui/View" &&
+            mounted.registration.name != "whisker.ui/Text"
+        ) return
+        val pool = presentationPool.getOrPut(mounted.registration.elementType, ::ArrayDeque)
+        if (pool.size < PRESENTATION_POOL_LIMIT_PER_TYPE) pool.addLast(mounted)
     }
 
     private fun isDescendant(candidate: Long, ancestor: Long): Boolean {
@@ -1022,3 +1041,5 @@ internal class HostScene(
         const val BACKGROUND_BLEND_NORMAL = 0
     }
 }
+
+private const val PRESENTATION_POOL_LIMIT_PER_TYPE = 128

@@ -240,7 +240,7 @@ public final class WhiskerMountedElement {
     private let properties: [Int: WhiskerPropComponent]
     private let commands: [Int: WhiskerCommandComponent]
     private let eventsByName: [String: WhiskerEventBinding]
-    private let eventSink: WhiskerElementEventSink
+    private var eventSink: WhiskerElementEventSink
     private var eventMask: UInt64 = 0
 
     fileprivate init(
@@ -264,6 +264,10 @@ public final class WhiskerMountedElement {
         self.commands = commands
         self.eventsByName = eventsByName
         self.eventSink = eventSink
+        installEventSink()
+    }
+
+    private func installEventSink() {
         eventSource?.installWhiskerEventSink { [weak self] name, detail in
             guard let self, let event = self.eventsByName[name] else { return }
             let bit = UInt64(1) << UInt64(event.id - 1)
@@ -297,6 +301,15 @@ public final class WhiskerMountedElement {
     }
 
     public func childrenHost() -> UIView? { childrenHostProvider?(view) }
+
+    /** Resets protocol-owned state before a built-in presentation is reused. */
+    public func prepareForReuse(eventSink: @escaping WhiskerElementEventSink) {
+        properties.values.forEach { $0.clearer(view) }
+        eventMask = 0
+        self.eventSink = eventSink
+        installEventSink()
+    }
+
     public func dispose() { eventSource?.installWhiskerEventSink(nil) }
 }
 

@@ -18,6 +18,8 @@ use crate::{
     WebNativeEvent, WhiskerValue, js_error, paint, px, set_style,
 };
 
+type ScrollListener = Closure<dyn FnMut(web_sys::Event)>;
+
 pub(crate) struct DomFrameSink {
     document: web_sys::Document,
     root: web_sys::Element,
@@ -31,9 +33,15 @@ pub(crate) struct DomFrameSink {
     resources: WebResourceStore,
     text_nodes: HashMap<NodeId, web_sys::Element>,
     native_nodes: HashMap<NodeId, Box<dyn WebNativeElement>>,
+    presentation_pool: HashMap<ElementTypeId, Vec<PooledWebPresentation>>,
     event_masks: HashMap<NodeId, Rc<Cell<u64>>>,
-    scroll_listeners: HashMap<NodeId, Closure<dyn FnMut(web_sys::Event)>>,
+    scroll_listeners: HashMap<NodeId, Vec<ScrollListener>>,
     pending_events: Rc<RefCell<VecDeque<WebProviderEvent>>>,
+}
+
+struct PooledWebPresentation {
+    element: web_sys::Element,
+    native: Option<Box<dyn WebNativeElement>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -106,6 +114,7 @@ impl DomFrameSink {
             resources,
             text_nodes: HashMap::new(),
             native_nodes: HashMap::new(),
+            presentation_pool: HashMap::new(),
             event_masks: HashMap::new(),
             scroll_listeners: HashMap::new(),
             pending_events: Rc::new(RefCell::new(VecDeque::new())),
@@ -248,20 +257,31 @@ impl DomFrameSink {
                         }
                     })
                 });
-                let (element, native) = match &binding.factory {
-                    WebElementFactoryKind::Tag(tag_name) => (
-                        self.document
-                            .create_element(tag_name)
-                            .map_err(|error| js_error("create Whisker DOM node", error))?,
-                        None,
-                    ),
-                    WebElementFactoryKind::Native(create) => {
-                        let native = create(&self.document, emitter.clone())
-                            .map_err(|error| js_error("create native Whisker DOM node", error))?;
-                        (native.element(), Some(native))
-                    }
-                    WebElementFactoryKind::Declared(_) => {
-                        unreachable!("DOM declared factory was not bound at bootstrap")
+                let pooled = self
+                    .presentation_pool
+                    .get_mut(element_type)
+                    .and_then(Vec::pop);
+                let (element, native) = if let Some(pooled) = pooled {
+                    reset_pooled_element(&pooled.element)?;
+                    (pooled.element, pooled.native)
+                } else {
+                    match &binding.factory {
+                        WebElementFactoryKind::Tag(tag_name) => (
+                            self.document
+                                .create_element(tag_name)
+                                .map_err(|error| js_error("create Whisker DOM node", error))?,
+                            None,
+                        ),
+                        WebElementFactoryKind::Native(create) => {
+                            let native =
+                                create(&self.document, emitter.clone()).map_err(|error| {
+                                    js_error("create native Whisker DOM node", error)
+                                })?;
+                            (native.element(), Some(native))
+                        }
+                        WebElementFactoryKind::Declared(_) => {
+                            unreachable!("DOM declared factory was not bound at bootstrap")
+                        }
                     }
                 };
                 element
@@ -314,7 +334,18 @@ impl DomFrameSink {
                             listener.as_ref().unchecked_ref(),
                         )
                         .map_err(|error| js_error("register Whisker scroll listener", error))?;
-                    self.scroll_listeners.insert(*node, listener);
+                    let snap_element = element.clone();
+                    let snap_listener = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                        settle_scroll_snap(&snap_element);
+                    });
+                    element
+                        .add_event_listener_with_callback(
+                            "scrollend",
+                            snap_listener.as_ref().unchecked_ref(),
+                        )
+                        .map_err(|error| js_error("register Whisker scrollend listener", error))?;
+                    self.scroll_listeners
+                        .insert(*node, vec![listener, snap_listener]);
                 }
                 self.root
                     .append_child(&element)
@@ -343,6 +374,7 @@ impl DomFrameSink {
                 parent_element
                     .insert_before(&child_element, reference.as_ref().map(AsRef::as_ref))
                     .map_err(|error| js_error("insert Whisker DOM child", error))?;
+                sync_scroll_snap_child(&parent_element, &child_element)?;
                 self.parents.insert(*child, *parent);
                 self.sync_layout(*child)?;
             }
@@ -677,16 +709,129 @@ impl DomFrameSink {
             cursor += 1;
         }
         for node in deleted {
-            self.nodes.remove(&node);
-            self.node_types.remove(&node);
+            let element = self.nodes.remove(&node);
+            let element_type = self.node_types.remove(&node);
             self.parents.remove(&node);
             self.layouts.remove(&node);
             self.box_paints.remove(&node);
             self.text_nodes.remove(&node);
-            self.native_nodes.remove(&node);
+            let native = self.native_nodes.remove(&node);
             self.event_masks.remove(&node);
             self.scroll_listeners.remove(&node);
+            if let (Some(element), Some(element_type)) = (element, element_type)
+                && self.elements.binding(element_type).is_ok_and(|binding| {
+                    matches!(
+                        binding.registration.name.as_str(),
+                        "whisker.ui/View" | "whisker.ui/Text"
+                    )
+                })
+            {
+                let pool = self.presentation_pool.entry(element_type).or_default();
+                if pool.len() < 256 {
+                    pool.push(PooledWebPresentation { element, native });
+                }
+            }
         }
+    }
+}
+
+fn reset_pooled_element(element: &web_sys::Element) -> Result<(), WebError> {
+    element.set_text_content(None);
+    let attributes = element.get_attribute_names();
+    for index in 0..attributes.length() {
+        if let Some(name) = attributes.get(index).as_string() {
+            element
+                .remove_attribute(&name)
+                .map_err(|error| js_error("reset pooled DOM attribute", error))?;
+        }
+    }
+    set_style(element, "position", "absolute")?;
+    set_style(element, "box-sizing", "border-box")
+}
+
+fn sync_scroll_snap_child(
+    parent: &web_sys::Element,
+    child: &web_sys::Element,
+) -> Result<(), WebError> {
+    let Some(alignment) = parent.get_attribute("data-whisker-snap-align") else {
+        return Ok(());
+    };
+    set_style(child, "scroll-snap-align", &alignment)?;
+    let stop = parent
+        .get_attribute("data-whisker-snap-stop")
+        .unwrap_or_else(|| "normal".to_owned());
+    set_style(child, "scroll-snap-stop", &stop)
+}
+
+fn settle_scroll_snap(element: &web_sys::Element) {
+    let Some(factor) = element
+        .get_attribute("data-whisker-snap-factor")
+        .and_then(|value| value.parse::<f64>().ok())
+    else {
+        return;
+    };
+    let offset = element
+        .get_attribute("data-whisker-snap-offset")
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let horizontal = element
+        .get_attribute("data-whisker-scroll-orientation")
+        .as_deref()
+        == Some("horizontal");
+    let Some(scroller) = element.dyn_ref::<web_sys::HtmlElement>() else {
+        return;
+    };
+    let viewport = if horizontal {
+        scroller.client_width()
+    } else {
+        scroller.client_height()
+    } as f64;
+    let maximum = if horizontal {
+        scroller.scroll_width() - scroller.client_width()
+    } else {
+        scroller.scroll_height() - scroller.client_height()
+    }
+    .max(0) as f64;
+    let current = if horizontal {
+        scroller.scroll_left()
+    } else {
+        scroller.scroll_top()
+    } as f64;
+    let factor = factor.clamp(0.0, 1.0);
+    let mut target = None::<f64>;
+    let children = element.children();
+    for index in 0..children.length() {
+        let Some(child) = children.item(index) else {
+            continue;
+        };
+        let Some(child) = child.dyn_ref::<web_sys::HtmlElement>() else {
+            continue;
+        };
+        let start = if horizontal {
+            child.offset_left()
+        } else {
+            child.offset_top()
+        } as f64;
+        let extent = if horizontal {
+            child.offset_width()
+        } else {
+            child.offset_height()
+        } as f64;
+        let candidate = (start + extent * factor - viewport * factor + offset).clamp(0.0, maximum);
+        if target.is_none_or(|target| (candidate - current).abs() < (target - current).abs()) {
+            target = Some(candidate);
+        }
+    }
+    let Some(target) = target.map(f64::round) else {
+        return;
+    };
+    if (target - current).abs() < 0.5 {
+        return;
+    }
+    if horizontal {
+        scroller.set_scroll_left(target as i32);
+    } else {
+        scroller.set_scroll_top(target as i32);
     }
 }
 

@@ -108,10 +108,8 @@ pub fn app() -> Element {
             list(
                 style: css!(flex_grow: 1.0, width: percent(100)),
                 each: || (0..GRID_ROW_COUNT).collect::<Vec<_>>(),
-                meta: |row: &u32| ItemMeta::key(*row)
-                    .estimated_size(GRID_ROW_HEIGHT)
-                    .reuse_identifier("transaction-grid-row"),
-                recycled_children: |row: ReadSignal<u32>| render! {
+                key: |row: &u32| *row,
+                children: |row: ReadSignal<u32>| render! {
                     benchmark_grid_row(row: row)
                 },
             )

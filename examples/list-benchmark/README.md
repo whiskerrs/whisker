@@ -6,7 +6,7 @@ materializing the viewport window. List virtualizes 50,000 fixed-height Grid
 rows; each mounted row uses Taffy Grid to place two cards, and each card owns
 three text nodes. Scrolling therefore exercises virtualization, Grid layout,
 text, paint, FramePacket generation, and Host application together. The rows
-use `recycled_children:`: their `ReadSignal<u32>` is rebound while compatible
+receive a keyed `ReadSignal<u32>`: its value is updated while the key remains
 Rust owners, element handles, and Host views retain identity.
 
 Run it from this directory:

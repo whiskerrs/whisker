@@ -1,133 +1,146 @@
 # Rust-owned List design
 
-Status: **implemented foundation**
+Status: **implemented**
 
 ## Decision
 
-`list` is a runtime control primitive in the same family as `ForEach`. It is
-not a fourth built-in Host element and it is not a wrapper around
-`UICollectionView`, `RecyclerView`, or Lynx `<list>`.
-
-User code remains declarative:
+`list` is keyed Rust control flow built on the ordinary
+`whisker.ui/ScrollView`. It is not a Host element and does not wrap Lynx
+`<list>`, `RecyclerView`, or `UICollectionView`.
 
 ```rust
+let handle = ListHandle::<RowId>::new();
+
 render! {
     list(
-        style: css!(height: px(480)),
+        ref: handle.r(),
+        style: css!(height: px(480)),          // viewport
+        content_style: css!(row_gap: px(8)),  // content layout
         each: move || rows.get(),
         key: |row: &Row| row.id,
-        children: |row: Row| render! { row_view(row: row) },
+        children: |row: ReadSignal<Row>| render! { row_view(row: row) },
     )
 }
 ```
 
-For non-uniform rows, `meta:` replaces `key:` and returns
-`ItemMeta::key(row.id).estimated_size(estimated_height)`.
-
-The lowering is deliberately ordinary:
+The Host-visible tree contains only ordinary primitives:
 
 ```text
-list control state (Rust only)
-  └─ ScrollView (standard whisker.ui element)
+ScrollView
+  └─ content View
+       ├─ optional header
        ├─ leading spacer View
-       ├─ visible item subtrees
-       └─ trailing spacer View
+       ├─ mounted keyed item subtrees
+       ├─ trailing spacer View
+       └─ optional footer
 ```
 
-FramePacket never contains a List element type. Hosts receive the same
-ScrollView/View/Text/custom-element operations they already implement.
+When the source is empty, `empty` replaces the spacers and item range between
+the optional header and footer. `FramePacket` has no List operation, element
+type, data source, or recycling protocol.
 
-## Ownership
+## Public contract
 
-Rust owns:
+The required inputs are `each`, `key`, and `children`. The child receives a
+`ReadSignal<T>`:
 
-- keyed data diffing and item identity;
-- the visible/overscan range;
-- item owners and lifecycle;
-- estimated and later measured item extents;
-- layout policy (linear, horizontal, and Grid);
-- scroll anchoring when estimates are corrected;
-- snap target selection when CSS scroll snap is enabled.
+- replacing data with the same key updates that signal and preserves its
+  reactive Owner and local state;
+- leaving the mounted window disposes the Owner;
+- re-entering later creates a fresh Owner;
+- duplicate keys fail deterministically in Rust.
 
-The Host owns:
+There is no public estimated/fixed size, reuse identifier, recyclable child,
+or item metadata API. Mounted item extents are learned from Taffy's completed
+Rust layout. A private 44 logical-pixel bootstrap extent exists only until a
+row has produced layout feedback.
 
-- native scrolling physics and transient offset;
-- clipping and presentation;
-- reporting logical scroll geometry through the standard node-event path.
+Optional configuration:
 
-The ScrollView `scroll` event detail is one `WhiskerValue::Map`:
+- `axis: ScrollAxis::{Vertical, Horizontal}`;
+- `content_style`, applied to the internal content View while `style` applies
+  to the ScrollView viewport;
+- reactive `scroll_enabled`;
+- `header`, `footer`, and `empty` render functions;
+- logical-pixel `start_reached_threshold` / `end_reached_threshold` and their
+  edge-entry callbacks;
+- typed `initial_scroll: ListScrollTarget<K>`.
 
-- `scrollLeft`, `scrollTop`
-- `scrollWidth`, `scrollHeight`
-- `viewportWidth`, `viewportHeight`
+Linear layout is the default. A constrained Grid may be requested through a
+static typed `content_style`; the virtualizer derives its private track model
+from that same style and every mounted track is still laid out by Taffy.
+Supported Grid configuration is deliberately small and deterministic:
 
-All values are logical pixels/points. This is a generic ScrollView contract,
-not a List ABI.
+- a fixed explicit cross-axis track count, including `repeat(<count>, ...)`;
+- fixed, percentage, and `fr` cross-axis tracks;
+- sparse source-order auto placement;
+- row/column gaps (the main-axis gap is currently a non-negative logical-pixel
+  value);
+- variable item sizes and both vertical and horizontal Lists.
 
-## Identity model
+Dense placement, explicit item placement/span/order, named lines/areas,
+`auto-fill`/`auto-fit`, intrinsic track sizing, and a main-axis explicit
+template fail immediately as unsupported virtualized Grid. Those constraints
+apply only to `list`; ordinary `view` Grid remains whatever Taffy supports.
+Reactive changes that switch the List content between linear and Grid are also
+rejected because the virtual track topology must be stable. Scroll snapping
+remains a ScrollView/CSS capability rather than a List API.
 
-Three identities must remain separate:
+## Imperative API
 
-1. Item key — stable application identity from `ItemMeta::key`.
-2. Mounted owner — reactive state belonging to one visible keyed item.
-3. Future presentation slot — recyclable Host-independent storage selected by
-   item type/reuse identifier.
+`ListHandle<K>` and `ListRef<K>` are typed by the same stable key used by the
+List. They expose:
 
-The foundation implements the first two. It mounts only a bounded keyed
-window and preserves surviving owners. Plain `children:` disposes items that
-leave the window. The opt-in `recycled_children:` path gives each presentation
-slot a stable `ReadSignal<T>`; a leaving slot can be rebound to an entering item
-with the same interned `reuse_identifier`. Reactive props update from that
-signal while the Rust owner, element handles, and Host views retain identity.
-`recyclable(false)` forces disposal instead. Unused slots are disposed before
-the frame is presented, so detached nodes never accumulate in the retained
-scene. A recycled builder must produce one stable subtree shape per
-`reuse_identifier`, and every item-derived prop must read the slot signal (or a
-`computed` derived from it). The old Lynx native item provider, numeric signs,
-list action stream, and list-specific FFI are removed.
+- `scroll_to(ListScrollTarget<K>, ScrollBehavior)` for start, end, logical
+  offset, index, or key targets;
+- `scroll_by(delta, ScrollBehavior)`;
+- `snapshot()` with cached offset, viewport/content extents, visible indices,
+  first visible key, and visible keys;
+- a reactive `bound()` signal.
 
-The source snapshot, stable keys, and prefix offsets are rebuilt only when the
-reactive item source changes. A Host scroll event finds the visible window with
-binary searches over that index and performs only the entering/leaving edge
-mutations. Within one source generation it visits the range difference rather
-than rescanning retained rows, inserts entering children directly at their
-final positions, and clones only entering items. Scroll work is therefore
-`O(log n + delta)` for `n` logical items and `delta` entering/leaving items; it
-does not clone or rescan the complete source.
+Key/index lookup and snapshots use the Rust prefix index. Only the final
+`scrollTo` or `scrollBy` command crosses the Host boundary. Initial key targets
+remain pending until that key exists in a source snapshot.
 
-## Layout feedback
+## Ownership and update model
 
-The initial window uses `estimated_size` (44 logical pixels when omitted).
-Leading and trailing spacer Views preserve the complete estimated scroll
-extent. A Host scroll event immediately reconciles the range using the real
-viewport and offset. The mounted range keeps at least one viewport of overscan
-on each available side, with a two-item minimum for very small viewports. The
-Web Host treats scroll input as latency-sensitive and reconciles it in a
-microtask before the browser's next paint; ordinary module events remain
-frame-scheduled.
+Rust owns the source snapshot, key index, mounted range, item Owners, measured
+extents, and first-visible-key anchoring. The Host owns native scroll physics,
+clipping, and transient offset. It reports one standard ScrollView event map:
 
-The next layout slice replaces estimates with Taffy results after a mounted
-item is laid out. Corrections must be applied before presentation and preserve
-the first visible key as an anchor. This feedback belongs in
-`SurfaceRuntime`; it must not introduce a Host List element.
+- `scrollLeft`, `scrollTop`;
+- `scrollWidth`, `scrollHeight`;
+- `viewportWidth`, `viewportHeight`.
 
-## Horizontal, Grid, and snap
+All values are logical pixels/points. Scroll reconciliation is
+`O(log n + delta)`: binary searches select the range and only entering/leaving
+edges mutate during one source generation. Source changes rebuild the key and
+prefix index in `O(n)`.
 
-- Horizontal List is the same virtualizer using the inline axis and a generic
-  horizontal ScrollView.
-- Grid uses Taffy's Grid layout. The virtualizer groups item metadata into
-  main-axis rows/tracks; it does not independently reimplement CSS Grid.
-- Scroll snap is a ScrollView capability. A List inherits it because its Host
-  container is a ScrollView. Pager and short-video feeds are therefore
-  horizontal/vertical List plus mandatory snap, not separate Host widgets.
+When layout feedback changes an extent or the source is prepended/reordered,
+the runtime preserves the first visible key and its intra-item offset. Any
+required correction is one instant standard ScrollView command before the
+next presentation.
 
-These policies are intentionally downstream of the vertical linear tracer
-bullet. Their tests must use the same public `render! -> SurfaceRuntime ->
-FramePacket/input event` seam before implementation.
+## Presentation reuse
 
-## Complexity target
+Logical state is never recycled across keys. Independently, each Host may keep
+a bounded, type-indexed pool of deleted built-in View/Text presentations. This
+optimization lives in the normal `CreateNode`/`DeleteNode` path, so it applies
+to List and non-List trees alike and adds no ABI.
 
-- Source/index rebuild after data changes: `O(n)`.
-- Steady-state scroll reconciliation: `O(log n + entering + leaving)`.
-- Mounted element subtrees: `O(visible + overscan)`.
-- Host-specific List code and List-specific ABI: zero.
+Before reuse, protocol-owned properties, event masks, text/common
+presentation, DOM attributes, and parentage are reset. Custom element
+presentations are destroyed normally; module authors do not need a List-aware
+reuse contract and custom native state cannot leak between keys.
+
+Desktop uses the same general pool for its lightweight element-content
+objects. Android and iOS reuse their built-in native View/Text content, and
+Web reuses the corresponding DOM/native wrapper. Every pool is bounded.
+
+## Complexity targets
+
+- source/index rebuild: `O(n)`;
+- steady-state reconciliation: `O(log n + entering + leaving)`;
+- mounted logical subtrees: `O(visible + overscan)`;
+- List-specific Host classes and ABI: zero.

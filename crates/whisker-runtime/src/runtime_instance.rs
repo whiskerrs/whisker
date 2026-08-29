@@ -36,6 +36,72 @@ pub enum RuntimeLifecycle {
     Unmounted,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::ElementTag;
+    use crate::reactive::__reset_for_tests;
+    use crate::view::{
+        BindType, append_child, create_element, set_attribute, set_event_listener,
+        set_specified_style,
+    };
+    use whisker_engine::whisker_protocol::{InputEventKind, SurfaceId};
+    use whisker_style::{SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty, StyleValue};
+
+    #[test]
+    fn one_input_event_takes_one_surface_snapshot_for_text_and_style_updates() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(77).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+        runtime
+            .mount(|| {
+                let root = create_element(ElementTag::View);
+                let first = create_element(ElementTag::Text);
+                let first_text = create_element(ElementTag::RawText);
+                let second = create_element(ElementTag::Text);
+                let second_text = create_element(ElementTag::RawText);
+                append_child(first, first_text);
+                append_child(second, second_text);
+                append_child(root, first);
+                append_child(root, second);
+                set_event_listener(
+                    root,
+                    "scroll",
+                    BindType::Bind,
+                    Box::new(move |_| {
+                        set_attribute(first_text, "text", "first-updated");
+                        set_attribute(second_text, "text", "second-updated");
+                        let style = SpecifiedStyle::new().push(
+                            StyleProperty::Opacity,
+                            StyleValue::Number(StyleNumber::new(0.5)),
+                        );
+                        set_specified_style(first, &style);
+                        set_specified_style(second, &style);
+                    }),
+                );
+                root
+            })
+            .unwrap();
+
+        surface.reset_surface_snapshot_count();
+        runtime
+            .dispatch_input(&InputEvent {
+                surface: surface.surface(),
+                timestamp_ms: 1.0,
+                kind: InputEventKind::Named("scroll".to_owned()),
+                pointer: None,
+                target: surface.root(),
+                detail: WhiskerValue::Null,
+            })
+            .unwrap();
+
+        assert_eq!(surface.surface_snapshot_count(), 1);
+    }
+}
+
 /// A lifecycle operation that is invalid in the current state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RuntimeLifecycleError {
@@ -502,21 +568,42 @@ impl RuntimeInstance {
         &self,
         event: &InputEvent,
     ) -> Result<InputDispatch, RuntimeInputError> {
-        let mut dispatch = self.surface.dispatch_input(event)?;
-        let activation = self
-            .activations
-            .borrow_mut()
-            .observe(event, dispatch.target);
-        if let Some(activation) = activation {
-            let synthesized = self.surface.dispatch_input(&activation)?;
-            dispatch.target = synthesized.target.or(dispatch.target);
-            dispatch.consumed |= synthesized.consumed;
-            dispatch.listener_count += synthesized.listener_count;
-            dispatch.queued |= synthesized.queued;
+        // Treat listener execution and the reactive cascade it schedules as
+        // one retained-scene transaction. Renderer calls still update the
+        // element mirror immediately, while expensive style/subtree lowering
+        // is committed once after the queue settles.
+        self.surface.begin_mutation_batch();
+        let dispatch = (|| {
+            let mut dispatch = self.surface.dispatch_input(event)?;
+            let activation = self
+                .activations
+                .borrow_mut()
+                .observe(event, dispatch.target);
+            if let Some(activation) = activation {
+                let synthesized = self.surface.dispatch_input(&activation)?;
+                dispatch.target = synthesized.target.or(dispatch.target);
+                dispatch.consumed |= synthesized.consumed;
+                dispatch.listener_count += synthesized.listener_count;
+                dispatch.queued |= synthesized.queued;
+            }
+            reactive::flush();
+            reactive::flush_mounts();
+            Ok(dispatch)
+        })();
+        let finish = self
+            .surface
+            .finish_mutation_batch()
+            .map_err(RuntimeInputError::Binding);
+        match dispatch {
+            Ok(dispatch) => {
+                finish?;
+                Ok(dispatch)
+            }
+            Err(error) => {
+                let _ = finish;
+                Err(error)
+            }
         }
-        reactive::flush();
-        reactive::flush_mounts();
-        Ok(dispatch)
     }
 
     fn drain_pending_input(&self) -> Result<(), RuntimeInputError> {

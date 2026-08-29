@@ -171,7 +171,12 @@ internal class HostMeasurementProvider(private val context: Context) {
             ),
             floatArrayOf(indentPixels / density),
         )
-        val width = if (knownMask and WIDTH != 0) knownWidth else layout.width / density
+        val width = when {
+            knownMask and WIDTH != 0 -> knownWidth
+            availableWidthKind == DEFINITE && wrap != 0 ->
+                (layout.width / density).coerceAtMost(availableWidth)
+            else -> layout.width / density
+        }
         val height = if (knownMask and HEIGHT != 0) knownHeight else layout.height / density
         val first = if (layout.lineCount > 0) layout.getLineBaseline(0) / density else 0f
         val last = if (layout.lineCount > 0) {

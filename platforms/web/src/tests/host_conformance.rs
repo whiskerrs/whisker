@@ -7,6 +7,7 @@ use std::task::Poll;
 use base64::Engine as _;
 use wasm_bindgen::Clamped;
 use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::wasm_bindgen_test;
 use whisker::prelude::*;
 use whisker::runtime::RuntimeWakeHandle;
@@ -66,13 +67,17 @@ fn browser_pointer_metadata_maps_to_protocol_values() {
 }
 
 #[wasm_bindgen_test]
-fn scroll_view_emits_logical_scroll_geometry() {
+async fn scroll_view_emits_geometry_and_honors_scroll_behavior() {
     let mut driver = Driver::new();
     let registry = ElementRegistry::standard();
-    let scroll_type = registry
+    let scroll_registration = registry
         .registration_for_builtin(whisker::ElementTag::ScrollView)
+        .unwrap();
+    let scroll_type = scroll_registration.element_type;
+    let scroll_to = scroll_registration
+        .command_named("scrollTo")
         .unwrap()
-        .element_type;
+        .command;
     let view_type = registry
         .registration_for_builtin(whisker::ElementTag::View)
         .unwrap()
@@ -159,6 +164,72 @@ fn scroll_view_emits_logical_scroll_geometry() {
     assert_eq!(detail.get("scrollTop"), Some(&WhiskerValue::Int(120)));
     assert_eq!(detail.get("viewportHeight"), Some(&WhiskerValue::Int(80)));
     assert_eq!(detail.get("scrollHeight"), Some(&WhiskerValue::Int(300)));
+
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 2,
+                base_revision: 1,
+                target_revision: 2,
+                viewport_epoch: 1,
+                mode: FrameMode::Delta,
+            },
+            operations: vec![Operation::InvokeCommand {
+                node: scroll,
+                command: scroll_to,
+                arguments: WhiskerValue::map([
+                    ("offset", WhiskerValue::Float(40.0)),
+                    ("smooth", WhiskerValue::Bool(false)),
+                ]),
+            }],
+        })
+        .unwrap();
+    assert_eq!(element.scroll_top(), 40);
+
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 3,
+                base_revision: 2,
+                target_revision: 3,
+                viewport_epoch: 1,
+                mode: FrameMode::Delta,
+            },
+            operations: vec![Operation::InvokeCommand {
+                node: scroll,
+                command: scroll_to,
+                arguments: WhiskerValue::map([
+                    ("offset", WhiskerValue::Float(200.0)),
+                    ("smooth", WhiskerValue::Bool(true)),
+                ]),
+            }],
+        })
+        .unwrap();
+    for _ in 0..20 {
+        if element.scroll_top() == 200 {
+            break;
+        }
+        wait_ms(50).await;
+    }
+    assert_eq!(element.scroll_top(), 200);
+}
+
+async fn wait_ms(milliseconds: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        web_sys::window()
+            .expect("browser Window")
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, milliseconds)
+            .expect("schedule browser timeout");
+    });
+    JsFuture::from(promise).await.expect("browser timeout");
 }
 
 #[wasm_bindgen_test]

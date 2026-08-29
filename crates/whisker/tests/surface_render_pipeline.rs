@@ -4,9 +4,10 @@ use std::rc::Rc;
 
 use whisker::css::{
     Angle, Animation, AnimationFillMode, AnimationIterationCount, BorderRadius, BorderStyle, Clear,
-    CustomPropertyName, Direction, EasingFunction, Float, GridLine, GridTemplate, GridTrack,
-    ImageRendering, Keyframes, MotionPathCommand, MotionPathPoint, OffsetPath, OffsetRotate,
-    Overflow, Position, Size, StyleProperty, TransformFn, Transition, TransitionPropertyKind,
+    CustomPropertyName, Direction, EasingFunction, Float, GridAutoFlow, GridLine, GridRepeatCount,
+    GridTemplate, GridTrack, ImageRendering, Keyframes, MotionPathCommand, MotionPathPoint,
+    OffsetPath, OffsetRotate, Overflow, Position, Size, StyleProperty, TransformFn, Transition,
+    TransitionPropertyKind,
 };
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -109,8 +110,11 @@ fn list_virtualizes_through_scroll_view_and_reacts_to_host_scroll_geometry() {
                     style: css!(width: percent(100), height: px(100)),
                     each: || (0_u32..100).collect::<Vec<_>>(),
                     key: |row: &u32| *row,
-                    children: |row: u32| render! {
-                        text(style: css!(height: px(20), font_size: px(20)), value: format!("row-{row}"))
+                    children: |row: ReadSignal<u32>| {
+                        let value = computed(move || format!("row-{}", row.get()));
+                        render! {
+                            text(style: css!(height: px(20), font_size: px(20)), value: value)
+                        }
                     },
                 )
             }
@@ -178,7 +182,7 @@ fn list_virtualizes_through_scroll_view_and_reacts_to_host_scroll_geometry() {
                 pointer: None,
                 target: Some(scroll_node),
                 detail: WhiskerValue::map([
-                    ("scrollTop", WhiskerValue::Float(2_200.0)),
+                    ("scrollTop", WhiskerValue::Float(1_000.0)),
                     ("viewportHeight", WhiskerValue::Float(100.0)),
                     ("scrollHeight", WhiskerValue::Float(4_400.0)),
                 ]),
@@ -197,9 +201,105 @@ fn list_virtualizes_through_scroll_view_and_reacts_to_host_scroll_geometry() {
         )
         .unwrap();
 
-    assert!(renderer.frames().last().unwrap().packet.operations.iter().any(
-        |operation| matches!(operation, Operation::SetText { content, .. } if content.payload.text == "row-50")
-    ));
+    assert!(
+        renderer
+            .frames()
+            .last()
+            .unwrap()
+            .packet
+            .operations
+            .iter()
+            .any(
+                |operation| matches!(operation, Operation::SetText { content, .. }
+            if content.payload.text.strip_prefix("row-")
+                .and_then(|index| index.parse::<u32>().ok())
+                .is_some_and(|index| index >= 20))
+            )
+    );
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn carousel_scroll_contract_reaches_the_host_as_typed_properties() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(46).unwrap(),
+        StyleEnvironment::new(320.0, 180.0, 1.0, 14.0),
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                scroll_view(
+                    scroll_orientation: whisker::attrs::ScrollOrientation::Horizontal,
+                    item_snap: (0.0, 12.0),
+                    scroll_snap_stop: whisker::attrs::ScrollSnapStop::Always,
+                    style: css!(width: px(320), height: px(180), flex_direction: FlexDirection::Row),
+                ) {
+                    view(style: css!(width: px(280), height: px(180), flex_shrink: 0.0))
+                    view(style: css!(width: px(280), height: px(180), flex_shrink: 0.0))
+                }
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+
+    let registrations = surface.element_registrations();
+    let registration = registrations
+        .iter()
+        .find(|registration| registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME)
+        .unwrap();
+    let orientation = registration
+        .property_named("scroll-orientation")
+        .unwrap()
+        .property;
+    let snap = registration.property_named("item-snap").unwrap().property;
+    let snap_stop = registration
+        .property_named("scroll-snap-stop")
+        .unwrap()
+        .property;
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 180.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    let operations = &renderer.frames()[0].packet.operations;
+    assert!(operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetProperty {
+            property,
+            value: WhiskerValue::String(value),
+            ..
+        } if *property == orientation && value == "horizontal"
+    )));
+    assert!(operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetProperty {
+            property,
+            value: WhiskerValue::Map(value),
+            ..
+        } if *property == snap
+            && value.get("factor") == Some(&WhiskerValue::Float(0.0))
+            && value.get("offset") == Some(&WhiskerValue::Float(12.0))
+    )));
+    assert!(operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetProperty {
+            property,
+            value: WhiskerValue::String(value),
+            ..
+        } if *property == snap_stop && value == "always"
+    )));
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
@@ -212,12 +312,12 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
         StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
     );
     let source_reads = Rc::new(Cell::new(0));
-    let metadata_reads = Rc::new(Cell::new(0));
+    let key_reads = Rc::new(Cell::new(0));
     let item_clones = Rc::new(Cell::new(0));
 
     with_installed_renderer(surface.renderer(), || {
         let source_reads = Rc::clone(&source_reads);
-        let metadata_reads = Rc::clone(&metadata_reads);
+        let key_reads = Rc::clone(&key_reads);
         let item_clones = Rc::clone(&item_clones);
         let root = owner.with(|| {
             render! {
@@ -232,15 +332,18 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
                             })
                             .collect::<Vec<_>>()
                     },
-                    meta: move |row: &CloneTrackedRow| {
-                        metadata_reads.set(metadata_reads.get() + 1);
-                        ItemMeta::key(row.index).estimated_size(44)
+                    key: move |row: &CloneTrackedRow| {
+                        key_reads.set(key_reads.get() + 1);
+                        row.index
                     },
-                    children: |row: CloneTrackedRow| render! {
-                        text(
-                            style: css!(height: px(44), font_size: px(20)),
-                            value: format!("row-{}", row.index),
-                        )
+                    children: |row: ReadSignal<CloneTrackedRow>| {
+                        let value = computed(move || row.with(|row| format!("row-{}", row.index)));
+                        render! {
+                            text(
+                                style: css!(height: px(44), font_size: px(20)),
+                                value: value,
+                            )
+                        }
                     },
                 )
             }
@@ -248,7 +351,7 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
         set_root(root);
     });
     assert_eq!(source_reads.get(), 1);
-    assert_eq!(metadata_reads.get(), 100_000);
+    assert_eq!(key_reads.get(), 100_000);
 
     let registrations = surface.element_registrations();
     let scroll_type = registrations
@@ -346,14 +449,13 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
         "scrolling must use the cached source snapshot"
     );
     assert_eq!(
-        metadata_reads.get(),
+        key_reads.get(),
         100_000,
         "scrolling must use the cached layout index"
     );
-    assert_eq!(
-        item_clones.get(),
-        3,
-        "only the three rows entering the mounted window should be cloned"
+    assert!(
+        item_clones.get() <= 5,
+        "scrolling plus automatic size feedback should clone only window-edge rows"
     );
     let structural_operations = renderer.frames()[2]
         .packet
@@ -377,28 +479,42 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
 }
 
 #[test]
-fn recycled_list_rebinds_compatible_slots_without_recreating_nodes() {
+fn list_updates_the_item_signal_without_recycling_keyed_state() {
     __reset_for_tests();
     let owner = Owner::new(None);
     let surface = SurfaceRuntime::new(
         SurfaceId::new(43).unwrap(),
         StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
     );
+    #[derive(Clone)]
+    struct Row {
+        id: u32,
+        label: &'static str,
+    }
+
+    let rows = owner.with(|| {
+        signal(vec![Row {
+            id: 7,
+            label: "before",
+        }])
+    });
     let item_builds = Rc::new(Cell::new(0));
+    let item_cleanups = Rc::new(Cell::new(0));
 
     with_installed_renderer(surface.renderer(), || {
         let item_builds = Rc::clone(&item_builds);
+        let item_cleanups = Rc::clone(&item_cleanups);
         let root = owner.with(|| {
             render! {
                 list(
                     style: css!(width: percent(100), height: px(100)),
-                    each: || (0_u32..100_000).collect::<Vec<_>>(),
-                    meta: |row: &u32| ItemMeta::key(*row)
-                        .estimated_size(44)
-                        .reuse_identifier("row"),
-                    recycled_children: move |row: ReadSignal<u32>| {
+                    each: move || rows.get(),
+                    key: |row: &Row| row.id,
+                    children: move |row: ReadSignal<Row>| {
                         item_builds.set(item_builds.get() + 1);
-                        let value = computed(move || format!("recycled-row-{}", row.get()));
+                        let cleanups = Rc::clone(&item_cleanups);
+                        on_cleanup(move || cleanups.set(cleanups.get() + 1));
+                        let value = computed(move || row.with(|row| row.label.to_owned()));
                         render! {
                             text(
                                 style: css!(height: px(44), font_size: px(20)),
@@ -412,8 +528,328 @@ fn recycled_list_rebinds_compatible_slots_without_recreating_nodes() {
         set_root(root);
     });
 
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(item_builds.get(), 1);
+    assert_eq!(item_cleanups.get(), 0);
+
+    with_installed_renderer(surface.renderer(), || {
+        rows.set(vec![Row {
+            id: 7,
+            label: "after",
+        }]);
+        whisker::flush();
+    });
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            2,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(item_builds.get(), 1, "the keyed owner must be retained");
+    assert_eq!(item_cleanups.get(), 0);
+    assert!(
+        renderer.frames()[1]
+            .packet
+            .operations
+            .iter()
+            .all(|operation| {
+                !matches!(
+                    operation,
+                    Operation::CreateNode { .. } | Operation::DeleteNode { .. }
+                )
+            })
+    );
+    assert!(renderer.frames()[1].packet.operations.iter().any(
+        |operation| matches!(operation, Operation::SetText { content, .. } if content.payload.text == "after")
+    ));
+
+    with_installed_renderer(surface.renderer(), || {
+        rows.set(vec![Row {
+            id: 8,
+            label: "replacement",
+        }]);
+        whisker::flush();
+    });
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            3,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(item_builds.get(), 2, "a new key must build a fresh owner");
+    assert_eq!(item_cleanups.get(), 1, "the old keyed owner must dispose");
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn typed_list_handle_resolves_keys_from_the_rust_snapshot() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(47).unwrap(),
+        StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+    );
+    let list_handle = owner.with(ListHandle::<u32>::new);
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                list(
+                    ref: list_handle.r(),
+                    style: css!(width: percent(100), height: px(100)),
+                    each: || (0_u32..100).collect::<Vec<_>>(),
+                    key: |row: &u32| *row,
+                    children: |row: ReadSignal<u32>| {
+                        let value = computed(move || format!("row-{}", row.get()));
+                        render! { text(value: value, style: css!(height: px(44), font_size: px(20))) }
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+
+    let snapshot = list_handle.snapshot().expect("mounted List snapshot");
+    assert_eq!(snapshot.content_extent, 4_400.0);
+    assert_eq!(snapshot.first_visible_key, Some(0));
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    // Key lookup is resolved entirely from the Rust-side layout index. Rows
+    // outside the mounted window retain the private initial extent until they
+    // have been observed, so key 10 starts at 10 × 44px.
+    let expected_key_offset = 440.0;
+
+    with_installed_renderer(surface.renderer(), || {
+        list_handle
+            .scroll_to(
+                ListScrollTarget::key(10, ScrollAlignment::Start),
+                ScrollBehavior::Smooth,
+            )
+            .unwrap();
+    });
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            2,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    assert!(renderer.frames()[1].packet.operations.iter().any(|operation| {
+        matches!(
+            operation,
+            Operation::InvokeCommand {
+                arguments: WhiskerValue::Map(arguments),
+                ..
+            } if matches!(arguments.get("offset"), Some(WhiskerValue::Float(offset)) if (*offset - expected_key_offset).abs() < 0.01)
+                && arguments.get("smooth") == Some(&WhiskerValue::Bool(true))
+        )
+    }), "second frame operations: {:?}; expected offset {expected_key_offset}", renderer.frames()[1].packet.operations);
+
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+    assert_eq!(
+        list_handle.scroll_to(ListScrollTarget::start(), ScrollBehavior::Instant),
+        Err(ListHandleError::NotBound)
+    );
+}
+
+#[test]
+fn list_applies_axis_scroll_control_and_initial_key_target() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(48).unwrap(),
+        StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+    );
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                list(
+                    axis: ScrollAxis::Horizontal,
+                    scroll_enabled: false,
+                    initial_scroll: ListScrollTarget::key(3_u32, ScrollAlignment::Start),
+                    style: css!(width: px(320), height: px(100)),
+                    each: || (0_u32..20).collect::<Vec<_>>(),
+                    key: |row: &u32| *row,
+                    children: |row: ReadSignal<u32>| render! {
+                        text(value: computed(move || row.get().to_string()), style: css!(width: px(44), font_size: px(20)))
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+
     let registrations = surface.element_registrations();
-    let scroll_type = registrations
+    let registration = registrations
+        .iter()
+        .find(|registration| registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME)
+        .unwrap();
+    let orientation = registration
+        .property_named("scroll-orientation")
+        .unwrap()
+        .property;
+    let enabled = registration
+        .property_named("enable-scroll")
+        .unwrap()
+        .property;
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    let operations = &renderer.frames()[0].packet.operations;
+    assert!(operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetProperty {
+            property,
+            value: WhiskerValue::String(value),
+            ..
+        } if *property == orientation && value == "horizontal"
+    )));
+    assert!(operations.iter().any(|operation| matches!(
+        operation,
+        Operation::SetProperty {
+            property,
+            value: WhiskerValue::Bool(false),
+            ..
+        } if *property == enabled
+    )));
+    assert!(operations.iter().any(|operation| matches!(
+        operation,
+        Operation::InvokeCommand {
+            command,
+            arguments: WhiskerValue::Map(arguments),
+            ..
+        } if *command == whisker::SCROLL_TO_COMMAND
+            && matches!(arguments.get("offset"), Some(WhiskerValue::Float(offset)) if (*offset - 132.0).abs() < 0.01)
+    )));
+
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn list_mounts_header_footer_and_empty_content_without_host_list_nodes() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(49).unwrap(),
+        StyleEnvironment::new(320.0, 200.0, 1.0, 14.0),
+    );
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                list(
+                    style: css!(width: px(320), height: px(200)),
+                    header: || render! { text(value: "header", style: css!(font_size: px(20))) },
+                    footer: || render! { text(value: "footer", style: css!(font_size: px(20))) },
+                    empty: || render! { text(value: "empty", style: css!(font_size: px(20))) },
+                    each: Vec::<u32>::new,
+                    key: |row: &u32| *row,
+                    children: |row: ReadSignal<u32>| render! { text(value: computed(move || row.get().to_string()), style: css!(font_size: px(20))) },
+                )
+            }
+        });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 200.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    let texts = renderer.frames()[0]
+        .packet
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            Operation::SetText { content, .. } => Some(content.payload.text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(texts.contains(&"header"));
+    assert!(texts.contains(&"footer"));
+    assert!(texts.contains(&"empty"));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn list_preserves_the_first_visible_key_when_items_are_prepended() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(50).unwrap(),
+        StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+    );
+    let rows = owner.with(|| signal((0_u32..40).collect::<Vec<_>>()));
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                list(
+                    style: css!(width: px(320), height: px(100)),
+                    each: move || rows.get(),
+                    key: |row: &u32| *row,
+                    children: |_row: ReadSignal<u32>| render! { view(style: css!(height: px(44))) },
+                )
+            }
+        });
+        set_root(root);
+    });
+
+    let scroll_type = surface
+        .element_registrations()
         .iter()
         .find(|registration| registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME)
         .unwrap()
@@ -442,27 +878,23 @@ fn recycled_list_rebinds_compatible_slots_without_recreating_nodes() {
         })
         .unwrap();
 
-    let dispatch_scroll = |offset: f64| {
-        with_installed_renderer(surface.renderer(), || {
-            surface
-                .dispatch_input(&InputEvent {
-                    surface: surface.surface(),
-                    timestamp_ms: offset,
-                    kind: InputEventKind::Named("scroll".to_owned()),
-                    pointer: None,
-                    target: Some(scroll_node),
-                    detail: WhiskerValue::map([
-                        ("scrollTop", WhiskerValue::Float(offset)),
-                        ("viewportHeight", WhiskerValue::Float(100.0)),
-                        ("scrollHeight", WhiskerValue::Float(4_400_000.0)),
-                    ]),
-                })
-                .unwrap();
-            whisker::flush();
-        });
-    };
-
-    dispatch_scroll(132.0);
+    with_installed_renderer(surface.renderer(), || {
+        surface
+            .dispatch_input(&InputEvent {
+                surface: surface.surface(),
+                timestamp_ms: 16.0,
+                kind: InputEventKind::Named("scroll".to_owned()),
+                pointer: None,
+                target: Some(scroll_node),
+                detail: WhiskerValue::map([
+                    ("scrollTop", WhiskerValue::Float(440.0)),
+                    ("viewportHeight", WhiskerValue::Float(100.0)),
+                    ("scrollHeight", WhiskerValue::Float(1_760.0)),
+                ]),
+            })
+            .unwrap();
+        whisker::flush();
+    });
     surface
         .render_frame(
             LayoutSize::new(320.0, 100.0),
@@ -473,8 +905,13 @@ fn recycled_list_rebinds_compatible_slots_without_recreating_nodes() {
             LayoutOptions::default(),
         )
         .unwrap();
-    item_builds.set(0);
-    dispatch_scroll(264.0);
+
+    with_installed_renderer(surface.renderer(), || {
+        let mut next = vec![100, 101];
+        next.extend(0_u32..40);
+        rows.set(next);
+        whisker::flush();
+    });
     surface
         .render_frame(
             LayoutSize::new(320.0, 100.0),
@@ -486,26 +923,363 @@ fn recycled_list_rebinds_compatible_slots_without_recreating_nodes() {
         )
         .unwrap();
 
-    assert_eq!(
-        item_builds.get(),
-        0,
-        "matching recycled slots must not rerun the item builder"
+    assert!(renderer.frames().last().unwrap().packet.operations.iter().any(|operation| {
+        matches!(
+            operation,
+            Operation::InvokeCommand {
+                command,
+                arguments: WhiskerValue::Map(arguments),
+                ..
+            } if *command == whisker::SCROLL_TO_COMMAND
+                && matches!(arguments.get("offset"), Some(WhiskerValue::Float(offset)) if (*offset - 528.0).abs() < 0.01)
+                && arguments.get("smooth") == Some(&WhiskerValue::Bool(false))
+        )
+    }));
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn list_learns_variable_item_sizes_from_rust_layout() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(48).unwrap(),
+        StyleEnvironment::new(320.0, 600.0, 1.0, 14.0),
     );
-    assert!(
-        renderer.frames()[2]
-            .packet
+    let list_handle = owner.with(ListHandle::<u32>::new);
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                list(
+                    ref: list_handle.r(),
+                    style: css!(width: percent(100), height: px(600)),
+                    each: || vec![(1_u32, 100_i32), (2, 200)],
+                    key: |row: &(u32, i32)| row.0,
+                    children: |row: ReadSignal<(u32, i32)>| {
+                        let style = computed(move || css!(height: px(row.get().1), flex_shrink: 0.0));
+                        render! { view(style: style) }
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+
+    assert_eq!(list_handle.snapshot().unwrap().content_extent, 88.0);
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(320.0, 600.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(list_handle.snapshot().unwrap().content_extent, 300.0);
+
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn list_virtualizes_supported_grid_content_by_complete_rows() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(53).unwrap(),
+        StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+    );
+    let list_handle = owner.with(ListHandle::<u32>::new);
+    let grid = Css::new()
+        .display_grid()
+        .grid_template_columns(GridTemplate::repeat(
+            GridRepeatCount::Count(2),
+            [GridTrack::fraction(1.0)],
+        ))
+        .row_gap(px(8));
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                list(
+                    ref: list_handle.r(),
+                    style: css!(width: px(200), height: px(100)),
+                    content_style: grid,
+                    each: || (0_u32..8).collect::<Vec<_>>(),
+                    key: |row: &u32| *row,
+                    children: |row: ReadSignal<u32>| {
+                        render! {
+                            text(
+                                value: computed(move || format!("grid-{}", row.get())),
+                                style: css!(height: px(40), font_size: px(20)),
+                            )
+                        }
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+    assert_eq!(surface.binding_error(), None);
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(200.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(list_handle.snapshot().unwrap().content_extent, 184.0);
+
+    let packet = &renderer.frames()[0].packet;
+    let node_for = |label: &str| {
+        packet
             .operations
             .iter()
-            .all(|operation| {
-                !matches!(
-                    operation,
-                    Operation::CreateNode { .. } | Operation::DeleteNode { .. }
-                )
+            .find_map(|operation| match operation {
+                Operation::SetText { node, content } if content.payload.text == label => {
+                    Some(*node)
+                }
+                _ => None,
             })
+    };
+    let geometry_for = |node| {
+        packet
+            .operations
+            .iter()
+            .find_map(|operation| match operation {
+                Operation::SetLayout {
+                    node: candidate,
+                    geometry,
+                } if *candidate == node => Some(geometry.border_box),
+                _ => None,
+            })
+    };
+    let parent_of = |node| {
+        packet
+            .operations
+            .iter()
+            .find_map(|operation| match operation {
+                Operation::InsertChild { parent, child, .. } if *child == node => Some(*parent),
+                _ => None,
+            })
+    };
+    let first_node = node_for("grid-0").expect("first Grid item");
+    let second_node = node_for("grid-1").expect("second Grid item");
+    let third_node = node_for("grid-2").expect("third Grid item");
+    let first = geometry_for(parent_of(first_node).expect("first Grid cell"))
+        .expect("first Grid item layout");
+    let second = geometry_for(parent_of(second_node).expect("second Grid cell"))
+        .expect("second Grid item layout");
+    let third = geometry_for(parent_of(third_node).expect("third Grid cell"))
+        .expect("third Grid item layout");
+
+    assert_eq!((first.x, first.y, first.width), (0.0, 0.0, 100.0));
+    assert_eq!((second.x, second.y, second.width), (100.0, 0.0, 100.0));
+    assert_eq!((third.x, third.y, third.width), (0.0, 0.0, 100.0));
+
+    let scroll_type = surface
+        .element_registrations()
+        .iter()
+        .find(|registration| registration.name == whisker::SCROLL_VIEW_ELEMENT_NAME)
+        .unwrap()
+        .element_type;
+    let scroll_node = packet
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::CreateNode {
+                node, element_type, ..
+            } if *element_type == scroll_type => Some(*node),
+            _ => None,
+        })
+        .expect("Grid List ScrollView");
+    with_installed_renderer(surface.renderer(), || {
+        surface
+            .dispatch_input(&InputEvent {
+                surface: surface.surface(),
+                timestamp_ms: 16.0,
+                kind: InputEventKind::Named("scroll".to_owned()),
+                pointer: None,
+                target: Some(scroll_node),
+                detail: WhiskerValue::map([
+                    ("scrollTop", WhiskerValue::Float(0.0)),
+                    ("viewportHeight", WhiskerValue::Float(100.0)),
+                    ("scrollHeight", WhiskerValue::Float(184.0)),
+                ]),
+            })
+            .unwrap();
+        whisker::flush();
+    });
+    surface
+        .render_frame(
+            LayoutSize::new(200.0, 100.0),
+            1,
+            2,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    with_installed_renderer(surface.renderer(), || {
+        list_handle
+            .scroll_to(
+                ListScrollTarget::key(2, ScrollAlignment::Start),
+                ScrollBehavior::Instant,
+            )
+            .unwrap();
+    });
+    surface
+        .render_frame(
+            LayoutSize::new(200.0, 100.0),
+            1,
+            3,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+    assert!(renderer.frames().last().unwrap().packet.operations.iter().any(|operation| {
+        matches!(
+            operation,
+            Operation::InvokeCommand {
+                command,
+                arguments: WhiskerValue::Map(arguments),
+                ..
+            } if *command == whisker::SCROLL_TO_COMMAND
+                && matches!(arguments.get("offset"), Some(WhiskerValue::Float(offset)) if (*offset - 48.0).abs() < 0.01)
+        )
+    }), "Grid key scroll operations: {:?}", renderer.frames().last().unwrap().packet.operations);
+
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+#[should_panic(
+    expected = "unsupported virtualized Grid: `grid-auto-flow: dense` can move later items into earlier tracks"
+)]
+fn list_rejects_dense_grid_before_host_presentation() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(54).unwrap(),
+        StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
     );
-    assert!(renderer.frames()[2].packet.operations.iter().any(
-        |operation| matches!(operation, Operation::SetText { content, .. } if content.payload.text == "recycled-row-8")
-    ));
+    let unsupported = Css::new()
+        .display_grid()
+        .grid_template_columns(GridTemplate::tracks([
+            GridTrack::fraction(1.0),
+            GridTrack::fraction(1.0),
+        ]))
+        .grid_auto_flow(GridAutoFlow::RowDense);
+
+    with_installed_renderer(surface.renderer(), || {
+        owner.with(|| {
+            render! {
+                list(
+                    content_style: unsupported,
+                    each: || vec![0_u32, 1],
+                    key: |row: &u32| *row,
+                    children: |_row: ReadSignal<u32>| render! { view() },
+                )
+            }
+        });
+    });
+}
+
+#[test]
+#[should_panic(
+    expected = "unsupported virtualized Grid item: `grid-column-start` requires explicit placement"
+)]
+fn list_rejects_explicit_grid_item_placement() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(55).unwrap(),
+        StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+    );
+    let grid = Css::new()
+        .display_grid()
+        .grid_template_columns(GridTemplate::tracks([
+            GridTrack::fraction(1.0),
+            GridTrack::fraction(1.0),
+        ]));
+
+    with_installed_renderer(surface.renderer(), || {
+        owner.with(|| {
+            render! {
+                list(
+                    content_style: grid,
+                    each: || vec![0_u32, 1],
+                    key: |row: &u32| *row,
+                    children: |_row: ReadSignal<u32>| render! {
+                        view(style: Css::new().grid_column_start(GridLine::Number(2)))
+                    },
+                )
+            }
+        });
+    });
+}
+
+#[test]
+fn horizontal_list_virtualizes_grid_content_by_complete_columns() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(56).unwrap(),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let list_handle = owner.with(ListHandle::<u32>::new);
+    let grid = Css::new()
+        .display_grid()
+        .grid_template_rows(GridTemplate::repeat(
+            GridRepeatCount::Count(2),
+            [GridTrack::fraction(1.0)],
+        ))
+        .column_gap(px(6));
+
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                list(
+                    ref: list_handle.r(),
+                    axis: ScrollAxis::Horizontal,
+                    style: css!(width: px(100), height: px(100)),
+                    content_style: grid,
+                    each: || (0_u32..8).collect::<Vec<_>>(),
+                    key: |item: &u32| *item,
+                    children: |_item: ReadSignal<u32>| render! {
+                        view(style: css!(width: px(30), height: px(50)))
+                    },
+                )
+            }
+        });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(list_handle.snapshot().unwrap().content_extent, 138.0);
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 

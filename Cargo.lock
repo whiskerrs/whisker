@@ -716,6 +716,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "carousel"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+]
+
+[[package]]
 name = "cassowary"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
