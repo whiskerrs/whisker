@@ -232,27 +232,7 @@ impl DesktopRuntime {
         });
         self.drain_runtime_resource_commands(runtime)?;
         let dispatched_resource_event = self.dispatch_pending_resource_events(runtime)?;
-        let environment = StyleEnvironment::new(
-            context.logical_width,
-            context.logical_height,
-            context.scale,
-            14.0,
-        );
-        let drive = self.modules.with_host(|| {
-            runtime.drive_frame(
-                context.timestamp_ms,
-                environment,
-                context.environment_epoch,
-                context.viewport_epoch,
-                &mut self.measurements,
-                &mut self.surface,
-                LayoutOptions::default(),
-            )
-        });
-        self.drain_runtime_resource_commands(runtime)?;
-        let drive = drive.map_err(|error| DesktopError(format!("drive Desktop frame: {error}")))?;
         let events = self.surface.take_events();
-        let dispatched_provider_event = !events.is_empty();
         for event in events {
             self.modules
                 .with_host(|| {
@@ -272,6 +252,28 @@ impl DesktopRuntime {
         self.modules.with_host(|| {
             self.modules.dispatch_pending_events();
         });
+        let environment = StyleEnvironment::new(
+            context.logical_width,
+            context.logical_height,
+            context.scale,
+            14.0,
+        );
+        let drive = self.modules.with_host(|| {
+            runtime.drive_frame(
+                context.timestamp_ms,
+                environment,
+                context.environment_epoch,
+                context.viewport_epoch,
+                &mut self.measurements,
+                &mut self.surface,
+                LayoutOptions::default(),
+            )
+        });
+        self.drain_runtime_resource_commands(runtime)?;
+        let drive = drive.map_err(|error| DesktopError(format!("drive Desktop frame: {error}")))?;
+        self.modules.with_host(|| {
+            self.modules.dispatch_pending_events();
+        });
         self.surface
             .paint(
                 &mut self.measurements,
@@ -280,9 +282,7 @@ impl DesktopRuntime {
             )
             .map_err(|error| DesktopError(format!("paint Desktop frame: {error}")))?;
         Ok(DesktopFrameResult {
-            needs_frame: drive.needs_frame
-                || dispatched_provider_event
-                || dispatched_resource_event,
+            needs_frame: drive.needs_frame || dispatched_resource_event,
         })
     }
 
