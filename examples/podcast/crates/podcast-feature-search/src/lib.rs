@@ -254,9 +254,7 @@ fn search_results(results: Resource<Vec<Podcast>>, query: RwSignal<String>) -> E
                 flex_shrink: 1.0,
                 width: percent(100),
             ),
-            scroll_orientation: ScrollOrientation::Vertical,
-            scroll_bar_enable: false,
-            bounces: true,
+            axis: ScrollAxis::Vertical,
         ) {
             view(style: css!(
                 display: Display::Flex,

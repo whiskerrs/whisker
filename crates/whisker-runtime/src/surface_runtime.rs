@@ -1,7 +1,7 @@
 //! Runtime ownership of one retained semantic surface.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
@@ -12,6 +12,7 @@ use crate::background_resources::{
     BackgroundProjection, BackgroundResourceError, BackgroundResourceManager,
 };
 use crate::element::ElementTag;
+use crate::event::Dataset;
 use crate::transform_interpolation::interpolate_transform_style;
 #[cfg(test)]
 use crate::transform_interpolation::{identity_transform_function, interpolate_transform_function};
@@ -19,9 +20,9 @@ use crate::value::WhiskerValue;
 use crate::view::{BindType, DynRenderer, Element, with_installed_renderer};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
-    BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior, InputEvent,
-    InputEventError, LayoutGeometry, MeasurementReady, NodeId, PaintColor, ResourceCommand,
-    ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
+    Accessibility, BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior,
+    InputEvent, InputEventError, LayoutGeometry, MeasurementReady, NodeId, PaintColor,
+    ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
 };
 #[cfg(test)]
 use whisker_engine::whisker_style::ComputedTransformFunction;
@@ -696,9 +697,12 @@ impl SurfaceRuntime {
                 let Ok(planned) = state.plan_event(root, target, event.kind) else {
                     continue;
                 };
-                let body = motion_event_body(&event, timestamp_ms, target);
+                let body = motion_event_body(&event, timestamp_ms, state.target_value(target));
                 firings.extend(planned.into_iter().map(|(current_target, callback)| {
-                    (callback, with_current_target(&body, current_target))
+                    (
+                        callback,
+                        with_current_target(&body, state.target_value(current_target)),
+                    )
                 }));
             }
         }
@@ -770,12 +774,20 @@ impl SurfaceRuntime {
                 return Ok(InputDispatch::default());
             };
             let event_name = event.kind.name(event.pointer.map(|pointer| pointer.kind));
-            let firings = state.plan_event(root, target, event_name)?;
-            (target, firings, input_body(event, target))
+            let firings = state
+                .plan_event(root, target, event_name)?
+                .into_iter()
+                .map(|(current_target, callback)| (callback, state.target_value(current_target)))
+                .collect::<Vec<_>>();
+            (
+                target,
+                firings,
+                input_body(event, state.target_value(target)),
+            )
         };
 
         let listener_count = firings.len();
-        for (current_target, callback) in firings {
+        for (callback, current_target) in firings {
             callback(with_current_target(&body, current_target));
         }
         Ok(InputDispatch {
@@ -999,6 +1011,9 @@ struct BoundElement {
     resolved: Option<ResolvedNodeStyle>,
     text: Option<PlainTextInput>,
     raw_text: String,
+    id: String,
+    dataset: BTreeMap<String, WhiskerValue>,
+    accessibility: Accessibility,
     listeners: HashMap<String, Vec<RuntimeListener>>,
     layout_observers: Vec<Rc<dyn Fn(LayoutGeometry) + 'static>>,
     style_initialized: bool,
@@ -1909,6 +1924,28 @@ struct EnvironmentStyleUpdate {
 }
 
 impl BindingState {
+    fn target_value(&self, node: NodeId) -> WhiskerValue {
+        let metadata = self
+            .node_elements
+            .get(&node)
+            .and_then(|element| self.elements.get(element));
+        WhiskerValue::map([
+            (
+                "id",
+                WhiskerValue::String(metadata.map(|entry| entry.id.clone()).unwrap_or_default()),
+            ),
+            ("uid", WhiskerValue::Int(node.get() as i64)),
+            (
+                "dataset",
+                WhiskerValue::Map(
+                    metadata
+                        .map(|entry| entry.dataset.clone())
+                        .unwrap_or_default(),
+                ),
+            ),
+        ])
+    }
+
     fn begin_mutation_batch(&mut self) {
         if let Some(batch) = &mut self.mutation_batch {
             batch.depth += 1;
@@ -2245,6 +2282,9 @@ impl BindingState {
                 resolved,
                 text,
                 raw_text: String::new(),
+                id: String::new(),
+                dataset: BTreeMap::new(),
+                accessibility: Accessibility::default(),
                 listeners: HashMap::new(),
                 layout_observers: Vec::new(),
                 style_initialized: false,
@@ -3676,7 +3716,7 @@ fn event_mask(kind: &BoundElementKind, name: &str) -> u64 {
         .unwrap_or_else(|| event_class_mask(name))
 }
 
-fn input_body(event: &InputEvent, target: NodeId) -> WhiskerValue {
+fn input_body(event: &InputEvent, target: WhiskerValue) -> WhiskerValue {
     let pointer_kind = event.pointer.map(|pointer| match pointer.kind {
         whisker_engine::whisker_protocol::PointerKind::Mouse => "mouse",
         whisker_engine::whisker_protocol::PointerKind::Touch => "touch",
@@ -3702,17 +3742,35 @@ fn input_body(event: &InputEvent, target: NodeId) -> WhiskerValue {
             ),
         ),
         ("timestamp", WhiskerValue::Float(event.timestamp_ms)),
-        (
-            "target",
-            WhiskerValue::map([("uid", WhiskerValue::Int(target.get() as i64))]),
-        ),
-        (
-            "currentTarget",
-            WhiskerValue::map([("uid", WhiskerValue::Int(target.get() as i64))]),
-        ),
+        ("target", target.clone()),
+        ("currentTarget", target),
         ("detail", detail),
     ];
     if let Some(pointer) = event.pointer {
+        let touch = WhiskerValue::map([
+            ("identifier", WhiskerValue::Int(pointer.id.get() as i64)),
+            ("x", WhiskerValue::Float(f64::from(pointer.position.x))),
+            ("y", WhiskerValue::Float(f64::from(pointer.position.y))),
+            ("pageX", WhiskerValue::Float(f64::from(pointer.position.x))),
+            ("pageY", WhiskerValue::Float(f64::from(pointer.position.y))),
+            (
+                "clientX",
+                WhiskerValue::Float(f64::from(pointer.position.x)),
+            ),
+            (
+                "clientY",
+                WhiskerValue::Float(f64::from(pointer.position.y)),
+            ),
+        ]);
+        let active_touches = if matches!(
+            event.kind,
+            whisker_engine::whisker_protocol::InputEventKind::PointerUp
+                | whisker_engine::whisker_protocol::InputEventKind::PointerCancel
+        ) {
+            Vec::new()
+        } else {
+            vec![touch.clone()]
+        };
         entries.extend([
             ("pointerId", WhiskerValue::Int(pointer.id.get() as i64)),
             (
@@ -3724,6 +3782,8 @@ fn input_body(event: &InputEvent, target: NodeId) -> WhiskerValue {
                 "button",
                 WhiskerValue::Int(i64::from(pointer.changed_button)),
             ),
+            ("touches", WhiskerValue::Array(active_touches)),
+            ("changedTouches", WhiskerValue::Array(vec![touch])),
         ]);
     }
     WhiskerValue::map(entries)
@@ -3732,19 +3792,13 @@ fn input_body(event: &InputEvent, target: NodeId) -> WhiskerValue {
 fn motion_event_body(
     event: &PendingMotionEvent,
     timestamp_ms: f64,
-    target: NodeId,
+    target: WhiskerValue,
 ) -> WhiskerValue {
     WhiskerValue::map([
         ("type", WhiskerValue::String(event.kind.to_owned())),
         ("timestamp", WhiskerValue::Float(timestamp_ms)),
-        (
-            "target",
-            WhiskerValue::map([("uid", WhiskerValue::Int(target.get() as i64))]),
-        ),
-        (
-            "currentTarget",
-            WhiskerValue::map([("uid", WhiskerValue::Int(target.get() as i64))]),
-        ),
+        ("target", target.clone()),
+        ("currentTarget", target),
         (
             "animation_type",
             WhiskerValue::String(event.animation_type.to_owned()),
@@ -3754,13 +3808,10 @@ fn motion_event_body(
     ])
 }
 
-fn with_current_target(body: &WhiskerValue, target: NodeId) -> WhiskerValue {
+fn with_current_target(body: &WhiskerValue, target: WhiskerValue) -> WhiskerValue {
     let mut body = body.clone();
     if let WhiskerValue::Map(entries) = &mut body {
-        entries.insert(
-            "currentTarget".to_owned(),
-            WhiskerValue::map([("uid", WhiskerValue::Int(target.get() as i64))]),
-        );
+        entries.insert("currentTarget".to_owned(), target);
     }
     body
 }
@@ -3873,6 +3924,51 @@ impl DynRenderer for SurfaceRuntime {
     fn set_attribute(&self, handle: Element, key: &str, value: &str) {
         let mut state = self.state.borrow_mut();
         let result = state.set_attribute(handle, key, value);
+        state.record(result);
+    }
+
+    fn set_element_id(&self, handle: Element, id: String) {
+        let mut state = self.state.borrow_mut();
+        let result = state.element_mut(handle).map(|entry| entry.id = id);
+        state.record(result);
+    }
+
+    fn set_dataset(&self, handle: Element, dataset: Dataset) {
+        let mut state = self.state.borrow_mut();
+        let result = state
+            .element_mut(handle)
+            .map(|entry| entry.dataset = dataset.as_map().clone());
+        state.record(result);
+    }
+
+    fn set_accessibility(&self, handle: Element, accessibility: Accessibility) {
+        let mut state = self.state.borrow_mut();
+        let result = (|| {
+            let node = state
+                .element(handle)?
+                .node
+                .ok_or(RuntimeBindingError::InvalidRoot { element: handle })?;
+            state.element_mut(handle)?.accessibility = accessibility.clone();
+            state.surface.set_accessibility(node, accessibility)?;
+            Ok(())
+        })();
+        state.record(result);
+    }
+
+    fn set_text_max_lines(&self, handle: Element, max_lines: u32) {
+        let mut state = self.state.borrow_mut();
+        let result =
+            (|| {
+                let entry = state.element_mut(handle)?;
+                let text = entry.text.as_mut().ok_or_else(|| {
+                    RuntimeBindingError::UnsupportedAttribute {
+                        element: handle,
+                        name: "max-lines".to_owned(),
+                    }
+                })?;
+                text.max_lines = (max_lines > 0).then_some(max_lines);
+                state.apply_subtree(handle)
+            })();
         state.record(result);
     }
 

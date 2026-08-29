@@ -42,16 +42,15 @@
 //!   Both are written as ordinary `#[component]` functions.
 //! - **CSS** — the [`css`] type-safe builder + the `css!` macro.
 //! - **Built-in elements** — `view`, `text`, `scroll_view`, `list`,
-//!   `raw_text`, `fragment`. The `render!` macro lowers each
+//!   `fragment`. The `render!` macro lowers each
 //!   tag invocation into a builder chain on the corresponding struct in
 //!   [`__tags`]; the [`__tags::ElementBuilder`] trait provides the
-//!   shared `style` / `class` / `on_<event>` / … methods.
+//!   shared `style` / semantics / `on_<event>` methods.
 //! - **Platform bridges** — [`PlatformModule`] + [`module!`] for
 //!   function-shaped native modules, [`ElementRef`]
 //!   for imperative methods on mounted components, [`ElementHandle`]
 //!   et al for the typed return values.
-//! - **Typed attribute enums** — see [`attrs`] for the closed-set
-//!   string attributes ([`attrs::ScrollOrientation`], etc.).
+//! - **Typed control options** — see [`attrs`] for ScrollView options.
 //!
 //! Everything intended for direct user code is also pulled into
 //! [`prelude`]; reaching into the long paths is only necessary when
@@ -74,8 +73,9 @@ pub use whisker_animation as animation;
 pub use whisker_animation::{AnimConfig, Animatable, AnimationController, Curve, Tween, animated};
 
 pub use whisker_engine::whisker_protocol::{
-    ChildPolicy, CommandId, ElementCommandSchema, ElementEventSchema, ElementMeasurement,
-    ElementPropertySchema, ElementSchema, ElementValueKind, EventId, PropertyId,
+    Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, ChildPolicy,
+    CommandId, ElementCommandSchema, ElementEventSchema, ElementMeasurement, ElementPropertySchema,
+    ElementSchema, ElementValueKind, EventId, PropertyId,
 };
 pub use whisker_runtime::element::ElementTag;
 
@@ -112,6 +112,8 @@ pub use element_ref::{ElementHandle, ElementRef, RefError, ScrollViewHandle, Tex
 pub use whisker_driver::ffi_module as __driver_module;
 pub use whisker_runtime::module::PlatformModule;
 
+pub use attrs::ScrollSnap;
+pub use whisker_runtime::event::Dataset;
 /// The universal tagged-union value model. Crosses the native
 /// boundary as both module args/returns and event payloads, so it
 /// lives at the crate root rather than buried under
@@ -123,7 +125,7 @@ pub use whisker_value::WhiskerValue;
 ///
 /// A `view(on_tap: |e| …)` handler receives a [`TouchEvent`](event::TouchEvent);
 /// `on_animationend` an [`AnimationEvent`](event::AnimationEvent);
-/// lifecycle / component-state events a [`CustomEvent`](event::CustomEvent).
+/// component-specific state events a [`CustomEvent`](event::CustomEvent).
 pub mod event {
     pub use whisker_runtime::event::{
         AnimationEvent, BindType, CustomEvent, Event, LayoutCompleteDetail, LayoutCompleteEvent,
@@ -224,16 +226,12 @@ pub mod __element_builder {
 #[doc(hidden)]
 pub mod __tags {
     use crate::ElementTag;
-    use whisker_runtime::event::{
-        AnimationEvent, CustomEvent, ScrollEvent, SelectionChangeEvent, TextLayoutEvent,
-        TouchEvent, bind_typed,
-    };
-    use whisker_runtime::reactive::Signal;
-    use whisker_runtime::value::WhiskerValue;
+    use whisker_runtime::event::{AnimationEvent, ScrollEvent, TouchEvent, bind_typed};
+    use whisker_runtime::reactive::{Signal, effect};
     use whisker_runtime::view::{
-        BindType, Element, append_child, apply_attr, apply_attr_bool, apply_attr_int,
-        apply_attr_int_mapped, apply_attr_owned, create_element, create_phantom_element,
-        set_attribute_object, set_event_listener,
+        BindType, Element, append_child, apply_accessibility, apply_attr, apply_attr_bool,
+        apply_dataset, apply_element_id, apply_text_max_lines, create_element,
+        create_phantom_element, set_attribute_object,
     };
 
     // A trait, not `macro_rules!`: RA's method-completion does NOT
@@ -251,7 +249,7 @@ pub mod __tags {
     /// attributes accept any `Into<Signal<T>>` (a static value, a
     /// `ReadSignal`, an `RwSignal`, …) and re-apply on change.
     pub trait ElementBuilder: Sized {
-        /// The underlying Lynx element handle. Implemented by each
+        /// The underlying runtime element handle. Implemented by each
         /// tag struct as `self.handle`.
         #[doc(hidden)]
         fn __element(&self) -> Element;
@@ -280,300 +278,39 @@ pub mod __tags {
             self
         }
 
-        /// Lynx `class` attribute.
-        fn class<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<String>>,
-        {
-            apply_attr(self.__element(), "class", v);
-            self
-        }
+        // ---- Common semantics (shared by all elements) ------------------
 
-        /// Catch-all for any Lynx attribute not covered by a named
-        /// method. Name is taken verbatim (already kebab-cased by
-        /// the `render!` lowering).
-        fn attr<V>(self, name: &'static str, v: V) -> Self
-        where
-            V: Into<Signal<String>>,
-        {
-            apply_attr(self.__element(), name, v);
-            self
-        }
-
-        // ---- Common attributes (shared by all built-in elements) --------
-
-        /// `id` — element identifier for selection / events.
+        /// Stable identifier surfaced through event target metadata.
         fn id<V>(self, v: V) -> Self
         where
             V: Into<Signal<String>>,
         {
-            apply_attr(self.__element(), "id", v);
+            apply_element_id(self.__element(), v);
             self
         }
 
-        /// `name` — for native-side `findViewByName` lookup.
-        fn name<V>(self, v: V) -> Self
+        /// Structured metadata surfaced through event targets.
+        fn dataset<V>(self, v: V) -> Self
         where
-            V: Into<Signal<String>>,
+            V: Into<Signal<crate::Dataset>>,
         {
-            apply_attr(self.__element(), "name", v);
+            apply_dataset(self.__element(), v);
             self
         }
 
-        /// `data-<key>` custom attribute, surfaced back on events via
-        /// `Target::dataset`.
-        ///
-        /// Use to thread per-element identifiers through to an event
-        /// handler without an extra closure capture.
-        ///
-        /// ```ignore
-        /// view {
-        ///     data: ("row-id", row.id.to_string()),
-        ///     on_tap: |e| println!("tapped row {:?}", e.target.dataset.get("row-id")),
-        /// }
-        /// ```
-        fn data<V>(self, key: &str, v: V) -> Self
+        /// Common accessibility semantics for built-in and module elements.
+        fn accessibility<V>(self, v: V) -> Self
         where
-            V: Into<Signal<String>>,
+            V: Into<Signal<crate::Accessibility>>,
         {
-            apply_attr_owned(self.__element(), format!("data-{key}"), v);
+            apply_accessibility(self.__element(), v);
             self
         }
 
-        /// `accessibility-label` — VoiceOver / TalkBack text.
-        fn accessibility_label<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<String>>,
-        {
-            apply_attr(self.__element(), "accessibility-label", v);
-            self
-        }
-
-        /// `accessibility-trait` — the role advertised to platform
-        /// a11y services (VoiceOver on iOS, TalkBack on Android).
-        /// Takes the typed
-        /// [`AccessibilityTrait`](crate::attrs::AccessibilityTrait)
-        /// enum.
-        ///
-        /// ```ignore
-        /// view(accessibility_trait: AccessibilityTrait::Button)
-        /// ```
-        fn accessibility_trait<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<crate::attrs::AccessibilityTrait>>,
-        {
-            apply_attr(self.__element(), "accessibility-trait", v);
-            self
-        }
-
-        /// `accessibility-element` — enable/disable a11y for this node.
-        fn accessibility_element<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<bool>>,
-        {
-            apply_attr(self.__element(), "accessibility-element", v);
-            self
-        }
-
-        /// `user-interaction-enabled` — whether the node responds to
-        /// touch events.
-        fn user_interaction_enabled<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<bool>>,
-        {
-            apply_attr(self.__element(), "user-interaction-enabled", v);
-            self
-        }
-
-        /// `event-through` — display-only mode (pass touches through).
-        fn event_through<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<bool>>,
-        {
-            apply_attr(self.__element(), "event-through", v);
-            self
-        }
-
-        /// `exposure-id` — opt the node into exposure detection.
-        fn exposure_id<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<String>>,
-        {
-            apply_attr(self.__element(), "exposure-id", v);
-            self
-        }
-
-        /// `exposure-scene` — exposure scene identifier (pairs with
-        /// `exposure-id` for scoping exposure monitoring).
-        fn exposure_scene<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<String>>,
-        {
-            apply_attr(self.__element(), "exposure-scene", v);
-            self
-        }
-
-        /// `exposure-area` — viewport-intersection ratio threshold that
-        /// counts as "exposed" (e.g. `"0.5"` or `"50%"`).
-        fn exposure_area<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<String>>,
-        {
-            apply_attr(self.__element(), "exposure-area", v);
-            self
-        }
-
-        /// `a11y-id` — separate identifier for accessibility nodes.
-        fn a11y_id<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<String>>,
-        {
-            apply_attr(self.__element(), "a11y-id", v);
-            self
-        }
-
-        /// `accessibility-elements` — customize child focus order by a
-        /// comma-separated list of element ids.
-        fn accessibility_elements<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<String>>,
-        {
-            apply_attr(self.__element(), "accessibility-elements", v);
-            self
-        }
-
-        /// `accessibility-elements-hidden` — hide this node and its
-        /// children from accessibility.
-        fn accessibility_elements_hidden<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<bool>>,
-        {
-            apply_attr(self.__element(), "accessibility-elements-hidden", v);
-            self
-        }
-
-        /// `accessibility-exclusive-focus` — restrict accessibility
-        /// focus to this node's children.
-        fn accessibility_exclusive_focus<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<bool>>,
-        {
-            apply_attr(self.__element(), "accessibility-exclusive-focus", v);
-            self
-        }
-
-        /// `hit-slop` — expand the touch-responsive area beyond the
-        /// element's bounds (e.g. `"10px"`, or per-side
-        /// `"{top:10,bottom:10}"`).
-        fn hit_slop<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<String>>,
-        {
-            apply_attr(self.__element(), "hit-slop", v);
-            self
-        }
-
-        /// `native-interaction-enabled` — let the platform layer consume
-        /// gestures on this node.
-        fn native_interaction_enabled<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<bool>>,
-        {
-            apply_attr(self.__element(), "native-interaction-enabled", v);
-            self
-        }
-
-        /// `block-native-event` — block platform gestures (e.g. an
-        /// underlying native scroll) from firing outside Lynx while a
-        /// touch is on this node.
-        fn block_native_event<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<bool>>,
-        {
-            apply_attr(self.__element(), "block-native-event", v);
-            self
-        }
-
-        /// `consume-slide-event` — consume swipes within given angle
-        /// ranges so an ancestor scroll doesn't also act on them
-        /// (e.g. `"[[0,45]]"`).
-        fn consume_slide_event<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<String>>,
-        {
-            apply_attr(self.__element(), "consume-slide-event", v);
-            self
-        }
-
-        /// `pan-intercept-direction` — block swipe gestures along
-        /// the given axis. Takes the typed
-        /// [`PanInterceptDirection`](crate::attrs::PanInterceptDirection)
-        /// enum.
-        ///
-        /// Sent as an int, not the enum's wire *string* — Lynx's
-        /// native prop setter for this attribute is integer-typed on
-        /// both platforms (confirmed on-device: the string form is a
-        /// silent no-op, the attribute never reaches the native
-        /// element). See `PanInterceptDirection::as_wire_int`'s doc
-        /// comment.
-        ///
-        /// ```ignore
-        /// view(pan_intercept_direction: PanInterceptDirection::Horizontal)
-        /// ```
-        fn pan_intercept_direction<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<crate::attrs::PanInterceptDirection>>,
-        {
-            apply_attr_int_mapped(
-                self.__element(),
-                "pan-intercept-direction",
-                v,
-                crate::attrs::PanInterceptDirection::as_wire_int,
-            );
-            self
-        }
-
-        /// `pan-intercept-scope` — scope of
-        /// [`Self::pan_intercept_direction`]. Takes the typed
-        /// [`PanInterceptScope`](crate::attrs::PanInterceptScope)
-        /// enum.
-        ///
-        /// Sent as an int — see [`Self::pan_intercept_direction`]'s
-        /// doc comment; the same gap applies to this attribute.
-        ///
-        /// ```ignore
-        /// view(pan_intercept_scope: PanInterceptScope::SelfAndAncestors)
-        /// ```
-        fn pan_intercept_scope<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<crate::attrs::PanInterceptScope>>,
-        {
-            apply_attr_int_mapped(
-                self.__element(),
-                "pan-intercept-scope",
-                v,
-                crate::attrs::PanInterceptScope::as_wire_int,
-            );
-            self
-        }
-
-        /// `flatten` — Android-only: force a real Android View for this
-        /// node (opts out of flattening). `false` lets Lynx flatten it.
-        fn flatten<V>(self, v: V) -> Self
-        where
-            V: Into<Signal<bool>>,
-        {
-            apply_attr(self.__element(), "flatten", v);
-            self
-        }
-
-        // Touch / tap / click event naming maps 1:1 onto Lynx's four
-        // handler kinds: `on_<event>` ↔ `bindtap`, `on_<event>_catch`
-        // ↔ `catchtap`, `on_capture_<event>` ↔ `capture-bindtap`,
-        // `on_capture_<event>_catch` ↔ `capture-catchtap`. Capture
-        // fires top-down (root → target), bubble fires bottom-up;
-        // `catch` stops propagation at that handler. Propagation runs
-        // through Lynx's native chain (no Rust-side fan-out).
+        // Capture listeners fire root-to-target and bubble listeners fire
+        // target-to-root. `catch` stops propagation at that listener. The
+        // retained Rust scene performs hit testing and event propagation, so
+        // these semantics are identical on every Host.
 
         /// `tap` — single tap (won't fire if the finger moved far).
         /// Bubble phase, lets the event continue up the chain.
@@ -605,27 +342,6 @@ pub mod __tags {
         /// the target.
         fn on_capture_tap_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
             bind_typed(self.__element(), "tap", BindType::CaptureCatch, f);
-            self
-        }
-
-        /// `longpress` — ~500ms press (mutually exclusive with `tap`).
-        fn on_longpress<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "longpress", BindType::Bind, f);
-            self
-        }
-        /// `longpress`, bubble phase — **stops** propagation here.
-        fn on_longpress_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "longpress", BindType::Catch, f);
-            self
-        }
-        /// `longpress`, capture phase — doesn't stop.
-        fn on_capture_longpress<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "longpress", BindType::CaptureBind, f);
-            self
-        }
-        /// `longpress`, capture phase — **stops** propagation.
-        fn on_capture_longpress_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "longpress", BindType::CaptureCatch, f);
             self
         }
 
@@ -734,26 +450,6 @@ pub mod __tags {
             self
         }
 
-        // ---- Events: lifecycle → `CustomEvent` --------------------------
-
-        /// `layoutchange` — reports position after layout completes.
-        fn on_layoutchange<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "layoutchange", BindType::Bind, f);
-            self
-        }
-
-        /// `uiappear` — node entered the visible screen area.
-        fn on_uiappear<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "uiappear", BindType::Bind, f);
-            self
-        }
-
-        /// `uidisappear` — node left the visible screen area.
-        fn on_uidisappear<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "uidisappear", BindType::Bind, f);
-            self
-        }
-
         // ---- Events: animation / transition → `AnimationEvent` ----------
 
         /// `animationstart` — keyframe animation began.
@@ -798,37 +494,6 @@ pub mod __tags {
             self
         }
 
-        // ---- Events: raw escape hatch -----------------------------------
-
-        /// Bind any event by name, receiving the raw [`WhiskerValue`]
-        /// body. For custom / dynamic event names not covered by a
-        /// typed `on_<event>` method above. Bubble phase, doesn't stop
-        /// propagation — for the catch / capture variants use
-        /// [`bind`](Self::bind).
-        fn on<F: Fn(WhiskerValue) + 'static>(self, event: &'static str, f: F) -> Self {
-            self.bind(event, BindType::Bind, f)
-        }
-
-        /// Bind any event by name with an explicit propagation
-        /// [`BindType`] (bind / catch / capture-bind / capture-catch),
-        /// receiving the raw [`WhiskerValue`] body. The general escape
-        /// hatch behind the typed `on_<event>` / `on_<event>_catch` /
-        /// `on_capture_<event>[_catch]` methods.
-        fn bind<F: Fn(WhiskerValue) + 'static>(
-            self,
-            event: &'static str,
-            bind_type: BindType,
-            f: F,
-        ) -> Self {
-            set_event_listener(
-                self.__element(),
-                event,
-                bind_type,
-                ::std::boxed::Box::new(f),
-            );
-            self
-        }
-
         // ---- Children ---------------------------------------------------
 
         /// Append a child handle.
@@ -854,15 +519,12 @@ pub mod __tags {
         }
     }
 
-    /// `<view>` — Lynx's flex container. The basic layout primitive:
+    /// `<view>` — Whisker's basic layout primitive:
     /// a rectangular box that lays out children with CSS flexbox
     /// (`<View>` in React Native, `<div>` on the web).
     ///
-    /// Use `view` for any non-text grouping or layout. Note Lynx's
-    /// `flex-direction` defaults to `row` (not `column` like the web),
-    /// so vertical stacks need an explicit `flex-direction: column`.
-    /// `view` is also the right tag for touch targets — attach
-    /// `on_tap` / `on_longpress` here.
+    /// Use `view` for any non-text grouping or layout. `view` is also the
+    /// right tag for touch targets; attach `on_tap` or `on_click` there.
     ///
     /// ```ignore
     /// render! {
@@ -891,8 +553,8 @@ pub mod __tags {
         }
     }
 
-    /// `<text>` — text container. The glyphs live in `raw_text`
-    /// children the macro creates from string-literal children.
+    /// `<text>` — plain-text leaf. The raw-text node used to lower `value`
+    /// is an internal runtime detail.
     ///
     /// `text` is the only element that renders text on screen. Set
     /// the content through the [`value`](Self::value) attribute
@@ -925,9 +587,7 @@ pub mod __tags {
         }
     }
     impl text {
-        /// `value` — the text string. Lynx renders `<text>` content
-        /// from a child `<raw-text text="…">`, so this creates that
-        /// child and sets its `text` attribute (reactive-capable).
+        /// `value` — the text string (reactive-capable).
         pub fn value<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<::std::string::String>>,
@@ -938,120 +598,12 @@ pub mod __tags {
             self
         }
 
-        // ---- text attributes (reactive-capable) ---------------------
-
-        /// `text-maxline` — max displayed lines (-1 = unlimited).
-        pub fn text_maxline<V>(self, v: V) -> Self
+        /// Maximum displayed line count. `0` restores the unlimited default.
+        pub fn max_lines<V>(self, value: V) -> Self
         where
-            V: ::std::convert::Into<Signal<i32>>,
+            V: ::std::convert::Into<Signal<u32>>,
         {
-            apply_attr(self.handle, "text-maxline", v);
-            self
-        }
-        /// `text-selection` — allow the user to select the text.
-        pub fn text_selection<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr(self.handle, "text-selection", v);
-            self
-        }
-        /// `include-font-padding` — add font padding (Android).
-        pub fn include_font_padding<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr(self.handle, "include-font-padding", v);
-            self
-        }
-        /// `tail-color-convert` — control ellipsis color inheritance.
-        pub fn tail_color_convert<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr(self.handle, "tail-color-convert", v);
-            self
-        }
-        /// `text-single-line-vertical-align` — vertical alignment
-        /// of a single-line `<text>`. Takes the typed
-        /// [`TextVerticalAlign`](crate::attrs::TextVerticalAlign)
-        /// enum (default `Normal`).
-        ///
-        /// ```ignore
-        /// text(text_single_line_vertical_align: TextVerticalAlign::Center)
-        /// ```
-        pub fn text_single_line_vertical_align<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<crate::attrs::TextVerticalAlign>>,
-        {
-            apply_attr(self.handle, "text-single-line-vertical-align", v);
-            self
-        }
-        /// `custom-context-menu` — enable a custom selection context menu.
-        pub fn custom_context_menu<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr(self.handle, "custom-context-menu", v);
-            self
-        }
-        /// `custom-text-selection` — developer-controlled selection logic.
-        pub fn custom_text_selection<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr(self.handle, "custom-text-selection", v);
-            self
-        }
-
-        // ---- text-specific events (CustomEvent → bind only) ---------
-
-        /// `layout` — fired after text layout completes. The
-        /// [`TextLayoutEvent`] reports line count, per-line ranges, and
-        /// the laid-out size.
-        pub fn on_layout<F: Fn(TextLayoutEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.handle, "layout", BindType::Bind, f);
-            self
-        }
-
-        /// `selectionchange` — fired when the selected text range
-        /// changes (requires text selection to be enabled).
-        pub fn on_selectionchange<F: Fn(SelectionChangeEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.handle, "selectionchange", BindType::Bind, f);
-            self
-        }
-    }
-
-    /// `<raw-text>` — leaf text node carrying actual glyphs. Created
-    /// by the macro from string-literal children of `<text>`.
-    ///
-    /// User code rarely names `raw_text` directly: write
-    /// `text { value: "..." }` and the macro emits the `raw_text`
-    /// child automatically. Reach for `raw_text` only when composing
-    /// mixed-style runs by hand (e.g. inline styled spans inside a
-    /// single `<text>`).
-    #[allow(non_camel_case_types)]
-    pub struct raw_text {
-        handle: Element,
-    }
-    #[allow(non_snake_case)]
-    pub fn __raw_text_ctor() -> raw_text {
-        raw_text {
-            handle: create_element(ElementTag::RawText),
-        }
-    }
-    impl ElementBuilder for raw_text {
-        fn __element(&self) -> Element {
-            self.handle
-        }
-    }
-    impl raw_text {
-        /// `text` — the glyph string. Reactive-capable.
-        pub fn text<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "text", v);
+            apply_text_max_lines(self.handle, value);
             self
         }
     }
@@ -1063,13 +615,13 @@ pub mod __tags {
     /// the visible items should hold platform views, reach for
     /// [`list`] instead — `scroll_view` keeps every child mounted.
     /// Direction defaults to `Vertical`; flip with
-    /// [`scroll_orientation`](Self::scroll_orientation).
+    /// [`axis`](Self::axis).
     ///
     /// ```ignore
     /// render! {
     ///     scroll_view {
     ///         style: css!(flex_grow: 1.0),
-    ///         scroll_orientation: ScrollOrientation::Vertical,
+    ///         axis: ScrollAxis::Vertical,
     ///         on_scroll: |e| println!("y = {}", e.detail.scroll_top),
     ///         view { /* ... long content ... */ }
     ///     }
@@ -1091,33 +643,47 @@ pub mod __tags {
         }
     }
     impl scroll_view {
-        /// Scroll direction. Takes the typed
-        /// [`ScrollOrientation`](crate::attrs::ScrollOrientation)
-        /// enum (default `Vertical`); the variant's `Display` impl
-        /// produces the Lynx-side wire string at the bridge boundary.
-        pub fn scroll_orientation<V>(self, v: V) -> Self
+        /// Logical scroll axis (vertical by default).
+        pub fn axis<V>(self, v: V) -> Self
         where
-            V: ::std::convert::Into<Signal<crate::attrs::ScrollOrientation>>,
+            V: ::std::convert::Into<Signal<crate::ScrollAxis>>,
         {
             apply_attr(self.handle, "scroll-orientation", v);
             self
         }
 
         /// Enables item-aligned settling for carousels and pagers.
-        ///
-        /// `factor` selects the anchor inside both the viewport and each
-        /// direct child (`0.0` = start, `0.5` = center, `1.0` = end).
-        /// `offset` adds a logical-pixel displacement to that anchor.
-        pub fn item_snap(self, snap: (f64, f64)) -> Self {
-            let (factor, offset) = snap;
-            set_attribute_object(
-                self.handle,
-                "item-snap",
-                &[
-                    ("factor".to_string(), factor),
-                    ("offset".to_string(), offset),
-                ],
-            );
+        pub fn snap<V>(self, snap: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<crate::ScrollSnap>>,
+        {
+            let apply = |snap: crate::ScrollSnap| {
+                set_attribute_object(
+                    self.handle,
+                    "item-snap",
+                    &[
+                        ("factor".to_string(), snap.factor()),
+                        ("offset".to_string(), snap.offset()),
+                    ],
+                );
+            };
+            match snap.into() {
+                Signal::Stored(value) => value.with(|value| apply(*value)),
+                Signal::Dynamic(value) => {
+                    let handle = self.handle;
+                    effect(move || {
+                        let snap = value.get();
+                        set_attribute_object(
+                            handle,
+                            "item-snap",
+                            &[
+                                ("factor".to_string(), snap.factor()),
+                                ("offset".to_string(), snap.offset()),
+                            ],
+                        );
+                    });
+                }
+            }
             self
         }
 
@@ -1132,69 +698,12 @@ pub mod __tags {
             self
         }
 
-        // ---- scroll_view attributes (reactive-capable) --------------
-
-        /// `bounces` — bounce effect at the scroll edges. Lynx
-        /// reads via `IsBool()`, so the bool path is required.
-        pub fn bounces<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr_bool(self.handle, "bounces", v);
-            self
-        }
-        /// `enable-scroll` — allow the user to drag-scroll. Bool
-        /// dispatch on the Lynx side.
-        pub fn enable_scroll<V>(self, v: V) -> Self
+        /// Enables or disables user-driven scrolling.
+        pub fn scroll_enabled<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<bool>>,
         {
             apply_attr_bool(self.handle, "enable-scroll", v);
-            self
-        }
-        /// `scroll-bar-enable` — show the scrollbar indicator. Bool
-        /// dispatch on the Lynx side.
-        pub fn scroll_bar_enable<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr_bool(self.handle, "scroll-bar-enable", v);
-            self
-        }
-        /// `initial-scroll-offset` — starting scroll position (px).
-        /// Lynx reads via `IsNumber()`.
-        pub fn initial_scroll_offset<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<i32>>,
-        {
-            apply_attr_int(self.handle, "initial-scroll-offset", v);
-            self
-        }
-        /// `initial-scroll-to-index` — child index to jump to on load.
-        /// Lynx reads via `IsNumber()`.
-        pub fn initial_scroll_to_index<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<i32>>,
-        {
-            apply_attr_int(self.handle, "initial-scroll-to-index", v);
-            self
-        }
-        /// `upper-threshold` — distance (px) from the top/left edge that
-        /// triggers `scrolltoupper`. Lynx reads via `IsNumber()`.
-        pub fn upper_threshold<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<i32>>,
-        {
-            apply_attr_int(self.handle, "upper-threshold", v);
-            self
-        }
-        /// `lower-threshold` — distance (px) from the bottom/right edge
-        /// that triggers `scrolltolower`. Lynx reads via `IsNumber()`.
-        pub fn lower_threshold<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<i32>>,
-        {
-            apply_attr_int(self.handle, "lower-threshold", v);
             self
         }
 
@@ -1205,32 +714,6 @@ pub mod __tags {
         /// size, per-event delta, and drag state.
         pub fn on_scroll<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
             bind_typed(self.handle, "scroll", BindType::Bind, f);
-            self
-        }
-
-        /// `scrolltoupper` — the upper/left edge reached the
-        /// `upper-threshold` visible area.
-        pub fn on_scrolltoupper<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.handle, "scrolltoupper", BindType::Bind, f);
-            self
-        }
-
-        /// `scrolltolower` — the lower/right edge reached the
-        /// `lower-threshold` visible area.
-        pub fn on_scrolltolower<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.handle, "scrolltolower", BindType::Bind, f);
-            self
-        }
-
-        /// `scrollend` — scrolling came to rest.
-        pub fn on_scrollend<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.handle, "scrollend", BindType::Bind, f);
-            self
-        }
-
-        /// `contentsizechanged` — the scrollable content size changed.
-        pub fn on_contentsizechanged<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.handle, "contentsizechanged", BindType::Bind, f);
             self
         }
     }
@@ -1912,15 +1395,12 @@ pub mod __hot {
 ///   numeric extension traits (`8.px()`, `45.deg()`, …), and the
 ///   `css!` macro.
 /// - **Built-in element tags** — `view`, `text`, `scroll_view`,
-///   `list`, `raw_text`, `fragment` (re-exported from the
+///   `list`, `fragment` (re-exported from the
 ///   hidden [`__tags`] module so rust-analyzer
 ///   completes `vie|` → `view` inside `render!`).
-/// - **Typed attribute enums** — [`AccessibilityTrait`](crate::attrs::AccessibilityTrait),
-///   [`PanInterceptDirection`](crate::attrs::PanInterceptDirection),
-///   [`PanInterceptScope`](crate::attrs::PanInterceptScope),
-///   [`ScrollOrientation`](crate::attrs::ScrollOrientation),
-///   [`ScrollSnapStop`](crate::attrs::ScrollSnapStop),
-///   [`TextVerticalAlign`](crate::attrs::TextVerticalAlign).
+/// - **Typed control options** — [`ScrollAxis`](crate::ScrollAxis),
+///   [`ScrollSnap`](crate::ScrollSnap), and
+///   [`ScrollSnapStop`](crate::attrs::ScrollSnapStop).
 ///
 /// Framework-level code (custom control flow, custom routers, tests
 /// that bootstrap reactive scopes) reaches past the prelude into
@@ -1950,11 +1430,11 @@ pub mod prelude {
     // The `css!` macro coexists with the `crate::css` module
     // re-export above because the macro and module namespaces are
     // disjoint.
-    pub use crate::attrs::{
-        AccessibilityTrait, PanInterceptDirection, PanInterceptScope, ScrollOrientation,
-        ScrollSnapStop, TextVerticalAlign,
-    };
+    pub use crate::attrs::{ScrollSnap, ScrollSnapStop};
     pub use crate::css::css;
+    pub use crate::{
+        Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, Dataset,
+    };
     // Re-exporting the `__tags` struct names is what lets RA complete
     // `vie|` → `view`, `te|` → `text`, etc. inside render! — the
     // macro source position is a value-expression context, so RA does
@@ -1964,7 +1444,7 @@ pub mod prelude {
     // kwarg, so RA's macro-expansion completion path sees the
     // method-call shape regardless of what `view` resolves to.
     #[doc(hidden)]
-    pub use crate::__tags::{fragment, list, raw_text, scroll_view, text, view};
+    pub use crate::__tags::{fragment, list, scroll_view, text, view};
     // A separate list-item builder is intentionally absent — the `list` render-props
     // builder auto-wraps every item internally.
 }

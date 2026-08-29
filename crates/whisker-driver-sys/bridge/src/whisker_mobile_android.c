@@ -631,7 +631,9 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                 if (decoration_name) (*env)->DeleteLocalRef(env, decoration_name);
                 (*env)->DeleteLocalRef(env, cls); break;
             }
-            case WHISKER_OP_PROPERTY: case WHISKER_OP_COMMAND: value = raw_to_value(env, op->payload); break;
+            case WHISKER_OP_PROPERTY: case WHISKER_OP_COMMAND:
+            case WHISKER_OP_ACCESSIBILITY:
+                value = raw_to_value(env, op->payload); break;
         }
         if (!ok) break;
         const size_t offset = i * WHISKER_ANDROID_OPERATION_STRIDE;

@@ -36,6 +36,14 @@ enum Op {
         id: u32,
         style: whisker_engine::whisker_style::SpecifiedStyle,
     },
+    SetId {
+        id: u32,
+        value: String,
+    },
+    SetAccessibility {
+        id: u32,
+        label: Option<String>,
+    },
     Append {
         parent: u32,
         child: u32,
@@ -94,6 +102,15 @@ impl DynRenderer for Recorder {
             style: style.clone(),
         });
         true
+    }
+    fn set_element_id(&self, h: Element, value: String) {
+        self.log.borrow_mut().push(Op::SetId { id: h.id(), value });
+    }
+    fn set_accessibility(&self, h: Element, value: Accessibility) {
+        self.log.borrow_mut().push(Op::SetAccessibility {
+            id: h.id(),
+            label: value.label,
+        });
     }
     fn append_child(&self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Append {
@@ -273,7 +290,7 @@ fn module_component_builder_inherits_common_element_api() {
                 label: "generated",
                 style: css!(width: px(10)),
                 id: "generated-id",
-                accessibility_label: "Generated element",
+                accessibility: Accessibility::new().label("Generated element"),
                 on_tap: |_event| {},
                 on_change: |_event| {},
             )
@@ -281,13 +298,12 @@ fn module_component_builder_inherits_common_element_api() {
         let operations = log.borrow();
         assert!(operations.iter().any(|operation| matches!(
             operation,
-            Op::SetAttr { key, value, .. }
-                if key == "id" && value == "generated-id"
+            Op::SetId { value, .. } if value == "generated-id"
         )));
         assert!(operations.iter().any(|operation| matches!(
             operation,
-            Op::SetAttr { key, value, .. }
-                if key == "accessibility-label" && value == "Generated element"
+            Op::SetAccessibility { label, .. }
+                if label.as_deref() == Some("Generated element")
         )));
         assert!(operations.iter().any(|operation| matches!(
             operation,
@@ -355,7 +371,7 @@ fn zero_props_component_inherits_style_and_common_element_api() {
         )));
         assert!(operations.iter().any(|operation| matches!(
             operation,
-            Op::SetAttr { key, value, .. } if key == "id" && value == "zero-props"
+            Op::SetId { value, .. } if value == "zero-props"
         )));
         assert!(operations.iter().any(|operation| matches!(
             operation,

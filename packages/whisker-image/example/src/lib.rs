@@ -103,7 +103,7 @@ pub fn app() -> Element {
     let warmed = RwSignal::new(false);
 
     render! {
-        scroll_view(style: page, scroll_orientation: ScrollOrientation::Vertical) {
+        scroll_view(style: page, axis: ScrollAxis::Vertical) {
             view(style: card.clone()) {
                 text(value: "headers", style: heading.clone())
                 text(

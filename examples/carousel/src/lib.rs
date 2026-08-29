@@ -1,6 +1,6 @@
 //! Horizontal ScrollView snap smoke test.
 
-use whisker::attrs::{ScrollOrientation, ScrollSnapStop};
+use whisker::attrs::ScrollSnapStop;
 use whisker::css::{AlignItems, FlexDirection, FontWeight, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
@@ -126,8 +126,8 @@ pub fn app() -> Element {
                 )
             }
             scroll_view(
-                scroll_orientation: ScrollOrientation::Horizontal,
-                item_snap: (0.0, -16.0),
+                axis: ScrollAxis::Horizontal,
+                snap: ScrollSnap::start().with_offset(-16.0),
                 scroll_snap_stop: ScrollSnapStop::Always,
                 on_scroll: on_scroll,
                 style: css!(

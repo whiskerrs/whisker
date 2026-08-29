@@ -272,7 +272,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             sig.generics.span(),
             "#[whisker::module_component] does not support generic parameters \
              — platform components are tag-name driven, not type-parameterised. \
-             Each tag is a distinct registered Lynx UI class.",
+             Each tag is one registered Host element schema.",
         )
         .to_compile_error();
     }
@@ -808,23 +808,11 @@ enum PropKind {
     EventTyped { event: String, payload: Type },
 }
 
-/// Event names Lynx's native gesture / animation pipeline claims for
-/// itself, rejected at compile time. A custom event dispatched under
-/// one of these is **silently swallowed** — Lynx's built-in gesture
-/// recognition consumes the name before it reaches the custom-event
-/// path, so the `on_<event>` handler never fires, with no error or log.
-///
-/// The list mirrors Lynx's touch + animation event families (see
-/// `whisker_runtime::event` and <https://lynxjs.org/api/lynx-api/event/event.html>).
-/// Both the canonical spelling (`longpress`) and the snake_case form an
-/// `on_<event>` prop produces (`long_press`) are reserved, since
-/// authors hit the collision either way. Component-level custom events
-/// Lynx does NOT intercept (`scroll`, `change`, …) are fine.
+/// Event names owned by the common Rust input and motion pipelines. Element
+/// modules must use distinct names for provider-specific events.
 const RESERVED_EVENT_NAMES: &[&str] = &[
     "tap",
     "click",
-    "longpress",
-    "long_press",
     "touchstart",
     "touch_start",
     "touchmove",
@@ -837,49 +825,32 @@ const RESERVED_EVENT_NAMES: &[&str] = &[
     "animation_start",
     "animationend",
     "animation_end",
+    "animationcancel",
+    "animation_cancel",
+    "animationiteration",
+    "animation_iteration",
+    "transitionstart",
+    "transition_start",
     "transitionend",
     "transition_end",
+    "transitioncancel",
+    "transition_cancel",
 ];
 
 /// Props supplied by `ElementBuilder` for every element. They are Rust-side
 /// authoring features rather than component-specific Host schema entries.
 ///
-/// `style` and `children` are intentionally absent: `style` remains accepted
-/// as a compatibility/convenience declaration and is always excluded from the
-/// schema, while the declared children type determines its child policy.
+/// `style` and `children` are intentionally absent: structured `style` is
+/// always excluded from the element schema, while the declared children type
+/// determines its child policy.
 const COMMON_ELEMENT_PROP_NAMES: &[&str] = &[
-    "class",
     "id",
-    "name",
-    "data",
-    "attr",
-    "accessibility_label",
-    "accessibility_trait",
-    "accessibility_element",
-    "accessibility_elements",
-    "accessibility_elements_hidden",
-    "accessibility_exclusive_focus",
-    "a11y_id",
-    "user_interaction_enabled",
-    "native_interaction_enabled",
-    "event_through",
-    "exposure_id",
-    "exposure_scene",
-    "exposure_area",
-    "block_native_event",
-    "consume_slide_event",
-    "pan_intercept_direction",
-    "pan_intercept_scope",
-    "hit_slop",
-    "flatten",
+    "dataset",
+    "accessibility",
     "on_tap",
     "on_tap_catch",
     "on_capture_tap",
     "on_capture_tap_catch",
-    "on_longpress",
-    "on_longpress_catch",
-    "on_capture_longpress",
-    "on_capture_longpress_catch",
     "on_click",
     "on_click_catch",
     "on_capture_click",
@@ -900,9 +871,6 @@ const COMMON_ELEMENT_PROP_NAMES: &[&str] = &[
     "on_touchcancel_catch",
     "on_capture_touchcancel",
     "on_capture_touchcancel_catch",
-    "on_layoutchange",
-    "on_uiappear",
-    "on_uidisappear",
     "on_animationstart",
     "on_animationend",
     "on_animationcancel",
@@ -910,8 +878,6 @@ const COMMON_ELEMENT_PROP_NAMES: &[&str] = &[
     "on_transitionstart",
     "on_transitionend",
     "on_transitioncancel",
-    "on",
-    "bind",
     "child",
     "bind_ref",
 ];
@@ -953,9 +919,7 @@ fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
                 ident.span(),
                 format!(
                     "#[whisker::module_component]: event name `{event}` collides with a \
-                     Lynx built-in gesture/animation event and would be silently swallowed \
-                     (the native gesture pipeline consumes it before your custom event \
-                     fires, so `{ident}` would never be called). Rename it to a \
+                     common Whisker input or motion event. Rename it to a \
                      non-reserved, module-specific name — e.g. `on_{event}_gesture`, \
                      `on_press`, `on_page_changed`, or `on_activate`.",
                 ),
@@ -1267,7 +1231,13 @@ mod tests {
 
     #[test]
     fn common_builder_props_cannot_enter_a_component_schema() {
-        for name in ["id", "accessibility_label", "on_tap", "on_layoutchange"] {
+        for name in [
+            "id",
+            "dataset",
+            "accessibility",
+            "on_tap",
+            "on_animationend",
+        ] {
             let ident: Ident = syn::parse_str(name).unwrap();
             let ty: Type = syn::parse_str("String").unwrap();
             let error = classify(&ident, &ty).err().expect("must be rejected");

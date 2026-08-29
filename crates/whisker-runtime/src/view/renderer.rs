@@ -24,8 +24,9 @@ use std::rc::Rc;
 
 use super::handle::Element;
 use crate::element::ElementTag;
+use crate::event::Dataset;
 use crate::value::WhiskerValue;
-use whisker_protocol::{ElementSchema, LayoutGeometry};
+use whisker_protocol::{Accessibility, ElementSchema, LayoutGeometry};
 use whisker_style::SpecifiedStyle;
 
 /// Event-handler propagation type — a faithful 1:1 mapping to Lynx's
@@ -127,6 +128,18 @@ pub trait DynRenderer {
     fn set_specified_style(&self, _handle: Element, _style: &SpecifiedStyle) -> bool {
         false
     }
+
+    /// Stores the framework-level identifier used in event metadata.
+    fn set_element_id(&self, _handle: Element, _id: String) {}
+
+    /// Stores structured metadata surfaced on event targets.
+    fn set_dataset(&self, _handle: Element, _dataset: Dataset) {}
+
+    /// Replaces common accessibility semantics independently of element schema.
+    fn set_accessibility(&self, _handle: Element, _accessibility: Accessibility) {}
+
+    /// Sets the maximum number of lines for a plain-text element (`0` clears).
+    fn set_text_max_lines(&self, _handle: Element, _max_lines: u32) {}
 
     /// Returns the current typed style when the renderer owns a retained Rust
     /// scene. Framework control flow uses this only for semantic validation;
@@ -438,6 +451,32 @@ pub fn release_element(handle: Element) {
         return;
     }
     with_renderer(|r| r.release_element(handle), ())
+}
+
+/// Stores a framework-level element identifier.
+pub fn set_element_id(handle: Element, id: String) {
+    with_renderer(|renderer| renderer.set_element_id(handle, id), ())
+}
+
+/// Stores structured event metadata for an element.
+pub fn set_dataset(handle: Element, dataset: Dataset) {
+    with_renderer(|renderer| renderer.set_dataset(handle, dataset), ())
+}
+
+/// Replaces the common accessibility semantics for an element.
+pub fn set_accessibility(handle: Element, accessibility: Accessibility) {
+    with_renderer(
+        |renderer| renderer.set_accessibility(handle, accessibility),
+        (),
+    )
+}
+
+/// Sets the maximum number of lines for a plain-text element.
+pub fn set_text_max_lines(handle: Element, max_lines: u32) {
+    with_renderer(
+        |renderer| renderer.set_text_max_lines(handle, max_lines),
+        (),
+    )
 }
 
 /// Allocate a phantom element — an opaque positional marker the

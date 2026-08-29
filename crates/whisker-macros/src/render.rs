@@ -16,7 +16,6 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
-use syn::LitStr;
 use whisker_macro_syntax::render::{ElementNode, Kwarg, Node, Root, UserComponentNode};
 
 pub fn expand(input: TokenStream) -> TokenStream {
@@ -117,6 +116,44 @@ fn element_to_tokens(el: &ElementNode) -> TokenStream2 {
     // TokenStream captures span / grouping differently and breaks RA's
     // kwarg completion.
 
+    if tag_name == "text" && !el.children.is_empty() {
+        let error = syn::Error::new(
+            tag_span,
+            "`text` is a plain-text leaf; pass its content with `value:`",
+        )
+        .to_compile_error();
+        return quote! {{
+            #error
+            ::whisker::runtime::view::create_element(::whisker::ElementTag::Text)
+        }};
+    }
+    if tag_name == "list" && !el.children.is_empty() {
+        let error = syn::Error::new(
+            tag_span,
+            "`list` takes rows through its `children:` render prop and cannot have a body",
+        )
+        .to_compile_error();
+        return quote! {{
+            #error
+            ::whisker::runtime::view::create_element(::whisker::ElementTag::ScrollView)
+        }};
+    }
+    if let Some(Node::TextLiteral(value)) = el
+        .children
+        .iter()
+        .find(|child| matches!(child, Node::TextLiteral(_)))
+    {
+        let error = syn::Error::new(
+            value.span(),
+            "bare text is not an element child; wrap it in `text(value: ...)`",
+        )
+        .to_compile_error();
+        return quote! {{
+            #error
+            ::whisker::runtime::view::create_element(::whisker::ElementTag::View)
+        }};
+    }
+
     // Span-anchored at the user's kwarg-name source position so RA's
     // method-name completion lands on the right token.
     let setter_calls: Vec<TokenStream2> = el
@@ -126,7 +163,6 @@ fn element_to_tokens(el: &ElementNode) -> TokenStream2 {
         .collect();
 
     let ident_refs: Vec<TokenStream2> = Vec::new();
-    let _ = tag_name;
 
     let child_calls: Vec<TokenStream2> = el
         .children
@@ -204,183 +240,16 @@ fn element_kwarg_to_setter(el: &ElementNode, kw: &Kwarg) -> Option<TokenStream2>
         return Some(quote_spanned! {span=> .#name(()) });
     }
 
-    let call = if is_known_attr_method(&tag_name, &name_str) {
-        // Named builder attribute method. Each takes
-        // `impl Into<Signal<T>>` for its semantic `T`, so the value
-        // flows as-is and inference picks `From<T>` (static) or
-        // `From<ReadSignal<T>>` (reactive).
-        quote_spanned! {span=> .#name(#value) }
-    } else if name_str == "ref" {
+    let call = if name_str == "ref" {
         // `ref` is a keyword, so the builder method is `bind_ref`.
         quote_spanned! {span=> .bind_ref(#value) }
-    } else if is_known_event_method(&name_str) {
-        // Typed event helper on `ElementBuilder`: the closure flows
-        // through unchanged and the builder method fixes the event
-        // type.
-        quote_spanned! {span=> .#name(#value) }
-    } else if let Some(event) = strip_on_prefix(&name_str) {
-        let event_lit = LitStr::new(&event, span);
-        quote_spanned! {span=> .on(#event_lit, #value) }
     } else {
-        let kebab = name_str.replace('_', "-");
-        let kebab_lit = LitStr::new(&kebab, span);
-        quote_spanned! {span=>
-            .attr(#kebab_lit, #value)
-        }
+        // Both common and schema-generated APIs are ordinary typed builder
+        // methods. An undeclared property or event intentionally becomes a
+        // normal Rust "method not found" error.
+        quote_spanned! {span=> .#name(#value) }
     };
     Some(call)
-}
-
-/// Kwargs that map to a **named** builder attribute method
-/// (`.#name(value)`) rather than the catch-all `.attr("kebab", value)`.
-/// Each method takes `impl Into<Signal<T>>` for its semantic `T`
-/// (bool / number / String), which is what lets bool and number attrs
-/// through — `.attr` is String-only. Mirrors the methods on
-/// `ElementBuilder` + the per-tag inherent impls in `whisker::__tags`;
-/// a tag-specific name used on the wrong element is a clear "no method"
-/// error.
-fn is_known_attr_method(tag: &str, attr: &str) -> bool {
-    // Universal attributes (the `ElementBuilder` trait — any tag).
-    let common = matches!(
-        attr,
-        "style"
-            | "class"
-            | "id"
-            | "name"
-            | "event_through"
-            | "exposure_id"
-            | "exposure_scene"
-            | "exposure_area"
-            | "accessibility_label"
-            | "accessibility_trait"
-            | "accessibility_element"
-            | "accessibility_elements"
-            | "accessibility_elements_hidden"
-            | "accessibility_exclusive_focus"
-            | "a11y_id"
-            | "user_interaction_enabled"
-            | "native_interaction_enabled"
-            | "block_native_event"
-            | "consume_slide_event"
-            | "pan_intercept_direction"
-            | "pan_intercept_scope"
-            | "hit_slop"
-            | "flatten"
-    );
-    if common {
-        return true;
-    }
-    // Tag-specific inherent attributes.
-    matches!(
-        (tag, attr),
-        ("raw_text", "text")
-            | ("text", "value")
-            | ("text", "text_maxline")
-            | ("text", "text_selection")
-            | ("text", "include_font_padding")
-            | ("text", "tail_color_convert")
-            | ("text", "text_single_line_vertical_align")
-            | ("text", "custom_context_menu")
-            | ("text", "custom_text_selection")
-            | ("scroll_view", "scroll_orientation")
-            | ("scroll_view", "item_snap")
-            | ("scroll_view", "scroll_snap_stop")
-            | ("scroll_view", "bounces")
-            | ("scroll_view", "enable_scroll")
-            | ("scroll_view", "scroll_bar_enable")
-            | ("scroll_view", "initial_scroll_offset")
-            | ("scroll_view", "initial_scroll_to_index")
-            | ("scroll_view", "upper_threshold")
-            | ("scroll_view", "lower_threshold")
-            | ("list", "content_style")
-            | ("list", "axis")
-            | ("list", "scroll_enabled")
-            | ("list", "start_reached_threshold")
-            | ("list", "end_reached_threshold")
-            | ("list", "on_start_reached")
-            | ("list", "on_end_reached")
-            | ("list", "header")
-            | ("list", "footer")
-            | ("list", "empty")
-            | ("list", "initial_scroll")
-            // Typed render-props setters on `list`: the closure needs
-            // `Into<EachFn<T>>`, whereas the generic `attr` fallback
-            // would try `Into<Signal<String>>`.
-            | ("list", "each")
-            | ("list", "key")
-            | ("list", "children")
-    )
-}
-
-/// Event kwargs that map to a **typed** `ElementBuilder::on_<event>`
-/// method (the closure receives a typed `TouchEvent` /
-/// `CustomEvent` / `AnimationEvent`). Any other `on_*` kwarg falls
-/// through to the raw `.on("name", |e: WhiskerValue| …)` escape
-/// hatch. Mirrors the `on_*` methods on the trait in
-/// `whisker::__tags`.
-fn is_known_event_method(name: &str) -> bool {
-    // Bubble-phase bind variant for every typed event …
-    let bind_variant = matches!(
-        name,
-        "on_tap"
-            | "on_longpress"
-            | "on_click"
-            | "on_touchstart"
-            | "on_touchmove"
-            | "on_touchend"
-            | "on_touchcancel"
-            | "on_layoutchange"
-            | "on_uiappear"
-            | "on_uidisappear"
-            | "on_animationstart"
-            | "on_animationend"
-            | "on_animationcancel"
-            | "on_animationiteration"
-            | "on_transitionstart"
-            | "on_transitionend"
-            | "on_transitioncancel"
-            // Inherent methods on a single tag's builder, so using one
-            // on the wrong tag is a clear "no method" error.
-            | "on_scroll"
-            | "on_scrolltoupper"
-            | "on_scrolltolower"
-            | "on_scrollend"
-            | "on_contentsizechanged"
-            // `<list>`-specific scroll events.
-            | "on_scrollstatechange"
-            | "on_layoutcomplete"
-            | "on_snap"
-            | "on_layout"
-            | "on_selectionchange"
-    );
-    // … plus the catch / capture propagation variants, which map 1:1 to
-    // Lynx's `catchtap` / `capture-bindtap` / `capture-catchtap`
-    // handler kinds.
-    let propagation_variant = matches!(
-        name,
-        "on_tap_catch"
-            | "on_capture_tap"
-            | "on_capture_tap_catch"
-            | "on_longpress_catch"
-            | "on_capture_longpress"
-            | "on_capture_longpress_catch"
-            | "on_click_catch"
-            | "on_capture_click"
-            | "on_capture_click_catch"
-            | "on_touchstart_catch"
-            | "on_capture_touchstart"
-            | "on_capture_touchstart_catch"
-            | "on_touchmove_catch"
-            | "on_capture_touchmove"
-            | "on_capture_touchmove_catch"
-            | "on_touchend_catch"
-            | "on_capture_touchend"
-            | "on_capture_touchend_catch"
-            | "on_touchcancel_catch"
-            | "on_capture_touchcancel"
-            | "on_capture_touchcancel_catch"
-    );
-    bind_variant || propagation_variant
 }
 
 // ---- User-component codegen ---------------------------------------------
@@ -451,48 +320,14 @@ fn user_component_to_tokens(uc: &UserComponentNode) -> TokenStream2 {
     }
 }
 
-fn strip_on_prefix(name: &str) -> Option<String> {
-    if let Some(rest) = name.strip_prefix("on_") {
-        Some(rest.to_string())
-    } else if let Some(rest) = name.strip_prefix("on") {
-        if let Some(first) = rest.chars().next() {
-            if first.is_uppercase() {
-                let mut owned = first.to_lowercase().to_string();
-                owned.push_str(&rest[first.len_utf8()..]);
-                return Some(owned);
-            }
-        }
-        None
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::strip_on_prefix;
     use proc_macro2::TokenStream as TokenStream2;
     use whisker_macro_syntax::render::{Root, is_builtin_tag, snake_to_pascal};
 
     #[test]
-    fn strips_snake_case() {
-        assert_eq!(strip_on_prefix("on_tap"), Some("tap".into()));
-    }
-
-    #[test]
-    fn strips_camel_case() {
-        assert_eq!(strip_on_prefix("onTap"), Some("tap".into()));
-    }
-
-    #[test]
-    fn rejects_non_event_prefixes() {
-        assert_eq!(strip_on_prefix("tap"), None);
-        assert_eq!(strip_on_prefix("ontap"), None);
-    }
-
-    #[test]
     fn builtin_tags_recognised() {
-        for t in ["view", "text", "raw_text", "scroll_view", "list"] {
+        for t in ["view", "text", "scroll_view", "list"] {
             assert!(is_builtin_tag(t));
         }
     }
@@ -586,11 +421,27 @@ mod tests {
     }
 
     #[test]
-    fn bare_string_literal_child_lowers_to_raw_text() {
+    fn bare_string_literal_child_is_rejected_for_builtin_elements() {
         let input: TokenStream2 = quote::quote! { view { "hi" } };
         let output = super::expand_test(input).to_string();
-        assert!(output.contains("RawText"));
-        assert!(output.contains("\"text\""));
+        assert!(output.contains("compile_error"));
+        assert!(output.contains("bare text is not an element child"));
+    }
+
+    #[test]
+    fn text_children_are_rejected_in_favor_of_value() {
+        let input: TokenStream2 = quote::quote! { text { "hi" } };
+        let output = super::expand_test(input).to_string();
+        assert!(output.contains("compile_error"));
+        assert!(output.contains("plain-text leaf"));
+    }
+
+    #[test]
+    fn list_body_is_rejected_in_favor_of_render_props() {
+        let input: TokenStream2 = quote::quote! { list { view() } };
+        let output = super::expand_test(input).to_string();
+        assert!(output.contains("compile_error"));
+        assert!(output.contains("cannot have a body"));
     }
 
     #[test]

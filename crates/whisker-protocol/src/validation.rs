@@ -371,6 +371,7 @@ impl SceneProjection {
             Operation::SetClip { node, .. }
             | Operation::SetVisibility { node, .. }
             | Operation::SetZOrder { node, .. }
+            | Operation::SetAccessibility { node, .. }
             | Operation::SetProperty { node, .. }
             | Operation::ClearProperty { node, .. }
             | Operation::SetEventMask { node, .. }
@@ -1013,6 +1014,12 @@ mod tests {
                     node: root,
                     style: crate::TextStyleSnapshot::from(&text_content("styled")),
                 },
+                Operation::SetAccessibility {
+                    node: root,
+                    accessibility: crate::Accessibility::new()
+                        .label("Example")
+                        .role(crate::AccessibilityRole::Button),
+                },
                 Operation::SetImage {
                     node: root,
                     content: crate::ImageContent {
@@ -1159,6 +1166,10 @@ mod tests {
             Operation::SetTextStyle {
                 node: missing,
                 style: crate::TextStyleSnapshot::from(&text_content("missing style")),
+            },
+            Operation::SetAccessibility {
+                node: missing,
+                accessibility: crate::Accessibility::default(),
             },
             Operation::SetImage {
                 node: missing,

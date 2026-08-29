@@ -8,11 +8,66 @@
 //! the read in `effect(...)` so the value re-applies whenever the
 //! signal source changes.
 
+use crate::event::Dataset;
 use crate::reactive::{Signal, effect};
 use crate::view::handle::Element;
 use crate::view::renderer::{
-    set_attribute, set_attribute_bool, set_attribute_double, set_attribute_int,
+    set_accessibility, set_attribute, set_attribute_bool, set_attribute_double, set_attribute_int,
+    set_dataset, set_element_id, set_text_max_lines,
 };
+use whisker_protocol::Accessibility;
+
+/// Applies a reactive framework-level element identifier.
+pub fn apply_element_id<V>(handle: Element, value: V)
+where
+    V: Into<Signal<String>>,
+{
+    match value.into() {
+        Signal::Stored(value) => value.with(|value| set_element_id(handle, value.clone())),
+        Signal::Dynamic(value) => {
+            effect(move || set_element_id(handle, value.get()));
+        }
+    }
+}
+
+/// Applies a reactive structured dataset.
+pub fn apply_dataset<V>(handle: Element, value: V)
+where
+    V: Into<Signal<Dataset>>,
+{
+    match value.into() {
+        Signal::Stored(value) => value.with(|value| set_dataset(handle, value.clone())),
+        Signal::Dynamic(value) => {
+            effect(move || set_dataset(handle, value.get()));
+        }
+    }
+}
+
+/// Applies reactive common accessibility semantics.
+pub fn apply_accessibility<V>(handle: Element, value: V)
+where
+    V: Into<Signal<Accessibility>>,
+{
+    match value.into() {
+        Signal::Stored(value) => value.with(|value| set_accessibility(handle, value.clone())),
+        Signal::Dynamic(value) => {
+            effect(move || set_accessibility(handle, value.get()));
+        }
+    }
+}
+
+/// Applies a reactive plain-text line limit (`0` means unlimited).
+pub fn apply_text_max_lines<V>(handle: Element, value: V)
+where
+    V: Into<Signal<u32>>,
+{
+    match value.into() {
+        Signal::Stored(value) => value.with(|value| set_text_max_lines(handle, *value)),
+        Signal::Dynamic(value) => {
+            effect(move || set_text_max_lines(handle, value.get()));
+        }
+    }
+}
 
 /// Apply a named attribute value to `h`. Same Stored / Dynamic
 /// dispatch as other reactive property helpers.

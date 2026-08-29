@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex};
 use whisker::runtime::RuntimeWakeHandle;
 use whisker_engine::FrameSink;
 use whisker_protocol::{
-    ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BoxClip,
-    BoxPaint, ClipShape, Cursor, ElementTypeId, FillRule, FrameMode, FramePacket, HitTestBehavior,
-    ImageRepeat, LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
-    PaintCoordinate, PaintImage, PaintPosition, PathCommand, RadialGradientExtent, ResourceId,
-    SceneProjection, SurfaceId, TextContent, Transform, ValidationError, Visibility, VisualEffects,
-    WhiskerValue,
+    Accessibility, ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
+    BoxClip, BoxPaint, ClipShape, Cursor, ElementTypeId, FillRule, FrameMode, FramePacket,
+    HitTestBehavior, ImageRepeat, LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip,
+    PaintBox, PaintColor, PaintCoordinate, PaintImage, PaintPosition, PathCommand,
+    RadialGradientExtent, ResourceId, SceneProjection, SurfaceId, TextContent, Transform,
+    ValidationError, Visibility, VisualEffects, WhiskerValue,
 };
 
 use crate::element::{
@@ -34,6 +34,7 @@ struct CommonPresentation {
     z_order: i32,
     hit_test: HitTestBehavior,
     cursor: Cursor,
+    accessibility: Accessibility,
 }
 
 impl Default for CommonPresentation {
@@ -55,6 +56,7 @@ impl Default for CommonPresentation {
             z_order: 0,
             hit_test: HitTestBehavior::Auto,
             cursor: Cursor::default(),
+            accessibility: Accessibility::default(),
         }
     }
 }
@@ -1128,6 +1130,7 @@ impl DesktopScene {
                 | Operation::SetOpacity { .. }
                 | Operation::SetVisibility { .. }
                 | Operation::SetZOrder { .. }
+                | Operation::SetAccessibility { .. }
                 | Operation::SetEventMask { .. }
                 | Operation::SetHitTest { .. }
                 | Operation::SetCursor { .. }
@@ -1308,6 +1311,16 @@ impl DesktopScene {
                         .content
                         .set_text_style(*node, style)
                         .expect("text-style operation was validated before commit");
+                }
+                Operation::SetAccessibility {
+                    node,
+                    accessibility,
+                } => {
+                    self.nodes
+                        .get_mut(node)
+                        .expect("validated node")
+                        .presentation
+                        .accessibility = accessibility.clone();
                 }
                 Operation::SetProperty {
                     node,
@@ -1831,9 +1844,9 @@ mod tests {
     };
     use whisker::standard_element_registrations;
     use whisker_protocol::{
-        CommandId, ElementCommandSchema, ElementEventSchema, ElementMeasurement,
-        ElementPropertySchema, ElementRegistration, ElementValueKind, EventId, FrameHeader,
-        MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
+        AccessibilityRole, AccessibilityState, CommandId, ElementCommandSchema, ElementEventSchema,
+        ElementMeasurement, ElementPropertySchema, ElementRegistration, ElementValueKind, EventId,
+        FrameHeader, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
         MeasureTextOverflow, MeasureTextWrap, PaintCorners, PaintEdges, PaintLengthPercentage,
         PropertyId, ProtocolVersion, TextMeasurePayload, TextMeasureStyle, TextPaint,
     };
@@ -2052,6 +2065,35 @@ mod tests {
 
     fn toggle_scene() -> (DesktopScene, ElementTypeId) {
         toggle_scene_with_wake(RuntimeWakeHandle::new(|| {}))
+    }
+
+    #[test]
+    fn accessibility_semantics_are_retained_with_the_common_presentation() {
+        let node = id(1);
+        let mut scene = scene(SurfaceId::new(1).unwrap());
+        let accessibility = Accessibility::new()
+            .label("Settings")
+            .role(AccessibilityRole::Button)
+            .state(AccessibilityState::new().disabled(true));
+        scene
+            .present(&packet(
+                FrameMode::Snapshot,
+                0,
+                1,
+                vec![
+                    Operation::CreateNode {
+                        node,
+                        element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+                    },
+                    Operation::SetAccessibility {
+                        node,
+                        accessibility: accessibility.clone(),
+                    },
+                ],
+            ))
+            .unwrap();
+
+        assert_eq!(scene.nodes[&node].presentation.accessibility, accessibility);
     }
 
     #[test]

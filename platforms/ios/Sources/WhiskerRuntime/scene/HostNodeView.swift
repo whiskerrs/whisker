@@ -54,6 +54,54 @@ final class WhiskerNodeView: UIView {
 
     required init?(coder: NSCoder) { nil }
 
+    func setAccessibility(_ raw: WhiskerValue) {
+        guard case .map(let value) = raw else { return }
+        let label = value["label"]?.asString
+        let hint = value["hint"]?.asString
+        let role = value["role"]?.asString
+        let identifier = value["identifier"]?.asString
+        let hidden = value["hidden"]?.asBool ?? false
+        let modal = value["modal"]?.asBool ?? false
+        let state: [String: WhiskerValue]
+        if case .map(let map) = value["state"] { state = map } else { state = [:] }
+        let hasSemantics = label != nil || hint != nil || role != nil
+            || state["disabled"]?.asBool != nil || state["selected"]?.asBool != nil
+            || state["checked"]?.asString != nil || state["expanded"]?.asBool != nil
+
+        accessibilityLabel = label
+        accessibilityHint = hint
+        accessibilityIdentifier = identifier
+        accessibilityElementsHidden = hidden
+        accessibilityViewIsModal = modal
+        shouldGroupAccessibilityChildren = role == "group"
+        isAccessibilityElement = !hidden && hasSemantics && role != "group"
+
+        var traits: UIAccessibilityTraits = []
+        switch role {
+        case "button": traits.insert(.button)
+        case "link": traits.insert(.link)
+        case "image": traits.insert(.image)
+        case "text": traits.insert(.staticText)
+        case "header": traits.formUnion([.staticText, .header])
+        case "checkbox", "radio", "switch": traits.insert(.button)
+        case "adjustable": traits.insert(.adjustable)
+        case "searchbox": traits.insert(.searchField)
+        case "tab": traits.insert(.button)
+        default: break
+        }
+        if state["disabled"]?.asBool == true { traits.insert(.notEnabled) }
+        if state["selected"]?.asBool == true { traits.insert(.selected) }
+        accessibilityTraits = traits
+
+        if let checked = state["checked"]?.asString {
+            accessibilityValue = checked == "mixed" ? "Mixed" : (checked == "true" ? "Checked" : "Unchecked")
+        } else if let expanded = state["expanded"]?.asBool {
+            accessibilityValue = expanded ? "Expanded" : "Collapsed"
+        } else {
+            accessibilityValue = nil
+        }
+    }
+
     override func didMoveToSuperview() {
         super.didMoveToSuperview()
         updateOverflowMask()

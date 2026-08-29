@@ -13,6 +13,43 @@ final class HostConformanceTests: XCTestCase {
         BuiltInElementModule().registerWithWhisker()
     }
 
+    func testCommonAccessibilityMapsToUIKitNodeSemantics() {
+        let node = WhiskerNodeView(element: "whisker.ui/View")
+        node.setAccessibility(.map([
+            "label": .string("Playback"),
+            "hint": .string("Starts the episode"),
+            "role": .string("button"),
+            "identifier": .string("playback-button"),
+            "hidden": .bool(false),
+            "modal": .bool(true),
+            "state": .map([
+                "disabled": .bool(true),
+                "selected": .bool(true),
+                "checked": .string("mixed"),
+                "expanded": .bool(false),
+            ]),
+        ]))
+
+        XCTAssertTrue(node.isAccessibilityElement)
+        XCTAssertEqual(node.accessibilityLabel, "Playback")
+        XCTAssertEqual(node.accessibilityHint, "Starts the episode")
+        XCTAssertEqual(node.accessibilityIdentifier, "playback-button")
+        XCTAssertTrue(node.accessibilityViewIsModal)
+        XCTAssertTrue(node.accessibilityTraits.contains(.button))
+        XCTAssertTrue(node.accessibilityTraits.contains(.notEnabled))
+        XCTAssertTrue(node.accessibilityTraits.contains(.selected))
+        XCTAssertEqual(node.accessibilityValue, "Mixed")
+
+        node.setAccessibility(.map([
+            "role": .string("group"),
+            "hidden": .bool(false),
+            "modal": .bool(false),
+            "state": .map([:]),
+        ]))
+        XCTAssertFalse(node.isAccessibilityElement)
+        XCTAssertTrue(node.shouldGroupAccessibilityChildren)
+    }
+
     func testEverySharedHostScenarioUsesProductionUIKitHost() throws {
         let manifest = try json(at: fixtureRoot.appendingPathComponent("manifest.json"))
         let cases = try XCTUnwrap(manifest["cases"] as? [[String: Any]])

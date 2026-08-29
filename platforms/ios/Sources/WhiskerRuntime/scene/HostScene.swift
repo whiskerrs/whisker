@@ -129,7 +129,8 @@ final class HostScene {
             case UInt32(WHISKER_OP_MOVE):
                 guard stagedParents[operation.child] == operation.parent else { return false }
             case UInt32(WHISKER_OP_LAYOUT), UInt32(WHISKER_OP_PAINT),
-                 UInt32(WHISKER_OP_PROPERTY), UInt32(WHISKER_OP_COMMAND):
+                 UInt32(WHISKER_OP_PROPERTY), UInt32(WHISKER_OP_COMMAND),
+                 UInt32(WHISKER_OP_ACCESSIBILITY):
                 guard existing.contains(operation.node), operation.payload != nil else { return false }
             case UInt32(WHISKER_OP_TEXT), UInt32(WHISKER_OP_TEXT_STYLE):
                 guard existing.contains(operation.node),
@@ -425,6 +426,12 @@ final class HostScene {
                 .assumingMemoryBound(to: WhiskerMobileText.self).pointee
             else { return false }
             applyText(nodes[id], payload, styleOnly: true)
+        case UInt32(WHISKER_OP_ACCESSIBILITY):
+            guard let payload = operation.payload?
+                .assumingMemoryBound(to: WhiskerValueRaw.self).pointee,
+                  let node = nodes[id]
+            else { return false }
+            node.setAccessibility(WhiskerValue.from(raw: payload))
         case UInt32(WHISKER_OP_PROPERTY):
             guard let payload = operation.payload?
                 .assumingMemoryBound(to: WhiskerValueRaw.self).pointee

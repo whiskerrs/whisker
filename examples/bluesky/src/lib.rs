@@ -358,7 +358,7 @@ fn search_screen() -> Element {
                 search_tab(label: "投稿", active: computed(move || mode.get() == SearchMode::Posts), on_tap: std::rc::Rc::new(move || { mode.set(SearchMode::Posts); let _ = posts_pager.scroll_to(ListScrollTarget::key("posts", ScrollAlignment::Start), ScrollBehavior::Smooth); }) as std::rc::Rc<dyn Fn()>)
             }
             // Swipeable pager: a horizontal `<list>` of two full-viewport-width
-            // pages (People / Posts) with `item_snap` for ViewPager-style
+            // pages (People / Posts) with item snapping for ViewPager-style
             // paging. Always mounted — swipeable even before a query, with each
             // page showing its own empty state. Swiping snaps to a page →
             // `on_snap` syncs the tab highlight; tapping a tab calls
@@ -1840,7 +1840,7 @@ fn timeline_screen() -> Element {
     let seeded = RwSignal::new(false);
     let loading_more = RwSignal::new(false);
 
-    // on_scrolltolower fires a few rows before the end (lower_threshold_item_count).
+    // The virtual list requests more rows before the visible window reaches the end.
     // Fetch the next page from the current cursor and append it. Guards against
     // re-entrancy (loading_more) and the end of the feed (cursor == None).
     let load_more = move |_| {

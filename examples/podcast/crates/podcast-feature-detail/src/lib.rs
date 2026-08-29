@@ -139,9 +139,7 @@ fn detail_body(podcast: Podcast) -> Element {
                     flex_shrink: 1.0,
                     width: percent(100),
                 ),
-                scroll_orientation: ScrollOrientation::Vertical,
-                scroll_bar_enable: false,
-                bounces: true,
+                axis: ScrollAxis::Vertical,
             ) {
                 // Hero block — artwork + title metadata. Padded
                 // horizontally by the page gutter so it visually

@@ -5,10 +5,10 @@ use std::error::Error;
 use std::fmt;
 
 use whisker_protocol::{
-    BackgroundLayer, BoxClip, BoxPaint, CommandId, Cursor, ElementTypeId, FrameHeader, FrameMode,
-    FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, NodeId, Operation, OverflowClip,
-    PointerId, PropertyId, ProtocolVersion, SurfaceId, TextContent, TextContentError,
-    TextStyleSnapshot, Transform, Visibility, VisualEffects, WhiskerValue,
+    Accessibility, BackgroundLayer, BoxClip, BoxPaint, CommandId, Cursor, ElementTypeId,
+    FrameHeader, FrameMode, FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, NodeId,
+    Operation, OverflowClip, PointerId, PropertyId, ProtocolVersion, SurfaceId, TextContent,
+    TextContentError, TextStyleSnapshot, Transform, Visibility, VisualEffects, WhiskerValue,
 };
 
 /// A retained logical node owned by a [`Scene`].
@@ -28,6 +28,7 @@ pub struct SceneNode {
     z_order: Option<i32>,
     text: Option<TextContent>,
     text_style: Option<TextStyleSnapshot>,
+    accessibility: Option<Accessibility>,
     properties: BTreeMap<PropertyId, WhiskerValue>,
     event_mask: Option<u64>,
     hit_test: Option<HitTestBehavior>,
@@ -52,6 +53,7 @@ impl SceneNode {
             z_order: None,
             text: None,
             text_style: None,
+            accessibility: None,
             properties: BTreeMap::new(),
             event_mask: None,
             hit_test: None,
@@ -88,6 +90,11 @@ impl SceneNode {
     /// Returns the resolved inherited text style retained for native content.
     pub const fn text_style(&self) -> Option<&TextStyleSnapshot> {
         self.text_style.as_ref()
+    }
+
+    /// Returns the retained common accessibility semantics.
+    pub const fn accessibility(&self) -> Option<&Accessibility> {
+        self.accessibility.as_ref()
     }
 
     /// Returns retained background and border paint.
@@ -244,6 +251,7 @@ enum DirtySlot {
     ZOrder(NodeId),
     Text(NodeId),
     TextStyle(NodeId),
+    Accessibility(NodeId),
     Property(NodeId, PropertyId),
     EventMask(NodeId),
     HitTest(NodeId),
@@ -842,6 +850,30 @@ impl Scene {
         Ok(())
     }
 
+    /// Replaces a node's common accessibility semantics.
+    pub fn set_accessibility(
+        &mut self,
+        node: NodeId,
+        accessibility: Accessibility,
+    ) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        if self.require_node(node)?.accessibility.as_ref() == Some(&accessibility) {
+            return Ok(());
+        }
+        self.nodes
+            .get_mut(&node)
+            .expect("node checked above")
+            .accessibility = Some(accessibility.clone());
+        self.journal.push_coalesced(
+            DirtySlot::Accessibility(node),
+            Operation::SetAccessibility {
+                node,
+                accessibility,
+            },
+        );
+        Ok(())
+    }
+
     /// Sets a node's Host hit-test participation.
     pub fn set_hit_test(
         &mut self,
@@ -1156,6 +1188,12 @@ impl Scene {
                 operations.push(Operation::SetTextStyle {
                     node: *node,
                     style: style.clone(),
+                });
+            }
+            if let Some(accessibility) = &state.accessibility {
+                operations.push(Operation::SetAccessibility {
+                    node: *node,
+                    accessibility: accessibility.clone(),
                 });
             }
             for (property, value) in &state.properties {
