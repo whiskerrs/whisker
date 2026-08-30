@@ -1,7 +1,9 @@
 use super::*;
 use crate::{
     BackdropFilterValue, BackgroundLayerValue, BackgroundRepeatValue, BackgroundValue,
-    BorderRadiusValue, GradientStopValue, LengthPercentageValue, LengthUnit, LengthValue,
+    BorderRadiusValue, BoxShadowValue, ClipBoxValue, ClipFillRuleValue, ClipPathCommandValue,
+    ClipPathValue, ClipPointValue, ClipShapeValue, GradientStopValue, LengthPercentageValue,
+    LengthUnit, LengthValue,
 };
 
 #[test]
@@ -102,6 +104,335 @@ fn backdrop_blur_resolves_relative_lengths_and_rejects_negative_radii() {
                 StyleProperty::BackdropFilter
             ))
         );
+    }
+}
+
+#[test]
+fn box_shadow_resolves_every_component_and_rejects_invalid_values() {
+    let length = |value| {
+        ComponentValue::Value(LengthValue::Dimension {
+            value: number(value),
+            unit: LengthUnit::Px,
+        })
+    };
+    let shadow = BoxShadowValue {
+        offset_x: length(1.0),
+        offset_y: length(-2.0),
+        blur_radius: length(3.0),
+        spread_radius: length(-4.0),
+        color: ComponentValue::Value(ColorValue::Named("shadow".into())),
+        inset: true,
+    };
+    let resolve = |value| {
+        crate::resolve_style(
+            &SpecifiedStyle::new().push(StyleProperty::BoxShadow, value),
+            None,
+            StyleEnvironment::default(),
+        )
+    };
+    let resolved = resolve(StyleValue::BoxShadows(vec![shadow.clone()])).unwrap();
+    assert_eq!(
+        resolved.computed().paint().box_shadows,
+        [ComputedBoxShadow {
+            offset_x: number(1.0),
+            offset_y: number(-2.0),
+            blur_radius: number(3.0),
+            spread_radius: number(-4.0),
+            color: ColorValue::Named("shadow".into()),
+            inset: true,
+        }]
+    );
+
+    let expected = Err(StyleResolutionError::InvalidPropertyValue(
+        StyleProperty::BoxShadow,
+    ));
+    assert_eq!(resolve(StyleValue::Number(number(1.0))), expected);
+
+    let mut negative_blur = shadow.clone();
+    negative_blur.blur_radius = length(-1.0);
+    assert_eq!(
+        resolve(StyleValue::BoxShadows(vec![negative_blur])),
+        expected
+    );
+
+    for field in 0..4 {
+        let mut invalid = shadow.clone();
+        let invalid_length = length(f32::NAN);
+        match field {
+            0 => invalid.offset_x = invalid_length,
+            1 => invalid.offset_y = invalid_length,
+            2 => invalid.blur_radius = invalid_length,
+            3 => invalid.spread_radius = invalid_length,
+            _ => unreachable!(),
+        }
+        assert_eq!(resolve(StyleValue::BoxShadows(vec![invalid])), expected);
+    }
+}
+
+#[test]
+fn clip_path_resolves_every_shape_command_and_error_position() {
+    fn point(x: LengthPercentageValue, y: LengthPercentageValue) -> ClipPointValue {
+        ClipPointValue { x, y }
+    }
+
+    let invalid = || px_length(f32::NAN);
+    let radius = |horizontal, vertical| BorderRadiusValue {
+        horizontal,
+        vertical,
+    };
+    let resolve = |value| {
+        crate::resolve_style(
+            &SpecifiedStyle::new().push(StyleProperty::ClipPath, value),
+            None,
+            StyleEnvironment::default(),
+        )
+    };
+    let clip = |reference_box, shape| {
+        StyleValue::ClipPath(ClipPathValue::Shape {
+            reference_box,
+            shape,
+        })
+    };
+    let expected = Err(StyleResolutionError::InvalidPropertyValue(
+        StyleProperty::ClipPath,
+    ));
+
+    assert_eq!(
+        resolve(StyleValue::ClipPath(ClipPathValue::None))
+            .unwrap()
+            .computed()
+            .paint()
+            .clip_path,
+        None
+    );
+    assert_eq!(resolve(StyleValue::Number(number(1.0))), expected);
+
+    let inset_offsets = [
+        percentage(10.0),
+        px_length(2.0),
+        percentage(30.0),
+        px_length(4.0),
+    ];
+    let inset_radii = [
+        radius(px_length(1.0), percentage(10.0)),
+        radius(px_length(2.0), percentage(20.0)),
+        radius(px_length(3.0), percentage(30.0)),
+        radius(px_length(4.0), percentage(40.0)),
+    ];
+    let resolved = resolve(clip(
+        ClipBoxValue::Padding,
+        ClipShapeValue::Inset {
+            offsets: inset_offsets.clone(),
+            radii: Some(inset_radii.clone()),
+        },
+    ))
+    .unwrap();
+    assert!(matches!(
+        resolved.computed().paint().clip_path,
+        Some(ComputedClipPath {
+            reference_box: ClipBoxValue::Padding,
+            shape: ComputedClipShape::Inset { .. },
+        })
+    ));
+    let without_radii = resolve(clip(
+        ClipBoxValue::Border,
+        ClipShapeValue::Inset {
+            offsets: inset_offsets.clone(),
+            radii: None,
+        },
+    ))
+    .unwrap();
+    let Some(ComputedClipPath {
+        shape: ComputedClipShape::Inset { radii, .. },
+        ..
+    }) = &without_radii.computed().paint().clip_path
+    else {
+        unreachable!();
+    };
+    assert_eq!(radii, &Corners::all(ComputedCornerRadius::ZERO));
+
+    for index in 0..4 {
+        let mut offsets = inset_offsets.clone();
+        offsets[index] = invalid();
+        assert_eq!(
+            resolve(clip(
+                ClipBoxValue::Border,
+                ClipShapeValue::Inset {
+                    offsets,
+                    radii: None,
+                },
+            )),
+            expected
+        );
+    }
+    for index in 0..8 {
+        let mut radii = inset_radii.clone();
+        if index % 2 == 0 {
+            radii[index / 2].horizontal = invalid();
+        } else {
+            radii[index / 2].vertical = invalid();
+        }
+        assert_eq!(
+            resolve(clip(
+                ClipBoxValue::Border,
+                ClipShapeValue::Inset {
+                    offsets: inset_offsets.clone(),
+                    radii: Some(radii),
+                },
+            )),
+            expected
+        );
+    }
+
+    let circle = ClipShapeValue::Circle {
+        radius: percentage(25.0),
+        center_x: px_length(5.0),
+        center_y: percentage(75.0),
+    };
+    assert!(matches!(
+        resolve(clip(ClipBoxValue::Fill, circle.clone()))
+            .unwrap()
+            .computed()
+            .paint()
+            .clip_path,
+        Some(ComputedClipPath {
+            reference_box: ClipBoxValue::Fill,
+            shape: ComputedClipShape::Circle { .. },
+        })
+    ));
+    for index in 0..3 {
+        let mut shape = circle.clone();
+        let ClipShapeValue::Circle {
+            radius,
+            center_x,
+            center_y,
+        } = &mut shape
+        else {
+            unreachable!();
+        };
+        *match index {
+            0 => radius,
+            1 => center_x,
+            2 => center_y,
+            _ => unreachable!(),
+        } = invalid();
+        assert_eq!(resolve(clip(ClipBoxValue::Fill, shape)), expected);
+    }
+
+    let ellipse = ClipShapeValue::Ellipse {
+        radius_x: px_length(10.0),
+        radius_y: percentage(20.0),
+        center_x: percentage(30.0),
+        center_y: px_length(40.0),
+    };
+    assert!(matches!(
+        resolve(clip(ClipBoxValue::Stroke, ellipse.clone()))
+            .unwrap()
+            .computed()
+            .paint()
+            .clip_path,
+        Some(ComputedClipPath {
+            reference_box: ClipBoxValue::Stroke,
+            shape: ComputedClipShape::Ellipse { .. },
+        })
+    ));
+    for index in 0..4 {
+        let mut shape = ellipse.clone();
+        let ClipShapeValue::Ellipse {
+            radius_x,
+            radius_y,
+            center_x,
+            center_y,
+        } = &mut shape
+        else {
+            unreachable!();
+        };
+        *match index {
+            0 => radius_x,
+            1 => radius_y,
+            2 => center_x,
+            3 => center_y,
+            _ => unreachable!(),
+        } = invalid();
+        assert_eq!(resolve(clip(ClipBoxValue::Stroke, shape)), expected);
+    }
+
+    let path_commands = vec![
+        ClipPathCommandValue::MoveTo(point(px_length(1.0), percentage(10.0))),
+        ClipPathCommandValue::LineTo(point(px_length(2.0), percentage(20.0))),
+        ClipPathCommandValue::QuadraticTo {
+            control: point(px_length(3.0), percentage(30.0)),
+            end: point(px_length(4.0), percentage(40.0)),
+        },
+        ClipPathCommandValue::CubicTo {
+            control_1: point(px_length(5.0), percentage(50.0)),
+            control_2: point(px_length(6.0), percentage(60.0)),
+            end: point(px_length(7.0), percentage(70.0)),
+        },
+        ClipPathCommandValue::Close,
+    ];
+    for fill_rule in [ClipFillRuleValue::NonZero, ClipFillRuleValue::EvenOdd] {
+        let resolved = resolve(clip(
+            ClipBoxValue::View,
+            ClipShapeValue::Path {
+                fill_rule,
+                commands: path_commands.clone(),
+            },
+        ))
+        .unwrap();
+        let Some(ComputedClipPath {
+            reference_box: ClipBoxValue::View,
+            shape:
+                ComputedClipShape::Path {
+                    fill_rule: actual,
+                    commands,
+                },
+        }) = &resolved.computed().paint().clip_path
+        else {
+            unreachable!();
+        };
+        assert_eq!(*actual, fill_rule);
+        assert_eq!(commands.len(), 5);
+    }
+
+    for command_index in 0..4 {
+        let coordinate_count = match command_index {
+            0 | 1 => 2,
+            2 => 4,
+            3 => 6,
+            _ => unreachable!(),
+        };
+        for coordinate_index in 0..coordinate_count {
+            let mut commands = path_commands.clone();
+            let points: Vec<&mut ClipPointValue> = match &mut commands[command_index] {
+                ClipPathCommandValue::MoveTo(point) | ClipPathCommandValue::LineTo(point) => {
+                    vec![point]
+                }
+                ClipPathCommandValue::QuadraticTo { control, end } => vec![control, end],
+                ClipPathCommandValue::CubicTo {
+                    control_1,
+                    control_2,
+                    end,
+                } => vec![control_1, control_2, end],
+                ClipPathCommandValue::Close => unreachable!(),
+            };
+            let point = &mut *points.into_iter().nth(coordinate_index / 2).unwrap();
+            if coordinate_index % 2 == 0 {
+                point.x = invalid();
+            } else {
+                point.y = invalid();
+            }
+            assert_eq!(
+                resolve(clip(
+                    ClipBoxValue::View,
+                    ClipShapeValue::Path {
+                        fill_rule: ClipFillRuleValue::EvenOdd,
+                        commands,
+                    },
+                )),
+                expected
+            );
+        }
     }
 }
 

@@ -1,5 +1,8 @@
 use super::*;
-use whisker_style::{ComputedCornerRadius, Corners, Edges, MotionPathPointValue, StyleNumber};
+use whisker_style::{
+    ComputedBoxShadow, ComputedClipPath, ComputedClipPathCommand, ComputedClipPoint,
+    ComputedClipShape, ComputedCornerRadius, Corners, Edges, MotionPathPointValue, StyleNumber,
+};
 
 fn color(name: &str) -> ColorValue {
     ColorValue::Named(name.into())
@@ -108,6 +111,205 @@ fn lowers_complete_box_paint_clip_and_compositing_state() {
             lower_paint(&style, &layout).visual_effects.image_rendering,
             protocol_value
         );
+    }
+}
+
+#[test]
+fn lowers_box_shadows_and_every_clip_path_variant() {
+    let layout = ComputedLayoutStyle::default();
+    let point = |x_length, x_fraction, y_length, y_fraction| ComputedClipPoint {
+        x: ComputedLengthPercentage::new(x_length, x_fraction),
+        y: ComputedLengthPercentage::new(y_length, y_fraction),
+    };
+    let center = point(1.0, 0.25, 2.0, 0.75);
+
+    let mut style = paint_style();
+    style.box_shadows = vec![ComputedBoxShadow {
+        offset_x: StyleNumber::new(1.0),
+        offset_y: StyleNumber::new(-2.0),
+        blur_radius: StyleNumber::new(3.0),
+        spread_radius: StyleNumber::new(-4.0),
+        color: ColorValue::Rgba {
+            red: 10,
+            green: 20,
+            blue: 30,
+            alpha: StyleNumber::new(0.4),
+        },
+        inset: true,
+    }];
+    let shadows = lower_paint(&style, &layout).visual_effects.box_shadows;
+    assert_eq!(
+        shadows,
+        vec![BoxShadow {
+            offset_x: 1.0,
+            offset_y: -2.0,
+            blur_radius: 3.0,
+            spread_radius: -4.0,
+            color: PaintColor::Srgba {
+                red: 10,
+                green: 20,
+                blue: 30,
+                alpha: 0.4,
+            },
+            inset: true,
+        }]
+    );
+
+    for (reference_box, expected) in [
+        (ClipBoxValue::Border, PaintBox::Border),
+        (ClipBoxValue::Padding, PaintBox::Padding),
+        (ClipBoxValue::Content, PaintBox::Content),
+        (ClipBoxValue::Fill, PaintBox::Fill),
+        (ClipBoxValue::Stroke, PaintBox::Stroke),
+        (ClipBoxValue::View, PaintBox::View),
+    ] {
+        style.clip_path = Some(ComputedClipPath {
+            reference_box,
+            shape: ComputedClipShape::Circle {
+                radius: ComputedLengthPercentage::new(5.0, 0.5),
+                center,
+            },
+        });
+        assert_eq!(
+            lower_paint(&style, &layout).visual_effects.clip_path,
+            Some((
+                expected,
+                ClipShape::Circle {
+                    radius: PaintLengthPercentage {
+                        length: 5.0,
+                        fraction: 0.5,
+                    },
+                    center: PaintPosition {
+                        x: PaintCoordinate {
+                            length: 1.0,
+                            fraction: 0.25,
+                        },
+                        y: PaintCoordinate {
+                            length: 2.0,
+                            fraction: 0.75,
+                        },
+                    },
+                },
+            ))
+        );
+    }
+
+    style.clip_path = Some(ComputedClipPath {
+        reference_box: ClipBoxValue::Border,
+        shape: ComputedClipShape::Inset {
+            offsets: Edges {
+                top: ComputedLengthPercentage::new(1.0, 0.1),
+                right: ComputedLengthPercentage::new(2.0, 0.2),
+                bottom: ComputedLengthPercentage::new(3.0, 0.3),
+                left: ComputedLengthPercentage::new(4.0, 0.4),
+            },
+            radii: Corners {
+                top_left: radius(1.0, 0.1, 2.0, 0.2),
+                top_right: radius(3.0, 0.3, 4.0, 0.4),
+                bottom_right: radius(5.0, 0.5, 6.0, 0.6),
+                bottom_left: radius(7.0, 0.7, 8.0, 0.8),
+            },
+        },
+    });
+    let Some((PaintBox::Border, ClipShape::Inset { edges, radii })) =
+        lower_paint(&style, &layout).visual_effects.clip_path
+    else {
+        panic!("expected an inset border-box clip");
+    };
+    assert_eq!(
+        edges.top,
+        PaintCoordinate {
+            length: 1.0,
+            fraction: 0.1
+        }
+    );
+    assert_eq!(
+        edges.left,
+        PaintCoordinate {
+            length: 4.0,
+            fraction: 0.4
+        }
+    );
+    assert_eq!(radii.top_right.horizontal.length, 3.0);
+    assert_eq!(radii.bottom_left.vertical.fraction, 0.8);
+
+    style.clip_path = Some(ComputedClipPath {
+        reference_box: ClipBoxValue::Content,
+        shape: ComputedClipShape::Ellipse {
+            radius_x: ComputedLengthPercentage::new(10.0, 0.1),
+            radius_y: ComputedLengthPercentage::new(20.0, 0.2),
+            center,
+        },
+    });
+    let Some((
+        PaintBox::Content,
+        ClipShape::Ellipse {
+            radius_x,
+            radius_y,
+            center: actual_center,
+        },
+    )) = lower_paint(&style, &layout).visual_effects.clip_path
+    else {
+        panic!("expected an ellipse content-box clip");
+    };
+    assert_eq!(
+        radius_x,
+        PaintLengthPercentage {
+            length: 10.0,
+            fraction: 0.1
+        }
+    );
+    assert_eq!(
+        radius_y,
+        PaintLengthPercentage {
+            length: 20.0,
+            fraction: 0.2
+        }
+    );
+    assert_eq!(actual_center.x.fraction, 0.25);
+
+    let commands = vec![
+        ComputedClipPathCommand::MoveTo(point(1.0, 0.1, 2.0, 0.2)),
+        ComputedClipPathCommand::LineTo(point(3.0, 0.3, 4.0, 0.4)),
+        ComputedClipPathCommand::QuadraticTo {
+            control: point(5.0, 0.5, 6.0, 0.6),
+            end: point(7.0, 0.7, 8.0, 0.8),
+        },
+        ComputedClipPathCommand::CubicTo {
+            control_1: point(9.0, 0.9, 10.0, 1.0),
+            control_2: point(11.0, 1.1, 12.0, 1.2),
+            end: point(13.0, 1.3, 14.0, 1.4),
+        },
+        ComputedClipPathCommand::Close,
+    ];
+    for (fill_rule, expected) in [
+        (ClipFillRuleValue::NonZero, FillRule::NonZero),
+        (ClipFillRuleValue::EvenOdd, FillRule::EvenOdd),
+    ] {
+        style.clip_path = Some(ComputedClipPath {
+            reference_box: ClipBoxValue::View,
+            shape: ComputedClipShape::Path {
+                fill_rule,
+                commands: commands.clone(),
+            },
+        });
+        let Some((
+            PaintBox::View,
+            ClipShape::Path {
+                fill_rule: actual,
+                commands,
+            },
+        )) = lower_paint(&style, &layout).visual_effects.clip_path
+        else {
+            panic!("expected a view-box path clip");
+        };
+        assert_eq!(actual, expected);
+        assert_eq!(commands.len(), 5);
+        assert!(matches!(commands[0], PathCommand::MoveTo(_)));
+        assert!(matches!(commands[1], PathCommand::LineTo(_)));
+        assert!(matches!(commands[2], PathCommand::QuadraticTo { .. }));
+        assert!(matches!(commands[3], PathCommand::CubicTo { .. }));
+        assert_eq!(commands[4], PathCommand::Close);
     }
 }
 
