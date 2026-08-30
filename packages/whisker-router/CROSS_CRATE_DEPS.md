@@ -62,7 +62,7 @@ the implicit-reactivity model.
 
 **Why**: Deep-link Level 2 wires native-side `whisker_url` global
 events into Whisker subscribers. The runtime has the
-`GlobalEventEmitter` plumbing for `<lynx-view>` events, but it
+`GlobalEventEmitter` plumbing for Host events, but it
 isn't exposed as a `pub fn on_global_event(name, handler)` in
 `whisker::event`.
 

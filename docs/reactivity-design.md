@@ -264,7 +264,7 @@ struct Scope {                              // the owner record
     contexts: HashMap<TypeId, Rc<dyn Any>>, // provide/use_context bag
     cleanups: Vec<Box<dyn FnOnce()>>,       // on_cleanup, LIFO
     mount_fn: Option<*const ()>,            // component fn-ptr, for hot reload
-    elements: Vec<Element>,                 // Lynx handles to release on dispose
+    elements: Vec<Element>,                 // Host handles to release on dispose
     paused:   bool,                         // pause/resume — see below
 }
 
@@ -284,7 +284,7 @@ register against it. `#[component]` and `Owner::with` push/pop it.
 
 **Disposal cascades.** `Owner::dispose` recursively disposes children,
 runs `cleanups` LIFO, frees the scope's reactive nodes (severing
-subscriber links and Arc back-refs), and releases the scope's Lynx
+subscriber links and Arc back-refs), and releases the scope's Host
 `Element` handles back to the renderer — preventing the bridge's element
 map from accumulating dangling pointers across `Show` flips, `ForEach`
 removals, and per-component remounts.
@@ -358,7 +358,7 @@ component invocation.
 Each one allocates a **phantom element** (`create_phantom_element`, no
 on-screen footprint) and installs a reactive `effect` that mounts /
 disposes children under it. The phantom's hoisting machinery routes each
-child mount/detach to the nearest *real* (non-phantom) Lynx ancestor, so
+child mount/detach to the nearest *real* (non-phantom) Host ancestor, so
 the on-screen tree is wrapper-less while user code keeps its hierarchical
 mental model.
 

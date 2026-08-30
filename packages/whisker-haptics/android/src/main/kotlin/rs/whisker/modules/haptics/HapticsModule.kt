@@ -68,7 +68,7 @@ class HapticsModule : Module() {
     }
 }
 
-/// Plain helper — no Whisker / Lynx types. Kept separate from
+/// Plain helper — no Whisker runtime types. Kept separate from
 /// `HapticsModule` so the vibration logic is testable on its own.
 private object Haptics {
     private fun context(): Context =

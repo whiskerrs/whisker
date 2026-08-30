@@ -73,7 +73,6 @@ const WHISKER_SDK_VERSION: &str = "0.1.20";
 /// version.
 const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.4.1";
 const WHISKER_MAVEN_URL: &str = "https://whiskerrs.github.io/whisker/maven";
-const LYNX_MAVEN_URL: &str = "https://whiskerrs.github.io/lynx/maven";
 
 fn sync_android(
     app_config: &Config,
@@ -96,7 +95,6 @@ fn sync_android(
         WHISKER_SDK_VERSION.to_string(),
         WHISKER_GRADLE_PLUGIN_VERSION.to_string(),
         WHISKER_MAVEN_URL.to_string(),
-        LYNX_MAVEN_URL.to_string(),
     )?;
     let gen_dir = crate_dir.join("gen/android");
     let template_version = inputs.template_version;

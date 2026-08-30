@@ -24,8 +24,7 @@
 //!
 //! [`start_log_capture`] must be called **before** any other code
 //! emits to stdout/stderr — earlier writes go to the original
-//! destination. The canonical entry is `whisker_driver::lynx::bootstrap`
-//! right after the driver attach.
+//! destination. Hosts should start it immediately after attaching the driver.
 
 use std::collections::VecDeque;
 use std::os::raw::c_int;

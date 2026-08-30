@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  Build native iOS and Android apps in Rust — a Leptos-style fine-grained
-  reactive API on the <a href="https://github.com/lynx-family/lynx">Lynx</a> engine.
-  No virtual DOM, no JavaScript runtime.
+  Build native iOS, Android, desktop, and web apps in Rust with a
+  fine-grained reactive runtime, Taffy layout, and native Host renderers.
+  No virtual DOM.
 </p>
 
 <p align="center">

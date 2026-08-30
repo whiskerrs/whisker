@@ -80,18 +80,11 @@ static DRIVE_HOOK: std::sync::Mutex<DriveHook> = std::sync::Mutex::new(request_m
 /// Production drive hook: ask the host to run another drive of the
 /// runtime (which calls [`run_until_stalled`]).
 ///
-/// Posting an empty closure to the host's main-thread dispatcher makes
-/// the trampoline fire the registered DRIVE callback, which runs
-/// `tick_frame` → `run_until_stalled` and re-polls the ready task.
-/// `run_on_main_thread` is any-thread-safe, so this is sound to call
-/// from a foreign thread's wake.
-///
-/// A wake on the MAIN thread while a drive is already in progress (a
-/// task self-waking during `run_until_stalled`) defers to a vsync
-/// frame — see `main_thread::trampoline`. The re-queued task is picked
-/// up by the in-flight drain or by the next frame.
+/// The Host callback is any-thread-safe and coalesces the request onto its UI
+/// event loop. The re-queued task is picked up by the in-flight drain or the
+/// next scheduled frame.
 fn request_main_loop_drive() {
-    crate::main_thread::run_on_main_thread(|| {});
+    crate::runtime_wake::wake_runtime();
 }
 
 /// Install a custom drive hook. Returns the previous hook so callers
@@ -114,8 +107,7 @@ fn invoke_drive_hook() {
 /// re-queues it into `LocalPool`'s ready-queue and the stock
 /// same-thread / self-wake behaviour is preserved; then calls the drive
 /// hook so the main loop actually re-polls. Safe from any thread — the
-/// inner waker is `Send + Sync` and the hook funnels through the
-/// any-thread-safe `run_on_main_thread`.
+/// inner waker is `Send + Sync` and the Host wake contract is any-thread-safe.
 struct DriveWaker {
     inner: std::task::Waker,
     wake: Option<crate::runtime_wake::RuntimeWakeHandle>,
@@ -284,34 +276,17 @@ pub fn __reset_for_tests() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::main_thread::{DispatchFn, set_main_thread_dispatcher};
     use std::cell::Cell;
-    use std::ffi::c_void;
     use std::rc::Rc;
     use std::sync::MutexGuard;
 
     fn lock<'a>() -> MutexGuard<'a, ()> {
-        crate::main_thread::host_test_lock()
+        crate::runtime_wake::host_test_lock()
     }
 
     fn reset_all() {
         __reset_for_tests();
-        crate::main_thread::__reset_for_tests();
-    }
-
-    /// Synchronous in-test dispatcher: invokes the callback inline on
-    /// the caller's thread.
-    extern "C" fn sync_invoke(
-        _engine: *mut c_void,
-        callback: extern "C" fn(*mut c_void),
-        user_data: *mut c_void,
-    ) -> bool {
-        callback(user_data);
-        true
-    }
-
-    fn install_sync_dispatcher() {
-        set_main_thread_dispatcher(Some(sync_invoke as DispatchFn), std::ptr::null_mut());
+        crate::runtime_wake::__reset_for_tests();
     }
 
     #[test]
@@ -388,7 +363,6 @@ mod tests {
     fn run_blocking_returns_value_from_worker_thread() {
         let _g = lock();
         reset_all();
-        install_sync_dispatcher();
 
         let got: Rc<RefCell<Option<i32>>> = Rc::new(RefCell::new(None));
         let got_for_task = got.clone();
@@ -405,38 +379,6 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert_eq!(*got.borrow(), Some(42));
-        crate::main_thread::__reset_for_tests();
-    }
-
-    #[test]
-    fn run_on_main_thread_trampoline_wakes_runtime() {
-        // The trampoline must wake the runtime after the closure runs,
-        // or the awaiting future is never re-polled: `LocalPool` is
-        // only drained from `tick`, which doesn't fire while the host's
-        // vsync loop is paused.
-        use std::sync::atomic::{AtomicBool, Ordering};
-        let _g = lock();
-        reset_all();
-        install_sync_dispatcher();
-
-        static WOKE: AtomicBool = AtomicBool::new(false);
-        WOKE.store(false, Ordering::SeqCst);
-        extern "C" fn wake_cb(_: *mut c_void) {
-            WOKE.store(true, Ordering::SeqCst);
-        }
-        crate::runtime_wake::set_request_frame_callback(Some(wake_cb), std::ptr::null_mut());
-
-        crate::main_thread::run_on_main_thread(|| {});
-
-        assert!(
-            WOKE.load(Ordering::SeqCst),
-            "run_on_main_thread's trampoline must wake the runtime \
-             after the closure runs — otherwise the awaiting future \
-             never gets re-polled (hn-reader Loading-stuck bug)"
-        );
-
-        crate::runtime_wake::__reset_for_tests();
-        crate::main_thread::__reset_for_tests();
     }
 
     #[test]
@@ -455,8 +397,7 @@ mod tests {
         }
         assert!(
             polled.get(),
-            "the result channel and task waker must work without the \
-             legacy Lynx main-thread dispatcher"
+            "the result channel and task waker must work through the Host wake callback"
         );
     }
 

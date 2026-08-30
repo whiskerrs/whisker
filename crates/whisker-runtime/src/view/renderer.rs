@@ -15,7 +15,7 @@
 //! uninstall_renderer(prev);                 // restore previous (None)
 //! ```
 //!
-//! In production the bridge driver installs the Lynx-backed renderer
+//! In production the bridge driver installs the Host renderer
 //! once at startup and keeps it for the life of the process.
 
 use std::cell::{Cell, RefCell};
@@ -29,10 +29,10 @@ use crate::value::WhiskerValue;
 use whisker_protocol::{Accessibility, ElementSchema, LayoutGeometry};
 use whisker_style::SpecifiedStyle;
 
-/// Event-handler propagation type — a faithful 1:1 mapping to Lynx's
-/// four handler kinds (`bind` / `catch` / `capture-bind` /
+/// Event-handler propagation type for the four supported handler kinds
+/// (`bind` / `catch` / `capture-bind` /
 /// `capture-catch`). The variant chosen when registering a listener is
-/// what drives Lynx's native event chain:
+/// what drives the Host event chain:
 ///
 ///   - **phase**: capture handlers fire on the way *down* (root →
 ///     target); bind/catch (bubble) handlers fire on the way *up*
@@ -40,8 +40,8 @@ use whisker_style::SpecifiedStyle;
 ///   - **stop**: a `catch` handler stops propagation after it fires;
 ///     a `bind` handler lets the event continue along the chain.
 ///
-/// The discriminants match `lynx_event_bind_type_e` in the C bridge,
-/// so the value crosses the FFI as a plain `i32`.
+/// Discriminants are stable for renderer implementations that store the mode
+/// as an integer.
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BindType {
@@ -68,8 +68,7 @@ pub type EventFiring = (Rc<dyn Fn(WhiskerValue) + 'static>, WhiskerValue);
 /// released, since a handler may re-enter the renderer).
 #[derive(Default)]
 pub struct EventDispatchPlan {
-    /// Whether any listener matched — relayed to the platform reporter
-    /// so Lynx can skip its own native chain for this event.
+    /// Whether any listener matched.
     pub consumed: bool,
     /// Listeners to invoke, in propagation order.
     pub firings: Vec<EventFiring>,
@@ -79,8 +78,8 @@ pub struct EventDispatchPlan {
 /// state it needs and answers in [`Element`] IDs.
 ///
 /// All mutating methods take `&self`, not `&mut self`, so the renderer
-/// survives re-entrancy: a native event can fire *synchronously*
-/// during a renderer operation (e.g. Lynx teardown inside
+/// survives re-entrancy: a Host event can fire *synchronously*
+/// during a renderer operation (e.g. Host teardown inside
 /// [`remove_child`](Self::remove_child) triggering a UIKit callback
 /// that dispatches a custom event) and re-enter through
 /// [`dispatch_event`]. With `&self` methods the thread-local
@@ -94,7 +93,7 @@ pub trait DynRenderer {
     /// Tag-by-name dispatch for custom / xelement-style tags
     /// ("x-input", etc.) not in the built-in [`ElementTag`] enum.
     /// Returns a handle whose [`id`](Element::id) is `u32::MAX` when the
-    /// tag is unknown to Lynx's behaviour registry.
+    /// tag is unknown to the element registry.
     fn create_element_by_name(&self, tag_name: &str) -> Element;
     /// Schema-carrying path used by `#[module_component]`. Renderers that
     /// negotiate schemas out of band can keep the default name-only behavior.
@@ -104,15 +103,9 @@ pub trait DynRenderer {
     fn release_element(&self, handle: Element);
 
     fn set_attribute(&self, handle: Element, key: &str, value: &str);
-    /// Typed-attr variants. Lynx's prop dispatch on many UIs
-    /// (`<list>`, `<scroll-view>`, …) gates branches on
-    /// `value.IsNumber()` / `value.IsBool()` against the underlying
-    /// `lepus::Value`, so a stringified attr from
-    /// [`set_attribute`](Self::set_attribute) silently no-ops in
-    /// those branches. Use these for any prop whose Lynx handler
-    /// reads the value as anything other than a string. Default
-    /// impls forward to the string path (good enough for test
-    /// renderers that don't model the underlying type discrimination).
+    /// Typed attribute variants preserve value kind for module property
+    /// handlers. Default implementations serialize to the string path for
+    /// renderers that do not model type discrimination.
     fn set_attribute_int(&self, handle: Element, key: &str, value: i64) {
         self.set_attribute(handle, key, &value.to_string());
     }
@@ -157,7 +150,7 @@ pub trait DynRenderer {
 
     /// Whether this renderer can insert a child before a reference
     /// sibling in one operation. When `false`, positioned insertion is
-    /// simulated by append + rotate (see [`bridge_insert_or_append`]).
+    /// simulated by append + rotate (see [`insert_or_append`]).
     /// Defaults to `false` so mock / host renderers opt in explicitly.
     fn supports_insert_before(&self) -> bool {
         false
@@ -173,7 +166,7 @@ pub trait DynRenderer {
 
     /// Register `callback` for `event_name` on `handle`.
     ///
-    /// The callback receives the event body Lynx hands the handler
+    /// The callback receives the event body Host hands the handler
     /// as a [`WhiskerValue`] tree (the same wire as module
     /// args/returns). A built-in builder's `on_<event>` method or a
     /// `#[whisker::module_component]` `on_<event>` prop wraps a
@@ -208,8 +201,8 @@ pub trait DynRenderer {
     /// because firing happens after the renderer borrow is released
     /// (a handler may mutate signals → effects → re-enter the
     /// renderer). [`dispatch_event`] does the firing. The default impl
-    /// plans nothing (renderers without a native event source); the
-    /// Lynx bridge renderer overrides it.
+    /// plans nothing (renderers without a Host event source); the
+    /// Host bridge renderer overrides it.
     fn plan_event_dispatch(
         &self,
         _target_sign: i32,
@@ -247,10 +240,8 @@ thread_local! {
     /// relationship the runtime has emitted. Maintained by
     /// [`append_child`] / [`remove_child`].
     ///
-    /// The mirror exists because Lynx's C API exposes no
-    /// child-position query, so sibling/index lookups (component
-    /// remount anchors, phantom hoisting) have nowhere else to read
-    /// child order from.
+    /// The mirror makes sibling/index queries deterministic without requiring
+    /// a reverse query API from each Host.
     static CHILDREN_OF: RefCell<HashMap<Element, Vec<Element>>> =
         RefCell::new(HashMap::new());
 
@@ -267,12 +258,12 @@ thread_local! {
 
     /// IDs allocated by [`create_phantom_element`]. A phantom is an
     /// Element that lives in [`CHILDREN_OF`] / [`PARENT_OF`] but is
-    /// **not** present in Lynx. It behaves like a *transparent
+    /// **not** present in Host. It behaves like a *transparent
     /// container*: any real child mounted under a phantom is hoisted
-    /// to the phantom's nearest non-phantom ancestor in Lynx; if
+    /// to the phantom's nearest non-phantom ancestor in Host; if
     /// there is no such ancestor yet (the phantom is still
     /// unattached), the real children stay in the mirror only and
-    /// land in Lynx when the phantom subtree is finally attached.
+    /// land in Host when the phantom subtree is finally attached.
     static PHANTOM_ELEMENTS: RefCell<HashSet<Element>> =
         RefCell::new(HashSet::new());
 
@@ -421,8 +412,8 @@ pub fn create_element_by_schema(schema: &ElementSchema) -> Element {
 pub fn create_element(tag: ElementTag) -> Element {
     let handle = with_renderer(|r| r.create_element(tag), Element(u32::MAX));
     // Register with the current reactive owner so `Owner::dispose`
-    // releases it — otherwise the renderer's element map and Lynx's
-    // FiberElement refcounts accumulate across every `<Show>` flip,
+    // releases it — otherwise the renderer's element map and Host element
+    // records accumulate across every `<Show>` flip,
     // `<For>` removal, and component remount.
     if handle.id() != u32::MAX {
         crate::reactive::with_runtime(|rt| {
@@ -438,7 +429,7 @@ pub fn create_element(tag: ElementTag) -> Element {
 
 pub fn release_element(handle: Element) {
     if is_phantom(handle) {
-        // Phantom never reached Lynx; tear down mirror state only.
+        // Phantom never reached Host; tear down mirror state only.
         PHANTOM_ELEMENTS.with_borrow_mut(|s| {
             s.remove(&handle);
         });
@@ -480,20 +471,20 @@ pub fn set_text_max_lines(handle: Element, max_lines: u32) {
 }
 
 /// Allocate a phantom element — an opaque positional marker the
-/// runtime registers in the mirror but **never** forwards to Lynx.
+/// runtime registers in the mirror but **never** forwards to Host.
 /// Phantoms behave as *transparent containers*: any real descendant
 /// attached under a phantom is hoisted to the phantom's nearest
-/// non-phantom mirror ancestor in Lynx, preserving source order.
+/// non-phantom mirror ancestor in Host, preserving source order.
 ///
 /// The phantom joins the current reactive owner's `elements` list like
 /// a real element, so the same dispose-cascade reaches it;
 /// [`release_element`] then clears its mirror state without touching
-/// Lynx.
+/// Host.
 ///
 /// **Use case**: the wrapper-less `fragment` builtin and the
 /// `For` / `Show` control-flow components — each allocates one
 /// phantom as its "transparent grouping" element so its reactive
-/// children appear in the mirror tree as a group while landing in Lynx
+/// children appear in the mirror tree as a group while landing in Host
 /// as flat siblings of the surrounding non-phantom container.
 pub fn create_phantom_element() -> Element {
     let id = NEXT_PHANTOM_ID.with(|c| {
@@ -530,7 +521,7 @@ pub fn is_phantom(handle: Element) -> bool {
 /// has no parent or the entire chain to the root is phantoms.
 ///
 /// The hoisting path passes the *parent* of the just-mutated child:
-/// what determines the effective Lynx parent is the surrounding tree,
+/// what determines the effective Host parent is the surrounding tree,
 /// not the child's own type.
 fn nearest_real_ancestor(start: Element) -> Option<Element> {
     let mut current = start;
@@ -546,7 +537,7 @@ fn nearest_real_ancestor(start: Element) -> Option<Element> {
 /// Count the number of *real* (non-phantom) elements reachable from
 /// `root` through a strictly transparent path (phantom-only ancestors
 /// between `root` and the reached element) that appear in DFS
-/// pre-order before `target`. Used to compute the Lynx-side position
+/// pre-order before `target`. Used to compute the Host-side position
 /// at which a newly-attached real element should land in
 /// [`nearest_real_ancestor(target)`].
 ///
@@ -582,7 +573,7 @@ fn count_real_descendants_before(root: Element, target: Element) -> usize {
 /// DFS pre-order collect every real (non-phantom) descendant of
 /// `root` reachable through a strictly transparent chain (phantom-
 /// only ancestors). Used when a phantom subtree gets attached to a
-/// real parent — we walk it and hand the real descendants to Lynx
+/// real parent — we walk it and hand the real descendants to Host
 /// in the right order.
 fn collect_transparent_real_descendants(root: Element) -> Vec<Element> {
     let mut out = Vec::new();
@@ -602,7 +593,7 @@ fn collect_transparent_real_descendants(root: Element) -> Vec<Element> {
 
 pub fn set_attribute(handle: Element, key: &str, value: &str) {
     if is_phantom(handle) {
-        return; // phantoms carry no Lynx-side styling — silently no-op
+        return; // phantoms carry no Host-side styling — silently no-op
     }
     with_renderer(|r| r.set_attribute(handle, key, value), ())
 }
@@ -654,21 +645,21 @@ pub fn set_attribute_object(handle: Element, key: &str, obj: &[(String, f64)]) {
     with_renderer(|r| r.set_attribute_object(handle, key, obj), ())
 }
 
-/// Append `child` as the last mirror child of `parent`. The Lynx-
+/// Append `child` as the last mirror child of `parent`. The Host-
 /// side effect depends on whether either end of the edge is a
 /// phantom:
 ///
 ///   - both real → the bridge sees `append_child(parent, child)`
 ///     exactly as before.
 ///   - phantom child → no FFI for `child` itself (it never reaches
-///     Lynx); if `child` brings a transparent subtree of real
+///     Host); if `child` brings a transparent subtree of real
 ///     descendants with it, they're replayed into the nearest real
 ///     ancestor at the position the parent's transparent layout
 ///     puts them.
 ///   - phantom parent → `child` is hoisted up the phantom chain to
 ///     the nearest real ancestor (if any); inserted there at the
 ///     position the mirror order puts it.
-///   - phantom parent with no real ancestor → no Lynx call at all;
+///   - phantom parent with no real ancestor → no Host call at all;
 ///     the subtree is queued in the mirror only. When the topmost
 ///     phantom is later attached to a real ancestor, the same
 ///     replay path handles the queued descendants in source order.
@@ -691,7 +682,7 @@ pub fn append_child(parent: Element, child: Element) {
 }
 
 /// Realize `child` — already placed in the mirror at its target
-/// position — into the real Lynx tree, hoisting/replaying real
+/// position — into the real Host tree, hoisting/replaying real
 /// descendants when either end is a phantom. Reads `child`'s *current*
 /// mirror position, so it serves both a tail append ([`append_child`])
 /// and a positioned insert ([`insert_child_at`]) unchanged.
@@ -699,13 +690,13 @@ pub fn append_child(parent: Element, child: Element) {
 /// Returns `true` when a phantom was involved (and handled here);
 /// `false` when both ends are real, leaving the caller to do the direct
 /// real-to-real attach (`r.append_child` for a tail append, or a
-/// positioned [`bridge_insert_or_append`] for a mid-list insert).
+/// positioned [`insert_or_append`] for a mid-list insert).
 fn realize_hoisted_child(parent: Element, child: Element) -> bool {
     let parent_is_phantom = is_phantom(parent);
     let child_is_phantom = is_phantom(child);
     if parent_is_phantom {
         // No real ancestor yet (topmost phantom still detached) means
-        // nothing to tell Lynx — the next attach replays this subtree.
+        // nothing to tell Host — the next attach replays this subtree.
         if let Some(real_anc) = nearest_real_ancestor(parent) {
             let to_attach: Vec<Element> = if child_is_phantom {
                 collect_transparent_real_descendants(child)
@@ -714,11 +705,11 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
             };
             // Back-to-front: each child's positioned-insert reference
             // is its next real sibling, so it must already be in the
-            // Lynx tree. A forward pass references batch-mates that
-            // aren't on-device yet and Lynx drops all but the last.
+            // Host tree. A forward pass references batch-mates that
+            // aren't on-device yet and Host drops all but the last.
             for real in to_attach.into_iter().rev() {
                 let pos = count_real_descendants_before(real_anc, real);
-                bridge_insert_or_append(real_anc, real, pos);
+                insert_or_append(real_anc, real, pos);
             }
         }
         true
@@ -729,7 +720,7 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
             .rev()
         {
             let pos = count_real_descendants_before(parent, real);
-            bridge_insert_or_append(parent, real, pos);
+            insert_or_append(parent, real, pos);
         }
         true
     } else {
@@ -737,7 +728,7 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
     }
 }
 
-/// Detach `child` from `parent` in the mirror. Lynx-side: any real
+/// Detach `child` from `parent` in the mirror. Host-side: any real
 /// descendants of `child` (or `child` itself if it's real) are
 /// removed from the nearest real ancestor.
 pub fn remove_child(parent: Element, child: Element) {
@@ -774,19 +765,19 @@ pub fn remove_child(parent: Element, child: Element) {
 }
 
 /// Internal helper: place `real_child` at `position` inside
-/// `real_parent`'s Lynx child list.
+/// `real_parent`'s Host child list.
 ///
 /// The mirror already includes `real_child` at `position` in the
 /// parent's real-only DFS pre-order, so the element that should sit
-/// *after* it in Lynx is the next real descendant (`position + 1`), if
+/// *after* it in Host is the next real descendant (`position + 1`), if
 /// any — that's the reference node for a positioned insert.
 ///
 /// A renderer reporting `supports_insert_before` gets one native call
 /// with no sibling churn. The append + rotate fallback (test mocks, a
-/// Lynx too old for the capi) detaches and re-appends every real
+/// Host too old for the capi) detaches and re-appends every real
 /// sibling that must sit after `real_child`, which re-anchors stateful
 /// native siblings — a focused `<input>` loses focus.
-fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: usize) {
+fn insert_or_append(real_parent: Element, real_child: Element, position: usize) {
     let real_descendants = collect_transparent_real_descendants(real_parent);
     let reference = real_descendants.get(position + 1).copied();
 
@@ -814,8 +805,8 @@ fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: 
 
 /// Places `child` at mirror `index` in `parent`'s child list (appends
 /// when `index >= len`). The following siblings are **not touched** on
-/// the Lynx side: `child` is realized with a positioned insert
-/// ([`bridge_insert_or_append`] → native `insert_before` on Lynx), so a
+/// the Host side: `child` is realized with a positioned insert
+/// ([`insert_or_append`] → native `insert_before` on Host), so a
 /// stateful native sibling (a focused `<input>`, a scrolled list) keeps
 /// its state.
 pub fn insert_child_at(parent: Element, child: Element, index: usize) {
@@ -833,7 +824,7 @@ pub fn insert_child_at(parent: Element, child: Element, index: usize) {
 
     if !realize_hoisted_child(parent, child) {
         let pos = count_real_descendants_before(parent, child);
-        bridge_insert_or_append(parent, child, pos);
+        insert_or_append(parent, child, pos);
     }
 
     crate::reactive::on_component_root_attached(parent, child);
@@ -887,7 +878,7 @@ pub fn set_event_listener(
     callback: Box<dyn Fn(WhiskerValue) + 'static>,
 ) {
     if is_phantom(handle) {
-        // Phantoms aren't in Lynx's event chain.
+        // Phantoms aren't in Host's event chain.
         drop(callback);
         return;
     }

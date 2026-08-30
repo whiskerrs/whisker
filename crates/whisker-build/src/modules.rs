@@ -107,8 +107,8 @@ pub struct AndroidSectionRaw {
     /// runtime's own Kotlin sources. Paths are relative to the
     /// manifest's directory.
     ///
-    /// Most modules use these to declare a `LynxUI` subclass that
-    /// the [`behaviors`] list below points the Lynx engine at.
+    /// Most modules use these to declare a `WhiskerUI` subclass that
+    /// their generated Host registration points at.
     #[serde(default)]
     pub kotlin_sources: Vec<String>,
     /// Paths to JNI C / C++ source files (`*.c`, `*.cc`, `*.cpp`)

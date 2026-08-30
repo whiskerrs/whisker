@@ -7,7 +7,7 @@
 //!   - **module function args / returns** (`PlatformModule::invoke`) and
 //!     **element command parameters** (`ElementRef::command`) — raw values, with no typed-arg
 //!     deserialization at the boundary, and
-//!   - **event payloads** — the body Lynx hands a tap / touch /
+//!   - **event payloads** — the body a Host hands a tap / touch /
 //!     animation handler, delivered to the Rust closure as a
 //!     recursive `WhiskerValue` tree.
 //!

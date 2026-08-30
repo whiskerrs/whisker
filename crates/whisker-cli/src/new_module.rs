@@ -11,14 +11,14 @@
 //! Naming convention: input is the cargo crate name (kebab-case,
 //! `whisker-foo`). The PascalCase tag (`Foo`), the module class
 //! (`FooModule`), and (for view-bearing modules) the view class
-//! (`FooView`) are derived. Lynx registers a view-bearing module's
-//! element under `<crate-name>:<tag>` (`whisker-foo:Foo`).
+//! (`FooView`) are derived. A view-bearing module registers its element
+//! under `<crate-name>:<tag>` (`whisker-foo:Foo`).
 //!
 //! Modules are authored with the ModuleDefinition DSL: a class
 //! subclasses `Module`, applies `@WhiskerModule`, and overrides
 //! `definition()`. The annotation is the explicit registration trigger.
 //! Per-platform codegen (SwiftPM build plugin / KSP) finds each annotated
-//! declaration and emits the Lynx registration.
+//! declaration and emits the Host registration.
 //!
 //! This is a minimal scaffolder — it copies a small set of inline
 //! templates and substitutes a handful of variables. For a richer
@@ -326,10 +326,10 @@ fn package_swift(v: &Vars) -> String {
 //
 // The module resolves Whisker's iOS runtime + macros via the published
 // `whisker` SwiftPM package (the same remote-git dependency every
-// first-party module uses) — `WhiskerModule` re-exports Lynx, and
-// `WhiskerRuntime` pulls in the `WhiskerView` / driver symbols. The
+// first-party module uses). `WhiskerRuntime` supplies the `WhiskerView` /
+// driver symbols. The
 // `WhiskerModuleCodegenPlugin` build-tool plugin walks `Module`
-// subclasses at build time and emits the Lynx registration.
+// subclasses at build time and emits the Host registration.
 
 import PackageDescription
 

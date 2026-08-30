@@ -5,12 +5,9 @@
 // subclass and emits a registration block in
 // `<Target>+Generated.swift` that:
 //
-//   * Reads `definitionLazy.view!.viewClass` (== WhiskerSvgView).
-//   * Calls `LynxComponentRegistry.registerUI(viewClass, withName:
-//     "whisker-svg:Svg")`.
-//   * Calls `module.registerWithLynx()` so the DSL's
-//     `Prop("_display_list")` / `Prop("color")` install via the
-//     Obj-C-runtime path the rest of Whisker uses.
+//   * Reads the declared `WhiskerSvgView` class.
+//   * Registers it as `"whisker-svg:Svg"` with Whisker's Host registry.
+//   * Installs the `_display_list` and `color` prop handlers.
 //
 // User code never instantiates this directly — the Rust crate's
 // `Svg(content, color, style)` component compiles the SVG and

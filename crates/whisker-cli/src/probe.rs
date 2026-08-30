@@ -24,8 +24,8 @@
 //!
 //! `whisker-config` is intentionally a small, dependency-light
 //! crate so the probe build is cheap. Pulling in `whisker`
-//! (umbrella) would also pull `whisker-runtime`, `whisker-driver`,
-//! Lynx headers, etc. — turning the probe into a multi-minute build.
+//! (umbrella) would also pull `whisker-runtime`, `whisker-driver`, and
+//! the Host protocol stack — turning the probe into a much larger build.
 //! The user crate's `whisker.rs` therefore writes
 //! `use whisker_config::Config` directly, not `use
 //! whisker::Config`.

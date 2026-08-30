@@ -36,7 +36,6 @@ fn sync_and_read_gradle(app: &Config) -> String {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();

@@ -41,9 +41,11 @@ pub use motion::{
 };
 pub use paint::{
     BorderStyleValue, ComputedBackgroundImage, ComputedBackgroundLayerStyle,
-    ComputedBackgroundPosition, ComputedBackgroundSize, ComputedCornerRadius, ComputedGradient,
-    ComputedGradientStop, ComputedInsetPathValue, ComputedOffsetPathValue, ComputedPaintStyle,
-    ComputedTransformFunction, ComputedTransformStyle, Corners, OverflowValue, VisibilityValue,
+    ComputedBackgroundPosition, ComputedBackgroundSize, ComputedBoxShadow, ComputedClipPath,
+    ComputedClipPathCommand, ComputedClipPoint, ComputedClipShape, ComputedCornerRadius,
+    ComputedGradient, ComputedGradientStop, ComputedInsetPathValue, ComputedOffsetPathValue,
+    ComputedPaintStyle, ComputedTransformFunction, ComputedTransformStyle, Corners, OverflowValue,
+    VisibilityValue,
 };
 pub use property::{
     PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyDomain, StylePropertyId,
@@ -57,13 +59,15 @@ pub use resolution::{
 pub use value::{
     BackdropFilterValue, BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue,
     BackgroundLayerValue, BackgroundPositionValue, BackgroundRepeatModeValue,
-    BackgroundRepeatValue, BackgroundSizeValue, BackgroundValue, BorderRadiusValue, CalcExpression,
-    ColorValue, ComponentValue, CursorValue, CustomPropertyName, CustomPropertyReference,
-    FontFamilyValue, FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue,
-    FontWeightValue, GradientStopValue, GradientValue, ImageRenderingValue, InsetPathValue,
-    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, MotionPathCommandValue,
-    MotionPathPointValue, OffsetPathValue, OffsetRotateValue, OpenTypeTagValue, PointerEventsValue,
-    RadialGradientValue, StyleNumber, StyleValue, TextAlignValue, TextDecorationLineValue,
-    TextDecorationStyleValue, TextDecorationValue, TextOverflowValue, TextShadowValue,
-    TransformFunctionValue, TransformOriginValue, TransformValue, WhiteSpaceValue, WordBreakValue,
+    BackgroundRepeatValue, BackgroundSizeValue, BackgroundValue, BorderRadiusValue, BoxShadowValue,
+    CalcExpression, ClipBoxValue, ClipFillRuleValue, ClipPathCommandValue, ClipPathValue,
+    ClipPointValue, ClipShapeValue, ColorValue, ComponentValue, CursorValue, CustomPropertyName,
+    CustomPropertyReference, FontFamilyValue, FontFeatureValue, FontOpticalSizingValue,
+    FontStyleValue, FontVariationValue, FontWeightValue, GradientStopValue, GradientValue,
+    ImageRenderingValue, InsetPathValue, LengthPercentageValue, LengthUnit, LengthValue,
+    LineHeightValue, MotionPathCommandValue, MotionPathPointValue, OffsetPathValue,
+    OffsetRotateValue, OpenTypeTagValue, PointerEventsValue, RadialGradientValue, StyleNumber,
+    StyleValue, TextAlignValue, TextDecorationLineValue, TextDecorationStyleValue,
+    TextDecorationValue, TextOverflowValue, TextShadowValue, TransformFunctionValue,
+    TransformOriginValue, TransformValue, WhiteSpaceValue, WordBreakValue,
 };

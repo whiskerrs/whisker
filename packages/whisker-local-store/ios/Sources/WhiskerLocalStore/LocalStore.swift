@@ -1,7 +1,7 @@
 // UserDefaults-backed persistent string store. Persists across
 // launches, doesn't sync across devices.
 //
-// Plain helper — no Whisker / Lynx types. The DSL module that
+// Plain helper — no Whisker runtime types. The DSL module that
 // exposes it to Rust lives in `LocalStoreModule.swift`.
 
 import Foundation

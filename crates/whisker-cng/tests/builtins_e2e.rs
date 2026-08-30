@@ -136,7 +136,6 @@ fn android_extra_permissions_reach_the_rendered_manifest() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();
@@ -175,7 +174,6 @@ fn android_duplicate_permissions_are_dedup_in_the_rendered_manifest() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();
@@ -205,7 +203,6 @@ fn android_meta_data_reaches_the_rendered_manifest_inside_application() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();
@@ -236,7 +233,6 @@ fn android_no_plugin_declared_means_no_permissions() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();

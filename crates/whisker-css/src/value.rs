@@ -11,7 +11,7 @@
 use core::fmt;
 
 use crate::data_type::{
-    CssString, FitContent, Length, LengthPercentage, MaxContent, Number, Percentage,
+    Color, CssString, FitContent, Length, LengthPercentage, MaxContent, Number, Percentage,
 };
 use crate::to_css::{ToCss, write_number};
 
@@ -46,6 +46,382 @@ impl ToCss for BackdropFilter {
                 dest.write_char(')')
             }
         }
+    }
+}
+
+// ---------- Box shadow ----------
+
+/// One structured `box-shadow` layer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoxShadow {
+    /// Horizontal offset.
+    pub offset_x: crate::ValueOrVariable<Length>,
+    /// Vertical offset.
+    pub offset_y: crate::ValueOrVariable<Length>,
+    /// Non-negative blur radius.
+    pub blur_radius: crate::ValueOrVariable<Length>,
+    /// Signed spread radius.
+    pub spread_radius: crate::ValueOrVariable<Length>,
+    /// Shadow color.
+    pub color: crate::ValueOrVariable<Color>,
+    /// Whether the shadow is painted inside the box.
+    pub inset: bool,
+}
+
+impl BoxShadow {
+    /// Creates an outer shadow.
+    pub fn outer(
+        offset_x: impl Into<crate::ValueOrVariable<Length>>,
+        offset_y: impl Into<crate::ValueOrVariable<Length>>,
+        blur_radius: impl Into<crate::ValueOrVariable<Length>>,
+        spread_radius: impl Into<crate::ValueOrVariable<Length>>,
+        color: impl Into<crate::ValueOrVariable<Color>>,
+    ) -> Self {
+        Self {
+            offset_x: offset_x.into(),
+            offset_y: offset_y.into(),
+            blur_radius: blur_radius.into(),
+            spread_radius: spread_radius.into(),
+            color: color.into(),
+            inset: false,
+        }
+    }
+
+    /// Creates an inset shadow.
+    pub fn inset(
+        offset_x: impl Into<crate::ValueOrVariable<Length>>,
+        offset_y: impl Into<crate::ValueOrVariable<Length>>,
+        blur_radius: impl Into<crate::ValueOrVariable<Length>>,
+        spread_radius: impl Into<crate::ValueOrVariable<Length>>,
+        color: impl Into<crate::ValueOrVariable<Color>>,
+    ) -> Self {
+        Self {
+            inset: true,
+            ..Self::outer(offset_x, offset_y, blur_radius, spread_radius, color)
+        }
+    }
+}
+
+impl ToCss for BoxShadow {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        if self.inset {
+            dest.write_str("inset ")?;
+        }
+        self.offset_x.to_css(dest)?;
+        dest.write_char(' ')?;
+        self.offset_y.to_css(dest)?;
+        dest.write_char(' ')?;
+        self.blur_radius.to_css(dest)?;
+        dest.write_char(' ')?;
+        self.spread_radius.to_css(dest)?;
+        dest.write_char(' ')?;
+        self.color.to_css(dest)
+    }
+}
+
+// ---------- Clip path ----------
+
+/// Reference box used by a structured clip path.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ClipBox {
+    /// Border box.
+    #[default]
+    BorderBox,
+    /// Padding box.
+    PaddingBox,
+    /// Content box.
+    ContentBox,
+    /// Object bounding box for vector content.
+    FillBox,
+    /// Stroke bounding box for vector content.
+    StrokeBox,
+    /// Nearest vector viewport box.
+    ViewBox,
+}
+
+impl ToCss for ClipBox {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        dest.write_str(match self {
+            Self::BorderBox => "border-box",
+            Self::PaddingBox => "padding-box",
+            Self::ContentBox => "content-box",
+            Self::FillBox => "fill-box",
+            Self::StrokeBox => "stroke-box",
+            Self::ViewBox => "view-box",
+        })
+    }
+}
+
+/// Fill rule used by a clip path.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ClipFillRule {
+    /// Non-zero winding rule.
+    #[default]
+    NonZero,
+    /// Even-odd winding rule.
+    EvenOdd,
+}
+
+/// One point in a structured clip path.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClipPoint {
+    /// Horizontal coordinate.
+    pub x: LengthPercentage,
+    /// Vertical coordinate.
+    pub y: LengthPercentage,
+}
+
+impl ClipPoint {
+    /// Creates a point.
+    pub fn new(x: impl Into<LengthPercentage>, y: impl Into<LengthPercentage>) -> Self {
+        Self {
+            x: x.into(),
+            y: y.into(),
+        }
+    }
+}
+
+/// One command in a structured clip path.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClipPathCommand {
+    /// Start a subpath.
+    MoveTo(ClipPoint),
+    /// Add a line.
+    LineTo(ClipPoint),
+    /// Add a quadratic Bezier segment.
+    QuadraticTo {
+        /// Quadratic control point.
+        control: ClipPoint,
+        /// Segment end point.
+        end: ClipPoint,
+    },
+    /// Add a cubic Bezier segment.
+    CubicTo {
+        /// First cubic control point.
+        control_1: ClipPoint,
+        /// Second cubic control point.
+        control_2: ClipPoint,
+        /// Segment end point.
+        end: ClipPoint,
+    },
+    /// Close the current subpath.
+    Close,
+}
+
+/// Typed `clip-path` value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClipPath {
+    /// Disable clipping.
+    None,
+    /// Inset rectangle.
+    Inset {
+        /// Coordinate box used to resolve percentages.
+        reference_box: ClipBox,
+        /// Top, right, bottom, and left inset offsets.
+        offsets: [LengthPercentage; 4],
+        /// Optional corner radii.
+        radii: Option<BorderRadius>,
+    },
+    /// Circle.
+    Circle {
+        /// Coordinate box used to resolve percentages.
+        reference_box: ClipBox,
+        /// Circle radius.
+        radius: LengthPercentage,
+        /// Horizontal center coordinate.
+        center_x: LengthPercentage,
+        /// Vertical center coordinate.
+        center_y: LengthPercentage,
+    },
+    /// Ellipse.
+    Ellipse {
+        /// Coordinate box used to resolve percentages.
+        reference_box: ClipBox,
+        /// Horizontal radius.
+        radius_x: LengthPercentage,
+        /// Vertical radius.
+        radius_y: LengthPercentage,
+        /// Horizontal center coordinate.
+        center_x: LengthPercentage,
+        /// Vertical center coordinate.
+        center_y: LengthPercentage,
+    },
+    /// Structured path.
+    Path {
+        /// Coordinate box used to resolve percentages.
+        reference_box: ClipBox,
+        /// Fill rule applied to the path.
+        fill_rule: ClipFillRule,
+        /// Ordered path commands.
+        commands: Vec<ClipPathCommand>,
+    },
+}
+
+impl ClipPath {
+    /// Creates a centered circle against the border box.
+    pub fn circle(radius: impl Into<LengthPercentage>) -> Self {
+        Self::Circle {
+            reference_box: ClipBox::BorderBox,
+            radius: radius.into(),
+            center_x: Percentage::new(50.0).into(),
+            center_y: Percentage::new(50.0).into(),
+        }
+    }
+
+    /// Creates a centered ellipse against the border box.
+    pub fn ellipse(
+        radius_x: impl Into<LengthPercentage>,
+        radius_y: impl Into<LengthPercentage>,
+    ) -> Self {
+        Self::Ellipse {
+            reference_box: ClipBox::BorderBox,
+            radius_x: radius_x.into(),
+            radius_y: radius_y.into(),
+            center_x: Percentage::new(50.0).into(),
+            center_y: Percentage::new(50.0).into(),
+        }
+    }
+
+    /// Creates an inset rectangle against the border box.
+    pub fn inset(offsets: [LengthPercentage; 4]) -> Self {
+        Self::Inset {
+            reference_box: ClipBox::BorderBox,
+            offsets,
+            radii: None,
+        }
+    }
+
+    /// Replaces the reference box of this shape.
+    pub fn with_reference_box(mut self, reference_box: ClipBox) -> Self {
+        match &mut self {
+            Self::None => {}
+            Self::Inset {
+                reference_box: box_value,
+                ..
+            }
+            | Self::Circle {
+                reference_box: box_value,
+                ..
+            }
+            | Self::Ellipse {
+                reference_box: box_value,
+                ..
+            }
+            | Self::Path {
+                reference_box: box_value,
+                ..
+            } => *box_value = reference_box,
+        }
+        self
+    }
+}
+
+impl ToCss for ClipPath {
+    fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+        fn point(dest: &mut dyn fmt::Write, point: &ClipPoint) -> fmt::Result {
+            point.x.to_css(dest)?;
+            dest.write_char(' ')?;
+            point.y.to_css(dest)
+        }
+
+        let reference_box = match self {
+            Self::None => return dest.write_str("none"),
+            Self::Inset {
+                reference_box,
+                offsets,
+                radii,
+            } => {
+                dest.write_str("inset(")?;
+                write_four(dest, offsets)?;
+                if let Some(radii) = radii {
+                    dest.write_str(" round ")?;
+                    radii.to_css(dest)?;
+                }
+                dest.write_char(')')?;
+                reference_box
+            }
+            Self::Circle {
+                reference_box,
+                radius,
+                center_x,
+                center_y,
+            } => {
+                dest.write_str("circle(")?;
+                radius.to_css(dest)?;
+                dest.write_str(" at ")?;
+                center_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                center_y.to_css(dest)?;
+                dest.write_char(')')?;
+                reference_box
+            }
+            Self::Ellipse {
+                reference_box,
+                radius_x,
+                radius_y,
+                center_x,
+                center_y,
+            } => {
+                dest.write_str("ellipse(")?;
+                radius_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                radius_y.to_css(dest)?;
+                dest.write_str(" at ")?;
+                center_x.to_css(dest)?;
+                dest.write_char(' ')?;
+                center_y.to_css(dest)?;
+                dest.write_char(')')?;
+                reference_box
+            }
+            Self::Path {
+                reference_box,
+                fill_rule,
+                commands,
+            } => {
+                dest.write_str("path(")?;
+                if matches!(fill_rule, ClipFillRule::EvenOdd) {
+                    dest.write_str("evenodd, ")?;
+                }
+                for (index, command) in commands.iter().enumerate() {
+                    if index > 0 {
+                        dest.write_char(' ')?;
+                    }
+                    match command {
+                        ClipPathCommand::MoveTo(value) => {
+                            dest.write_str("M ")?;
+                            point(dest, value)?;
+                        }
+                        ClipPathCommand::LineTo(value) => {
+                            dest.write_str("L ")?;
+                            point(dest, value)?;
+                        }
+                        ClipPathCommand::QuadraticTo { control, end } => {
+                            dest.write_str("Q ")?;
+                            point(dest, control)?;
+                            dest.write_char(' ')?;
+                            point(dest, end)?;
+                        }
+                        ClipPathCommand::CubicTo {
+                            control_1,
+                            control_2,
+                            end,
+                        } => {
+                            dest.write_str("C ")?;
+                            point(dest, control_1)?;
+                            dest.write_char(' ')?;
+                            point(dest, control_2)?;
+                            dest.write_char(' ')?;
+                            point(dest, end)?;
+                        }
+                        ClipPathCommand::Close => dest.write_char('Z')?,
+                    }
+                }
+                dest.write_char(')')?;
+                reference_box
+            }
+        };
+        dest.write_char(' ')?;
+        reference_box.to_css(dest)
     }
 }
 

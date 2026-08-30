@@ -149,10 +149,8 @@ not to narrate the code.
   depend on it."
 
 - **Bug references** when the code shape exists because of a
-  specific upstream bug. "Without the `.clone()` here, Lynx's
-  Android Animator latches the transform forward — see memory note
-  `lynx_android_transform_latched_after_fill_forwards` or issue
-  #99."
+  specific upstream bug. "Without the `.clone()` here, the Android
+  animator latches the transform forward — see issue #99."
 
 - **TODOs / FIXMEs** with concrete intent. "`TODO(#NNN): replace
   this stub with the real keyboard-height observer once we ship
@@ -195,10 +193,10 @@ not to narrate the code.
 
 - **`TODO` policy:** acceptable in committed code only when
   paired with either an issue number or a concrete trigger
-  ("when Lynx ships X", "when we drop iOS 14 support"). Bare
+  ("when wgpu ships X", "when we drop iOS 14 support"). Bare
   `// TODO` is delete-on-sight.
 
-- **Memory-note references** (e.g. `lynx_version_pinning`,
+- **Memory-note references** (e.g. `host_sdk_version_pinning`,
   `whisker_signal_update_i32_only`) — keep them. They're the
   bridge between code and the auto-memory system.
 

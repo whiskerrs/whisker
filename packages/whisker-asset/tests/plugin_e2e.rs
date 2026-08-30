@@ -112,7 +112,6 @@ fn android_generation_lands_assets_under_whisker_namespace() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://example.invalid/maven".into(),
-        "https://example.invalid/lynx".into(),
     )
     .unwrap();
 

@@ -297,20 +297,6 @@ fn relative_units_use_the_correct_environment_basis() {
         (px(3.0), 3.0),
         (
             LengthValue::Dimension {
-                value: number(3.0),
-                unit: LengthUnit::Rpx,
-            },
-            3.0,
-        ),
-        (
-            LengthValue::Dimension {
-                value: number(4.0),
-                unit: LengthUnit::Ppx,
-            },
-            2.0,
-        ),
-        (
-            LengthValue::Dimension {
                 value: number(2.0),
                 unit: LengthUnit::Em,
             },

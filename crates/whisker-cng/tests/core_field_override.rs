@@ -210,7 +210,6 @@ fn inputs_from_android_still_produces_correct_manifest_after_ir_refactor() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();

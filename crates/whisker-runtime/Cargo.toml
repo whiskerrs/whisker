@@ -19,7 +19,7 @@ description = "Host-independent Whisker runtime: reactivity, retained elements, 
 slotmap = "1"
 # Single-threaded futures executor (LocalPool) driven by Whisker's
 # tick callback. Used by the `tasks` module to host async work
-# (resource fetchers, user-spawned futures) on the TASM thread
+# (resource fetchers, user-spawned futures) on the runtime thread
 # without pulling in tokio's full IO/scheduler infrastructure.
 futures-executor = "0.3"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

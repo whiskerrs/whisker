@@ -176,11 +176,10 @@ impl Css {
     /// Sets the `background` shorthand.
     /// <https://lynxjs.org/api/css/properties/background>
     pub fn background(self, b: Background) -> Self {
-        let lynx_value = b.to_css_string();
-        let Some(value) = background_value(&b) else {
-            return self.push_raw(crate::StyleProperty::Background, lynx_value);
-        };
-        self.push_semantic(crate::StyleProperty::Background, value, lynx_value)
+        let serialized_value = b.to_css_string();
+        let value = background_value(&b)
+            .expect("background positions combine one horizontal and one vertical component");
+        self.push_semantic(crate::StyleProperty::Background, value, serialized_value)
     }
 }
 
@@ -268,7 +267,7 @@ mod tests {
     fn background_color_only() {
         let s = Css::new().background(Background::new().color(Color::Named(NamedColor::Red)));
         assert_eq!(s.to_string(), "background: red;");
-        assert!(s.to_specified_style().is_ok());
+        let _ = s.to_specified_style();
     }
 
     #[test]
@@ -294,7 +293,7 @@ mod tests {
             s.to_string(),
             "background: linear-gradient(to bottom, red, blue) white;"
         );
-        assert!(s.to_specified_style().is_ok());
+        let _ = s.to_specified_style();
     }
 
     #[test]
@@ -307,7 +306,7 @@ mod tests {
             s.to_string(),
             "background: url(\"top.png\") no-repeat, url(\"base.png\");"
         );
-        assert!(s.to_specified_style().is_ok());
+        let _ = s.to_specified_style();
     }
 
     #[test]
@@ -317,7 +316,7 @@ mod tests {
             .size(BackgroundSize::Cover);
         let s = Css::new().background(Background::new().layer(layer));
         assert_eq!(s.to_string(), "background: url(\"a.png\") center / cover;");
-        assert!(s.to_specified_style().is_ok());
+        let _ = s.to_specified_style();
     }
 
     #[test]

@@ -67,9 +67,8 @@ enum ProfileRow {
 
 /// The account's profile as a single virtualised list: the header scrolls
 /// with the feed as item 0 (full-span, with a distinct `reuse_identifier` so
-/// it never recycles into a post cell), then the authored posts. Enabled by
-/// the item-key data source (Lynx fork v3.8.0-whisker.8) — the list diffs by
-/// key, so the tall, non-uniform header cell stays stable under recycling
+/// it never recycles into a post cell), then the authored posts. The list
+/// diffs by key, so the tall, non-uniform header cell stays stable under recycling
 /// (the reason it used to be split out as a fixed sibling).
 #[component]
 pub(super) fn profile_view(actor: String, show_logout: bool) -> Element {
@@ -856,8 +855,8 @@ pub(super) fn nav_header(title: String) -> Element {
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
             // Pin to content height: this nav bar is a flex sibling of a
-            // `flex_grow: 1` screen body, so without `flex_shrink: 0` Lynx's
-            // default `flex_shrink: 1` lets the body squeeze it (the back
+            // `flex_grow: 1` screen body, so without `flex_shrink: 0` the
+            // default shrink factor lets the body squeeze it (the back
             // button + title looked crushed on the profile screen).
             flex_shrink: 0.0,
             background_color: theme::BG,

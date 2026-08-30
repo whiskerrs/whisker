@@ -49,16 +49,6 @@ pub fn px(v: impl IntoF32) -> Length {
     Length::Px(v.into_f32())
 }
 
-/// Construct a [`Length::Rpx`] (Lynx responsive pixel; 750rpx = device width).
-pub fn rpx(v: impl IntoF32) -> Length {
-    Length::Rpx(v.into_f32())
-}
-
-/// Construct a [`Length::Ppx`] (physical pixel).
-pub fn ppx(v: impl IntoF32) -> Length {
-    Length::Ppx(v.into_f32())
-}
-
 /// Construct a [`Length::Em`].
 pub fn em(v: impl IntoF32) -> Length {
     Length::Em(v.into_f32())
@@ -89,10 +79,6 @@ pub const ZERO: Length = Length::Zero;
 pub trait LengthExt: Copy {
     /// `<self>px`.
     fn px(self) -> Length;
-    /// `<self>rpx`.
-    fn rpx(self) -> Length;
-    /// `<self>ppx`.
-    fn ppx(self) -> Length;
     /// `<self>em`.
     fn em(self) -> Length;
     /// `<self>rem`.
@@ -106,12 +92,6 @@ pub trait LengthExt: Copy {
 impl<T: IntoF32> LengthExt for T {
     fn px(self) -> Length {
         Length::Px(self.into_f32())
-    }
-    fn rpx(self) -> Length {
-        Length::Rpx(self.into_f32())
-    }
-    fn ppx(self) -> Length {
-        Length::Ppx(self.into_f32())
     }
     fn em(self) -> Length {
         Length::Em(self.into_f32())
@@ -222,8 +202,6 @@ mod tests {
     #[test]
     fn length_free_fns() {
         assert_eq!(px(8).to_css_string(), "8px");
-        assert_eq!(rpx(750).to_css_string(), "750rpx");
-        assert_eq!(ppx(2).to_css_string(), "2ppx");
         assert_eq!(em(1.5).to_css_string(), "1.5em");
         assert_eq!(rem(2).to_css_string(), "2rem");
         assert_eq!(vh(50).to_css_string(), "50vh");
@@ -233,8 +211,6 @@ mod tests {
     #[test]
     fn length_methods_on_i32() {
         assert_eq!(8.px().to_css_string(), "8px");
-        assert_eq!(750.rpx().to_css_string(), "750rpx");
-        assert_eq!(2.ppx().to_css_string(), "2ppx");
         assert_eq!(1.em().to_css_string(), "1em");
         assert_eq!(2.rem().to_css_string(), "2rem");
         assert_eq!(50.vh().to_css_string(), "50vh");
@@ -248,8 +224,6 @@ mod tests {
         assert_eq!(0.5_f32.rem().to_css_string(), "0.5rem");
         assert_eq!(0.5_f32.vh().to_css_string(), "0.5vh");
         assert_eq!(0.5_f32.vw().to_css_string(), "0.5vw");
-        assert_eq!(0.5_f32.rpx().to_css_string(), "0.5rpx");
-        assert_eq!(0.5_f32.ppx().to_css_string(), "0.5ppx");
     }
 
     #[test]

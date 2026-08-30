@@ -12,7 +12,7 @@
 //!
 //! [`RecordingRenderer`] is the reference Rust-only consumer. Together with
 //! `whisker-protocol` it lets tree, revision, recovery, and incremental-update
-//! behavior run without Android, UIKit, DOM, Lynx, FFI, or WASM.
+//! behavior run without Android, UIKit, DOM, FFI, or WASM.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

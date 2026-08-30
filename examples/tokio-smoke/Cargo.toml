@@ -3,7 +3,7 @@ name = "tokio-smoke"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Smoke test for whisker's `tokio` feature: a `resource()` fetcher that does an HTTP GET with reqwest (tokio reactor) and a CPU offload with tokio::task::spawn_blocking, both driven on the TASM thread without freezing the UI. If the byte count renders, the runtime is entered correctly."
+description = "Smoke test for whisker's `tokio` feature: a `resource()` fetcher that does an HTTP GET with reqwest (tokio reactor) and a CPU offload with tokio::task::spawn_blocking, both driven on the runtime thread without freezing the UI. If the byte count renders, the runtime is entered correctly."
 
 [lib]
 crate-type = ["rlib"]

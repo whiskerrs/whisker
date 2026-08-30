@@ -155,13 +155,13 @@ static SLOT: OnceLock<Slot> = OnceLock::new();
 /// Locally-scoped wrapper asserting main-thread-only access to
 /// `inner`. Same pattern (and safety contract) as
 /// `whisker-safe-area`'s `MainThreadOnly`: every access path runs on
-/// the Lynx TASM thread by contract.
+/// the runtime thread by contract.
 #[derive(Copy, Clone)]
 struct MainThreadOnly<T> {
     inner: T,
 }
 // SAFETY: the signal read (`keyboard_height`) and write (the `on_event`
-// callback) both run on the Lynx TASM thread by contract. Misuse would
+// callback) both run on the runtime thread by contract. Misuse would
 // corrupt the reactive arena.
 unsafe impl<T> Send for MainThreadOnly<T> {}
 unsafe impl<T> Sync for MainThreadOnly<T> {}

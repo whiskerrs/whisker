@@ -466,7 +466,7 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     component::expand(item.into()).into()
 }
 
-/// Declare a Whisker-side wrapper for a Lynx-registered view module's element.
+/// Declare a Whisker-side wrapper for a Host-registered module element.
 ///
 /// ```ignore
 /// #[whisker::module_component(

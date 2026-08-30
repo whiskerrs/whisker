@@ -127,10 +127,7 @@ impl KeyframesBuilder {
                 return Err(KeyframesBuildError::InvalidOffset(percentage));
             }
             let percentage = if percentage == 0.0 { 0.0 } else { percentage };
-            let style = frame
-                .style
-                .to_specified_style()
-                .map_err(|error| KeyframesBuildError::UnmigratedStyle(error.to_string()))?;
+            let style = frame.style.to_specified_style();
             if let Some(property) = style
                 .resolved()
                 .into_iter()
@@ -178,8 +175,6 @@ pub enum KeyframesBuildError {
     Empty,
     /// An offset was non-finite or outside `0%..=100%`.
     InvalidOffset(f32),
-    /// A frame still contained a compatibility-only declaration.
-    UnmigratedStyle(String),
     /// Timeline declarations cannot recursively appear inside a frame.
     MotionProperty(whisker_style::StyleProperty),
 }

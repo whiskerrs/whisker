@@ -8,7 +8,7 @@
 // crypto (consistent across OEMs, upgradeable), while Keystore only
 // protects the keyset-wrapping key.
 //
-// Plain helper — no Whisker / Lynx types. The DSL module that exposes
+// Plain helper — no Whisker runtime types. The DSL module that exposes
 // it to Rust lives in `SecureStoreModule.kt`.
 
 package rs.whisker.modules.securestore

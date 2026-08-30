@@ -13,7 +13,7 @@
 //!
 //! The receiver writes the dylib bytes to a local cache file, rewrites
 //! `table.lib` to that path, and drops the resulting JumpTable into a
-//! single-slot mutex. The Lynx TASM thread later drains the slot at
+//! single-slot mutex. The runtime thread later drains the slot at
 //! the top of its tick (via [`take_pending_patch`]) and invokes
 //! `subsecond::apply_patch` while **no** `subsecond::call` is on the
 //! stack — the only safe window.
@@ -84,7 +84,7 @@ pub fn devlog(line: &str) {
 /// Most-recent-wins: an older queued patch is silently superseded.
 static PENDING: Mutex<Option<JumpTable>> = Mutex::new(None);
 
-/// TASM-thread entry — pop the queued patch, if any. Safe to call
+/// runtime-thread entry — pop the queued patch, if any. Safe to call
 /// every tick (returns `None` cheaply).
 pub fn take_pending_patch() -> Option<JumpTable> {
     PENDING.lock().ok().and_then(|mut p| p.take())
@@ -263,7 +263,7 @@ where
 }
 
 /// Decode one patch frame from the dev-server and park it in
-/// [`PENDING`] for the TASM thread to apply on the next tick.
+/// [`PENDING`] for the runtime thread to apply on the next tick.
 fn handle_patch_frame(bytes: &[u8]) {
     devlog(&format!("patch frame received ({} bytes)", bytes.len()));
     let (mut table, dylib_bytes) = match parse_patch_frame(bytes) {
@@ -292,7 +292,7 @@ fn handle_patch_frame(bytes: &[u8]) {
         devlog("patch queued");
     }
     // Wake the host so a frame is scheduled — `take_pending_patch`
-    // only runs inside the tick and the TASM thread may be idle.
+    // only runs inside the tick and the runtime thread may be idle.
     whisker_runtime::runtime_wake::wake_runtime();
 }
 

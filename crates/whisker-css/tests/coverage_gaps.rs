@@ -341,8 +341,6 @@ fn fit_content_keyword_path() {
 #[test]
 fn length_each_unit_zero_path() {
     assert!(Length::Px(0.0).is_zero());
-    assert!(Length::Rpx(0.0).is_zero());
-    assert!(Length::Ppx(0.0).is_zero());
     assert!(Length::Em(0.0).is_zero());
     assert!(Length::Rem(0.0).is_zero());
     assert!(Length::Vh(0.0).is_zero());

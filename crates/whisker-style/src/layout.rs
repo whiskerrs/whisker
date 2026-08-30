@@ -10,8 +10,6 @@ use crate::{
     StyleProperty, StyleResolutionError, StyleValue,
 };
 
-const RPX_REFERENCE_WIDTH: f32 = 750.0;
-
 mod resolution;
 
 #[cfg(test)]
@@ -414,7 +412,7 @@ pub struct ComputedLayoutStyle {
 impl Default for ComputedLayoutStyle {
     fn default() -> Self {
         Self {
-            display: DisplayValue::Linear,
+            display: DisplayValue::Flex,
             float: FloatValue::None,
             clear: ClearValue::None,
             overflow: Axes::all(OverflowValue::Visible),

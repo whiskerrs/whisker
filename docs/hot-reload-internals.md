@@ -188,21 +188,13 @@ crash the device.
 3. Wake the runtime (`whisker_runtime::runtime_wake::wake_runtime()`) so a
    frame gets scheduled even when no signal is dirty.
 
-The Lynx TASM thread drains `PENDING` at the top of its tick. In
-`whisker-driver/src/lynx/bootstrap.rs::tick_frame`:
-
-```text
-apply_pending_hot_patch()  // take_pending_patch() + subsecond::apply_patch
-  → if non-empty, remount_components_for(&patched)
-reactive_flush(); run_until_stalled(); reactive_flush(); flush_mounts();
-renderer_flush();
-```
-
-`subsecond::apply_patch` is called **before** any user code that might
-itself call `subsecond::call` is on the stack — the only safe window to
-swap dispatchers. It returns the list of host fn pointers that were
-rewritten; `remount_components_for` then disposes and re-mounts every
-`#[component]` whose body was patched, so structural edits (new
+`PENDING` is the receiver/runtime handoff exposed by `take_pending_patch()`.
+The current mobile loop performs explicit full reloads; fine-grained mobile
+patch application must drain this slot at the start of a Host-driven runtime
+transaction, before user code enters a `subsecond::call` frame. Applying a
+patch returns the host function pointers that changed;
+`remount_components_for` then disposes and re-mounts every `#[component]`
+whose body was patched, so structural edits (new
 elements, new signals) reflect on screen. State local to a remounted
 component is lost; state above the remount point survives.
 

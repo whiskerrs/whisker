@@ -426,8 +426,6 @@ pub(super) fn resolve_absolute(
         LengthValue::Dimension { value, unit } => {
             let multiplier = match unit {
                 LengthUnit::Px => 1.0,
-                LengthUnit::Rpx => environment.viewport_width() / RPX_REFERENCE_WIDTH,
-                LengthUnit::Ppx => 1.0 / environment.scale_factor(),
                 LengthUnit::Em => font_size,
                 LengthUnit::Rem => environment.root_font_size(),
                 LengthUnit::Vh => environment.viewport_height() / 100.0,

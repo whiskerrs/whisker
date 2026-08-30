@@ -68,9 +68,8 @@ pub fn router(routes: RouteSet, children: Children) -> Element {
     // gesture has something to bind to.
     //
     // The `children()` slot is bundled behind a phantom, and appending that
-    // phantom directly would hoist the children into a style-less container,
-    // which Lynx defaults to `flex-direction: row` (memory
-    // `lynx_view_flex_direction_default`) — collapsing them horizontally. So
+    // phantom directly would hoist the children into a style-less container
+    // with the default row direction, collapsing them horizontally. So
     // `root` itself is the `flex-direction: column` container they mount into.
     //
     // Build `root` EMPTY, publish the `RouterRoot` context, and only THEN

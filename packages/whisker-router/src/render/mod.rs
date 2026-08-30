@@ -4,8 +4,8 @@
 //! [`RouteState`](crate::core::RouteState) core in the Whisker reactive
 //! runtime: a signal-backed [`RouterHandle`] + [`use_navigator`], the
 //! [`Outlet`] / [`Stack`] / [`Switch`] renderers,
-//! float-`Tween` transitions (via `whisker-animation`, **not** Lynx's
-//! animator), and the interactive back gestures ([`SwipeBack`] for iOS
+//! float-`Tween` transitions (via `whisker-animation`), and the interactive
+//! back gestures ([`SwipeBack`] for iOS
 //! edge swipe, [`AndroidPredictiveBack`] for Android 13+ predictive back)
 //! — both driving the same coordinated two-screen scrub.
 //!

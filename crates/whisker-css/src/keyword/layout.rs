@@ -1,20 +1,10 @@
 //! Layout-related keyword enums.
 //!
-//! References:
-//! - <https://lynxjs.org/api/css/properties/display>
-//! - <https://lynxjs.org/api/css/properties/position>
-//! - <https://lynxjs.org/api/css/properties/overflow>
-//! - <https://lynxjs.org/api/css/properties/visibility>
-//! - <https://lynxjs.org/api/css/properties/box-sizing>
-//! - <https://lynxjs.org/api/css/properties/pointer-events>
-
 use core::fmt;
 
 use crate::to_css::ToCss;
 
-/// The `display` keyword. Lynx's default for `<view>` is
-/// [`Display::Linear`] (Lynx's vertical/horizontal stacking layout);
-/// `flex` is required to opt into CSS flexbox semantics.
+/// Layout modes supported by Whisker's Taffy integration.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Display {
     /// `none` — element is removed from the layout tree.
@@ -27,10 +17,6 @@ pub enum Display {
     Block,
     /// `flow-root` — block layout with an independent formatting context.
     FlowRoot,
-    /// `linear` — Lynx's linear layout (default for `<view>`).
-    Linear,
-    /// `relative` — Lynx's relative-positioning container.
-    Relative,
 }
 
 impl ToCss for Display {
@@ -41,8 +27,6 @@ impl ToCss for Display {
             Display::Grid => "grid",
             Display::Block => "block",
             Display::FlowRoot => "flow-root",
-            Display::Linear => "linear",
-            Display::Relative => "relative",
         })
     }
 }
@@ -94,9 +78,7 @@ impl ToCss for Clear {
     }
 }
 
-/// The `position` keyword. **Lynx does not support `static`** — the
-/// default in Lynx is `relative`, so a `static` value is meaningless
-/// and is omitted from this enum.
+/// Positioning modes supported by Whisker's Taffy integration.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PositionKind {
     /// `relative` — positioned with normal flow as origin (default).
@@ -121,9 +103,8 @@ impl ToCss for PositionKind {
     }
 }
 
-/// The `overflow` keyword. **Lynx supports only two values** —
-/// `visible` (default) and `hidden`. CSS's `scroll` and `auto` are
-/// **not** supported; use a `<scroll-view>` element for scrolling.
+/// Descendant paint overflow. Scrolling is represented by a ScrollView
+/// element rather than `overflow: scroll`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Overflow {
     /// `visible` — content overflows the box. Default.
@@ -208,8 +189,6 @@ mod tests {
             (Display::Grid, "grid"),
             (Display::Block, "block"),
             (Display::FlowRoot, "flow-root"),
-            (Display::Linear, "linear"),
-            (Display::Relative, "relative"),
         ];
         for (k, expected) in cases {
             assert_eq!(k.to_css_string(), expected);

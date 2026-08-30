@@ -5,8 +5,8 @@ Status: **implemented**
 ## Decision
 
 `list` is keyed Rust control flow built on the ordinary
-`whisker.ui/ScrollView`. It is not a Host element and does not wrap Lynx
-`<list>`, `RecyclerView`, or `UICollectionView`.
+`whisker.ui/ScrollView`. It is not a Host element and does not wrap a native
+`RecyclerView` or `UICollectionView`.
 
 ```rust
 let handle = ListHandle::<RowId>::new();

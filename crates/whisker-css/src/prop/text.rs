@@ -5,8 +5,7 @@ use crate::ValueOrVariable;
 use crate::css::Css;
 use crate::data_type::{Color, Length, LengthPercentage};
 use crate::keyword::{
-    TextAlign, TextDecorationLine, TextDecorationStyle, TextOverflow, TextTransform, VerticalAlign,
-    WhiteSpace, WordBreak, WordWrap,
+    TextAlign, TextDecorationLine, TextDecorationStyle, TextOverflow, WhiteSpace, WordBreak,
 };
 use crate::to_css::ToCss;
 
@@ -126,30 +125,6 @@ impl Css {
         )
     }
 
-    /// Sets `text-decoration-line` (single value).
-    /// <https://lynxjs.org/api/css/properties/text-decoration-line>
-    pub fn text_decoration_line(self, v: TextDecorationLine) -> Self {
-        self.push(crate::StyleProperty::TextDecorationLine, v)
-    }
-
-    /// Sets `text-decoration-style`.
-    /// <https://lynxjs.org/api/css/properties/text-decoration-style>
-    pub fn text_decoration_style(self, v: TextDecorationStyle) -> Self {
-        self.push(crate::StyleProperty::TextDecorationStyle, v)
-    }
-
-    /// Sets `text-decoration-color`.
-    /// <https://lynxjs.org/api/css/properties/text-decoration-color>
-    pub fn text_decoration_color(self, v: Color) -> Self {
-        self.push(crate::StyleProperty::TextDecorationColor, v)
-    }
-
-    /// Sets `text-decoration-thickness`.
-    /// <https://lynxjs.org/api/css/properties/text-decoration-thickness>
-    pub fn text_decoration_thickness(self, v: Length) -> Self {
-        self.push_typed(crate::StyleProperty::TextDecorationThickness, v)
-    }
-
     /// Sets `text-overflow`.
     /// <https://lynxjs.org/api/css/properties/text-overflow>
     pub fn text_overflow(self, v: TextOverflow) -> Self {
@@ -164,22 +139,10 @@ impl Css {
         )
     }
 
-    /// Sets `text-transform`.
-    /// <https://lynxjs.org/api/css/properties/text-transform>
-    pub fn text_transform(self, v: TextTransform) -> Self {
-        self.push(crate::StyleProperty::TextTransform, v)
-    }
-
     /// Sets `text-indent` — first-line indentation.
     /// <https://lynxjs.org/api/css/properties/text-indent>
     pub fn text_indent(self, v: impl Into<LengthPercentage>) -> Self {
         self.push_typed(crate::StyleProperty::TextIndent, v.into())
-    }
-
-    /// Sets `vertical-align`.
-    /// <https://lynxjs.org/api/css/properties/vertical-align>
-    pub fn vertical_align(self, v: VerticalAlign) -> Self {
-        self.push(crate::StyleProperty::VerticalAlign, v)
     }
 
     /// Sets `white-space`.
@@ -188,9 +151,6 @@ impl Css {
         let value = match v {
             WhiteSpace::Normal => whisker_style::WhiteSpaceValue::Normal,
             WhiteSpace::Nowrap => whisker_style::WhiteSpaceValue::NoWrap,
-            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine => {
-                return self.push(crate::StyleProperty::WhiteSpace, v);
-            }
         };
         self.push_semantic(
             crate::StyleProperty::WhiteSpace,
@@ -213,12 +173,6 @@ impl Css {
             v.to_css_string(),
         )
     }
-
-    /// Sets `overflow-wrap`.
-    /// <https://lynxjs.org/api/css/properties/overflow-wrap>
-    pub fn overflow_wrap(self, v: WordWrap) -> Self {
-        self.push(crate::StyleProperty::OverflowWrap, v)
-    }
 }
 
 #[cfg(test)]
@@ -233,19 +187,19 @@ mod tests {
         let s = Css::new().text_align(TextAlign::Center);
         assert_eq!(s.to_string(), "text-align: center;");
         assert_eq!(
-            s.to_specified_style().unwrap().resolved()[0].value(),
+            s.to_specified_style().resolved()[0].value(),
             &whisker_style::StyleValue::TextAlign(whisker_style::TextAlignValue::Center)
         );
     }
 
     #[test]
-    fn single_text_shadow_is_typed_and_uses_lynx_order() {
+    fn single_text_shadow_is_typed_and_uses_wire_order() {
         let style = Css::new().text_shadow(1.px(), 2.px(), 3.px(), Color::rgba(255, 0, 0, 0.5));
         assert_eq!(
             style.to_string(),
             "text-shadow: 1px 2px 3px rgba(255, 0, 0, 0.5);"
         );
-        let specified = style.to_specified_style().unwrap();
+        let specified = style.to_specified_style();
         assert!(matches!(
             specified.resolved()[0].value(),
             whisker_style::StyleValue::TextShadow(whisker_style::TextShadowValue::Shadow { .. })
@@ -257,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn lynx_text_decoration_shorthand_is_typed() {
+    fn text_decoration_shorthand_is_typed() {
         let style = Css::new().text_decoration(
             TextDecorationLine::LineThrough,
             TextDecorationStyle::Dashed,
@@ -268,7 +222,7 @@ mod tests {
             "text-decoration: line-through dashed red;"
         );
         assert!(matches!(
-            style.to_specified_style().unwrap().resolved()[0].value(),
+            style.to_specified_style().resolved()[0].value(),
             whisker_style::StyleValue::TextDecoration(whisker_style::TextDecorationValue {
                 line: whisker_style::TextDecorationLineValue::LineThrough,
                 style: whisker_style::TextDecorationStyleValue::Dashed,
@@ -282,30 +236,12 @@ mod tests {
     }
 
     #[test]
-    fn text_decoration_set() {
-        let s = Css::new()
-            .text_decoration_line(TextDecorationLine::Underline)
-            .text_decoration_style(TextDecorationStyle::Wavy)
-            .text_decoration_color(Color::Named(NamedColor::Red))
-            .text_decoration_thickness(2.px());
-        assert_eq!(
-            s.to_string(),
-            "text-decoration-line: underline; text-decoration-style: wavy; text-decoration-color: red; text-decoration-thickness: 2px;"
-        );
-    }
-
-    #[test]
-    fn text_overflow_and_transform() {
-        let s = Css::new()
-            .text_overflow(TextOverflow::Ellipsis)
-            .text_transform(TextTransform::Uppercase);
-        assert_eq!(
-            s.to_string(),
-            "text-overflow: ellipsis; text-transform: uppercase;"
-        );
+    fn text_overflow_is_structured() {
+        let s = Css::new().text_overflow(TextOverflow::Ellipsis);
+        assert_eq!(s.to_string(), "text-overflow: ellipsis;");
         let semantic = Css::new().text_overflow(TextOverflow::Ellipsis);
         assert!(matches!(
-            semantic.to_specified_style().unwrap().resolved()[0].value(),
+            semantic.to_specified_style().resolved()[0].value(),
             whisker_style::StyleValue::TextOverflow(whisker_style::TextOverflowValue::Ellipsis)
         ));
     }
@@ -315,32 +251,21 @@ mod tests {
         let s = Css::new().text_indent(px(20));
         assert_eq!(s.to_string(), "text-indent: 20px;");
         assert!(matches!(
-            s.to_specified_style().unwrap().resolved()[0].value(),
+            s.to_specified_style().resolved()[0].value(),
             whisker_style::StyleValue::LengthPercentage(_)
         ));
-    }
-
-    #[test]
-    fn vertical_align_keywords() {
-        let s = Css::new().vertical_align(VerticalAlign::Middle);
-        assert_eq!(s.to_string(), "vertical-align: middle;");
     }
 
     #[test]
     fn whitespace_word_handling() {
         let s = Css::new()
             .white_space(WhiteSpace::Nowrap)
-            .word_break(WordBreak::BreakAll)
-            .overflow_wrap(WordWrap::BreakWord);
-        assert_eq!(
-            s.to_string(),
-            "white-space: nowrap; word-break: break-all; overflow-wrap: break-word;"
-        );
+            .word_break(WordBreak::BreakAll);
+        assert_eq!(s.to_string(), "white-space: nowrap; word-break: break-all;");
         let specified = Css::new()
             .white_space(WhiteSpace::Nowrap)
             .word_break(WordBreak::BreakAll)
-            .to_specified_style()
-            .unwrap();
+            .to_specified_style();
         assert!(matches!(
             specified.resolved()[0].value(),
             whisker_style::StyleValue::WhiteSpace(whisker_style::WhiteSpaceValue::NoWrap)
@@ -349,14 +274,5 @@ mod tests {
             specified.resolved()[1].value(),
             whisker_style::StyleValue::WordBreak(whisker_style::WordBreakValue::BreakAll)
         ));
-
-        for unsupported in [WhiteSpace::Pre, WhiteSpace::PreWrap, WhiteSpace::PreLine] {
-            assert!(
-                Css::new()
-                    .white_space(unsupported)
-                    .to_specified_style()
-                    .is_err()
-            );
-        }
     }
 }

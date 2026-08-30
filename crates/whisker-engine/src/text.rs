@@ -434,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn every_lynx_text_alignment_reaches_the_host_payload_and_metric_key() {
+    fn every_supported_text_alignment_reaches_the_host_payload_and_metric_key() {
         for (value, expected) in [
             (TextAlignValue::Start, MeasureTextAlignment::Start),
             (TextAlignValue::End, MeasureTextAlignment::End),
@@ -462,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn every_lynx_word_break_reaches_the_host_payload_and_metric_key() {
+    fn every_supported_word_break_reaches_the_host_payload_and_metric_key() {
         for (value, expected) in [
             (WordBreakValue::Normal, MeasureTextWordBreak::Normal),
             (WordBreakValue::BreakAll, MeasureTextWordBreak::BreakAll),
@@ -488,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn lynx_text_indent_reaches_the_host_payload_and_metric_key() {
+    fn text_indent_reaches_the_host_payload_and_metric_key() {
         let input = PlainTextInput::new("indent");
         let initial = resolved(Vec::new());
         let initial = lower_plain_text(&input, initial.computed());
@@ -626,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn lynx_text_decoration_lowers_to_paint_without_changing_measurement() {
+    fn text_decoration_lowers_to_paint_without_changing_measurement() {
         let input = PlainTextInput::new("decoration");
         let plain = lower_plain_text(&input, resolved(Vec::new()).computed());
         let decorated = resolved(vec![StyleDeclaration::new(

@@ -8,7 +8,7 @@
 //!
 //! # Self-driving scenarios
 //!
-//! Synthetic touches don't reach Lynx's scroll pipeline on the simulator,
+//! Synthetic touches do not exercise the physical Host scroll pipeline,
 //! so the smoke drives itself with programmatic scrolls chained off the
 //! `layoutcomplete` / `scrollstatechange` events. Pick a scenario with
 //! `SIMCTL_CHILD_SMOKE_SCENARIO=<name> xcrun simctl launch …`:

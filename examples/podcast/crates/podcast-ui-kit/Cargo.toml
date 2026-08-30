@@ -10,11 +10,8 @@ crate-type = ["rlib"]
 
 [dependencies]
 whisker = { workspace = true }
-# `whisker-image` provides `WhiskerImage` — a Kingfisher / Coil-
-# backed `<image>` replacement. Lynx's own `<image>` element needs
-# a `LynxServiceImageProtocol` implementation registered against it
-# (which Whisker doesn't ship), so we use the module-component path
-# instead. See `WhiskerImage`'s crate docs for the rationale.
+# `whisker-image` provides a Kingfisher / Coil-backed image module while the
+# renderer kernel remains resource-policy agnostic.
 whisker-image = { path = "../../../../packages/whisker-image" }
 # `whisker-safe-area` exposes the host view's safe-area insets as a
 # reactive `ReadSignal<SafeAreaInsets>`. `top_nav` reads it to pad the

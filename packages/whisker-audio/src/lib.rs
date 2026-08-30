@@ -80,7 +80,7 @@ pub use plugin::*;
 
 /// Player + reactive `PlaybackStatus` runtime. Gated behind the
 /// default-on `runtime` feature so the config probe build path can
-/// skip the heavyweight `whisker` umbrella crate (Lynx bridge,
+/// skip the heavyweight `whisker` umbrella crate (mobile Host bridge,
 /// driver, render layer). Apps depending on `whisker-audio` for
 /// actual playback get this re-exported automatically; the probe
 /// only sees the plugin types.

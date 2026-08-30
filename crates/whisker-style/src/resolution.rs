@@ -13,8 +13,6 @@ use crate::{
     TextShadowValue, WhiteSpaceValue, WordBreakValue,
 };
 
-const RPX_REFERENCE_WIDTH: f32 = 750.0;
-
 mod custom_properties;
 mod values;
 

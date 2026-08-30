@@ -36,7 +36,7 @@ use crate::tasks;
 // callback). Serialize on the shared host-test lock so sibling modules
 // can't clear our wiring mid-test.
 fn lock<'a>() -> MutexGuard<'a, ()> {
-    crate::main_thread::host_test_lock()
+    crate::runtime_wake::host_test_lock()
 }
 
 // ----- Host model -----------------------------------------------------------
@@ -109,7 +109,7 @@ fn tick_frame_body(settle_signal: RwSignal<i32>, reentry: &Cell<u32>) {
 /// when the host may pause: idle == the queue is genuinely drained.
 /// Mirrors `whisker-driver`'s `tick()` (`!dispatch_pending &&
 /// !has_pending_work()`), where the synchronous frame makes
-/// `!dispatch_pending` always hold on the TASM==main thread.
+/// `!dispatch_pending` always hold on the runtime==main thread.
 fn tick_fixed(settle_signal: RwSignal<i32>, reentry: &Cell<u32>) -> bool {
     tick_frame_body(settle_signal, reentry);
     !has_pending_work()

@@ -32,14 +32,12 @@ let package = Package(
         // it there, and the package identity (the crate's dir name)
         // is unique, so the app aggregator references it via
         // `.package(path: …)` without the `ios`-dir-name collision.
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.11"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.12"),
     ],
     targets: [
         .target(
             name: "WhiskerVideo",
             dependencies: [
-                // WhiskerModule re-exports Lynx transitively, so
-                // no separate `Lynx` product dep is needed.
                 .product(name: "WhiskerModule", package: "whisker"),
             ],
             // Swift sources live under the package's `ios/` directory

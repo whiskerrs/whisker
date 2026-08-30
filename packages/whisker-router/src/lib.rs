@@ -20,7 +20,7 @@
 //!   plus [`use_navigator`](render::use_navigator), the
 //!   [`Outlet`](render::Outlet), [`Stack`](render::Stack) and
 //!   [`Switch`](render::Switch) renderers, the [`Tabs`](render::Tabs) chrome,
-//!   float-`Tween` transitions (via `whisker-animation`, not Lynx's animator),
+//!   float-`Tween` transitions (via `whisker-animation`),
 //!   and the iOS [`SwipeBack`](render::SwipeBack) gesture.
 //!
 //! The route id → component mapping lives in a

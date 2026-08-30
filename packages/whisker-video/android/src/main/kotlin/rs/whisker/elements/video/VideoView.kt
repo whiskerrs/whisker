@@ -1,4 +1,4 @@
-// Lynx UI subclass that hosts the AndroidX Media3 ExoPlayer +
+// Whisker module view that hosts the AndroidX Media3 ExoPlayer +
 // PlayerView. Registration is driven by `VideoModule`'s `definition()`,
 // not by annotations here.
 

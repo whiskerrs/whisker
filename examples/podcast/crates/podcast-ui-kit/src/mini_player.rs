@@ -121,8 +121,8 @@ pub fn mini_player() -> Element {
                 border_radius: px(12),
                 background_color: theme::MINI_PLAYER_BG,
             )) {
-                // Leading artwork. `aspect-ratio` keeps Lynx from
-                // collapsing the box before the image loads.
+                // Leading artwork. Explicit geometry keeps the box stable
+                // before the image loads.
                 Image(
                     style: css!(
                         width: px(40),

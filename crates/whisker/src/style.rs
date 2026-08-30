@@ -151,9 +151,7 @@ pub(crate) fn apply_list_content_style(
             VirtualListLayout::Linear
         }
         Some(Style::Typed(css)) => {
-            let specified = css
-                .to_specified_style()
-                .unwrap_or_else(|error| panic!("List content_style must use typed CSS: {error}"));
+            let specified = css.to_specified_style();
             match virtual_grid_styles(&specified, axis) {
                 Ok(Some((outer, grid))) => {
                     set_specified_style(element, &base.merge(outer));
@@ -169,9 +167,7 @@ pub(crate) fn apply_list_content_style(
         Some(Style::DynamicTyped(f)) => {
             effect(move || {
                 let css = f();
-                let specified = css.to_specified_style().unwrap_or_else(|error| {
-                    panic!("List content_style must use typed CSS: {error}")
-                });
+                let specified = css.to_specified_style();
                 if specified.resolved().iter().any(|declaration| {
                     declaration.property() == StyleProperty::Display
                         && declaration.value() == &StyleValue::Display(DisplayValue::Grid)
@@ -428,9 +424,7 @@ fn fixed_pixel_gap(value: &StyleValue) -> Option<f32> {
 }
 
 fn apply_structured_style(h: Element, css: &Css) {
-    let specified = css
-        .to_specified_style()
-        .unwrap_or_else(|error| panic!("style must use structured CSS: {error}"));
+    let specified = css.to_specified_style();
     // Renderer primitives intentionally remain no-ops when no renderer is
     // installed so pure reactive/unit tests can mount trees without a Host.
     // Real SurfaceRuntime-backed Hosts accept this typed path.
@@ -453,7 +447,7 @@ mod tests {
     fn from_css_serializes_via_to_css_string() {
         let s = Css::new().padding(px(8));
         let out = css(s.into());
-        assert_eq!(out.to_specified_style().unwrap().len(), 4);
+        assert_eq!(out.to_specified_style().len(), 4);
     }
 
     #[test]
@@ -461,7 +455,7 @@ mod tests {
         let s = Css::new().padding(px(8));
         let style: Style = (&s).into();
         let out = css(style);
-        assert_eq!(out.to_specified_style().unwrap().len(), 4);
+        assert_eq!(out.to_specified_style().len(), 4);
         assert!(!s.is_empty());
     }
 }

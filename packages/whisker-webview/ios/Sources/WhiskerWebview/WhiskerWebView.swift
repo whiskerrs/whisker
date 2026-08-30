@@ -1,4 +1,4 @@
-// Lynx UI subclass hosting a WKWebView behind a unified Whisker interface.
+// Whisker module view hosting a WKWebView behind a unified interface.
 // Registration is driven by `WebViewModule`'s `definition()` — no
 // annotations required here.
 //
@@ -11,7 +11,7 @@
 //
 // WKWebView retains its `WKUserContentController`, which retains every
 // registered `WKScriptMessageHandler`. Registering `WhiskerWebViewView`
-// directly would therefore form a retain cycle and the Lynx-owned view
+// directly would therefore form a retain cycle and the Host-owned view
 // would never deallocate. `WeakScriptMessageProxy` breaks it: it holds
 // `self` weakly, so once the view is gone the bridge callback silently
 // drops incoming messages.
@@ -20,15 +20,15 @@
 //
 // Every `WhiskerCustomEvent.dispatch(...)` fires SYNCHRONOUSLY.
 // Navigation-delegate / KVO / script-message callbacks can fire during
-// Lynx teardown while a renderer op is on the Rust stack, which is only
+// native teardown while a renderer op is on the Rust stack, which is only
 // safe because the Rust renderer is re-entrancy-safe (whisker #3: shared
 // `with_renderer` borrow, `&self` `DynRenderer` methods, FFI-scoped
-// per-field `RefCell`s in `BridgeRenderer`).
+// narrowly scoped interior mutability in the Host renderer).
 //
 // ## Event payload shape
 //
 // Params are passed DIRECTLY (e.g. `["url": urlString]`). Do NOT wrap in a
-// `detail` key — the iOS bridge's `LynxCustomEvent.params` normalisation
+// `detail` key — the iOS Host event normalisation
 // already places the dispatched params under `detail` in the event body, so
 // the Rust structs (`NavEvent { detail: { url } }`, etc.) read the correct
 // shape. Double-wrapping produces `detail: { detail: { url } }` and every
@@ -70,7 +70,7 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
 
     // MARK: - Hosted views
 
-    /// Transparent container that fills the LynxUI frame; holds the
+    /// Transparent container that fills the WhiskerUI frame; holds the
     /// `WKWebView` as a subview pinned to its bounds.
     private lazy var containerView: UIView = {
         let v = UIView()
@@ -99,7 +99,7 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
     /// observation alive; clearing it cancels the observation.
     private var progressObservation: NSKeyValueObservation?
 
-    // MARK: - LynxUI lifecycle
+    // MARK: - WhiskerUI lifecycle
 
     @objc public override func createView() -> UIView {
         let config = WKWebViewConfiguration()
@@ -165,11 +165,11 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
         webView?.frame = self.view().bounds
     }
 
-    /// `WhiskerUI` / `LynxUI` exposes no teardown override, so cleanup has
+    /// `WhiskerUI` / `WhiskerUI` exposes no teardown override, so cleanup has
     /// to happen in `deinit`. That works because nothing retains this
     /// object back: `WeakScriptMessageProxy` stands in for us on the
     /// `WKUserContentController` and `navigationDelegate` is weak, so
-    /// `deinit` does fire — on the main thread — when Lynx releases the
+    /// `deinit` does fire — on the main thread — when the Host releases the
     /// view, and the web process is freed promptly.
     deinit {
         progressObservation = nil
@@ -298,11 +298,10 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
     // MARK: - Event emission helpers
 
     // These dispatch SYNCHRONOUSLY, which is only safe because the Rust
-    // renderer is re-entrancy-safe: `DynRenderer` methods take `&self`,
-    // `BridgeRenderer` keeps its state behind per-field `RefCell`s with
-    // FFI-scoped borrows, and `with_renderer` takes a SHARED borrow
-    // (whisker #3). Navigation-delegate / KVO / script-message callbacks can
-    // fire during Lynx teardown while `remove_child` is on the Rust stack,
+    // renderer is re-entrancy-safe: methods take `&self` and mutable Host
+    // state uses narrowly scoped interior mutability. Navigation-delegate /
+    // KVO / script-message callbacks can fire during native teardown while
+    // `remove_child` is on the Rust stack,
     // so a re-entrant dispatch is granted rather than aborting. Deferring a
     // runloop tick instead would cost every webview event a tick of latency.
 

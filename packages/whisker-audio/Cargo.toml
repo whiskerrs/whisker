@@ -62,7 +62,7 @@ doc = false
 # `runtime` feature so the config probe — which only needs the
 # `plugin` module — can pull this crate with
 # `default-features = false` and avoid the multi-minute build of
-# the Lynx bridge + driver. The runtime feature is on by default
+# the mobile Host bridge + driver. The runtime feature is on by default
 # so user app crates that depend on `whisker-audio` for actual
 # audio playback get the Player runtime without any feature
 # flag dance.
@@ -78,7 +78,7 @@ anyhow = { workspace = true }
 [features]
 default = ["runtime"]
 # Pull in the heavyweight `whisker` umbrella crate (and through it
-# the Lynx bridge, driver, render layer). Required by anyone that
+# the mobile Host bridge, driver, render layer). Required by anyone that
 # wants to use the `Player` / `PlaybackStatus` API. Default-on so
 # normal app dependencies "just work". Off-on-probe so the config
 # probe build stays fast.

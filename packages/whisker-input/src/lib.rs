@@ -7,7 +7,7 @@
 //! bound on mount via `ref:` for `focus` / `blur` / `clear` /
 //! `setValue`.
 //!
-//! The Lynx tag is `whisker-input:Input` (the crate name is
+//! The native element tag is `whisker-input:Input` (the crate name is
 //! auto-prepended by `#[whisker::module_component]`).
 //!
 //! ## Usage
@@ -118,9 +118,9 @@
 //!
 //! The cursor / placeholder / selection colors are **explicit props**
 //! ([`caret_color`](InputProps), [`placeholder_color`](InputProps),
-//! [`selection_color`](InputProps)) rather than CSS, because Lynx's CSS
-//! engine doesn't reach the internals of a custom UI element — the
-//! parsed style cascade only sets generic view properties, so these
+//! [`selection_color`](InputProps)) rather than CSS, because the shared
+//! style cascade only controls the module element's generic presentation;
+//! it does not reach private subviews, so these
 //! sub-element colors must be passed as attributes the native view
 //! reads directly.
 //!

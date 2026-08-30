@@ -1,12 +1,5 @@
-// `whisker-input` ModuleDefinition (Android).
-//
-// KSP scans this module's sources for `@WhiskerModule`
-// and emits the registration block into
-// `WhiskerInputBehaviors.registerAll()`.
-//
-// The `WhiskerInputView` Lynx UI subclass this references lives in
-// `WhiskerInputView.kt`. Matching iOS files live under
-// `packages/whisker-input/ios/Sources/WhiskerInput/`.
+// `whisker-input` ModuleDefinition (Android). KSP discovers the annotated
+// module and generates its registration entry.
 
 package rs.whisker.elements.input
 
@@ -79,6 +72,10 @@ class InputModule : Module() {
             // actual dispatch is the imperative WhiskerCustomEvent path
             // inside WhiskerInputView. Documents the emittable set.
             Events("input", "change", "focus", "blur", "submit")
+
+            TextStyle { view: WhiskerInputView, style ->
+                view.applyTextStyle(style)
+            }
 
             // ---- one-way View commands -------------------------------------
 

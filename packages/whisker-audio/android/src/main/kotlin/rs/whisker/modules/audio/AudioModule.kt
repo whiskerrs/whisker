@@ -29,7 +29,7 @@ class AudioModule : Module() {
     /**
      * Live players, keyed by the id the Rust side allocates. A plain
      * `HashMap` suffices because every lookup is on the main thread —
-     * Lynx's bridge dispatch thread is the UI thread on Android.
+     * the Host bridge callback thread is the UI thread on Android.
      */
     private val players: MutableMap<Long, ExoPlayer> = mutableMapOf()
     private val loopFlags: MutableMap<Long, Boolean> = mutableMapOf()

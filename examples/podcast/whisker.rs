@@ -37,7 +37,7 @@ pub fn configure(app: &mut whisker_config::Config) {
     //   - enable_background_{recording,playback} → Info.plist.UIBackgroundModes
     //
     // The probe pulls `whisker-audio` with `default-features = false`
-    // so only the plugin module is built (no Lynx bridge / runtime
+    // so only the plugin module is built (no full renderer/runtime
     // overhead) — see `crates/whisker-cli/src/probe.rs`.
     app.plugin::<whisker_audio::WhiskerAudio>(|c| {
         c.microphone_permission("Record clips for podcast episodes.")

@@ -91,9 +91,6 @@ pub struct AndroidInputs {
     /// declare it in both `pluginManagement.repositories` and
     /// `dependencyResolutionManagement.repositories`.
     pub whisker_maven_url: String,
-    /// Legacy renderer repository input retained until the CNG input API is
-    /// cleaned up. The native Whisker Host templates do not emit it.
-    pub lynx_maven_url: String,
     /// `<uses-permission android:name="…"/>` rows from the engine's
     /// post-pipeline IR, emitted after the template's hardcoded
     /// `INTERNET` permission and dedup'd across plugins.
@@ -206,7 +203,6 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
         inputs.whisker_gradle_plugin_version.clone(),
     );
     v.insert("whisker_maven_url", inputs.whisker_maven_url.clone());
-    v.insert("lynx_maven_url", inputs.lynx_maven_url.clone());
     v.insert(
         "extra_uses_permissions",
         render_extra_permissions(&inputs.extra_permissions),
@@ -649,7 +645,6 @@ pub fn inputs_from(
     whisker_sdk_version: String,
     whisker_gradle_plugin_version: String,
     whisker_maven_url: String,
-    lynx_maven_url: String,
 ) -> Result<AndroidInputs> {
     inputs_from_with_engine(
         &Engine::with_builtins(),
@@ -660,7 +655,6 @@ pub fn inputs_from(
         whisker_sdk_version,
         whisker_gradle_plugin_version,
         whisker_maven_url,
-        lynx_maven_url,
     )
 }
 
@@ -677,7 +671,6 @@ pub fn inputs_from_with_engine(
     whisker_sdk_version: String,
     whisker_gradle_plugin_version: String,
     whisker_maven_url: String,
-    lynx_maven_url: String,
 ) -> Result<AndroidInputs> {
     // The engine seeds the IR from `Config` and plugins may override
     // any of it, so everything below reads the post-pipeline IR.
@@ -731,7 +724,6 @@ pub fn inputs_from_with_engine(
         whisker_sdk_version,
         whisker_gradle_plugin_version,
         whisker_maven_url,
-        lynx_maven_url,
         extra_permissions,
         extra_meta_data,
         extra_application_attributes,
@@ -775,7 +767,6 @@ mod tests {
             whisker_sdk_version: "0.1.0".into(),
             whisker_gradle_plugin_version: "0.1.0".into(),
             whisker_maven_url: "https://whiskerrs.github.io/whisker/maven".into(),
-            lynx_maven_url: "https://whiskerrs.github.io/lynx/maven".into(),
             extra_permissions: Vec::new(),
             extra_meta_data: Vec::new(),
             extra_application_attributes: Vec::new(),
@@ -1085,7 +1076,6 @@ mod tests {
             "0.1.0".into(),
             "0.1.0".into(),
             "https://whiskerrs.github.io/whisker/maven".into(),
-            "https://whiskerrs.github.io/lynx/maven".into(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("application_id"), "got: {err:#}");

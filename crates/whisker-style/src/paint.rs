@@ -2,8 +2,9 @@
 
 use crate::{
     BackdropFilterValue, BackgroundAttachmentValue, BackgroundBoxValue, BackgroundImageValue,
-    BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundSizeValue, ColorValue,
-    ComponentValue, ComputedLengthPercentage, DirectionValue, Edges, GradientValue,
+    BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundSizeValue, BoxShadowValue,
+    ClipBoxValue, ClipFillRuleValue, ClipPathCommandValue, ClipPathValue, ClipShapeValue,
+    ColorValue, ComponentValue, ComputedLengthPercentage, DirectionValue, Edges, GradientValue,
     ImageRenderingValue, InheritedStyle, LengthPercentageValue, MotionPathCommandValue,
     OffsetPathValue, OffsetRotateValue, RadialGradientValue, SpecifiedStyle, StyleEnvironment,
     StyleNumber, StyleProperty, StyleResolutionError, StyleValue, TransformFunctionValue,
@@ -52,6 +53,103 @@ impl<T: Copy> Corners<T> {
             bottom_left: value,
         }
     }
+}
+
+/// One box shadow after environment-dependent values are resolved.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedBoxShadow {
+    /// Horizontal offset in logical pixels.
+    pub offset_x: StyleNumber,
+    /// Vertical offset in logical pixels.
+    pub offset_y: StyleNumber,
+    /// Non-negative blur radius in logical pixels.
+    pub blur_radius: StyleNumber,
+    /// Signed spread radius in logical pixels.
+    pub spread_radius: StyleNumber,
+    /// Shadow color.
+    pub color: ColorValue,
+    /// Paint inside the border box when true.
+    pub inset: bool,
+}
+
+/// One point in a computed clip path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedClipPoint {
+    /// Horizontal coordinate.
+    pub x: ComputedLengthPercentage,
+    /// Vertical coordinate.
+    pub y: ComputedLengthPercentage,
+}
+
+/// One command in a computed clip path.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedClipPathCommand {
+    /// Start a subpath.
+    MoveTo(ComputedClipPoint),
+    /// Add a line.
+    LineTo(ComputedClipPoint),
+    /// Add a quadratic Bezier segment.
+    QuadraticTo {
+        /// Control point.
+        control: ComputedClipPoint,
+        /// Endpoint.
+        end: ComputedClipPoint,
+    },
+    /// Add a cubic Bezier segment.
+    CubicTo {
+        /// First control point.
+        control_1: ComputedClipPoint,
+        /// Second control point.
+        control_2: ComputedClipPoint,
+        /// Endpoint.
+        end: ComputedClipPoint,
+    },
+    /// Close the current subpath.
+    Close,
+}
+
+/// A computed basic shape retained until Host lowering.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ComputedClipShape {
+    /// Inset rectangle.
+    Inset {
+        /// Top, right, bottom, and left offsets.
+        offsets: Edges<ComputedLengthPercentage>,
+        /// Per-corner radii.
+        radii: Corners<ComputedCornerRadius>,
+    },
+    /// Circle.
+    Circle {
+        /// Radius.
+        radius: ComputedLengthPercentage,
+        /// Center.
+        center: ComputedClipPoint,
+    },
+    /// Ellipse.
+    Ellipse {
+        /// Horizontal radius.
+        radius_x: ComputedLengthPercentage,
+        /// Vertical radius.
+        radius_y: ComputedLengthPercentage,
+        /// Center.
+        center: ComputedClipPoint,
+    },
+    /// Structured path.
+    Path {
+        /// Fill rule.
+        fill_rule: ClipFillRuleValue,
+        /// Command stream.
+        commands: Vec<ComputedClipPathCommand>,
+    },
+}
+
+/// Computed `clip-path` with its reference box.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ComputedClipPath {
+    /// Reference box.
+    pub reference_box: ClipBoxValue,
+    /// Basic shape.
+    pub shape: ComputedClipShape,
 }
 
 /// Renderer-independent border line style.
@@ -337,6 +435,10 @@ pub struct ComputedPaintStyle {
     pub backdrop_blur: Option<StyleNumber>,
     /// Raster-image sampling behavior for images painted by this node.
     pub image_rendering: ImageRenderingValue,
+    /// Ordered box shadows, front to back.
+    pub box_shadows: Vec<ComputedBoxShadow>,
+    /// Optional basic-shape clip.
+    pub clip_path: Option<ComputedClipPath>,
     /// Resolved background color. Transparent is represented explicitly.
     pub background_color: ColorValue,
     /// Ordered Host-independent background image sources, front to back.
@@ -374,6 +476,8 @@ impl ComputedPaintStyle {
         Self {
             backdrop_blur: None,
             image_rendering: ImageRenderingValue::Auto,
+            box_shadows: Vec::new(),
+            clip_path: None,
             background_color: transparent,
             background_images: Vec::new(),
             background_layers: vec![ComputedBackgroundLayerStyle::default()],
@@ -407,6 +511,187 @@ impl ComputedPaintStyle {
             crate::PropertyImpactSet::PAINT
         }
     }
+}
+
+fn resolve_shadow_length(
+    value: &ComponentValue<crate::LengthValue>,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<f32, StyleResolutionError> {
+    Ok(resolve_affine(
+        &LengthPercentageValue::Length(*component(value)),
+        inherited.font_size(),
+        environment,
+        property,
+    )?
+    .length())
+}
+
+fn resolve_box_shadow(
+    value: &BoxShadowValue,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedBoxShadow, StyleResolutionError> {
+    let blur_radius = resolve_shadow_length(&value.blur_radius, inherited, environment, property)?;
+    if blur_radius < 0.0 {
+        return Err(invalid(property));
+    }
+    Ok(ComputedBoxShadow {
+        offset_x: StyleNumber::new(resolve_shadow_length(
+            &value.offset_x,
+            inherited,
+            environment,
+            property,
+        )?),
+        offset_y: StyleNumber::new(resolve_shadow_length(
+            &value.offset_y,
+            inherited,
+            environment,
+            property,
+        )?),
+        blur_radius: StyleNumber::new(blur_radius),
+        spread_radius: StyleNumber::new(resolve_shadow_length(
+            &value.spread_radius,
+            inherited,
+            environment,
+            property,
+        )?),
+        color: component(&value.color).clone(),
+        inset: value.inset,
+    })
+}
+
+fn resolve_clip_path(
+    value: &ClipPathValue,
+    inherited: &InheritedStyle,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<Option<ComputedClipPath>, StyleResolutionError> {
+    let ClipPathValue::Shape {
+        reference_box,
+        shape,
+    } = value
+    else {
+        return Ok(None);
+    };
+    let length = |value: &LengthPercentageValue| {
+        resolve_affine(value, inherited.font_size(), environment, property)
+    };
+    let point = |value: &crate::ClipPointValue| {
+        Ok(ComputedClipPoint {
+            x: length(&value.x)?,
+            y: length(&value.y)?,
+        })
+    };
+    let shape = match shape {
+        ClipShapeValue::Inset { offsets, radii } => {
+            let offsets = Edges {
+                top: length(&offsets[0])?,
+                right: length(&offsets[1])?,
+                bottom: length(&offsets[2])?,
+                left: length(&offsets[3])?,
+            };
+            let radii = match radii {
+                Some(radii) => Corners {
+                    top_left: resolve_radius_axes(
+                        &radii[0].horizontal,
+                        &radii[0].vertical,
+                        inherited,
+                        environment,
+                        property,
+                    )?,
+                    top_right: resolve_radius_axes(
+                        &radii[1].horizontal,
+                        &radii[1].vertical,
+                        inherited,
+                        environment,
+                        property,
+                    )?,
+                    bottom_right: resolve_radius_axes(
+                        &radii[2].horizontal,
+                        &radii[2].vertical,
+                        inherited,
+                        environment,
+                        property,
+                    )?,
+                    bottom_left: resolve_radius_axes(
+                        &radii[3].horizontal,
+                        &radii[3].vertical,
+                        inherited,
+                        environment,
+                        property,
+                    )?,
+                },
+                None => Corners::all(ComputedCornerRadius::ZERO),
+            };
+            ComputedClipShape::Inset { offsets, radii }
+        }
+        ClipShapeValue::Circle {
+            radius,
+            center_x,
+            center_y,
+        } => ComputedClipShape::Circle {
+            radius: length(radius)?,
+            center: ComputedClipPoint {
+                x: length(center_x)?,
+                y: length(center_y)?,
+            },
+        },
+        ClipShapeValue::Ellipse {
+            radius_x,
+            radius_y,
+            center_x,
+            center_y,
+        } => ComputedClipShape::Ellipse {
+            radius_x: length(radius_x)?,
+            radius_y: length(radius_y)?,
+            center: ComputedClipPoint {
+                x: length(center_x)?,
+                y: length(center_y)?,
+            },
+        },
+        ClipShapeValue::Path {
+            fill_rule,
+            commands,
+        } => ComputedClipShape::Path {
+            fill_rule: *fill_rule,
+            commands: commands
+                .iter()
+                .map(|command| {
+                    Ok(match command {
+                        ClipPathCommandValue::MoveTo(value) => {
+                            ComputedClipPathCommand::MoveTo(point(value)?)
+                        }
+                        ClipPathCommandValue::LineTo(value) => {
+                            ComputedClipPathCommand::LineTo(point(value)?)
+                        }
+                        ClipPathCommandValue::QuadraticTo { control, end } => {
+                            ComputedClipPathCommand::QuadraticTo {
+                                control: point(control)?,
+                                end: point(end)?,
+                            }
+                        }
+                        ClipPathCommandValue::CubicTo {
+                            control_1,
+                            control_2,
+                            end,
+                        } => ComputedClipPathCommand::CubicTo {
+                            control_1: point(control_1)?,
+                            control_2: point(control_2)?,
+                            end: point(end)?,
+                        },
+                        ClipPathCommandValue::Close => ComputedClipPathCommand::Close,
+                    })
+                })
+                .collect::<Result<Vec<_>, StyleResolutionError>>()?,
+        },
+    };
+    Ok(Some(ComputedClipPath {
+        reference_box: *reference_box,
+        shape,
+    }))
 }
 
 pub(crate) fn resolve_paint_style(
@@ -447,6 +732,21 @@ pub(crate) fn resolve_paint_style(
                         Some(StyleNumber::new(radius))
                     }
                 };
+            }
+            StyleProperty::BoxShadow => {
+                let StyleValue::BoxShadows(values) = value else {
+                    return Err(invalid(property));
+                };
+                paint.box_shadows = values
+                    .iter()
+                    .map(|value| resolve_box_shadow(value, inherited, environment, property))
+                    .collect::<Result<_, _>>()?;
+            }
+            StyleProperty::ClipPath => {
+                let StyleValue::ClipPath(value) = value else {
+                    return Err(invalid(property));
+                };
+                paint.clip_path = resolve_clip_path(value, inherited, environment, property)?;
             }
             StyleProperty::Transform => {
                 let StyleValue::Transform(value) = value else {

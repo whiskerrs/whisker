@@ -11,6 +11,8 @@ fn paint_style() -> ComputedPaintStyle {
         background_color: color("background"),
         background_images: Vec::new(),
         background_layers: vec![Default::default()],
+        box_shadows: Vec::new(),
+        clip_path: None,
         border_colors: Edges {
             top: color("top"),
             right: color("right"),
@@ -231,7 +233,7 @@ fn canonicalizes_three_dimensional_output_to_the_node_plane() {
 }
 
 #[test]
-fn prepends_lynx_current_node_perspective_to_the_transform_matrix() {
+fn prepends_current_node_perspective_to_the_transform_matrix() {
     let style = ComputedTransformStyle {
         perspective: Some(StyleNumber::new(100.0)),
         offset_path: OffsetPathValue::None,

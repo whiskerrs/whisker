@@ -11,7 +11,7 @@ impl Css {
     /// Sets `transition-property` — the property to transition.
     /// <https://lynxjs.org/api/css/properties/transition-property>
     pub fn transition_property(self, v: TransitionPropertyKind) -> Self {
-        self.push(crate::StyleProperty::TransitionProperty, v)
+        self.push_typed(crate::StyleProperty::TransitionProperty, v)
     }
 
     /// Sets `transition-duration`.

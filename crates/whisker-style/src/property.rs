@@ -24,12 +24,8 @@ impl StylePropertyId {
 pub enum PropertyOrigin {
     /// A standard, non-deprecated CSS property in Whisker's conformance target.
     Css,
-    /// A WebKit compatibility property supported by Lynx.
+    /// A WebKit compatibility spelling retained by a Host.
     Webkit,
-    /// A Lynx-specific extension whose name starts with `-x-`.
-    Lynx,
-    /// A Lynx-specific extension without a vendor prefix.
-    LynxUnprefixed,
 }
 
 /// Static metadata for one common style property.
@@ -37,9 +33,9 @@ pub enum PropertyOrigin {
 pub struct PropertyMetadata {
     /// Stable renderer-facing ID.
     pub id: StylePropertyId,
-    /// Compatibility spelling used by the temporary Lynx serializer.
+    /// Canonical CSS spelling used for diagnostics and serialization.
     pub css_name: &'static str,
-    /// Origin of the compatibility spelling and semantics.
+    /// Origin of the spelling and semantics.
     pub origin: PropertyOrigin,
     /// Whether an omitted value inherits from the nearest ancestor.
     ///
@@ -104,12 +100,12 @@ macro_rules! define_style_properties {
                 StylePropertyId(self as u32)
             }
 
-            /// Returns the compatibility CSS/Lynx spelling.
+            /// Returns the canonical CSS spelling.
             pub const fn css_name(self) -> &'static str {
                 match self { $(Self::$variant => $name,)* }
             }
 
-            /// Resolves a compatibility spelling to its stable property.
+            /// Resolves a CSS spelling to its stable property.
             pub fn from_css_name(name: &str) -> Option<Self> {
                 match name { $($name => Some(Self::$variant),)* _ => None }
             }

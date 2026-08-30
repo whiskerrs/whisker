@@ -286,9 +286,9 @@ fn border_radius_full_elliptical_expands_to_semantic_corner_longhands() {
     );
     assert!(s.resolved().into_iter().all(|declaration| matches!(
         declaration.style_value(),
-        Some(whisker_style::StyleValue::BorderRadius(_))
+        whisker_style::StyleValue::BorderRadius(_)
     )));
-    let specified = s.to_specified_style().unwrap();
+    let specified = s.to_specified_style();
     let resolved =
         whisker_style::resolve_style(&specified, None, whisker_style::StyleEnvironment::default())
             .unwrap();

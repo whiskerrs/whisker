@@ -122,7 +122,7 @@ pub fn owners_for_fn(fn_ptr: *const ()) -> Vec<Owner> {
 // Per-component remount. `mount_component_remountable` returns the
 // body's root element directly — no wrapper element sits between a
 // component body and its parent, so the Whisker component tree maps
-// 1:1 onto the Lynx element tree.
+// 1:1 onto the Host element tree.
 //
 // With no wrapper to serve as a stable placeholder, each mount's
 // `(parent, previous_sibling)` is captured lazily: the mount stashes
@@ -244,7 +244,7 @@ pub fn __reset_pending_mount_for_tests() {
 ///
 /// Runs `body` inside a fresh owner and returns the body's root
 /// element directly to the caller. No wrapper element is created, so
-/// the Whisker component tree maps 1:1 with the Lynx element tree.
+/// the Whisker component tree maps 1:1 with the Host element tree.
 ///
 /// To make remount work without a stable wrapper handle in the
 /// parent's child list, the function stashes a pending-mount entry
@@ -447,7 +447,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
 
     // Detach every old body_root *before* any dispose runs.
     // `Owner::dispose` invalidates element handles, after which
-    // `remove_child` silently no-ops against Lynx and the stale subtree
+    // `remove_child` silently no-ops after the handle is invalid and the stale subtree
     // stays on screen.
     let mut by_parent: std::collections::HashMap<Element, Vec<(Element, Option<Element>)>> =
         std::collections::HashMap::new();

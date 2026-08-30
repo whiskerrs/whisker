@@ -11,9 +11,8 @@
 //!   control flow.
 //! - [`runtime_wake`] — Host's "wake up" callback, pinged by the reactive
 //!   scheduler when new work appears.
-//! - [`main_thread`] — `run_on_main_thread`, the worker-thread →
-//!   TASM-thread marshaling primitive used to update signals from
-//!   background work (HTTP fetch, channels, etc.).
+//! - [`dispatch`] — instance-scoped posting back to the Host-owned runtime
+//!   thread from background work.
 
 pub mod anim_hook;
 mod background_resources;
@@ -21,7 +20,6 @@ mod dispatch;
 pub mod element;
 mod element_registry;
 pub mod event;
-pub mod main_thread;
 pub mod module;
 pub mod reactive;
 mod runtime_context;

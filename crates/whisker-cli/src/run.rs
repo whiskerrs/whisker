@@ -50,14 +50,6 @@ pub struct Args {
     #[arg(long)]
     pub workspace_root: Option<PathBuf>,
 
-    /// Show every line of the device's stdout/stderr stream, including
-    /// Lynx C++ engine chatter (`s_glBindAttribLocation: …` and
-    /// friends) that the curated default suppresses. Useful when
-    /// triaging engine-level issues; noisy for typical app
-    /// development. Pair with `WHISKER_VERBOSE=1` for the full picture.
-    #[arg(long)]
-    pub show_native_logs: bool,
-
     /// Disable the inline ratatui status bar at the bottom of the
     /// terminal. On by default when stderr is a TTY; auto-off when
     /// piping to a file or running under CI. Use this when running
@@ -201,7 +193,7 @@ fn run_inner(
     // would duplicate the "▶ Setup" scrollback entry.
     //
     // Android and iOS generation is self-contained. Their bootstrap projects
-    // are plain platform applications and resolve no legacy Lynx artifacts.
+    // are plain platform applications backed by the Whisker Host SDK.
 
     // cng templates are `include_str!`-baked into this binary, so a CLI
     // older than the sources under `crates/whisker-cng/src` renders
@@ -300,7 +292,6 @@ fn run_inner(
         .enable_all()
         .build()
         .context("build tokio runtime")?;
-    let show_native_logs = args.show_native_logs;
     let tui_for_events = tui.cloned();
 
     // Reload shortcuts (`r` / `R` in the TUI) flow through this
@@ -321,7 +312,7 @@ fn run_inner(
                 // `ui::info` captured back through stderr).
                 h.apply_event(&e);
             } else {
-                forward_event_to_ui(e, show_native_logs);
+                forward_event_to_ui(e);
             }
         });
 
@@ -564,10 +555,7 @@ fn target_label(target: Target) -> &'static str {
 /// here; everything else is already covered by `whisker_build::ui`
 /// calls inside the dev loop.
 ///
-/// When `show_native_logs` is false (the default), device lines that
-/// match [`is_native_engine_noise`] are dropped silently. The escape
-/// hatch is `whisker run --show-native-logs`.
-fn forward_event_to_ui(event: whisker_dev_server::Event, show_native_logs: bool) {
+fn forward_event_to_ui(event: whisker_dev_server::Event) {
     use whisker_dev_server::Event;
     if let Event::DeviceLog {
         stream,
@@ -575,9 +563,6 @@ fn forward_event_to_ui(event: whisker_dev_server::Event, show_native_logs: bool)
         ts_micros: _,
     } = event
     {
-        if !show_native_logs && is_native_engine_noise(&line) {
-            return;
-        }
         // Short prefix so the column alignment stays compact next to
         // `whisker_build::ui::info`'s own output.
         let tag = match stream.as_str() {
@@ -585,81 +570,6 @@ fn forward_event_to_ui(event: whisker_dev_server::Event, show_native_logs: bool)
             _ => "device",
         };
         whisker_build::ui::info(format!("[{tag}] {line}"));
-    }
-}
-
-/// Identify lines that come from the Lynx C++ engine's debug stderr
-/// rather than the user's own Rust code. Lynx's Skia/GL backend
-/// prints per-program attribute-binding traces (`s_glBindAttribLocation:
-/// bind attrib N name X`) on every frame draw and a handful of other
-/// engine-internal log lines that are not actionable from app code.
-///
-/// The filter intentionally errs toward letting unknown lines through
-/// — these patterns are bounded to specific known-noisy Lynx prefixes,
-/// so genuine error output and user `eprintln!`s are never silenced.
-fn is_native_engine_noise(line: &str) -> bool {
-    let t = line.trim_start();
-    // The `s_gl<CamelCase>(` form is Skia-internal only, and shows up
-    // dozens of times per frame on first paint.
-    const LYNX_NOISE_PREFIXES: &[&str] = &[
-        "s_glBindAttribLocation:",
-        "s_glGetUniformLocation:",
-        "s_glGetAttribLocation:",
-    ];
-    for prefix in LYNX_NOISE_PREFIXES {
-        if t.starts_with(prefix) {
-            return true;
-        }
-    }
-    false
-}
-
-#[cfg(test)]
-mod device_log_filter_tests {
-    use super::is_native_engine_noise;
-
-    #[test]
-    fn drops_lynx_skia_bind_attrib_traces() {
-        assert!(is_native_engine_noise(
-            "s_glBindAttribLocation: bind attrib 0 name position"
-        ));
-        assert!(is_native_engine_noise(
-            "s_glBindAttribLocation: bind attrib 2 name inTextureCoords"
-        ));
-        assert!(is_native_engine_noise(
-            "s_glGetUniformLocation: query uniform u_mvp"
-        ));
-    }
-
-    #[test]
-    fn drops_indented_lynx_traces() {
-        // Belt-and-braces: native printf output sometimes lands with a
-        // leading space or tab from libc buffering.
-        assert!(is_native_engine_noise("  s_glBindAttribLocation: bind 1"));
-        assert!(is_native_engine_noise(
-            "\ts_glGetAttribLocation: query in_color"
-        ));
-    }
-
-    #[test]
-    fn preserves_user_println_output() {
-        assert!(!is_native_engine_noise("podcast: app() starting"));
-        assert!(!is_native_engine_noise("info: loaded 12 items from cache"));
-        // Even patterns that touch `gl` but aren't Lynx's known
-        // tracers should pass through — the filter list is precise
-        // by design.
-        assert!(!is_native_engine_noise("openglRenderer: skia init OK"));
-        assert!(!is_native_engine_noise(
-            "warning: glsl shader compilation took 42ms"
-        ));
-    }
-
-    #[test]
-    fn preserves_panics_and_errors() {
-        assert!(!is_native_engine_noise(
-            "thread 'main' panicked at 'index out of bounds'"
-        ));
-        assert!(!is_native_engine_noise("error: failed to parse JSON"));
     }
 }
 
