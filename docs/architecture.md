@@ -94,13 +94,14 @@ through a narrow FFI Driver; Desktop and Web compose the same runtime directly.
 
    platforms/desktop   — shared native Desktop Host services: cosmic-text
                          measurement/prepared glyphs, retained FrameSink
-                         projection, common frame drive, and wgpu paint.
+                         projection, common winit frame/event shell, and wgpu
+                         paint.
                          Scene, batching, shaders, and GPU resources are common
                          to macOS, Windows, and Linux.
-   platforms/macos     — macOS window lifecycle, viewport/scale sampling,
-                         frame scheduling, and generated app API.
-   platforms/windows   — symmetric Windows application shell.
-   platforms/linux     — symmetric Linux application shell.
+   platforms/macos     — macOS-named generated app interface and seam for
+                         genuine native macOS integration.
+   platforms/windows   — symmetric Windows target interface.
+   platforms/linux     — symmetric Linux target interface.
    platforms/web       — Rust/WASM browser Host: DOM text measurement,
                          requestAnimationFrame scheduling, and semantic frame
                          application to explicitly positioned DOM nodes.
@@ -127,10 +128,10 @@ through a narrow FFI Driver; Desktop and Web compose the same runtime directly.
 | `whisker-cng` | Continuous Native Generation: pure, fingerprint-gated renderer of complete `gen/<platform>/` projects from Config. No CLI surface. | `whisker-cli` |
 | `whisker-runtime-android` | Android Host SDK library. It owns `WhiskerView`, frame scheduling, intrinsic measurement, retained View projection, module dispatch, and paint. Generated apps only compose it from `MainActivity`. | generated `gen/android` app |
 | `WhiskerRuntime` | iOS Host SwiftPM library with the symmetric UIKit ownership. Generated apps receive it transitively through `WhiskerModules` and only compose it from `AppDelegate`. | generated `gen/ios` app |
-| `whisker-desktop` | Common native Rust Desktop Host services and direct runtime composition boundary. It owns cosmic-text intrinsic measurement with reusable prepared content, the transactionally retained Host projection, common frame driving, and wgpu scene lowering, batching, shaders, and painting. Host conformance scenarios can drive measurement and frame presentation without `RuntimeInstance`, record normalized input at a mock Rust sink, and run offscreen GPU checkpoints. It does not own a native event loop or window policy. | macOS/Windows/Linux application shells |
-| `whisker-macos` | macOS application shell preserving the public API consumed by generated projects. It owns winit lifecycle, window creation, viewport/scale observation, redraw scheduling, packaging hooks, and native services. | generated `gen/macos` app |
-| `whisker-windows` | Symmetric Windows application shell over `whisker-desktop`; CNG/build/run integration follows separately. | future generated `gen/windows` app |
-| `whisker-linux` | Symmetric Linux application shell over `whisker-desktop`; CNG/build/run integration follows separately. | future generated `gen/linux` app |
+| `whisker-desktop` | Common native Rust Desktop Host services and direct runtime composition seam. It owns cosmic-text intrinsic measurement with reusable prepared content, the transactionally retained Host projection, common frame driving, the shared winit lifecycle/event translation, and wgpu scene lowering, batching, shaders, and painting. Host conformance scenarios can drive measurement and frame presentation without `RuntimeInstance`, record normalized input at a mock Rust sink, and run offscreen GPU checkpoints. | macOS/Windows/Linux target crates |
+| `whisker-macos` | Thin macOS target crate preserving the OS-named interface consumed by generated projects and providing the seam for future native-only integration. Common winit behavior remains in `whisker-desktop`. | generated `gen/macos` app |
+| `whisker-windows` | Symmetric Windows target crate over `whisker-desktop`; CNG/build/run integration follows separately. | future generated `gen/windows` app |
+| `whisker-linux` | Symmetric Linux target crate over `whisker-desktop`; CNG/build/run integration follows separately. | future generated `gen/linux` app |
 | `whisker-web` | Browser DOM Host. It drives `RuntimeInstance` from `requestAnimationFrame`, supplies current browser viewport/scale metrics, measures intrinsic text in the DOM, and applies layout/paint/text operations without making browser layout authoritative. | generated `gen/web` WASM app |
 | `whisker-plugin` | CNG plugin surface: `Plugin` trait, IR types, JSON envelope, subprocess runner shared by the engine and 3rd-party plugin binaries. | `whisker-cng`, 3rd-party plugins |
 | `whisker-protocol` | Host-independent semantic frame, intrinsic-measurement, and normalized input types; stable IDs; strict batch validation; and transactional retained-tree validation. Plain text and common box paint are retained semantic presentation, while pointer/provider events enter Rust through typed input values. The legacy production Lynx path does not consume this protocol. | scene engine and Host providers |

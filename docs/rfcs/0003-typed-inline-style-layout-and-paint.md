@@ -706,14 +706,14 @@ packet without knowing the Host representation.
 
 Presentation is implemented from focused low-level Rust facilities for GPU
 access, shaping/rasterization, atlas allocation, paths, and accessibility.
-Those common dependencies are owned by `platforms/desktop`, while each OS
-shell owns its window-event dependency; Whisker core never depends on any
-Desktop Host crate. The Desktop paint pass lowers the accepted Host projection
+Those common dependencies and the common `winit` window/event shell are owned
+by `platforms/desktop`; Whisker core never depends on any Desktop Host crate.
+The Desktop paint pass lowers the accepted Host projection
 into quads, shadows, paths, glyph/image sprites, clips, layers, and external
 surfaces, then submits GPU work. `platforms/macos`, `platforms/windows`, and
-`platforms/linux` are symmetric window-lifecycle, frame-scheduling, and
-packaging shells over that common Host; they do not fork the common scene or
-renderer.
+`platforms/linux` are symmetric OS-named target interfaces over that common
+Host and the seams for genuine native-only integration; they do not fork the
+common lifecycle, scene, or renderer.
 
 Host source trees are organized by semantic capability rather than CSS
 spelling: measurement/text, paint/box, paint/text, clip, transform,

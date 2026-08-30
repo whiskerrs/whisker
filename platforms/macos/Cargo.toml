@@ -11,10 +11,5 @@ keywords.workspace = true
 categories.workspace = true
 description = "Native macOS adapter for Whisker Desktop applications."
 
-[dependencies]
-whisker = { workspace = true }
+[target.'cfg(target_os = "macos")'.dependencies]
 whisker-desktop = { workspace = true }
-whisker-protocol = { workspace = true }
-whisker-style = { workspace = true }
-pollster = "0.4.0"
-winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
