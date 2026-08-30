@@ -9,6 +9,7 @@
 use super::*;
 use whisker_css::data_type::Color;
 use whisker_runtime::reactive::{Owner, ReadSignal, flush};
+use whisker_runtime::{RuntimeContext, RuntimeWakeHandle};
 
 /// Reset thread-local runtime + animation scheduler.
 fn fresh() {
@@ -19,6 +20,44 @@ fn fresh() {
 /// Approximate float equality for progress/value assertions.
 fn approx(a: f32, b: f32) -> bool {
     (a - b).abs() < 1e-3
+}
+
+#[test]
+fn animation_schedulers_are_isolated_between_runtime_contexts_on_one_thread() {
+    fresh();
+    let first = RuntimeContext::new(RuntimeWakeHandle::new(|| {}));
+    let second = RuntimeContext::new(RuntimeWakeHandle::new(|| {}));
+
+    let first_controller = first.enter(|| AnimationController::new(AnimConfig::linear(100)));
+    let second_controller = second.enter(|| AnimationController::new(AnimConfig::linear(100)));
+    first.enter(|| first_controller.forward());
+    second.enter(|| second_controller.forward());
+
+    first.enter(|| {
+        whisker_runtime::anim_hook::step(0.0);
+        whisker_runtime::anim_hook::step(50.0);
+        flush();
+    });
+
+    assert!(approx(
+        first.enter(|| first_controller.value().get_untracked()),
+        0.5
+    ));
+    assert!(approx(
+        second.enter(|| second_controller.value().get_untracked()),
+        0.0
+    ));
+
+    first.shutdown();
+    second.enter(|| {
+        whisker_runtime::anim_hook::step(0.0);
+        whisker_runtime::anim_hook::step(50.0);
+        flush();
+    });
+    assert!(approx(
+        second.enter(|| second_controller.value().get_untracked()),
+        0.5
+    ));
 }
 
 #[test]

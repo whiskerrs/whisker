@@ -4,9 +4,17 @@
 package rs.whisker.runtime
 
 import java.util.concurrent.ConcurrentHashMap
+import java.util.IdentityHashMap
 
-/** Process-wide module registry and Host-injected event sink. */
+/** Process-wide module registry and surface-scoped Host event subscriptions. */
 public object WhiskerModuleEventCenter {
+
+    private data class EventKey(val module: String, val event: String)
+
+    private class SurfaceSink(
+        var dispatch: (String, String, WhiskerValue) -> Unit,
+        val observed: MutableSet<EventKey> = mutableSetOf(),
+    )
 
     /**
      * `qualifiedName → Module` lookup the JNI trampolines consult
@@ -14,8 +22,8 @@ public object WhiskerModuleEventCenter {
      * `(module, event)` event.
      */
     private val modulesByName = ConcurrentHashMap<String, Module>()
-    @Volatile
-    private var eventSink: ((String, String, WhiskerValue) -> Unit)? = null
+    private val eventSinkLock = Any()
+    private val eventSinks = IdentityHashMap<Any, SurfaceSink>()
 
     /**
      * Register [module] after its qualified name has been assigned.
@@ -27,19 +35,68 @@ public object WhiskerModuleEventCenter {
         modulesByName[qname] = module
     }
 
-    /** Install the event consumer owned by the active Whisker Host. */
+    /** Install or remove the event consumer owned by one Host surface. */
     @JvmStatic
-    public fun installEventSink(sink: ((String, String, WhiskerValue) -> Unit)?) {
-        eventSink = sink
+    public fun installEventSink(
+        owner: Any,
+        sink: ((String, String, WhiskerValue) -> Unit)?,
+    ) {
+        val stopped = synchronized(eventSinkLock) {
+            if (sink == null) {
+                val removed = eventSinks.remove(owner) ?: return@synchronized emptyList()
+                removed.observed.filterTo(mutableListOf()) { key ->
+                    eventSinks.values.none { key in it.observed }
+                }
+            } else {
+                val existing = eventSinks[owner]
+                if (existing == null) {
+                    eventSinks[owner] = SurfaceSink(sink)
+                } else {
+                    existing.dispatch = sink
+                }
+                emptyList()
+            }
+        }
+        stopped.forEach { key -> fireStop(key.module, key.event) }
     }
 
-    /** Forward a module event to the active Host, if one is installed. */
+    /** Update one surface's first/last Rust-side subscription. */
+    @JvmStatic
+    public fun setObserving(
+        owner: Any,
+        moduleName: String,
+        eventName: String,
+        observing: Boolean,
+    ) {
+        val key = EventKey(moduleName, eventName)
+        val transition = synchronized(eventSinkLock) {
+            val surface = eventSinks[owner] ?: return
+            if (observing) {
+                if (!surface.observed.add(key)) return
+                eventSinks.values.count { key in it.observed } == 1
+            } else {
+                if (!surface.observed.remove(key)) return
+                eventSinks.values.none { key in it.observed }
+            }
+        }
+        if (transition) {
+            if (observing) fireStart(moduleName, eventName) else fireStop(moduleName, eventName)
+        }
+    }
+
+    /** Forward an event only to surfaces currently observing its channel. */
     internal fun dispatchSend(
         moduleName: String,
         eventName: String,
         payload: WhiskerValue,
     ) {
-        eventSink?.invoke(moduleName, eventName, payload)
+        val key = EventKey(moduleName, eventName)
+        val sinks = synchronized(eventSinkLock) {
+            eventSinks.values.filter { key in it.observed }.map { it.dispatch }
+        }
+        if (sinks.isEmpty()) return
+        val snapshot = payload.snapshotForDispatch()
+        sinks.forEach { sink -> sink(moduleName, eventName, snapshot) }
     }
 
     /**
@@ -47,14 +104,29 @@ public object WhiskerModuleEventCenter {
      * Hosts call this when wiring Rust-side subscriptions.
      */
     @JvmStatic
-    public fun fireStart(moduleName: String, eventName: String) {
+    internal fun fireStart(moduleName: String, eventName: String) {
         modulesByName[moduleName]?.fireOnStartObserving(eventName)
     }
 
     /** Counterpart to [fireStart] — fires on 1 → 0 transitions. */
     @JvmStatic
-    public fun fireStop(moduleName: String, eventName: String) {
+    internal fun fireStop(moduleName: String, eventName: String) {
         modulesByName[moduleName]?.fireOnStopObserving(eventName)
     }
 
+}
+
+/** Own mutable byte/container storage before crossing an asynchronous Host turn. */
+private fun WhiskerValue.snapshotForDispatch(): WhiskerValue = when (this) {
+    WhiskerValue.Null -> this
+    is WhiskerValue.Bool -> this
+    is WhiskerValue.Int -> this
+    is WhiskerValue.Float -> this
+    is WhiskerValue.Str -> this
+    is WhiskerValue.Bytes -> WhiskerValue.Bytes(value.copyOf())
+    is WhiskerValue.Array -> WhiskerValue.Array(value.map { it.snapshotForDispatch() })
+    is WhiskerValue.Map -> WhiskerValue.Map(
+        value.entries.associate { (key, item) -> key to item.snapshotForDispatch() },
+    )
+    is WhiskerValue.Err -> this
 }

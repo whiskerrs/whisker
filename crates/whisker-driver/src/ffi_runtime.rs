@@ -381,8 +381,13 @@ pub unsafe fn dispatch_module_event(
         return false;
     };
     let payload = unsafe { decode_value(payload) };
-    let modules = std::rc::Rc::clone(&mobile.modules);
-    with_module_host(&modules, || modules.dispatch_event(module, event, payload))
+    mobile
+        .runtime
+        .dispatch_module_event(&mobile.modules, module, event, payload)
+        .unwrap_or_else(|error| {
+            mobile_error(format_args!("Whisker mobile module event failed: {error}"));
+            false
+        })
 }
 
 /// # Safety

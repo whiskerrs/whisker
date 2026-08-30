@@ -18,6 +18,8 @@ import rs.whisker.runtime.measure.HostMeasurementProvider
 import rs.whisker.runtime.measure.HostMeasureBatchAbi
 import rs.whisker.runtime.measure.HostMeasureBatchResponse
 import rs.whisker.runtime.module.HostModuleDispatcher
+import rs.whisker.runtime.module.PendingModuleEvent
+import rs.whisker.runtime.module.PendingModuleEvents
 import rs.whisker.runtime.paint.HostRasterResourceStore
 import rs.whisker.runtime.resource.HostResourceAbiEvent
 import rs.whisker.runtime.resource.HostResourceChannel
@@ -61,6 +63,26 @@ class WhiskerView(context: Context) :
     private var backdropCaptureReached = false
     private val pendingContinuousEvents = PendingContinuousEvents()
     private var continuousEventFlushPending = false
+    private val pendingModuleEvents = PendingModuleEvents()
+    private val moduleEventFlush = Runnable {
+        val pending = pendingModuleEvents.drain(moduleEventSinkEpoch)
+        if (pending.isEmpty()) return@Runnable
+        scene.dispatchOrDefer {
+            val handle = nativeHandle
+            if (handle == 0L) return@dispatchOrDefer
+            var dispatched = false
+            pending.forEach { moduleEvent ->
+                dispatched = nativeDispatchModuleEvent(
+                    handle,
+                    moduleEvent.module,
+                    moduleEvent.event,
+                    moduleEvent.payload,
+                ) || dispatched
+            }
+            if (dispatched) requestFrameFromNative()
+        }
+    }
+    private var moduleEventSinkEpoch = 0L
     private val continuousEventFlush = Runnable {
         val pending = pendingContinuousEvents.drain()
         if (nativeHandle == 0L || pending.isEmpty()) return@Runnable
@@ -119,29 +141,41 @@ class WhiskerView(context: Context) :
 
     private fun mountWhenSized() {
         if (nativeHandle == 0L && isAttachedToWindow && width > 0 && height > 0) {
-            WhiskerModuleEventCenter.installEventSink { module, event, payload ->
-                dispatchModuleEvent(module, event, payload)
+            moduleEventSinkEpoch += 1
+            val sinkEpoch = moduleEventSinkEpoch
+            WhiskerModuleEventCenter.installEventSink(this) { module, event, payload ->
+                val shouldPost = pendingModuleEvents.offer(
+                    PendingModuleEvent(sinkEpoch, module, event, payload),
+                )
+                if (shouldPost) {
+                    mainHandler.post(moduleEventFlush)
+                }
             }
             val density = resources.displayMetrics.density
             nativeHandle = nativeCreate(width / density, height / density, density)
             if (nativeHandle != 0L) {
                 requestFrameFromNative()
             } else {
+                moduleEventSinkEpoch += 1
+                WhiskerModuleEventCenter.installEventSink(this, null)
                 Log.e("WhiskerView", "Unable to create the Rust runtime; see bootstrap diagnostics above")
             }
         }
     }
 
     override fun onDetachedFromWindow() {
+        moduleEventSinkEpoch += 1
+        WhiskerModuleEventCenter.installEventSink(this, null)
         if (nativeHandle != 0L) nativeDestroy(nativeHandle)
         nativeHandle = 0L
         frameScheduled = false
         continuousEventFlushPending = false
         choreographer.removeFrameCallback(this)
         mainHandler.removeCallbacks(continuousEventFlush)
-        WhiskerModuleEventCenter.installEventSink(null)
+        mainHandler.removeCallbacks(moduleEventFlush)
         scene.clear()
         pendingContinuousEvents.clear()
+        pendingModuleEvents.clear()
         WhiskerAppContext.popRuntimeOwner(this)
         super.onDetachedFromWindow()
     }
@@ -514,26 +548,7 @@ class WhiskerView(context: Context) :
 
     /** Called by Rust on the first and last listener transition. */
     fun observeModuleFromNative(module: String, event: String, observing: Boolean) {
-        modules.observe(module, event, observing)
-    }
-
-    private fun dispatchModuleEvent(module: String, event: String, payload: WhiskerValue) {
-        scene.dispatchOrDefer {
-            val handle = nativeHandle
-            if (handle == 0L) {
-                // OnStartObserving can synchronously emit while nativeCreate is
-                // still returning its handle. Retry once on the next main-loop
-                // turn instead of dropping that initial value.
-                post {
-                    val mountedHandle = nativeHandle
-                    if (mountedHandle != 0L) {
-                        nativeDispatchModuleEvent(mountedHandle, module, event, payload)
-                    }
-                }
-            } else {
-                nativeDispatchModuleEvent(handle, module, event, payload)
-            }
-        }
+        modules.observe(this, module, event, observing)
     }
 
     /** Processes one native intrinsic-measurement batch in a single Host call. */
