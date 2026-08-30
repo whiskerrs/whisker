@@ -24,8 +24,6 @@ import rs.whisker.runtime.resolveWhiskerTypeface
 
 /** Intrinsic measurement implementation shared by all Android Host frames. */
 internal class HostMeasurementProvider(private val context: Context) {
-    var textInspectionObserver: ((IntArray, FloatArray) -> Unit)? = null
-
     @Suppress("LongParameterList")
     fun measure(
         elementType: Int, kind: Int,
@@ -121,17 +119,24 @@ internal class HostMeasurementProvider(private val context: Context) {
             availableWidthKind == DEFINITE -> availableWidth
             else -> 0f
         }
-        val indentPixels = indentLogicalPixels * density +
-            widthBasis * density * indentPercentage / 100f
         val displayText = if (wordBreak == WORD_BREAK_KEEP_ALL) protectCjkBreaks(text) else text
         val localeRtl = context.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
-        val resolvedRtl = resolvesRightToLeft(displayText, direction, localeRtl)
-        val layoutText: CharSequence = if (displayText.isEmpty() || indentPixels == 0f) {
+        val semantics = resolveTextLayoutSemantics(
+            displayText,
+            direction,
+            alignment,
+            localeRtl,
+            widthBasis,
+            density,
+            indentLogicalPixels,
+            indentPercentage,
+        )
+        val layoutText: CharSequence = if (displayText.isEmpty() || semantics.indentPixels == 0f) {
             displayText
         } else {
             SpannableString(displayText).apply {
                 setSpan(
-                    LeadingMarginSpan.Standard(indentPixels.toInt(), 0),
+                    LeadingMarginSpan.Standard(semantics.indentPixels.toInt(), 0),
                     0,
                     length,
                     Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
@@ -141,13 +146,13 @@ internal class HostMeasurementProvider(private val context: Context) {
         val maxWidthPx = if (availableWidthKind == DEFINITE && wrap != 0) {
             ceil(availableWidth * density).toInt().coerceAtLeast(1)
         } else {
-            ceil(paint.measureText(text) + indentPixels).toInt().coerceAtLeast(1)
+            ceil(paint.measureText(text) + semantics.indentPixels).toInt().coerceAtLeast(1)
         }
         val builder = StaticLayout.Builder.obtain(
             layoutText, 0, layoutText.length, paint, maxWidthPx,
         )
-            .setAlignment(resolveAlignment(alignment, resolvedRtl))
-            .setTextDirection(resolveDirectionHeuristic(direction, localeRtl))
+            .setAlignment(semantics.alignment)
+            .setTextDirection(semantics.directionHeuristic)
             .setIncludePad(false)
             .setMaxLines(if (maxLines == 0) Int.MAX_VALUE else maxLines)
             .setBreakStrategy(
@@ -162,15 +167,6 @@ internal class HostMeasurementProvider(private val context: Context) {
             builder.setLineSpacing((lineHeight * density - fontHeight).coerceAtLeast(0f), 1f)
         }
         val layout = builder.build()
-        textInspectionObserver?.invoke(
-            intArrayOf(
-                direction,
-                alignment,
-                if (layout.lineCount > 0) layout.getParagraphDirection(0) else if (resolvedRtl) -1 else 1,
-                layout.alignment.ordinal,
-            ),
-            floatArrayOf(indentPixels / density),
-        )
         val width = when {
             knownMask and WIDTH != 0 -> knownWidth
             availableWidthKind == DEFINITE && wrap != 0 ->
@@ -189,6 +185,32 @@ internal class HostMeasurementProvider(private val context: Context) {
 
     private fun ready(width: Float, height: Float): FloatArray =
         floatArrayOf(READY, 0f, width, height, 0f, 0f, 0f)
+}
+
+internal data class TextLayoutSemantics(
+    val alignment: Layout.Alignment,
+    val directionHeuristic: TextDirectionHeuristic,
+    val indentPixels: Float,
+)
+
+@Suppress("LongParameterList")
+internal fun resolveTextLayoutSemantics(
+    text: String,
+    direction: Int,
+    alignment: Int,
+    localeRtl: Boolean,
+    widthBasis: Float,
+    density: Float,
+    indentLogicalPixels: Float,
+    indentPercentage: Float,
+): TextLayoutSemantics {
+    val rightToLeft = resolvesRightToLeft(text, direction, localeRtl)
+    return TextLayoutSemantics(
+        alignment = resolveAlignment(alignment, rightToLeft),
+        directionHeuristic = resolveDirectionHeuristic(direction, localeRtl),
+        indentPixels = indentLogicalPixels * density +
+            widthBasis * density * indentPercentage / 100f,
+    )
 }
 
 private fun resolveDirectionHeuristic(

@@ -208,46 +208,22 @@ public final class WhiskerView: UIView {
         pointerID: UInt64,
         pointerKind: HostPointerKind,
         x: Float,
-        y: Float,
-        handle overrideHandle: UnsafeMutableRawPointer? = nil
-    ) {
-        guard timestampMs.isFinite, pointerID != 0, x.isFinite, y.isFinite,
-              let handle = overrideHandle ?? runtimeHandle else { return }
-        _ = dispatchWhiskerPointer(
-            handle: handle,
-            input: WhiskerPointerDispatch(
-                timestampMs: timestampMs,
-                event: event.rawValue,
-                pointerID: pointerID,
-                pointerKind: pointerKind.rawValue,
-                x: x,
-                y: y,
-                buttons: event.buttons,
-                changedButton: pointerKind.changedButton(for: event)
-            )
-        )
-    }
-
-#if WHISKER_HOST_CONFORMANCE
-    func dispatchConformanceTouchSample(
-        timestampMs: Double,
-        event: HostPointerEvent,
-        pointerID: UInt64,
-        pointerKind: HostPointerKind,
-        x: Float,
         y: Float
     ) {
-        dispatchTouchSample(
-            timestampMs: timestampMs,
-            event: event,
-            pointerID: pointerID,
-            pointerKind: pointerKind,
-            x: x,
-            y: y,
-            handle: UnsafeMutableRawPointer(bitPattern: 1)
+        guard let handle = runtimeHandle,
+              let input = makeWhiskerPointerDispatch(
+                  timestampMs: timestampMs,
+                  event: event,
+                  pointerID: pointerID,
+                  pointerKind: pointerKind,
+                  x: x,
+                  y: y
+              ) else { return }
+        _ = dispatchWhiskerPointer(
+            handle: handle,
+            input: input
         )
     }
-#endif
 
     private func unmount() {
         guard let handle = runtimeHandle else { return }
@@ -310,15 +286,6 @@ public final class WhiskerView: UIView {
     ) -> Bool {
         scene.applyFrame(frame, response: &response)
     }
-
-#if WHISKER_HOST_CONFORMANCE
-    func applyConformanceFrame(
-        _ frame: WhiskerMobileFrame,
-        response: inout WhiskerMobileApplyResponse
-    ) -> Bool {
-        scene.applyFrame(frame, response: &response)
-    }
-#endif
     private func dispatchElementEvent(node: UInt64, name: String, detail: WhiskerValue) {
         scene.dispatchOrDefer { [weak self] in
             guard let self, let handle = runtimeHandle else { return }
