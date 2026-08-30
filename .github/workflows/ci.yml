@@ -70,6 +70,46 @@ jobs:
             -x c++ /dev/null
       - run: cargo test -p whisker-driver-sys -p whisker-driver
 
+  mobile-link-test-android:
+    name: Mobile consumer link (Android)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - uses: gradle/actions/setup-gradle@v6
+      - uses: android-actions/setup-android@v3
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.1.12297006"
+      - name: Build and inspect generated Android consumer
+        run: cargo xtask mobile-link-test android
+        # Cross-target feature flags can emit rustc's own compatibility
+        # warnings. The regular clippy job remains the source warning gate.
+        env:
+          RUSTFLAGS: ""
+
+  mobile-link-test-ios:
+    name: Mobile consumer link (iOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim,x86_64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and inspect generated iOS consumer
+        run: cargo xtask mobile-link-test ios
+        # Cross-target feature flags can emit rustc's own compatibility
+        # warnings. The regular clippy job remains the source warning gate.
+        env:
+          RUSTFLAGS: ""
+
   msrv:
     name: MSRV (rust 1.85)
     runs-on: ubuntu-latest

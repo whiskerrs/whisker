@@ -47,6 +47,7 @@ members = [
     "examples/list-smoke",
     "examples/list-benchmark",
     "examples/carousel",
+    "tests/mobile-link-test",
     "packages/whisker-haptics",
     "packages/whisker-icons",
     "packages/whisker-icons/example",
@@ -110,6 +111,7 @@ whisker = { path = "crates/whisker", version = "0.12.0" }
 whisker-animation = { path = "crates/whisker-animation", version = "0.12.0" }
 whisker-config = { path = "crates/whisker-config", version = "0.12.0" }
 whisker-build = { path = "crates/whisker-build", version = "0.12.0" }
+whisker-cli = { path = "crates/whisker-cli", version = "0.12.0" }
 whisker-cng = { path = "crates/whisker-cng", version = "0.12.0" }
 whisker-credentials = { path = "crates/whisker-credentials", version = "0.12.0" }
 whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.12.0" }

@@ -7,6 +7,7 @@ use std::process::{Command, Output};
 use anyhow::{Context, Result, bail};
 
 mod mobile_abi;
+mod mobile_link_test;
 
 fn main() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
@@ -17,8 +18,11 @@ fn main() -> Result<()> {
         (Some("mobile-abi"), Some(mode)) if arguments.next().is_none() => {
             mobile_abi::run(&workspace_root()?, mode)
         }
+        (Some("mobile-link-test"), Some(host)) if arguments.next().is_none() => {
+            mobile_link_test::run(&workspace_root()?, host)
+        }
         _ => bail!(
-            "usage: cargo xtask host-conformance <desktop|web|android|ios>\n       cargo xtask mobile-abi <generate|check>"
+            "usage: cargo xtask host-conformance <desktop|web|android|ios>\n       cargo xtask mobile-abi <generate|check>\n       cargo xtask mobile-link-test <android|ios>"
         ),
     }
 }

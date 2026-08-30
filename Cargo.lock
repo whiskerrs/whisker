@@ -2915,6 +2915,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mobile-link-test"
+version = "0.0.0"
+dependencies = [
+ "whisker",
+]
+
+[[package]]
 name = "moka"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7044,6 +7051,9 @@ dependencies = [
  "anyhow",
  "cbindgen",
  "serde_json",
+ "whisker-build",
+ "whisker-cli",
+ "whisker-dev-server",
  "zip",
 ]
 
