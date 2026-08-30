@@ -56,6 +56,25 @@ pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
     capture_env_vars_for_triple(c, c.target_triple.as_deref())
 }
 
+/// Capture a generated Host project and all of its path dependencies.
+///
+/// Cargo's `RUSTC_WORKSPACE_WRAPPER` only sees members of the generated
+/// workspace. Desktop applications keep user code as a normal path
+/// dependency, so their fat build uses `RUSTC_WRAPPER` while retaining the
+/// same linker and codegen flags.
+pub fn capture_env_vars_all_crates(c: &CaptureShims) -> Vec<(String, String)> {
+    capture_env_vars(c)
+        .into_iter()
+        .map(|(key, value)| {
+            if key == "RUSTC_WORKSPACE_WRAPPER" {
+                ("RUSTC_WRAPPER".to_string(), value)
+            } else {
+                (key, value)
+            }
+        })
+        .collect()
+}
+
 /// Like [`capture_env_vars`] but applies the linker shim + rustflags
 /// to `triple_override` instead of `c.target_triple`. Multi-triple
 /// builds (iOS emits dylibs for device + intel-sim + arm64-sim) need
@@ -224,6 +243,16 @@ mod tests {
         assert!(names.contains("WHISKER_REAL_LINKER"));
         assert!(names.contains("CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"));
         assert!(names.contains("CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS"));
+    }
+
+    #[test]
+    fn all_crates_capture_replaces_only_the_workspace_wrapper() {
+        let vars = capture_env_vars_all_crates(&shim_for_triple(Some("aarch64-apple-darwin")));
+        let names: std::collections::HashSet<&str> = vars.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(names.contains("RUSTC_WRAPPER"));
+        assert!(!names.contains("RUSTC_WORKSPACE_WRAPPER"));
+        assert!(names.contains("WHISKER_RUSTC_CACHE_DIR"));
+        assert!(names.contains("CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER"));
     }
 
     #[test]

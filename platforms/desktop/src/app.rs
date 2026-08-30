@@ -150,9 +150,18 @@ impl fmt::Display for DesktopAppError {
 impl Error for DesktopAppError {}
 
 /// Runs a standalone Whisker application in a native Desktop window.
-pub fn run(
+pub fn run(config: DesktopAppConfig, application: fn() -> Element) -> Result<(), DesktopAppError> {
+    run_with_application_hash(config, application, || 0)
+}
+
+/// Runs a standalone Whisker application with its generated source hash.
+///
+/// The hash is ignored in normal builds. With the `hot-reload` feature it
+/// distinguishes an edited application root from a component-only update.
+pub fn run_with_application_hash(
     mut config: DesktopAppConfig,
     application: fn() -> Element,
+    application_hash: fn() -> u64,
 ) -> Result<(), DesktopAppError> {
     let built_ins = BuiltInElementModule::definition();
     config
@@ -174,7 +183,8 @@ pub fn run(
         .build()
         .map_err(|error| DesktopAppError(format!("create {TARGET_NAME} event loop: {error}")))?;
     let proxy = event_loop.create_proxy();
-    let mut application = DesktopApplication::new(config, elements, application, proxy);
+    let mut application =
+        DesktopApplication::new(config, elements, application, application_hash, proxy);
     event_loop
         .run_app(&mut application)
         .map_err(|error| DesktopAppError(format!("run {TARGET_NAME} event loop: {error}")))
@@ -189,6 +199,8 @@ struct DesktopApplication {
     config: DesktopAppConfig,
     elements: ElementRegistry,
     application: fn() -> Element,
+    application_hash: fn() -> u64,
+    hot_reload: Option<DesktopHotReload>,
     proxy: EventLoopProxy<HostEvent>,
     window: Option<Arc<Window>>,
     runtime: Option<RuntimeInstance>,
@@ -207,12 +219,15 @@ impl DesktopApplication {
         config: DesktopAppConfig,
         elements: ElementRegistry,
         application: fn() -> Element,
+        application_hash: fn() -> u64,
         proxy: EventLoopProxy<HostEvent>,
     ) -> Self {
         Self {
             config,
             elements,
             application,
+            application_hash,
+            hot_reload: None,
             proxy,
             window: None,
             runtime: None,
@@ -266,9 +281,14 @@ impl DesktopApplication {
             wake.clone(),
         ))
         .map_err(|error| DesktopAppError(error.to_string()))?;
-        let mut runtime = RuntimeInstance::new(surface, wake);
+        let mut runtime = RuntimeInstance::new(surface, wake.clone());
         host.with_modules(|| runtime.mount(self.application))
             .map_err(|error| DesktopAppError(format!("mount Whisker application: {error}")))?;
+        self.hot_reload = Some(DesktopHotReload::new(
+            wake,
+            self.application,
+            self.application_hash,
+        ));
         self.host = Some(host);
         self.runtime = Some(runtime);
         self.window = Some(window);
@@ -289,10 +309,15 @@ impl DesktopApplication {
             return;
         }
         let (Some(window), Some(runtime), Some(host)) =
-            (&self.window, &self.runtime, &mut self.host)
+            (&self.window, &mut self.runtime, &mut self.host)
         else {
             return;
         };
+        if let Some(hot_reload) = &mut self.hot_reload
+            && let Err(error) = host.with_modules(|| hot_reload.apply(runtime))
+        {
+            eprintln!("whisker {TARGET_NAME} hot reload failed: {error}");
+        }
         let scale = window.scale_factor();
         let logical = self.viewport.to_logical::<f32>(scale);
         match host.drive_frame(
@@ -347,6 +372,27 @@ impl DesktopApplication {
         } else {
             self.request_frame();
         }
+    }
+}
+
+#[cfg(feature = "hot-reload")]
+type DesktopHotReload = whisker_dev_runtime::NativeHotReload;
+
+#[cfg(not(feature = "hot-reload"))]
+struct DesktopHotReload;
+
+#[cfg(not(feature = "hot-reload"))]
+impl DesktopHotReload {
+    fn new(
+        _wake: RuntimeWakeHandle,
+        _application: fn() -> Element,
+        _application_hash: fn() -> u64,
+    ) -> Self {
+        Self
+    }
+
+    fn apply(&mut self, _runtime: &mut RuntimeInstance) -> Result<bool, String> {
+        Ok(false)
     }
 }
 

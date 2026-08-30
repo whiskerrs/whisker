@@ -289,7 +289,7 @@ impl Patcher {
         // / Android branch of build_link_plan ignores
         // `extra_exports`.
         let extra_exports: &[&str] = match self.target_os {
-            LinkerOs::Macos => &["_whisker_aslr_anchor", "_whisker_app_main", "_whisker_tick"],
+            LinkerOs::Macos => &["_whisker_aslr_anchor"],
             _ => &[],
         };
         let link_plan = build_link_plan(
@@ -380,15 +380,16 @@ impl Patcher {
     }
 
     /// Resolve the captured linker invocation that produced this
-    /// crate's library. The key is the basename of the captured
+    /// crate's library or generated native Host executable. The key is the basename of the captured
     /// `-o`; for a typical cargo build the file is something like
     /// `lib<crate>-<hash>.dylib`, so we match by the `lib<crate>`
-    /// prefix and the right extension. If multiple match (e.g.
+    /// prefix and the right extension (or an extensionless macOS binary). If multiple match (e.g.
     /// rebuilds across cargo cache states), the most-recent
     /// timestamp wins.
     fn lookup_captured_linker(&self) -> Option<&CapturedLinkerInvocation> {
         let stem_lib = format!("lib{}", self.package.replace('-', "_"));
         let stem_bin = self.package.replace('-', "_");
+        let stem_bin_raw = self.package.as_str();
         let exts: &[&str] = match self.target_os {
             LinkerOs::Macos => &[".dylib"],
             LinkerOs::Linux => &[".so"],
@@ -402,14 +403,17 @@ impl Patcher {
             let Some(name) = Path::new(out).file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
-            let matches_ext = exts.iter().any(|ext| name.ends_with(ext));
+            let matches_ext = exts.iter().any(|ext| name.ends_with(ext))
+                || (self.target_os == LinkerOs::Macos && Path::new(name).extension().is_none());
             if !matches_ext {
                 continue;
             }
             // `lib<crate>` (Unix shared) or `<crate>` (Windows DLL or
             // Apple bin output) — both are valid stems for the user
             // crate's link output.
-            let matches_stem = name.starts_with(&stem_lib) || name.starts_with(&stem_bin);
+            let matches_stem = name.starts_with(&stem_lib)
+                || name.starts_with(&stem_bin)
+                || name.starts_with(stem_bin_raw);
             if !matches_stem {
                 continue;
             }
@@ -550,6 +554,18 @@ mod tests {
         let p = patcher_with_linker_map(LinkerOs::Macos, "demo", m);
         let inv = p.lookup_captured_linker().expect("found");
         assert_eq!(inv.timestamp_micros, 100);
+    }
+
+    #[test]
+    fn lookup_finds_generated_macos_host_executable() {
+        let mut m = HashMap::new();
+        m.insert(
+            "demo-whisker-macos".into(),
+            linker_inv("/cargo/target/debug/demo-whisker-macos", 125),
+        );
+        let p = patcher_with_linker_map(LinkerOs::Macos, "demo", m);
+        let inv = p.lookup_captured_linker().expect("found");
+        assert_eq!(inv.timestamp_micros, 125);
     }
 
     #[test]

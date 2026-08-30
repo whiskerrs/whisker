@@ -33,8 +33,8 @@ pub mod modules;
 pub mod ui;
 
 pub use capture::{
-    CaptureShims, capture_env_vars, capture_env_vars_for_triple, target_linker_env_var,
-    target_rustflags_env_var,
+    CaptureShims, capture_env_vars, capture_env_vars_all_crates, capture_env_vars_for_triple,
+    target_linker_env_var, target_rustflags_env_var,
 };
 
 /// Build profile. Maps to `cargo --release` and to the

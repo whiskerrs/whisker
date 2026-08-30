@@ -156,8 +156,8 @@ pub(super) fn prepare_hot_reload_capture(config: &Config) -> Result<HotReloadPre
 }
 
 /// What Rust target triple `config.target` compiles for. Android
-/// derives the triple from `Config::android.abi`. Host returns
-/// `None`, falling back to the global RUSTFLAGS form.
+/// derives the triple from `Config::android.abi`; native macOS uses the
+/// current Host architecture so Apple linker flags remain target-scoped.
 pub(super) fn target_triple_for(config: &Config) -> Option<String> {
     match config.target {
         Target::Android => {
@@ -182,7 +182,11 @@ pub(super) fn target_triple_for(config: &Config) -> Option<String> {
             };
             Some(triple.to_string())
         }
-        Target::Macos => None,
+        Target::Macos => match std::env::consts::ARCH {
+            "aarch64" => Some("aarch64-apple-darwin".to_string()),
+            "x86_64" => Some("x86_64-apple-darwin".to_string()),
+            _ => None,
+        },
         Target::Web => Some("wasm32-unknown-unknown".to_string()),
     }
 }
@@ -217,6 +221,14 @@ pub(super) fn resolve_linker_for(config: &Config) -> Result<PathBuf> {
 /// Splits out so [`DevServer::run`] is easier to read.
 pub(super) fn init_patcher_for(config: &Config, prep: &HotReloadPrep) -> Result<hotpatch::Patcher> {
     let original_binary = original_binary_path(config)?;
+    // Native macOS builds do not pass `--target`; the capture envelope still
+    // names the host triple to select Apple linker flags, but filtering rustc
+    // records by an explicit target would discard the user crate invocation.
+    let captured_target = if config.target == Target::Macos {
+        None
+    } else {
+        prep.capture.target_triple.as_deref()
+    };
     hotpatch::Patcher::initialize(
         &config.workspace_root,
         config.package.clone(),
@@ -225,7 +237,7 @@ pub(super) fn init_patcher_for(config: &Config, prep: &HotReloadPrep) -> Result<
         &prep.real_linker,
         &original_binary,
         target_os_for(config.target),
-        prep.capture.target_triple.as_deref(),
+        captured_target,
     )
 }
 
@@ -330,9 +342,20 @@ pub(super) fn original_binary_path(config: &Config) -> Result<PathBuf> {
             }
             Ok(dylib)
         }
-        Target::Macos => anyhow::bail!(
-            "macOS desktop hot-patch capture is not wired yet; use the automatic rebuild/relaunch loop"
-        ),
+        Target::Macos => {
+            let macos = config
+                .macos
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("target=Macos but Config.macos is None"))?;
+            let executable = macos.target_dir.join("debug").join(&macos.binary_name);
+            if !executable.is_file() {
+                anyhow::bail!(
+                    "no macOS Host executable at {} — the initial Cargo build did not produce it",
+                    executable.display(),
+                );
+            }
+            Ok(executable)
+        }
         Target::Web => anyhow::bail!(
             "Web hot-patch capture is not used; Trunk reloads and remounts the WASM application"
         ),

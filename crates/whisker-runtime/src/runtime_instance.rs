@@ -191,6 +191,32 @@ mod tests {
             .context
             .enter(|| second_subscription.borrow_mut().take());
     }
+
+    #[test]
+    fn root_remount_replaces_only_the_instance_application_tree() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(79).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let wake_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let wake_observer = Arc::clone(&wake_count);
+        let mut runtime = RuntimeInstance::new(
+            surface.clone(),
+            RuntimeWakeHandle::new(move || {
+                wake_observer.fetch_add(1, Ordering::Relaxed);
+            }),
+        );
+        let first = runtime.mount(|| create_element(ElementTag::View)).unwrap();
+        let second = runtime
+            .remount_root(|| create_element(ElementTag::Text))
+            .unwrap();
+
+        assert_ne!(first, second);
+        assert_eq!(runtime.lifecycle(), RuntimeLifecycle::Running);
+        assert!(wake_count.load(Ordering::Relaxed) >= 2);
+        runtime.unmount().unwrap();
+    }
 }
 
 /// A lifecycle operation that is invalid in the current state.
@@ -480,6 +506,86 @@ impl RuntimeInstance {
         self.context.shutdown();
         self.lifecycle = RuntimeLifecycle::Unmounted;
         Ok(())
+    }
+
+    /// Rebuilds the application root inside this instance without replacing
+    /// the Host-owned surface or wake endpoint.
+    ///
+    /// Development adapters use this as the conservative fallback when a
+    /// code update cannot be reflected through an individual component. The
+    /// runtime deliberately knows nothing about patch transports or dynamic
+    /// libraries; it only provides the instance-scoped remount transaction.
+    pub fn remount_root(
+        &mut self,
+        application: impl FnOnce() -> Element,
+    ) -> Result<Element, RuntimeEventError> {
+        self.require(RuntimeLifecycle::Running, "remount the application root")
+            .map_err(RuntimeEventError::Lifecycle)?;
+        let previous = self
+            .owner
+            .take()
+            .expect("a running runtime has a root owner");
+        let surface = self.surface.clone();
+        let result = self.context.enter(|| {
+            view::with_installed_renderer(surface.renderer(), || {
+                surface.begin_mutation_batch();
+                previous.dispose();
+                let owner = Owner::new(None);
+                let root = owner.with(application);
+                view::set_root(root);
+                reactive::flush();
+                reactive::flush_mounts();
+                surface
+                    .finish_mutation_batch()
+                    .map_err(RuntimeInputError::Binding)
+                    .map_err(RuntimeEventError::Input)?;
+                Ok((owner, root))
+            })
+        });
+        match result {
+            Ok((owner, root)) => {
+                self.owner = Some(owner);
+                self.wake.wake();
+                Ok(root)
+            }
+            Err(error) => {
+                // The previous owner has already been disposed. Keeping the
+                // lifecycle running would let later Host callbacks enter a
+                // half-mounted instance, so make the failure terminal.
+                self.wake_enabled.store(false, Ordering::Release);
+                self.lifecycle = RuntimeLifecycle::Unmounted;
+                self.context.shutdown();
+                Err(error)
+            }
+        }
+    }
+
+    /// Rebuilds mounted component sites whose body function appears in
+    /// `patched_functions`.
+    ///
+    /// Function pointers are an opaque matching key supplied by a
+    /// development adapter. This API performs no code loading and remains
+    /// useful to any future patch engine that can identify changed bodies.
+    pub fn remount_components(
+        &self,
+        patched_functions: &[*const ()],
+    ) -> Result<reactive::RemountStats, RuntimeEventError> {
+        self.require(RuntimeLifecycle::Running, "remount updated components")
+            .map_err(RuntimeEventError::Lifecycle)?;
+        let surface = self.surface.clone();
+        self.context.enter(|| {
+            view::with_installed_renderer(surface.renderer(), || {
+                surface.begin_mutation_batch();
+                let stats = reactive::remount_components_for(patched_functions);
+                reactive::flush();
+                reactive::flush_mounts();
+                surface
+                    .finish_mutation_batch()
+                    .map_err(RuntimeInputError::Binding)
+                    .map_err(RuntimeEventError::Input)?;
+                Ok(stats)
+            })
+        })
     }
 
     /// Delivers one Host-normalized event and flushes its reactive transaction.
