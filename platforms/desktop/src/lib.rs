@@ -2,9 +2,9 @@
 //!
 //! This crate owns only the work shared by macOS, Windows, and Linux:
 //! intrinsic measurement, retained frame projection, `wgpu` resources,
-//! semantic paint lowering, and one short runtime frame drive. Native window
-//! creation, event loops, scale/viewport observation, and redraw scheduling
-//! remain in the individual OS crates under `platforms/<os>`.
+//! semantic paint lowering, one short runtime frame drive, and the shared
+//! `winit` window/event shell. Target crates under `platforms/<os>` retain the
+//! stable OS-named entry points and are the seam for genuine OS integration.
 
 #![cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 #![warn(missing_docs)]
@@ -32,6 +32,7 @@ pub type WhiskerMeasuredSize = whisker_protocol::MeasuredSize;
 /// Resolved inherited text style delivered to Desktop module content.
 pub type WhiskerTextStyle = whisker_protocol::TextStyleSnapshot;
 
+mod app;
 mod element;
 mod gpu;
 mod input;
@@ -45,6 +46,7 @@ mod text;
 #[path = "../tests/host_conformance/mod.rs"]
 mod host_conformance_tests;
 
+pub use app::{DesktopAppConfig, DesktopAppError, run};
 use element::DesktopElementRegistry;
 pub use element::{
     BuiltInElementModule, DesktopElementFactory, DesktopEventEmitter, DesktopModuleDefinition,

@@ -3,13 +3,13 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use whisker::runtime::RuntimeWakeHandle;
-use whisker::runtime::module::RustModuleDefinition;
-use whisker::{Element, ElementModuleDefinition, ElementRegistry, RuntimeInstance, SurfaceRuntime};
-use whisker_desktop::{
+use crate::{
     BuiltInElementModule, DesktopElementFactory, DesktopFrameContext, DesktopModuleDefinition,
     DesktopMouseButton, DesktopPointerAdapter, DesktopPointerPhase, DesktopRuntime, WhiskerModule,
 };
+use whisker::runtime::RuntimeWakeHandle;
+use whisker::runtime::module::RustModuleDefinition;
+use whisker::{Element, ElementModuleDefinition, ElementRegistry, RuntimeInstance, SurfaceRuntime};
 use whisker_protocol::{CursorKeyword, InputEvent, SurfaceId};
 use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
@@ -17,6 +17,13 @@ use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{CursorIcon, Window, WindowAttributes, WindowId};
+
+#[cfg(target_os = "macos")]
+const TARGET_NAME: &str = "macOS";
+#[cfg(target_os = "windows")]
+const TARGET_NAME: &str = "Windows";
+#[cfg(target_os = "linux")]
+const TARGET_NAME: &str = "Linux";
 
 fn cursor_icon(value: CursorKeyword) -> CursorIcon {
     match value {
@@ -86,9 +93,9 @@ fn scroll_delta(value: MouseScrollDelta, scale: f64) -> [f32; 2] {
     }
 }
 
-/// Configuration for one standalone Windows window.
+/// Configuration for one standalone native Desktop window.
 #[derive(Clone, Debug)]
-pub struct WindowsAppConfig {
+pub struct DesktopAppConfig {
     /// Window and application display name.
     pub title: String,
     /// Initial logical width in points.
@@ -103,8 +110,8 @@ pub struct WindowsAppConfig {
     module_services: Vec<RustModuleDefinition>,
 }
 
-impl WindowsAppConfig {
-    /// Creates the default standalone Windows window configuration.
+impl DesktopAppConfig {
+    /// Creates the default standalone Desktop window configuration.
     pub fn new(title: impl Into<String>) -> Self {
         Self {
             title: title.into(),
@@ -130,20 +137,23 @@ impl WindowsAppConfig {
     }
 }
 
-/// Failure while creating or running the native Windows Host.
+/// Failure while creating or running the native Desktop Host.
 #[derive(Debug)]
-pub struct WindowsError(String);
+pub struct DesktopAppError(String);
 
-impl fmt::Display for WindowsError {
+impl fmt::Display for DesktopAppError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
-impl Error for WindowsError {}
+impl Error for DesktopAppError {}
 
-/// Runs a standalone Whisker application in a native Windows window.
-pub fn run(mut config: WindowsAppConfig, application: fn() -> Element) -> Result<(), WindowsError> {
+/// Runs a standalone Whisker application in a native Desktop window.
+pub fn run(
+    mut config: DesktopAppConfig,
+    application: fn() -> Element,
+) -> Result<(), DesktopAppError> {
     let built_ins = BuiltInElementModule::definition();
     config
         .module_services
@@ -152,7 +162,7 @@ pub fn run(mut config: WindowsAppConfig, application: fn() -> Element) -> Result
     let elements = ElementRegistry::standard_builder()
         .register_modules(config.element_modules.drain(..))
         .build()
-        .map_err(|error| WindowsError(format!("build element registry: {error}")))?;
+        .map_err(|error| DesktopAppError(format!("build element registry: {error}")))?;
     for definition in config.module_definitions.drain(..) {
         config
             .module_services
@@ -162,12 +172,12 @@ pub fn run(mut config: WindowsAppConfig, application: fn() -> Element) -> Result
     config.element_factories = element_factories;
     let event_loop = EventLoop::<HostEvent>::with_user_event()
         .build()
-        .map_err(|error| WindowsError(format!("create Windows event loop: {error}")))?;
+        .map_err(|error| DesktopAppError(format!("create {TARGET_NAME} event loop: {error}")))?;
     let proxy = event_loop.create_proxy();
-    let mut application = WindowsApplication::new(config, elements, application, proxy);
+    let mut application = DesktopApplication::new(config, elements, application, proxy);
     event_loop
         .run_app(&mut application)
-        .map_err(|error| WindowsError(format!("run Windows event loop: {error}")))
+        .map_err(|error| DesktopAppError(format!("run {TARGET_NAME} event loop: {error}")))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -175,8 +185,8 @@ enum HostEvent {
     RequestFrame,
 }
 
-struct WindowsApplication {
-    config: WindowsAppConfig,
+struct DesktopApplication {
+    config: DesktopAppConfig,
     elements: ElementRegistry,
     application: fn() -> Element,
     proxy: EventLoopProxy<HostEvent>,
@@ -192,9 +202,9 @@ struct WindowsApplication {
     pending_scroll_settle: Option<(Instant, [f32; 2])>,
 }
 
-impl WindowsApplication {
+impl DesktopApplication {
     fn new(
-        config: WindowsAppConfig,
+        config: DesktopAppConfig,
         elements: ElementRegistry,
         application: fn() -> Element,
         proxy: EventLoopProxy<HostEvent>,
@@ -217,18 +227,17 @@ impl WindowsApplication {
         }
     }
 
-    fn mount(&mut self, event_loop: &ActiveEventLoop) -> Result<(), WindowsError> {
+    fn mount(&mut self, event_loop: &ActiveEventLoop) -> Result<(), DesktopAppError> {
         if self.window.is_some() {
             return Ok(());
         }
         let attributes = WindowAttributes::default()
             .with_title(self.config.title.clone())
             .with_inner_size(LogicalSize::new(self.config.width, self.config.height));
-        let window = Arc::new(
-            event_loop
-                .create_window(attributes)
-                .map_err(|error| WindowsError(format!("create Windows window: {error}")))?,
-        );
+        let window =
+            Arc::new(event_loop.create_window(attributes).map_err(|error| {
+                DesktopAppError(format!("create {TARGET_NAME} window: {error}"))
+            })?);
         self.viewport = window.inner_size();
         let scale = window.scale_factor() as f32;
         let logical = self.viewport.to_logical::<f32>(window.scale_factor());
@@ -252,10 +261,10 @@ impl WindowsApplication {
             self.config.module_services.clone(),
             wake.clone(),
         ))
-        .map_err(|error| WindowsError(error.to_string()))?;
+        .map_err(|error| DesktopAppError(error.to_string()))?;
         let mut runtime = RuntimeInstance::new(surface, wake);
         host.with_modules(|| runtime.mount(self.application))
-            .map_err(|error| WindowsError(format!("mount Whisker application: {error}")))?;
+            .map_err(|error| DesktopAppError(format!("mount Whisker application: {error}")))?;
         self.host = Some(host);
         self.runtime = Some(runtime);
         self.window = Some(window);
@@ -300,7 +309,7 @@ impl WindowsApplication {
             }
             Err(error) => {
                 self.frame_failed = true;
-                eprintln!("whisker Windows frame failed: {error}");
+                eprintln!("whisker {TARGET_NAME} frame failed: {error}");
             }
         }
     }
@@ -330,14 +339,14 @@ impl WindowsApplication {
             .with_modules(|| runtime.dispatch_input(&event))
         {
             self.frame_failed = true;
-            eprintln!("dispatch Windows input failed: {error}");
+            eprintln!("dispatch {TARGET_NAME} input failed: {error}");
         } else {
             self.request_frame();
         }
     }
 }
 
-impl ApplicationHandler<HostEvent> for WindowsApplication {
+impl ApplicationHandler<HostEvent> for DesktopApplication {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let Err(error) = self.mount(event_loop) {
             eprintln!("{error}");
@@ -464,5 +473,23 @@ impl ApplicationHandler<HostEvent> for WindowsApplication {
         {
             self.request_frame();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DesktopAppConfig;
+
+    #[test]
+    fn default_config_preserves_the_standalone_window_contract() {
+        let config = DesktopAppConfig::new("Whisker");
+
+        assert_eq!(config.title, "Whisker");
+        assert_eq!(config.width, 1024.0);
+        assert_eq!(config.height, 720.0);
+        assert!(config.module_definitions.is_empty());
+        assert!(config.element_modules.is_empty());
+        assert!(config.element_factories.is_empty());
+        assert!(config.module_services.is_empty());
     }
 }

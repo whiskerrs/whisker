@@ -6093,6 +6093,7 @@ dependencies = [
  "whisker-protocol",
  "whisker-style",
  "whisker-value",
+ "winit",
 ]
 
 [[package]]
@@ -6253,12 +6254,7 @@ dependencies = [
 name = "whisker-linux"
 version = "0.12.0"
 dependencies = [
- "pollster",
- "whisker",
  "whisker-desktop",
- "whisker-protocol",
- "whisker-style",
- "winit",
 ]
 
 [[package]]
@@ -6272,12 +6268,7 @@ dependencies = [
 name = "whisker-macos"
 version = "0.12.0"
 dependencies = [
- "pollster",
- "whisker",
  "whisker-desktop",
- "whisker-protocol",
- "whisker-style",
- "winit",
 ]
 
 [[package]]
@@ -6561,12 +6552,7 @@ dependencies = [
 name = "whisker-windows"
 version = "0.12.0"
 dependencies = [
- "pollster",
- "whisker",
  "whisker-desktop",
- "whisker-protocol",
- "whisker-style",
- "winit",
 ]
 
 [[package]]

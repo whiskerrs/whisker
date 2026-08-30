@@ -12,9 +12,4 @@ categories.workspace = true
 description = "Native Linux application shell for Whisker."
 
 [target.'cfg(target_os = "linux")'.dependencies]
-whisker = { workspace = true }
 whisker-desktop = { workspace = true }
-whisker-protocol = { workspace = true }
-whisker-style = { workspace = true }
-pollster = "0.4.0"
-winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "wayland-dlopen", "x11"] }
