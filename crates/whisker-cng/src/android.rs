@@ -743,7 +743,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 32,
+        template_version: 33,
     })
 }
 
@@ -787,7 +787,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 32,
+            template_version: 33,
         }
     }
 
@@ -951,7 +951,13 @@ mod tests {
             "the published SDK repository must resolve plugins and AARs",
         );
         assert!(settings.contains("rs.whisker:ksp"));
-        assert!(settings.contains("whisker_modules.settings.gradle.kts"));
+        assert!(settings.contains("id(\"rs.whisker\") version \"0.1.0\""));
+        assert!(settings.contains("includeBuild(localGradlePlugin)"));
+        assert!(settings.contains("userPackage = \"hello-world\""));
+
+        let app_gradle = std::fs::read_to_string(out.join("app/build.gradle.kts")).unwrap();
+        assert!(app_gradle.contains("id(\"rs.whisker.gradle\")"));
+        assert!(!app_gradle.contains("whisker_module_deps.gradle.kts"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

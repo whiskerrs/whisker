@@ -89,6 +89,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 39A71CFC79D014E76D4445EB /* Build configuration list for PBXNativeTarget "{{ios_scheme}}" */;
 			buildPhases = (
+				7E2B91D0F46A1C73B5A5DE91 /* Whisker Build Rust App */,
 				4A590CB0D847DB4C38DDCDFC /* Sources */,
 				A1A2A3A4A5A6A7A8A9AAAB00 /* Resources */,
 				D4C57884A372C8EC69F16CAD /* Frameworks */,
@@ -107,6 +108,29 @@
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		7E2B91D0F46A1C73B5A5DE91 /* Whisker Build Rust App */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Whisker Build Rust App";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/Frameworks/WhiskerDriver.framework/WhiskerDriver",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\nWORKSPACE=\"{{whisker_workspace_root}}\"\nif ! command -v whisker >/dev/null 2>&1; then\n  echo \"error: 'whisker' not on PATH. Install with: cargo install whisker-cli\" >&2\n  exit 1\nfi\nif [ ! -d \"$WORKSPACE\" ]; then\n  echo \"error: Whisker workspace no longer exists: $WORKSPACE\" >&2\n  echo \"Re-run CNG generation after moving the project.\" >&2\n  exit 1\nfi\nBUILD_COMMAND=(\n  whisker build-ios\n  --workspace=\"$WORKSPACE\"\n  --package=\"{{whisker_user_package}}\"\n  --configuration=\"$CONFIGURATION\"\n  --platform=\"$PLATFORM_NAME\"\n  --archs=\"$ARCHS\"\n  --built-products-dir=\"$BUILT_PRODUCTS_DIR\"\n)\nif [ -n \"${WHISKER_FEATURES:-}\" ]; then\n  for feat in $WHISKER_FEATURES; do\n    BUILD_COMMAND+=(--features \"$feat\")\n  done\nfi\n\"${BUILD_COMMAND[@]}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXProject section */
 		993C38E6B55CB9C6F082FDCA /* Project object */ = {

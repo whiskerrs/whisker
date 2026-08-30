@@ -101,6 +101,12 @@ fn sync_android(
     let gen_dir = crate_dir.join("gen/android");
     let template_version = inputs.template_version;
     let regenerated = whisker_cng::sync_android(&gen_dir, &inputs).context("render gen/android")?;
+    // Gradle is the build driver after CNG finishes. Seed the module report
+    // that the Settings/Project plugins share so a fresh generated project
+    // can immediately run `./gradlew assembleDebug` without a preceding
+    // `whisker run` or `whisker build` invocation.
+    whisker_build::modules::refresh_gradle_module_cache(workspace_root, package)
+        .context("stage Android module dependency report")?;
     Ok(PlatformSync {
         gen_dir,
         regenerated,

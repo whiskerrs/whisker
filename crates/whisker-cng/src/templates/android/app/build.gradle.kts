@@ -8,6 +8,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("rs.whisker.gradle")
 {{extra_gradle_plugins}}
 }
 
@@ -30,8 +31,6 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
-    sourceSets.getByName("main").kotlin.srcDir("src/main/whisker_generated")
-
     val whiskerKeystore = System.getenv("WHISKER_ANDROID_KEYSTORE")
     if (whiskerKeystore != null) {
         signingConfigs {
@@ -65,5 +64,3 @@ dependencies {
     }
 {{extra_gradle_dependencies}}
 }
-
-apply(from = rootProject.file("whisker_module_deps.gradle.kts"))

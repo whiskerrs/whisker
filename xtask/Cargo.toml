@@ -10,4 +10,7 @@ publish = false
 anyhow = { workspace = true }
 cbindgen = "0.29.4"
 serde_json = { workspace = true }
+whisker-build = { workspace = true }
+whisker-cli = { workspace = true }
+whisker-dev-server = { workspace = true }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }

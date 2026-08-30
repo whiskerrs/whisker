@@ -6,12 +6,24 @@
 // Lynx artifacts are resolved.
 
 pluginManagement {
+    val localGradlePlugin = file("{{whisker_workspace_path}}/platforms/android/gradle-plugin")
+    if (localGradlePlugin.isDirectory) {
+        includeBuild(localGradlePlugin)
+    }
     repositories {
         maven { url = uri("{{whisker_maven_url}}") }
         gradlePluginPortal()
         google()
         mavenCentral()
     }
+    plugins {
+        id("rs.whisker") version "{{whisker_gradle_plugin_version}}"
+        id("rs.whisker.gradle") version "{{whisker_gradle_plugin_version}}"
+    }
+}
+
+plugins {
+    id("rs.whisker")
 }
 
 dependencyResolutionManagement {
@@ -27,6 +39,10 @@ rootProject.name = "{{android_project_name}}"
 include(":app")
 
 val whiskerWorkspace = file("{{whisker_workspace_path}}")
+whisker {
+    workspace = whiskerWorkspace
+    userPackage = "{{whisker_user_package}}"
+}
 val localAndroidSdk = whiskerWorkspace.resolve("platforms/android")
 if (localAndroidSdk.isDirectory) {
     include(":whisker-module")
@@ -42,5 +58,3 @@ if (localKsp.isDirectory) {
         }
     }
 }
-
-apply(from = "whisker_modules.settings.gradle.kts")
