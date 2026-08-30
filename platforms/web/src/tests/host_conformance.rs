@@ -678,6 +678,7 @@ impl Driver {
             elements.registrations(),
             &built_in_element_factories(),
             resources.clone(),
+            crate::capabilities::detect_host_capabilities(),
         )
         .unwrap();
         Self {

@@ -1,9 +1,9 @@
 use super::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use whisker_engine::whisker_protocol::{
     BackgroundLayer, FontFeature, FontOpticalSizing, FontTag, FontVariation, FrameHeader,
-    GradientStop, PaintCoordinate, PaintPosition, ProtocolVersion, TextContent, TextMeasurePayload,
-    TextMeasureStyle, TextPaint, TextShadow, TextStyleSnapshot,
+    GradientStop, PaintCoordinate, PaintPosition, ProtocolVersion, RenderCapability, TextContent,
+    TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, TextStyleSnapshot,
 };
 
 #[test]
@@ -80,6 +80,138 @@ fn viewport_rejects_invalid_host_metrics() {
     assert!(Viewport::new(320.0, 640.0, 2.0).is_some());
     assert!(Viewport::new(-1.0, 640.0, 2.0).is_none());
     assert!(Viewport::new(320.0, 640.0, 0.0).is_none());
+}
+
+#[test]
+fn mobile_host_profile_negotiates_protocol_and_support_masks() {
+    let raw = MobileHostCapabilities {
+        abi_major: MOBILE_ABI_MAJOR,
+        abi_minor: MOBILE_ABI_MINOR,
+        protocol_major: 1,
+        protocol_minor: 3,
+        native: CAPABILITY_VISUAL_EFFECTS,
+        emulated: CAPABILITY_BACKDROP_BLUR,
+    };
+
+    let profile = decode_host_capabilities(&raw).unwrap();
+
+    assert_eq!(profile.protocol(), ProtocolVersion { major: 1, minor: 3 });
+    assert_eq!(
+        profile.support(RenderCapability::VisualEffects),
+        whisker_engine::whisker_protocol::CapabilitySupport::Native
+    );
+    assert_eq!(
+        profile.support(RenderCapability::BackdropBlur),
+        whisker_engine::whisker_protocol::CapabilitySupport::Emulated
+    );
+}
+
+#[test]
+fn mobile_capability_constants_match_the_semantic_protocol() {
+    assert_eq!(FRAME_PROTOCOL_MAJOR, ProtocolVersion::CURRENT.major);
+    assert_eq!(FRAME_PROTOCOL_MINOR, ProtocolVersion::CURRENT.minor);
+    let expected = [
+        (
+            RenderCapability::EllipticalBorderRadius,
+            CAPABILITY_ELLIPTICAL_BORDER_RADIUS,
+        ),
+        (
+            RenderCapability::BackgroundLayers,
+            CAPABILITY_BACKGROUND_LAYERS,
+        ),
+        (RenderCapability::VisualEffects, CAPABILITY_VISUAL_EFFECTS),
+        (RenderCapability::TextEffects, CAPABILITY_TEXT_EFFECTS),
+        (RenderCapability::TextTypography, CAPABILITY_TEXT_TYPOGRAPHY),
+        (RenderCapability::ImageContent, CAPABILITY_IMAGE_CONTENT),
+        (RenderCapability::Cursor, CAPABILITY_CURSOR),
+        (
+            RenderCapability::ResourceLifecycle,
+            CAPABILITY_RESOURCE_LIFECYCLE,
+        ),
+        (
+            RenderCapability::LinearGradients,
+            CAPABILITY_LINEAR_GRADIENTS,
+        ),
+        (
+            RenderCapability::RadialGradients,
+            CAPABILITY_RADIAL_GRADIENTS,
+        ),
+        (RenderCapability::ConicGradients, CAPABILITY_CONIC_GRADIENTS),
+        (
+            RenderCapability::BackgroundGeometry,
+            CAPABILITY_BACKGROUND_GEOMETRY,
+        ),
+        (
+            RenderCapability::BackgroundLayerStacking,
+            CAPABILITY_BACKGROUND_LAYER_STACKING,
+        ),
+        (
+            RenderCapability::BackgroundImageResources,
+            CAPABILITY_BACKGROUND_IMAGE_RESOURCES,
+        ),
+        (RenderCapability::BackdropBlur, CAPABILITY_BACKDROP_BLUR),
+    ];
+
+    assert_eq!(expected.len(), RenderCapability::ALL.len());
+    for (capability, wire) in expected {
+        assert_eq!(capability.mask(), wire, "{}", capability.as_str());
+    }
+}
+
+extern "C" fn count_present_calls(
+    data: *mut c_void,
+    _frame: *const MobileFrame,
+    _response: *mut MobileApplyResponse,
+) -> bool {
+    let calls = unsafe { &*data.cast::<Cell<usize>>() };
+    calls.set(calls.get() + 1);
+    true
+}
+
+#[test]
+fn unsupported_mobile_capability_is_rejected_before_crossing_the_host_seam() {
+    let calls = Cell::new(0_usize);
+    let capabilities = RenderCapabilities::new(
+        ProtocolVersion::CURRENT,
+        [whisker_engine::whisker_protocol::CapabilityEntry {
+            capability: RenderCapability::VisualEffects,
+            support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
+        }],
+    )
+    .unwrap();
+    let mut sink = MobileFrameSink {
+        present: count_present_calls,
+        data: (&calls as *const Cell<usize>).cast_mut().cast(),
+        capabilities,
+    };
+    let effects = VisualEffects {
+        backdrop_blur: Some(12.0),
+        ..VisualEffects::default()
+    };
+    let packet = FramePacket {
+        header: FrameHeader {
+            version: ProtocolVersion::CURRENT,
+            surface: SurfaceId::new(1).unwrap(),
+            scene_epoch: 1,
+            frame_id: 7,
+            base_revision: 0,
+            target_revision: 1,
+            viewport_epoch: 1,
+            mode: FrameMode::Snapshot,
+        },
+        operations: vec![Operation::SetVisualEffects {
+            node: NodeId::new(1).unwrap(),
+            effects,
+        }],
+    };
+
+    let error = sink.present(&packet).unwrap_err();
+
+    assert_eq!(calls.get(), 0);
+    assert_eq!(
+        error.to_string(),
+        "mobile Host does not advertise capability backdrop-blur required by frame 7"
+    );
 }
 #[test]
 fn hsla_is_lowered_without_host_string_parsing() {

@@ -242,10 +242,14 @@ impl DesktopApplication {
         let scale = window.scale_factor() as f32;
         let logical = self.viewport.to_logical::<f32>(window.scale_factor());
         let surface_id = SurfaceId::new(1).expect("the standalone surface id is non-zero");
-        let surface = SurfaceRuntime::with_element_registry(
+        let capabilities = crate::capabilities::host_capabilities()
+            .negotiate(whisker_protocol::ProtocolVersion::CURRENT)
+            .map_err(|error| DesktopAppError(format!("negotiate Desktop Host: {error}")))?;
+        let surface = SurfaceRuntime::with_element_registry_and_protocol(
             surface_id,
             StyleEnvironment::new(logical.width, logical.height, scale, 14.0),
             self.elements.clone(),
+            capabilities.protocol(),
         );
         let element_registrations = surface.element_registrations();
         let wake_proxy = self.proxy.clone();

@@ -24,6 +24,7 @@ web-sys = { version = "0.3", features = [
     "Blob",
     "BlobPropertyBag",
     "console",
+    "css",
     "CssStyleDeclaration",
     "CanvasRenderingContext2d",
     "Document",

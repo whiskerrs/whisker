@@ -294,6 +294,15 @@ A renderer provider implements the singular `whisker.renderer@1` interface for
 a surface. The runtime resolves it once during bootstrap and holds a typed
 handle. No module-name or method-name lookup occurs while constructing a frame.
 
+The Host also supplies one immutable `RenderCapabilities` profile when the
+surface is created. The profile contains the highest frame-protocol version
+understood by the Host plus separate native and emulated capability bitsets.
+Rust validates the bitsets and negotiates the greatest mutually supported
+minor version within the shared major version. A major-version mismatch, an
+unknown bit, or a capability marked both native and emulated rejects bootstrap.
+Every packet produced for that surface carries the negotiated version; the
+profile is not resent per frame.
+
 ### Surface
 
 A `Surface` is one independently presented root: an Android Activity content
@@ -775,7 +784,9 @@ unsupported; omission is unsupported. A frame can derive its requirements
 without inspecting CSS spellings. Capability preflight occurs before retained
 state mutation, so a packet cannot partially apply before discovering an
 unsupported background, effect, text, image, cursor, or elliptical-radius
-operation.
+operation. Native mobile Hosts perform the same preflight in Rust before the
+borrowed frame pointer crosses the C/Swift/Kotlin callback. This preserves a
+transactional boundary and adds no per-frame capability FFI.
 
 ### Operation groups
 

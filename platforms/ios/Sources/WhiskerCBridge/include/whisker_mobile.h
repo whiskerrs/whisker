@@ -32,7 +32,41 @@
 
 #define WHISKER_MOBILE_ABI_MAJOR 2
 
-#define WHISKER_MOBILE_ABI_MINOR 28
+#define WHISKER_MOBILE_ABI_MINOR 29
+
+#define WHISKER_FRAME_PROTOCOL_MAJOR 1
+
+#define WHISKER_FRAME_PROTOCOL_MINOR 4
+
+#define WHISKER_CAPABILITY_ELLIPTICAL_BORDER_RADIUS 1
+
+#define WHISKER_CAPABILITY_BACKGROUND_LAYERS 2
+
+#define WHISKER_CAPABILITY_VISUAL_EFFECTS 4
+
+#define WHISKER_CAPABILITY_TEXT_EFFECTS 8
+
+#define WHISKER_CAPABILITY_TEXT_TYPOGRAPHY 16
+
+#define WHISKER_CAPABILITY_IMAGE_CONTENT 32
+
+#define WHISKER_CAPABILITY_CURSOR 64
+
+#define WHISKER_CAPABILITY_RESOURCE_LIFECYCLE 128
+
+#define WHISKER_CAPABILITY_LINEAR_GRADIENTS 256
+
+#define WHISKER_CAPABILITY_RADIAL_GRADIENTS 512
+
+#define WHISKER_CAPABILITY_CONIC_GRADIENTS 1024
+
+#define WHISKER_CAPABILITY_BACKGROUND_GEOMETRY 2048
+
+#define WHISKER_CAPABILITY_BACKGROUND_LAYER_STACKING 4096
+
+#define WHISKER_CAPABILITY_BACKGROUND_IMAGE_RESOURCES 8192
+
+#define WHISKER_CAPABILITY_BACKDROP_BLUR 16384
 
 #define WHISKER_POINTER_DOWN 0
 
@@ -241,6 +275,18 @@
 #define WHISKER_RESOURCE_FAILURE_UNSUPPORTED 6
 
 #define WHISKER_RESOURCE_DIMENSIONS_PRESENT 1
+
+/**
+ * Host-advertised renderer profile supplied once when a surface is created.
+ */
+typedef struct WhiskerMobileHostCapabilities {
+  uint16_t abi_major;
+  uint16_t abi_minor;
+  uint16_t protocol_major;
+  uint16_t protocol_minor;
+  uint64_t native;
+  uint64_t emulated;
+} WhiskerMobileHostCapabilities;
 
 typedef void (*WhiskerMobileRequestFrameCallback)(void*);
 
@@ -715,6 +761,7 @@ extern "C" {
 extern void *whisker_view_create(float width,
                                  float height,
                                  float scale,
+                                 const struct WhiskerMobileHostCapabilities *capabilities,
                                  WhiskerMobileRequestFrameCallback request_frame,
                                  void *request_frame_data,
                                  WhiskerMobileBootstrapCallback bootstrap,
@@ -780,6 +827,7 @@ extern bool whisker_view_dispatch_resource_event(void *handle,
 #endif
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerValueRaw) == 24, "WhiskerValueRaw ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerKeyValueRaw) == 40, "WhiskerKeyValueRaw ABI drift");
+WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileHostCapabilities) == 24, "WhiskerMobileHostCapabilities ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileOperation) == 72, "WhiskerMobileOperation ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileFrame) == 72, "WhiskerMobileFrame ABI drift");
 WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileMeasureRequest) == 224, "WhiskerMobileMeasureRequest ABI drift");
@@ -791,6 +839,7 @@ WHISKER_ABI_STATIC_ASSERT(sizeof(WhiskerMobileResourceEvent) == 56, "WhiskerMobi
 WHISKER_ABI_STATIC_ASSERT(offsetof(WhiskerValueRaw, type) == 0, "WhiskerValueRaw.type ABI drift");
 WHISKER_ABI_STATIC_ASSERT(offsetof(WhiskerValueRaw, v) == 8, "WhiskerValueRaw.v ABI drift");
 WHISKER_ABI_STATIC_ASSERT(offsetof(WhiskerKeyValueRaw, value) == 16, "WhiskerKeyValueRaw.value ABI drift");
+WHISKER_ABI_STATIC_ASSERT(offsetof(WhiskerMobileHostCapabilities, native) == 8, "WhiskerMobileHostCapabilities.native ABI drift");
 WHISKER_ABI_STATIC_ASSERT(offsetof(WhiskerMobileOperation, node) == 8, "WhiskerMobileOperation.node ABI drift");
 WHISKER_ABI_STATIC_ASSERT(offsetof(WhiskerMobileOperation, integer) == 40, "WhiskerMobileOperation.integer ABI drift");
 WHISKER_ABI_STATIC_ASSERT(offsetof(WhiskerMobileOperation, payload) == 56, "WhiskerMobileOperation.payload ABI drift");

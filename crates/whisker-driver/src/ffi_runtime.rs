@@ -15,9 +15,9 @@ use whisker_engine::whisker_protocol::{
     MeasurementPayload, MeasurementRequest, MeasurementRequestId, MeasurementResponse, NodeId,
     Operation, PaintBox, PaintColor, PaintImage, PaintLengthPercentage, PaintPosition, PathCommand,
     PointerId, PointerInput, PointerKind, PreparedContentId, RadialGradientExtent,
-    RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent, ResourceFailureCode,
-    ResourceId, ResourceKind, ResourceSource, SurfaceId, TextContent, TextMeasurePayload,
-    UnsupportedMeasurementReason, VisualEffects, WhiskerValue,
+    RadialGradientShape, RenderCapabilities, ResourceCommand, ResourceDimensions, ResourceEvent,
+    ResourceFailureCode, ResourceId, ResourceKind, ResourceSource, SurfaceId, TextContent,
+    TextMeasurePayload, UnsupportedMeasurementReason, VisualEffects, WhiskerValue,
 };
 use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
@@ -101,13 +101,65 @@ impl Viewport {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum MobileCapabilityError {
+    Abi { host_major: u16, host_minor: u16 },
+    Masks(whisker_engine::whisker_protocol::InvalidCapabilityMasks),
+    Protocol(whisker_engine::whisker_protocol::CapabilityNegotiationError),
+}
+
+impl std::fmt::Display for MobileCapabilityError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Abi {
+                host_major,
+                host_minor,
+            } => write!(
+                formatter,
+                "incompatible mobile ABI: Rust {MOBILE_ABI_MAJOR}.{MOBILE_ABI_MINOR}, Host {host_major}.{host_minor}"
+            ),
+            Self::Masks(error) => error.fmt(formatter),
+            Self::Protocol(error) => error.fmt(formatter),
+        }
+    }
+}
+
+fn decode_host_capabilities(
+    raw: &MobileHostCapabilities,
+) -> Result<RenderCapabilities, MobileCapabilityError> {
+    if raw.abi_major != MOBILE_ABI_MAJOR || raw.abi_minor < MOBILE_ABI_MINOR {
+        return Err(MobileCapabilityError::Abi {
+            host_major: raw.abi_major,
+            host_minor: raw.abi_minor,
+        });
+    }
+    RenderCapabilities::from_masks(
+        whisker_engine::whisker_protocol::ProtocolVersion {
+            major: raw.protocol_major,
+            minor: raw.protocol_minor,
+        },
+        raw.native,
+        raw.emulated,
+    )
+    .map_err(MobileCapabilityError::Masks)?
+    .negotiate(whisker_engine::whisker_protocol::ProtocolVersion::CURRENT)
+    .map_err(MobileCapabilityError::Protocol)
+}
+
 /// Mounts Rust, negotiates all element registrations with the Host, then
 /// enables measurement and frame production. All callbacks run on the caller.
+///
+/// # Safety
+///
+/// `capabilities` must point to a readable [`MobileHostCapabilities`] for the
+/// duration of this call. Callback data pointers must satisfy the contracts of
+/// their corresponding callbacks for the lifetime of the returned runtime.
 #[allow(clippy::too_many_arguments)]
-pub fn create(
+pub unsafe fn create(
     width: f32,
     height: f32,
     scale: f32,
+    capabilities: *const MobileHostCapabilities,
     request_frame: RequestFrameCallback,
     request_data: *mut c_void,
     bootstrap: BootstrapCallback,
@@ -128,11 +180,26 @@ pub fn create(
     let Some(viewport) = Viewport::new(width, height, scale) else {
         return std::ptr::null_mut();
     };
+    let Some(capabilities) = (unsafe { capabilities.as_ref() }) else {
+        mobile_error("Whisker mobile Host did not provide a capability profile");
+        return std::ptr::null_mut();
+    };
+    let capabilities = match decode_host_capabilities(capabilities) {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            mobile_error(format_args!(
+                "Whisker mobile capability negotiation failed: {error}"
+            ));
+            return std::ptr::null_mut();
+        }
+    };
     let wake_data = request_data as usize;
     let wake = RuntimeWakeHandle::new(move || request_frame(wake_data as *mut c_void));
-    let surface = SurfaceRuntime::new(
+    let surface = SurfaceRuntime::with_element_registry_and_protocol(
         SurfaceId::new(1).expect("mobile surface ID is non-zero"),
         viewport.environment(),
+        whisker_runtime::ElementRegistry::standard(),
+        capabilities.protocol(),
     );
     let mut runtime = RuntimeInstance::new(surface, wake);
     let modules = module_host(module_data, invoke_module, observe_module);
@@ -156,6 +223,7 @@ pub fn create(
         sink: MobileFrameSink {
             present: present_frame,
             data: present_data,
+            capabilities,
         },
         resources: MobileResourceHost {
             callback: resource_command,

@@ -159,10 +159,14 @@ impl WebApplication {
         let viewport = viewport(&window)?;
         let surface_id = SurfaceId::new(1).expect("the browser surface id is non-zero");
         let registrations = elements.registrations().to_vec();
-        let surface = SurfaceRuntime::with_element_registry(
+        let capabilities = crate::capabilities::detect_host_capabilities()
+            .negotiate(whisker_protocol::ProtocolVersion::CURRENT)
+            .map_err(|error| WebError(format!("negotiate Web Host capabilities: {error}")))?;
+        let surface = SurfaceRuntime::with_element_registry_and_protocol(
             surface_id,
             StyleEnvironment::new(viewport.0, viewport.1, viewport.2, 16.0),
             elements,
+            capabilities.protocol(),
         );
         let wake = RuntimeWakeHandle::new(request_frame);
         let resource_store = WebResourceStore::new();
@@ -182,6 +186,7 @@ impl WebApplication {
                 &registrations,
                 &element_factories,
                 resource_store,
+                capabilities,
             )?,
             resources,
             modules,

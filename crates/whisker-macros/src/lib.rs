@@ -173,10 +173,11 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // layout, and frame production stay in shared Rust.
         #[cfg(any(target_os = "android", target_os = "ios"))]
         #[unsafe(no_mangle)]
-        pub extern "C" fn whisker_view_create(
+        pub unsafe extern "C" fn whisker_view_create(
             width: f32,
             height: f32,
             scale: f32,
+            capabilities: *const ::whisker::__driver_abi::MobileHostCapabilities,
             request_frame: extern "C" fn(*mut ::std::ffi::c_void),
             request_frame_data: *mut ::std::ffi::c_void,
             bootstrap: ::whisker::__driver_abi::BootstrapCallback,
@@ -191,10 +192,11 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             observe_module: ::whisker::__driver_abi::ObserveModuleCallback,
             module_data: *mut ::std::ffi::c_void,
         ) -> *mut ::std::ffi::c_void {
-            ::whisker::__driver_runtime::create(
+            unsafe { ::whisker::__driver_runtime::create(
                 width,
                 height,
                 scale,
+                capabilities,
                 request_frame,
                 request_frame_data,
                 bootstrap,
@@ -209,7 +211,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 observe_module,
                 module_data,
                 __whisker_app_dispatch,
-            )
+            ) }
         }
 
         #[cfg(any(target_os = "android", target_os = "ios"))]

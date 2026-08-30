@@ -1,5 +1,8 @@
 //! Renderer capability negotiation for optional semantic protocol groups.
 
+use std::error::Error;
+use std::fmt;
+
 use crate::{FramePacket, Operation, ProtocolVersion};
 
 /// An independently negotiable renderer feature.
@@ -38,11 +41,13 @@ pub enum RenderCapability {
     BackgroundLayerStacking,
     /// Resource-backed images used by otherwise supported background layers.
     BackgroundImageResources,
+    /// Blur applied to pixels already painted behind a node.
+    BackdropBlur,
 }
 
 impl RenderCapability {
     /// Every optional capability in stable declaration order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::EllipticalBorderRadius,
         Self::BackgroundLayers,
         Self::VisualEffects,
@@ -57,6 +62,7 @@ impl RenderCapability {
         Self::BackgroundGeometry,
         Self::BackgroundLayerStacking,
         Self::BackgroundImageResources,
+        Self::BackdropBlur,
     ];
 
     /// Stable diagnostic spelling shared by Host errors and checklists.
@@ -76,10 +82,12 @@ impl RenderCapability {
             Self::BackgroundGeometry => "background-geometry",
             Self::BackgroundLayerStacking => "background-layer-stacking",
             Self::BackgroundImageResources => "background-image-resources",
+            Self::BackdropBlur => "backdrop-blur",
         }
     }
 
-    const fn bit(self) -> u16 {
+    /// Stable bit used by compact Host capability profiles.
+    pub const fn mask(self) -> u64 {
         1 << self as u8
     }
 }
@@ -108,12 +116,69 @@ pub struct CapabilityEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DuplicateCapability(pub RenderCapability);
 
+/// A compact Host profile contained unknown or contradictory capability bits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvalidCapabilityMasks {
+    /// At least one bit is not assigned by this protocol implementation.
+    Unknown {
+        /// Unrecognized bits across both masks.
+        bits: u64,
+    },
+    /// The same capability was declared both native and emulated.
+    Overlapping {
+        /// Bits present in both masks.
+        bits: u64,
+    },
+}
+
+impl fmt::Display for InvalidCapabilityMasks {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unknown { bits } => {
+                write!(formatter, "unknown Host capability bits 0x{bits:016x}")
+            }
+            Self::Overlapping { bits } => write!(
+                formatter,
+                "Host capabilities are both native and emulated in bits 0x{bits:016x}"
+            ),
+        }
+    }
+}
+
+impl Error for InvalidCapabilityMasks {}
+
+/// Failure to select one protocol version shared by Rust and its Host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapabilityNegotiationError {
+    /// The two sides implement different breaking protocol generations.
+    IncompatibleProtocol {
+        /// Highest protocol version understood by the Rust runtime.
+        runtime: ProtocolVersion,
+        /// Highest protocol version advertised by the Host.
+        host: ProtocolVersion,
+    },
+}
+
+impl fmt::Display for CapabilityNegotiationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::IncompatibleProtocol { runtime, host } => write!(
+                formatter,
+                "incompatible frame protocol: Rust {}.{}, Host {}.{}",
+                runtime.major, runtime.minor, host.major, host.minor
+            ),
+        }
+    }
+}
+
+impl Error for CapabilityNegotiationError {}
+
 /// Protocol version and optional semantic features supported by one Host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RenderCapabilities {
     protocol: ProtocolVersion,
-    native: u16,
-    emulated: u16,
+    native: u64,
+    emulated: u64,
 }
 
 impl RenderCapabilities {
@@ -126,7 +191,7 @@ impl RenderCapabilities {
         let mut native = 0;
         let mut emulated = 0;
         for entry in entries {
-            let bit = entry.capability.bit();
+            let bit = entry.capability.mask();
             if seen & bit != 0 {
                 return Err(DuplicateCapability(entry.capability));
             }
@@ -136,6 +201,30 @@ impl RenderCapabilities {
                 CapabilitySupport::Emulated => emulated |= bit,
                 CapabilitySupport::Unsupported => {}
             }
+        }
+        Ok(Self {
+            protocol,
+            native,
+            emulated,
+        })
+    }
+
+    /// Decodes a compact Host profile crossing an FFI or WASM seam.
+    pub fn from_masks(
+        protocol: ProtocolVersion,
+        native: u64,
+        emulated: u64,
+    ) -> Result<Self, InvalidCapabilityMasks> {
+        let known = RenderCapability::ALL
+            .into_iter()
+            .fold(0, |mask, capability| mask | capability.mask());
+        let unknown = (native | emulated) & !known;
+        if unknown != 0 {
+            return Err(InvalidCapabilityMasks::Unknown { bits: unknown });
+        }
+        let overlapping = native & emulated;
+        if overlapping != 0 {
+            return Err(InvalidCapabilityMasks::Overlapping { bits: overlapping });
         }
         Ok(Self {
             protocol,
@@ -161,7 +250,7 @@ impl RenderCapabilities {
         let native = RenderCapability::ALL
             .into_iter()
             .filter(|capability| *capability != RenderCapability::ResourceLifecycle)
-            .fold(0, |bits, capability| bits | capability.bit());
+            .fold(0, |bits, capability| bits | capability.mask());
         Self {
             protocol: ProtocolVersion::CURRENT,
             native,
@@ -174,6 +263,44 @@ impl RenderCapabilities {
         self.protocol
     }
 
+    /// Compact mask of capabilities implemented directly by the Host.
+    pub const fn native_mask(&self) -> u64 {
+        self.native
+    }
+
+    /// Compact mask of capabilities implemented through a conforming adaptation.
+    pub const fn emulated_mask(&self) -> u64 {
+        self.emulated
+    }
+
+    /// Selects the highest protocol minor understood by both sides.
+    ///
+    /// Host capability support is retained because it describes the concrete
+    /// renderer attached to the surface rather than the Rust implementation.
+    pub const fn negotiate(
+        self,
+        runtime: ProtocolVersion,
+    ) -> Result<Self, CapabilityNegotiationError> {
+        if runtime.major != self.protocol.major {
+            return Err(CapabilityNegotiationError::IncompatibleProtocol {
+                runtime,
+                host: self.protocol,
+            });
+        }
+        Ok(Self {
+            protocol: ProtocolVersion {
+                major: runtime.major,
+                minor: if runtime.minor < self.protocol.minor {
+                    runtime.minor
+                } else {
+                    self.protocol.minor
+                },
+            },
+            native: self.native,
+            emulated: self.emulated,
+        })
+    }
+
     /// Returns whether the Host understands this protocol version.
     pub const fn supports_protocol(&self, version: ProtocolVersion) -> bool {
         version.major == self.protocol.major && version.minor <= self.protocol.minor
@@ -181,7 +308,7 @@ impl RenderCapabilities {
 
     /// Returns how the Host implements a feature; omitted features are unsupported.
     pub fn support(&self, capability: RenderCapability) -> CapabilitySupport {
-        let bit = capability.bit();
+        let bit = capability.mask();
         if self.native & bit != 0 {
             CapabilitySupport::Native
         } else if self.emulated & bit != 0 {
@@ -228,6 +355,9 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6
     if let Operation::SetBackgroundLayers { layers, .. } = operation {
         return background_capabilities(layers);
     }
+    if let Operation::SetVisualEffects { effects, .. } = operation {
+        return visual_effect_capabilities(effects);
+    }
     let first = match operation {
         Operation::SetBoxPaint { paint, .. }
             if [
@@ -241,7 +371,6 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6
         {
             Some(RenderCapability::EllipticalBorderRadius)
         }
-        Operation::SetVisualEffects { .. } => Some(RenderCapability::VisualEffects),
         Operation::SetText { content, .. } if content.paint.uses_extended_features() => {
             Some(RenderCapability::TextEffects)
         }
@@ -262,6 +391,20 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6
         _ => None,
     };
     [first, second, None, None, None, None]
+}
+
+fn visual_effect_capabilities(effects: &crate::VisualEffects) -> [Option<RenderCapability>; 6] {
+    let backdrop = effects.backdrop_blur.is_some_and(|radius| radius > 0.0);
+    let mut remainder = effects.clone();
+    remainder.backdrop_blur = None;
+    [
+        (remainder != crate::VisualEffects::default()).then_some(RenderCapability::VisualEffects),
+        backdrop.then_some(RenderCapability::BackdropBlur),
+        None,
+        None,
+        None,
+        None,
+    ]
 }
 
 fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderCapability>; 6] {
@@ -569,6 +712,122 @@ mod tests {
     }
 
     #[test]
+    fn negotiation_selects_the_highest_shared_minor_and_preserves_host_support() {
+        let host = RenderCapabilities::new(
+            ProtocolVersion { major: 1, minor: 3 },
+            [CapabilityEntry {
+                capability: RenderCapability::Cursor,
+                support: CapabilitySupport::Emulated,
+            }],
+        )
+        .unwrap();
+
+        let negotiated = host
+            .negotiate(ProtocolVersion { major: 1, minor: 4 })
+            .expect("matching protocol majors negotiate");
+
+        assert_eq!(
+            negotiated.protocol(),
+            ProtocolVersion { major: 1, minor: 3 }
+        );
+        assert_eq!(
+            negotiated.support(RenderCapability::Cursor),
+            CapabilitySupport::Emulated
+        );
+
+        let newer_host = RenderCapabilities::base();
+        assert_eq!(
+            newer_host
+                .negotiate(ProtocolVersion { major: 1, minor: 2 })
+                .unwrap()
+                .protocol(),
+            ProtocolVersion { major: 1, minor: 2 }
+        );
+    }
+
+    #[test]
+    fn negotiation_rejects_a_different_protocol_major() {
+        let host = RenderCapabilities::base();
+
+        let error = CapabilityNegotiationError::IncompatibleProtocol {
+            runtime: ProtocolVersion { major: 2, minor: 0 },
+            host: ProtocolVersion::CURRENT,
+        };
+        assert_eq!(
+            host.negotiate(ProtocolVersion { major: 2, minor: 0 }),
+            Err(error)
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "incompatible frame protocol: Rust 2.0, Host {}.{}",
+                ProtocolVersion::CURRENT.major,
+                ProtocolVersion::CURRENT.minor
+            )
+        );
+    }
+
+    #[test]
+    fn wire_masks_round_trip_and_reject_ambiguous_profiles() {
+        let native = RenderCapability::Cursor.mask();
+        let emulated = RenderCapability::BackdropBlur.mask();
+        let profile = RenderCapabilities::from_masks(ProtocolVersion::CURRENT, native, emulated)
+            .expect("known disjoint masks are valid");
+
+        assert_eq!(profile.native_mask(), native);
+        assert_eq!(profile.emulated_mask(), emulated);
+        assert_eq!(
+            profile.support(RenderCapability::BackdropBlur),
+            CapabilitySupport::Emulated
+        );
+        let overlapping = InvalidCapabilityMasks::Overlapping { bits: native };
+        assert_eq!(
+            RenderCapabilities::from_masks(ProtocolVersion::CURRENT, native, native),
+            Err(overlapping)
+        );
+        assert_eq!(
+            overlapping.to_string(),
+            format!("Host capabilities are both native and emulated in bits 0x{native:016x}")
+        );
+        let unknown = InvalidCapabilityMasks::Unknown { bits: 1_u64 << 63 };
+        assert_eq!(
+            RenderCapabilities::from_masks(ProtocolVersion::CURRENT, 1_u64 << 63, 0),
+            Err(unknown)
+        );
+        assert_eq!(
+            unknown.to_string(),
+            "unknown Host capability bits 0x8000000000000000"
+        );
+    }
+
+    #[test]
+    fn backdrop_blur_is_negotiated_independently_from_other_visual_effects() {
+        let node = NodeId::new(1).unwrap();
+        let effects = VisualEffects {
+            backdrop_blur: Some(8.0),
+            ..VisualEffects::default()
+        };
+        let packet = packet(vec![Operation::SetVisualEffects { node, effects }]);
+
+        assert_eq!(
+            packet.required_capabilities(),
+            vec![RenderCapability::BackdropBlur]
+        );
+        assert_eq!(
+            RenderCapabilities::new(
+                ProtocolVersion::CURRENT,
+                [CapabilityEntry {
+                    capability: RenderCapability::VisualEffects,
+                    support: CapabilitySupport::Native,
+                }]
+            )
+            .unwrap()
+            .first_unsupported(&packet),
+            Some(RenderCapability::BackdropBlur)
+        );
+    }
+
+    #[test]
     fn linear_gradient_capability_does_not_claim_the_complete_layer_protocol() {
         let node = NodeId::new(1).unwrap();
         assert_eq!(
@@ -870,6 +1129,7 @@ mod tests {
                 "background-geometry",
                 "background-layer-stacking",
                 "background-image-resources",
+                "backdrop-blur",
             ]
         );
 
@@ -962,7 +1222,11 @@ mod tests {
             },
             Operation::SetVisualEffects {
                 node,
-                effects: VisualEffects::default(),
+                effects: VisualEffects {
+                    backdrop_blur: Some(4.0),
+                    image_rendering: crate::ImageRendering::Pixelated,
+                    ..VisualEffects::default()
+                },
             },
             Operation::SetText {
                 node,
@@ -1015,6 +1279,7 @@ mod tests {
                 RenderCapability::ConicGradients,
                 RenderCapability::BackgroundGeometry,
                 RenderCapability::VisualEffects,
+                RenderCapability::BackdropBlur,
                 RenderCapability::TextEffects,
                 RenderCapability::TextTypography,
                 RenderCapability::ImageContent,
