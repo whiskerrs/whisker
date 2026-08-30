@@ -8,7 +8,25 @@ use std::ffi::c_void;
 use crate::{WhiskerBytesRef, WhiskerStringRef, WhiskerValueRaw};
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 28;
+pub const MOBILE_ABI_MINOR: u16 = 29;
+pub const FRAME_PROTOCOL_MAJOR: u16 = 1;
+pub const FRAME_PROTOCOL_MINOR: u16 = 4;
+
+pub const CAPABILITY_ELLIPTICAL_BORDER_RADIUS: u64 = 0x0001;
+pub const CAPABILITY_BACKGROUND_LAYERS: u64 = 0x0002;
+pub const CAPABILITY_VISUAL_EFFECTS: u64 = 0x0004;
+pub const CAPABILITY_TEXT_EFFECTS: u64 = 0x0008;
+pub const CAPABILITY_TEXT_TYPOGRAPHY: u64 = 0x0010;
+pub const CAPABILITY_IMAGE_CONTENT: u64 = 0x0020;
+pub const CAPABILITY_CURSOR: u64 = 0x0040;
+pub const CAPABILITY_RESOURCE_LIFECYCLE: u64 = 0x0080;
+pub const CAPABILITY_LINEAR_GRADIENTS: u64 = 0x0100;
+pub const CAPABILITY_RADIAL_GRADIENTS: u64 = 0x0200;
+pub const CAPABILITY_CONIC_GRADIENTS: u64 = 0x0400;
+pub const CAPABILITY_BACKGROUND_GEOMETRY: u64 = 0x0800;
+pub const CAPABILITY_BACKGROUND_LAYER_STACKING: u64 = 0x1000;
+pub const CAPABILITY_BACKGROUND_IMAGE_RESOURCES: u64 = 0x2000;
+pub const CAPABILITY_BACKDROP_BLUR: u64 = 0x4000;
 
 pub const POINTER_DOWN: u32 = 0;
 pub const POINTER_MOVE: u32 = 1;
@@ -127,6 +145,18 @@ pub const RESOURCE_FAILURE_DECODE: u32 = 4;
 pub const RESOURCE_FAILURE_CANCELLED: u32 = 5;
 pub const RESOURCE_FAILURE_UNSUPPORTED: u32 = 6;
 pub const RESOURCE_DIMENSIONS_PRESENT: u32 = 1;
+
+/// Host-advertised renderer profile supplied once when a surface is created.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MobileHostCapabilities {
+    pub abi_major: u16,
+    pub abi_minor: u16,
+    pub protocol_major: u16,
+    pub protocol_minor: u16,
+    pub native: u64,
+    pub emulated: u64,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -563,6 +593,7 @@ unsafe extern "C" {
         width: f32,
         height: f32,
         scale: f32,
+        capabilities: *const MobileHostCapabilities,
         request_frame: RequestFrameCallback,
         request_frame_data: *mut c_void,
         bootstrap: BootstrapCallback,

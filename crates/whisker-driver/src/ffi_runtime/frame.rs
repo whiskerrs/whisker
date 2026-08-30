@@ -11,81 +11,101 @@ impl std::fmt::Display for MobileFrameError {
 }
 impl std::error::Error for MobileFrameError {}
 
+#[derive(Debug)]
+pub(super) enum MobilePresentError {
+    Encoding(MobileFrameError),
+    IncompatibleProtocol {
+        packet: whisker_engine::whisker_protocol::ProtocolVersion,
+        host: whisker_engine::whisker_protocol::ProtocolVersion,
+    },
+    UnsupportedCapability {
+        capability: whisker_engine::whisker_protocol::RenderCapability,
+        frame_id: u64,
+    },
+    HostRejected {
+        frame_id: u64,
+        status: u8,
+        revision: u64,
+    },
+}
+
+impl From<MobileFrameError> for MobilePresentError {
+    fn from(error: MobileFrameError) -> Self {
+        Self::Encoding(error)
+    }
+}
+
+impl std::fmt::Display for MobilePresentError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Encoding(error) => error.fmt(formatter),
+            Self::IncompatibleProtocol { packet, host } => write!(
+                formatter,
+                "mobile Host protocol {}.{} cannot accept frame protocol {}.{}",
+                host.major, host.minor, packet.major, packet.minor
+            ),
+            Self::UnsupportedCapability {
+                capability,
+                frame_id,
+            } => write!(
+                formatter,
+                "mobile Host does not advertise capability {} required by frame {frame_id}",
+                capability.as_str()
+            ),
+            Self::HostRejected {
+                frame_id,
+                status,
+                revision,
+            } => write!(
+                formatter,
+                "mobile Host rejected frame {frame_id} with status {status} at revision {revision}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MobilePresentError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Encoding(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
 pub(super) struct MobileFrameSink {
     pub(super) present: PresentFrameCallback,
     pub(super) data: *mut c_void,
+    pub(super) capabilities: whisker_engine::whisker_protocol::RenderCapabilities,
 }
 
 impl FrameSink for MobileFrameSink {
-    type Error = MobileFrameError;
+    type Error = MobilePresentError;
     fn capabilities(&self) -> whisker_engine::whisker_protocol::RenderCapabilities {
-        whisker_engine::whisker_protocol::RenderCapabilities::new(
-            whisker_engine::whisker_protocol::ProtocolVersion::CURRENT,
-            [
-                whisker_engine::whisker_protocol::CapabilityEntry {
-                    capability:
-                        whisker_engine::whisker_protocol::RenderCapability::EllipticalBorderRadius,
-                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_engine::whisker_protocol::CapabilityEntry {
-                    capability: whisker_engine::whisker_protocol::RenderCapability::VisualEffects,
-                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_engine::whisker_protocol::CapabilityEntry {
-                    capability: whisker_engine::whisker_protocol::RenderCapability::TextEffects,
-                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_engine::whisker_protocol::CapabilityEntry {
-                    capability:
-                        whisker_engine::whisker_protocol::RenderCapability::TextTypography,
-                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_engine::whisker_protocol::CapabilityEntry {
-                    capability: whisker_engine::whisker_protocol::RenderCapability::Cursor,
-                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_engine::whisker_protocol::CapabilityEntry {
-                    capability: whisker_engine::whisker_protocol::RenderCapability::LinearGradients,
-                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_engine::whisker_protocol::CapabilityEntry {
-                    capability: whisker_engine::whisker_protocol::RenderCapability::RadialGradients,
-                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_engine::whisker_protocol::CapabilityEntry {
-                    capability: whisker_engine::whisker_protocol::RenderCapability::ConicGradients,
-                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_engine::whisker_protocol::CapabilityEntry {
-                    capability:
-                        whisker_engine::whisker_protocol::RenderCapability::BackgroundGeometry,
-                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_engine::whisker_protocol::CapabilityEntry {
-                    capability:
-                        whisker_engine::whisker_protocol::RenderCapability::BackgroundLayerStacking,
-                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_engine::whisker_protocol::CapabilityEntry {
-                    capability:
-                        whisker_engine::whisker_protocol::RenderCapability::BackgroundImageResources,
-                    support: whisker_engine::whisker_protocol::CapabilitySupport::Native,
-                },
-            ],
-        )
-        .expect("mobile capability profile is unique")
+        self.capabilities
     }
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
         let capabilities = self.capabilities();
-        if !capabilities.supports_protocol(packet.header.version)
-            || capabilities.first_unsupported(packet).is_some()
-        {
-            return Err(MobileFrameError);
+        if !capabilities.supports_protocol(packet.header.version) {
+            return Err(MobilePresentError::IncompatibleProtocol {
+                packet: packet.header.version,
+                host: capabilities.protocol(),
+            });
+        }
+        if let Some(capability) = capabilities.first_unsupported(packet) {
+            return Err(MobilePresentError::UnsupportedCapability {
+                capability,
+                frame_id: packet.header.frame_id,
+            });
         }
         let owned = MobileFrameOwned::new(packet)?;
         let mut response = MobileApplyResponse::default();
         if !(self.present)(self.data, &owned.value, &mut response) {
-            return Err(MobileFrameError);
+            return Err(MobilePresentError::HostRejected {
+                frame_id: packet.header.frame_id,
+                status: APPLY_REJECTED,
+                revision: packet.header.base_revision,
+            });
         }
         match response.status {
             APPLY_ACCEPTED if response.revision == packet.header.target_revision => {
@@ -96,7 +116,11 @@ impl FrameSink for MobileFrameSink {
             APPLY_NEED_SNAPSHOT => Ok(ApplyResult::NeedSnapshot {
                 receiver_revision: response.revision,
             }),
-            _ => Err(MobileFrameError),
+            _ => Err(MobilePresentError::HostRejected {
+                frame_id: packet.header.frame_id,
+                status: response.status,
+                revision: response.revision,
+            }),
         }
     }
 }

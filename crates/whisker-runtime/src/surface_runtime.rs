@@ -372,9 +372,24 @@ impl SurfaceRuntime {
         environment: StyleEnvironment,
         registry: ElementRegistry,
     ) -> Self {
+        Self::with_element_registry_and_protocol(
+            surface,
+            environment,
+            registry,
+            whisker_protocol::ProtocolVersion::CURRENT,
+        )
+    }
+
+    /// Creates a registered surface using the protocol selected with its Host.
+    pub fn with_element_registry_and_protocol(
+        surface: SurfaceId,
+        environment: StyleEnvironment,
+        registry: ElementRegistry,
+        protocol: whisker_protocol::ProtocolVersion,
+    ) -> Self {
         Self {
             state: Rc::new(RefCell::new(BindingState {
-                surface: SurfaceEngine::new(surface),
+                surface: SurfaceEngine::with_protocol(surface, protocol),
                 environment,
                 registry,
                 next_element: 0,

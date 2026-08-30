@@ -145,6 +145,7 @@ public final class WhiskerView: UIView {
         }
         runtimeHandle = whiskerViewCreate(
             Float(viewport.width), Float(viewport.height), Float(window?.screen.scale ?? 1),
+            IOSHostCapabilities.current.rawValue,
             whiskerIOSRequestFrame, token,
             whiskerIOSBootstrap, token,
             whiskerIOSMeasure, token,

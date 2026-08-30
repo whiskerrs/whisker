@@ -296,6 +296,7 @@ impl ChangeJournal {
 #[derive(Clone, Debug)]
 pub struct Scene {
     surface: SurfaceId,
+    protocol: ProtocolVersion,
     scene_epoch: u32,
     accepted_revision: u64,
     next_node_id: u64,
@@ -309,8 +310,14 @@ pub struct Scene {
 impl Scene {
     /// Creates an empty scene that will emit a snapshot on its first frame.
     pub fn new(surface: SurfaceId) -> Self {
+        Self::with_protocol(surface, ProtocolVersion::CURRENT)
+    }
+
+    /// Creates an empty scene using the version selected with its Host.
+    pub fn with_protocol(surface: SurfaceId, protocol: ProtocolVersion) -> Self {
         Self {
             surface,
+            protocol,
             scene_epoch: 1,
             accepted_revision: 0,
             next_node_id: 1,
@@ -1011,7 +1018,7 @@ impl Scene {
         };
         self.pending = Some(FramePacket {
             header: FrameHeader {
-                version: ProtocolVersion::CURRENT,
+                version: self.protocol,
                 surface: self.surface,
                 scene_epoch: self.scene_epoch,
                 frame_id,
@@ -1824,6 +1831,16 @@ mod tests {
             .accept_pending(retry.header.target_revision)
             .expect("accept retry");
         assert_eq!(scene.accept_pending(3), Err(SceneError::NoPendingFrame));
+    }
+
+    #[test]
+    fn configured_protocol_version_is_written_to_every_frame() {
+        let protocol = ProtocolVersion { major: 1, minor: 2 };
+        let mut scene = Scene::with_protocol(surface(), protocol);
+
+        let packet = scene.prepare_frame(1).unwrap().unwrap();
+
+        assert_eq!(packet.header.version, protocol);
     }
 
     #[test]

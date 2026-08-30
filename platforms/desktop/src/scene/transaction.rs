@@ -1075,56 +1075,7 @@ impl FrameSink for DesktopScene {
     type Error = DesktopPresentError;
 
     fn capabilities(&self) -> whisker_protocol::RenderCapabilities {
-        whisker_protocol::RenderCapabilities::new(
-            whisker_protocol::ProtocolVersion::CURRENT,
-            [
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::EllipticalBorderRadius,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::VisualEffects,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::TextEffects,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::TextTypography,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::Cursor,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::LinearGradients,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::RadialGradients,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::ConicGradients,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::BackgroundGeometry,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::BackgroundLayerStacking,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::BackgroundImageResources,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-            ],
-        )
-        .expect("Desktop capability profile is unique")
+        crate::capabilities::host_capabilities()
     }
 
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {

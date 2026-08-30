@@ -29,7 +29,8 @@ pub use accessibility::{
     Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState,
 };
 pub use capability::{
-    CapabilityEntry, CapabilitySupport, DuplicateCapability, RenderCapabilities, RenderCapability,
+    CapabilityEntry, CapabilityNegotiationError, CapabilitySupport, DuplicateCapability,
+    InvalidCapabilityMasks, RenderCapabilities, RenderCapability,
 };
 pub use element::{
     ChildPolicy, ElementCommandSchema, ElementEventSchema, ElementMeasurement,

@@ -516,6 +516,14 @@ scope. `SetImage` and `SetCursor` carry replaced content and cursor resources.
 All resource references use `ResourceId`; platform image objects, decoded
 pixels, paths, and GPU handles never enter the common protocol.
 
+Backdrop blur is negotiated independently from the remaining
+`visual-effects` group. A Host may therefore support shadows, clips, opacity,
+or compositing without falsely claiming it can sample content behind an
+element. The initial profiles advertise backdrop blur as native on Web when
+`CSS.supports("backdrop-filter", "blur(1px)")` succeeds, native on Desktop,
+native on Android API 31 and later, emulated on iOS, and unsupported on older
+Android versions.
+
 Resource acquisition is a separate, non-frame channel. `ResourceCommand::Load`
 binds a `ResourceId` and monotonic generation to a URL, bundled asset, or
 one-time byte payload; `ResourceEvent::Ready` or `Failed` completes that exact
@@ -612,11 +620,14 @@ surface binds, and unsupported dynamic values produce deterministic errors
 rather than silent visual changes.
 
 The Rust boundary exposes this table as `RenderCapabilities`. Optional
-protocol-minor-1 groups are `elliptical-border-radius`, `background-layers`,
-`visual-effects`, `text-effects`, `text-typography`, `image-content`, `cursor`,
-and `resource-lifecycle`. `FramePacket::required_capabilities()` derives the
-dynamic subset from semantic operations. An omitted entry means unsupported;
-Hosts preflight the complete packet before changing their retained projection.
+semantic groups include `elliptical-border-radius`, `background-layers`,
+`visual-effects`, `backdrop-blur`, `text-effects`, `text-typography`,
+`image-content`, `cursor`, and `resource-lifecycle`.
+`FramePacket::required_capabilities()` derives the dynamic subset from semantic
+operations. An omitted entry means unsupported; Hosts preflight the complete
+packet before changing their retained projection. Native and emulated support
+are distinct so conformance can require equal output without pretending every
+platform uses the same rendering primitive.
 
 Paint order is derived from the Rust scene, stacking-context rules, and
 resolved order. A backend may realize it with native child order, layers, DOM

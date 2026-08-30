@@ -12,6 +12,7 @@ import android.view.MotionEvent
 import android.view.View
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.bridge.AndroidFrameBatch
+import rs.whisker.runtime.bridge.AndroidHostCapabilities
 import rs.whisker.runtime.bridge.MobileAbi
 import rs.whisker.runtime.input.normalizePointerInput
 import rs.whisker.runtime.measure.HostMeasurementProvider
@@ -152,7 +153,12 @@ class WhiskerView(context: Context) :
                 }
             }
             val density = resources.displayMetrics.density
-            nativeHandle = nativeCreate(width / density, height / density, density)
+            nativeHandle = nativeCreate(
+                width / density,
+                height / density,
+                density,
+                AndroidHostCapabilities.current().wireValues(),
+            )
             if (nativeHandle != 0L) {
                 requestFrameFromNative()
             } else {
@@ -571,7 +577,12 @@ class WhiskerView(context: Context) :
         payloads,
     )
 
-    private external fun nativeCreate(width: Float, height: Float, scale: Float): Long
+    private external fun nativeCreate(
+        width: Float,
+        height: Float,
+        scale: Float,
+        capabilities: LongArray,
+    ): Long
     private external fun nativeTick(
         handle: Long,
         timestampMs: Double,

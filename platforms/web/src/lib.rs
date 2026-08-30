@@ -25,6 +25,7 @@ pub type WhiskerMeasuredSize = whisker_protocol::MeasuredSize;
 pub type WhiskerTextStyle = whisker_protocol::TextStyleSnapshot;
 
 mod application;
+mod capabilities;
 mod dom;
 mod input;
 mod measure;
