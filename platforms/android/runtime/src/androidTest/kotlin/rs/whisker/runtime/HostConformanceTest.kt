@@ -9,6 +9,7 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import android.util.Base64
 import android.text.Spanned
+import android.text.TextDirectionHeuristics
 import android.text.style.LeadingMarginSpan
 import android.view.View
 import android.view.Gravity
@@ -29,7 +30,9 @@ import kotlin.math.roundToInt
 import rs.whisker.runtime.resource.HostResourceFailureCode
 import rs.whisker.runtime.resource.HostResourceSnapshot
 import rs.whisker.runtime.resource.HostResourceState
+import rs.whisker.runtime.input.normalizePointerInput
 import rs.whisker.runtime.measure.HostMeasureBatchAbi
+import rs.whisker.runtime.measure.resolveTextLayoutSemantics
 import rs.whisker.runtime.scene.HostAccessibility
 import rs.whisker.runtime.scene.HostNode
 
@@ -44,14 +47,6 @@ private data class CapturedPointerInput(
     val timestampMs: Double,
     val x: Float,
     val y: Float,
-)
-
-private data class CapturedTextMeasurement(
-    val direction: Int,
-    val alignment: Int,
-    val paragraphDirection: Int,
-    val layoutAlignment: Int,
-    val indent: Float,
 )
 
 @RunWith(AndroidJUnit4::class)
@@ -457,7 +452,6 @@ private class Driver(
     private var checkpoint: Bitmap? = null
     private val measurements = HashMap<Long, FloatArray>()
     private var pointerInput: CapturedPointerInput? = null
-    private var textMeasurement: CapturedTextMeasurement? = null
 
     init {
         view.beginBootstrapFromNative()
@@ -488,27 +482,6 @@ private class Driver(
             intArrayOf(), intArrayOf(), emptyArray(),
         )
         check(view.finishBootstrapFromNative())
-        view.observePointerInputForTesting { semantics, geometry ->
-            pointerInput = CapturedPointerInput(
-                event = semantics[0].toInt(),
-                pointerId = semantics[1],
-                kind = semantics[2].toInt(),
-                buttons = semantics[3].toInt(),
-                changedButton = semantics[4].toInt(),
-                timestampMs = geometry[0].toDouble(),
-                x = geometry[1].toFloat(),
-                y = geometry[2].toFloat(),
-            )
-        }
-        view.observeTextMeasurementForTesting { semantics, geometry ->
-            textMeasurement = CapturedTextMeasurement(
-                direction = semantics[0],
-                alignment = semantics[1],
-                paragraphDirection = semantics[2],
-                layoutAlignment = semantics[3],
-                indent = geometry[0],
-            )
-        }
     }
 
     fun execute(side: JSONObject): Bitmap {
@@ -799,6 +772,17 @@ private class Driver(
             0,
         )
         try {
+            val normalized = normalizePointerInput(event, density).single()
+            pointerInput = CapturedPointerInput(
+                event = normalized.event,
+                pointerId = normalized.pointerId,
+                kind = normalized.kind,
+                buttons = normalized.buttons,
+                changedButton = normalized.changedButton,
+                timestampMs = normalized.timestampMs,
+                x = normalized.x,
+                y = normalized.y,
+            )
             view.dispatchTouchEvent(event)
         } finally {
             event.recycle()
@@ -937,19 +921,28 @@ private class Driver(
             check(opticalSizing == 1)
         }
         if (id == "host.measure.text.direction") {
-            val applied = checkNotNull(textMeasurement)
-            check(applied.direction == direction)
-            check(applied.alignment == alignment)
-            check(abs(applied.indent - (indentLogicalPixels +
+            val density = context.resources.displayMetrics.density
+            val semantics = resolveTextLayoutSemantics(
+                text = command.getString("text"),
+                direction = direction,
+                alignment = alignment,
+                localeRtl = context.resources.configuration.layoutDirection ==
+                    View.LAYOUT_DIRECTION_RTL,
+                widthBasis = command.getDouble("available_width").toFloat(),
+                density = density,
+                indentLogicalPixels = indentLogicalPixels,
+                indentPercentage = indentPercentage,
+            )
+            check(abs(semantics.indentPixels / density - (indentLogicalPixels +
                 command.getDouble("available_width").toFloat() * indentPercentage / 100f)) < 0.01f)
             when (command.getLong("key")) {
                 20L -> {
-                    check(applied.paragraphDirection == -1)
-                    check(applied.layoutAlignment == android.text.Layout.Alignment.ALIGN_OPPOSITE.ordinal)
+                    check(semantics.directionHeuristic === TextDirectionHeuristics.RTL)
+                    check(semantics.alignment == android.text.Layout.Alignment.ALIGN_OPPOSITE)
                 }
                 21L -> {
-                    check(applied.paragraphDirection == 1)
-                    check(applied.layoutAlignment == android.text.Layout.Alignment.ALIGN_CENTER.ordinal)
+                    check(semantics.directionHeuristic === TextDirectionHeuristics.LTR)
+                    check(semantics.alignment == android.text.Layout.Alignment.ALIGN_CENTER)
                 }
             }
         }

@@ -78,18 +78,32 @@ struct WhiskerPointerDispatch: Equatable {
     let changedButton: Int16
 }
 
-#if WHISKER_HOST_CONFORMANCE
-var whiskerPointerDispatchObserver: ((WhiskerPointerDispatch) -> Void)?
-#endif
+func makeWhiskerPointerDispatch(
+    timestampMs: Double,
+    event: HostPointerEvent,
+    pointerID: UInt64,
+    pointerKind: HostPointerKind,
+    x: Float,
+    y: Float
+) -> WhiskerPointerDispatch? {
+    guard timestampMs.isFinite, pointerID != 0, x.isFinite, y.isFinite else { return nil }
+    return WhiskerPointerDispatch(
+        timestampMs: timestampMs,
+        event: event.rawValue,
+        pointerID: pointerID,
+        pointerKind: pointerKind.rawValue,
+        x: x,
+        y: y,
+        buttons: event.buttons,
+        changedButton: pointerKind.changedButton(for: event)
+    )
+}
 
 @discardableResult
 func dispatchWhiskerPointer(
     handle: UnsafeMutableRawPointer,
     input: WhiskerPointerDispatch
 ) -> Bool {
-#if WHISKER_HOST_CONFORMANCE
-    whiskerPointerDispatchObserver?(input)
-#endif
     return whiskerViewDispatchPointer(
         handle,
         input.timestampMs,

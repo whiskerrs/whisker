@@ -13,7 +13,6 @@ import android.view.View
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.bridge.AndroidFrameBatch
 import rs.whisker.runtime.bridge.MobileAbi
-import rs.whisker.runtime.input.HostPointerInput
 import rs.whisker.runtime.input.normalizePointerInput
 import rs.whisker.runtime.measure.HostMeasurementProvider
 import rs.whisker.runtime.measure.HostMeasureBatchAbi
@@ -60,7 +59,6 @@ class WhiskerView(context: Context) :
     private val modules = HostModuleDispatcher(::nativeResolveModule)
     private var backdropCaptureTarget: HostNode? = null
     private var backdropCaptureReached = false
-    private var pointerInputObserver: ((HostPointerInput) -> Unit)? = null
     private val pendingContinuousEvents = PendingContinuousEvents()
     private var continuousEventFlushPending = false
     private val continuousEventFlush = Runnable {
@@ -179,7 +177,6 @@ class WhiskerView(context: Context) :
         val density = resources.displayMetrics.density
         val pointers = normalizePointerInput(event, density)
         pointers.forEach { pointer ->
-            pointerInputObserver?.invoke(pointer)
             val handle = nativeHandle
             if (handle != 0L) {
                 nativeDispatchPointer(
@@ -200,33 +197,6 @@ class WhiskerView(context: Context) :
         // an Android ownership decision, so receiving a normalized sample is
         // enough to claim it while the runtime is mounted.
         return nativeHandle != 0L && pointers.isNotEmpty()
-    }
-
-    /** Test-only observer at the production MotionEvent-to-runtime dispatch seam. */
-    fun observePointerInputForTesting(observer: ((LongArray, DoubleArray) -> Unit)?) {
-        pointerInputObserver = observer?.let { callback ->
-            { pointer ->
-                callback(
-                    longArrayOf(
-                        pointer.event.toLong(),
-                        pointer.pointerId,
-                        pointer.kind.toLong(),
-                        pointer.buttons.toLong(),
-                        pointer.changedButton.toLong(),
-                    ),
-                    doubleArrayOf(
-                        pointer.timestampMs,
-                        pointer.x.toDouble(),
-                        pointer.y.toDouble(),
-                    ),
-                )
-            }
-        }
-    }
-
-    /** Test-only observer at the production text shaping configuration seam. */
-    fun observeTextMeasurementForTesting(observer: ((IntArray, FloatArray) -> Unit)?) {
-        measurements.textInspectionObserver = observer
     }
 
     /** Called from Rust through JNI. Safe even when the wake originates off-main. */

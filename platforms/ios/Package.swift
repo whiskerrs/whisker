@@ -38,8 +38,7 @@ let package = Package(
         .target(
             name: "WhiskerRuntime",
             dependencies: ["WhiskerModule"],
-            path: "Sources/WhiskerRuntime",
-            swiftSettings: [.define("WHISKER_HOST_CONFORMANCE")]
+            path: "Sources/WhiskerRuntime"
         ),
         .target(
             name: "WhiskerHostConformanceStubs",

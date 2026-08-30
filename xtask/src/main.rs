@@ -9,6 +9,9 @@ use anyhow::{Context, Result, bail};
 mod mobile_abi;
 mod mobile_link_test;
 
+#[cfg(test)]
+mod host_sdk_surface;
+
 fn main() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
     match (arguments.next().as_deref(), arguments.next().as_deref()) {

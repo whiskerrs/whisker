@@ -385,12 +385,12 @@ final class HostConformanceTests: XCTestCase {
                         frame.operations = UnsafePointer(operationBuffer.baseAddress!)
                         frame.operation_count = operationBuffer.count
                         var response = WhiskerMobileApplyResponse()
-                        XCTAssertTrue(view.applyConformanceFrame(frame, response: &response))
+                        XCTAssertTrue(view.applyFrame(frame, response: &response))
                         XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_REJECTED))
                         XCTAssertTrue(
                             view.registerRasterResource(id: resourceID, image: raster)
                         )
-                        XCTAssertTrue(view.applyConformanceFrame(frame, response: &response))
+                        XCTAssertTrue(view.applyFrame(frame, response: &response))
                         XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
                     }
                 }
@@ -1154,18 +1154,14 @@ private final class Driver {
         default: throw Failure("unknown pointer event")
         }
         let pointerKind = try fixturePointerKind(command)
-        var observed: WhiskerPointerDispatch?
-        whiskerPointerDispatchObserver = { observed = $0 }
-        defer { whiskerPointerDispatchObserver = nil }
-        view.dispatchConformanceTouchSample(
+        let input = try unwrap(makeWhiskerPointerDispatch(
             timestampMs: try number(command, "timestamp_ms"),
             event: event,
             pointerID: UInt64(try number(command, "pointer_id")),
             pointerKind: pointerKind,
             x: Float(try number(command, "x")),
             y: Float(try number(command, "y"))
-        )
-        let input = try unwrap(observed, "production pointer ABI dispatch")
+        ), "production pointer ABI dispatch")
         XCTAssertEqual(input.timestampMs, try number(command, "timestamp_ms"))
         XCTAssertEqual(input.event, event.rawValue)
         XCTAssertNotEqual(input.pointerID, 0)
@@ -1355,7 +1351,7 @@ private final class Driver {
                     }
                     frame.operation_count = buffer.count
                     var response = WhiskerMobileApplyResponse()
-                    guard view.applyConformanceFrame(frame, response: &response),
+                    guard view.applyFrame(frame, response: &response),
                           response.status == UInt8(WHISKER_APPLY_ACCEPTED) else {
                         throw Failure("UIKit Host rejected fixture frame")
                     }
@@ -1892,7 +1888,7 @@ private final class Driver {
                                 frame.operations = UnsafePointer(buffer.baseAddress!)
                                 frame.operation_count = buffer.count
                                 var response = WhiskerMobileApplyResponse()
-                                guard view.applyConformanceFrame(frame, response: &response),
+                                guard view.applyFrame(frame, response: &response),
                                       response.status == UInt8(WHISKER_APPLY_ACCEPTED) else {
                                     throw Failure("UIKit Host rejected scene fixture frame")
                                 }
