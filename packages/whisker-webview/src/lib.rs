@@ -8,7 +8,7 @@
 //! ([`WebViewRef`]) bound on mount via `ref:` for `reload` / `goBack` /
 //! `goForward` / `stopLoading` / `postMessage` / `evaluateJavaScript`.
 //!
-//! The Lynx tag is `whisker-webview:WebView` (the crate name is
+//! The native element tag is `whisker-webview:WebView` (the crate name is
 //! auto-prepended by `#[whisker::module_component]`).
 //!
 //! ## Usage

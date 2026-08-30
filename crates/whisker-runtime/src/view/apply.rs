@@ -84,8 +84,8 @@ where
     }
 }
 
-/// Typed-attribute helpers — use these when the Lynx-side handler
-/// reads the value as anything other than a string. Lynx's prop
+/// Typed-attribute helpers — use these when the Host-side handler
+/// reads the value as anything other than a string. Host's prop
 /// dispatch on many UIs (`<list>`, `<scroll-view>`, …) gates
 /// branches on `value.IsNumber()` / `value.IsBool()`, so a
 /// stringified attr from [`apply_attr`] silently no-ops in those
@@ -106,7 +106,7 @@ where
 /// Same as [`apply_attr_int`] but for a signal whose element type
 /// isn't already `i32` — maps each read through `to_wire` first.
 /// Exists for typed attribute enums (e.g. `PanInterceptDirection`)
-/// whose Lynx-side prop setter is integer-typed but where the Rust
+/// whose Host-side prop setter is integer-typed but where the Rust
 /// API keeps the ergonomic enum type; see [`apply_attr_int`]'s doc
 /// comment for why the plain string [`apply_attr`] path silently
 /// no-ops for these.

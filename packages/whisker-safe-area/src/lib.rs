@@ -133,7 +133,7 @@ fn install() {
         let (read, write) = ArcRwSignal::new(SafeAreaInsets::default()).split();
         // `ArcWriteSignal` is `!Send`; both platforms post their events from
         // the UI thread, so `MainThreadOnly` asserts that contract. A host
-        // that breaks it must route through `run_on_main_thread` first.
+        // that breaks it must post through the active runtime dispatcher first.
         subscribe_to_native(MainThreadOnly {
             inner: write.clone(),
         });
@@ -203,7 +203,7 @@ struct MainThreadOnly<T> {
     inner: T,
 }
 // SAFETY: every access path — the signal read in `safe_area_insets`, the
-// write in the `on_event` callback — runs on the Lynx TASM thread by
+// write in the `on_event` callback — runs on the runtime thread by
 // contract. Misuse would corrupt the reactive arena.
 unsafe impl<T> Send for MainThreadOnly<T> {}
 unsafe impl<T> Sync for MainThreadOnly<T> {}

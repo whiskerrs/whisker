@@ -1,4 +1,4 @@
-// Lynx UI subclass hosting AVPlayer + AVPlayerLayer. Registration is
+// Whisker module view hosting AVPlayer + AVPlayerLayer. Registration is
 // driven by `VideoModule`'s `definition()`, not by annotations here.
 //
 // `@objc(VideoView)` pins the Obj-C class name to the bare
@@ -22,7 +22,7 @@ public final class VideoView: WhiskerUI<UIView> {
     }
 
     /// Keep the AVPlayerLayer sized to the host UIView's bounds.
-    /// Lynx fires this after computing the FiberElement's frame —
+    /// The Host fires this after applying the element's computed frame —
     /// `self.view().bounds` is authoritative here.
     @objc public override func frameDidChange() {
         super.frameDidChange()
@@ -42,7 +42,7 @@ public final class VideoView: WhiskerUI<UIView> {
         layer.backgroundColor = UIColor.black.cgColor
 
         let hostView: UIView = self.view()
-        // setSrc can fire before Lynx assigns the host view its computed
+        // setSrc can fire before the Host assigns the view its computed
         // frame — the first dispatch happens during initial-mount prop
         // application — so the layer needs a placeholder rect until
         // `frameDidChange` resizes it.

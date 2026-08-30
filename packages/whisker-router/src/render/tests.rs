@@ -1459,9 +1459,9 @@ fn one_transition_poses_all_four_directional_slots() {
 // Renderer-level reproduction of the `replace` content-attach path.
 //
 // The tests above run without a renderer, so they never exercise the
-// real Lynx op sequence. This block installs a recording renderer that
-// mints real element ids and models `insert_child_before` the way Lynx's
-// `FiberElement::InsertNodeBefore` behaves — a positioned insert whose
+// real native op sequence. This block installs a recording renderer that
+// mints real element ids and models `insert_child_before` the way a native Host
+// does — a positioned insert whose
 // reference node MUST already be a live child of the parent, else the
 // insert is dropped. That drop is exactly the on-device "next chapter is
 // blank after a `replace`" symptom, so it lets us reproduce it in-process.
@@ -1645,7 +1645,7 @@ mod replace_repro {
                     match kids.iter().position(|c| *c == r) {
                         Some(pos) => kids.insert(pos, child),
                         None => {
-                            // Lynx drops an insert whose reference isn't a
+                            // a native Host drops an insert whose reference isn't a
                             // live child — the child never enters the tree.
                             inner.violations.push(format!(
                                 "insert {}->{} before dead ref {}",

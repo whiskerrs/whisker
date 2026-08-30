@@ -318,7 +318,7 @@ fn read_bool(fields: &BTreeMap<String, WhiskerValue>, key: &str) -> bool {
     matches!(fields.get(key), Some(WhiskerValue::Bool(true)))
 }
 
-/// Main-thread-only wrapper. Asserts the Lynx TASM-thread contract so
+/// Main-thread-only wrapper. Asserts the runtime-thread contract so
 /// `OnceLock<T>`'s `T: Sync` bound passes without making `Rc` actually
 /// `Sync`.
 #[derive(Clone)]

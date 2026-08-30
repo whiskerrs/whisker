@@ -35,7 +35,7 @@
 //! ## Implementation notes
 //!
 //! - `#[whisker::module_component("Video")]` declares the element for
-//!   `render!`. The Lynx tag is `whisker-video:Video` (the crate name
+//!   `render!`. The native element tag is `whisker-video:Video` (the crate name
 //!   is auto-prepended).
 //! - [`VideoHandle`] wraps an `ElementRef` (the element-id handle
 //!   bound on mount); methods dispatch through

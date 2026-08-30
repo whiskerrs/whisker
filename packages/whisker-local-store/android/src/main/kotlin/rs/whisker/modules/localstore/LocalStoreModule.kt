@@ -2,8 +2,8 @@
 //
 // A view-less DSL module: `definition()` has no `View(...)` block,
 // just module-level `Function`s. The KSP processor finds every
-// concrete `Module` subclass and calls `registerWithLynx()`,
-// which registers the functions with `WhiskerModuleRegistry` under
+// concrete `Module` subclass and registers its functions with
+// `WhiskerModuleRegistry` under
 // the `Name(...)` — so `whisker::platform_module::invoke(
 // "WhiskerLocalStore", ...)` from Rust routes into these handlers.
 //

@@ -1,6 +1,6 @@
 // `whisker-video` ModuleDefinition (Android).
 //
-// The `VideoView` Lynx UI subclass this references lives in
+// The `VideoView` Whisker module view this references lives in
 // `VideoView.kt`. Same split on iOS (`VideoModule.swift` +
 // `VideoView.swift`).
 

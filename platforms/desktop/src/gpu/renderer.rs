@@ -452,7 +452,7 @@ impl GpuRenderer {
                     });
                 } else {
                     // Glyphon does not expose a blur primitive. Approximate the
-                    // single Lynx shadow with a compact, normalized sample disk.
+                    // configured shadow with a compact, normalized sample disk.
                     let radius = shadow.blur_radius.min(12.0);
                     let offsets = [
                         (0.0, 0.0),

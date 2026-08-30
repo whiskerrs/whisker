@@ -3,7 +3,7 @@
 // SwiftPM manifest for the `whisker-audio` module package. Same
 // shape as `whisker-video`'s manifest — the SwiftPM codegen plugin
 // scans `ios/Sources/WhiskerAudio/` for `@WhiskerModule` declarations and
-// auto-registers them with Lynx.
+// registers them with Whisker's Host registry.
 
 import PackageDescription
 
@@ -18,7 +18,7 @@ let package = Package(
         .library(name: "WhiskerAudio", targets: ["WhiskerAudio"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.11"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.12"),
     ],
     targets: [
         .target(

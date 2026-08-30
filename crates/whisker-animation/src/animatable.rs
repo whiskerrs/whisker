@@ -37,7 +37,7 @@ impl Animatable for Color {
     ///   `Transparent`, or an `Hsla`/`Rgba` mix) interpolates per
     ///   channel.
     /// - A [`Color::Named`] endpoint has no resolvable channels here
-    ///   (the named-color table lives in Lynx, not in this crate), so a
+    ///   (named colors are unresolved at this animation layer), so a
     ///   pair involving a named color **snaps** at the midpoint rather
     ///   than producing a wrong RGBA. Use explicit `Color::rgb(..)` /
     ///   `Color::hsl(..)` endpoints when you need a smooth color tween.
@@ -87,7 +87,7 @@ impl Animatable for Color {
 }
 
 /// Resolve a [`Color`] to concrete `(r, g, b, a)` channels, or `None`
-/// for a [`Color::Named`] (whose RGB table lives in Lynx, not here).
+/// for a [`Color::Named`] (which is unresolved at this animation layer).
 fn rgba_channels(c: &Color) -> Option<(u8, u8, u8, f32)> {
     match c {
         Color::Rgba(r, g, b, a) => Some((*r, *g, *b, *a)),

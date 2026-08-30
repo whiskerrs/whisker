@@ -2,32 +2,34 @@
 
 use whisker_style::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, AnimationValue, BackdropFilterValue,
-    BorderRadiusValue, BorderStyleValue, BoxSizingValue, CalcExpression, ClearValue, ColorValue,
-    CursorValue, CustomPropertyReference, DirectionValue, DisplayValue, FlexBasisValue,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyleValue, FontWeightValue,
-    GridAutoFlowValue, GridMaxTrackSizingValue, GridMinTrackSizingValue, GridPlacementValue,
-    GridRepetitionCountValue, GridTemplateAreaValue, GridTemplateAreasValue,
-    GridTemplateComponentValue, GridTemplateRepetitionValue, GridTemplateValue,
-    GridTrackSizingValue, ImageRenderingValue, InsetPathValue, JustifyContentValue,
-    LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
-    MotionDirection, MotionEasing, MotionFillMode, MotionIterationCount, MotionPathCommandValue,
-    MotionPathPointValue, MotionPlayState, MotionStepPosition, MotionTime, OffsetPathValue,
-    OffsetRotateValue, PointerEventsValue, PositionValue, SizeValue, StyleNumber, StyleValue,
-    TransformFunctionValue, TransformOriginValue, TransformValue, TransitionPropertyValue,
-    TransitionValue,
+    BorderRadiusValue, BorderStyleValue, BoxShadowValue, BoxSizingValue, CalcExpression,
+    ClearValue, ClipBoxValue, ClipFillRuleValue, ClipPathCommandValue, ClipPathValue,
+    ClipPointValue, ClipShapeValue, ColorValue, CursorValue, CustomPropertyReference,
+    DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
+    FontStyleValue, FontWeightValue, GridAutoFlowValue, GridMaxTrackSizingValue,
+    GridMinTrackSizingValue, GridPlacementValue, GridRepetitionCountValue, GridTemplateAreaValue,
+    GridTemplateAreasValue, GridTemplateComponentValue, GridTemplateRepetitionValue,
+    GridTemplateValue, GridTrackSizingValue, ImageRenderingValue, InsetPathValue,
+    JustifyContentValue, LengthPercentageAutoValue, LengthPercentageValue, LengthUnit, LengthValue,
+    LineHeightValue, MotionDirection, MotionEasing, MotionFillMode, MotionIterationCount,
+    MotionPathCommandValue, MotionPathPointValue, MotionPlayState, MotionStepPosition, MotionTime,
+    OffsetPathValue, OffsetRotateValue, PointerEventsValue, PositionValue, SizeValue, StyleNumber,
+    StyleValue, TransformFunctionValue, TransformOriginValue, TransformValue,
+    TransitionPropertyValue, TransitionValue,
 };
 
 use crate::data_type_ext::{PositionKeyword, StepPosition};
 use crate::{
     AlignContent, AlignItems, AlignSelf, Angle, Animation, AnimationDirection, AnimationFillMode,
-    AnimationIterationCount, AnimationPlayState, BackdropFilter, BoxSizing, CalcExpr, Clear, Color,
-    CssString, Cursor, Direction, Display, EasingFunction, FlexBasis, FlexDirection, FlexWrap,
-    Float, FontStyle, FontWeight, GridAutoFlow, GridLine, GridRepeatCount, GridTemplate,
-    GridTemplateAreas, GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin,
-    ImageRendering, Integer, JustifyContent, Length, LengthPercentage, LineHeight, MarginValue,
-    MotionPathCommand, Number, OffsetDistance, OffsetPath, OffsetRotate, Overflow, Percentage,
-    PointerEvents, Position, PositionKind, Size, Time, Transform, TransformFn, Transition,
-    TransitionPropertyKind, ValueOrVariable, Visibility,
+    AnimationIterationCount, AnimationPlayState, BackdropFilter, BoxShadow, BoxSizing, CalcExpr,
+    Clear, ClipBox, ClipFillRule, ClipPath, ClipPathCommand, ClipPoint, Color, CssString, Cursor,
+    Direction, Display, EasingFunction, FlexBasis, FlexDirection, FlexWrap, Float, FontStyle,
+    FontWeight, GridAutoFlow, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
+    GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, ImageRendering, Integer,
+    JustifyContent, Length, LengthPercentage, LineHeight, MarginValue, MotionPathCommand, Number,
+    OffsetDistance, OffsetPath, OffsetRotate, Overflow, Percentage, PointerEvents, Position,
+    PositionKind, Size, Time, Transform, TransformFn, Transition, TransitionPropertyKind,
+    ValueOrVariable, Visibility,
 };
 use whisker_style::{OverflowValue, VisibilityValue};
 
@@ -266,6 +268,128 @@ impl ToStyleValue for PointerEvents {
         StyleValue::PointerEvents(match self {
             Self::Auto => PointerEventsValue::Auto,
             Self::None => PointerEventsValue::None,
+        })
+    }
+}
+
+impl ToStyleValue for BoxShadow {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::BoxShadows(vec![BoxShadowValue {
+            offset_x: to_length_component(&self.offset_x),
+            offset_y: to_length_component(&self.offset_y),
+            blur_radius: to_length_component(&self.blur_radius),
+            spread_radius: to_length_component(&self.spread_radius),
+            color: to_color_component(&self.color),
+            inset: self.inset,
+        }])
+    }
+}
+
+impl ToStyleValue for ClipPath {
+    fn to_style_value(&self) -> StyleValue {
+        let clip_box = |value: ClipBox| match value {
+            ClipBox::BorderBox => ClipBoxValue::Border,
+            ClipBox::PaddingBox => ClipBoxValue::Padding,
+            ClipBox::ContentBox => ClipBoxValue::Content,
+            ClipBox::FillBox => ClipBoxValue::Fill,
+            ClipBox::StrokeBox => ClipBoxValue::Stroke,
+            ClipBox::ViewBox => ClipBoxValue::View,
+        };
+        let point = |value: &ClipPoint| ClipPointValue {
+            x: to_length_percentage(&value.x),
+            y: to_length_percentage(&value.y),
+        };
+        let shape = match self {
+            ClipPath::None => return StyleValue::ClipPath(ClipPathValue::None),
+            ClipPath::Inset {
+                reference_box,
+                offsets,
+                radii,
+            } => (
+                clip_box(*reference_box),
+                ClipShapeValue::Inset {
+                    offsets: std::array::from_fn(|index| to_length_percentage(&offsets[index])),
+                    radii: radii.as_ref().map(|radii| {
+                        let vertical = radii.vertical.as_ref().unwrap_or(&radii.horizontal);
+                        std::array::from_fn(|index| BorderRadiusValue {
+                            horizontal: to_length_percentage(&radii.horizontal[index]),
+                            vertical: to_length_percentage(&vertical[index]),
+                        })
+                    }),
+                },
+            ),
+            ClipPath::Circle {
+                reference_box,
+                radius,
+                center_x,
+                center_y,
+            } => (
+                clip_box(*reference_box),
+                ClipShapeValue::Circle {
+                    radius: to_length_percentage(radius),
+                    center_x: to_length_percentage(center_x),
+                    center_y: to_length_percentage(center_y),
+                },
+            ),
+            ClipPath::Ellipse {
+                reference_box,
+                radius_x,
+                radius_y,
+                center_x,
+                center_y,
+            } => (
+                clip_box(*reference_box),
+                ClipShapeValue::Ellipse {
+                    radius_x: to_length_percentage(radius_x),
+                    radius_y: to_length_percentage(radius_y),
+                    center_x: to_length_percentage(center_x),
+                    center_y: to_length_percentage(center_y),
+                },
+            ),
+            ClipPath::Path {
+                reference_box,
+                fill_rule,
+                commands,
+            } => (
+                clip_box(*reference_box),
+                ClipShapeValue::Path {
+                    fill_rule: match fill_rule {
+                        ClipFillRule::NonZero => ClipFillRuleValue::NonZero,
+                        ClipFillRule::EvenOdd => ClipFillRuleValue::EvenOdd,
+                    },
+                    commands: commands
+                        .iter()
+                        .map(|command| match command {
+                            ClipPathCommand::MoveTo(value) => {
+                                ClipPathCommandValue::MoveTo(point(value))
+                            }
+                            ClipPathCommand::LineTo(value) => {
+                                ClipPathCommandValue::LineTo(point(value))
+                            }
+                            ClipPathCommand::QuadraticTo { control, end } => {
+                                ClipPathCommandValue::QuadraticTo {
+                                    control: point(control),
+                                    end: point(end),
+                                }
+                            }
+                            ClipPathCommand::CubicTo {
+                                control_1,
+                                control_2,
+                                end,
+                            } => ClipPathCommandValue::CubicTo {
+                                control_1: point(control_1),
+                                control_2: point(control_2),
+                                end: point(end),
+                            },
+                            ClipPathCommand::Close => ClipPathCommandValue::Close,
+                        })
+                        .collect(),
+                },
+            ),
+        };
+        StyleValue::ClipPath(ClipPathValue::Shape {
+            reference_box: shape.0,
+            shape: shape.1,
         })
     }
 }
@@ -541,8 +665,6 @@ impl ToStyleValue for Display {
             Self::Grid => DisplayValue::Grid,
             Self::Block => DisplayValue::Block,
             Self::FlowRoot => DisplayValue::FlowRoot,
-            Self::Linear => DisplayValue::Linear,
-            Self::Relative => DisplayValue::Relative,
         })
     }
 }
@@ -972,8 +1094,6 @@ fn to_length(value: Length) -> LengthValue {
     let (value, unit) = match value {
         Length::Zero => return LengthValue::Zero,
         Length::Px(value) => (value, LengthUnit::Px),
-        Length::Rpx(value) => (value, LengthUnit::Rpx),
-        Length::Ppx(value) => (value, LengthUnit::Ppx),
         Length::Em(value) => (value, LengthUnit::Em),
         Length::Rem(value) => (value, LengthUnit::Rem),
         Length::Vh(value) => (value, LengthUnit::Vh),
@@ -1042,8 +1162,6 @@ mod tests {
         let cases = [
             (Length::Zero, LengthValue::Zero),
             (Length::Px(1.0), dimension(1.0, LengthUnit::Px)),
-            (Length::Rpx(2.0), dimension(2.0, LengthUnit::Rpx)),
-            (Length::Ppx(3.0), dimension(3.0, LengthUnit::Ppx)),
             (Length::Em(4.0), dimension(4.0, LengthUnit::Em)),
             (Length::Rem(5.0), dimension(5.0, LengthUnit::Rem)),
             (Length::Vh(6.0), dimension(6.0, LengthUnit::Vh)),

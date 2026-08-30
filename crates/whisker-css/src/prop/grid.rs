@@ -159,8 +159,7 @@ mod tests {
                 GridTrack::minmax(GridTrackMin::MinContent, GridTrackMax::Fraction(2.0)),
             ]))
             .grid_row(GridLine::Number(1), GridLine::Span(2))
-            .to_specified_style()
-            .expect("all grid declarations should be typed");
+            .to_specified_style();
         let value = |property| {
             style
                 .declarations()
@@ -187,8 +186,7 @@ mod tests {
             css.to_string(),
             "grid-template-areas: \"header header\" \". main\";"
         );
-        css.to_specified_style()
-            .expect("grid-template-areas should not require CSS parsing");
+        css.to_specified_style();
     }
 
     #[test]
@@ -206,9 +204,7 @@ mod tests {
             css.to_string(),
             "grid-template-columns: [content-start] repeat(auto-fit, minmax(100px, 1fr)) [content-end];"
         );
-        let specified = css
-            .to_specified_style()
-            .expect("repeat() should not require CSS parsing");
+        let specified = css.to_specified_style();
         assert!(matches!(
             specified.declarations().next().map(|value| value.value()),
             Some(whisker_style::StyleValue::GridTemplate(template))

@@ -8,7 +8,7 @@
 //!    around a `u32` ID) regardless of which backend is mounted. The
 //!    renderer maps these IDs to whatever concrete types it needs
 //!    internally — `MockRenderer` keeps a `HashMap<u32, MockOp>`, the
-//!    production bridge maps each to a `Rc<LynxElement>`.
+//!    production Hosts map each to their retained native element.
 //!
 //! 2. **Thread-local active renderer**. The macro expansion calls free
 //!    functions ([`create_element`], [`set_attribute`], etc.) that

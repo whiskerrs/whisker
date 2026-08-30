@@ -147,9 +147,6 @@ pub fn run_modules(args: ModulesArgs) -> Result<()> {
 
 pub fn run_ios(args: IosArgs) -> Result<()> {
     let workspace = canonicalize_workspace(&args.workspace)?;
-    // No Lynx pre-fetch: the bridge cc build touches no Lynx header,
-    // and xcodebuild resolves the xcframeworks through SPM's
-    // `binaryTarget(url:checksum:)`.
     let archs: Vec<&str> = args.archs.split_whitespace().collect();
     let fw = whisker_build::ios::build_framework_for_xcode_run_script(
         &whisker_build::ios::XcodeRunScriptInputs {
@@ -191,9 +188,6 @@ pub fn run_android(args: AndroidArgs) -> Result<()> {
 
     let profile = parse_profile(&args.profile)?;
 
-    // No Lynx pre-fetch on Android either — the bridge calls into Lynx
-    // via `dlopen("liblynx.so")` + `dlsym` at engine-attach time, and
-    // gradle pulls `lynx-android.aar` transitively from Maven.
     let toolchain = whisker_build::android::resolve_toolchain(&args.abi, args.min_sdk)
         .with_context(|| {
             format!(

@@ -21,13 +21,6 @@
 //!   `cargo metadata` and resolve per-platform source contributions
 //!   the host build needs to stage.
 //!
-//! Lynx itself is never fetched here: iOS resolves the four
-//! xcframeworks via SPM `binaryTarget(url:checksum:)` in
-//! `platforms/ios/Package.swift`, Android pulls
-//! `rs.whisker:lynx-android:<ver>` from the
-//! `whiskerrs.github.io/lynx/maven` repository transitively via the
-//! SDK pom.
-//!
 //! Sync-only API. Dev-server callers wrap invocations in
 //! `tokio::task::spawn_blocking`; the cli runs them directly.
 

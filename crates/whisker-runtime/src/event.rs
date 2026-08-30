@@ -151,17 +151,15 @@ where
 pub struct Target {
     /// The element's `id` attribute (empty when unset).
     pub id: String,
-    /// Lynx Engine's unique element identifier (its "sign").
+    /// The Host's unique element identifier.
     pub uid: i64,
     /// Structured application metadata attached to the element.
     pub dataset: Dataset,
 }
 
-// The platform reporter hands over the *raw* event body, where `target`
-// and `currentTarget` are plain integer signs (Lynx
-// `LynxEvent.generateEventBody`); the richer `{id, dataset, uid}`
-// object is synthesized downstream in the JS layer, which Whisker
-// bypasses. `Target` must therefore accept EITHER form — a hard
+// Host adapters may encode `target` and `currentTarget` as either a plain
+// integer identifier or the richer `{id, dataset, uid}` object. `Target`
+// therefore accepts either form — a hard
 // "expected struct, got number" here fails the *whole* event struct and
 // blanks every field, `detail` included.
 impl<'de> Deserialize<'de> for Target {
@@ -372,9 +370,8 @@ pub struct Size {
 
 /// `<scroll_view>` scroll events — `scroll`, `scrolltoupper`,
 /// `scrolltolower`, `scrollend`, `contentsizechanged`. The `detail`
-/// carries the current scroll geometry. (CustomEvent → target-only, so
-/// these have no catch/capture variants — see Lynx `CustomEvent`
-/// defaults `Capture::kNo, Bubbles::kNo`.)
+/// carries the current scroll geometry. These events use the current
+/// target-only dispatch contract and have no catch/capture variants.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[non_exhaustive]
 pub struct ScrollEvent {
@@ -390,8 +387,7 @@ pub struct ScrollEvent {
     pub detail: ScrollDetail,
 }
 
-/// Scroll geometry carried by a [`ScrollEvent`] (the event body's
-/// `detail` dict — see Lynx `LynxScrollEventManager`).
+/// Scroll geometry carried by a [`ScrollEvent`]'s `detail` map.
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
@@ -607,7 +603,7 @@ mod tests {
 
     #[test]
     fn touch_event_from_value_tree() {
-        // Shape mirrors Lynx's `generateEventBody` for a tap.
+        // Representative Host payload for a tap.
         let v = WhiskerValue::map([
             ("type", WhiskerValue::String("tap".into())),
             ("timestamp", WhiskerValue::Float(123.0)),
@@ -669,7 +665,7 @@ mod tests {
 
     #[test]
     fn scroll_event_detail_camel_case_mapping() {
-        // Mirrors Lynx's LynxScrollEventManager detail dict.
+        // Mirrors the native scroll event payload shape.
         let v = WhiskerValue::map([
             ("type", WhiskerValue::String("scroll".into())),
             (

@@ -25,11 +25,11 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/background-image>
     pub fn background_image(self, v: impl Into<ImageRef>) -> Self {
         let image = v.into();
-        let lynx_value = image.to_css_string();
+        let serialized_value = image.to_css_string();
         self.push_semantic(
             crate::StyleProperty::BackgroundImage,
             whisker_style::StyleValue::BackgroundImages(vec![background_image_value(&image)]),
-            lynx_value,
+            serialized_value,
         )
     }
 
@@ -46,14 +46,13 @@ impl Css {
     /// Sets `background-position`.
     /// <https://lynxjs.org/api/css/properties/background-position>
     pub fn background_position(self, v: Position) -> Self {
-        let lynx_value = v.to_css_string();
-        let Some(value) = background_position_value(v) else {
-            return self.push_raw(crate::StyleProperty::BackgroundPosition, lynx_value);
-        };
+        let serialized_value = v.to_css_string();
+        let value = background_position_value(v)
+            .expect("background-position combines one horizontal and one vertical component");
         self.push_semantic(
             crate::StyleProperty::BackgroundPosition,
             whisker_style::StyleValue::BackgroundPosition(value),
-            lynx_value,
+            serialized_value,
         )
     }
 
@@ -72,11 +71,11 @@ impl Css {
     /// Sets `background-size`.
     /// <https://lynxjs.org/api/css/properties/background-size>
     pub fn background_size(self, v: BackgroundSize) -> Self {
-        let lynx_value = v.to_css_string();
+        let serialized_value = v.to_css_string();
         self.push_semantic(
             crate::StyleProperty::BackgroundSize,
             whisker_style::StyleValue::BackgroundSize(background_size_value(v)),
-            lynx_value,
+            serialized_value,
         )
     }
 
@@ -98,7 +97,7 @@ impl Css {
     /// Sets `background-clip`. Lynx default: `border-box`.
     /// <https://lynxjs.org/api/css/properties/background-clip>
     pub fn background_clip(self, v: BackgroundClip) -> Self {
-        let lynx_value = v.to_css_string();
+        let serialized_value = v.to_css_string();
         let value = match v {
             BackgroundClip::BorderBox => whisker_style::BackgroundBoxValue::Border,
             BackgroundClip::PaddingBox => whisker_style::BackgroundBoxValue::Padding,
@@ -108,26 +107,24 @@ impl Css {
         self.push_semantic(
             crate::StyleProperty::BackgroundClip,
             whisker_style::StyleValue::BackgroundBox(value),
-            lynx_value,
+            serialized_value,
         )
     }
 
     /// Sets `background-attachment`. Lynx default: `scroll`.
     /// <https://lynxjs.org/api/css/properties/background-attachment>
     pub fn background_attachment(self, v: BackgroundAttachment) -> Self {
-        let lynx_value = v.to_css_string();
-        match v {
-            BackgroundAttachment::Scroll => self.push_semantic(
-                crate::StyleProperty::BackgroundAttachment,
-                whisker_style::StyleValue::BackgroundAttachment(
-                    whisker_style::BackgroundAttachmentValue::Scroll,
-                ),
-                lynx_value,
-            ),
-            BackgroundAttachment::Fixed | BackgroundAttachment::Local => {
-                self.push_raw(crate::StyleProperty::BackgroundAttachment, lynx_value)
-            }
-        }
+        let serialized_value = v.to_css_string();
+        let value = match v {
+            BackgroundAttachment::Scroll => whisker_style::BackgroundAttachmentValue::Scroll,
+            BackgroundAttachment::Fixed => whisker_style::BackgroundAttachmentValue::Fixed,
+            BackgroundAttachment::Local => whisker_style::BackgroundAttachmentValue::Local,
+        };
+        self.push_semantic(
+            crate::StyleProperty::BackgroundAttachment,
+            whisker_style::StyleValue::BackgroundAttachment(value),
+            serialized_value,
+        )
     }
 
     /// Sets `color` — the foreground color used by text and SVG strokes.
@@ -373,7 +370,7 @@ mod tests {
         let s = Css::new().background_image(ImageRef::Url(CssString::new("a.png")));
         assert_eq!(s.to_string(), "background-image: url(\"a.png\");");
         assert_eq!(
-            s.to_specified_style().unwrap().resolved()[0].value(),
+            s.to_specified_style().resolved()[0].value(),
             &whisker_style::StyleValue::BackgroundImages(vec![
                 whisker_style::BackgroundImageValue::Url("a.png".into()),
             ])
@@ -391,7 +388,7 @@ mod tests {
             s.to_string(),
             "background-image: linear-gradient(to bottom, red, blue);"
         );
-        assert!(s.to_specified_style().is_ok());
+        let _ = s.to_specified_style();
     }
 
     #[test]
@@ -414,18 +411,8 @@ mod tests {
             at: Some((Percentage(25.0).into(), Percentage(75.0).into())),
             stops: stops(),
         };
-        assert!(
-            Css::new()
-                .background_image(radial)
-                .to_specified_style()
-                .is_ok()
-        );
-        assert!(
-            Css::new()
-                .background_image(conic)
-                .to_specified_style()
-                .is_ok()
-        );
+        Css::new().background_image(radial).to_specified_style();
+        Css::new().background_image(conic).to_specified_style();
     }
 
     #[test]
@@ -446,7 +433,7 @@ mod tests {
             s.to_string(),
             "background-repeat: no-repeat; background-position: center top;"
         );
-        let specified = s.to_specified_style().unwrap();
+        let specified = s.to_specified_style();
         assert_eq!(
             specified.resolved()[0].value(),
             &whisker_style::StyleValue::BackgroundRepeat(whisker_style::BackgroundRepeatValue {
@@ -489,7 +476,7 @@ mod tests {
         let s = Css::new().background_size(BackgroundSize::Auto);
         assert_eq!(s.to_string(), "background-size: auto;");
         assert_eq!(
-            s.to_specified_style().unwrap().resolved()[0].value(),
+            s.to_specified_style().resolved()[0].value(),
             &whisker_style::StyleValue::BackgroundSize(whisker_style::BackgroundSizeValue::Auto)
         );
 
@@ -498,7 +485,7 @@ mod tests {
             Percentage(50.0).into(),
         ));
         assert!(matches!(
-            explicit.to_specified_style().unwrap().resolved()[0].value(),
+            explicit.to_specified_style().resolved()[0].value(),
             whisker_style::StyleValue::BackgroundSize(
                 whisker_style::BackgroundSizeValue::Explicit { .. }
             )
@@ -508,7 +495,6 @@ mod tests {
             Css::new()
                 .background_size(BackgroundSize::Cover)
                 .to_specified_style()
-                .unwrap()
                 .resolved()[0]
                 .value(),
             whisker_style::StyleValue::BackgroundSize(whisker_style::BackgroundSizeValue::Cover)
@@ -534,7 +520,7 @@ mod tests {
             "background-origin: content-box; background-clip: border-area;"
         );
         assert_eq!(
-            s.to_specified_style().unwrap().resolved()[1].value(),
+            s.to_specified_style().resolved()[1].value(),
             &whisker_style::StyleValue::BackgroundBox(
                 whisker_style::BackgroundBoxValue::BorderArea
             )
@@ -543,8 +529,7 @@ mod tests {
         let supported = Css::new()
             .background_origin(BackgroundOrigin::ContentBox)
             .background_clip(BackgroundClip::PaddingBox)
-            .to_specified_style()
-            .unwrap();
+            .to_specified_style();
         assert_eq!(
             supported.resolved()[0].value(),
             &whisker_style::StyleValue::BackgroundBox(whisker_style::BackgroundBoxValue::Content)
@@ -560,14 +545,15 @@ mod tests {
         let s = Css::new().background_attachment(BackgroundAttachment::Fixed);
         assert_eq!(s.to_string(), "background-attachment: fixed;");
         assert_eq!(
-            s.to_specified_style().unwrap_err().property(),
-            "background-attachment"
+            s.to_specified_style().resolved()[0].value(),
+            &whisker_style::StyleValue::BackgroundAttachment(
+                whisker_style::BackgroundAttachmentValue::Fixed
+            )
         );
         assert_eq!(
             Css::new()
                 .background_attachment(BackgroundAttachment::Scroll)
                 .to_specified_style()
-                .unwrap()
                 .resolved()[0]
                 .value(),
             &whisker_style::StyleValue::BackgroundAttachment(

@@ -189,7 +189,7 @@ impl Css {
             .fold(self, |css, (index, property)| {
                 let horizontal = &v.horizontal[index];
                 let vertical = &vertical[index];
-                let lynx_value = if horizontal == vertical {
+                let serialized_value = if horizontal == vertical {
                     crate::ToCss::to_css_string(horizontal)
                 } else {
                     format!(
@@ -201,7 +201,7 @@ impl Css {
                 css.push_semantic(
                     property,
                     crate::style_value::to_border_radius(horizontal, vertical),
-                    lynx_value,
+                    serialized_value,
                 )
             })
     }
@@ -288,7 +288,7 @@ mod tests {
             .border_start_end_radius(px(5))
             .border_end_start_radius(px(6))
             .border_end_end_radius(px(7));
-        assert_eq!(css.to_specified_style().unwrap().len(), 10);
+        assert_eq!(css.to_specified_style().len(), 10);
         assert_eq!(
             css.to_string(),
             "border-inline-start-width: 2px; border-inline-end-width: 3px; border-inline-start-style: dotted; border-inline-end-style: double; border-inline-start-color: rgb(17, 34, 51); border-inline-end-color: rgb(68, 85, 102); border-start-start-radius: 4px; border-start-end-radius: 5px; border-end-start-radius: 6px; border-end-end-radius: 7px;"

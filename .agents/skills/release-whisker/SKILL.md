@@ -23,11 +23,9 @@ Read the table as: **the platform artifact goes out first, the crate
 release that points at it goes out second.** An app can't reach a new
 AAR or tag until a CLI carrying the new pin is published.
 
-Before assuming iOS needs a tag, check whether the change can live in
-the Obj-C++ bridge instead. The bridge already walks to
-`LynxEventHandler` and can call framework methods that Swift cannot see
-(a stub `@interface` declares them), so it reaches apps through the
-crates stream alone — no tag, no pin bumps, no second release.
+Before assuming iOS needs a tag, check whether the change lives entirely in
+`whisker-driver-sys`'s compiled bridge. Bridge-only changes reach apps through
+the crates stream; Swift Host changes require the iOS SwiftPM stream.
 
 ## Crates (crates.io)
 
@@ -82,10 +80,6 @@ Tag-triggered: `sdk-v<version>` → `publish-sdk` → gh-pages Maven.
 3. Bump `WHISKER_SDK_VERSION` in `crates/whisker-cli/src/platforms.rs`,
    with a comment saying what forces the move, and release the crates.
 
-`platforms/android` builds locally with `-PwhiskerSdkRelease=true`,
-which switches the Lynx dependency from the flatDir form to Maven
-coordinates. Without it `:module` fails to resolve `:LynxAndroid`.
-
 ## iOS Swift package
 
 **Run the `publish-ios` workflow** — do not tag by hand. SwiftPM
@@ -114,10 +108,9 @@ cd platforms/ios
 xcodebuild -scheme WhiskerRuntime -destination 'generic/platform=iOS Simulator' build
 ```
 
-Note that Lynx declares much of its API in **class extensions**, which
-Swift does not import. A property that is visible in a framework header
-may still be unreachable from Swift; the compiler is the only reliable
-check.
+The compiler is the reliable compatibility check for Swift Host APIs; source
+inspection alone does not validate target availability or Objective-C import
+behavior.
 
 ## Gradle plugin
 

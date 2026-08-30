@@ -1,4 +1,4 @@
-// Lynx UI subclass hosting a native android.webkit.WebView. Registration
+// Whisker module view hosting a native android.webkit.WebView. Registration
 // is driven by `WebViewModule`'s `definition()`, not by annotations on
 // this class.
 //
@@ -20,21 +20,21 @@
 // ## Event dispatch
 //
 // WebViewClient / WebChromeClient callbacks fire on the UI thread and
-// dispatch SYNCHRONOUSLY. They can arrive while Lynx is mid-teardown, and
+// dispatch SYNCHRONOUSLY. They can arrive while the Host is mid-teardown, and
 // that is only safe because the Rust renderer is re-entrancy-safe
 // (whisker #3: `with_renderer` takes a shared borrow and every renderer
 // field borrow is scoped so it never spans a re-entrant FFI call).
 //
 // The ONE exception is `@JavascriptInterface`, which fires on JavaBridge,
 // a background thread. That path must hop to the UI thread via
-// `view?.post { … }` before touching any Android View / Lynx emitter
+// `view?.post { … }` before touching any Android View / Host event emitter
 // state — a genuine thread transition, not a reentrancy guard.
 //
 // ## Teardown
 //
 // An OnAttachStateChangeListener tears the web process down on detach so
 // the renderer process is released promptly rather than leaking after
-// Lynx removes the element.
+// the Host removes the element.
 
 package rs.whisker.elements.webview
 
@@ -419,7 +419,7 @@ open class WhiskerWebView(context: WhiskerContext) :
      *
      * `@JavascriptInterface` methods run on the JavaBridge background
      * thread, so the hop back to the UI thread via `view?.post { … }` must
-     * happen before any View API or Lynx emitter state is touched.
+     * happen before any View API or Host event emitter state is touched.
      */
     private inner class WhiskerBridge {
         @JavascriptInterface

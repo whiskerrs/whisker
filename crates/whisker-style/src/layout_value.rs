@@ -15,10 +15,6 @@ pub enum DisplayValue {
     Block,
     /// CSS block layout establishing a new block formatting context.
     FlowRoot,
-    /// Lynx-compatible linear layout.
-    Linear,
-    /// Lynx-compatible relative layout.
-    Relative,
 }
 
 /// Side to which a box floats in a block formatting context.

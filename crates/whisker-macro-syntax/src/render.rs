@@ -169,7 +169,7 @@ impl Parse for Node {
         let name = tag.to_string();
         // Classification by casing + whitelist:
         //
-        //   snake_case + in built-in whitelist  → Element (Lynx tag)
+        //   snake_case + in built-in whitelist  → Element (Host tag)
         //   PascalCase (anything)                → UserComponent
         //   snake_case + not in whitelist        → UserComponent
         //                                          (back-compat path)

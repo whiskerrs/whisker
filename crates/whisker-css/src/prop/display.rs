@@ -4,8 +4,7 @@ use crate::css::Css;
 use crate::keyword::{Direction, Display};
 
 impl Css {
-    /// Sets `display`. Lynx default: `linear`.
-    /// <https://lynxjs.org/api/css/properties/display>
+    /// Sets `display`. Whisker defaults to flex layout.
     pub fn display(self, v: Display) -> Self {
         self.push_typed(crate::StyleProperty::Display, v)
     }
@@ -35,18 +34,7 @@ impl Css {
         self.push_typed(crate::StyleProperty::Display, Display::FlowRoot)
     }
 
-    /// Sets `display: linear` — Lynx default linear layout.
-    pub fn display_linear(self) -> Self {
-        self.push_typed(crate::StyleProperty::Display, Display::Linear)
-    }
-
-    /// Sets `display: relative` — Lynx relative-positioning container.
-    pub fn display_relative(self) -> Self {
-        self.push_typed(crate::StyleProperty::Display, Display::Relative)
-    }
-
-    /// Sets `direction`. Lynx default: `ltr`.
-    /// <https://lynxjs.org/api/css/properties/direction>
+    /// Sets `direction`. Default: `ltr`.
     pub fn direction(self, v: Direction) -> Self {
         self.push_typed(crate::StyleProperty::Direction, v)
     }
@@ -72,11 +60,6 @@ mod tests {
         assert_eq!(
             Css::new().display_flow_root().to_string(),
             "display: flow-root;"
-        );
-        assert_eq!(Css::new().display_linear().to_string(), "display: linear;");
-        assert_eq!(
-            Css::new().display_relative().to_string(),
-            "display: relative;"
         );
     }
 

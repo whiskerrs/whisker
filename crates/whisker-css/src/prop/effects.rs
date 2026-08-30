@@ -4,11 +4,12 @@
 use crate::css::Css;
 use crate::data_type::{Color, Length};
 use crate::keyword::{Cursor, ImageRendering, Overflow, PointerEvents, Visibility};
-use crate::value::BackdropFilter;
+use crate::style_value::ToStyleValue;
+use crate::to_css::ToCss;
+use crate::value::{BackdropFilter, BoxShadow, ClipPath};
 
 impl Css {
-    /// Sets `opacity`. Lynx clamps to `0.0..=1.0`. Default: `1`.
-    /// <https://lynxjs.org/api/css/properties/opacity>
+    /// Sets `opacity`. Values are clamped to `0.0..=1.0`. Default: `1`.
     pub fn opacity(self, v: f32) -> Self {
         self.push_semantic(
             crate::StyleProperty::Opacity,
@@ -17,15 +18,12 @@ impl Css {
         )
     }
 
-    /// Sets `visibility`. Lynx default: `visible`. `collapse` is not
-    /// supported.
-    /// <https://lynxjs.org/api/css/properties/visibility>
+    /// Sets `visibility`. Default: `visible`. `collapse` is not supported.
     pub fn visibility(self, v: Visibility) -> Self {
         self.push_typed(crate::StyleProperty::Visibility, v)
     }
 
-    /// Sets `overflow`. Lynx accepts only `visible` and `hidden`.
-    /// <https://lynxjs.org/api/css/properties/overflow>
+    /// Sets `overflow`. Whisker accepts only `visible` and `hidden`.
     pub fn overflow(self, v: Overflow) -> Self {
         self.push_typed(crate::StyleProperty::OverflowX, v)
             .push_typed(crate::StyleProperty::OverflowY, v)
@@ -55,9 +53,7 @@ impl Css {
         self.push_typed(crate::StyleProperty::PointerEvents, v)
     }
 
-    /// Sets `box-shadow` to a single shadow. Pass `None` for inset
-    /// to get an outer shadow.
-    /// <https://lynxjs.org/api/css/properties/box-shadow>
+    /// Sets `box-shadow` to one outer shadow.
     pub fn box_shadow(
         self,
         offset_x: Length,
@@ -66,22 +62,16 @@ impl Css {
         spread_radius: Length,
         color: Color,
     ) -> Self {
-        use crate::to_css::ToCss;
-        let mut s = String::new();
-        let _ = offset_x.to_css(&mut s);
-        s.push(' ');
-        let _ = offset_y.to_css(&mut s);
-        s.push(' ');
-        let _ = blur_radius.to_css(&mut s);
-        s.push(' ');
-        let _ = spread_radius.to_css(&mut s);
-        s.push(' ');
-        let _ = color.to_css(&mut s);
-        self.push_raw(crate::StyleProperty::BoxShadow, s)
+        self.box_shadows([BoxShadow::outer(
+            offset_x,
+            offset_y,
+            blur_radius,
+            spread_radius,
+            color,
+        )])
     }
 
     /// Sets an inset `box-shadow`.
-    /// <https://lynxjs.org/api/css/properties/box-shadow>
     pub fn box_shadow_inset(
         self,
         offset_x: Length,
@@ -90,18 +80,40 @@ impl Css {
         spread_radius: Length,
         color: Color,
     ) -> Self {
-        use crate::to_css::ToCss;
-        let mut s = String::from("inset ");
-        let _ = offset_x.to_css(&mut s);
-        s.push(' ');
-        let _ = offset_y.to_css(&mut s);
-        s.push(' ');
-        let _ = blur_radius.to_css(&mut s);
-        s.push(' ');
-        let _ = spread_radius.to_css(&mut s);
-        s.push(' ');
-        let _ = color.to_css(&mut s);
-        self.push_raw(crate::StyleProperty::BoxShadow, s)
+        self.box_shadows([BoxShadow::inset(
+            offset_x,
+            offset_y,
+            blur_radius,
+            spread_radius,
+            color,
+        )])
+    }
+
+    /// Replaces `box-shadow` with an ordered list of typed shadows.
+    /// An empty iterator serializes to `none` and clears existing shadows.
+    pub fn box_shadows(self, shadows: impl IntoIterator<Item = BoxShadow>) -> Self {
+        let shadows: Vec<_> = shadows.into_iter().collect();
+        let serialized = if shadows.is_empty() {
+            "none".to_owned()
+        } else {
+            shadows
+                .iter()
+                .map(ToCss::to_css_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let values = shadows
+            .into_iter()
+            .flat_map(|shadow| match shadow.to_style_value() {
+                whisker_style::StyleValue::BoxShadows(values) => values,
+                _ => unreachable!("BoxShadow always produces BoxShadows"),
+            })
+            .collect();
+        self.push_semantic(
+            crate::StyleProperty::BoxShadow,
+            whisker_style::StyleValue::BoxShadows(values),
+            serialized,
+        )
     }
 
     /// Sets the supported `backdrop-filter` subset: `none` or one
@@ -116,46 +128,9 @@ impl Css {
         self.push_typed(crate::StyleProperty::ImageRendering, value)
     }
 
-    /// Sets `mask-image` to a raw CSS value (URL or gradient).
-    /// <https://lynxjs.org/api/css/properties/mask-image>
-    pub fn mask_image(self, value: impl Into<String>) -> Self {
-        self.push_raw(crate::StyleProperty::MaskImage, value)
-    }
-
-    /// Sets `clip-path` to a raw CSS value.
-    /// <https://lynxjs.org/api/css/properties/clip-path>
-    pub fn clip_path(self, value: impl Into<String>) -> Self {
-        self.push_raw(crate::StyleProperty::ClipPath, value)
-    }
-
-    /// Sets `caret-color`.
-    /// <https://lynxjs.org/api/css/properties/caret-color>
-    pub fn caret_color(self, v: Color) -> Self {
-        self.push(crate::StyleProperty::CaretColor, v)
-    }
-
-    /// Sets `outline-width`.
-    /// <https://lynxjs.org/api/css/properties/outline-width>
-    pub fn outline_width(self, v: Length) -> Self {
-        self.push_typed(crate::StyleProperty::OutlineWidth, v)
-    }
-
-    /// Sets `outline-color`.
-    /// <https://lynxjs.org/api/css/properties/outline-color>
-    pub fn outline_color(self, v: Color) -> Self {
-        self.push(crate::StyleProperty::OutlineColor, v)
-    }
-
-    /// Sets `outline-style`.
-    /// <https://lynxjs.org/api/css/properties/outline-style>
-    pub fn outline_style(self, v: crate::keyword::BorderStyle) -> Self {
-        self.push(crate::StyleProperty::OutlineStyle, v)
-    }
-
-    /// Sets `outline-offset`.
-    /// <https://lynxjs.org/api/css/properties/outline-offset>
-    pub fn outline_offset(self, v: Length) -> Self {
-        self.push_typed(crate::StyleProperty::OutlineOffset, v)
+    /// Applies a structured basic-shape clip.
+    pub fn clip_path(self, value: ClipPath) -> Self {
+        self.push_typed(crate::StyleProperty::ClipPath, value)
     }
 }
 
@@ -232,29 +207,35 @@ mod tests {
     }
 
     #[test]
-    fn backdrop_blur_is_typed_while_clip_and_mask_remain_raw() {
+    fn multiple_box_shadows_remain_structured() {
+        let style = Css::new().box_shadows([
+            crate::BoxShadow::outer(1.px(), 2.px(), 3.px(), 0.px(), Color::hex(0x112233)),
+            crate::BoxShadow::inset(4.px(), 5.px(), 6.px(), 1.px(), Color::hex(0x445566)),
+        ]);
+        assert!(style.to_string().contains(", inset 4px 5px 6px 1px"));
+        assert!(matches!(
+            style.to_specified_style().declarations().next().map(|declaration| declaration.value()),
+            Some(whisker_style::StyleValue::BoxShadows(values)) if values.len() == 2
+        ));
+    }
+
+    #[test]
+    fn backdrop_blur_and_clip_path_are_typed() {
         let s = Css::new()
             .backdrop_filter(BackdropFilter::blur(4.px()))
-            .clip_path("circle(50%)")
-            .mask_image("url(\"a.png\")");
+            .clip_path(crate::ClipPath::circle(50.percent()));
         assert_eq!(
             s.to_string(),
-            "backdrop-filter: blur(4px); clip-path: circle(50%); mask-image: url(\"a.png\");"
+            "backdrop-filter: blur(4px); clip-path: circle(50% at 50% 50%) border-box;"
         );
-        assert!(
-            s.to_specified_style().is_err(),
-            "clip/mask remain unmigrated"
-        );
-
-        let typed = Css::new().backdrop_filter(BackdropFilter::blur(4.px()));
-        assert!(typed.to_specified_style().is_ok());
+        let _ = s.to_specified_style();
     }
 
     #[test]
     fn image_rendering_is_typed() {
         let style = Css::new().image_rendering(ImageRendering::Pixelated);
         assert_eq!(style.to_string(), "image-rendering: pixelated;");
-        assert!(style.to_specified_style().is_ok());
+        let _ = style.to_specified_style();
         assert_eq!(
             Css::new().image_rendering(ImageRendering::Auto).to_string(),
             "image-rendering: auto;"
@@ -265,24 +246,5 @@ mod tests {
                 .to_string(),
             "image-rendering: crisp-edges;"
         );
-    }
-
-    #[test]
-    fn outline_props() {
-        let s = Css::new()
-            .outline_width(1.px())
-            .outline_style(BorderStyle::Solid)
-            .outline_color(Color::hex(0xFF0000))
-            .outline_offset(2.px());
-        assert_eq!(
-            s.to_string(),
-            "outline-width: 1px; outline-style: solid; outline-color: rgb(255, 0, 0); outline-offset: 2px;"
-        );
-    }
-
-    #[test]
-    fn caret_props() {
-        let s = Css::new().caret_color(Color::hex(0xFF00FF));
-        assert_eq!(s.to_string(), "caret-color: rgb(255, 0, 255);");
     }
 }

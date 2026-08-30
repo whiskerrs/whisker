@@ -654,9 +654,8 @@ fn convert_style(input: &ComputedLayoutStyle) -> Result<Style, LayoutError> {
     Ok(Style {
         display: match input.display {
             DisplayValue::None => Display::None,
-            DisplayValue::Flex | DisplayValue::Linear => Display::Flex,
+            DisplayValue::Flex => Display::Flex,
             DisplayValue::Grid => Display::Grid,
-            DisplayValue::Relative => Display::Block,
             DisplayValue::Block => Display::Block,
             DisplayValue::FlowRoot => Display::FlowRoot,
         },
@@ -1978,8 +1977,7 @@ mod tests {
         tree.create_node(right, sized(10.0, 10.0)).unwrap();
         assert_eq!(LayoutTree::validate_style(&sized(1.0, 1.0)), Ok(()));
         tree.set_children(root, &[left, right]).unwrap();
-        let mut resized_root = sized(31.0, 10.0);
-        resized_root.display = DisplayValue::Linear;
+        let resized_root = sized(31.0, 10.0);
         assert!(
             tree.update_style(root, resized_root)
                 .unwrap()
@@ -2096,8 +2094,6 @@ mod tests {
         for display in [
             DisplayValue::Flex,
             DisplayValue::Grid,
-            DisplayValue::Linear,
-            DisplayValue::Relative,
             DisplayValue::Block,
             DisplayValue::FlowRoot,
         ] {

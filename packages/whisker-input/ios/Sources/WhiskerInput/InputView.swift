@@ -1,4 +1,4 @@
-// Lynx UI subclass hosting a UITextField (single-line) or UITextView
+// Whisker module element hosting a UITextField (single-line) or UITextView
 // (multiline) behind a unified interface. Registration is driven by
 // `InputModule`'s `definition()` — no annotations required here.
 //
@@ -47,7 +47,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
 
     // MARK: - Hosted controls
 
-    /// Transparent container that fills the LynxUI frame; holds either the
+    /// Transparent container that fills the module element; holds either the
     /// `textField` or `textView` as a subview.
     ///
     /// A [`DetachAwareView`] so it can resign focus on unmount. UIKit
@@ -98,61 +98,17 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     private var cachedFontWeight: UIFont.Weight = .regular
     private var cachedTextAlignment: NSTextAlignment = .natural
 
-    /// Computed CSS padding read from the base `LynxUI.padding`. Defaults
-    /// to `.zero` so a field with no CSS padding sits flush, matching
-    /// Android.
-    private var cachedPadding: UIEdgeInsets = .zero
-
     /// Distinguishes "no control yet" from "control exists, possibly needs
     /// a mode switch" in `ensureControl`.
     private var controlBuilt: Bool = false
 
-    // MARK: - LynxUI lifecycle
+    // MARK: - WhiskerUI lifecycle
 
     @objc public override func createView() -> UIView {
         // Default to single-line so the first render shows a working field
         // even though `multiline` hasn't arrived yet.
         ensureControl(multiline: false)
         return containerView
-    }
-
-    @objc public override func frameDidChange() {
-        super.frameDidChange()
-        // Lynx sizes `containerView` to the computed element bounds; the
-        // hosted control has to be propagated the same frame by hand.
-        let bounds = self.view().bounds
-        textField?.frame = bounds
-        textView?.frame = bounds
-        // Padding is only resolved during layout, so this post-layout hook
-        // is the authoritative point to read it.
-        syncPadding()
-    }
-
-    /// Fallback for `font-size`: the base `LynxUI` exposes a resolved
-    /// computed `fontSize` for any element, so the cascaded value is picked
-    /// up here even when the `font-size` prop dispatch never reaches
-    /// `setFontSize`. `color` / `font-weight` / `text-align` have no such
-    /// base-class accessor and depend on their `Prop` setters.
-    @objc public override func propsDidUpdate() {
-        super.propsDidUpdate()
-        let computed = self.fontSize
-        if computed > 0 && abs(computed - cachedFontSize) > 0.01 {
-            cachedFontSize = computed
-            applyFont()
-        }
-        // `padding` may be resolved by now on a props-only update too.
-        syncPadding()
-    }
-
-    /// Apply the base `LynxUI.padding` — shorthand, units, and per-side
-    /// longhands already resolved to point insets by Lynx's layout — to the
-    /// live control. The single source of truth for the field's text inset.
-    private func syncPadding() {
-        let p = self.padding
-        if p != cachedPadding {
-            cachedPadding = p
-            applyPadding()
-        }
     }
 
     // MARK: - Control builder
@@ -186,8 +142,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
             buildTextField()
         }
 
-        // `frameDidChange` may already have fired before this switch, so
-        // pin the fresh control to the container's current bounds.
+        // Pin the fresh control to the container's current bounds.
         let bounds = containerView.bounds
         textField?.frame = bounds
         textView?.frame = bounds
@@ -202,6 +157,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         tf.addTarget(self, action: #selector(textFieldDidChange(_:)), for: .editingChanged)
         tf.addTarget(self, action: #selector(textFieldDidEndOnExit(_:)), for: .editingDidEndOnExit)
         tf.delegate = self
+        tf.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         containerView.addSubview(tf)
         textField = tf
     }
@@ -221,6 +177,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         tv.contentInsetAdjustmentBehavior = .never
         tv.returnKeyType = .default
         tv.delegate = self
+        tv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         containerView.addSubview(tv)
         textView = tv
     }
@@ -234,18 +191,6 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         applyFont()
         applyTextAlignment()
         applyBehaviour()
-        applyPadding()
-    }
-
-    /// Inset the text by the computed CSS padding on whichever control is
-    /// live.
-    private func applyPadding() {
-        if let tf = textField as? PaddedTextField {
-            tf.textInsets = cachedPadding
-        }
-        if let tv = textView {
-            tv.textContainerInset = cachedPadding
-        }
     }
 
     /// Apply current text to whichever control is active. The equality
@@ -445,52 +390,20 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         if textView?.isFirstResponder == true { textView?.reloadInputViews() }
     }
 
-    // ---- CSS text-style props ------------------------------------------
-    //
-    // These arrive from Lynx's CSS cascade ALREADY PARSED, not as CSS
-    // strings: `color` is an ARGB int, `font-size` a resolved point value,
-    // `font-weight` a `LynxFontWeightType` enum int, `text-align` a
-    // `LynxTextAlignType` enum int. Each setter decodes the numeric form
-    // first and falls back to string parsing, so it still works when the
-    // value arrives as a plain-string attribute instead.
+    // ---- Resolved text style ------------------------------------------
 
-    public func setTextColor(_ value: WhiskerValue) {
-        cachedTextColor = Self.resolveColor(value) ?? .label
+    public func applyTextStyle(_ style: WhiskerTextStyle) {
+        cachedTextColor = style.color
+        cachedFontSize = style.fontSize
+        cachedFontWeight = Self.mapFontWeight(style.fontWeight)
+        cachedTextAlignment = switch style.alignment {
+        case .left: .left
+        case .right: .right
+        case .center: .center
+        case .start, .end: .natural
+        }
         applyColors()
-    }
-
-    public func setFontSize(_ value: WhiskerValue) {
-        if let n = value.asDouble, n > 0 {
-            cachedFontSize = CGFloat(n)
-            applyFont()
-            return
-        }
-        // Unknown units leave the cached size unchanged rather than
-        // regressing the font to a wrong number.
-        if let s = value.asString {
-            let stripped = s.hasSuffix("px") ? String(s.dropLast(2)) : s
-            if let pt = Double(stripped.trimmingCharacters(in: .whitespaces)), pt > 0 {
-                cachedFontSize = CGFloat(pt)
-                applyFont()
-            }
-        }
-    }
-
-    public func setFontWeight(_ value: WhiskerValue) {
-        if let i = value.asInt {
-            cachedFontWeight = Self.mapLynxFontWeightEnum(Int(i))
-        } else if let s = value.asString {
-            cachedFontWeight = Self.mapFontWeight(s)
-        }
         applyFont()
-    }
-
-    public func setTextAlign(_ value: WhiskerValue) {
-        if let i = value.asInt {
-            cachedTextAlignment = Self.mapLynxTextAlignEnum(Int(i))
-        } else if let s = value.asString {
-            cachedTextAlignment = Self.mapTextAlignment(s)
-        }
         applyTextAlignment()
     }
 
@@ -520,9 +433,9 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
 
     /// The event params — `{ "value": "<text>" }`.
     ///
-    /// IMPORTANT: do NOT wrap this in a `detail` key. Lynx's
-    /// `generateEventBody` already places the dispatched `params` under
-    /// `detail` in the event body, and the Rust `InputEvent { detail: {
+    /// IMPORTANT: do NOT wrap this in a `detail` key. Host event encoding
+    /// places the dispatched `params` under `detail` in the event body, and
+    /// the Rust `InputEvent { detail: {
     /// value } }` reads `body.detail`. Wrapping here double-nests, and
     /// every `on_input` / `on_change` / `on_submit` delivers an empty
     /// string.
@@ -531,11 +444,10 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     }
 
     // The emitters below dispatch SYNCHRONOUSLY, which is only safe because
-    // the Rust renderer is re-entrancy-safe: `DynRenderer` methods take
-    // `&self`, `BridgeRenderer` keeps its state behind per-field `RefCell`s
-    // with FFI-scoped borrows, and `with_renderer` takes a SHARED borrow
-    // (whisker #3). That matters because UIKit delegate callbacks can fire
-    // during Lynx's teardown on a hot-reload remount, while `remove_child`
+    // the Rust renderer is re-entrancy-safe: renderer methods take `&self`
+    // and keep mutable state behind narrowly scoped interior mutability.
+    // That matters because UIKit delegate callbacks can fire during native
+    // teardown on a hot-reload remount, while `remove_child`
     // is still on the Rust stack — a re-entrant `dispatch_event` is granted
     // rather than aborting on "RefCell already borrowed". Deferring a
     // runloop tick instead would cost every event a tick of latency.
@@ -608,83 +520,21 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         }
     }
 
-    private static func mapFontWeight(_ s: String) -> UIFont.Weight {
-        switch s.lowercased() {
-        case "100", "thin":        return .ultraLight
-        case "200", "extralight":  return .thin
-        case "300", "light":       return .light
-        case "400", "normal":      return .regular
-        case "500", "medium":      return .medium
-        case "600", "semibold":    return .semibold
-        case "700", "bold":        return .bold
-        case "800", "extrabold":   return .heavy
-        case "900", "black":       return .black
-        default:                   return .regular
+    private static func mapFontWeight(_ value: Int) -> UIFont.Weight {
+        switch value {
+        case ...150: .ultraLight
+        case ...250: .thin
+        case ...350: .light
+        case ...450: .regular
+        case ...550: .medium
+        case ...650: .semibold
+        case ...750: .bold
+        case ...850: .heavy
+        default: .black
         }
     }
 
-    private static func mapTextAlignment(_ s: String) -> NSTextAlignment {
-        switch s.lowercased() {
-        case "left":    return .left
-        case "right":   return .right
-        case "center":  return .center
-        case "justify": return .justified
-        default:        return .natural
-        }
-    }
-
-    /// `LynxTextAlignType` enum → `NSTextAlignment`. Values per
-    /// `LynxCSSType.h`: Left=0, Center=1, Right=2, Start=3, End=4,
-    /// Justify=5. Start/End become `.natural`, which UIKit resolves per the
-    /// writing direction.
-    private static func mapLynxTextAlignEnum(_ i: Int) -> NSTextAlignment {
-        switch i {
-        case 0:  return .left
-        case 1:  return .center
-        case 2:  return .right
-        case 5:  return .justified
-        default: return .natural   // Start(3) / End(4) / unknown
-        }
-    }
-
-    /// Numeric `font-weight` → `UIFont.Weight`. Lynx normally delivers the
-    /// `LynxFontWeightType` enum (Normal=0, Bold=1, 100=2 … 900=10, per
-    /// `LynxAutoGenCSSType.h`), but raw CSS weights are accepted too: the
-    /// 100…900 literals don't overlap the 0…10 enum range, so either form
-    /// resolves unambiguously.
-    private static func mapLynxFontWeightEnum(_ i: Int) -> UIFont.Weight {
-        switch i {
-        // LynxFontWeightType enum indices.
-        case 0:   return .regular     // Normal
-        case 1:   return .bold        // Bold
-        case 2:   return .ultraLight  // 100
-        case 3:   return .thin        // 200
-        case 4:   return .light       // 300
-        case 5:   return .regular     // 400
-        case 6:   return .medium      // 500
-        case 7:   return .semibold    // 600
-        case 8:   return .bold        // 700
-        case 9:   return .heavy       // 800
-        case 10:  return .black       // 900
-        // Raw CSS numeric weights (in case Lynx forwards the literal).
-        case 100: return .ultraLight
-        case 200: return .thin
-        case 300: return .light
-        case 400: return .regular
-        case 500: return .medium
-        case 600: return .semibold
-        case 700: return .bold
-        case 800: return .heavy
-        case 900: return .black
-        default:  return .regular
-        }
-    }
-
-    /// Resolve a colour prop value to a `UIColor`. Lynx's CSS cascade
-    /// delivers a parsed colour as an ARGB integer (`0xAARRGGBB`, arriving
-    /// as `.int` after the NSNumber → WhiskerValue conversion); a
-    /// plain-string attribute delivers a CSS string. Returns `nil` on an
-    /// unrecognised / empty value so callers keep their default.
+    /// Resolve a module color property from a packed ARGB value or CSS string.
     private static func resolveColor(_ value: WhiskerValue) -> UIColor? {
         if case .string(let s) = value {
             return parseCssColor(s)
@@ -697,7 +547,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         return nil
     }
 
-    /// Build a `UIColor` from a Lynx `0xAARRGGBB` packed integer.
+    /// Build a `UIColor` from Whisker's `0xAARRGGBB` packed integer.
     private static func colorFromARGB(_ argb: UInt32) -> UIColor {
         let a = CGFloat((argb >> 24) & 0xFF) / 255
         let r = CGFloat((argb >> 16) & 0xFF) / 255

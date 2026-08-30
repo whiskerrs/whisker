@@ -51,7 +51,7 @@ pub use whisker_asset_macros::{asset, asset_bytes, asset_str};
 mod plugin;
 pub use plugin::{WhiskerAsset, WhiskerAssetConfig};
 
-/// The Android `assets/` URL prefix. Lynx/WebView load `file://` URLs and
+/// The Android `assets/` URL prefix. Native WebViews load `file://` URLs and
 /// Android exposes packaged assets under `/android_asset`. Whisker bundles
 /// under a `whisker/` subdir to avoid colliding with host-app assets.
 const ANDROID_PREFIX: &str = "file:///android_asset/whisker/";

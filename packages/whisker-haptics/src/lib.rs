@@ -48,7 +48,7 @@ pub use plugin::*;
 
 /// `WhiskerHaptics` runtime API. Gated behind the default-on
 /// `runtime` feature so the config probe build path can skip the
-/// heavyweight `whisker` umbrella crate (Lynx bridge, driver, render
+/// heavyweight `whisker` umbrella crate (mobile Host bridge, driver, render
 /// layer). Apps depending on `whisker-haptics` for actual haptic
 /// calls get this re-exported automatically; the probe only sees the
 /// plugin types.

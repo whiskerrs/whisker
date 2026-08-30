@@ -497,9 +497,9 @@ pub use virtual_list::*;
 
 /// `<fragment>` — *transparent grouping container*. Mounts as a
 /// phantom element ([`create_phantom_element`]) the runtime
-/// tracks in its mirror but never forwards to Lynx. Children
+/// tracks in its mirror but never forwards to Host. Children
 /// appended under a fragment are hoisted to the fragment's
-/// nearest non-phantom ancestor in the Lynx tree, in source
+/// nearest non-phantom ancestor in the Host tree, in source
 /// order — so on screen the fragment is *invisible*, while in
 /// user code it serves as a stable grouping point for reactive
 /// children.
@@ -512,7 +512,7 @@ pub use virtual_list::*;
 /// looks and feels exactly like the built-in `For` / `Show`.
 ///
 /// **Restrictions**: a fragment carries no styling, attributes,
-/// or event listeners — those would have no Lynx element to
+/// or event listeners — those would have no Host element to
 /// attach to. The builder exposes only `.child(...)`. Fragments
 /// inside a `<list>` are not supported (use the list builder's
 /// `each` / `key` / `children` render-props instead).

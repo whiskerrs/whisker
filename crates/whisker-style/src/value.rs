@@ -21,10 +21,6 @@ impl StyleNumber {
 pub enum LengthUnit {
     /// Logical pixels: iOS points and Android density-independent pixels.
     Px,
-    /// Responsive pixels relative to a 750-unit viewport width.
-    Rpx,
-    /// Physical device pixels.
-    Ppx,
     /// Units relative to the element's computed font size.
     Em,
     /// Units relative to the root computed font size.
@@ -580,6 +576,141 @@ pub enum ImageRenderingValue {
     CrispEdges,
 }
 
+/// One specified box shadow before environment-dependent lengths are resolved.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BoxShadowValue {
+    /// Horizontal offset.
+    pub offset_x: ComponentValue<LengthValue>,
+    /// Vertical offset.
+    pub offset_y: ComponentValue<LengthValue>,
+    /// Non-negative blur radius.
+    pub blur_radius: ComponentValue<LengthValue>,
+    /// Signed spread radius.
+    pub spread_radius: ComponentValue<LengthValue>,
+    /// Shadow color.
+    pub color: ComponentValue<ColorValue>,
+    /// Paint inside the border box when true.
+    pub inset: bool,
+}
+
+/// Reference box used to resolve a basic-shape clip.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ClipBoxValue {
+    /// Border box.
+    #[default]
+    Border,
+    /// Padding box.
+    Padding,
+    /// Content box.
+    Content,
+    /// Object bounding box for vector content.
+    Fill,
+    /// Stroke bounding box for vector content.
+    Stroke,
+    /// Nearest vector viewport box.
+    View,
+}
+
+/// Fill rule used by clip paths.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ClipFillRuleValue {
+    /// Non-zero winding rule.
+    #[default]
+    NonZero,
+    /// Even-odd winding rule.
+    EvenOdd,
+}
+
+/// One point in a specified clip path.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ClipPointValue {
+    /// Horizontal coordinate.
+    pub x: LengthPercentageValue,
+    /// Vertical coordinate.
+    pub y: LengthPercentageValue,
+}
+
+/// One command in a structured clip path.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ClipPathCommandValue {
+    /// Start a new subpath.
+    MoveTo(ClipPointValue),
+    /// Add a straight segment.
+    LineTo(ClipPointValue),
+    /// Add a quadratic Bezier segment.
+    QuadraticTo {
+        /// Control point.
+        control: ClipPointValue,
+        /// Segment endpoint.
+        end: ClipPointValue,
+    },
+    /// Add a cubic Bezier segment.
+    CubicTo {
+        /// First control point.
+        control_1: ClipPointValue,
+        /// Second control point.
+        control_2: ClipPointValue,
+        /// Segment endpoint.
+        end: ClipPointValue,
+    },
+    /// Close the current subpath.
+    Close,
+}
+
+/// A specified basic shape used by `clip-path`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ClipShapeValue {
+    /// Rectangle inset from the reference box.
+    Inset {
+        /// Top, right, bottom, and left offsets.
+        offsets: [LengthPercentageValue; 4],
+        /// Optional per-corner radii.
+        radii: Option<[BorderRadiusValue; 4]>,
+    },
+    /// Circle.
+    Circle {
+        /// Radius.
+        radius: LengthPercentageValue,
+        /// Horizontal center.
+        center_x: LengthPercentageValue,
+        /// Vertical center.
+        center_y: LengthPercentageValue,
+    },
+    /// Ellipse.
+    Ellipse {
+        /// Horizontal radius.
+        radius_x: LengthPercentageValue,
+        /// Vertical radius.
+        radius_y: LengthPercentageValue,
+        /// Horizontal center.
+        center_x: LengthPercentageValue,
+        /// Vertical center.
+        center_y: LengthPercentageValue,
+    },
+    /// Structured path commands.
+    Path {
+        /// Fill rule.
+        fill_rule: ClipFillRuleValue,
+        /// Command stream.
+        commands: Vec<ClipPathCommandValue>,
+    },
+}
+
+/// Typed `clip-path` value.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ClipPathValue {
+    /// Disable shape clipping.
+    #[default]
+    None,
+    /// Clip to a shape resolved against a reference box.
+    Shape {
+        /// Reference box.
+        reference_box: ClipBoxValue,
+        /// Basic shape.
+        shape: ClipShapeValue,
+    },
+}
+
 /// One typed transform function before environment and box-size resolution.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TransformFunctionValue {
@@ -832,6 +963,10 @@ pub enum StyleValue {
     BackdropFilter(BackdropFilterValue),
     /// Raster-image sampling behavior for this element's own image paint.
     ImageRendering(ImageRenderingValue),
+    /// Ordered box shadows, front to back.
+    BoxShadows(Vec<BoxShadowValue>),
+    /// Basic-shape clip applied to this node.
+    ClipPath(ClipPathValue),
     /// Ordered transform function list.
     Transform(TransformValue),
     /// Transform origin resolved against the node border box.

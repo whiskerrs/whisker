@@ -1,13 +1,10 @@
 // `whisker-webview` ModuleDefinition (iOS).
 //
 // The codegen plugin discovers this `Module` subclass and emits a
-// registration block in `WhiskerWebView+Generated.swift` that registers
-// `definitionLazy.view!.viewClass` with `LynxComponentRegistry` under
-// "whisker-webview:WebView", then calls `module.registerWithLynx()` so
-// every `Prop(...)` setter and `Command(...)` handler installs via the
-// Obj-C-runtime path.
+// registration block in `WhiskerWebView+Generated.swift`, which registers
+// the view, props, and commands with Whisker's Host registry.
 //
-// The `WhiskerWebViewView` Lynx UI subclass lives in `WhiskerWebView.swift`.
+// The `WhiskerWebViewView` Whisker module view lives in `WhiskerWebView.swift`.
 //
 // ## Prop delivery
 //

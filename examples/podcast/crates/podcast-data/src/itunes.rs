@@ -63,7 +63,7 @@ pub struct SearchQuery<'a> {
 
 /// Blocking GET against the iTunes search endpoint. Must be called
 /// from a worker thread (Whisker `run_blocking`) — never directly
-/// from the main TASM thread.
+/// from the main runtime thread.
 ///
 /// The iTunes API returns 200 with an empty `results` array for
 /// unknown terms; that's not modelled as an error here. Callers

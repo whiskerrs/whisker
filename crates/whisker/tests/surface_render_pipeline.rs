@@ -4,10 +4,10 @@ use std::rc::Rc;
 
 use whisker::css::{
     Angle, Animation, AnimationFillMode, AnimationIterationCount, BorderRadius, BorderStyle, Clear,
-    CustomPropertyName, Direction, EasingFunction, Float, GridAutoFlow, GridLine, GridRepeatCount,
-    GridTemplate, GridTrack, ImageRendering, Keyframes, MotionPathCommand, MotionPathPoint,
-    OffsetPath, OffsetRotate, Overflow, Position, Size, StyleProperty, TransformFn, Transition,
-    TransitionPropertyKind,
+    ClipPath, CustomPropertyName, Direction, EasingFunction, Float, GridAutoFlow, GridLine,
+    GridRepeatCount, GridTemplate, GridTrack, ImageRendering, Keyframes, MotionPathCommand,
+    MotionPathPoint, OffsetPath, OffsetRotate, Overflow, Position, Size, StyleProperty,
+    TransformFn, Transition, TransitionPropertyKind,
 };
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
@@ -2903,7 +2903,7 @@ fn render_projective_matrix3d_reaches_the_frame_sink() {
 }
 
 #[test]
-fn render_lynx_perspective_is_lowered_into_the_current_node_transform() {
+fn render_current_node_perspective_is_lowered_into_the_current_node_transform() {
     __reset_for_tests();
     let owner = Owner::new(None);
     let surface = SurfaceRuntime::new(
@@ -3696,6 +3696,64 @@ fn image_rendering_reaches_the_frame_protocol_from_render_macro() {
                 )
             })
     );
+}
+
+#[test]
+fn structured_shadow_and_clip_path_reach_the_frame_protocol() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(27).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            render! {
+                view(style: Css::new()
+                    .width(px(40))
+                    .height(px(40))
+                    .box_shadow(px(2), px(3), px(4), px(1), Color::hex(0x112233))
+                    .clip_path(ClipPath::circle(percent(50))))
+            }
+        });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    let effects = renderer.frames()[0]
+        .packet
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::SetVisualEffects { effects, .. }
+                if !effects.box_shadows.is_empty() && effects.clip_path.is_some() =>
+            {
+                Some(effects)
+            }
+            _ => None,
+        })
+        .expect("structured effects operation");
+    assert_eq!(effects.box_shadows[0].offset_x, 2.0);
+    assert_eq!(effects.box_shadows[0].blur_radius, 4.0);
+    assert!(matches!(
+        effects.clip_path,
+        Some((
+            whisker_engine::whisker_protocol::PaintBox::Border,
+            whisker_engine::whisker_protocol::ClipShape::Circle { .. }
+        ))
+    ));
 }
 
 #[test]

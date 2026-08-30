@@ -51,7 +51,7 @@ public object WhiskerInsetsDispatcher {
     /**
      * Live subscribers. `CopyOnWriteArrayList` so the decor-view
      * listener (UI thread) can iterate while `add`/`removeListener`
-     * (possibly the TASM thread, from `OnStartObserving`) mutate.
+     * (possibly the runtime thread, from `OnStartObserving`) mutate.
      */
     private val listeners: CopyOnWriteArrayList<Registration> = CopyOnWriteArrayList()
 
@@ -131,7 +131,7 @@ public object WhiskerInsetsDispatcher {
         ViewCompat.setOnApplyWindowInsetsListener(decor) { _, insets ->
             for (l in listeners) l.callback(insets)
             // Pass through unmodified so consumers further down the view
-            // tree (e.g. Lynx's own listeners) still see the same insets.
+            // tree (e.g. application listeners) still see the same insets.
             insets
         }
 

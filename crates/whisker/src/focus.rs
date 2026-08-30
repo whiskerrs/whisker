@@ -14,7 +14,7 @@
 //!
 //! Main-thread only: the reactive/UI world is thread-local, and the cell
 //! is only ever touched from focus/blur event handlers and navigation
-//! verbs, all of which run on the Lynx TASM thread.
+//! verbs, all of which run on the runtime thread.
 
 use std::cell::Cell;
 

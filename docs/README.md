@@ -31,8 +31,7 @@ Whisker itself**.
   operations.
 - [`animation-design.md`](animation-design.md) — the continuous,
   signal-based animation engine (`AnimationController` + `Tween`), how it
-  differs from Lynx's discrete CSS-keyframe animator, and how it backs the
-  router's transitions.
+  backs CSS animation/transition and the router's imperative transitions.
 - [`ios-spm-distribution.md`](ios-spm-distribution.md) — how iOS apps
   resolve the runtime from the remote SwiftPM package, version lockstep,
   and the monorepo-dev caveat.

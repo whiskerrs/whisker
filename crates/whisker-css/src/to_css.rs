@@ -2,13 +2,10 @@
 
 use core::fmt;
 
-/// Format a value as the CSS source text Lynx will parse.
+/// Format a value as canonical CSS source text.
 ///
-/// Implementors must write a string that, when fed back into Lynx's
-/// CSS parser for the property accepting the value, produces an
-/// equivalent computed value. Whitespace, casing, and unit choice
-/// follow the canonical CSS form documented at
-/// <https://lynxjs.org/api/css>.
+/// Implementors must write a string that represents an equivalent semantic
+/// value. Whitespace, casing, and unit choice follow canonical CSS spelling.
 ///
 /// A blanket [`fmt::Display`] is **not** provided automatically so
 /// implementors stay explicit about which surface (CSS-text vs.

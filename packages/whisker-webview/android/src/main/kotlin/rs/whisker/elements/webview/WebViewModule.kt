@@ -4,7 +4,7 @@
 // and emits the registration block into
 // `WhiskerWebViewBehaviors.registerAll()`.
 //
-// The `WhiskerWebView` Lynx UI subclass this references lives in
+// The `WhiskerWebView` Whisker module view this references lives in
 // `WhiskerWebView.kt`. Matching iOS files live under
 // `packages/whisker-webview/ios/Sources/WhiskerWebView/`.
 //
@@ -60,7 +60,7 @@ class WebViewModule : Module() {
             // `style` is handled by the WhiskerUI base.
 
             // Declaration-only, but the KSP-generated registrar needs it to
-            // register these names with Lynx's event system; dispatch
+            // register these names with the Host event registry; dispatch
             // itself happens inside WhiskerWebView.
             Events(
                 "message",

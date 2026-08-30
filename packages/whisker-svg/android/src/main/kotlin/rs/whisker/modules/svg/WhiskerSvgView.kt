@@ -1,4 +1,4 @@
-// Lynx UI subclass hosting a `WhiskerSvgDrawingView`. Registration is
+// Whisker module view hosting a `WhiskerSvgDrawingView`. Registration is
 // driven by `SvgModule`'s `definition()`, not by annotations here.
 
 package rs.whisker.modules.svg
@@ -55,7 +55,7 @@ open class WhiskerSvgView(context: WhiskerContext) : WhiskerUI<WhiskerSvgDrawing
 
 /**
  * `View` that paints the cached display-list bytes inside its own bounds,
- * kept separate from the LynxUI bookkeeping because Whisker's UI owner
+ * kept separate from the WhiskerUI bookkeeping because Whisker's UI owner
  * expects a single `view` accessor.
  */
 class WhiskerSvgDrawingView(context: Context) : View(context) {

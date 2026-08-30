@@ -28,7 +28,7 @@ dependencies {
     if (rootProject.findProject(":whisker-module") != null) {
         implementation(project(":whisker-module"))
     } else {
-        implementation("rs.whisker:whisker-module-android:0.1.19")
+        implementation("rs.whisker:whisker-module-android:0.1.20")
     }
-    ksp("rs.whisker:ksp:0.1.19")
+    ksp("rs.whisker:ksp:0.1.20")
 }

@@ -55,7 +55,6 @@ fn sync_android(app: &Config) -> (PathBuf, PathBuf) {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();
@@ -206,7 +205,6 @@ fn android_extra_file_with_absolute_path_is_rejected() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
     let tmp = unique_tempdir();

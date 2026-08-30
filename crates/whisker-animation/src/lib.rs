@@ -1,7 +1,7 @@
 //! Whisker's **continuous, signal-based animation engine**.
 //!
 //! This is the second of Whisker's two animation systems (see
-//! `docs/animation-design.md`). Unlike Lynx's discrete CSS-keyframe
+//! `docs/animation-design.md`). Unlike a discrete CSS-keyframe
 //! animator, this engine lives entirely in Rust and drives a `0..1`
 //! **progress** signal that the reactive runtime advances each frame —
 //! so an animated value is just a [`ReadSignal`] you can read anywhere

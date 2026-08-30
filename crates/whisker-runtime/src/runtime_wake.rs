@@ -1,5 +1,4 @@
-//! Host wake-up boundary for both retained runtime instances and the legacy
-//! process-global C callback.
+//! Host wake-up boundary for retained runtime instances and ABI adapters.
 //!
 //! Lives outside [`crate::view`] / [`crate::reactive`] because both need it:
 //! - [`crate::reactive::scheduler`] calls [`wake_runtime`] on the
@@ -71,12 +70,9 @@ struct RequestFrameCb {
 unsafe impl Send for RequestFrameCb {}
 unsafe impl Sync for RequestFrameCb {}
 
-/// Cross-thread mirror of the registered callback. Stored globally
-/// so threads other than the TASM thread (e.g. the WebSocket
-/// receiver in `whisker-dev-runtime`) can wake the runtime via
-/// [`wake_runtime`] without needing thread-local access. The TASM
-/// thread also writes through here, since there's only one slot
-/// and locking is cheap on the rare path that uses it.
+/// Cross-thread mirror of the callback registered by an ABI adapter. Direct
+/// Rust Hosts use [`RuntimeWakeHandle`] instead; mobile bindings retain this
+/// slot so foreign callbacks can wake the runtime without thread-local access.
 static REMOTE_WAKE: Mutex<Option<RequestFrameCb>> = Mutex::new(None);
 
 thread_local! {
@@ -93,8 +89,7 @@ pub(crate) fn current_wake_handle() -> Option<RuntimeWakeHandle> {
 
 /// Register the host's wake-up callback. Pass `None` to clear.
 ///
-/// In production this is called once during
-/// `whisker-driver::bootstrap::run` and never again.
+/// ABI adapters call this while attaching a Host runtime.
 #[doc(hidden)]
 pub fn set_request_frame_callback(
     func: Option<extern "C" fn(*mut c_void)>,
@@ -107,10 +102,8 @@ pub fn set_request_frame_callback(
 }
 
 /// Fire the registered wake callback, if any. Safe to call from any
-/// thread — the host's callback contract is "any-thread, posts a
-/// message to the TASM thread". No-op if no callback is registered
-/// (signal writes during init may happen before bootstrap has wired
-/// anything up).
+/// thread — the Host callback must post onto its owning UI event loop. No-op
+/// if no callback is registered.
 pub fn wake_runtime() {
     if let Some(wake) = current_wake_handle() {
         wake.wake();
@@ -129,4 +122,10 @@ pub fn __reset_for_tests() {
     if let Ok(mut guard) = REMOTE_WAKE.lock() {
         *guard = None;
     }
+}
+
+#[cfg(test)]
+pub(crate) fn host_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|error| error.into_inner())
 }

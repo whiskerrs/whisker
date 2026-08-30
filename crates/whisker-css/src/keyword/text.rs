@@ -187,12 +187,6 @@ pub enum WhiteSpace {
     Normal,
     /// `nowrap` — collapse whitespace, no wrapping.
     Nowrap,
-    /// `pre` — preserve whitespace, no wrapping.
-    Pre,
-    /// `pre-wrap` — preserve whitespace, allow wrapping.
-    PreWrap,
-    /// `pre-line` — collapse whitespace, preserve line breaks.
-    PreLine,
 }
 
 impl ToCss for WhiteSpace {
@@ -200,9 +194,6 @@ impl ToCss for WhiteSpace {
         dest.write_str(match self {
             WhiteSpace::Normal => "normal",
             WhiteSpace::Nowrap => "nowrap",
-            WhiteSpace::Pre => "pre",
-            WhiteSpace::PreWrap => "pre-wrap",
-            WhiteSpace::PreLine => "pre-line",
         })
     }
 }
@@ -329,9 +320,6 @@ mod tests {
         assert_keyword_set!([
             (WhiteSpace::Normal, "normal"),
             (WhiteSpace::Nowrap, "nowrap"),
-            (WhiteSpace::Pre, "pre"),
-            (WhiteSpace::PreWrap, "pre-wrap"),
-            (WhiteSpace::PreLine, "pre-line"),
         ]);
     }
 

@@ -1,15 +1,17 @@
 //! Lowering from computed style into the Host-independent paint protocol.
 
 use whisker_protocol::{
-    BorderLineStyle, BoxClip, BoxPaint, ImageRendering, OverflowClip, PaintColor,
-    PaintCornerRadius, PaintCorners, PaintEdges, PaintLengthPercentage, Transform, Visibility,
+    BorderLineStyle, BoxClip, BoxPaint, BoxShadow, ClipShape, FillRule, ImageRendering,
+    OverflowClip, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius, PaintCorners,
+    PaintEdges, PaintLengthPercentage, PaintPosition, PathCommand, Transform, Visibility,
     VisualEffects,
 };
 use whisker_style::{
-    BorderStyleValue, ColorValue, ComputedLayoutStyle, ComputedLengthPercentage,
-    ComputedOffsetPathValue as OffsetPathValue, ComputedPaintStyle, ComputedTransformFunction,
-    ComputedTransformStyle, ImageRenderingValue, MotionPathCommandValue, OffsetRotateValue,
-    OverflowValue, VisibilityValue,
+    BorderStyleValue, ClipBoxValue, ClipFillRuleValue, ColorValue, ComputedClipPath,
+    ComputedClipPathCommand, ComputedClipPoint, ComputedClipShape, ComputedLayoutStyle,
+    ComputedLengthPercentage, ComputedOffsetPathValue as OffsetPathValue, ComputedPaintStyle,
+    ComputedTransformFunction, ComputedTransformStyle, ImageRenderingValue, MotionPathCommandValue,
+    OffsetRotateValue, OverflowValue, VisibilityValue,
 };
 
 use crate::color::named_color_srgb;
@@ -67,6 +69,19 @@ pub fn lower_paint(style: &ComputedPaintStyle, layout: &ComputedLayoutStyle) -> 
         },
         visual_effects: VisualEffects {
             backdrop_blur: style.backdrop_blur.map(|value| value.get()),
+            box_shadows: style
+                .box_shadows
+                .iter()
+                .map(|shadow| BoxShadow {
+                    offset_x: shadow.offset_x.get(),
+                    offset_y: shadow.offset_y.get(),
+                    blur_radius: shadow.blur_radius.get(),
+                    spread_radius: shadow.spread_radius.get(),
+                    color: lower_color(&shadow.color),
+                    inset: shadow.inset,
+                })
+                .collect(),
+            clip_path: style.clip_path.as_ref().map(lower_clip_path),
             image_rendering: match style.image_rendering {
                 ImageRenderingValue::Auto => ImageRendering::Auto,
                 ImageRenderingValue::Pixelated => ImageRendering::Pixelated,
@@ -88,6 +103,92 @@ pub fn lower_paint(style: &ComputedPaintStyle, layout: &ComputedLayoutStyle) -> 
     }
 }
 
+fn lower_clip_path(value: &ComputedClipPath) -> (PaintBox, ClipShape) {
+    let reference_box = match value.reference_box {
+        ClipBoxValue::Border => PaintBox::Border,
+        ClipBoxValue::Padding => PaintBox::Padding,
+        ClipBoxValue::Content => PaintBox::Content,
+        ClipBoxValue::Fill => PaintBox::Fill,
+        ClipBoxValue::Stroke => PaintBox::Stroke,
+        ClipBoxValue::View => PaintBox::View,
+    };
+    let shape = match &value.shape {
+        ComputedClipShape::Inset { offsets, radii } => ClipShape::Inset {
+            edges: edges(offsets, coordinate),
+            radii: PaintCorners {
+                top_left: corner_radius(&radii.top_left),
+                top_right: corner_radius(&radii.top_right),
+                bottom_right: corner_radius(&radii.bottom_right),
+                bottom_left: corner_radius(&radii.bottom_left),
+            },
+        },
+        ComputedClipShape::Circle { radius, center } => ClipShape::Circle {
+            radius: length(radius),
+            center: clip_position(center),
+        },
+        ComputedClipShape::Ellipse {
+            radius_x,
+            radius_y,
+            center,
+        } => ClipShape::Ellipse {
+            radius_x: length(radius_x),
+            radius_y: length(radius_y),
+            center: clip_position(center),
+        },
+        ComputedClipShape::Path {
+            fill_rule,
+            commands,
+        } => ClipShape::Path {
+            fill_rule: match fill_rule {
+                ClipFillRuleValue::NonZero => FillRule::NonZero,
+                ClipFillRuleValue::EvenOdd => FillRule::EvenOdd,
+            },
+            commands: commands
+                .iter()
+                .map(|command| match command {
+                    ComputedClipPathCommand::MoveTo(value) => {
+                        PathCommand::MoveTo(clip_position(value))
+                    }
+                    ComputedClipPathCommand::LineTo(value) => {
+                        PathCommand::LineTo(clip_position(value))
+                    }
+                    ComputedClipPathCommand::QuadraticTo { control, end } => {
+                        PathCommand::QuadraticTo {
+                            control: clip_position(control),
+                            end: clip_position(end),
+                        }
+                    }
+                    ComputedClipPathCommand::CubicTo {
+                        control_1,
+                        control_2,
+                        end,
+                    } => PathCommand::CubicTo {
+                        control_1: clip_position(control_1),
+                        control_2: clip_position(control_2),
+                        end: clip_position(end),
+                    },
+                    ComputedClipPathCommand::Close => PathCommand::Close,
+                })
+                .collect(),
+        },
+    };
+    (reference_box, shape)
+}
+
+fn coordinate(value: &ComputedLengthPercentage) -> PaintCoordinate {
+    PaintCoordinate {
+        length: value.length(),
+        fraction: value.fraction(),
+    }
+}
+
+fn clip_position(value: &ComputedClipPoint) -> PaintPosition {
+    PaintPosition {
+        x: coordinate(&value.x),
+        y: coordinate(&value.y),
+    }
+}
+
 /// Resolves a computed transform against one node's border-box size.
 ///
 /// Hosts receive only the resulting matrix; percentages and transform-origin
@@ -105,8 +206,8 @@ pub fn lower_transform(
         return None;
     }
 
-    // Lynx intentionally differs from browser CSS here: `perspective` affects
-    // the current node. Prepending it makes the node's transform functions run
+    // Whisker applies `perspective` to the current node. Prepending it makes
+    // the node's transform functions run
     // first and the perspective divide run afterward.
     let mut matrix = style
         .perspective

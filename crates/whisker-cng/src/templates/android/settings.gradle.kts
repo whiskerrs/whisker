@@ -2,8 +2,7 @@
 // `whisker run` to refresh.
 //
 // Minimal Android shell. The app consumes the Whisker Host as an SDK library;
-// no renderer implementation is generated into the application target and no
-// Lynx artifacts are resolved.
+// no renderer implementation is generated into the application target.
 
 pluginManagement {
     val localGradlePlugin = file("{{whisker_workspace_path}}/platforms/android/gradle-plugin")

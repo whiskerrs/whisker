@@ -9,7 +9,7 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Continuous, signal-based animation engine for Whisker (Flutter-style AnimationController + Tween, no Lynx animator)."
+description = "Continuous, signal-based animation engine for Whisker (AnimationController + Tween)."
 
 [dependencies]
 whisker-runtime = { workspace = true }

@@ -199,7 +199,7 @@ pub(super) fn resolve_linker_for(config: &Config) -> Result<PathBuf> {
                 .as_ref()
                 .map(|a| a.abi.as_str())
                 .unwrap_or("arm64-v8a");
-            // API level: env override > 21 (Lynx baseline).
+            // API level: environment override, then the development fallback.
             let api = std::env::var("WHISKER_ANDROID_API")
                 .ok()
                 .and_then(|s| s.parse::<u32>().ok())

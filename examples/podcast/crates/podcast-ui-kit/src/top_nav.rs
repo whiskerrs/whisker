@@ -81,7 +81,7 @@ pub fn top_nav(
                     Icon(
                         svg: lucide::Menu,
                         // `whisker-icons` plumbs `color` straight
-                        // through to Lynx as a CSS colour string
+                        // through as a CSS colour string
                         // (`stroke="currentColor"` in the source
                         // SVG), so the accent hex literal is the
                         // right shape here — there's no typed

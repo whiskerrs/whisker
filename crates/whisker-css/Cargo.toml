@@ -9,7 +9,7 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Type-safe CSS builder for Whisker. Mirrors the Lynx CSS surface."
+description = "Type-safe CSS builder for Whisker's supported styling surface."
 
 [dependencies]
 whisker-macros = { workspace = true }

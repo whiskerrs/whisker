@@ -48,8 +48,8 @@ ksp {
 dependencies {
     // 0.1.15 for the module-level `AsyncFunction` the `prefetch`
     // entry point needs; the view-only packages still build on 0.1.0.
-    implementation("rs.whisker:whisker-module-android:0.1.19")
-    ksp("rs.whisker:ksp:0.1.19")
+    implementation("rs.whisker:whisker-module-android:0.1.20")
+    ksp("rs.whisker:ksp:0.1.20")
 
     // Coil 2.7 — Kotlin-first, coroutine-native image loader. Base
     // artifact covers PNG / JPEG / static WebP (Android 14+ native

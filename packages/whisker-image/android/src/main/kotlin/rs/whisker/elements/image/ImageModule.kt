@@ -4,7 +4,7 @@
 // module's sources for any concrete `Module` subclass and emits the
 // registration block into `WhiskerImageBehaviors.registerAll()`.
 //
-// The `WhiskerImageView` Lynx UI subclass this references lives in
+// The `WhiskerImageView` module view this references lives in
 // `WhiskerImageView.kt`. Same split on iOS (`ImageModule.swift` +
 // `ImageView.swift`).
 

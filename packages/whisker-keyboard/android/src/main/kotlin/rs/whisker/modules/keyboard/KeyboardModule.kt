@@ -72,7 +72,7 @@ public class KeyboardModule : Module() {
             insetsRegistration = null
         }
 
-        // Marshalled to the UI thread: this body may run on the Lynx TASM
+        // Marshalled to the UI thread: this body may run on the Rust runtime
         // thread, and clearFocus / IMM are View work.
         Function("dismiss") {
             val activity = appContext.currentActivity

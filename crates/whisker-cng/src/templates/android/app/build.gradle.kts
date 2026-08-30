@@ -2,8 +2,7 @@
 // `whisker run` to refresh.
 //
 // This is intentionally a plain Android application. The retained Rust
-// renderer is connected in a later Host slice; bootstrapping the native shell
-// must not pull the legacy Lynx SDK, bridge, or module code generation in.
+// renderer is connected through the Whisker Host SDK.
 
 plugins {
     id("com.android.application")

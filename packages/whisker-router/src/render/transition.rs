@@ -1,8 +1,8 @@
 //! Float-`Tween` screen transitions built on `whisker-animation`.
 //!
-//! A transition here is **not** a Lynx keyframe animation (see
-//! `docs/animation-design.md` for why the router uses the continuous
-//! engine instead). It is a pair of pure `progress → Pose` functions driven
+//! A transition here uses Whisker's continuous animation engine rather than
+//! a declarative keyframe (see `docs/animation-design.md`). It is a pair of
+//! pure `progress → Pose` functions driven
 //! by an [`AnimationController`]'s `0..1` value, composed into the screen
 //! wrapper's typed `transform` / `opacity` by a `computed`.
 //!
@@ -355,8 +355,8 @@ pub fn pose_for(mode: &PoseMode, role: Role, progress: f32) -> Pose {
 /// The corner radius **animates with the gesture** (Material predictive
 /// back): `0` at rest (square screen), growing to the device radius as the
 /// card shrinks. Normal route transitions keep it `0`. The actual clipping
-/// is applied on the inner clip view (see [`crate::render::node`]), which
-/// needs the `clip-radius` Lynx attribute for the rounding to clip children.
+/// is applied on the inner clip view (see [`crate::render::node`]) by the
+/// common Host presentation layer.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive] // a pose may grow fields (filter, scrim) — construct via the ctors
 pub struct Pose {

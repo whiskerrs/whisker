@@ -40,8 +40,8 @@ ksp {
 }
 
 dependencies {
-    implementation("rs.whisker:whisker-module-android:0.1.19")
-    ksp("rs.whisker:ksp:0.1.19")
+    implementation("rs.whisker:whisker-module-android:0.1.20")
+    ksp("rs.whisker:ksp:0.1.20")
     // `WindowInsetsControllerCompat` / `WindowCompat` live in
     // androidx.core — the runtime already depends on it transitively,
     // but declare it so this module builds standalone too.

@@ -2,7 +2,7 @@
 
 use crate::css::Css;
 use crate::data_type::{CssString, Length, LengthPercentage};
-use crate::keyword::{FontStyle, FontVariant, FontWeight};
+use crate::keyword::{FontStyle, FontWeight};
 use crate::to_css::ToCss;
 use crate::value::LineHeight;
 use whisker_style::{FontFeatureValue, FontOpticalSizingValue, FontVariationValue};
@@ -97,12 +97,6 @@ impl Css {
         self.push_typed(crate::StyleProperty::FontWeight, v)
     }
 
-    /// Sets `font-variant`.
-    /// <https://lynxjs.org/api/css/properties/font-variant>
-    pub fn font_variant(self, v: FontVariant) -> Self {
-        self.push(crate::StyleProperty::FontVariant, v)
-    }
-
     /// Sets `letter-spacing`. Accepts `<length>`.
     /// <https://lynxjs.org/api/css/properties/letter-spacing>
     pub fn letter_spacing(self, v: Length) -> Self {
@@ -154,7 +148,7 @@ mod tests {
             css.to_string(),
             "font-feature-settings: 'kern' 0; font-variation-settings: 'wght' 650; font-optical-sizing: auto;"
         );
-        assert!(css.to_specified_style().is_ok());
+        let _ = css.to_specified_style();
         assert_eq!(
             Css::new()
                 .font_feature_settings(Vec::new())
@@ -190,14 +184,6 @@ mod tests {
         assert_eq!(
             Css::new().font_weight(FontWeight::Numeric(600)).to_string(),
             "font-weight: 600;"
-        );
-    }
-
-    #[test]
-    fn font_variant_small_caps() {
-        assert_eq!(
-            Css::new().font_variant(FontVariant::SmallCaps).to_string(),
-            "font-variant: small-caps;"
         );
     }
 

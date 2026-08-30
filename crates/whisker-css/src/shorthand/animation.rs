@@ -167,11 +167,11 @@ impl Css {
     /// Sets the `animation` shorthand for a single animation.
     /// <https://lynxjs.org/api/css/properties/animation>
     pub fn animation(self, a: Animation) -> Self {
-        let lynx = a.to_css_string();
+        let serialized = a.to_css_string();
         self.push_semantic(
             crate::StyleProperty::Animation,
             whisker_style::StyleValue::Animations(vec![to_animation_value(&a)]),
-            lynx,
+            serialized,
         )
     }
 
@@ -236,7 +236,7 @@ mod tests {
         ]);
         assert_eq!(s.to_string(), "animation: fade 300ms, slide 500ms 100ms;");
         let resolved = whisker_style::resolve_style(
-            &s.to_specified_style().unwrap(),
+            &s.to_specified_style(),
             None,
             whisker_style::StyleEnvironment::default(),
         )
@@ -262,7 +262,7 @@ mod tests {
             .unwrap();
         let style = Css::new().animation(Animation::new(keyframes).duration(200.ms()));
         let resolved = whisker_style::resolve_style(
-            &style.to_specified_style().unwrap(),
+            &style.to_specified_style(),
             None,
             whisker_style::StyleEnvironment::default(),
         )

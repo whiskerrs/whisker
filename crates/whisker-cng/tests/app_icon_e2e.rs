@@ -104,7 +104,6 @@ fn android_gen_tree_gets_mipmaps_and_manifest_icon() {
         "0.1.0".into(),
         "0.1.0".into(),
         "https://whiskerrs.github.io/whisker/maven".into(),
-        "https://whiskerrs.github.io/lynx/maven".into(),
     )
     .unwrap();
 

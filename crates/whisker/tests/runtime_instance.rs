@@ -1321,7 +1321,7 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
         .mount(|| {
             render! {
                 view(style: css!(width: vw(50), height: vh(50))) {
-                    text(value: "viewport", style: css!(font_size: rpx(75)))
+                    text(value: "viewport", style: css!(font_size: vw(10)))
                 }
             }
         })

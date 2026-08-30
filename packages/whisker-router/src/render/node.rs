@@ -29,7 +29,7 @@ use whisker::css::ext::{percent, px};
 use whisker::css::{Color, Css, FlexDirection, Overflow, PointerEvents, Position, PositionKind};
 use whisker::runtime::reactive::{Owner, effect};
 use whisker::runtime::view::{
-    Element, append_child, create_element, create_phantom_element, remove_child, set_attribute,
+    Element, append_child, create_element, create_phantom_element, remove_child,
 };
 use whisker::{
     AnimationController, ElementTag, apply_style, computed, provide_context, use_context,
@@ -40,11 +40,6 @@ use crate::render::components::OutletAnchor;
 use crate::render::handle::RouterHandle;
 use crate::render::registry::LayoutFn;
 use crate::render::transition::{self, Direction, Pose, PoseMode, Role, RouteTransition};
-
-/// Lynx `@LynxProp` **attribute** (not a CSS style) that makes a view clip its
-/// children to `border-radius`. Drift here silently disables corner clipping,
-/// so it lives in one named place. See the memory `lynx_border_radius_clip_radius_attr`.
-const CLIP_RADIUS_ATTR: &str = "clip-radius";
 
 /// Context marker: the `Layout(X)` chrome for this path is already being
 /// applied. The layout's own `Outlet` re-enters [`mount_node`] at the same
@@ -568,8 +563,9 @@ fn reconcile_stack(
     // ONLY for a push / steady state. During a **pop** the live top is the
     // revealed survivor, but the wrapper that must paint on top is the
     // *leaving* one (it slides off ABOVE the survivor) — `run_pop` keeps it
-    // last. Lynx ignores z-index during transform animations, so paint
-    // order is DOM order and re-appending the survivor here would draw it
+    // last. Keep the structural paint order explicit so every Host draws the
+    // leaving wrapper above the survivor during transform animations;
+    // re-appending the survivor here would draw it
     // over the leaving card.
     if new_len >= old_len {
         let l = live.borrow();
@@ -641,8 +637,7 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
     }
 
     // The leaving card slides off ON TOP of the revealed survivor, so it
-    // must paint above it. Lynx ignores z-index during transform
-    // animations (paint order = DOM order), so move the popped wrapper to
+    // must paint above it. Move the popped wrapper to
     // the end (topmost) for the duration of the slide-out.
     remove_child(slot, popped.wrapper);
     append_child(slot, popped.wrapper);
@@ -724,19 +719,10 @@ fn mount_wrapper(
         });
         let _ = idx;
 
-        // Lynx only rounds a view's *direct* children, so
-        // `overflow: hidden; border-radius` on the transform wrapper does
-        // not clip the screen — the opaque child covers it unrounded. Hence
-        // a dedicated clip view in between: wrapper (transform / opacity) →
+        // Keep clipping separate from the transform wrapper so the animated
+        // corner radius has one presentation owner: wrapper (transform / opacity) →
         // clip (border-radius + overflow:hidden, 100%) → child.
         let clip = create_element(ElementTag::View);
-        // `clip-radius` is a Lynx **prop** (`@LynxProp`), NOT a CSS style —
-        // it must be set as an attribute, not in the inline style string.
-        // It forces the view to clip its children to `border-radius` (the
-        // auto overflow:hidden path is disabled in the fork:
-        // `UIGroup.enableAutoClipRadius() == false`). The radius itself is
-        // written reactively below so it animates with the gesture.
-        set_attribute(clip, CLIP_RADIUS_ATTR, "true");
 
         // One style writer drives both elements from the pose: the wrapper's
         // transform/opacity AND the clip view's animated corner radius.
@@ -812,8 +798,7 @@ fn wrapper_style(pose: &Pose) -> Css {
 /// corner `radius_px`, sized to fill the transform wrapper. The radius is
 /// `0` at rest (square screen) and grows to the device radius as the
 /// predictive-back gesture shrinks the card — Material style. The
-/// `clip-radius` Lynx attribute (set in `mount_wrapper`) is what makes the
-/// rounding actually clip the child.
+/// Common Host presentation applies the radius and descendant clip together.
 fn clip_view_style(radius_px: f32) -> Css {
     Css::new()
         .position(PositionKind::Absolute)

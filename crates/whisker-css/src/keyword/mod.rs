@@ -1,10 +1,8 @@
 //! Keyword enums used by property values.
 //!
-//! Each enum covers exactly the keywords Lynx accepts for a given
-//! property family. Values explicitly rejected by Lynx (e.g.
-//! `position: static`, `overflow: scroll`, `flex-direction:
-//! vertical`) are absent from the enums so writing them is a
-//! compile error rather than a runtime no-op.
+//! Each enum covers the subset implemented by Whisker's typed style engine.
+//! Unsupported values are absent so they fail at compile time rather than
+//! becoming runtime no-ops.
 
 mod animation;
 mod background;
@@ -13,7 +11,6 @@ mod effects;
 mod flex;
 mod grid;
 mod layout;
-mod linear;
 mod text;
 mod transform;
 mod typography;
@@ -33,7 +30,6 @@ pub use grid::GridAutoFlow;
 pub use layout::{
     BoxSizing, Clear, Display, Float, Overflow, PointerEvents, PositionKind, Visibility,
 };
-pub use linear::{LinearCrossGravity, LinearGravity, LinearLayoutGravity, LinearOrientation};
 pub use text::{
     Direction, TextAlign, TextDecorationLine, TextDecorationStyle, TextOverflow, TextTransform,
     VerticalAlign, WhiteSpace, WordBreak, WordWrap,

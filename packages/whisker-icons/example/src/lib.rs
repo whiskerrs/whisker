@@ -1,7 +1,7 @@
 //! `whisker-icons` example app.
 //!
 //! Renders every Lucide icon (~1700) through Whisker's
-//! render-props `list(...)` so Lynx's native virtualised list
+//! render-props `list(...)` so Whisker's virtualized list
 //! drives the scrolling — only the tiles inside the viewport
 //! are materialised on mount.
 //!
@@ -45,8 +45,8 @@ pub fn app() -> Element {
             padding_top: px(insets.get().top as f32 + 16.0),
             padding_bottom: px(insets.get().bottom as f32 + 16.0),
         ))) {
-            // Wrap the header `text` in a `view` — a known Lynx
-            // Android quirk collapses the first direct child of the
+            // Wrap the header `text` in a `view`; Android can collapse the
+            // first direct child of the
             // root `<page>` to zero height when edge-to-edge is enabled
             // (`WhiskerActivity` flips `setDecorFitsSystemWindows(false)`).
             // Putting an intermediate flex container in between gives

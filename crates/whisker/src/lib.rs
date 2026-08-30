@@ -17,10 +17,6 @@
 //! }
 //! ```
 //!
-//! The legacy Lynx Host owns its required root `page` element and wraps
-//! whatever your app returns. Other Hosts mount the returned root element
-//! directly, so `page` is not part of Whisker's public element API.
-//!
 //! ## What's in this crate
 //!
 //! The `whisker` crate is an *umbrella* — almost everything here is a
@@ -36,8 +32,7 @@
 //!   [`resource()`], and their handle types ([`Signal`], [`ReadSignal`],
 //!   [`RwSignal`], [`Resource`], …).
 //! - **Async** — [`spawn_local`], [`run_blocking`], and the instance-aware
-//!   [`runtime_dispatcher()`]. [`run_on_main_thread`] remains available to the
-//!   legacy Lynx host during migration.
+//!   [`runtime_dispatcher()`].
 //! - **Control flow** — [`ForEach`] (keyed list), [`Show`] (conditional).
 //!   Both are written as ordinary `#[component]` functions.
 //! - **CSS** — the [`css`] type-safe builder + the `css!` macro.
@@ -223,22 +218,6 @@ pub mod __element_builder {
 #[doc(hidden)]
 #[path = "builtins/mod.rs"]
 pub mod __tags;
-
-/// Marshal a closure onto the active runtime thread.
-///
-/// Host integrations should capture
-/// [`runtime_dispatcher()`] while a [`RuntimeInstance`] is executing and post
-/// through that instance-aware handle. This process-global helper remains for
-/// compatibility with code that has not yet captured a dispatcher.
-///
-/// ```ignore
-/// let dispatcher = runtime_dispatcher().unwrap();
-/// std::thread::spawn(move || {
-///     let result = blocking_fetch();
-///     dispatcher.post(move || data.set(Some(result)));
-/// });
-/// ```
-pub use whisker_runtime::main_thread::run_on_main_thread;
 
 /// Whisker platform module invocation entry point.
 ///
@@ -460,8 +439,8 @@ pub mod prelude {
     pub use crate::{
         ArcReadSignal, ArcRwSignal, ArcWriteSignal, Callback, ReadSignal, Resource, ResourceState,
         RwSignal, Signal, StoredValue, WriteSignal, arc_signal, computed, effect, on_cleanup,
-        on_mount, provide_context, resource, resource_sync, run_blocking, run_on_main_thread,
-        runtime_dispatcher, signal, spawn_local, use_context, with_context,
+        on_mount, provide_context, resource, resource_sync, run_blocking, runtime_dispatcher,
+        signal, spawn_local, use_context, with_context,
     };
     pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
     pub use crate::{Element, ElementTag};

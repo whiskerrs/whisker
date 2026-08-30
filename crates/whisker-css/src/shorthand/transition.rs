@@ -76,11 +76,11 @@ impl Css {
     /// Sets the `transition` shorthand for a single transition.
     /// <https://lynxjs.org/api/css/properties/transition>
     pub fn transition(self, t: Transition) -> Self {
-        let lynx = t.to_css_string();
+        let serialized = t.to_css_string();
         self.push_semantic(
             crate::StyleProperty::Transition,
             whisker_style::StyleValue::Transitions(vec![to_transition_value(&t)]),
-            lynx,
+            serialized,
         )
     }
 
@@ -146,7 +146,7 @@ mod tests {
             "transition: opacity 300ms, transform 500ms 100ms;"
         );
         let resolved = whisker_style::resolve_style(
-            &s.to_specified_style().unwrap(),
+            &s.to_specified_style(),
             None,
             whisker_style::StyleEnvironment::default(),
         )

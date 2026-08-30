@@ -41,7 +41,7 @@ fn empty_style_uses_the_documented_layout_initials() {
         ComputedLengthPercentage::default(),
         ComputedLengthPercentage::ZERO
     );
-    assert_eq!(style.display, DisplayValue::Linear);
+    assert_eq!(style.display, DisplayValue::Flex);
     assert_eq!(style.float, FloatValue::None);
     assert_eq!(style.clear, ClearValue::None);
     assert_eq!(style.overflow, Axes::all(OverflowValue::Visible));
@@ -764,8 +764,6 @@ fn relative_units_become_logical_pixel_components() {
     let cases = [
         (LengthValue::Zero, 0.0),
         (length(2.0, LengthUnit::Px), 2.0),
-        (length(2.0, LengthUnit::Rpx), 2.0),
-        (length(4.0, LengthUnit::Ppx), 2.0),
         (length(2.0, LengthUnit::Em), 40.0),
         (length(2.0, LengthUnit::Rem), 20.0),
         (length(2.0, LengthUnit::Vh), 8.0),

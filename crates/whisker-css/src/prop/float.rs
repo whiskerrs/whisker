@@ -23,7 +23,6 @@ mod tests {
     fn float_and_clear_are_typed() {
         let css = Css::new().float(Float::Left).clear(Clear::Both);
         assert_eq!(css.to_string(), "float: left; clear: both;");
-        css.to_specified_style()
-            .expect("float declarations should not require CSS parsing");
+        css.to_specified_style();
     }
 }

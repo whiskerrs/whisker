@@ -49,7 +49,7 @@ public final class KeyboardModule: Module {
             }
 
             // Marshalled to the main thread: `invoke` may dispatch this
-            // body on the Lynx TASM thread, and `endEditing` is UIKit work.
+            // body on the runtime thread, and `endEditing` is UIKit work.
             Function("dismiss") { _ in
                 DispatchQueue.main.async {
                     Self.keyWindow()?.endEditing(true)

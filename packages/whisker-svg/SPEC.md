@@ -226,7 +226,7 @@ The replayer applies `[scale, 0, 0, scale, tx, ty]` as the
 CSS `color` on the host `<Svg>` element is the "tint". For
 `PAINT_FILL_TINT` / `PAINT_STROKE_TINT` opcodes, the replayer
 substitutes the tint colour (resolved from `style="color: …"` or
-the inherited Lynx text colour) as the paint. Producers compile
+the inherited Whisker text colour) as the paint. Producers compile
 SVG `fill="currentColor"` / `stroke="currentColor"` to these
 opcodes.
 

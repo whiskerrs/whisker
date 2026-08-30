@@ -174,12 +174,9 @@ async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::proces
 }
 
 /// `xcodebuild`'s `-quiet` flag silences progress chatter but the
-/// underlying compiler still emits diagnostics — which under Xcode
-/// with iOS 26 SDK + Lynx's pre-iOS-26 framework headers means a
-/// hundreds-of-lines deprecation cascade (`'mainScreen' is
-/// deprecated`, `'screens' is deprecated`, …) on every build. None
-/// of it is actionable by Whisker users (the headers ship from
-/// upstream Lynx), so we filter it as benign here.
+/// underlying compiler still emits diagnostics. Framework deprecation
+/// cascades can produce hundreds of non-actionable lines on every build, so
+/// the concise UI filters warning chains while verbose mode preserves them.
 ///
 /// Approach: drop anything that looks like a clang / xcodebuild
 /// warning chain — the `warning:` line, the `note:` follow-ups,
@@ -231,7 +228,7 @@ fn is_benign_xcodebuild_line(raw: &str) -> bool {
     }
 
     // Source-line listings rendered alongside the warning chain:
-    //   `217 | #import "LynxBackgroundInfo.h"`
+    //   `217 | #import "FrameworkHeader.h"`
     //   `    | ^`
     //   `56 |`        (empty source line for context)
     // After trimming leading whitespace and ALL leading digits, the
@@ -299,8 +296,7 @@ impl SimctlNoise {
     }
 
     fn is_benign_stdout(&self, line: &str) -> bool {
-        // `-quiet` doesn't fully silence xcodebuild on an iOS 26 SDK
-        // against pre-iOS-26 Lynx headers, so its stdout needs the
+        // `-quiet` does not fully silence xcodebuild, so its stdout needs the
         // benign filter too.
         if matches!(self, SimctlNoise::Xcodebuild) && is_benign_xcodebuild_line(line) {
             return true;

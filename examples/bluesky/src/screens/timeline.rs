@@ -143,7 +143,7 @@ pub(super) fn compose_fab() -> Element {
 
 #[component]
 pub(super) fn post_list(posts: Vec<bsky_domain::FeedPost>) -> Element {
-    // Lynx's native-virtualised `<list>` — recycles off-screen rows and scrolls
+    // Whisker's virtualized list recycles off-screen rows and scrolls
     // vertically by default. Scales to many posts without keeping every row
     // mounted (unlike scroll_view + ForEach).
     render! {

@@ -1,22 +1,14 @@
 //! # whisker-css
 //!
-//! Type-safe CSS [`Css`] builder for Whisker, mirroring the Lynx
-//! CSS surface 1-to-1.
+//! Type-safe CSS [`Css`] builder for Whisker.
 //!
 //! The crate is split into four layers:
 //!
-//! - [`data_type`] — the 11 data types Lynx exposes at
-//!   <https://lynxjs.org/api/css/data-type.html>. Each is mapped to a
-//!   Rust `enum` or `struct` with a [`ToCss`] implementation that
-//!   round-trips back to its CSS source form.
-//! - [`data_type_ext`] — data types Lynx uses inline inside property
-//!   pages but does not document independently (`<integer>`,
+//! - [`data_type`] — reusable CSS value types represented as Rust enums and
+//!   structs with [`ToCss`] implementations for diagnostics.
+//! - [`data_type_ext`] — additional composite data types (`<integer>`,
 //!   `<easing-function>`, `<position>`, the 147 [`NamedColor`]s).
-//! - [`keyword`] — closed keyword enums for property values
-//!   (`Display`, `FlexDirection`, …). Values Lynx explicitly rejects
-//!   (`position: static`, `overflow: scroll`) are absent from the
-//!   enums so they cause compile errors instead of silent runtime
-//!   warnings.
+//! - [`keyword`] — closed keyword enums for supported property values.
 //! - [`prop`] — one method per CSS longhand property on [`Css`],
 //!   each carrying a documentation link to the corresponding
 //!   `lynxjs.org/api/css/properties/<name>` page.
@@ -60,7 +52,7 @@ mod variable;
 // the macros crate directly.
 pub use whisker_macros::css;
 
-pub use crate::css::{Css, CssProp, CustomPropertyValue, UnmigratedStyleValue};
+pub use crate::css::{Css, CssProp, CustomPropertyValue};
 pub use crate::data_type::{
     Angle, CalcExpr, Color, ColorStop, CssString, FitContent, Gradient, Length, LengthPercentage,
     LinearDirection, MaxContent, NamedColor, Number, Percentage, RadialShape, StopPosition, Time,
@@ -74,10 +66,10 @@ pub use crate::shorthand::{
 };
 pub use crate::to_css::ToCss;
 pub use crate::value::{
-    BackdropFilter, BorderRadius, FlexBasis, GridArea, GridLine, GridRepeatCount, GridTemplate,
-    GridTemplateAreas, GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, ImageRef,
-    InsetPath, LineHeight, MotionPathCommand, MotionPathPoint, OffsetDistance, OffsetPath,
-    OffsetRotate, Repeated, Size,
+    BackdropFilter, BorderRadius, BoxShadow, ClipBox, ClipFillRule, ClipPath, ClipPathCommand,
+    ClipPoint, FlexBasis, GridArea, GridLine, GridRepeatCount, GridTemplate, GridTemplateAreas,
+    GridTemplateComponent, GridTrack, GridTrackMax, GridTrackMin, ImageRef, InsetPath, LineHeight,
+    MotionPathCommand, MotionPathPoint, OffsetDistance, OffsetPath, OffsetRotate, Repeated, Size,
 };
 pub use crate::variable::{ValueOrVariable, custom_var, custom_var_with_fallback};
 pub use whisker_style::{
