@@ -32,6 +32,16 @@ mod transform_interpolation;
 pub mod value;
 pub mod view;
 
+/// Link-time registration hooks used by `#[whisker::module_component]`.
+///
+/// This is macro plumbing rather than application API.
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod __linked_elements {
+    pub use crate::element_registry::LINKED_ELEMENT_PROVIDERS;
+    pub use linkme::*;
+}
+
 #[doc(hidden)]
 pub use dispatch::drain_runtime_dispatches;
 pub use dispatch::{RuntimeDispatcher, runtime_dispatcher};

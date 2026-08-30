@@ -25,12 +25,18 @@ impl DynRenderer for SurfaceRuntime {
 
     fn create_element_by_schema(&self, schema: &ElementSchema) -> Element {
         let mut state = self.state.borrow_mut();
-        let registration = state
-            .registry
-            .register_named(schema.clone())
-            .map(|_| ())
-            .map_err(RuntimeBindingError::from);
-        let result = registration.and_then(|()| state.allocate_named(&schema.name));
+        let registration = state.registry.registration_for_name(&schema.name);
+        let result = match registration {
+            None => Err(RuntimeBindingError::UnsupportedCustomElement {
+                name: schema.name.clone(),
+            }),
+            Some(registration) if registration.schema() != *schema => Err(
+                RuntimeBindingError::ElementRegistry(ElementRegistryError::ConflictingSchema {
+                    name: schema.name.clone(),
+                }),
+            ),
+            Some(_) => state.allocate_named(&schema.name),
+        };
         match result {
             Ok(element) => element,
             Err(error) => {
