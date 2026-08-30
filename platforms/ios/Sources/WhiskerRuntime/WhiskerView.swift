@@ -7,6 +7,8 @@ public final class WhiskerView: UIView {
     private var hostToken: UnsafeMutableRawPointer?
     private var runtimeHandle: UnsafeMutableRawPointer?
     private var isApplicationActive = true
+    private var moduleEventSinkEpoch: UInt64 = 0
+    private let pendingModuleEvents = PendingModuleEvents()
     private lazy var pointerInputRecognizer: WhiskerTouchObserverGestureRecognizer = {
         let recognizer = WhiskerTouchObserverGestureRecognizer(target: nil, action: nil)
         recognizer.touchHandler = { [weak self] touches, event in
@@ -127,8 +129,19 @@ public final class WhiskerView: UIView {
         guard runtimeHandle == nil, window != nil, viewport.width > 0, viewport.height > 0 else { return }
         let token = Unmanaged.passRetained(self).toOpaque()
         hostToken = token
-        WhiskerModuleEventCenter.installEventSink { [weak self] module, event, payload in
-            self?.dispatchModuleEvent(module: module, event: event, payload: payload)
+        moduleEventSinkEpoch &+= 1
+        let sinkEpoch = moduleEventSinkEpoch
+        WhiskerModuleEventCenter.installEventSink(owner: self) { [weak self] module, event, payload in
+            guard let self else { return }
+            let shouldSchedule = self.pendingModuleEvents.offer(PendingModuleEvent(
+                epoch: sinkEpoch,
+                module: module,
+                event: event,
+                payload: payload
+            ))
+            if shouldSchedule {
+                DispatchQueue.main.async { [weak self] in self?.flushModuleEventsOnMain() }
+            }
         }
         runtimeHandle = whiskerViewCreate(
             Float(viewport.width), Float(viewport.height), Float(window?.screen.scale ?? 1),
@@ -143,6 +156,8 @@ public final class WhiskerView: UIView {
             driveRuntimeFrame(timestampMs: ProcessInfo.processInfo.systemUptime * 1_000)
             requestFrame()
         } else {
+            moduleEventSinkEpoch &+= 1
+            WhiskerModuleEventCenter.installEventSink(owner: self, nil)
             Unmanaged<WhiskerView>.fromOpaque(token).release()
             hostToken = nil
         }
@@ -226,13 +241,19 @@ public final class WhiskerView: UIView {
     }
 
     private func unmount() {
-        guard let handle = runtimeHandle else { return }
+        moduleEventSinkEpoch &+= 1
+        WhiskerModuleEventCenter.installEventSink(owner: self, nil)
+        let handle = runtimeHandle
+        let ownedRuntime = handle != nil || hostToken != nil
         runtimeHandle = nil
         displayLink?.invalidate()
         displayLink = nil
-        whiskerViewDestroy(handle)
-        WhiskerModuleEventCenter.installEventSink(nil)
-        scene.clear()
+        if let handle { whiskerViewDestroy(handle) }
+        // Avoid initializing the lazy scene from `deinit` for a View that was
+        // never mounted. Its initializer captures `weak self`, which UIKit
+        // correctly rejects once object deallocation has begun.
+        if ownedRuntime { scene.clear() }
+        pendingModuleEvents.clear()
         touchIdentities.clear()
         if let token = hostToken {
             Unmanaged<WhiskerView>.fromOpaque(token).release()
@@ -326,35 +347,35 @@ public final class WhiskerView: UIView {
     }
 
     func observeModule(module: String, event: String, observing: Bool) {
-        modules.observe(module: module, event: event, observing: observing)
+        modules.observe(owner: self, module: module, event: event, observing: observing)
     }
 
-    private func dispatchModuleEvent(module: String, event: String, payload: WhiskerValue) {
+    private func flushModuleEventsOnMain() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let pending = pendingModuleEvents.drain(epoch: moduleEventSinkEpoch)
+        guard !pending.isEmpty else { return }
         scene.dispatchOrDefer { [weak self] in
-            guard let self else { return }
-            guard let handle = runtimeHandle else {
-                DispatchQueue.main.async { [weak self] in
-                    guard self?.runtimeHandle != nil else { return }
-                    self?.dispatchModuleEvent(module: module, event: event, payload: payload)
-                }
-                return
-            }
-            var raw = payload.toRaw()
-            defer { WhiskerValue.releaseRaw(&raw) }
-            let moduleBytes = Array(module.utf8)
-            let eventBytes = Array(event.utf8)
-            moduleBytes.withUnsafeBytes { moduleBuffer in
-                eventBytes.withUnsafeBytes { eventBuffer in
-                    _ = whiskerViewDispatchModuleEvent(
-                        handle,
-                        moduleBuffer.bindMemory(to: UInt8.self).baseAddress,
-                        moduleBytes.count,
-                        eventBuffer.bindMemory(to: UInt8.self).baseAddress,
-                        eventBytes.count,
-                        &raw
-                    )
+            guard let self, let handle = runtimeHandle else { return }
+            var dispatched = false
+            for moduleEvent in pending {
+                var raw = moduleEvent.payload.toRaw()
+                defer { WhiskerValue.releaseRaw(&raw) }
+                let moduleBytes = Array(moduleEvent.module.utf8)
+                let eventBytes = Array(moduleEvent.event.utf8)
+                moduleBytes.withUnsafeBytes { moduleBuffer in
+                    eventBytes.withUnsafeBytes { eventBuffer in
+                        dispatched = whiskerViewDispatchModuleEvent(
+                            handle,
+                            moduleBuffer.bindMemory(to: UInt8.self).baseAddress,
+                            moduleBytes.count,
+                            eventBuffer.bindMemory(to: UInt8.self).baseAddress,
+                            eventBytes.count,
+                            &raw
+                        ) || dispatched
+                    }
                 }
             }
+            if dispatched { requestFrame() }
         }
     }
 }

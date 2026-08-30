@@ -6,11 +6,102 @@ import WhiskerCBridge
 @testable import WhiskerModule
 import XCTest
 
+private final class EventLifecycleTestModule: Module {
+    var starts = 0
+    var stops = 0
+
+    override func definition() -> ModuleDefinition {
+        ModuleDefinition {
+            Name("Clock")
+            Events("tick")
+            OnStartObserving("tick") { [weak self] in self?.starts += 1 }
+            OnStopObserving("tick") { [weak self] in self?.stops += 1 }
+        }
+    }
+}
+
 @MainActor
 final class HostConformanceTests: XCTestCase {
     override class func setUp() {
         super.setUp()
         BuiltInElementModule().registerWithWhisker()
+    }
+
+    func testModuleEventsReachOnlyObservingSurfacesAndLifecycleIsAggregated() {
+        let module = EventLifecycleTestModule()
+        module.qualifiedName = "event-test:Clock"
+        WhiskerModuleEventCenter.register(module)
+        let moduleName = try! XCTUnwrap(module.qualifiedName)
+        let firstOwner = NSObject()
+        let secondOwner = NSObject()
+        var received: [String] = []
+        WhiskerModuleEventCenter.installEventSink(owner: firstOwner) { _, _, _ in
+            received.append("first")
+        }
+        WhiskerModuleEventCenter.installEventSink(owner: secondOwner) { _, _, _ in
+            received.append("second")
+        }
+        defer {
+            WhiskerModuleEventCenter.installEventSink(owner: firstOwner, nil)
+            WhiskerModuleEventCenter.installEventSink(owner: secondOwner, nil)
+        }
+
+        WhiskerModuleEventCenter.setObserving(
+            owner: firstOwner,
+            module: moduleName,
+            event: "tick",
+            observing: true
+        )
+        XCTAssertEqual(module.starts, 1)
+        WhiskerModuleEventCenter.dispatchSend(
+            module: moduleName,
+            event: "tick",
+            payload: .int(1)
+        )
+        XCTAssertEqual(received, ["first"])
+
+        received.removeAll()
+        WhiskerModuleEventCenter.setObserving(
+            owner: secondOwner,
+            module: moduleName,
+            event: "tick",
+            observing: true
+        )
+        XCTAssertEqual(module.starts, 1)
+        WhiskerModuleEventCenter.dispatchSend(
+            module: moduleName,
+            event: "tick",
+            payload: .int(2)
+        )
+        XCTAssertEqual(Set(received), Set(["first", "second"]))
+
+        WhiskerModuleEventCenter.installEventSink(owner: firstOwner, nil)
+        XCTAssertEqual(module.stops, 0)
+        received.removeAll()
+        WhiskerModuleEventCenter.dispatchSend(
+            module: moduleName,
+            event: "tick",
+            payload: .int(3)
+        )
+        XCTAssertEqual(received, ["second"])
+        WhiskerModuleEventCenter.installEventSink(owner: secondOwner, nil)
+        XCTAssertEqual(module.stops, 1)
+    }
+
+    func testPendingModuleEventsCoalesceWakeupsAndRejectEarlierMountEpoch() {
+        let pending = PendingModuleEvents()
+        XCTAssertTrue(pending.offer(PendingModuleEvent(
+            epoch: 1, module: "demo", event: "tick", payload: .int(1)
+        )))
+        XCTAssertFalse(pending.offer(PendingModuleEvent(
+            epoch: 1, module: "demo", event: "tick", payload: .int(2)
+        )))
+        XCTAssertEqual(pending.drain(epoch: 1).map(\.payload), [.int(1), .int(2)])
+
+        XCTAssertTrue(pending.offer(PendingModuleEvent(
+            epoch: 1, module: "demo", event: "tick", payload: .int(3)
+        )))
+        XCTAssertTrue(pending.drain(epoch: 2).isEmpty)
     }
 
     func testCommonAccessibilityMapsToUIKitNodeSemantics() {

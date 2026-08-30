@@ -582,16 +582,24 @@ impl RustModuleRuntime {
         with_module_host(&self.host, work)
     }
 
-    /// Delivers queued Host events to Rust subscribers without re-entering
-    /// application code from the originating Host callback.
-    pub fn dispatch_pending_events(&self) -> usize {
+    /// Delivers queued Host events through the owning runtime's ordinary event
+    /// transaction rather than re-entering application code from the
+    /// originating Host callback.
+    pub fn dispatch_pending_events(
+        &self,
+        runtime: &crate::RuntimeInstance,
+    ) -> Result<usize, crate::RuntimeEventError> {
         let pending = std::mem::take(&mut *self.inner.pending.borrow_mut());
         let count = pending.len();
         for event in pending {
-            self.host
-                .dispatch_event(&event.module, &event.event, event.payload);
+            runtime.dispatch_module_event(
+                &self.host,
+                &event.module,
+                &event.event,
+                event.payload,
+            )?;
         }
-        count
+        Ok(count)
     }
 }
 
@@ -683,18 +691,36 @@ mod tests {
         });
 
         let payload = Rc::new(RefCell::new(None));
-        let subscription = runtime.with_host(|| {
-            let payload = Rc::clone(&payload);
-            PlatformModule::named("demo:Echo").on_event("ready", move |value| {
-                *payload.borrow_mut() = Some(value);
-            })
+        let subscription = Rc::new(RefCell::new(None));
+        let surface = crate::SurfaceRuntime::new(
+            whisker_protocol::SurfaceId::new(1).unwrap(),
+            whisker_style::StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+        );
+        let mut instance =
+            crate::RuntimeInstance::new(surface, crate::RuntimeWakeHandle::new(|| {}));
+        runtime.with_host(|| {
+            instance
+                .mount({
+                    let payload = Rc::clone(&payload);
+                    let subscription = Rc::clone(&subscription);
+                    move || {
+                        *subscription.borrow_mut() = Some(
+                            PlatformModule::named("demo:Echo").on_event("ready", move |value| {
+                                *payload.borrow_mut() = Some(value);
+                            }),
+                        );
+                        crate::view::create_element(crate::ElementTag::View)
+                    }
+                })
+                .unwrap();
         });
         assert_eq!(starts.get(), 1);
         assert_eq!(wakes.get(), 1);
-        runtime.with_host(|| assert_eq!(runtime.dispatch_pending_events(), 1));
+        assert_eq!(runtime.dispatch_pending_events(&instance).unwrap(), 1);
         assert_eq!(*payload.borrow(), Some(WhiskerValue::String("now".into())));
-        drop(subscription);
+        drop(subscription.borrow_mut().take());
         assert_eq!(stops.get(), 1);
+        runtime.with_host(|| instance.unmount().unwrap());
     }
 
     #[test]

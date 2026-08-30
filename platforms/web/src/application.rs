@@ -193,9 +193,9 @@ impl WebApplication {
 
     fn drive_frame(&mut self, timestamp_ms: f64) -> Result<(), WebError> {
         self.start_resource_commands();
-        self.modules.with_host(|| {
-            self.modules.dispatch_pending_events();
-        });
+        self.modules
+            .dispatch_pending_events(&self.runtime)
+            .map_err(|error| WebError(format!("dispatch Web module event: {error}")))?;
         for event in self.frames.take_events() {
             self.modules
                 .with_host(|| {
@@ -230,9 +230,9 @@ impl WebApplication {
                 )
             })
             .map_err(|error| WebError(format!("drive Web frame: {error}")))?;
-        self.modules.with_host(|| {
-            self.modules.dispatch_pending_events();
-        });
+        self.modules
+            .dispatch_pending_events(&self.runtime)
+            .map_err(|error| WebError(format!("dispatch Web module event: {error}")))?;
         self.start_resource_commands();
         if drive.needs_frame {
             request_frame();
