@@ -734,18 +734,36 @@ mod tests {
             negotiated.support(RenderCapability::Cursor),
             CapabilitySupport::Emulated
         );
+
+        let newer_host = RenderCapabilities::base();
+        assert_eq!(
+            newer_host
+                .negotiate(ProtocolVersion { major: 1, minor: 2 })
+                .unwrap()
+                .protocol(),
+            ProtocolVersion { major: 1, minor: 2 }
+        );
     }
 
     #[test]
     fn negotiation_rejects_a_different_protocol_major() {
         let host = RenderCapabilities::base();
 
+        let error = CapabilityNegotiationError::IncompatibleProtocol {
+            runtime: ProtocolVersion { major: 2, minor: 0 },
+            host: ProtocolVersion::CURRENT,
+        };
         assert_eq!(
             host.negotiate(ProtocolVersion { major: 2, minor: 0 }),
-            Err(CapabilityNegotiationError::IncompatibleProtocol {
-                runtime: ProtocolVersion { major: 2, minor: 0 },
-                host: ProtocolVersion::CURRENT,
-            })
+            Err(error)
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "incompatible frame protocol: Rust 2.0, Host {}.{}",
+                ProtocolVersion::CURRENT.major,
+                ProtocolVersion::CURRENT.minor
+            )
         );
     }
 
@@ -762,14 +780,24 @@ mod tests {
             profile.support(RenderCapability::BackdropBlur),
             CapabilitySupport::Emulated
         );
+        let overlapping = InvalidCapabilityMasks::Overlapping { bits: native };
         assert_eq!(
             RenderCapabilities::from_masks(ProtocolVersion::CURRENT, native, native),
-            Err(InvalidCapabilityMasks::Overlapping { bits: native })
+            Err(overlapping)
         );
-        assert!(matches!(
+        assert_eq!(
+            overlapping.to_string(),
+            format!("Host capabilities are both native and emulated in bits 0x{native:016x}")
+        );
+        let unknown = InvalidCapabilityMasks::Unknown { bits: 1_u64 << 63 };
+        assert_eq!(
             RenderCapabilities::from_masks(ProtocolVersion::CURRENT, 1_u64 << 63, 0),
-            Err(InvalidCapabilityMasks::Unknown { .. })
-        ));
+            Err(unknown)
+        );
+        assert_eq!(
+            unknown.to_string(),
+            "unknown Host capability bits 0x8000000000000000"
+        );
     }
 
     #[test]
