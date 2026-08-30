@@ -5,7 +5,7 @@ use std::path::PathBuf;
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=bridge/include/whisker_mobile.h");
-    println!("cargo:rerun-if-changed=bridge/include/whisker_value.h");
+    println!("cargo:rerun-if-changed=bridge/include/whisker_android_jni.h");
     println!("cargo:rerun-if-changed=bridge/src/whisker_mobile_android.c");
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {

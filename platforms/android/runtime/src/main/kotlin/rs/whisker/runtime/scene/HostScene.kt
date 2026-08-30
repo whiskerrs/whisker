@@ -26,6 +26,7 @@ import rs.whisker.runtime.WhiskerTextOverflow
 import rs.whisker.runtime.WhiskerTextShadow
 import rs.whisker.runtime.WhiskerTextWordBreak
 import rs.whisker.runtime.WhiskerValue
+import rs.whisker.runtime.bridge.MobileAbi
 import rs.whisker.runtime.styleSnapshot
 import rs.whisker.runtime.paint.HostBackgroundGeometry
 import rs.whisker.runtime.paint.HostBackgroundBox
@@ -121,7 +122,7 @@ internal class HostScene(
             if (stagedSnapshot) clear()
             stagedOperations.forEach(::applyOperation)
             attachRoots()
-            if (stagedOperations.any { it.tag in 1..5 || it.tag == 12 }) {
+            if (stagedOperations.any { it.tag in OP_CREATE..OP_MOVE || it.tag == OP_Z_ORDER }) {
                 refreshZOrderProjection()
             }
             sceneEpoch = stagedSceneEpoch
@@ -158,21 +159,21 @@ internal class HostScene(
             HashMap(nodes.mapValues { it.value.mountedElement!!.registration.elementType })
         }
         for (operation in stagedOperations) when (operation.tag) {
-            1 -> {
+            OP_CREATE -> {
                 if (
                     operation.node == 0L || !existing.add(operation.node) ||
                     WhiskerElementRegistry.registration(operation.member) == null
                 ) return false
                 elementTypes[operation.node] = operation.member
             }
-            2 -> {
+            OP_DELETE -> {
                 if (!existing.remove(operation.node)) return false
                 elementTypes.remove(operation.node)
                 stagedParents.entries.removeAll {
                     it.key == operation.node || it.value == operation.node
                 }
             }
-            3 -> {
+            OP_INSERT -> {
                 val policy = elementTypes[operation.parent]
                     ?.let(WhiskerElementRegistry::registration)?.childPolicy
                 if (
@@ -182,33 +183,34 @@ internal class HostScene(
                 ) return false
                 stagedParents[operation.child] = operation.parent
             }
-            4 -> if (stagedParents.remove(operation.child) != operation.parent) return false
-            5 -> if (stagedParents[operation.child] != operation.parent) return false
-            6 -> if (operation.node !in existing || operation.numbers?.size ?: 0 < 8) return false
-            7 -> if (
+            OP_REMOVE -> if (stagedParents.remove(operation.child) != operation.parent) return false
+            OP_MOVE -> if (stagedParents[operation.child] != operation.parent) return false
+            OP_LAYOUT -> if (operation.node !in existing || operation.numbers?.size ?: 0 < 8) return false
+            OP_PAINT -> if (
                 operation.node !in existing || operation.numbers?.size ?: 0 < 53 ||
                 operation.names?.size ?: 0 < 5
             ) return false
-            8, 12, 15, 16 -> if (operation.node !in existing) return false
-            17 -> if (operation.node !in existing || operation.integer !in 0..3) return false
-            26 -> if (operation.node !in existing || operation.integer !in 0..34) return false
-            22 -> if (!validBoxShadows(operation, existing)) return false
-            23 -> if (!validClipPath(operation, existing)) return false
-            24 -> if (
+            OP_CLIP, OP_Z_ORDER, OP_CLEAR_PROPERTY, OP_EVENT_MASK ->
+                if (operation.node !in existing) return false
+            OP_HIT_TEST -> if (operation.node !in existing || operation.integer !in 0..3) return false
+            OP_CURSOR -> if (operation.node !in existing || operation.integer !in 0..34) return false
+            OP_BOX_SHADOWS -> if (!validBoxShadows(operation, existing)) return false
+            OP_CLIP_PATH -> if (!validClipPath(operation, existing)) return false
+            OP_BACKDROP_BLUR -> if (
                 operation.node !in existing || !operation.scalar.isFinite() ||
                 operation.scalar < 0f || (operation.scalar > 0f && Build.VERSION.SDK_INT < 31)
             ) return false
-            25 -> if (operation.node !in existing || operation.integer !in 0..2) return false
-            9 -> if (
+            OP_IMAGE_RENDERING -> if (operation.node !in existing || operation.integer !in 0..2) return false
+            OP_TRANSFORM -> if (
                 operation.node !in existing ||
                 !isProjectableFlatPlaneTransform(operation.numbers ?: return false)
             ) return false
-            10 -> if (
+            OP_OPACITY -> if (
                 operation.node !in existing || !operation.scalar.isFinite() ||
                 operation.scalar !in 0f..1f
             ) return false
-            11 -> if (operation.node !in existing || operation.integer !in 0..1) return false
-            13, 27 -> {
+            OP_VISIBILITY -> if (operation.node !in existing || operation.integer !in 0..1) return false
+            OP_TEXT, OP_TEXT_STYLE -> {
                 val values = operation.numbers ?: return false
                 val registration = elementTypes[operation.node]
                     ?.let(WhiskerElementRegistry::registration) ?: return false
@@ -224,11 +226,12 @@ internal class HostScene(
                     values[36].toInt() !in 0..2 ||
                     values[36] != values[36].toInt().toFloat()
                 ) return false
-                if (operation.tag == 13 && registration.childPolicy != WhiskerChildPolicy.PlainText) return false
-                if (operation.tag == 27 && !registration.textStyle) return false
+                if (operation.tag == OP_TEXT && registration.childPolicy != WhiskerChildPolicy.PlainText) return false
+                if (operation.tag == OP_TEXT_STYLE && !registration.textStyle) return false
             }
-            14, 18, 28 -> if (operation.node !in existing || operation.value == null) return false
-            21 -> if (!validBackgroundLayers(operation, existing)) return false
+            OP_PROPERTY, OP_COMMAND, OP_ACCESSIBILITY ->
+                if (operation.node !in existing || operation.value == null) return false
+            OP_BACKGROUND_LAYERS -> if (!validBackgroundLayers(operation, existing)) return false
             else -> return false
         }
         return true
@@ -237,7 +240,7 @@ internal class HostScene(
     private fun applyOperation(operation: HostSceneOperation) {
         val id = operation.node
         when (operation.tag) {
-            1 -> {
+            OP_CREATE -> {
                 val registration = requireNotNull(
                     WhiskerElementRegistry.registration(operation.member),
                 )
@@ -260,57 +263,57 @@ internal class HostScene(
                 )
                 nodes[id] = node
             }
-            2 -> deleteNode(id)
-            3, 5 -> insertChild(operation.parent, operation.child, operation.index)
-            4 -> detachChild(operation.parent, operation.child)
-            6 -> applyLayout(id, nodes[id] ?: return, requireNotNull(operation.numbers))
-            7 -> applyPaint(
+            OP_DELETE -> deleteNode(id)
+            OP_INSERT, OP_MOVE -> insertChild(operation.parent, operation.child, operation.index)
+            OP_REMOVE -> detachChild(operation.parent, operation.child)
+            OP_LAYOUT -> applyLayout(id, nodes[id] ?: return, requireNotNull(operation.numbers))
+            OP_PAINT -> applyPaint(
                 nodes[id] ?: return,
                 HostBoxPaint(requireNotNull(operation.numbers), requireNotNull(operation.names)),
             )
-            8 -> (nodes[id] ?: return).setDescendantClip(
+            OP_CLIP -> (nodes[id] ?: return).setDescendantClip(
                 horizontal = operation.flags and 1 != 0,
                 vertical = operation.flags and 2 != 0,
             )
-            9 -> (nodes[id] ?: return).setLocalTransform(
+            OP_TRANSFORM -> (nodes[id] ?: return).setLocalTransform(
                 requireNotNull(operation.numbers),
                 root.resources.displayMetrics.density,
             )
-            10 -> (nodes[id] ?: return).alpha = operation.scalar
-            11 -> (nodes[id] ?: return).setWhiskerVisibility(operation.integer != 0)
-            12 -> (nodes[id] ?: return).zOrder = operation.integer
-            13 -> applyText(
+            OP_OPACITY -> (nodes[id] ?: return).alpha = operation.scalar
+            OP_VISIBILITY -> (nodes[id] ?: return).setWhiskerVisibility(operation.integer != 0)
+            OP_Z_ORDER -> (nodes[id] ?: return).zOrder = operation.integer
+            OP_TEXT -> applyText(
                 nodes[id] ?: return,
                 requireNotNull(operation.text),
                 requireNotNull(operation.numbers),
                 requireNotNull(operation.names),
             )
-            27 -> applyText(
+            OP_TEXT_STYLE -> applyText(
                 nodes[id] ?: return,
                 requireNotNull(operation.text),
                 requireNotNull(operation.numbers),
                 requireNotNull(operation.names),
                 styleOnly = true,
             )
-            28 -> applyAccessibility(nodes[id] ?: return, requireNotNull(operation.value))
-            14 -> (nodes[id] ?: return).mountedElement
+            OP_ACCESSIBILITY -> applyAccessibility(nodes[id] ?: return, requireNotNull(operation.value))
+            OP_PROPERTY -> (nodes[id] ?: return).mountedElement
                 ?.setProperty(operation.member, requireNotNull(operation.value))
-            15 -> (nodes[id] ?: return).mountedElement?.clearProperty(operation.member)
-            16 -> (nodes[id] ?: return).mountedElement?.setEventMask(operation.wide)
-            17 -> (nodes[id] ?: return).setHitTestBehavior(operation.integer)
-            18 -> (nodes[id] ?: return).mountedElement
+            OP_CLEAR_PROPERTY -> (nodes[id] ?: return).mountedElement?.clearProperty(operation.member)
+            OP_EVENT_MASK -> (nodes[id] ?: return).mountedElement?.setEventMask(operation.wide)
+            OP_HIT_TEST -> (nodes[id] ?: return).setHitTestBehavior(operation.integer)
+            OP_COMMAND -> (nodes[id] ?: return).mountedElement
                 ?.invokeCommand(operation.member, requireNotNull(operation.value))
-            21 -> applyBackgroundLayers(nodes[id] ?: return, operation)
-            22 -> applyBoxShadows(nodes[id] ?: return, operation)
-            23 -> applyClipPath(nodes[id] ?: return, operation)
-            24 -> (nodes[id] ?: return).backdropBlur =
+            OP_BACKGROUND_LAYERS -> applyBackgroundLayers(nodes[id] ?: return, operation)
+            OP_BOX_SHADOWS -> applyBoxShadows(nodes[id] ?: return, operation)
+            OP_CLIP_PATH -> applyClipPath(nodes[id] ?: return, operation)
+            OP_BACKDROP_BLUR -> (nodes[id] ?: return).backdropBlur =
                 operation.scalar * root.resources.displayMetrics.density
-            25 -> {
+            OP_IMAGE_RENDERING -> {
                 val node = nodes[id] ?: return
                 node.imageRendering = HostImageRendering.fromWire(operation.integer) ?: return
                 node.paint?.let { applyPaint(node, it) }
             }
-            26 -> (nodes[id] ?: return).setCursorKeyword(operation.integer)
+            OP_CURSOR -> (nodes[id] ?: return).setCursorKeyword(operation.integer)
         }
     }
 
@@ -1016,6 +1019,32 @@ internal class HostScene(
         validBackgroundOrigin(value) || value == BACKGROUND_BOX_BORDER_AREA.toFloat()
 
     private companion object {
+        const val OP_CREATE = MobileAbi.OP_CREATE
+        const val OP_DELETE = MobileAbi.OP_DELETE
+        const val OP_INSERT = MobileAbi.OP_INSERT
+        const val OP_REMOVE = MobileAbi.OP_REMOVE
+        const val OP_MOVE = MobileAbi.OP_MOVE
+        const val OP_LAYOUT = MobileAbi.OP_LAYOUT
+        const val OP_PAINT = MobileAbi.OP_PAINT
+        const val OP_CLIP = MobileAbi.OP_CLIP
+        const val OP_TRANSFORM = MobileAbi.OP_TRANSFORM
+        const val OP_OPACITY = MobileAbi.OP_OPACITY
+        const val OP_VISIBILITY = MobileAbi.OP_VISIBILITY
+        const val OP_Z_ORDER = MobileAbi.OP_Z_ORDER
+        const val OP_TEXT = MobileAbi.OP_TEXT
+        const val OP_PROPERTY = MobileAbi.OP_PROPERTY
+        const val OP_CLEAR_PROPERTY = MobileAbi.OP_CLEAR_PROPERTY
+        const val OP_EVENT_MASK = MobileAbi.OP_EVENT_MASK
+        const val OP_HIT_TEST = MobileAbi.OP_HIT_TEST
+        const val OP_COMMAND = MobileAbi.OP_COMMAND
+        const val OP_BACKGROUND_LAYERS = MobileAbi.OP_BACKGROUND_LAYERS
+        const val OP_BOX_SHADOWS = MobileAbi.OP_BOX_SHADOWS
+        const val OP_CLIP_PATH = MobileAbi.OP_CLIP_PATH
+        const val OP_BACKDROP_BLUR = MobileAbi.OP_BACKDROP_BLUR
+        const val OP_IMAGE_RENDERING = MobileAbi.OP_IMAGE_RENDERING
+        const val OP_CURSOR = MobileAbi.OP_CURSOR
+        const val OP_TEXT_STYLE = MobileAbi.OP_TEXT_STYLE
+        const val OP_ACCESSIBILITY = MobileAbi.OP_ACCESSIBILITY
         const val BACKGROUND_GEOMETRY_PACKED_SIZE = 15
         const val BOX_SHADOW_PACKED_SIZE = 10
         const val CLIP_PATH_INSET_PACKED_SIZE = 26
@@ -1024,14 +1053,14 @@ internal class HostScene(
         const val CLIP_PATH_HEADER_SIZE = 4
         const val PATH_COMMAND_PACKED_SIZE = 13
         const val MAX_PATH_COMMANDS = 4096
-        const val CLIP_SHAPE_INSET = 0
-        const val CLIP_SHAPE_CIRCLE = 1
-        const val CLIP_SHAPE_ELLIPSE = 2
-        const val CLIP_SHAPE_PATH = 3
-        const val FILL_RULE_NON_ZERO = 0
-        const val FILL_RULE_EVEN_ODD = 1
-        const val PATH_MOVE_TO = 0
-        const val PATH_CLOSE = 4
+        const val CLIP_SHAPE_INSET = MobileAbi.CLIP_SHAPE_INSET
+        const val CLIP_SHAPE_CIRCLE = MobileAbi.CLIP_SHAPE_CIRCLE
+        const val CLIP_SHAPE_ELLIPSE = MobileAbi.CLIP_SHAPE_ELLIPSE
+        const val CLIP_SHAPE_PATH = MobileAbi.CLIP_SHAPE_PATH
+        const val FILL_RULE_NON_ZERO = MobileAbi.FILL_RULE_NON_ZERO
+        const val FILL_RULE_EVEN_ODD = MobileAbi.FILL_RULE_EVEN_ODD
+        const val PATH_MOVE_TO = MobileAbi.PATH_MOVE_TO
+        const val PATH_CLOSE = MobileAbi.PATH_CLOSE
         const val BACKGROUND_GRADIENT_STOP_PACKED_SIZE = 7
         const val BACKGROUND_PACKED_LAYER_HEADER_SIZE = 3
         const val BACKGROUND_PACKED_LAYERS = 256
@@ -1039,26 +1068,26 @@ internal class HostScene(
         const val BACKGROUND_RESOURCE_ID_WORDS = 4
         const val RESOURCE_ID_WORD_BITS = 16
         const val RESOURCE_ID_WORD_MAX = 0xffff
-        const val BACKGROUND_LINEAR = 0
-        const val BACKGROUND_RADIAL = 1
-        const val BACKGROUND_CONIC = 2
-        const val BACKGROUND_RESOURCE = 3
-        const val BACKGROUND_SIZE_AUTO = 0
-        const val BACKGROUND_SIZE_EXPLICIT = 1
-        const val BACKGROUND_SIZE_COVER = 2
-        const val BACKGROUND_SIZE_CONTAIN = 3
-        const val BACKGROUND_SIZE_WIDTH = 4
-        const val BACKGROUND_SIZE_HEIGHT = 5
-        const val BACKGROUND_REPEAT = 0
-        const val BACKGROUND_NO_REPEAT = 1
-        const val BACKGROUND_SPACE = 2
-        const val BACKGROUND_ROUND = 3
-        const val BACKGROUND_BOX_BORDER = 0
-        const val BACKGROUND_BOX_PADDING = 1
-        const val BACKGROUND_BOX_CONTENT = 2
-        const val BACKGROUND_BOX_BORDER_AREA = 3
-        const val BACKGROUND_ATTACHMENT_SCROLL = 0
-        const val BACKGROUND_BLEND_NORMAL = 0
+        const val BACKGROUND_LINEAR = MobileAbi.BACKGROUND_LINEAR
+        const val BACKGROUND_RADIAL = MobileAbi.BACKGROUND_RADIAL
+        const val BACKGROUND_CONIC = MobileAbi.BACKGROUND_CONIC
+        const val BACKGROUND_RESOURCE = MobileAbi.BACKGROUND_RESOURCE
+        const val BACKGROUND_SIZE_AUTO = MobileAbi.BACKGROUND_SIZE_AUTO
+        const val BACKGROUND_SIZE_EXPLICIT = MobileAbi.BACKGROUND_SIZE_EXPLICIT
+        const val BACKGROUND_SIZE_COVER = MobileAbi.BACKGROUND_SIZE_COVER
+        const val BACKGROUND_SIZE_CONTAIN = MobileAbi.BACKGROUND_SIZE_CONTAIN
+        const val BACKGROUND_SIZE_WIDTH = MobileAbi.BACKGROUND_SIZE_WIDTH
+        const val BACKGROUND_SIZE_HEIGHT = MobileAbi.BACKGROUND_SIZE_HEIGHT
+        const val BACKGROUND_REPEAT = MobileAbi.BACKGROUND_REPEAT_REPEAT
+        const val BACKGROUND_NO_REPEAT = MobileAbi.BACKGROUND_REPEAT_NO_REPEAT
+        const val BACKGROUND_SPACE = MobileAbi.BACKGROUND_REPEAT_SPACE
+        const val BACKGROUND_ROUND = MobileAbi.BACKGROUND_REPEAT_ROUND
+        const val BACKGROUND_BOX_BORDER = MobileAbi.BACKGROUND_BOX_BORDER
+        const val BACKGROUND_BOX_PADDING = MobileAbi.BACKGROUND_BOX_PADDING
+        const val BACKGROUND_BOX_CONTENT = MobileAbi.BACKGROUND_BOX_CONTENT
+        const val BACKGROUND_BOX_BORDER_AREA = MobileAbi.BACKGROUND_BOX_BORDER_AREA
+        const val BACKGROUND_ATTACHMENT_SCROLL = MobileAbi.BACKGROUND_ATTACHMENT_SCROLL
+        const val BACKGROUND_BLEND_NORMAL = MobileAbi.BACKGROUND_BLEND_NORMAL
     }
 }
 

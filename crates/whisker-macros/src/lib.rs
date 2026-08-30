@@ -187,8 +187,8 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             present_frame_data: *mut ::std::ffi::c_void,
             resource_command: ::whisker::__driver_abi::ResourceCommandCallback,
             resource_data: *mut ::std::ffi::c_void,
-            invoke_module: ::whisker::__driver_module::InvokeModuleCallback,
-            observe_module: ::whisker::__driver_module::ObserveModuleCallback,
+            invoke_module: ::whisker::__driver_abi::InvokeModuleCallback,
+            observe_module: ::whisker::__driver_abi::ObserveModuleCallback,
             module_data: *mut ::std::ffi::c_void,
         ) -> *mut ::std::ffi::c_void {
             ::whisker::__driver_runtime::create(

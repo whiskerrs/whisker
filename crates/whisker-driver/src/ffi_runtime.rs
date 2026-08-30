@@ -3,7 +3,9 @@
 use std::ffi::{CString, c_void};
 
 use crate::abi::*;
-use crate::ffi_module::{InvokeModuleCallback, ObserveModuleCallback, module_host};
+use crate::ffi_module::module_host;
+use crate::value_codec::{RawValueArena, decode_value};
+use whisker_driver_sys::{InvokeModuleCallback, ObserveModuleCallback};
 use whisker_engine::whisker_protocol::{
     ApplyResult, AvailableSpace, BackgroundAttachment, BackgroundSize, BlendMode, BorderLineStyle,
     ChildPolicy, ClipShape, ElementMeasurement, ElementRegistration, ElementValueKind, FillRule,
@@ -48,7 +50,7 @@ fn mobile_error(message: impl std::fmt::Display) {
     eprintln!("{message}");
 }
 
-pub type RequestFrameCallback = extern "C" fn(*mut c_void);
+pub use whisker_driver_sys::RequestFrameCallback;
 
 struct MobileRuntime {
     runtime: RuntimeInstance,

@@ -1,7 +1,6 @@
 // Borrowed value and retained-runtime ABI imported by the Swift Host.
 
 module WhiskerCBridge {
-    header "whisker_value.h"
     header "whisker_mobile.h"
     export *
 }

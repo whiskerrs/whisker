@@ -9,7 +9,7 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Raw value ABI shared by Whisker's Rust runtime and native Hosts."
+description = "Raw native Host ABI shared by Whisker's Rust runtime and platform drivers."
 build = "build.rs"
 
 [build-dependencies]

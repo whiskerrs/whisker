@@ -8,5 +8,6 @@ publish = false
 
 [dependencies]
 anyhow = { workspace = true }
+cbindgen = "0.29.4"
 serde_json = { workspace = true }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }

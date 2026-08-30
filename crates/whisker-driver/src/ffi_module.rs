@@ -3,33 +3,9 @@
 use std::ffi::c_void;
 use std::rc::Rc;
 
-use crate::abi::{RawValueArena, WhiskerValueRaw, decode_value};
+use crate::value_codec::{RawValueArena, decode_value};
+use whisker_driver_sys::{InvokeModuleCallback, ObserveModuleCallback, WhiskerValueRaw};
 use whisker_runtime::module::{ModuleHost, ModuleResult};
-
-/// Receives one borrowed typed module result.
-pub type ModuleResultCallback = extern "C" fn(*mut c_void, *const WhiskerValueRaw);
-
-/// Dispatches one sync or async call to the native module registry.
-///
-/// Returning `true` transfers ownership of the result callback to the Host;
-/// it must then invoke that callback exactly once. Returning `false` means the
-/// Host did not invoke or retain the callback, so the adapter reclaims it.
-pub type InvokeModuleCallback = extern "C" fn(
-    *mut c_void,
-    *const u8,
-    usize,
-    *const u8,
-    usize,
-    *const WhiskerValueRaw,
-    usize,
-    bool,
-    ModuleResultCallback,
-    *mut c_void,
-) -> bool;
-
-/// Notifies the native Host about first/last Rust listeners for one event.
-pub type ObserveModuleCallback =
-    extern "C" fn(*mut c_void, *const u8, usize, *const u8, usize, bool);
 
 extern "C" fn complete(data: *mut c_void, value: *const WhiskerValueRaw) {
     if data.is_null() {
@@ -91,6 +67,7 @@ pub fn module_host(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use whisker_driver_sys::ModuleResultCallback;
     use whisker_runtime::module::{PlatformModule, with_module_host};
     use whisker_runtime::value::WhiskerValue;
 

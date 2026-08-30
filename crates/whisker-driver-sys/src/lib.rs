@@ -1,9 +1,14 @@
-//! Raw value ABI shared by Whisker's Rust runtime and native Hosts.
+//! Raw C ABI shared by Whisker's Rust runtime and native Hosts.
 //!
-//! This crate contains layout-compatible C data only. Runtime ownership,
-//! callback safety, and protocol conversion live in `whisker-driver`.
+//! This crate is the source of truth for layout-compatible data, numeric tags,
+//! and callback types. Runtime ownership, callback safety, and protocol
+//! conversion live in `whisker-driver`.
 
 use std::ffi::c_char;
+
+mod mobile;
+
+pub use mobile::*;
 
 #[cfg(target_os = "android")]
 unsafe extern "C" {
@@ -11,20 +16,16 @@ unsafe extern "C" {
     pub fn whisker_mobile_bridge_anchor();
 }
 
-/// Discriminant for [`WhiskerValueRaw`].
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WhiskerValueType {
-    Null = 0,
-    Bool = 1,
-    Int = 2,
-    Float = 3,
-    String = 4,
-    Bytes = 5,
-    Array = 6,
-    Map = 7,
-    Error = 8,
-}
+/// Discriminants for [`WhiskerValueRaw::type`].
+pub const VALUE_NULL: u8 = 0;
+pub const VALUE_BOOL: u8 = 1;
+pub const VALUE_INT: u8 = 2;
+pub const VALUE_FLOAT: u8 = 3;
+pub const VALUE_STRING: u8 = 4;
+pub const VALUE_BYTES: u8 = 5;
+pub const VALUE_ARRAY: u8 = 6;
+pub const VALUE_MAP: u8 = 7;
+pub const VALUE_ERROR: u8 = 8;
 
 /// Borrowed UTF-8 value.
 #[repr(C)]
@@ -75,7 +76,7 @@ pub union WhiskerValueUnion {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct WhiskerValueRaw {
-    pub type_: u8,
+    pub r#type: u8,
     pub _pad: [u8; 7],
     pub v: WhiskerValueUnion,
 }
@@ -98,6 +99,10 @@ mod tests {
             assert_eq!(std::mem::size_of::<WhiskerValueRaw>(), 24);
             assert_eq!(std::mem::align_of::<WhiskerValueRaw>(), 8);
             assert_eq!(std::mem::size_of::<WhiskerKeyValueRaw>(), 40);
+            assert_eq!(std::mem::offset_of!(WhiskerValueRaw, r#type), 0);
+            assert_eq!(std::mem::offset_of!(WhiskerValueRaw, v), 8);
+            assert_eq!(std::mem::offset_of!(WhiskerKeyValueRaw, key), 0);
+            assert_eq!(std::mem::offset_of!(WhiskerKeyValueRaw, value), 16);
         }
     }
 }
