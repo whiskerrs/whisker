@@ -36,6 +36,14 @@ yanked = "deny"
 #     TXT query (one name) against a trusted DoH endpoint, so the
 #     pathological input isn't reachable. The fix lands in hickory 0.25,
 #     which atrium 0.24 doesn't yet allow. Revisit on the atrium bump.
+#   RUSTSEC-2026-0194 / RUSTSEC-2026-0195  quick-xml 0.38.4 <-
+#     zbus-xml 5.1 <- zbus-lockstep <- AccessKit's Linux AT-SPI backend.
+#     This path parses only the upstream AT-SPI crate's checked-in interface
+#     XML from cfg(test) lockstep checks; Whisker's runtime does not feed it
+#     external XML. quick-xml 0.41 is available only through zbus releases
+#     requiring Rust 1.87, above the workspace's Rust 1.85 floor. Revisit when
+#     zbus ships a fixed release that preserves Rust 1.85 support, or when the
+#     workspace MSRV is raised.
 ignore = [
     "RUSTSEC-2024-0436",
     "RUSTSEC-2025-0119",
@@ -43,6 +51,8 @@ ignore = [
     "RUSTSEC-2026-0119",
     "RUSTSEC-2026-0206",
     "RUSTSEC-2026-0192",
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]
 
 [bans]

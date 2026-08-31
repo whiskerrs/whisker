@@ -2,6 +2,7 @@ use whisker::runtime::RuntimeWakeHandle;
 use whisker_engine::FrameSink;
 use whisker_protocol::{ApplyResult, FramePacket, RenderCapabilities, ResourceId, SurfaceId};
 
+use crate::accessibility::DesktopAccessibilitySnapshot;
 use crate::element::DesktopElementRegistry;
 use crate::gpu::{GpuError, GpuRenderer, RasterResource};
 use crate::scene::DesktopProviderEvent;
@@ -86,6 +87,10 @@ impl DesktopSurface {
 
     pub(crate) fn has_active_scroll_animations(&self) -> bool {
         self.scene.has_active_scroll_animations()
+    }
+
+    pub(crate) fn accessibility_snapshot(&self) -> DesktopAccessibilitySnapshot {
+        self.scene.accessibility_snapshot()
     }
 }
 

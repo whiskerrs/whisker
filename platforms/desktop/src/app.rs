@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::accessibility::{DesktopAccessibilityAction, DesktopAccessibilityBridge};
 use crate::{
     BuiltInElementModule, DesktopElementFactory, DesktopFrameContext, DesktopModuleDefinition,
     DesktopMouseButton, DesktopPointerAdapter, DesktopPointerPhase, DesktopRuntime, WhiskerModule,
@@ -10,7 +11,7 @@ use crate::{
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::runtime::module::RustModuleDefinition;
 use whisker::{Element, ElementModuleDefinition, ElementRegistry, RuntimeInstance, SurfaceRuntime};
-use whisker_protocol::{CursorKeyword, InputEvent, SurfaceId};
+use whisker_protocol::{CursorKeyword, InputEvent, InputEventKind, SurfaceId, WhiskerValue};
 use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -190,9 +191,16 @@ pub fn run_with_application_hash(
         .map_err(|error| DesktopAppError(format!("run {TARGET_NAME} event loop: {error}")))
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 enum HostEvent {
     RequestFrame,
+    Accessibility(accesskit_winit::Event),
+}
+
+impl From<accesskit_winit::Event> for HostEvent {
+    fn from(event: accesskit_winit::Event) -> Self {
+        Self::Accessibility(event)
+    }
 }
 
 struct DesktopApplication {
@@ -203,6 +211,8 @@ struct DesktopApplication {
     hot_reload: Option<DesktopHotReload>,
     proxy: EventLoopProxy<HostEvent>,
     window: Option<Arc<Window>>,
+    accessibility_adapter: Option<accesskit_winit::Adapter>,
+    accessibility_bridge: DesktopAccessibilityBridge,
     runtime: Option<RuntimeInstance>,
     host: Option<DesktopRuntime>,
     viewport: PhysicalSize<u32>,
@@ -230,6 +240,8 @@ impl DesktopApplication {
             hot_reload: None,
             proxy,
             window: None,
+            accessibility_adapter: None,
+            accessibility_bridge: DesktopAccessibilityBridge::default(),
             runtime: None,
             host: None,
             viewport: PhysicalSize::new(1, 1),
@@ -248,11 +260,17 @@ impl DesktopApplication {
         }
         let attributes = WindowAttributes::default()
             .with_title(self.config.title.clone())
-            .with_inner_size(LogicalSize::new(self.config.width, self.config.height));
+            .with_inner_size(LogicalSize::new(self.config.width, self.config.height))
+            .with_visible(false);
         let window =
             Arc::new(event_loop.create_window(attributes).map_err(|error| {
                 DesktopAppError(format!("create {TARGET_NAME} window: {error}"))
             })?);
+        let accessibility_adapter = accesskit_winit::Adapter::with_event_loop_proxy(
+            event_loop,
+            &window,
+            self.proxy.clone(),
+        );
         self.viewport = window.inner_size();
         let scale = window.scale_factor() as f32;
         let logical = self.viewport.to_logical::<f32>(window.scale_factor());
@@ -291,7 +309,12 @@ impl DesktopApplication {
         ));
         self.host = Some(host);
         self.runtime = Some(runtime);
+        self.accessibility_adapter = Some(accessibility_adapter);
         self.window = Some(window);
+        self.window
+            .as_ref()
+            .expect("mounted Desktop window")
+            .set_visible(true);
         self.request_frame();
         Ok(())
     }
@@ -320,7 +343,7 @@ impl DesktopApplication {
         }
         let scale = window.scale_factor();
         let logical = self.viewport.to_logical::<f32>(scale);
-        match host.drive_frame(
+        let frame_result = host.drive_frame(
             runtime,
             DesktopFrameContext {
                 timestamp_ms: self.started_at.elapsed().as_secs_f64() * 1000.0,
@@ -330,7 +353,8 @@ impl DesktopApplication {
                 environment_epoch: self.environment_epoch,
                 viewport_epoch: self.viewport_epoch,
             },
-        ) {
+        );
+        match frame_result {
             Ok(result) => {
                 if result.needs_frame {
                     window.request_redraw();
@@ -340,6 +364,9 @@ impl DesktopApplication {
                 self.frame_failed = true;
                 eprintln!("whisker {TARGET_NAME} frame failed: {error}");
             }
+        }
+        if !self.frame_failed {
+            self.update_accessibility(false);
         }
     }
 
@@ -371,6 +398,59 @@ impl DesktopApplication {
             eprintln!("dispatch {TARGET_NAME} input failed: {error}");
         } else {
             self.request_frame();
+        }
+    }
+
+    fn update_accessibility(&mut self, force_full: bool) {
+        let (Some(window), Some(host), Some(adapter)) = (
+            self.window.as_ref(),
+            self.host.as_ref(),
+            self.accessibility_adapter.as_mut(),
+        ) else {
+            return;
+        };
+        let scale = window.scale_factor();
+        let logical = self.viewport.to_logical::<f32>(scale);
+        let title = self.config.title.as_str();
+        let bridge = &mut self.accessibility_bridge;
+        adapter.update_if_active(|| {
+            bridge.update(
+                host.accessibility_snapshot(),
+                title,
+                [logical.width, logical.height],
+                scale as f32,
+                force_full,
+            )
+        });
+    }
+
+    fn handle_accessibility_event(&mut self, event: accesskit_winit::Event) {
+        if self.window.as_ref().map(|window| window.id()) != Some(event.window_id) {
+            return;
+        }
+        match event.window_event {
+            accesskit_winit::WindowEvent::InitialTreeRequested => {
+                self.update_accessibility(true);
+            }
+            accesskit_winit::WindowEvent::ActionRequested(request) => {
+                let action = self.accessibility_bridge.handle_action(&request);
+                if let DesktopAccessibilityAction::Click(target) = action {
+                    self.dispatch_input(InputEvent {
+                        surface: SurfaceId::new(1).expect("standalone surface id"),
+                        timestamp_ms: self.started_at.elapsed().as_secs_f64() * 1000.0,
+                        kind: InputEventKind::Click,
+                        pointer: None,
+                        target: Some(target),
+                        detail: WhiskerValue::Null,
+                    });
+                }
+                if action != DesktopAccessibilityAction::Ignored {
+                    self.update_accessibility(false);
+                }
+            }
+            accesskit_winit::WindowEvent::AccessibilityDeactivated => {
+                self.accessibility_bridge.reset();
+            }
         }
     }
 }
@@ -407,6 +487,7 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: HostEvent) {
         match event {
             HostEvent::RequestFrame => self.request_frame(),
+            HostEvent::Accessibility(event) => self.handle_accessibility_event(event),
         }
     }
 
@@ -418,6 +499,11 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
     ) {
         if self.window.as_ref().map(|window| window.id()) != Some(window_id) {
             return;
+        }
+        if let (Some(adapter), Some(window)) =
+            (&mut self.accessibility_adapter, self.window.as_ref())
+        {
+            adapter.process_event(window, &event);
         }
         match event {
             WindowEvent::CloseRequested => {

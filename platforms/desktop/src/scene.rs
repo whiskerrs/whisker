@@ -374,6 +374,7 @@ impl From<DesktopElementError> for DesktopPresentError {
 #[cfg(test)]
 mod tests;
 
+mod accessibility;
 mod transaction;
 pub(crate) use transaction::DesktopPresentError;
 

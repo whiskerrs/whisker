@@ -32,6 +32,7 @@ pub type WhiskerMeasuredSize = whisker_protocol::MeasuredSize;
 /// Resolved inherited text style delivered to Desktop module content.
 pub type WhiskerTextStyle = whisker_protocol::TextStyleSnapshot;
 
+mod accessibility;
 mod app;
 mod capabilities;
 mod element;
@@ -60,6 +61,7 @@ pub use input::{
 pub use whisker::runtime::module::{ModuleEventEmitter, ModulePromise};
 /// Desktop Host module declaration, named consistently with native Hosts.
 pub type ModuleDefinition = DesktopModuleDefinition;
+use accessibility::DesktopAccessibilitySnapshot;
 use gpu::RasterResource;
 use resource::{DesktopResourceService, DesktopResourceUpdate};
 use surface::DesktopSurface;
@@ -181,6 +183,10 @@ impl DesktopRuntime {
                 .surface
                 .hit_test([pointer.position.x, pointer.position.y]);
         }
+    }
+
+    pub(crate) fn accessibility_snapshot(&self) -> DesktopAccessibilitySnapshot {
+        self.surface.accessibility_snapshot()
     }
 
     /// Applies a logical wheel/trackpad delta to the nearest scroll container.

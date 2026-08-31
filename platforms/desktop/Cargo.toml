@@ -30,6 +30,7 @@ whisker-value = { workspace = true }
 whisker-dev-runtime = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+accesskit = "0.25.0"
 base64 = { workspace = true }
 bytemuck = { version = "1", features = ["derive"] }
 csscolorparser = "0.7.2"
@@ -39,14 +40,17 @@ pollster = "0.4.0"
 ureq = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+accesskit_winit = { version = "0.34.0", default-features = false, features = ["rwh_06"] }
 wgpu = { version = "25.0.2", default-features = false, features = ["metal", "wgsl"] }
 winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+accesskit_winit = { version = "0.34.0", default-features = false, features = ["rwh_06"] }
 wgpu = { version = "25.0.2", default-features = false, features = ["dx12", "wgsl"] }
 winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+accesskit_winit = { version = "0.34.0", default-features = false, features = ["accesskit_unix", "async-io", "rwh_06"] }
 wgpu = { version = "25.0.2", default-features = false, features = ["vulkan", "gles", "wgsl"] }
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "wayland-dlopen", "x11"] }
 
