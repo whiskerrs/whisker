@@ -24,13 +24,12 @@
 //! `PluginConfig::NAME` matches the table key, so the CLI never needs
 //! an `Engine::register(...)` call site for a 3rd-party plugin.
 //!
-//! This module resolves declarations only, never binaries. It parallels
-//! [`whisker_build::modules::discover`] over the same cargo metadata,
-//! but lives here because `whisker-build` already depends on
-//! `whisker-cng` and the reverse would cycle.
+//! This module resolves plugin declarations only, never binaries. The
+//! canonical [`crate::ProjectDependencyGraph`] combines this result with
+//! runtime-module discovery from the same Cargo metadata snapshot.
 
 use anyhow::{Context, Result, anyhow};
-use cargo_metadata::MetadataCommand;
+use cargo_metadata::{Metadata, MetadataCommand};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -79,7 +78,13 @@ pub fn discover_plugins(manifest_path: &Path, app_package: &str) -> Result<Vec<D
                 manifest_path.display(),
             )
         })?;
+    discover_plugins_from_metadata(&metadata, app_package)
+}
 
+pub(crate) fn discover_plugins_from_metadata(
+    metadata: &Metadata,
+    app_package: &str,
+) -> Result<Vec<DiscoveredPlugin>> {
     let resolve = metadata
         .resolve
         .as_ref()
@@ -130,10 +135,8 @@ pub fn discover_plugins(manifest_path: &Path, app_package: &str) -> Result<Vec<D
             .find(|p| p.id == id)
             .expect("dep id came from resolve.nodes, must exist in metadata.packages");
 
-        // Read only the `plugins` sub-table, untyped, so the sibling
-        // `[ios]` / `[android]` module schema that
-        // `whisker_build::modules::discover` owns can evolve
-        // independently.
+        // Read only the `plugins` sub-table, untyped, so sibling Host
+        // contribution fields can evolve independently.
         let Some(whisker_meta) = pkg.metadata.get("whisker") else {
             continue;
         };

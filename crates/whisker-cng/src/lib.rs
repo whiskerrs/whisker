@@ -28,19 +28,27 @@
 
 pub mod android;
 pub mod compose;
+pub mod dependency_graph;
 pub mod discovery;
 mod fingerprint;
 pub mod ios;
+pub mod ios_modules;
 pub mod macos;
+pub mod modules;
 pub mod plugins;
 mod render;
 pub mod web;
 
 pub use android::{AndroidInputs, sync as sync_android};
 pub use compose::{EnabledTargets, Engine, SubprocessPlugin};
+pub use dependency_graph::ProjectDependencyGraph;
 pub use discovery::{DiscoveredPlugin, discover_plugins};
 pub use ios::{IosInputs, sync as sync_ios};
 pub use macos::{MacosInputs, sync as sync_macos};
+pub use modules::{
+    ResolvedModule, ResolvedRustHostSource, ResolvedRustModuleContribution, build_modules_report,
+    discover as discover_modules, refresh_gradle_module_cache,
+};
 pub use web::{WebInputs, sync as sync_web};
 pub use whisker_config::Config;
 

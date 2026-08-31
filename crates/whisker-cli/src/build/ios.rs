@@ -110,9 +110,6 @@ pub fn run(args: Args) -> Result<()> {
     // the dev loop runs (see whisker-dev-server::builder). Writes a
     // no-op package even with zero modules so `import WhiskerModules`
     // always resolves.
-    let modules = whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), &m.package)?;
-    whisker_build::ios::stage_module_swift_sources(&sync.gen_dir, &modules, &workspace_root)?;
-
     let ipa = whisker_build::ios::archive_and_export(&IosReleaseInputs {
         gen_dir: &sync.gen_dir,
         scheme: &scheme,

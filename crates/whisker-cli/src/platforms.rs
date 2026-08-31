@@ -18,7 +18,7 @@
 use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use whisker_cng::{DiscoveredPlugin, Engine, SubprocessPlugin, discover_plugins};
+use whisker_cng::{DiscoveredPlugin, Engine, ProjectDependencyGraph, SubprocessPlugin};
 use whisker_config::Config;
 use whisker_dev_server::Target;
 
@@ -32,11 +32,13 @@ pub fn sync_for_target(
     workspace_root: &Path,
     package: &str,
 ) -> Result<PlatformSync> {
+    let graph = ProjectDependencyGraph::resolve(&workspace_root.join("Cargo.toml"), package)
+        .with_context(|| format!("resolve Whisker dependencies for `{package}`"))?;
     match target {
-        Target::Android => sync_android(app_config, crate_dir, workspace_root, package),
-        Target::IosSimulator => sync_ios(app_config, crate_dir, workspace_root, package),
-        Target::Macos => sync_macos(app_config, crate_dir, workspace_root, package),
-        Target::Web => sync_web(app_config, crate_dir, workspace_root, package),
+        Target::Android => sync_android(app_config, crate_dir, workspace_root, package, &graph),
+        Target::IosSimulator => sync_ios(app_config, crate_dir, workspace_root, package, &graph),
+        Target::Macos => sync_macos(app_config, crate_dir, workspace_root, package, &graph),
+        Target::Web => sync_web(app_config, crate_dir, workspace_root, package, &graph),
     }
 }
 
@@ -79,13 +81,15 @@ fn sync_android(
     crate_dir: &Path,
     workspace_root: &Path,
     package: &str,
+    graph: &ProjectDependencyGraph,
 ) -> Result<PlatformSync> {
     // The Settings plugin reads `workspace` as a `file(...)`, which
     // Gradle resolves relative to `gen/android/`. Pass an absolute
     // path — the template embeds it verbatim, and absolute keeps the
     // generated tree independent of where `gen/android` sits on disk.
     let workspace_path = workspace_root.to_path_buf();
-    let engine = build_engine_with_discovered_plugins(crate_dir, workspace_root, package)?;
+    let engine =
+        build_engine_with_discovered_plugins(crate_dir, workspace_root, &graph.cng_plugins)?;
     let inputs = whisker_cng::android::inputs_from_with_engine(
         &engine,
         app_config,
@@ -103,7 +107,7 @@ fn sync_android(
     // that the Settings/Project plugins share so a fresh generated project
     // can immediately run `./gradlew assembleDebug` without a preceding
     // `whisker run` or `whisker build` invocation.
-    whisker_build::modules::refresh_gradle_module_cache(workspace_root, package)
+    whisker_cng::modules::write_gradle_module_cache(workspace_root, package, &graph.modules)
         .context("stage Android module dependency report")?;
     Ok(PlatformSync {
         gen_dir,
@@ -117,21 +121,22 @@ fn sync_ios(
     crate_dir: &Path,
     workspace_root: &Path,
     package: &str,
+    graph: &ProjectDependencyGraph,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/ios");
-    // `whisker-build::ios::stage_module_swift_sources` fills
-    // `gen/ios/whisker_modules/` later (between cargo build and
-    // xcodebuild), but the pbxproj template's
-    // `XCLocalSwiftPackageReference` needs its absolute path now.
+    // CNG fills `gen/ios/whisker_modules/` in the same transaction as
+    // the Xcode project. The pbxproj references that local package.
     let whisker_modules = gen_dir.join("whisker_modules");
-    let engine = build_engine_with_discovered_plugins(crate_dir, workspace_root, package)?;
-    let inputs = whisker_cng::ios::inputs_from_with_engine(
+    let engine =
+        build_engine_with_discovered_plugins(crate_dir, workspace_root, &graph.cng_plugins)?;
+    let mut inputs = whisker_cng::ios::inputs_from_with_engine(
         &engine,
         app_config,
         whisker_modules,
         workspace_root.to_path_buf(),
         package.to_string(),
     )?;
+    inputs.modules = graph.modules.clone();
     // whisker-cng renders the full Xcode project directly (pbxproj +
     // xcworkspacedata + sources). No xcodegen subprocess needed —
     // see crates/whisker-cng/src/ios.rs for the rationale.
@@ -148,6 +153,7 @@ fn sync_macos(
     crate_dir: &Path,
     workspace_root: &Path,
     package: &str,
+    graph: &ProjectDependencyGraph,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/macos");
     // Inside the Whisker monorepo, point at the in-tree Host so examples
@@ -170,27 +176,28 @@ fn sync_macos(
         inputs.whisker_desktop_dependency =
             format!("{{ path = {:?} }}", in_tree_desktop.display().to_string());
     }
-    inputs.element_modules =
-        whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), package)?
-            .into_iter()
-            .filter_map(|module| {
-                let contribution = module.desktop?;
-                let host_dependency = match contribution.source {
-                    whisker_build::modules::ResolvedRustHostSource::Path(path) => {
-                        whisker_cng::RustHostDependency::Path(path)
-                    }
-                    whisker_build::modules::ResolvedRustHostSource::Registry { version } => {
-                        whisker_cng::RustHostDependency::Registry { version }
-                    }
-                };
-                Some(whisker_cng::RustElementModuleInput {
-                    package: module.package,
-                    crate_path: module.manifest_dir,
-                    host_package: contribution.package,
-                    host_dependency,
-                })
+    inputs.element_modules = graph
+        .modules
+        .iter()
+        .cloned()
+        .filter_map(|module| {
+            let contribution = module.desktop?;
+            let host_dependency = match contribution.source {
+                whisker_build::modules::ResolvedRustHostSource::Path(path) => {
+                    whisker_cng::RustHostDependency::Path(path)
+                }
+                whisker_build::modules::ResolvedRustHostSource::Registry { version } => {
+                    whisker_cng::RustHostDependency::Registry { version }
+                }
+            };
+            Some(whisker_cng::RustElementModuleInput {
+                package: module.package,
+                crate_path: module.manifest_dir,
+                host_package: contribution.package,
+                host_dependency,
             })
-            .collect();
+        })
+        .collect();
     let template_version = inputs.template_version;
     let regenerated = whisker_cng::sync_macos(&gen_dir, &inputs).context("render gen/macos")?;
     Ok(PlatformSync {
@@ -205,6 +212,7 @@ fn sync_web(
     crate_dir: &Path,
     workspace_root: &Path,
     package: &str,
+    graph: &ProjectDependencyGraph,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/web");
     let in_tree_host = workspace_root.join("platforms/web");
@@ -219,27 +227,28 @@ fn sync_web(
         crate_dir.to_path_buf(),
         dependency,
     )?;
-    inputs.element_modules =
-        whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), package)?
-            .into_iter()
-            .filter_map(|module| {
-                let contribution = module.web?;
-                let host_dependency = match contribution.source {
-                    whisker_build::modules::ResolvedRustHostSource::Path(path) => {
-                        whisker_cng::RustHostDependency::Path(path)
-                    }
-                    whisker_build::modules::ResolvedRustHostSource::Registry { version } => {
-                        whisker_cng::RustHostDependency::Registry { version }
-                    }
-                };
-                Some(whisker_cng::RustElementModuleInput {
-                    package: module.package,
-                    crate_path: module.manifest_dir,
-                    host_package: contribution.package,
-                    host_dependency,
-                })
+    inputs.element_modules = graph
+        .modules
+        .iter()
+        .cloned()
+        .filter_map(|module| {
+            let contribution = module.web?;
+            let host_dependency = match contribution.source {
+                whisker_build::modules::ResolvedRustHostSource::Path(path) => {
+                    whisker_cng::RustHostDependency::Path(path)
+                }
+                whisker_build::modules::ResolvedRustHostSource::Registry { version } => {
+                    whisker_cng::RustHostDependency::Registry { version }
+                }
+            };
+            Some(whisker_cng::RustElementModuleInput {
+                package: module.package,
+                crate_path: module.manifest_dir,
+                host_package: contribution.package,
+                host_dependency,
             })
-            .collect();
+        })
+        .collect();
     let template_version = inputs.template_version;
     let regenerated = whisker_cng::sync_web(&gen_dir, &inputs).context("render gen/web")?;
     Ok(PlatformSync {
@@ -258,12 +267,8 @@ fn sync_web(
 fn build_engine_with_discovered_plugins(
     crate_dir: &Path,
     workspace_root: &Path,
-    user_package: &str,
+    discovered: &[DiscoveredPlugin],
 ) -> Result<Engine> {
-    let manifest_path = workspace_root.join("Cargo.toml");
-    let discovered = discover_plugins(&manifest_path, user_package)
-        .with_context(|| format!("discover Whisker CNG plugins for `{user_package}`"))?;
-
     // Stamp the app crate dir onto the engine so subprocess plugins
     // (e.g. `whisker-asset`) can resolve paths the user spelled
     // relative to their crate — they don't inherit a reliable cwd.
@@ -272,10 +277,10 @@ fn build_engine_with_discovered_plugins(
         return Ok(engine);
     }
 
-    build_discovered_plugins(workspace_root, &discovered)?;
+    build_discovered_plugins(workspace_root, discovered)?;
 
     let target_dir = workspace_root.join("target/debug");
-    for plugin in discovered {
+    for plugin in discovered.iter().cloned() {
         let binary_path = target_dir.join(&plugin.bin_target_name);
         if !binary_path.exists() {
             return Err(anyhow!(
@@ -387,6 +392,24 @@ mod tests {
         let web_source = std::fs::read_to_string(web.gen_dir.join("src/lib.rs")).unwrap();
         assert!(web_source.contains("whisker_toggle::__whisker_element_module_definition()"));
         assert!(web_source.contains("whisker_toggle_web_host::__whisker_module_definition()"));
+
+        let ios = sync_for_target(
+            Target::IosSimulator,
+            &config,
+            &crate_dir,
+            workspace,
+            "host-smoke",
+        )
+        .unwrap();
+        let package =
+            std::fs::read_to_string(ios.gen_dir.join("whisker_modules/Package.swift")).unwrap();
+        let registrar = std::fs::read_to_string(
+            ios.gen_dir
+                .join("whisker_modules/Sources/WhiskerModules/RegisterAll.swift"),
+        )
+        .unwrap();
+        assert!(package.contains("WhiskerToggle"));
+        assert!(registrar.contains("_whiskerRegisterModules_WhiskerToggle()"));
         std::fs::remove_dir_all(crate_dir).ok();
     }
 }

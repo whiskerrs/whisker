@@ -17,9 +17,8 @@
 //! - [`ios`] — `cargo rustc` per iOS triple, lipo of simulator
 //!   slices, `WhiskerDriver.xcframework` assembly, `xcodebuild` for
 //!   the generated app project.
-//! - [`modules`] — discover `[package.metadata.whisker]` deps via
-//!   `cargo metadata` and resolve per-platform source contributions
-//!   the host build needs to stage.
+//! - [`modules`] — compatibility re-exports for CNG-owned dependency
+//!   resolution used by build-system adapters.
 //!
 //! Sync-only API. Dev-server callers wrap invocations in
 //! `tokio::task::spawn_blocking`; the cli runs them directly.
