@@ -31,6 +31,7 @@ use whisker_plugin::{FileEntry, PbxprojOp, PlistValue};
 
 use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
+use crate::modules::ResolvedModule;
 use crate::render::{escape_xml, render};
 
 const PBXPROJ: &str = include_str!("templates/ios/Project.xcodeproj/project.pbxproj");
@@ -49,11 +50,7 @@ pub struct IosInputs {
     pub scheme: String,
     pub bundle_id: String,
     pub deployment_target: String,
-    /// Path to the auto-generated `WhiskerModules` SwiftPM package —
-    /// typically `<crate_dir>/gen/ios/whisker_modules`, the dir
-    /// `whisker-build::ios::stage_module_swift_sources` populates with
-    /// each module's `[ios].swift_sources` and the generated
-    /// `WhiskerModuleBehaviors.swift`.
+    /// Path to the CNG-generated `WhiskerModules` SwiftPM package.
     pub whisker_modules_path: PathBuf,
     /// Absolute path to the cargo workspace root holding the user app
     /// crate's `[workspace]` `Cargo.toml`. Embedded into the pbxproj's
@@ -63,6 +60,10 @@ pub struct IosInputs {
     /// Cargo package name (the user app crate) — the Rust side of
     /// `whisker build-ios --package=...`.
     pub user_package: String,
+    /// Cargo-resolved Whisker modules materialized into the SwiftPM
+    /// aggregator as part of this CNG transaction.
+    #[serde(default)]
+    pub modules: Vec<ResolvedModule>,
     /// Plugin-supplied `Info.plist` entries from the engine's
     /// post-pipeline IR (`ctx.ios.info_plist`), emitted just before the
     /// closing `</dict>` by [`render_extra_info_plist`]. Every
@@ -103,6 +104,12 @@ pub fn sync(out_dir: &Path, inputs: &IosInputs) -> Result<bool> {
     }
 
     write_files(out_dir, inputs).context("write iOS project files")?;
+    crate::ios_modules::stage_module_swift_sources(
+        out_dir,
+        &inputs.modules,
+        &inputs.workspace_root,
+    )
+    .context("write iOS module aggregator")?;
     std::fs::write(&fp_path, &new_fp)
         .with_context(|| format!("write fingerprint {}", fp_path.display()))?;
     Ok(true)
@@ -634,6 +641,7 @@ pub fn inputs_from_with_engine(
         whisker_modules_path,
         workspace_root,
         user_package,
+        modules: Vec::new(),
         extra_info_plist,
         extra_files,
         pbxproj_ops,
@@ -669,6 +677,7 @@ mod tests {
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
+            modules: Vec::new(),
             extra_info_plist: BTreeMap::new(),
             extra_files: BTreeMap::new(),
             pbxproj_ops: Vec::new(),

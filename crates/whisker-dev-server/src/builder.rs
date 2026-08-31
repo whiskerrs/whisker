@@ -132,11 +132,6 @@ impl Builder {
                 &toolchain,
                 ABI,
             )?;
-            let modules =
-                whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), &package)
-                    .context("discover Android Whisker modules")?;
-            whisker_build::android::stage_module_kotlin_sources(&gen_android, &modules)
-                .context("stage Android Whisker modules")?;
             whisker_build::android::run_gradle_assemble(
                 &gen_android,
                 whisker_build::Profile::Debug,
@@ -185,7 +180,6 @@ impl Builder {
 
     async fn build_ios_simulator(&self) -> Result<()> {
         let workspace_root = self.workspace_root.clone();
-        let crate_dir = self.crate_dir.clone();
         let package = self.package.clone();
         let features = self.features.clone();
         tokio::task::spawn_blocking(move || -> Result<()> {
@@ -206,21 +200,6 @@ impl Builder {
                 },
                 &built_products,
             )?;
-            // The generated Xcode project imports the local
-            // `gen/ios/whisker_modules` Swift package. Unlike CNG-owned
-            // project files, this package reflects Cargo's current module
-            // dependency graph and must be staged on every cold build before
-            // Installer invokes xcodebuild. Keep this symmetric with the
-            // Android module staging above and with `whisker build ipa`.
-            let modules =
-                whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), &package)
-                    .context("discover iOS Whisker modules")?;
-            whisker_build::ios::stage_module_swift_sources(
-                &crate_dir.join("gen/ios"),
-                &modules,
-                &workspace_root,
-            )
-            .context("stage iOS Whisker modules")?;
             Ok(())
         })
         .await

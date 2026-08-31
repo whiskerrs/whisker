@@ -6753,14 +6753,10 @@ name = "whisker-build"
 version = "0.12.0"
 dependencies = [
  "anyhow",
- "cargo_metadata",
  "indicatif",
  "libc",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "toml 0.8.23",
  "wasm-bindgen-cli-support",
+ "whisker-cng",
 ]
 
 [[package]]
@@ -6800,7 +6796,8 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
- "whisker-build",
+ "sha2 0.10.9",
+ "toml 0.8.23",
  "whisker-config",
  "whisker-plugin",
 ]

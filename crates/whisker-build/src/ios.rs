@@ -47,8 +47,7 @@ use std::process::Command;
 ///
 /// Keep in lockstep with the `Package.swift` at the repo root and the
 /// `v<version>` git tag published for SwiftPM to resolve.
-pub const WHISKER_IOS_SPM_URL: &str = "https://github.com/whiskerrs/whisker.git";
-pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.12";
+pub use whisker_cng::ios_modules::{WHISKER_IOS_SPM_URL, WHISKER_IOS_SPM_VERSION};
 
 use crate::capture::{CaptureShims, capture_env_vars_for_triple};
 
@@ -684,8 +683,8 @@ mod tests;
 
 mod swift_modules;
 
-pub use swift_modules::{XcodebuildArgs, stage_module_swift_sources};
+pub use swift_modules::XcodebuildArgs;
 #[cfg(test)]
-use swift_modules::{
+use whisker_cng::ios_modules::{
     parse_ios_platform_major, render_modules_package_swift, render_register_all_swift,
 };

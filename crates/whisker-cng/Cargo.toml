@@ -26,18 +26,11 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 whisker-config = { workspace = true }
-# For the iOS remote-SwiftPM coordinates (`WHISKER_IOS_SPM_URL` /
-# `WHISKER_IOS_SPM_VERSION`) the generated pbxproj's
-# `XCRemoteSwiftPackageReference` is rendered from. Single source of
-# truth shared with whisker-build's aggregator generator. No cycle:
-# whisker-build does not depend on whisker-cng.
-whisker-build = { workspace = true }
-# Walks the user crate's dep graph to find dependencies that declare
-# `[package.metadata.whisker.plugins.<name>]` in their `Cargo.toml`.
-# Same crate `whisker-build` uses for module discovery — pinned at
-# the same major version so both subsystems agree on the dep-graph
-# shape.
+# Resolves runtime modules and generation-time plugins together from one
+# activated Cargo dependency graph.
 cargo_metadata = "0.18"
+sha2 = "0.10"
+toml = "0.8"
 # `Plugin` / `PluginConfig` trait + IR types the engine drives the
 # plugin pipeline against. The compose module turns each user-side
 # `Config.plugins[name]` JSON entry back into the plugin's typed
