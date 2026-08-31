@@ -251,11 +251,28 @@ fn accessibility_semantics_are_retained_with_the_common_presentation() {
                     node,
                     accessibility: accessibility.clone(),
                 },
+                Operation::SetLayout {
+                    node,
+                    geometry: geometry(12.0, 18.0, 90.0, 44.0),
+                },
             ],
         ))
         .unwrap();
 
     assert_eq!(scene.nodes[&node].presentation.accessibility, accessibility);
+    let snapshot = scene.accessibility_snapshot();
+    assert_eq!(snapshot.roots, vec![node]);
+    assert_eq!(snapshot.nodes.len(), 1);
+    assert_eq!(snapshot.nodes[0].id, node);
+    assert_eq!(
+        snapshot.nodes[0].bounds,
+        LayoutRect {
+            x: 12.0,
+            y: 18.0,
+            width: 90.0,
+            height: 44.0,
+        }
+    );
 }
 
 #[test]
