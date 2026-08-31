@@ -12,8 +12,10 @@ categories.workspace = true
 description = "Host-side dev server for `whisker run`. File watch + cargo build + WebSocket push of subsecond patches. Pulled in by whisker-cli; no presence in release builds."
 
 [dependencies]
+ar = "0.9.0"
 anyhow = { workspace = true }
 axum = { workspace = true }
+tower-http = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "process"] }
 futures-util = { workspace = true, default-features = true }
 serde = { workspace = true }
@@ -21,6 +23,17 @@ serde_json = { workspace = true }
 subsecond-types = { workspace = true }
 notify = { workspace = true }
 object = { workspace = true }
+# WebAssembly side-module rewriting for state-preserving Hot Reload. These
+# versions match the upstream Dioxus transformer from which the implementation
+# is derived; wasm-bindgen's host-side CLI currently pulls a newer walrus too.
+walrus = { version = "0.23.3", features = ["parallel"] }
+wasmparser = "0.235.0"
+rayon = "1.10"
+itertools = "0.14"
+target-lexicon = "0.13.2"
+thiserror = { workspace = true }
+pdb = "0.8"
+tracing = "0.1"
 # Workspace dep-graph walk for sub-crate hot-reload: enumerate path
 # deps of the user crate so the file watcher can cover their src/
 # trees and the patcher knows which crate a changed file belongs to.

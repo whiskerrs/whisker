@@ -47,3 +47,4 @@ serde_json = "1"
 # a `[package.metadata.whisker]` table.
 cargo_metadata = "0.18"
 toml = "0.8"
+wasm-bindgen-cli-support = "=0.2.127"

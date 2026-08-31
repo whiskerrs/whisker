@@ -12,6 +12,9 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+hot-reload = ["whisker-web/hot-reload"]
+
 [dependencies]
 wasm-bindgen = "0.2"
 whisker-app = { package = {{user_package_toml}}, path = {{user_crate_path_toml}} }

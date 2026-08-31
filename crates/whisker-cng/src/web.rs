@@ -1,4 +1,4 @@
-//! Render the complete Trunk/Cargo browser Host project under `gen/web`.
+//! Render the Cargo browser Host project consumed by Whisker's Web builder.
 
 use anyhow::{Context, Result, anyhow, bail};
 use std::path::{Path, PathBuf};
@@ -10,7 +10,6 @@ use crate::render::render;
 const CARGO_TOML: &str = include_str!("templates/web/Cargo.toml");
 const LIB_RS: &str = include_str!("templates/web/src/lib.rs");
 const INDEX_HTML: &str = include_str!("templates/web/index.html");
-const TRUNK_TOML: &str = include_str!("templates/web/Trunk.toml");
 
 /// Fully resolved inputs for one generated Web project.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -49,7 +48,7 @@ pub fn inputs_from(
         user_crate_path,
         whisker_web_dependency,
         element_modules: Vec::new(),
-        template_version: 6,
+        template_version: 10,
     })
 }
 
@@ -78,7 +77,6 @@ pub fn sync(out_dir: &Path, inputs: &WebInputs) -> Result<bool> {
         &out_dir.join("index.html"),
         &render(INDEX_HTML, &vars).context("render Web index.html")?,
     )?;
-    write_text(&out_dir.join("Trunk.toml"), TRUNK_TOML)?;
     write_text(&fingerprint_path, &new_fingerprint)?;
     Ok(true)
 }
@@ -193,17 +191,20 @@ mod tests {
             "Cargo.toml",
             "src/lib.rs",
             "index.html",
-            "Trunk.toml",
             ".whisker-fingerprint",
         ] {
             assert!(out.join(path).exists(), "missing {path}");
         }
+        assert!(!out.join("Trunk.toml").exists());
         assert!(!sync(&out, &sample()).unwrap());
         let manifest = std::fs::read_to_string(out.join("Cargo.toml")).unwrap();
         assert!(manifest.contains("package = \"hello\""));
         assert!(manifest.contains("whisker-web"));
         let html = std::fs::read_to_string(out.join("index.html")).unwrap();
         assert!(html.contains("<title>Hello Web</title>"));
+        assert!(html.contains("import init, * as whisker"));
+        assert!(html.contains("__WHISKER_DEVELOPMENT_BOOTSTRAP__"));
+        assert!(!html.contains("new WebSocket"));
         std::fs::remove_dir_all(root).ok();
     }
 

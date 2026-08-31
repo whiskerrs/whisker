@@ -10,7 +10,7 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-use crate::{MacosParams, Target};
+use crate::{MacosParams, Target, WebParams};
 use whisker_build::CaptureShims;
 
 /// Builder for cold (full reload) rebuilds. hot-reload patches live in
@@ -32,6 +32,7 @@ pub struct Builder {
     /// `None` → plain full reload.
     capture: Option<CaptureShims>,
     macos: Option<MacosParams>,
+    web: Option<WebParams>,
 }
 
 impl Builder {
@@ -49,6 +50,7 @@ impl Builder {
             features: Vec::new(),
             capture: None,
             macos: None,
+            web: None,
         }
     }
 
@@ -81,15 +83,18 @@ impl Builder {
         self
     }
 
+    pub fn with_web(mut self, web: Option<WebParams>) -> Self {
+        self.web = web;
+        self
+    }
+
     /// Run the build for the current target. Inherits stdout/stderr.
     pub async fn build(&self) -> Result<()> {
         match self.target {
             Target::Android => self.build_android().await,
             Target::IosSimulator => self.build_ios_simulator().await,
             Target::Macos => self.build_macos().await,
-            Target::Web => {
-                anyhow::bail!("Web builds are driven by the CNG-generated Trunk project")
-            }
+            Target::Web => self.build_web().await,
         }
     }
 
@@ -142,6 +147,40 @@ impl Builder {
         })
         .await
         .context("spawn_blocking Android build")?
+    }
+
+    async fn build_web(&self) -> Result<()> {
+        let web = self
+            .web
+            .clone()
+            .context("target=Web but Config.web is missing")?;
+        let features = self.features.clone();
+        let capture = self.capture.clone();
+        tokio::task::spawn_blocking(move || {
+            let config = whisker_build::web::WebBuild {
+                project_dir: web.project_dir,
+                target_dir: web.target_dir,
+                dist_dir: web.dist_dir,
+                package: web.generated_package,
+                profile: whisker_build::Profile::Debug,
+                features,
+                capture,
+                development: true,
+            };
+            let raw_wasm = whisker_build::web::compile(&config)?;
+            if config.capture.is_some() {
+                let bytes = std::fs::read(&raw_wasm)
+                    .with_context(|| format!("read {}", raw_wasm.display()))?;
+                let prepared = crate::hotpatch::prepare_wasm_base_module(&bytes)
+                    .context("prepare WebAssembly base module for Hot Reload")?;
+                std::fs::write(&raw_wasm, prepared)
+                    .with_context(|| format!("write {}", raw_wasm.display()))?;
+            }
+            whisker_build::web::bindgen(&config, &raw_wasm)?;
+            Ok(())
+        })
+        .await
+        .context("join Web build task")?
     }
 
     async fn build_ios_simulator(&self) -> Result<()> {

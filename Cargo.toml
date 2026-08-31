@@ -187,6 +187,7 @@ crossterm = { version = "0.28", default-features = false, features = ["events"] 
 
 # Host-side dev server (whisker-dev-server). Heavy deps confined here.
 axum = { version = "0.8", default-features = false, features = ["ws", "tokio", "http1"] }
+tower-http = { version = "0.6", default-features = false, features = ["fs"] }
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 # Reading ELF / Mach-O / WASM symbol tables for subsecond JumpTable
 # construction. Same crate `dx serve` and `subsecond` itself use,

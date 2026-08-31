@@ -226,9 +226,10 @@ mobile paths hand a flat `Config` to `whisker-dev-server`; the macOS path
 builds the same generated Cargo project used by `whisker build macos`, launches
 its `.app`, and automatically rebuilds/relaunches on source changes:
 
-The Web path emits a Cargo/Trunk project at `gen/web`. `whisker run web`
-starts Trunk, opens the browser, and uses Trunk's page reload as the initial
-remount-style hot reload implementation. Android and iOS generate plain AGP
+The Web path emits a minimal Cargo composition project and browser shell at
+`gen/web`. `whisker run web` compiles it to WebAssembly, runs wasm-bindgen,
+serves the generated directory, opens the browser, and applies Rust edits as
+subsecond WebAssembly side-module patches. Android and iOS generate plain AGP
 and Xcode/UIKit projects respectively, build them, install them on an emulator
 or Simulator, and launch them against the Whisker Host SDK.
 
@@ -240,15 +241,14 @@ or Simulator, and launch them against the Whisker Host SDK.
         │
         ▼
   platform loop
-   ├── Web: Trunk rebuild → browser remount
-   ├── macOS: Cargo rebuild → `.app` relaunch
-   └── Android/iOS bootstrap: save prompts for explicit Full Reload (`R`)
-       → Gradle/Xcode build → install/launch via adb/simctl
+   ├── Web: thin Cargo compile → WASM side module → browser patch
+   ├── macOS: thin Cargo compile → native patch
+   └── Android/iOS: thin Cargo compile → native patch
 ```
 
-Mobile source changes currently use the explicit full-reload path. The retained
-ABI already executes user `render!` output; finer-grained patch delivery can be
-added without changing the Host/runtime boundary.
+Dependency-shaped changes and an explicit `R` use each platform's Full Reload
+path: Web rebuilds and reloads the document; native platforms rebuild,
+install, and relaunch through their Host toolchain.
 
 The end-to-end mechanics of both tiers — captured-args replay, the ASLR
 anchor, the jump-table math, and the per-component remount strategy —

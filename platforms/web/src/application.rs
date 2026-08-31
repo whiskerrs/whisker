@@ -27,6 +27,8 @@ thread_local! {
     static APPLICATION: RefCell<Option<WebApplication>> = const { RefCell::new(None) };
     static FRAME_SCHEDULED: Cell<bool> = const { Cell::new(false) };
     static URGENT_FRAME_SCHEDULED: Cell<bool> = const { Cell::new(false) };
+    #[cfg(feature = "hot-reload")]
+    static MOUNTED_APPLICATION_HASH: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Mounts a Whisker application into the current browser document.
@@ -34,6 +36,18 @@ thread_local! {
 /// The generated `gen/web` crate calls this once from its WASM start
 /// function. Subsequent work is driven by `requestAnimationFrame`.
 pub fn run(config: WebAppConfig, application: fn() -> Element) -> Result<(), WebError> {
+    run_with_application_hash(config, application, || 0)
+}
+
+/// Mounts a browser application with the generated source hash used by Hot
+/// Reload to distinguish root edits from component-only edits.
+pub fn run_with_application_hash(
+    config: WebAppConfig,
+    application: fn() -> Element,
+    _application_hash: fn() -> u64,
+) -> Result<(), WebError> {
+    #[cfg(feature = "hot-reload")]
+    MOUNTED_APPLICATION_HASH.set(_application_hash());
     APPLICATION.with(|slot| {
         if slot.borrow().is_some() {
             return Err(WebError("a Web application is already mounted".into()));
@@ -75,6 +89,109 @@ pub fn run(config: WebAppConfig, application: fn() -> Element) -> Result<(), Web
     resize.forget();
     request_frame();
     Ok(())
+}
+
+/// Applies a wasm side-module patch received by the generated browser shell.
+/// The side module is compiled asynchronously; component reflection begins
+/// only after subsecond commits its indirect-function-table update.
+#[cfg(feature = "hot-reload")]
+pub fn apply_hot_patch(
+    header_json: &str,
+    patch_bytes: &[u8],
+    application: fn() -> Element,
+    application_hash: fn() -> u64,
+) -> Result<(), WebError> {
+    use js_sys::{Array, Uint8Array};
+
+    let mut table = decode_patch_header(header_json)?;
+    let bytes = Uint8Array::from(patch_bytes);
+    let parts = Array::new();
+    parts.push(&bytes);
+    let blob = web_sys::Blob::new_with_u8_array_sequence(&parts)
+        .map_err(|error| js_error("create Hot Reload Blob", error))?;
+    let object_url = web_sys::Url::create_object_url_with_blob(&blob)
+        .map_err(|error| js_error("create Hot Reload object URL", error))?;
+    table.lib = object_url.clone().into();
+
+    unsafe {
+        subsecond::apply_patch_with_callback(table, move |patched_functions| {
+            let result = reflect_hot_patch(&patched_functions, application, application_hash);
+            if let Err(error) = result {
+                web_sys::console::error_1(&format!("Whisker Hot Reload: {error}").into());
+            }
+            let _ = web_sys::Url::revoke_object_url(&object_url);
+        })
+        .map_err(|error| WebError(format!("apply WebAssembly Hot Reload patch: {error}")))?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "hot-reload")]
+fn reflect_hot_patch(
+    patched_functions: &[*const ()],
+    application: fn() -> Element,
+    application_hash: fn() -> u64,
+) -> Result<(), WebError> {
+    APPLICATION.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let host = slot
+            .as_mut()
+            .ok_or_else(|| WebError("a Web application is not mounted".into()))?;
+        host.modules.with_host(|| {
+            let current_hash = application_hash();
+            let mut remount_root = MOUNTED_APPLICATION_HASH.get() != current_hash;
+            if !remount_root {
+                let stats = host
+                    .runtime
+                    .remount_components(patched_functions)
+                    .map_err(|error| WebError(error.to_string()))?;
+                remount_root = stats.remounted == 0 || stats.layout_changed > 0;
+            }
+            if remount_root {
+                host.runtime
+                    .remount_root(application)
+                    .map_err(|error| WebError(error.to_string()))?;
+            }
+            MOUNTED_APPLICATION_HASH.set(current_hash);
+            Ok(())
+        })
+    })?;
+    request_frame();
+    Ok(())
+}
+
+#[cfg(feature = "hot-reload")]
+fn decode_patch_header(header_json: &str) -> Result<subsecond::JumpTable, WebError> {
+    #[derive(serde::Deserialize)]
+    struct Header {
+        kind: String,
+        table: WireTable,
+    }
+    #[derive(serde::Deserialize)]
+    struct WireTable {
+        lib: std::path::PathBuf,
+        map: Vec<(u64, u64)>,
+        aslr_reference: u64,
+        new_base_address: u64,
+        ifunc_count: u64,
+    }
+    let header: Header = serde_json::from_str(header_json)
+        .map_err(|error| WebError(format!("decode Hot Reload header: {error}")))?;
+    if header.kind != "patch" {
+        return Err(WebError(format!(
+            "unexpected development message `{}`",
+            header.kind
+        )));
+    }
+    let mut map = subsecond_types::AddressMap::default();
+    map.extend(header.table.map);
+    Ok(subsecond::JumpTable {
+        lib: header.table.lib,
+        map,
+        aslr_reference: header.table.aslr_reference,
+        new_base_address: header.table.new_base_address,
+        ifunc_count: header.table.ifunc_count,
+    })
 }
 
 /// Registers or replaces a browser URL for a ready Host resource.

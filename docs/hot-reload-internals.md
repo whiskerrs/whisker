@@ -336,9 +336,10 @@ the next save anyway.
 - **iOS hardware is unsupported** for Hot Reload: `mmap(PROT_WRITE |
   PROT_EXEC)` is blocked by Apple's W^X policy, so `apply_patch` can't
   run. Targets are macOS host, Android, and the iOS Simulator.
-- **Web uses remount reload, not native patch dylibs.** The generated Trunk
-  project rebuilds WASM and remounts the app. Native `subsecond` integration
-  is shared by Android, iOS Simulator, and Desktop.
+- **Web patches WebAssembly side modules.** `whisker run web` owns the Cargo,
+  wasm-bindgen, static-server, and WebSocket loop. Rust edits are compiled as
+  PIC side modules and applied through subsecond's indirect function table;
+  explicit Full Reloads rebuild and reload the browser document.
 - **`Cargo.toml` / `Cargo.lock` edits** always need a Full Reload —
   the patcher can't reload dependencies.
 - **Multi-crate change batches** can't be expressed as a single patch

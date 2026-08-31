@@ -31,6 +31,7 @@ pub mod ios;
 pub mod macos;
 pub mod modules;
 pub mod ui;
+pub mod web;
 
 pub use capture::{
     CaptureShims, capture_env_vars, capture_env_vars_all_crates, capture_env_vars_for_triple,
