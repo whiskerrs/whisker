@@ -520,15 +520,25 @@ public enum WhiskerElementRegistry {
     }
 }
 
-public extension Module {
-    func registerWithWhisker() {
-        let definition = definitionLazy
+/// Single bootstrap boundary for independently compiled Host modules.
+public enum WhiskerModuleKernel {
+    private static let lock = NSLock()
+    private static var installedNames: Set<String> = []
+
+    /// Validates and installs one complete service + element declaration.
+    public static func install(_ module: Module) {
+        let definition = module.definitionLazy
         definition.validateElementDeclaration()
         guard let name = definition.name else {
             preconditionFailure("ModuleDefinition requires Name")
         }
-        if qualifiedName == nil { qualifiedName = name }
-        WhiskerModuleRegistry.register(self)
-        definition.views.forEach { WhiskerElementRegistry.register($0, fallbackName: qualifiedName!) }
+        if module.qualifiedName == nil { module.qualifiedName = name }
+        let qualifiedName = module.qualifiedName!
+        lock.lock()
+        let inserted = installedNames.insert(qualifiedName).inserted
+        lock.unlock()
+        precondition(inserted, "module already installed: \(qualifiedName)")
+        WhiskerModuleRegistry.register(module)
+        definition.views.forEach { WhiskerElementRegistry.register($0, fallbackName: qualifiedName) }
     }
 }

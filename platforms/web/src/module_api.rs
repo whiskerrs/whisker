@@ -22,10 +22,14 @@ pub struct WebAppConfig {
     pub title: String,
     /// DOM element id used as the surface root.
     pub root_id: String,
-    /// Element modules selected for this target.
-    pub module_definitions: Vec<WebModuleDefinition>,
-    /// Host-independent element schemas selected from Rust module crates.
-    pub element_modules: Vec<ElementModuleDefinition>,
+    /// Modules selected for this target, paired with their portable schema.
+    pub(crate) modules: Vec<WebModuleInstallation>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct WebModuleInstallation {
+    pub(crate) elements: ElementModuleDefinition,
+    pub(crate) host: WebModuleDefinition,
 }
 
 impl WebAppConfig {
@@ -34,20 +38,20 @@ impl WebAppConfig {
         Self {
             title: title.into(),
             root_id: "whisker-root".to_string(),
-            module_definitions: Vec::new(),
-            element_modules: Vec::new(),
+            modules: Vec::new(),
         }
     }
 
-    /// Adds one Rust element definition with its matching DOM factory.
-    pub fn with_module_definition(mut self, definition: WebModuleDefinition) -> Self {
-        self.module_definitions.push(definition);
-        self
-    }
-
-    /// Adds one Host-independent Rust element module for bootstrap negotiation.
-    pub fn with_element_module(mut self, definition: ElementModuleDefinition) -> Self {
-        self.element_modules.push(definition);
+    /// Installs one module's portable element schema and Web implementation.
+    ///
+    /// Keeping the pair together makes it impossible for generated Hosts to
+    /// accidentally install only one side of a module.
+    pub fn with_module(
+        mut self,
+        elements: ElementModuleDefinition,
+        host: WebModuleDefinition,
+    ) -> Self {
+        self.modules.push(WebModuleInstallation { elements, host });
         self
     }
 }

@@ -24,7 +24,7 @@ import com.google.devtools.ksp.symbol.Modifier
  * `rs.whisker.runtime.Module`.
  *
  * For each annotated module the generated code instantiates it, assigns its
- * fully-qualified name, and calls `.registerWithWhisker()`. The common
+ * fully-qualified name, and calls `WhiskerModuleKernel.install()`. The common
  * registrar handles both native Views and view-less function modules.
  *
  * The generated object's symbol matches what
@@ -151,7 +151,7 @@ public class WhiskerModuleProcessor(
             w.appendLine()
             w.appendLine("package rs.whisker.runtime.generated")
             w.appendLine()
-            w.appendLine("import rs.whisker.runtime.registerWithWhisker")
+            w.appendLine("import rs.whisker.runtime.WhiskerModuleKernel")
             w.appendLine("import java.util.concurrent.atomic.AtomicBoolean")
             w.appendLine()
             w.appendLine("public object $behaviorsObjectName {")
@@ -164,7 +164,7 @@ public class WhiskerModuleProcessor(
                 w.appendLine("        // (no @WhiskerModule declaration found)")
             }
 
-            // `registerWithWhisker()` handles both native-View and view-less
+            // `WhiskerModuleKernel.install()` handles native-View and view-less
             // module definitions, so code generation has one registration
             // path on every Host.
             for (cls in dslModules) {
@@ -193,7 +193,7 @@ public class WhiskerModuleProcessor(
                 w.appendLine("            val qualifiedName = if ('/' in $nameLocal) $nameLocal else \"$tagPrefix\" + $nameLocal")
                 w.appendLine("            $instanceLocal.qualifiedName = qualifiedName")
                 val crateArg = if (crateName != null) "\"$crateName\"" else "null"
-                w.appendLine("            $instanceLocal.registerWithWhisker($crateArg)")
+                w.appendLine("            WhiskerModuleKernel.install($instanceLocal, $crateArg)")
                 w.appendLine("        }")
             }
 

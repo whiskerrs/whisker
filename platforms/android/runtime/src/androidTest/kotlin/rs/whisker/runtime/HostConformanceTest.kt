@@ -55,7 +55,7 @@ class HostConformanceTest {
         @JvmStatic
         @BeforeClass
         fun registerBuiltIns() {
-            BuiltInElementModule().registerWithWhisker()
+            WhiskerModuleKernel.install(BuiltInElementModule())
         }
     }
 

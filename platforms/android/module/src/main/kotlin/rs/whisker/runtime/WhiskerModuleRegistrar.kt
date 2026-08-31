@@ -385,32 +385,39 @@ public object WhiskerElementRegistry {
         boundByType[elementType]?.registration
 }
 
-/** Register one independently compiled Host module declaration. */
-public fun Module.registerWithWhisker(crateName: String? = null) {
-    val def = definitionLazy
-    def.validateElementDeclaration()
-    val name = requireNotNull(def.name) { "ModuleDefinition requires Name" }
-    val qualifiedName = this.qualifiedName
-        ?: if (crateName.isNullOrEmpty() || '/' in name) name else "$crateName:$name"
-    this.qualifiedName = qualifiedName
-    WhiskerModuleEventCenter.register(this)
+/** Single bootstrap boundary for independently compiled Host modules. */
+public object WhiskerModuleKernel {
+    private val installedNames = ConcurrentHashMap.newKeySet<String>()
 
-    def.views.forEach { WhiskerElementRegistry.register(it, qualifiedName) }
+    /** Validates and installs one complete service + element declaration. */
+    @JvmStatic
+    public fun install(module: Module, crateName: String? = null) {
+        val def = module.definitionLazy
+        def.validateElementDeclaration()
+        val name = requireNotNull(def.name) { "ModuleDefinition requires Name" }
+        val qualifiedName = module.qualifiedName
+            ?: if (crateName.isNullOrEmpty() || '/' in name) name else "$crateName:$name"
+        require(installedNames.add(qualifiedName)) { "module already installed: $qualifiedName" }
+        module.qualifiedName = qualifiedName
+        WhiskerModuleEventCenter.register(module)
 
-    val functions = def.functions.associateBy { it.name }
-    if (functions.isNotEmpty()) {
-        WhiskerModuleRegistry.registerDispatch(qualifiedName) { method, args ->
-            val function = functions[method]
-                ?: return@registerDispatch WhiskerValue.Err("unknown method `$method` on module `$name`")
-            function.handler(args.asList())
+        def.views.forEach { WhiskerElementRegistry.register(it, qualifiedName) }
+
+        val functions = def.functions.associateBy { it.name }
+        if (functions.isNotEmpty()) {
+            WhiskerModuleRegistry.registerDispatch(qualifiedName) { method, args ->
+                val function = functions[method]
+                    ?: return@registerDispatch WhiskerValue.Err("unknown method `$method` on module `$name`")
+                function.handler(args.asList())
+            }
         }
-    }
-    val asyncFunctions = def.asyncFunctions.associateBy { it.name }
-    if (asyncFunctions.isNotEmpty()) {
-        WhiskerModuleRegistry.registerDispatchAsync(qualifiedName) { method, args, promise ->
-            val function = asyncFunctions[method] ?: return@registerDispatchAsync false
-            function.handler(args.asList(), promise)
-            true
+        val asyncFunctions = def.asyncFunctions.associateBy { it.name }
+        if (asyncFunctions.isNotEmpty()) {
+            WhiskerModuleRegistry.registerDispatchAsync(qualifiedName) { method, args, promise ->
+                val function = asyncFunctions[method] ?: return@registerDispatchAsync false
+                function.handler(args.asList(), promise)
+                true
+            }
         }
     }
 }

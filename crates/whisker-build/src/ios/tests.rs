@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn generated_entrypoint_registers_the_built_in_element_module() {
     let source = render_register_all_swift(&[]);
-    assert!(source.contains("builtInModule.registerWithWhisker()"));
+    assert!(source.contains("WhiskerModuleKernel.install(builtInModule)"));
     assert!(source.contains("@_exported import WhiskerRuntime"));
     assert!(!source.contains("BuiltInElementBindings"));
 }

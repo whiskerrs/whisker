@@ -72,7 +72,7 @@ func parseArgs(_ argv: [String]) -> Args? {
 
 /// One discovered `@WhiskerModule` declaration.
 /// The codegen emits a registration block that instantiates the class,
-/// assigns its fully-qualified name, and calls `registerWithWhisker()`.
+/// assigns its fully-qualified name, and calls `WhiskerModuleKernel.install()`.
 /// The shared registrar handles both native-View and view-less modules.
 struct DSLModuleHit {
     let className: String
@@ -169,7 +169,7 @@ func render(
                         // observer-hook routing can find it.
                         let qname = name.contains("/") ? name : "\(tagPrefix)" + name
                         module.qualifiedName = qname
-                    module.registerWithWhisker()
+                    WhiskerModuleKernel.install(module)
                 }
 
             """

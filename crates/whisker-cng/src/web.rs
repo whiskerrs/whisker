@@ -227,12 +227,8 @@ mod tests {
         let source = std::fs::read_to_string(out.join("src/lib.rs")).unwrap();
         assert!(manifest.contains("whisker-toggle-web-host ="));
         assert!(!source.contains("#[path ="));
-        assert!(source.contains(
-            ".with_element_module(whisker_toggle::__whisker_element_module_definition())"
-        ));
-        assert!(source.contains(
-            ".with_module_definition(whisker_toggle_web_host::__whisker_module_definition())"
-        ));
+        assert!(source.contains(".with_module("));
+        assert!(source.contains("whisker_toggle_web_host::__whisker_module_definition()"));
         std::fs::remove_dir_all(root).ok();
     }
 }
