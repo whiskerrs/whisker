@@ -263,7 +263,10 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     let so_mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
     let before = so_mtime(&so_path);
 
-    let cargo_step = crate::ui::step("compile", format!("{} ({triple})", b.package));
+    let cargo_step = crate::ui::step(
+        crate::ui::OperationKind::Compile,
+        format!("{} ({triple})", b.package),
+    );
     let status = cargo_step
         .pipe(&mut cmd)
         .with_context(|| format!("spawn cargo for {triple}"))?;
@@ -451,7 +454,7 @@ pub fn run_gradle_assemble(
         Profile::Release => ":app:assembleRelease",
         Profile::Debug => ":app:assembleDebug",
     };
-    let gradle_step = crate::ui::step("gradle", task.to_string());
+    let gradle_step = crate::ui::step(crate::ui::OperationKind::Gradle, task.to_string());
     let mut cmd = gradle_command(gen_android, task)?;
     if !features.is_empty() {
         cmd.env("WHISKER_FEATURES", features.join(" "));
@@ -533,9 +536,6 @@ fn gradle_command(gen_android: &Path, task: &str) -> Result<Command> {
             "WHISKER_CLI",
             std::env::current_exe().context("resolve current Whisker CLI executable")?,
         );
-    if crate::ui::is_tui() {
-        cmd.env("WHISKER_TUI", "1");
-    }
     if crate::ui::is_verbose() {
         cmd.env("WHISKER_VERBOSE", "1");
     }
@@ -577,7 +577,7 @@ pub fn run_gradle_release(
             &["app-release.apk", "app-release-unsigned.apk"],
         ),
     };
-    let gradle_step = crate::ui::step("gradle", task.to_string());
+    let gradle_step = crate::ui::step(crate::ui::OperationKind::Gradle, task.to_string());
     let mut cmd = gradle_command(gen_android, task)?;
     for (k, v) in signing_env {
         cmd.env(k, v);

@@ -57,39 +57,57 @@ pub(super) fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Lin
         }
     }
 
-    if let Some(addr) = &state.ws_addr {
+    if state.workflow == WorkflowKind::Run {
+        if let Some(destination) = &state.target_destination {
+            lines.push(Line::from(vec![
+                Span::raw(" "),
+                Span::styled("target      ", Style::default().fg(Color::DarkGray)),
+                Span::raw(destination.clone()),
+            ]));
+            let host = match &state.host_status {
+                HostStatus::NotStarted => "not started".to_string(),
+                HostStatus::Launching => "launching".to_string(),
+                HostStatus::WaitingForConnection => "waiting for connection".to_string(),
+                HostStatus::Connected => format!("connected ({})", state.client_count),
+                HostStatus::Failed(reason) => format!("failed · {reason}"),
+            };
+            let mut watching = vec![
+                Span::raw(" "),
+                Span::styled("host        ", Style::default().fg(Color::DarkGray)),
+                Span::raw(host),
+            ];
+            if !state.watching.is_empty() {
+                watching.push(Span::styled(
+                    "   ·   ",
+                    Style::default().fg(Color::DarkGray),
+                ));
+                watching.push(Span::styled(
+                    format!("watching {} path(s)", state.watching.len()),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            lines.push(Line::from(watching));
+        } else {
+            // Reserve one row so the layout doesn't jiggle when the
+            // dev-server comes online mid-build.
+            lines.push(Line::from(""));
+        }
+    } else if let Some(artifact) = &state.artifact {
         lines.push(Line::from(vec![
             Span::raw(" "),
-            Span::styled("dev server  ", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!("ws://{addr}")),
+            Span::styled("artifact    ", Style::default().fg(Color::DarkGray)),
+            Span::raw(artifact.clone()),
         ]));
-        let clients = format!("{} connected", state.client_count);
-        let mut watching = vec![
-            Span::raw(" "),
-            Span::styled("clients     ", Style::default().fg(Color::DarkGray)),
-            Span::raw(clients),
-        ];
-        if !state.watching.is_empty() {
-            watching.push(Span::styled(
-                "   ·   ",
-                Style::default().fg(Color::DarkGray),
-            ));
-            watching.push(Span::styled(
-                format!("watching {} path(s)", state.watching.len()),
-                Style::default().fg(Color::DarkGray),
-            ));
-        }
-        lines.push(Line::from(watching));
     } else {
         // Reserve one row so the layout doesn't jiggle when the
-        // dev-server comes online mid-build.
+        // artifact appears at the end of the build.
         lines.push(Line::from(""));
     }
 
     // Also the spacer row when no prompt is pending, so the layout
     // doesn't jiggle.
-    match &state.full_reload_needed {
-        Some(reason) => {
+    match (&state.workflow, &state.full_reload_needed) {
+        (WorkflowKind::Run, Some(reason)) => {
             lines.push(Line::from(vec![
                 Span::raw(" "),
                 Span::styled(
@@ -106,7 +124,7 @@ pub(super) fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Lin
                 Span::styled(" to Full Reload", Style::default().fg(Color::Yellow)),
             ]));
         }
-        None => lines.push(Line::from("")),
+        _ => lines.push(Line::from("")),
     }
 
     // Footer hint. The key chips use `White` (not `Black`) on the
@@ -125,15 +143,21 @@ pub(super) fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Lin
     };
     let key_desc =
         |text: &str| Span::styled(text.to_string(), Style::default().fg(Color::DarkGray));
-    lines.push(Line::from(vec![
-        Span::raw(" "),
-        key_chip("r"),
-        key_desc("  hot reload   "),
-        key_chip("R"),
-        key_desc("  full reload   "),
-        key_chip("q"),
-        key_desc("  quit"),
-    ]));
+    let footer = match state.workflow {
+        WorkflowKind::Run => vec![
+            Span::raw(" "),
+            key_chip("r"),
+            key_desc("  hot reload   "),
+            key_chip("R"),
+            key_desc("  full reload   "),
+            key_chip("o"),
+            key_desc("  relaunch   "),
+            key_chip("q"),
+            key_desc("  quit"),
+        ],
+        WorkflowKind::Build => vec![Span::raw(" "), key_chip("q"), key_desc("  cancel")],
+    };
+    lines.push(Line::from(footer));
 
     // Truncate / pad to LIVE_HEIGHT so the viewport renders cleanly.
     lines.truncate(LIVE_HEIGHT as usize);
@@ -199,6 +223,23 @@ pub(super) fn render_history_item(item: &HistoryItem) -> Vec<Line<'static>> {
                 Span::raw(line.clone()),
             ])]
         }
+        HistoryItem::Message { level, text } => {
+            let (glyph, color) = match level {
+                MessageLevel::Info => ("·", Color::DarkGray),
+                MessageLevel::Warning => ("⚠", Color::Yellow),
+                MessageLevel::Error => ("✗", Color::Red),
+                MessageLevel::Debug => ("·", Color::DarkGray),
+                MessageLevel::Log => ("", Color::Reset),
+            };
+            if glyph.is_empty() {
+                vec![Line::from(Span::raw(text.clone()))]
+            } else {
+                vec![Line::from(vec![
+                    Span::styled(format!("{glyph} "), Style::default().fg(color)),
+                    Span::raw(text.clone()),
+                ])]
+            }
+        }
         HistoryItem::Failure(reason) => vec![Line::from(vec![
             Span::styled(
                 "✗ ",
@@ -206,11 +247,6 @@ pub(super) fn render_history_item(item: &HistoryItem) -> Vec<Line<'static>> {
             ),
             Span::styled(reason.clone(), Style::default().fg(Color::Red)),
         ])],
-        HistoryItem::SetCurrentStep(_) => {
-            // Live-region-only; consumed by
-            // `drain_history_into_scrollback` before reaching here.
-            Vec::new()
-        }
     }
 }
 
@@ -252,12 +288,27 @@ pub(super) fn status_chip(state: &LiveState) -> (&'static str, Color, Color) {
     if matches!(state.phase, AppPhase::Building { .. }) {
         return ("BUILDING", Color::Yellow, Color::Black);
     }
+    if matches!(state.phase, AppPhase::Completed) {
+        return ("BUILT", Color::Green, Color::Black);
+    }
+    if matches!(state.phase, AppPhase::Stopping) {
+        return ("STOPPING", Color::DarkGray, Color::White);
+    }
+    if state.current_step.is_some() {
+        return ("BUILDING", Color::Yellow, Color::Black);
+    }
     // Idle with a step in flight is still install / launch work.
     if matches!(state.phase, AppPhase::Idle) {
-        if state.current_step.is_some() {
-            return ("BUILDING", Color::Yellow, Color::Black);
-        }
-        return ("RUNNING", Color::Green, Color::Black);
+        return match (&state.workflow, &state.host_status) {
+            (WorkflowKind::Run, HostStatus::NotStarted | HostStatus::Launching) => {
+                ("LAUNCHING", Color::Yellow, Color::Black)
+            }
+            (WorkflowKind::Run, HostStatus::WaitingForConnection) => {
+                ("WAITING", Color::Yellow, Color::Black)
+            }
+            (WorkflowKind::Run, HostStatus::Failed(_)) => ("FAILED", Color::Red, Color::White),
+            _ => ("RUNNING", Color::Green, Color::Black),
+        };
     }
     // Setup / Initializing.
     ("STARTING", Color::DarkGray, Color::White)

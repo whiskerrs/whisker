@@ -20,7 +20,7 @@ pub struct Args {
     manifest_path: Option<PathBuf>,
 }
 
-pub fn run(artifact: ReleaseArtifact, args: Args) -> Result<()> {
+pub fn run(artifact: ReleaseArtifact, args: Args, no_tui: bool) -> Result<()> {
     let m = manifest::resolve(args.manifest_path.as_deref())?;
     let application_id = manifest::android_application_id(&m.config).ok_or_else(|| {
         anyhow!(
@@ -45,16 +45,17 @@ pub fn run(artifact: ReleaseArtifact, args: Args) -> Result<()> {
         ReleaseArtifact::AppBundle => "appbundle (.aab)",
         ReleaseArtifact::Apk => "apk",
     };
-    ui::section("Build");
-    ui::info(format!(
-        "building {application_id} {version} ({build_number}) — release {label}",
-    ));
-
     // Credential pre-step BEFORE any compilation: the decryption-key
     // prompt (if any) happens now, and key problems fail before, not
     // after, the long gradle+cargo build. `_staging` must stay alive
     // until gradle exits — the signing paths point into it.
     let (_staging, signing) = credential::require_android_signing(&m.crate_dir, &application_id)?;
+
+    let build_ui = super::BuildUi::start(no_tui, "Android", &application_id);
+    ui::section("Build");
+    ui::info(format!(
+        "building {application_id} {version} ({build_number}) — release {label}",
+    ));
 
     let sync = platforms::sync_for_target(
         Target::Android,
@@ -93,7 +94,7 @@ pub fn run(artifact: ReleaseArtifact, args: Args) -> Result<()> {
 
     let artifact_path =
         whisker_build::android::run_gradle_release(&sync.gen_dir, artifact, &signing_env)?;
-    ui::info(format!("✓ {}", artifact_path.display()));
+    build_ui.complete(&artifact_path);
     match artifact {
         ReleaseArtifact::AppBundle => {
             ui::info("upload to Play Console (first release: create the app there manually)");

@@ -16,7 +16,7 @@ pub struct Args {
     manifest_path: Option<PathBuf>,
 }
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(args: Args, no_tui: bool) -> Result<()> {
     let manifest = manifest::resolve(args.manifest_path.as_deref())?;
     let workspace_root = crate::run::find_workspace_root(&manifest.crate_dir).ok_or_else(|| {
         anyhow!(
@@ -24,6 +24,7 @@ pub fn run(args: Args) -> Result<()> {
             manifest.crate_dir.display()
         )
     })?;
+    let build_ui = super::BuildUi::start(no_tui, "Web", &manifest.package);
     let sync = platforms::sync_for_target(
         Target::Web,
         &manifest.config,
@@ -43,6 +44,6 @@ pub fn run(args: Args) -> Result<()> {
         capture: None,
         development: false,
     })?;
-    whisker_build::ui::info(format!("✓ {}", artifacts.index_html.display()));
+    build_ui.complete(&artifacts.index_html);
     Ok(())
 }

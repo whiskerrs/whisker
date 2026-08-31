@@ -1,4 +1,5 @@
-//! Inline-viewport TUI for `whisker run`.
+//! Inline-viewport TUI for the top-level `whisker run` and
+//! `whisker build` workflows.
 //!
 //! ## Design
 //!
@@ -26,17 +27,18 @@
 //!    whisker run · iOS Simulator · rs.example.bar · building · 4.1s
 //!    ⠋ xcodebuild …
 //!
-//!    r  hot reload   R  full reload   q  quit
+//!    r  hot reload   R  full reload   o  relaunch   q  quit
 //! ──────────────────────────────────────────────────────────────────
 //! ```
 //!
 //! ## Subprocess output → scrollback
 //!
-//! cargo / gradle / xcodebuild and every `whisker_build::ui::*` call
-//! write to stderr. We `dup2` `STDERR_FILENO` to a pipe whose read
-//! end a dedicated thread drains line-by-line, strips ANSI escapes
-//! from, and sends through an mpsc channel. The render thread drains
-//! that channel each frame and calls
+//! `whisker_build::ui::*` calls arrive as typed [`ProgressEvent`]s.
+//! Unstructured diagnostics from cargo / gradle / xcodebuild and
+//! other libraries may still write to stderr, so we `dup2`
+//! `STDERR_FILENO` to a pipe whose read end a dedicated thread drains
+//! line-by-line, strips ANSI escapes from, and sends through an mpsc
+//! channel. The render thread drains that channel each frame and calls
 //! [`Terminal::insert_before`] per line, so captured output lands
 //! above the live region — which the terminal's scrollback keeps for
 //! us. ratatui's backend is wired to the *saved* original stderr fd
@@ -52,9 +54,9 @@
 //! [`AppPhase`] tracks where the dev loop is. The cli calls
 //! [`TuiHandle::set_phase`] for phases it drives directly
 //! (`Setup`, `Initializing`); dev-server events drive the rest via
-//! [`TuiHandle::apply_event`]. Each transition emits a one-line
-//! "▶ <phase>" / "✓ <phase>  Xs" history entry plus updates the live
-//! header.
+//! [`TuiHandle::apply_event`]. Build operations and section history
+//! come from [`ProgressEvent`], so rendered terminal strings are never
+//! parsed to infer workflow state.
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -70,10 +72,14 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::io::Write;
+use std::io::{IsTerminal, stderr, stdin};
 use std::os::raw::c_int;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use whisker_build::ui::{
+    MessageLevel, OperationOutcome, ProgressEvent, ReporterGuard, install_reporter,
+};
 
 /// Height of the live region in rows. The header, current step,
 /// dev-server info and key hint together comfortably fit in 6 rows;
@@ -112,9 +118,28 @@ pub enum AppPhase {
     /// hot-reload patch in flight. Phase exit is signalled by
     /// `Event::PatchSent` or a full reload fallback's `Event::BuildingFull`.
     Patching { started_at: Instant },
+    /// A finite build workflow produced its artifact successfully.
+    Completed,
+    /// A user requested a graceful dev-server shutdown.
+    Stopping,
     /// Build failed. The live region surfaces the cause and the cli
     /// is about to exit non-zero.
     Failed { phase: String, reason: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowKind {
+    Run,
+    Build,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostStatus {
+    NotStarted,
+    Launching,
+    WaitingForConnection,
+    Connected,
+    Failed(String),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -123,8 +148,7 @@ pub enum BuildKind {
     Rebuild,
 }
 
-/// Outcome of a completed step. Pushed to scrollback by
-/// [`TuiHandle::finish_step`]; never rendered in the live region.
+/// Outcome of a completed step in terminal scrollback.
 #[derive(Debug, Clone, Copy)]
 pub enum StepStatus {
     Done,
@@ -139,27 +163,26 @@ pub enum StepStatus {
 /// thread that owns the ratatui terminal.
 #[derive(Debug, Clone)]
 pub struct LiveState {
+    pub workflow: WorkflowKind,
     pub target: String,
     pub bundle: String,
     pub phase: AppPhase,
     /// Label of the in-progress step (e.g. "xcodebuild …"). Cleared
     /// when the step finishes.
     pub current_step: Option<String>,
-    pub ws_addr: Option<String>,
+    pub target_destination: Option<String>,
+    pub host_status: HostStatus,
     pub watching: Vec<String>,
     pub client_count: usize,
     pub last_build: Option<String>,
     pub last_patch: Option<String>,
+    pub artifact: Option<String>,
     pub should_quit: bool,
-    /// `true` when the quit was triggered by a user keypress
-    /// (`q` / Esc / Ctrl-C), `false` when the cli called
-    /// `TuiHandle::request_quit` after its own work finished or
-    /// failed. The render thread uses this to decide whether to
-    /// force-exit the process after shutdown — the dev-server
-    /// `rt.block_on(server.run())` call in the main thread otherwise
-    /// blocks forever, so without a hard exit `q` would tear down the
-    /// TUI but leave the process running.
-    pub user_initiated_quit: bool,
+    /// `true` when the render loop must terminate the process because
+    /// no workflow command channel exists to perform an orderly stop.
+    /// Normal `run` shutdown leaves this `false`: the dev server owns
+    /// cleanup and the cli asks the TUI to finish after `run()` returns.
+    pub force_exit: bool,
     /// Persistent "press R to Full Reload" banner. Set by
     /// `Event::FullReloadRequired` (the dev loop hit a change it
     /// can't hot-reload), cleared when a Full Reload actually starts
@@ -172,19 +195,26 @@ pub struct LiveState {
 }
 
 impl LiveState {
-    pub fn new(target: impl Into<String>, bundle: impl Into<String>) -> Self {
+    pub fn new(
+        workflow: WorkflowKind,
+        target: impl Into<String>,
+        bundle: impl Into<String>,
+    ) -> Self {
         Self {
+            workflow,
             target: target.into(),
             bundle: bundle.into(),
             phase: AppPhase::Setup,
             current_step: None,
-            ws_addr: None,
+            target_destination: None,
+            host_status: HostStatus::NotStarted,
             watching: Vec::new(),
             client_count: 0,
             last_build: None,
             last_patch: None,
+            artifact: None,
             should_quit: false,
-            user_initiated_quit: false,
+            force_exit: false,
             full_reload_needed: None,
             command_tx: None,
         }
@@ -193,10 +223,9 @@ impl LiveState {
 
 /// One message the render thread receives from upstream producers
 /// (cli code, dev-server events, and the stderr capture thread).
-/// Most variants paint a row into the terminal's scrollback via
-/// [`Terminal::insert_before`]; the `SetCurrentStep` variant is the
-/// exception — it only mutates [`LiveState::current_step`] so the
-/// inline live region can show a spinner during the next frame.
+/// Variants paint a row into the terminal's scrollback via
+/// [`Terminal::insert_before`]. Live-only workflow state is updated
+/// directly through [`TuiHandle`].
 #[derive(Debug, Clone)]
 pub enum HistoryItem {
     /// Phase-transition heading: "▶ Initial build".
@@ -217,18 +246,16 @@ pub enum HistoryItem {
     /// escapes already stripped).
     CapturedStderr(String),
     /// Device log forwarded from the dev-server.
-    DeviceLog { stream: String, line: String },
+    DeviceLog {
+        stream: String,
+        line: String,
+    },
+    Message {
+        level: MessageLevel,
+        text: String,
+    },
     /// One-shot failure description for the scrollback.
     Failure(String),
-    /// Update the live region's `current_step` field. `Some(label)`
-    /// makes the spinner visible with the given label; `None`
-    /// hides it. Synthesised by the stderr capture thread when it
-    /// sees `whisker_build::ui::TUI_STEP_START_MARKER` /
-    /// `TUI_STEP_END_MARKER` — those markers let the dev-server's
-    /// `ui::step` calls drive the live spinner without committing
-    /// a "⏵ started" row that would later double-up with the
-    /// matching "✓ done" row in scrollback.
-    SetCurrentStep(Option<String>),
 }
 
 // ============================================================================
@@ -262,9 +289,9 @@ pub fn apply_event(
                 started_at: Instant::now(),
                 kind,
             };
-            // No history row: `whisker_build::ui::section` already puts
-            // "──── Initial build ────" in scrollback via the stderr
-            // capture, and a "▶ Initial build" line would duplicate it.
+            // No history row: `whisker_build::ui::section` already emits
+            // the structured section entry, and a second phase line would
+            // duplicate it.
             state.current_step = None;
         }
         Event::BuildSucceeded => {
@@ -302,11 +329,30 @@ pub fn apply_event(
             };
             state.current_step = None;
         }
+        Event::HostLaunching => {
+            state.host_status = HostStatus::Launching;
+        }
+        Event::HostLaunched => {
+            state.host_status = if state.client_count > 0 {
+                HostStatus::Connected
+            } else {
+                HostStatus::WaitingForConnection
+            };
+            state.phase = AppPhase::Idle;
+        }
+        Event::HostLaunchFailed(reason) => {
+            state.host_status = HostStatus::Failed(reason.clone());
+            history.push(HistoryItem::Failure(reason.clone()));
+        }
         Event::ClientConnected => {
             state.client_count = state.client_count.saturating_add(1);
+            state.host_status = HostStatus::Connected;
         }
         Event::ClientDisconnected => {
             state.client_count = state.client_count.saturating_sub(1);
+            if state.client_count == 0 {
+                state.host_status = HostStatus::WaitingForConnection;
+            }
         }
         Event::PatchBuilding => {
             // Exits are `Event::PatchSent` (→ Idle) or, when the loop
@@ -325,8 +371,8 @@ pub fn apply_event(
             state.current_step = None;
         }
         Event::FullReloadRequired { reason } => {
-            // Banner only — the dev-server's own `ui::warn` line is
-            // already in scrollback via captured stderr.
+            // Banner only — the dev-server's own `ui::warn` event is
+            // already in scrollback.
             state.full_reload_needed = Some(reason.clone());
             // An earlier `PatchBuilding` may have set Patching; reset
             // or the spinner runs forever.
@@ -369,37 +415,14 @@ impl TuiHandle {
 
     /// Enter `phase`. Updates the live region's phase label/spinner
     /// color and clears any in-progress step display. Does NOT push
-    /// a scrollback entry — `whisker_build::ui::section` already
-    /// prints labeled phase boundaries that flow into scrollback via
-    /// the stderr capture, so a duplicate "▶ <label>" line would just
-    /// be noise. Only a failed build emits a `HistoryItem::PhaseDone`
-    /// summary, from [`apply_event`].
+    /// a scrollback entry — `whisker_build::ui::section` already emits
+    /// labeled phase boundaries through the progress reporter, so a
+    /// duplicate "▶ <label>" line would just be noise. Only a failed
+    /// build emits a `HistoryItem::PhaseDone` summary, from [`apply_event`].
     pub fn set_phase(&self, phase: AppPhase) {
         self.with(|s| {
             s.phase = phase;
             s.current_step = None;
-        });
-    }
-
-    /// Begin a step. Updates `current_step` in the live region; on
-    /// `finish_step` the row gets committed to scrollback.
-    pub fn start_step(&self, label: impl Into<String>) {
-        let label = label.into();
-        self.with(|s| {
-            s.current_step = Some(label);
-        });
-    }
-
-    /// Finish the currently-displayed step. The row is pushed to
-    /// scrollback as "✓ <label>  <elapsed>"; the live region clears
-    /// `current_step`.
-    pub fn finish_step(&self, label: impl Into<String>, status: StepStatus, elapsed: Duration) {
-        let label = label.into();
-        self.with(|s| s.current_step = None);
-        self.send(HistoryItem::Step {
-            label,
-            status,
-            elapsed,
         });
     }
 
@@ -411,10 +434,79 @@ impl TuiHandle {
         }
     }
 
-    pub fn set_dev_server(&self, ws_addr: impl Into<String>, watching: Vec<String>) {
-        let ws_addr = ws_addr.into();
+    /// Apply one structured build/run progress event. This is the only place
+    /// the terminal model learns about build operations; rendered stderr is
+    /// retained for diagnostics but is never parsed to infer workflow state.
+    pub fn apply_progress_event(&self, event: ProgressEvent) {
+        match event {
+            ProgressEvent::Section(label) => self.send(HistoryItem::PhaseEnter(label)),
+            ProgressEvent::OperationStarted { kind, detail } => {
+                let label = format!("{} · {detail}", kind.label());
+                self.with(|state| {
+                    if state.workflow == WorkflowKind::Build
+                        && !matches!(state.phase, AppPhase::Building { .. })
+                    {
+                        state.phase = AppPhase::Building {
+                            started_at: Instant::now(),
+                            kind: BuildKind::Initial,
+                        };
+                    }
+                    state.current_step = Some(label);
+                });
+            }
+            ProgressEvent::OperationProgress { kind, message } => {
+                self.with(|state| {
+                    state.current_step = Some(format!("{} · {message}", kind.label()));
+                });
+            }
+            ProgressEvent::OperationFinished {
+                kind,
+                detail,
+                outcome,
+                summary,
+                elapsed,
+            } => {
+                self.with(|state| {
+                    state.current_step = None;
+                    if state.workflow == WorkflowKind::Build && outcome == OperationOutcome::Failed
+                    {
+                        state.phase = AppPhase::Failed {
+                            phase: kind.label().to_string(),
+                            reason: if summary.is_empty() {
+                                detail.clone()
+                            } else {
+                                summary.clone()
+                            },
+                        };
+                    }
+                });
+                self.send(HistoryItem::Step {
+                    label: format!("{} · {detail}", kind.label()),
+                    status: match outcome {
+                        OperationOutcome::Done => StepStatus::Done,
+                        OperationOutcome::Failed => StepStatus::Failed,
+                    },
+                    elapsed,
+                });
+            }
+            ProgressEvent::Message { level, text } => {
+                self.send(HistoryItem::Message { level, text });
+            }
+            // Run status is represented by target-aware dev-server events
+            // in the live region. The generic plain-output status string
+            // would duplicate that information in scrollback.
+            ProgressEvent::Status(_) => {}
+        }
+    }
+
+    pub fn set_artifact(&self, artifact: impl Into<String>) {
+        self.with(|state| state.artifact = Some(artifact.into()));
+    }
+
+    pub fn set_dev_server(&self, destination: impl Into<String>, watching: Vec<String>) {
+        let destination = destination.into();
         self.with(|s| {
-            s.ws_addr = Some(ws_addr);
+            s.target_destination = Some(destination);
             s.watching = watching;
         });
     }
@@ -474,6 +566,66 @@ pub struct Tui {
     rx: Receiver<HistoryItem>,
     saved_stderr_fd: c_int,
     spinner_idx: usize,
+    _reporter: ReporterGuard,
+}
+
+/// Owns the terminal render thread for one top-level CLI workflow.
+/// Nested build helpers never construct this type.
+pub struct TuiSession {
+    handle: TuiHandle,
+    render_thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl TuiSession {
+    pub fn start(
+        workflow: WorkflowKind,
+        target: impl Into<String>,
+        bundle: impl Into<String>,
+    ) -> Result<Self> {
+        let (tui, handle) = Tui::start(workflow, target.into(), bundle.into())?;
+        let render_thread = std::thread::Builder::new()
+            .name("whisker-tui-render".into())
+            .spawn(move || run_render_loop(tui))
+            .context("spawn TUI render thread")?;
+        Ok(Self {
+            handle,
+            render_thread: Some(render_thread),
+        })
+    }
+
+    pub fn handle(&self) -> TuiHandle {
+        self.handle.clone()
+    }
+
+    pub fn finish(mut self) {
+        self.handle.request_quit();
+        if let Some(thread) = self.render_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for TuiSession {
+    fn drop(&mut self) {
+        self.handle.request_quit();
+        if let Some(thread) = self.render_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+pub fn should_start(disabled: bool) -> bool {
+    !disabled && !whisker_build::ui::is_verbose() && stderr().is_terminal() && stdin().is_terminal()
+}
+
+fn run_render_loop(mut tui: Tui) {
+    let _ = tui.render_until_quit();
+    let force_exit = tui.requires_force_exit();
+    let _ = tui.shutdown();
+    if force_exit {
+        whisker_build::child_guard::kill_all();
+        std::process::exit(130);
+    }
 }
 
 impl Tui {
@@ -482,7 +634,11 @@ impl Tui {
     /// passes `Tui` to a dedicated OS thread that runs the render
     /// loop (ratatui's `Terminal` isn't `Send` once it has a backend
     /// holding raw fds — keep it pinned to one thread).
-    pub fn start(target: String, bundle: String) -> Result<(Self, TuiHandle)> {
+    pub fn start(
+        workflow: WorkflowKind,
+        target: String,
+        bundle: String,
+    ) -> Result<(Self, TuiHandle)> {
         let (saved_stderr_fd, capture_read_fd) =
             install_stderr_capture().context("install stderr capture")?;
         install_terminal_cleanup_once(saved_stderr_fd);
@@ -500,7 +656,7 @@ impl Tui {
         )
         .context("create ratatui terminal (inline viewport)")?;
 
-        let live = Arc::new(Mutex::new(LiveState::new(target, bundle)));
+        let live = Arc::new(Mutex::new(LiveState::new(workflow, target, bundle)));
         let (tx, rx) = channel::<HistoryItem>();
 
         {
@@ -518,6 +674,9 @@ impl Tui {
             live: Arc::clone(&live),
             tx,
         };
+        let progress_handle = handle.clone();
+        let reporter = install_reporter(move |event| progress_handle.apply_progress_event(event))
+            .context("install structured progress reporter")?;
 
         Ok((
             Self {
@@ -526,6 +685,7 @@ impl Tui {
                 rx,
                 saved_stderr_fd,
                 spinner_idx: 0,
+                _reporter: reporter,
             },
             handle,
         ))
@@ -570,6 +730,9 @@ impl Tui {
                             KeyCode::Char('R') => {
                                 self.send_command(whisker_dev_server::DevCommand::FullReload)
                             }
+                            KeyCode::Char('o') => {
+                                self.send_command(whisker_dev_server::DevCommand::Relaunch)
+                            }
                             _ => {}
                         }
                     }
@@ -588,13 +751,6 @@ impl Tui {
     fn drain_history_into_scrollback(&mut self) -> Result<()> {
         loop {
             match self.rx.try_recv() {
-                Ok(HistoryItem::SetCurrentStep(label)) => {
-                    // Live-region-only: no `insert_before`, so the
-                    // spinner label never enters scrollback.
-                    if let Ok(mut s) = self.live.lock() {
-                        s.current_step = label;
-                    }
-                }
                 Ok(item) => {
                     let lines = render_history_item(&item);
                     let height = lines.len().min(u16::MAX as usize) as u16;
@@ -626,28 +782,20 @@ impl Tui {
     }
 
     /// User-initiated quit (q / Esc / Ctrl-C from the TUI).
-    /// Distinguished from a cli-initiated quit (`TuiHandle::request_quit`)
-    /// so `run_until_quit`'s caller can decide to force-exit the
-    /// process — the dev-server's `rt.block_on` would otherwise keep
-    /// running after the TUI tears down.
+    /// Run workflows ask the dev server to shut down; finite build
+    /// workflows fall back to process cancellation after terminal cleanup.
     fn user_quit(&self) {
         if let Ok(mut s) = self.live.lock() {
-            s.should_quit = true;
-            s.user_initiated_quit = true;
+            request_user_quit(&mut s);
         }
     }
 
-    /// Whether the most recent quit signal came from a user keypress
-    /// rather than a `TuiHandle::request_quit` call. Callers use this
-    /// after `render_until_quit` returns to decide whether to
-    /// `process::exit` (user quit while the dev-server was running) or
-    /// to fall through and let the cli's own return path run (cli
-    /// finished its work).
-    pub fn was_user_quit(&self) -> bool {
-        self.live
-            .lock()
-            .map(|s| s.user_initiated_quit)
-            .unwrap_or(false)
+    /// Whether orderly workflow shutdown was unavailable and the
+    /// render thread must terminate the process after restoring the
+    /// terminal. This is primarily the finite build workflow, where
+    /// the main thread can be blocked in an external build command.
+    pub fn requires_force_exit(&self) -> bool {
+        self.live.lock().map(|s| s.force_exit).unwrap_or(false)
     }
 
     pub fn shutdown(mut self) -> Result<()> {
@@ -682,6 +830,19 @@ impl Tui {
         }
         Ok(())
     }
+}
+
+fn request_user_quit(state: &mut LiveState) {
+    if state.workflow == WorkflowKind::Run {
+        if let Some(tx) = &state.command_tx {
+            if tx.send(whisker_dev_server::DevCommand::Shutdown).is_ok() {
+                state.phase = AppPhase::Stopping;
+                return;
+            }
+        }
+    }
+    state.force_exit = true;
+    state.should_quit = true;
 }
 
 // ============================================================================
@@ -745,24 +906,6 @@ fn capture_reader_loop(read_fd: c_int, tx: Sender<HistoryItem>) {
                 Ok(s) => s,
                 Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
             };
-            // Marker detection must precede `strip_ansi`, which drops
-            // the framing `\x1e` (RS) along with the other C0 bytes.
-            // The literals mirror `whisker_build::ui::TUI_STEP_*_MARKER`
-            // rather than importing them, keeping this an internal
-            // protocol instead of a crate-level contract.
-            if let Some(rest) = text.strip_prefix("\x1eWHISKER-TUI-STEP-START\x1e") {
-                let label = rest.replace('\x1e', " ").trim().to_string();
-                if !label.is_empty() && tx.send(HistoryItem::SetCurrentStep(Some(label))).is_err() {
-                    return;
-                }
-                continue;
-            }
-            if text == "\x1eWHISKER-TUI-STEP-END" {
-                if tx.send(HistoryItem::SetCurrentStep(None)).is_err() {
-                    return;
-                }
-                continue;
-            }
             let text = strip_ansi(&text);
             if !text.is_empty() && tx.send(HistoryItem::CapturedStderr(text)).is_err() {
                 return;

@@ -258,6 +258,9 @@ pub enum Event {
     BuildingFull,
     BuildSucceeded,
     BuildFailed(String),
+    HostLaunching,
+    HostLaunched,
+    HostLaunchFailed(String),
     ClientConnected,
     ClientDisconnected,
     /// A hot-reload patch build kicked off. Fires *before* the
@@ -298,7 +301,7 @@ pub enum Event {
 // ----- Server ---------------------------------------------------------------
 
 /// Explicit user command delivered into the dev loop (keyboard
-/// shortcuts in `whisker run`'s TUI: `r` / `R`). Reloads are
+/// shortcuts in `whisker run`'s TUI: `r`, `R`, `o`, and `q`). Reloads are
 /// user-triggered by design — the loop never full-reloads on its own,
 /// because an unexpected app restart mid-interaction loses more time
 /// than it saves.
@@ -311,6 +314,10 @@ pub enum DevCommand {
     /// Full reload: cargo rebuild + reinstall + relaunch. The only
     /// way dependency-graph changes (Cargo.toml) reach the device.
     FullReload,
+    /// Relaunch the current artifact without compiling it again.
+    Relaunch,
+    /// Gracefully stop the watcher and server loop.
+    Shutdown,
 }
 
 /// The dev loop. Construct with [`DevServer::new`], then drive with
@@ -365,15 +372,11 @@ impl DevServer {
     /// restarts the app automatically: changes a patch can't express
     /// prompt for an explicit Full Reload (`DevCommand::FullReload`).
     pub async fn run(mut self) -> Result<()> {
-        // The TUI's live-region header already carries package, target
-        // and phase, so the intro rows are for non-TUI runs only.
-        if !whisker_build::ui::is_tui() {
-            whisker_build::ui::section("whisker run");
-            whisker_build::ui::info(format!(
-                "{} · {:?}",
-                self.config.package, self.config.target,
-            ));
-        }
+        whisker_build::ui::section("whisker run");
+        whisker_build::ui::info(format!(
+            "{} · {:?}",
+            self.config.package, self.config.target,
+        ));
         whisker_build::ui::debug(format!("mode={:?}", self.config.hot_patch_mode));
 
         // Builder + Installer are wired before the socket so no
@@ -440,11 +443,7 @@ impl DevServer {
         // there is nothing to patch and nothing a later save could
         // recover.
         //
-        // The section header is non-TUI only — the live region's phase
-        // indicator already announces the build.
-        if !whisker_build::ui::is_tui() {
-            whisker_build::ui::section("Initial build");
-        }
+        whisker_build::ui::section("Initial build");
         emit(&self.on_event, Event::BuildingFull);
         if let Err(e) = builder.build().await {
             let msg = format!("{e:#}");
@@ -458,9 +457,9 @@ impl DevServer {
         emit(&self.on_event, Event::BuildSucceeded);
 
         // Bind the WS so `install_and_launch` (next) has somewhere for
-        // the device's `whisker-dev-runtime` to dial. The status calls
-        // are no-ops under the TUI, whose live region shows the ws addr
-        // and client count; they carry `--no-tui` and CI.
+        // the device's `whisker-dev-runtime` to dial. Status calls feed
+        // deterministic plain output; the TUI adapter uses target-aware
+        // lifecycle events for its live region and ignores these strings.
         whisker_build::ui::ensure_status("dev-server");
         let (sender, bound, _server_handle) = server::serve(
             self.config.bind_addr,
@@ -531,11 +530,14 @@ impl DevServer {
         // dev-loop against if the app never reached the device. The
         // in-loop rebuild path (`run_build_cycle`) shares this code but
         // does fall through, so the user can retry with another save.
+        emit(&self.on_event, Event::HostLaunching);
         if let Err(e) = installer.install_and_launch().await {
+            emit(&self.on_event, Event::HostLaunchFailed(format!("{e:#}")));
             // Bails rather than `ui::error`s — see the initial-build
             // arm above.
             anyhow::bail!("initial install failed: {e:#}");
         }
+        emit(&self.on_event, Event::HostLaunched);
         whisker_build::ui::info(format!(
             "initial done · {} client(s) connected",
             sender.client_count()
@@ -598,11 +600,7 @@ impl DevServer {
             };
             match input {
                 Input::Change(mut change) => {
-                    // Non-TUI only — the live region's phase flip
-                    // already announces a picked-up save.
-                    if !whisker_build::ui::is_tui() {
-                        whisker_build::ui::section("Change");
-                    }
+                    whisker_build::ui::section("Change");
                     whisker_build::ui::debug(format!(
                         "{:?} — {} path(s)",
                         change.kind,
@@ -659,9 +657,7 @@ impl DevServer {
                     }
                 }
                 Input::Command(DevCommand::HotReload) => {
-                    if !whisker_build::ui::is_tui() {
-                        whisker_build::ui::section("Hot Reload");
-                    }
+                    whisker_build::ui::section("Hot Reload");
                     ensure_patcher(&self.config, &hot_reload_init, &mut patcher);
                     match patcher.as_ref() {
                         Some(p) => hot_reload_cycle(p, &sender, &self.on_event, None).await,
@@ -672,12 +668,22 @@ impl DevServer {
                     }
                 }
                 Input::Command(DevCommand::FullReload) => {
-                    if !whisker_build::ui::is_tui() {
-                        whisker_build::ui::section("Full Reload");
-                    }
+                    whisker_build::ui::section("Full Reload");
                     run_build_cycle(&builder, &installer, &self.on_event, &sender, "full reload")
                         .await;
                 }
+                Input::Command(DevCommand::Relaunch) => {
+                    emit(&self.on_event, Event::HostLaunching);
+                    match installer.relaunch().await {
+                        Ok(()) => emit(&self.on_event, Event::HostLaunched),
+                        Err(error) => {
+                            let message = format!("{error:#}");
+                            whisker_build::ui::error(format!("relaunch failed: {message}"));
+                            emit(&self.on_event, Event::HostLaunchFailed(message));
+                        }
+                    }
+                }
+                Input::Command(DevCommand::Shutdown) => break,
             }
         }
 

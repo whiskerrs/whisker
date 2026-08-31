@@ -37,7 +37,7 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
         );
     }
     let step = ui::step(
-        "cargo",
+        ui::OperationKind::Compile,
         format!("{} ({:?})", inputs.binary_name, inputs.profile),
     );
     let mut command = std::process::Command::new("cargo");

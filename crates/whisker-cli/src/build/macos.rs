@@ -23,12 +23,12 @@ pub struct Args {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn run(_args: Args) -> Result<()> {
+pub fn run(_args: Args, _no_tui: bool) -> Result<()> {
     anyhow::bail!("`whisker build macos` must run on macOS")
 }
 
 #[cfg(target_os = "macos")]
-pub fn run(args: Args) -> Result<()> {
+pub fn run(args: Args, no_tui: bool) -> Result<()> {
     let manifest = manifest::resolve(args.manifest_path.as_deref())?;
     let workspace_root = crate::run::find_workspace_root(&manifest.crate_dir).ok_or_else(|| {
         anyhow!(
@@ -41,6 +41,7 @@ pub fn run(args: Args) -> Result<()> {
         .name
         .as_deref()
         .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required for macOS"))?;
+    let build_ui = super::BuildUi::start(no_tui, "Desktop (macOS)", app_name);
     let sync = platforms::sync_for_target(
         Target::Macos,
         &manifest.config,
@@ -62,7 +63,7 @@ pub fn run(args: Args) -> Result<()> {
         features: &[],
         capture: None,
     })?;
-    whisker_build::ui::info(format!("✓ {}", bundle.display()));
+    build_ui.complete(&bundle);
     whisker_build::ui::info("bundle is unsigned; distribution signing/notarization is a follow-up");
     Ok(())
 }

@@ -44,12 +44,42 @@ enum Cmd {
     Web(web::Args),
 }
 
-pub fn run(args: BuildArgs) -> Result<()> {
+pub fn run(args: BuildArgs, no_tui: bool) -> Result<()> {
     match args.cmd {
-        Cmd::Appbundle(a) => android::run(ReleaseArtifact::AppBundle, a),
-        Cmd::Apk(a) => android::run(ReleaseArtifact::Apk, a),
-        Cmd::Ipa(a) => ios::run(a),
-        Cmd::Macos(a) => macos::run(a),
-        Cmd::Web(a) => web::run(a),
+        Cmd::Appbundle(a) => android::run(ReleaseArtifact::AppBundle, a, no_tui),
+        Cmd::Apk(a) => android::run(ReleaseArtifact::Apk, a, no_tui),
+        Cmd::Ipa(a) => ios::run(a, no_tui),
+        Cmd::Macos(a) => macos::run(a, no_tui),
+        Cmd::Web(a) => web::run(a, no_tui),
+    }
+}
+
+pub(super) struct BuildUi {
+    session: Option<crate::tui::TuiSession>,
+}
+
+impl BuildUi {
+    pub fn start(no_tui: bool, target: &str, bundle: &str) -> Self {
+        let session = if crate::tui::should_start(no_tui) {
+            match crate::tui::TuiSession::start(crate::tui::WorkflowKind::Build, target, bundle) {
+                Ok(session) => Some(session),
+                Err(error) => {
+                    eprintln!("couldn't start TUI ({error:#}); falling back to plain output");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        Self { session }
+    }
+
+    pub fn complete(&self, artifact: &std::path::Path) {
+        if let Some(session) = self.session.as_ref() {
+            let handle = session.handle();
+            handle.set_artifact(artifact.display().to_string());
+            handle.set_phase(crate::tui::AppPhase::Completed);
+        }
+        whisker_build::ui::info(format!("artifact · {}", artifact.display()));
     }
 }

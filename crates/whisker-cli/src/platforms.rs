@@ -322,7 +322,10 @@ fn build_engine_with_discovered_plugins(
 /// redraw.
 fn build_discovered_plugins(workspace_root: &Path, discovered: &[DiscoveredPlugin]) -> Result<()> {
     for plugin in discovered {
-        let step = whisker_build::ui::step("compile", format!("plugin ({})", plugin.name));
+        let step = whisker_build::ui::step(
+            whisker_build::ui::OperationKind::Compile,
+            format!("plugin ({})", plugin.name),
+        );
         let mut cmd = Command::new("cargo");
         cmd.arg("build")
             .arg("--bin")

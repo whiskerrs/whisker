@@ -35,7 +35,10 @@ pub(super) async fn hot_reload_cycle(
 ) {
     // Opened before the build so the spinner spans the whole
     // "edit → app updated" duration.
-    let step = whisker_build::ui::step("hot reload", "subsecond patch");
+    let step = whisker_build::ui::step(
+        whisker_build::ui::OperationKind::HotReload,
+        "subsecond patch",
+    );
     // Emitted before the wall-clock-heavy patcher work; `PatchSent`
     // flips the cli back to Idle.
     emit(on_event, Event::PatchBuilding);
@@ -472,8 +475,12 @@ pub(super) async fn run_build_cycle(
     match builder.build().await {
         Ok(()) => {
             emit(on_event, Event::BuildSucceeded);
+            emit(on_event, Event::HostLaunching);
             if let Err(e) = installer.install_and_launch().await {
                 whisker_build::ui::error(format!("{label} install failed: {e}"));
+                emit(on_event, Event::HostLaunchFailed(format!("{e:#}")));
+            } else {
+                emit(on_event, Event::HostLaunched);
             }
             sender.reload_browser();
             whisker_build::ui::info(format!(
