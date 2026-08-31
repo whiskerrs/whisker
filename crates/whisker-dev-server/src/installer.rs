@@ -507,6 +507,7 @@ async fn ios_install_and_launch(
 
     let xc_step = whisker_build::ui::step("xcodebuild", p.scheme.clone());
     let mut xc_cmd = Command::new("xcodebuild");
+    use_current_whisker_cli(&mut xc_cmd)?;
     xc_cmd
         .arg("-project")
         .arg(&xcode_project)
@@ -636,6 +637,17 @@ async fn ios_install_and_launch(
     Ok(())
 }
 
+/// Make an Xcode build launched by this CLI call the exact same executable
+/// from its Rust build phase. This matters for `cargo run`: a bare `whisker`
+/// lookup may otherwise select an older cargo-installed binary from `PATH`.
+/// Xcode builds started independently keep the generated script's `whisker`
+/// fallback.
+fn use_current_whisker_cli(command: &mut Command) -> Result<()> {
+    let executable = std::env::current_exe().context("resolve current Whisker CLI executable")?;
+    command.env("WHISKER_CLI", executable);
+    Ok(())
+}
+
 /// Best-effort pick of an iPhone simulator that's installed on this
 /// machine. `pick_available_iphone()` returns `None` if simctl isn't
 /// available or the output doesn't parse; the caller substitutes a
@@ -731,5 +743,21 @@ mod tests {
             .block_on(async { android_install_and_launch(&p, 9876, None).await })
             .unwrap_err();
         assert!(err.to_string().contains("APK missing"), "got: {err:#}");
+    }
+
+    #[test]
+    fn xcodebuild_uses_the_current_whisker_cli() {
+        let mut command = Command::new("xcodebuild");
+        use_current_whisker_cli(&mut command).unwrap();
+
+        let configured = command
+            .as_std()
+            .get_envs()
+            .find_map(|(key, value)| (key == "WHISKER_CLI").then_some(value))
+            .flatten();
+        assert_eq!(
+            configured,
+            Some(std::env::current_exe().unwrap().as_os_str())
+        );
     }
 }
