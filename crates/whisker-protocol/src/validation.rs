@@ -140,7 +140,6 @@ pub enum ValidationError {
     /// A visual effect contained invalid color or numeric data.
     InvalidVisualEffects,
     /// Replaced image content contained invalid position data.
-    InvalidImageContent,
     /// A geometry or transform component was NaN or infinite.
     NonFiniteNumber,
     /// Plain-text presentation contained invalid shaping inputs.
@@ -359,12 +358,6 @@ impl SceneProjection {
                     .validate()
                     .map_err(|error| ValidationError::InvalidText { error })?;
             }
-            Operation::SetImage { node, content } => {
-                self.require_node(*node)?;
-                if !content.validate() {
-                    return Err(ValidationError::InvalidImageContent);
-                }
-            }
             Operation::InvokeCommand { node, .. } => {
                 self.require_node(*node)?;
             }
@@ -528,9 +521,9 @@ mod tests {
     use crate::{
         CommandId, ElementTypeId, FrameHeader, HitTestBehavior, MeasureFontFamily,
         MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
-        MeasureTextWrap, ObjectFit, Operation, PaintPosition, PointerId, PropertyId,
-        ProtocolVersion, ResourceId, TextContent, TextContentError, TextMeasurePayload,
-        TextMeasureStyle, Transform, Visibility, WhiskerValue,
+        MeasureTextWrap, Operation, PaintPosition, PointerId, PropertyId, ProtocolVersion,
+        TextContent, TextContentError, TextMeasurePayload, TextMeasureStyle, Transform, Visibility,
+        WhiskerValue,
     };
 
     fn surface() -> SurfaceId {
@@ -1020,14 +1013,6 @@ mod tests {
                         .label("Example")
                         .role(crate::AccessibilityRole::Button),
                 },
-                Operation::SetImage {
-                    node: root,
-                    content: crate::ImageContent {
-                        resource: ResourceId::new(1).unwrap(),
-                        fit: ObjectFit::Contain,
-                        position: PaintPosition::default(),
-                    },
-                },
                 Operation::SetProperty {
                     node: root,
                     property,
@@ -1171,14 +1156,6 @@ mod tests {
                 node: missing,
                 accessibility: crate::Accessibility::default(),
             },
-            Operation::SetImage {
-                node: missing,
-                content: crate::ImageContent {
-                    resource: ResourceId::new(1).unwrap(),
-                    fit: ObjectFit::Contain,
-                    position: PaintPosition::default(),
-                },
-            },
             Operation::SetProperty {
                 node: missing,
                 property,
@@ -1257,27 +1234,6 @@ mod tests {
         )
         .expect_err("invalid backdrop blur");
         assert_eq!(error, ValidationError::InvalidVisualEffects);
-        assert_eq!(scene.revision(), revision);
-
-        let error = apply_next(
-            &mut scene,
-            vec![Operation::SetImage {
-                node: root,
-                content: crate::ImageContent {
-                    resource: ResourceId::new(1).unwrap(),
-                    fit: ObjectFit::Contain,
-                    position: PaintPosition {
-                        x: crate::PaintCoordinate {
-                            length: f32::INFINITY,
-                            fraction: 0.0,
-                        },
-                        y: crate::PaintCoordinate::default(),
-                    },
-                },
-            }],
-        )
-        .expect_err("invalid image position");
-        assert_eq!(error, ValidationError::InvalidImageContent);
         assert_eq!(scene.revision(), revision);
     }
 

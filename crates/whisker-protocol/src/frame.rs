@@ -654,13 +654,6 @@ pub enum Operation {
         /// Complete semantic state; the default value clears semantics.
         accessibility: crate::Accessibility,
     },
-    /// Sets replaced image content for an image-capable element.
-    SetImage {
-        /// Target node.
-        node: NodeId,
-        /// Resolved image resource and fitting behavior.
-        content: crate::ImageContent,
-    },
     /// Sets a typed common or element-specific property.
     SetProperty {
         /// Target node.
@@ -741,7 +734,6 @@ impl Operation {
             | Self::SetText { node, .. }
             | Self::SetTextStyle { node, .. }
             | Self::SetAccessibility { node, .. }
-            | Self::SetImage { node, .. }
             | Self::SetProperty { node, .. }
             | Self::ClearProperty { node, .. }
             | Self::SetEventMask { node, .. }
@@ -1087,14 +1079,6 @@ mod tests {
             Operation::SetAccessibility {
                 node: target,
                 accessibility: crate::Accessibility::default(),
-            },
-            Operation::SetImage {
-                node: target,
-                content: crate::ImageContent {
-                    resource: crate::ResourceId::new(1).unwrap(),
-                    fit: crate::ObjectFit::Contain,
-                    position: crate::PaintPosition::default(),
-                },
             },
             Operation::SetProperty {
                 node: target,

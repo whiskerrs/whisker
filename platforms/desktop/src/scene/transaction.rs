@@ -16,6 +16,7 @@ impl DesktopScene {
             elements,
             nodes: HashMap::new(),
             smooth_scrolls: HashMap::new(),
+            pointer_captures: HashMap::new(),
             presentation_pool: HashMap::new(),
             pending_events: Arc::new(Mutex::new(Vec::new())),
             event_wake,
@@ -771,9 +772,6 @@ impl DesktopScene {
                         return Err(DesktopPresentError::Unsupported("visual-effects"));
                     }
                 }
-                Operation::SetImage { .. } => {
-                    return Err(DesktopPresentError::Unsupported("image-content"));
-                }
                 Operation::SetCursor { cursor, .. } if !cursor.resources.is_empty() => {
                     return Err(DesktopPresentError::Unsupported("resource-backed cursor"));
                 }
@@ -805,6 +803,7 @@ impl DesktopScene {
                 self.recycle_presentation(node);
             }
             self.pending_events.lock().unwrap().clear();
+            self.pointer_captures.clear();
         }
         for operation in &packet.operations {
             match operation {
@@ -1030,9 +1029,13 @@ impl DesktopScene {
                         .presentation
                         .cursor = cursor.clone();
                 }
-                Operation::SetPointerCapture { .. } | Operation::ReleasePointerCapture { .. } => {}
-                Operation::SetImage { .. } => {
-                    unreachable!("unsupported operations are rejected before commit")
+                Operation::SetPointerCapture { node, pointer } => {
+                    self.pointer_captures.insert(*pointer, *node);
+                }
+                Operation::ReleasePointerCapture { node, pointer } => {
+                    if self.pointer_captures.get(pointer) == Some(node) {
+                        self.pointer_captures.remove(pointer);
+                    }
                 }
             }
         }
@@ -1044,6 +1047,7 @@ impl DesktopScene {
         let Some(removed) = self.nodes.remove(&node) else {
             return;
         };
+        self.pointer_captures.retain(|_, target| *target != node);
         if let Some(parent) = removed.presentation.parent
             && let Some(parent) = self.nodes.get_mut(&parent)
         {

@@ -20,7 +20,6 @@ internal object MobileAbi {
     const val CAPABILITY_VISUAL_EFFECTS: Long = 0x0004
     const val CAPABILITY_TEXT_EFFECTS: Long = 0x0008
     const val CAPABILITY_TEXT_TYPOGRAPHY: Long = 0x0010
-    const val CAPABILITY_IMAGE_CONTENT: Long = 0x0020
     const val CAPABILITY_CURSOR: Long = 0x0040
     const val CAPABILITY_RESOURCE_LIFECYCLE: Long = 0x0080
     const val CAPABILITY_LINEAR_GRADIENTS: Long = 0x0100
