@@ -698,7 +698,16 @@ fn gradle_command(gen_android: &Path, task: &str) -> Result<Command> {
         .arg("--no-daemon")
         .arg("--console=plain")
         .current_dir(gen_android)
-        .env("JAVA_HOME", &java_home);
+        .env("JAVA_HOME", &java_home)
+        // Keep Gradle's nested `modules` / `build-android` calls on the
+        // exact CLI that launched this build. This is essential for local
+        // `cargo run`: PATH may still contain an older installed Whisker.
+        // Android Studio builds do not pass this env and the plugins retain
+        // their normal PATH fallback.
+        .env(
+            "WHISKER_CLI",
+            std::env::current_exe().context("resolve current Whisker CLI executable")?,
+        );
     if crate::ui::is_tui() {
         cmd.env("WHISKER_TUI", "1");
     }
@@ -867,6 +876,28 @@ mod tests {
                 "profile.dev.package.\"list-benchmark\".opt-level=0",
             ],
         );
+    }
+
+    #[test]
+    fn gradle_uses_the_current_whisker_cli_for_nested_builds() {
+        let tmp = std::env::temp_dir().join(format!(
+            "whisker-build-gradle-cli-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("gradlew"), "#!/bin/sh\n").unwrap();
+
+        let command = gradle_command(&tmp, ":app:assembleDebug").unwrap();
+        let configured = command
+            .get_envs()
+            .find_map(|(key, value)| (key == "WHISKER_CLI").then_some(value))
+            .flatten();
+        assert_eq!(
+            configured,
+            Some(std::env::current_exe().unwrap().as_os_str())
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
