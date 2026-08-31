@@ -90,6 +90,7 @@ internal class HostScene(
     private val stagedOperations = ArrayList<HostSceneOperation>()
     private var applyingFrame = false
     private val deferredEvents = ArrayList<() -> Unit>()
+    private val pointerCaptures = HashMap<Long, Long>()
 
     /** 0 stages a transaction, 1 asks Rust for a snapshot, 2 rejects. */
     fun beginFrame(mode: Int, epoch: Int, baseRevision: Long, targetRevision: Long): Int {
@@ -147,6 +148,8 @@ internal class HostScene(
         nodes.values.toList().forEach(::releasePresentation)
         nodes.clear()
         parents.clear()
+        pointerCaptures.clear()
+        root.parent?.requestDisallowInterceptTouchEvent(false)
         root.removeAllViews()
     }
 
@@ -194,6 +197,9 @@ internal class HostScene(
                 if (operation.node !in existing) return false
             OP_HIT_TEST -> if (operation.node !in existing || operation.integer !in 0..3) return false
             OP_CURSOR -> if (operation.node !in existing || operation.integer !in 0..34) return false
+            OP_CAPTURE, OP_RELEASE_CAPTURE -> if (
+                operation.node !in existing || operation.wide == 0L
+            ) return false
             OP_BOX_SHADOWS -> if (!validBoxShadows(operation, existing)) return false
             OP_CLIP_PATH -> if (!validClipPath(operation, existing)) return false
             OP_BACKDROP_BLUR -> if (
@@ -314,6 +320,18 @@ internal class HostScene(
                 node.paint?.let { applyPaint(node, it) }
             }
             OP_CURSOR -> (nodes[id] ?: return).setCursorKeyword(operation.integer)
+            OP_CAPTURE -> {
+                pointerCaptures[operation.wide] = id
+                root.parent?.requestDisallowInterceptTouchEvent(true)
+            }
+            OP_RELEASE_CAPTURE -> {
+                if (pointerCaptures[operation.wide] == id) {
+                    pointerCaptures.remove(operation.wide)
+                    if (pointerCaptures.isEmpty()) {
+                        root.parent?.requestDisallowInterceptTouchEvent(false)
+                    }
+                }
+            }
         }
     }
 
@@ -381,6 +399,9 @@ internal class HostScene(
     private fun deleteNode(id: Long) {
         val node = nodes.remove(id) ?: return
         val descendants = nodes.keys.filter { candidate -> isDescendant(candidate, id) }
+        val removedNodes = descendants.toSet() + id
+        pointerCaptures.entries.removeAll { it.value in removedNodes }
+        if (pointerCaptures.isEmpty()) root.parent?.requestDisallowInterceptTouchEvent(false)
         descendants.forEach { child ->
             nodes.remove(child)?.let(::releasePresentation)
             parents.remove(child)

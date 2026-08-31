@@ -10,50 +10,48 @@ use crate::{FramePacket, Operation, ProtocolVersion};
 #[repr(u8)]
 pub enum RenderCapability {
     /// Independent horizontal and vertical border radii.
-    EllipticalBorderRadius,
+    EllipticalBorderRadius = 0,
     /// Background image and gradient layers.
-    BackgroundLayers,
+    BackgroundLayers = 1,
     /// Outline, shadow, clip-path, mask, filter, and compositing effects.
-    VisualEffects,
+    VisualEffects = 2,
     /// Text decoration and text shadows.
-    TextEffects,
+    TextEffects = 3,
     /// OpenType feature, variation, and optical-sizing controls.
-    TextTypography,
-    /// Replaced image content.
-    ImageContent,
+    TextTypography = 4,
+    // Bit 5 was the unreachable SetImage capability and remains reserved.
     /// Keyword or resource-backed pointing-device cursors.
-    Cursor,
+    Cursor = 6,
     /// Resource load, readiness, failure, and release messages.
-    ResourceLifecycle,
+    ResourceLifecycle = 7,
     /// One resolved, non-repeating linear-gradient background image using the
     /// initial layer geometry and explicit color-stop positions.
-    LinearGradients,
+    LinearGradients = 8,
     /// One resolved, non-repeating explicit radial-gradient background image
     /// using the initial layer geometry and explicit color-stop positions.
-    RadialGradients,
+    RadialGradients = 9,
     /// One resolved, non-repeating conic-gradient background image using the
     /// initial layer geometry and explicit fractional color-stop positions.
-    ConicGradients,
+    ConicGradients = 10,
     /// Explicit two-axis geometry for otherwise supported background images.
-    BackgroundGeometry,
+    BackgroundGeometry = 11,
     /// Ordered stacking of multiple otherwise independently supported
     /// background layers.
-    BackgroundLayerStacking,
+    BackgroundLayerStacking = 12,
     /// Resource-backed images used by otherwise supported background layers.
-    BackgroundImageResources,
+    BackgroundImageResources = 13,
     /// Blur applied to pixels already painted behind a node.
-    BackdropBlur,
+    BackdropBlur = 14,
 }
 
 impl RenderCapability {
     /// Every optional capability in stable declaration order.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 14] = [
         Self::EllipticalBorderRadius,
         Self::BackgroundLayers,
         Self::VisualEffects,
         Self::TextEffects,
         Self::TextTypography,
-        Self::ImageContent,
         Self::Cursor,
         Self::ResourceLifecycle,
         Self::LinearGradients,
@@ -73,7 +71,6 @@ impl RenderCapability {
             Self::VisualEffects => "visual-effects",
             Self::TextEffects => "text-effects",
             Self::TextTypography => "text-typography",
-            Self::ImageContent => "image-content",
             Self::Cursor => "cursor",
             Self::ResourceLifecycle => "resource-lifecycle",
             Self::LinearGradients => "linear-gradients",
@@ -377,7 +374,6 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6
         Operation::SetTextStyle { style, .. } if style.paint.uses_extended_features() => {
             Some(RenderCapability::TextEffects)
         }
-        Operation::SetImage { .. } => Some(RenderCapability::ImageContent),
         Operation::SetCursor { .. } => Some(RenderCapability::Cursor),
         _ => None,
     };
@@ -558,11 +554,11 @@ mod tests {
     use crate::{
         BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BoxPaint, Cursor,
         ElementTypeId, FontFeature, FontOpticalSizing, FontTag, FrameHeader, FrameMode,
-        GradientStop, ImageContent, ImageRepeat, MeasureTextDirection, MeasureTextOverflow,
-        MeasureTextWrap, NodeId, ObjectFit, PaintBox, PaintColor, PaintCoordinate,
-        PaintCornerRadius, PaintImage, PaintLengthPercentage, PaintPosition, ResourceId, SurfaceId,
-        TextContent, TextDecorationLines, TextMeasurePayload, TextMeasureStyle, TextPaint,
-        TextStyleSnapshot, VisualEffects,
+        GradientStop, ImageRepeat, MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap,
+        NodeId, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius, PaintImage,
+        PaintLengthPercentage, PaintPosition, ResourceId, SurfaceId, TextContent,
+        TextDecorationLines, TextMeasurePayload, TextMeasureStyle, TextPaint, TextStyleSnapshot,
+        VisualEffects,
     };
 
     fn packet(operations: Vec<Operation>) -> FramePacket {
@@ -700,7 +696,7 @@ mod tests {
     #[test]
     fn omitted_capabilities_are_rejected_and_duplicates_are_invalid() {
         let profile = RenderCapabilities::base();
-        assert!(!profile.supports(RenderCapability::ImageContent));
+        assert!(!profile.supports(RenderCapability::Cursor));
         let duplicate = CapabilityEntry {
             capability: RenderCapability::Cursor,
             support: CapabilitySupport::Native,
@@ -1120,7 +1116,6 @@ mod tests {
                 "visual-effects",
                 "text-effects",
                 "text-typography",
-                "image-content",
                 "cursor",
                 "resource-lifecycle",
                 "linear-gradients",
@@ -1251,14 +1246,6 @@ mod tests {
                 node,
                 style: text_style,
             },
-            Operation::SetImage {
-                node,
-                content: ImageContent {
-                    resource: ResourceId::new(1).unwrap(),
-                    fit: ObjectFit::Contain,
-                    position: PaintPosition::default(),
-                },
-            },
             Operation::SetCursor {
                 node,
                 cursor: Cursor::default(),
@@ -1282,7 +1269,6 @@ mod tests {
                 RenderCapability::BackdropBlur,
                 RenderCapability::TextEffects,
                 RenderCapability::TextTypography,
-                RenderCapability::ImageContent,
                 RenderCapability::Cursor,
                 RenderCapability::BackgroundImageResources,
             ]

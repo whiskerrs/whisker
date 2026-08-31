@@ -820,39 +820,6 @@ pub struct Cursor {
     pub fallback: CursorKeyword,
 }
 
-/// Fit mode for replaced image content.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ObjectFit {
-    /// Distort to fill the content box.
-    Fill,
-    /// Preserve aspect ratio and fit inside.
-    Contain,
-    /// Preserve aspect ratio and cover.
-    Cover,
-    /// Preserve intrinsic dimensions.
-    None,
-    /// Behave as `none` or `contain`, whichever is smaller.
-    ScaleDown,
-}
-
-/// Resolved content for an image element.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ImageContent {
-    /// Image resource.
-    pub resource: ResourceId,
-    /// Fit within the content box.
-    pub fit: ObjectFit,
-    /// Alignment of the fitted image.
-    pub position: PaintPosition,
-}
-
-impl ImageContent {
-    /// Validates the resolved position.
-    pub fn validate(&self) -> bool {
-        self.position.is_valid()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1115,25 +1082,6 @@ mod tests {
         }
         assert!(PathCommand::LineTo(position).is_valid());
         assert!(!PathCommand::LineTo(invalid_position).is_valid());
-    }
-
-    #[test]
-    fn image_content_accepts_signed_finite_positions() {
-        let image = ImageContent {
-            resource: ResourceId::new(1).unwrap(),
-            fit: ObjectFit::Cover,
-            position: PaintPosition {
-                x: PaintCoordinate {
-                    length: -3.0,
-                    fraction: 0.5,
-                },
-                y: PaintCoordinate {
-                    length: 2.0,
-                    fraction: 1.0,
-                },
-            },
-        };
-        assert!(image.validate());
     }
 
     #[test]

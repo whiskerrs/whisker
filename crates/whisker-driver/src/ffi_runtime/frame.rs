@@ -761,9 +761,6 @@ impl MobileFrameOwned {
                     values.push(Box::new(arena.encode(arguments)));
                     raw.payload = values.last().unwrap().as_ref() as *const _ as *const c_void;
                 }
-                Operation::SetImage { .. } => {
-                    return Err(MobileFrameError);
-                }
             }
             operations.push(raw);
         }

@@ -31,6 +31,7 @@ import rs.whisker.runtime.resource.HostResourceFailureCode
 import rs.whisker.runtime.resource.HostResourceSnapshot
 import rs.whisker.runtime.resource.HostResourceState
 import rs.whisker.runtime.input.normalizePointerInput
+import rs.whisker.runtime.bridge.MobileAbi
 import rs.whisker.runtime.measure.HostMeasureBatchAbi
 import rs.whisker.runtime.measure.resolveTextLayoutSemantics
 import rs.whisker.runtime.scene.HostAccessibility
@@ -134,6 +135,16 @@ class HostConformanceTest {
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
                     Driver(context, "backdrop-version-boundary").acceptsBackdropBlur(16f),
                 )
+            }
+    }
+
+    @Test
+    fun pointerCaptureOperationsReachTheAndroidSurface() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                assertTrue(Driver(context, "pointer-capture").acceptsPointerCapture())
             }
     }
 
@@ -985,6 +996,14 @@ private class Driver(
         return accepted && committed
     }
 
+    fun acceptsPointerCapture(): Boolean {
+        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(stage(tag = 1, member = 1))
+        check(stage(tag = MobileAbi.OP_CAPTURE, wide = 7))
+        check(stage(tag = MobileAbi.OP_RELEASE_CAPTURE, wide = 7))
+        return view.commitFrameFromNative()
+    }
+
     fun rejectOpacity(opacity: Float): Boolean {
         check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
@@ -1488,6 +1507,7 @@ private class Driver(
         member: Int = 0,
         integer: Int = 0,
         scalar: Float = 0f,
+        wide: Long = 0,
         numbers: FloatArray? = null,
         text: String? = null,
         names: Array<String>? = null,
@@ -1501,7 +1521,7 @@ private class Driver(
         member,
         integer,
         scalar,
-        0,
+        wide,
         numbers,
         text,
         names,

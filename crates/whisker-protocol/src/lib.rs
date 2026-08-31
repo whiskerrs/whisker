@@ -70,10 +70,9 @@ pub use validation::{ApplyResult, NodeProjection, SceneProjection, ValidationErr
 pub use visual::{
     BackfaceVisibility, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
     BoxShadow, ClipShape, Cursor, CursorKeyword, CursorResource, FillRule, GradientStop,
-    ImageContent, ImageRendering, ImageRepeat, Isolation, MaskComposite, MaskLayer, MaskMode,
-    ObjectFit, OutlineLineStyle, OutlinePaint, PaintBox, PaintCoordinate, PaintImage,
-    PaintPosition, PathCommand, RadialGradientExtent, RadialGradientShape, TextDecoration,
-    TextDecorationLines, TextDecorationStyle, TextDecorationThickness, TextShadow, TransformStyle,
-    VisualEffects,
+    ImageRendering, ImageRepeat, Isolation, MaskComposite, MaskLayer, MaskMode, OutlineLineStyle,
+    OutlinePaint, PaintBox, PaintCoordinate, PaintImage, PaintPosition, PathCommand,
+    RadialGradientExtent, RadialGradientShape, TextDecoration, TextDecorationLines,
+    TextDecorationStyle, TextDecorationThickness, TextShadow, TransformStyle, VisualEffects,
 };
 pub use whisker_value::WhiskerValue;

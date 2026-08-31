@@ -27,6 +27,39 @@ final class HostConformanceTests: XCTestCase {
         WhiskerModuleKernel.install(BuiltInElementModule())
     }
 
+    func testPointerCaptureOperationsReachTheUIKitSurface() {
+        let view = WhiskerView(frame: .zero)
+        let registration = WhiskerElementRegistration(
+            elementType: 1,
+            name: WhiskerBuiltInElements.viewName,
+            childPolicy: .elements,
+            measurement: .none
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
+        var operations = [
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 1, member: 1),
+            operation(tag: UInt32(WHISKER_OP_CAPTURE), node: 1, wide: 7),
+            operation(tag: UInt32(WHISKER_OP_RELEASE_CAPTURE), node: 1, wide: 7)
+        ]
+        operations.withUnsafeMutableBufferPointer { buffer in
+            var frame = WhiskerMobileFrame()
+            frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+            frame.abi_minor = UInt16(WHISKER_MOBILE_ABI_MINOR)
+            frame.protocol_major = 1
+            frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
+            frame.surface = 1
+            frame.scene_epoch = 1
+            frame.viewport_epoch = 1
+            frame.frame_id = 1
+            frame.target_revision = 1
+            frame.operations = UnsafePointer(buffer.baseAddress!)
+            frame.operation_count = buffer.count
+            var response = WhiskerMobileApplyResponse()
+            XCTAssertTrue(view.applyFrame(frame, response: &response))
+            XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
+        }
+    }
+
     func testModuleEventsReachOnlyObservingSurfacesAndLifecycleIsAggregated() {
         let module = EventLifecycleTestModule()
         module.qualifiedName = "event-test:Clock"
@@ -2269,6 +2302,7 @@ private func operation(
     flags: UInt32 = 0,
     integer: Int32 = 0,
     scalar: Float = 0,
+    wide: UInt64 = 0,
     payload: UnsafeRawPointer? = nil,
     count: Int = 0
 ) -> WhiskerMobileOperation {
@@ -2282,6 +2316,7 @@ private func operation(
     value.member = member
     value.integer = integer
     value.scalar = scalar
+    value.wide = wide
     value.payload = payload
     value.payload_count = count
     return value
