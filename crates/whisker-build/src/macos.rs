@@ -21,6 +21,10 @@ pub struct MacosBuild<'a> {
     pub binary_name: &'a str,
     /// Cargo build profile.
     pub profile: Profile,
+    /// Generated Host features enabled for this build.
+    pub features: &'a [String],
+    /// Optional hot-patch capture envelope for development builds.
+    pub capture: Option<&'a crate::CaptureShims>,
 }
 
 /// Compiles the generated project and returns the assembled `.app` path.
@@ -45,6 +49,14 @@ pub fn build_app(inputs: &MacosBuild<'_>) -> Result<PathBuf> {
         .arg(inputs.target_dir);
     if matches!(inputs.profile, Profile::Release) {
         command.arg("--release");
+    }
+    if !inputs.features.is_empty() {
+        command.arg("--features").arg(inputs.features.join(","));
+    }
+    if let Some(capture) = inputs.capture {
+        for (key, value) in crate::capture_env_vars_all_crates(capture) {
+            command.env(key, value);
+        }
     }
     let status = step
         .pipe(&mut command)

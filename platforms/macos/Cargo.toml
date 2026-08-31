@@ -11,5 +11,8 @@ keywords.workspace = true
 categories.workspace = true
 description = "Native macOS adapter for Whisker Desktop applications."
 
+[features]
+hot-reload = ["whisker-desktop/hot-reload"]
+
 [target.'cfg(target_os = "macos")'.dependencies]
 whisker-desktop = { workspace = true }

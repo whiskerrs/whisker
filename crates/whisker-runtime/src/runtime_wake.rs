@@ -4,8 +4,8 @@
 //! - [`crate::reactive::scheduler`] calls [`wake_runtime`] on the
 //!   empty→non-empty edge of the pending queue so the host wakes
 //!   up to drain effects.
-//! - the `whisker-dev-runtime` hot-reload receiver calls [`wake_runtime`]
-//!   after parking a patch.
+//! - subsystems that own a concrete runtime (including hot reload) retain a
+//!   [`RuntimeWakeHandle`] and wake that instance directly.
 
 use std::cell::RefCell;
 use std::ffi::c_void;

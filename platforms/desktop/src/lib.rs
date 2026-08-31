@@ -47,7 +47,7 @@ mod text;
 #[path = "../tests/host_conformance/mod.rs"]
 mod host_conformance_tests;
 
-pub use app::{DesktopAppConfig, DesktopAppError, run};
+pub use app::{DesktopAppConfig, DesktopAppError, run, run_with_application_hash};
 use element::DesktopElementRegistry;
 pub use element::{
     BuiltInElementModule, DesktopElementFactory, DesktopEventEmitter, DesktopModuleDefinition,

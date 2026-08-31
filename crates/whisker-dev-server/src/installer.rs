@@ -2,12 +2,13 @@
 //!
 //! After a successful cold-rebuild, the freshly-built artifact has to
 //! land on the target and start (re-bootstrapping the dev-runtime so
-//! it dials the dev-server back). For Android we shell out to `adb`;
-//! for iOS Simulator to `xcrun simctl`.
+//! it dials the dev-server back). For Android we shell out to `adb`,
+//! for iOS Simulator to `xcrun simctl`, and for macOS we launch the
+//! generated app executable while retaining its child handle.
 //!
 //! Application identity (bundle id, applicationId, launcher activity,
 //! scheme, …) is **not** baked in here. The cli passes those as
-//! `Config::android` / `Config::ios` after reading the user's
+//! `Config::android` / `Config::ios` / `Config::macos` after reading the user's
 //! `whisker.rs::configure(&mut Config)`, so this module has zero
 //! knowledge of which example or external user crate is in play.
 
@@ -15,13 +16,14 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 use tokio::process::Command;
 
-use crate::{AndroidParams, IosParams, Target};
+use crate::{AndroidParams, IosParams, MacosParams, Target};
 use whisker_build::CaptureShims;
 
 pub struct Installer {
     target: Target,
     android: Option<AndroidParams>,
     ios: Option<IosParams>,
+    macos: Option<MacosParams>,
     workspace_root: PathBuf,
     package: String,
     /// Capture shims for hot reload. When `Some`, the xcodebuild
@@ -52,6 +54,7 @@ pub struct Installer {
     /// `SIMCTL_CHILD_WHISKER_DEV_TOKEN`; Android via
     /// `adb shell setprop debug.whisker_dev_token`. `None` = token-less.
     dev_token: Option<String>,
+    macos_child: tokio::sync::Mutex<Option<tokio::process::Child>>,
 }
 
 impl Installer {
@@ -60,6 +63,7 @@ impl Installer {
         target: Target,
         android: Option<AndroidParams>,
         ios: Option<IosParams>,
+        macos: Option<MacosParams>,
         workspace_root: PathBuf,
         package: String,
         capture: Option<CaptureShims>,
@@ -71,12 +75,14 @@ impl Installer {
             target,
             android,
             ios,
+            macos,
             workspace_root,
             package,
             capture,
             features,
             dev_port,
             dev_token,
+            macos_child: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -104,7 +110,40 @@ impl Installer {
                 .await
             }
             Target::Macos => {
-                anyhow::bail!("macOS launch is driven by whisker-cli's local process supervisor")
+                let params = self.macos.as_ref().context(
+                    "target=Macos but no MacosParams — cli must provide the generated Host",
+                )?;
+                let executable = params
+                    .target_dir
+                    .join("bundles/debug")
+                    .join(format!("{}.app", params.app_name))
+                    .join("Contents/MacOS")
+                    .join(&params.binary_name);
+                if !executable.is_file() {
+                    anyhow::bail!(
+                        "macOS Host executable is missing at {}",
+                        executable.display()
+                    );
+                }
+                let mut slot = self.macos_child.lock().await;
+                if let Some(mut previous) = slot.take() {
+                    let _ = previous.kill().await;
+                    let _ = previous.wait().await;
+                }
+                let mut command = Command::new(&executable);
+                command
+                    .current_dir(executable.parent().expect("bundle executable has a parent"))
+                    .env("WHISKER_DEV_ADDR", format!("127.0.0.1:{}", self.dev_port))
+                    .kill_on_drop(true);
+                if let Some(token) = &self.dev_token {
+                    command.env("WHISKER_DEV_TOKEN", token);
+                }
+                *slot = Some(
+                    command
+                        .spawn()
+                        .with_context(|| format!("launch macOS Host {}", executable.display()))?,
+                );
+                Ok(())
             }
             Target::Web => {
                 anyhow::bail!("Web launch is driven by the CNG-generated Trunk project")
@@ -613,6 +652,7 @@ mod tests {
             Target::Android,
             None,
             None,
+            None,
             PathBuf::new(),
             "x".into(),
             None,
@@ -633,6 +673,7 @@ mod tests {
     fn installer_for_ios_without_params_errors() {
         let inst = Installer::new(
             Target::IosSimulator,
+            None,
             None,
             None,
             PathBuf::new(),

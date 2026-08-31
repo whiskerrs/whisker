@@ -70,13 +70,16 @@ When `hot_patch_mode == HotReload`, the *initial* build (the one
 that produces the installable artifact) runs with the capture shims
 wired in (`prepare_hot_reload_capture` in `lib.rs`):
 
-- `RUSTC_WORKSPACE_WRAPPER` = `whisker-rustc-shim` — records each
-  rustc invocation's argv to `<workspace>/target/.whisker/cache/rustc-args/`,
+- `whisker-rustc-shim` records each relevant rustc invocation's argv to
+  `<workspace>/target/.whisker/cache/rustc-args/`,
   along with the `CARGO_*` / `OUT_DIR` environment cargo set for it
   (minus `CARGO_MAKEFLAGS`, whose jobserver fds die with cargo). The
   thin rebuild replays those vars so `env!("CARGO_PKG_*")` /
   `env!("OUT_DIR")` in user code still compiles under the raw
-  (cargo-less) rustc spawn.
+  (cargo-less) rustc spawn. Mobile builds install it through
+  `RUSTC_WORKSPACE_WRAPPER`; the generated macOS Host is a separate Cargo
+  workspace with the app as a path dependency, so it uses `RUSTC_WRAPPER`
+  and lets the shim retain every path crate.
 - `-C linker=whisker-linker-shim` — records each linker invocation's
   argv (keyed by output basename) to the linker-args cache, then
   forwards to the real linker.
@@ -121,9 +124,8 @@ runs:
    non-Text symbols the weak stubs don't cover (thread-locals, statics).
 3. **Explicit link** (`build_link_plan` + `run_link_plan`) of the thin
    `.o` (+ stub + extras) into a patch dylib, replaying the captured
-   linker args. On macOS, `_whisker_aslr_anchor` / `_whisker_app_main` /
-   `_whisker_tick` are force-exported so subsecond's `dlsym(patch, …)`
-   resolves.
+   linker args. On macOS, `_whisker_aslr_anchor` is force-exported so
+   subsecond's `dlsym(patch, …)` resolves.
 4. **JumpTable construction** (`symbol_table` + `cache` +
    `build_jump_table`). Parse the patch dylib's symbols with the
    `object` crate, diff against the cached original, and emit a
@@ -162,7 +164,7 @@ On connect, the device sends a **text** `hello` frame:
 
 The `aslr_reference` is the device's `subsecond::aslr_reference()` —
 the runtime address of the `whisker_aslr_anchor` symbol. The server
-stashes it (single-slot, last-write-wins) so the patcher can compute
+stashes it for the active development client so the patcher can compute
 the ASLR slide and bake host runtime addresses into the stub objects.
 
 **Why the handshake is needed.** The stub-asm approach (Option B)
@@ -176,42 +178,46 @@ cleared on disconnect, because reusing a dead process's slide for the
 next process would stamp trampolines against meaningless addresses and
 crash the device.
 
-### 4. Device materialises and applies
+### 4. Runtime materialises, coordinates, and applies
 
 `whisker-dev-runtime/src/hot_reload.rs::handle_patch_frame`:
 
 1. Parse the frame, write the dylib bytes to a writable, dlopen-able
    dir (`/data/data/<pkg>/cache/whisker-patches/` on Android, `$TMPDIR`
    elsewhere), and rewrite `table.lib` to that local path.
-2. Park the JumpTable in a single-slot `PENDING` mutex
-   (most-recent-wins).
-3. Wake the runtime (`whisker_runtime::runtime_wake::wake_runtime()`) so a
-   frame gets scheduled even when no signal is dirty.
+2. Publish the JumpTable as a monotonically numbered generation in the
+   process-wide coordinator. A bounded history ensures multiple
+   `WhiskerView` / desktop runtime instances can each observe every patch.
+3. Wake every registered runtime through its own `RuntimeWakeHandle`.
 
-`PENDING` is the receiver/runtime handoff exposed by `take_pending_patch()`.
-The current mobile loop performs explicit full reloads; fine-grained mobile
-patch application must drain this slot at the start of a Host-driven runtime
-transaction, before user code enters a `subsecond::call` frame. Applying a
-patch returns the host function pointers that changed;
-`remount_components_for` then disposes and re-mounts every `#[component]`
-whose body was patched, so structural edits (new
-elements, new signals) reflect on screen. State local to a remounted
-component is lost; state above the remount point survives.
+At the beginning of the next Host-driven runtime transaction,
+`NativeHotReload::apply` polls that runtime's subscription. The coordinator
+serialises `subsecond::apply_patch`, so the process-wide function table is
+updated once even when an app owns multiple runtime instances. Each runtime
+then independently calls `RuntimeInstance::remount_components` with the
+patched host function pointers. Structural edits (new elements, new signals)
+therefore reflect in every mounted tree. State local to a remounted component
+is lost; state above the remount point survives.
+
+Android and iOS call this safe point from `MobileRuntime::tick`; desktop calls
+it at the start of `DesktopApplication::drive_frame`. Both use the same
+`NativeHotReload` adapter. The receiver thread never enters a runtime and
+never applies code while a `subsecond::call` frame is active.
 
 ### Full remount — Hot Reload's escalation path
 
-Hot Reload has two on-device reflection strategies: the per-component
+Hot Reload has two runtime reflection strategies: the per-component
 remount above (state above the remount point survives), and a **full
 remount** (everything resets). Both are Hot Reload — same patch
 wire format, same sub-second apply, no reinstall — the choice is made
-per patch, on-device, after `apply_patch`.
+per patch, inside each runtime, after `apply_patch`.
 
 Per-component remount re-runs `#[component]` bodies, never `app()`
-itself (`app_fn` runs once at bootstrap). Two patch shapes therefore
+itself (outside the root fallback, `app_fn` runs only at initial mount). Two patch shapes therefore
 used to apply without rendering: an edit to the `app()` body (top-level
 `provide_context` values, which root component is mounted), and a patch
 in an app with no top-level `#[component]` at all (nothing registered
-in `fn_ptr_mounts`). `maybe_full_remount` in `bootstrap.rs` escalates
+in `fn_ptr_mounts`). `NativeHotReload::apply` escalates
 those to a full re-run:
 
 - `#[whisker::main]` bakes an FNV-1a hash of the app fn's tokens into
@@ -243,7 +249,7 @@ the capture layout didn't move. Two guards make it sound:
   also shifts the patch's value). The mount records the value; after
   a patch, `remount_components_for` re-reads it through dispatch and
   **refuses** any site whose value moved, reporting it in
-  `RemountStats::layout_changed`. The bootstrap escalates those to a
+  `RemountStats::layout_changed`. The native adapter escalates those to a
   full remount, where fresh patched code rebuilds all props from
   scratch.
 
@@ -252,14 +258,12 @@ size or alignment (e.g. two `u32` fields swapped) still slips through
 the hash. The signature-token part catches renames/retypes at the
 declaration; byte-identical-layout semantic swaps are on the user.
 
-Either condition triggers: detach the page's children, dispose the
-current *run owner* (a per-`app()`-run child of the persistent root
-owner — contexts, signals, effects all cascade), re-invoke the kept
-`app_fn` (`FnMut` since the full-remount path landed) under a fresh
-run owner, and append
-the new content to the same fixed page. All reactive state is lost by
-design, but the process — and the dev-session WebSocket — survive, so
-it's still sub-second, unlike a Full Reload reinstall.
+Either condition calls `RuntimeInstance::remount_root`: dispose the current
+application owner (contexts, signals, effects, and descendants cascade),
+invoke the retained app function under a fresh owner, and replace the root
+tree in the existing runtime instance. All reactive state is lost by design,
+but the process, Host surface, and dev-session WebSocket survive, so it is
+still sub-second rather than a Full Reload reinstall.
 
 The vendored `whisker-subsecond` (`[lib] name = "subsecond"`,
 `crates/whisker-subsecond/`) is a fork of Dioxus's subsecond 0.7.9. The
@@ -332,6 +336,9 @@ the next save anyway.
 - **iOS hardware is unsupported** for Hot Reload: `mmap(PROT_WRITE |
   PROT_EXEC)` is blocked by Apple's W^X policy, so `apply_patch` can't
   run. Targets are macOS host, Android, and the iOS Simulator.
+- **Web uses remount reload, not native patch dylibs.** The generated Trunk
+  project rebuilds WASM and remounts the app. Native `subsecond` integration
+  is shared by Android, iOS Simulator, and Desktop.
 - **`Cargo.toml` / `Cargo.lock` edits** always need a Full Reload —
   the patcher can't reload dependencies.
 - **Multi-crate change batches** can't be expressed as a single patch

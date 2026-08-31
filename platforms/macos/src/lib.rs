@@ -12,4 +12,4 @@
 pub type MacosAppConfig = whisker_desktop::DesktopAppConfig;
 /// Failure while creating or running the native macOS Host.
 pub type MacosError = whisker_desktop::DesktopAppError;
-pub use whisker_desktop::run;
+pub use whisker_desktop::{run, run_with_application_hash};

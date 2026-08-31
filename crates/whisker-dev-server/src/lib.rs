@@ -114,6 +114,9 @@ pub struct Config {
     /// iOS install / launch params. Required iff
     /// `target == Target::IosSimulator`; absent for other targets.
     pub ios: Option<IosParams>,
+    /// Native macOS build / launch params. Required iff
+    /// `target == Target::Macos`; absent for other targets.
+    pub macos: Option<MacosParams>,
 }
 
 impl Config {
@@ -130,6 +133,7 @@ impl Config {
             hot_patch_mode: HotPatchMode::FullReloadOnly,
             android: None,
             ios: None,
+            macos: None,
         }
     }
 }
@@ -181,6 +185,19 @@ pub struct IosParams {
     pub device_override: Option<String>,
 }
 
+/// Flat parameters for the generated Cargo-based macOS Host.
+#[derive(Debug, Clone)]
+pub struct MacosParams {
+    /// Generated `gen/macos` Cargo project.
+    pub project_dir: PathBuf,
+    /// Dedicated Cargo target directory shared by builds and patches.
+    pub target_dir: PathBuf,
+    /// Human-readable `.app` bundle name.
+    pub app_name: String,
+    /// Generated Host executable and Cargo package name.
+    pub binary_name: String,
+}
+
 /// What kind of binary the dev server is rebuilding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
@@ -188,8 +205,8 @@ pub enum Target {
     Android,
     /// iOS Simulator app + xcrun simctl install + launch.
     IosSimulator,
-    /// Native macOS executable. The CLI currently owns its automatic
-    /// rebuild/relaunch loop; this variant is also used for CNG dispatch.
+    /// Native macOS app. The dev server builds and launches the generated
+    /// Cargo Host, and applies subsecond patches without restarting it.
     Macos,
     /// Browser WASM application. The CLI delegates its remount development
     /// loop to the CNG-generated Trunk project.
@@ -358,10 +375,16 @@ impl DevServer {
             self.config.crate_dir.clone(),
             self.config.package.clone(),
             self.config.target,
-        );
+        )
+        .with_macos(self.config.macos.clone());
 
         let hot_reload_init = if self.config.hot_patch_mode == HotPatchMode::HotReload {
-            builder = builder.with_features(vec!["whisker/hot-reload".into()]);
+            let feature = if self.config.target == Target::Macos {
+                "hot-reload"
+            } else {
+                "whisker/hot-reload"
+            };
+            builder = builder.with_features(vec![feature.into()]);
             match prepare_hot_reload_capture(&self.config) {
                 Ok(prep) => {
                     builder = builder.with_capture(prep.capture.clone());
@@ -383,6 +406,7 @@ impl DevServer {
             self.config.target,
             self.config.android.clone(),
             self.config.ios.clone(),
+            self.config.macos.clone(),
             self.config.workspace_root.clone(),
             self.config.package.clone(),
             hot_reload_init.as_ref().map(|p| p.capture.clone()),

@@ -66,6 +66,7 @@ pub use whisker_driver_sys::RequestFrameCallback;
 
 struct MobileRuntime {
     runtime: RuntimeInstance,
+    hot_reload: MobileHotReload,
     modules: std::rc::Rc<ModuleHost>,
     measurement: MobileMeasurementHost,
     sink: MobileFrameSink,
@@ -73,6 +74,27 @@ struct MobileRuntime {
     environment_epoch: u64,
     viewport_epoch: u32,
     viewport: Viewport,
+}
+
+#[cfg(feature = "hot-reload")]
+type MobileHotReload = whisker_dev_runtime::NativeHotReload;
+
+#[cfg(not(feature = "hot-reload"))]
+struct MobileHotReload;
+
+#[cfg(not(feature = "hot-reload"))]
+impl MobileHotReload {
+    fn new(
+        _wake: RuntimeWakeHandle,
+        _application: fn() -> Element,
+        _application_hash: fn() -> u64,
+    ) -> Self {
+        Self
+    }
+
+    fn apply(&mut self, _runtime: &mut RuntimeInstance) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -173,7 +195,8 @@ pub unsafe fn create(
     invoke_module: InvokeModuleCallback,
     observe_module: ObserveModuleCallback,
     module_data: *mut c_void,
-    application: impl FnOnce() -> Element,
+    application: fn() -> Element,
+    application_hash: fn() -> u64,
 ) -> *mut c_void {
     #[cfg(target_os = "android")]
     crate::ensure_mobile_bridge_linked();
@@ -201,7 +224,7 @@ pub unsafe fn create(
         whisker_runtime::ElementRegistry::standard(),
         capabilities.protocol(),
     );
-    let mut runtime = RuntimeInstance::new(surface, wake);
+    let mut runtime = RuntimeInstance::new(surface, wake.clone());
     let modules = module_host(module_data, invoke_module, observe_module);
     if let Err(error) = with_module_host(&modules, || runtime.mount(application)) {
         mobile_error(format_args!("Whisker mobile mount failed: {error}"));
@@ -215,6 +238,7 @@ pub unsafe fn create(
     }
     let mut mobile = Box::new(MobileRuntime {
         runtime,
+        hot_reload: MobileHotReload::new(wake, application, application_hash),
         modules,
         measurement: MobileMeasurementHost {
             callback: measure,
@@ -263,6 +287,10 @@ pub unsafe fn tick(
         mobile.viewport_epoch = mobile.viewport_epoch.saturating_add(1);
     }
     let modules = std::rc::Rc::clone(&mobile.modules);
+    if let Err(error) = with_module_host(&modules, || mobile.hot_reload.apply(&mut mobile.runtime))
+    {
+        mobile_error(format_args!("Whisker mobile hot reload failed: {error}"));
+    }
     let frame_result = with_module_host(&modules, || {
         mobile.runtime.drive_frame(
             timestamp_ms,

@@ -6088,6 +6088,7 @@ dependencies = [
  "ureq",
  "wgpu",
  "whisker",
+ "whisker-dev-runtime",
  "whisker-engine",
  "whisker-host-conformance",
  "whisker-protocol",
@@ -6133,6 +6134,7 @@ dependencies = [
 name = "whisker-driver"
 version = "0.12.0"
 dependencies = [
+ "whisker-dev-runtime",
  "whisker-driver-sys",
  "whisker-engine",
  "whisker-runtime",

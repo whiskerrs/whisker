@@ -16,8 +16,10 @@ crate-type = ["staticlib", "rlib"]
 
 [features]
 default = []
+hot-reload = ["dep:whisker-dev-runtime", "whisker-dev-runtime/hot-reload"]
 
 [dependencies]
 whisker-runtime = { workspace = true }
 whisker-driver-sys = { workspace = true }
 whisker-engine = { workspace = true }
+whisker-dev-runtime = { workspace = true, optional = true }

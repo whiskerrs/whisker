@@ -22,7 +22,7 @@ default = []
 # patch symbols actually contains its `call_it` monomorphization on
 # both sides — otherwise subsecond can't dispatch to the patched
 # version.
-hot-reload = ["dep:subsecond"]
+hot-reload = ["dep:subsecond", "whisker-driver/hot-reload"]
 # Hosts a process-lifetime tokio runtime so tokio-based async libraries
 # (reqwest, etc.) work inside `resource()`/`spawn_local()`.
 # Off by default; tokio drops out of release builds when unused.

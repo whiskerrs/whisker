@@ -15,6 +15,11 @@ description = "Shared native Desktop Host for Whisker applications."
 # Keeps the relatively expensive offscreen GPU fixture suite out of ordinary
 # unit-test runs. `cargo xtask host-conformance desktop` is its entry point.
 host-conformance = []
+hot-reload = [
+    "dep:whisker-dev-runtime",
+    "whisker/hot-reload",
+    "whisker-dev-runtime/hot-reload",
+]
 
 [dependencies]
 whisker = { workspace = true }
@@ -22,6 +27,7 @@ whisker-engine = { workspace = true }
 whisker-protocol = { workspace = true }
 whisker-style = { workspace = true }
 whisker-value = { workspace = true }
+whisker-dev-runtime = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 base64 = { workspace = true }
