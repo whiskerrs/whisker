@@ -63,11 +63,6 @@ fn sync_project(root: &Path, fixture: &Path, target: Target) -> Result<PathBuf> 
         "clean link test project was not regenerated"
     );
 
-    if target == Target::IosSimulator {
-        let modules = whisker_build::modules::discover(&root.join("Cargo.toml"), PACKAGE)?;
-        whisker_build::ios::stage_module_swift_sources(&sync.gen_dir, &modules, root)
-            .context("stage iOS module package")?;
-    }
     Ok(sync.gen_dir)
 }
 
