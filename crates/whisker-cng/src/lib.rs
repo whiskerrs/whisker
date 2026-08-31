@@ -105,8 +105,7 @@ fn rust_element_module_config(modules: &[RustElementModuleInput]) -> String {
         .iter()
         .map(|module| {
             format!(
-                "\n            .with_element_module({}::__whisker_element_module_definition())\
-                 \n            .with_module_definition({}::__whisker_module_definition())",
+                "\n            .with_module(\n                {}::__whisker_element_module_definition(),\n                {}::__whisker_module_definition(),\n            )",
                 rust_crate_name(&module.package),
                 rust_crate_name(&module.host_package),
             )

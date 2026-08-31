@@ -24,7 +24,7 @@ private final class EventLifecycleTestModule: Module {
 final class HostConformanceTests: XCTestCase {
     override class func setUp() {
         super.setUp()
-        BuiltInElementModule().registerWithWhisker()
+        WhiskerModuleKernel.install(BuiltInElementModule())
     }
 
     func testModuleEventsReachOnlyObservingSurfacesAndLifecycleIsAggregated() {

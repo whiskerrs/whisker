@@ -42,7 +42,7 @@ abstract class WhiskerModuleBehaviorsTask : DefaultTask() {
             appendLine("package rs.whisker.runtime.generated")
             appendLine()
             appendLine("import rs.whisker.runtime.BuiltInElementModule")
-            appendLine("import rs.whisker.runtime.registerWithWhisker")
+            appendLine("import rs.whisker.runtime.WhiskerModuleKernel")
             appendLine("import java.util.concurrent.atomic.AtomicBoolean")
             appendLine()
             appendLine("public object WhiskerModuleBehaviors {")
@@ -51,7 +51,7 @@ abstract class WhiskerModuleBehaviorsTask : DefaultTask() {
             appendLine("    @JvmStatic")
             appendLine("    public fun registerAll() {")
             appendLine("        if (!registered.compareAndSet(false, true)) return")
-            appendLine("        BuiltInElementModule().registerWithWhisker()")
+            appendLine("        WhiskerModuleKernel.install(BuiltInElementModule())")
             val classes = behaviorsClasses.get()
             if (classes.isEmpty()) {
                 appendLine("        // (no Whisker module deps)")

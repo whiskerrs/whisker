@@ -103,12 +103,16 @@ pub struct DesktopAppConfig {
     pub width: f64,
     /// Initial logical height in points.
     pub height: f64,
-    /// Element modules selected for this target.
-    pub module_definitions: Vec<DesktopModuleDefinition>,
-    /// Host-independent element schemas selected from Rust module crates.
-    pub element_modules: Vec<ElementModuleDefinition>,
+    /// Modules selected for this target, paired with their portable schema.
+    modules: Vec<DesktopModuleInstallation>,
     element_factories: Vec<DesktopElementFactory>,
     module_services: Vec<RustModuleDefinition>,
+}
+
+#[derive(Clone, Debug)]
+struct DesktopModuleInstallation {
+    elements: ElementModuleDefinition,
+    host: DesktopModuleDefinition,
 }
 
 impl DesktopAppConfig {
@@ -118,22 +122,23 @@ impl DesktopAppConfig {
             title: title.into(),
             width: 1024.0,
             height: 720.0,
-            module_definitions: Vec::new(),
-            element_modules: Vec::new(),
+            modules: Vec::new(),
             element_factories: Vec::new(),
             module_services: Vec::new(),
         }
     }
 
-    /// Adds one Rust element definition with its matching Desktop factory.
-    pub fn with_module_definition(mut self, definition: DesktopModuleDefinition) -> Self {
-        self.module_definitions.push(definition);
-        self
-    }
-
-    /// Adds one Host-independent Rust element module for bootstrap negotiation.
-    pub fn with_element_module(mut self, definition: ElementModuleDefinition) -> Self {
-        self.element_modules.push(definition);
+    /// Installs one module's portable element schema and Desktop implementation.
+    ///
+    /// Keeping the pair together makes it impossible for generated Hosts to
+    /// accidentally install only one side of a module.
+    pub fn with_module(
+        mut self,
+        elements: ElementModuleDefinition,
+        host: DesktopModuleDefinition,
+    ) -> Self {
+        self.modules
+            .push(DesktopModuleInstallation { elements, host });
         self
     }
 }
@@ -170,10 +175,11 @@ pub fn run_with_application_hash(
         .push(built_ins.service_definition().clone());
     let mut element_factories = built_ins.into_factories();
     let elements = ElementRegistry::standard_builder()
-        .register_modules(config.element_modules.drain(..))
+        .register_modules(config.modules.iter().map(|module| module.elements.clone()))
         .build()
         .map_err(|error| DesktopAppError(format!("build element registry: {error}")))?;
-    for definition in config.module_definitions.drain(..) {
+    for module in config.modules.drain(..) {
+        let definition = module.host;
         config
             .module_services
             .push(definition.service_definition().clone());
@@ -623,8 +629,7 @@ mod tests {
         assert_eq!(config.title, "Whisker");
         assert_eq!(config.width, 1024.0);
         assert_eq!(config.height, 720.0);
-        assert!(config.module_definitions.is_empty());
-        assert!(config.element_modules.is_empty());
+        assert!(config.modules.is_empty());
         assert!(config.element_factories.is_empty());
         assert!(config.module_services.is_empty());
     }

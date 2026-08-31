@@ -246,7 +246,7 @@ impl WebApplication {
     fn new(mut config: WebAppConfig) -> Result<Self, WebError> {
         let built_ins = BuiltInElementModule::definition();
         let mut module_definitions = vec![built_ins];
-        module_definitions.append(&mut config.module_definitions);
+        module_definitions.extend(config.modules.iter().map(|module| module.host.clone()));
         let module_services = module_definitions
             .iter()
             .map(|definition| definition.service_definition().clone());
@@ -257,7 +257,7 @@ impl WebApplication {
             .flat_map(WebModuleDefinition::into_factories)
             .collect::<Vec<_>>();
         let elements = ElementRegistry::standard_builder()
-            .register_modules(config.element_modules.drain(..))
+            .register_modules(config.modules.drain(..).map(|module| module.elements))
             .build()
             .map_err(|error| WebError(format!("build element registry: {error}")))?;
         let window = browser_window()?;

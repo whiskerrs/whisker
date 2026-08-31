@@ -309,12 +309,8 @@ mod tests {
         let main = std::fs::read_to_string(out.join("src/main.rs")).unwrap();
         assert!(manifest.contains("whisker-toggle-desktop-host ="));
         assert!(!main.contains("#[path ="));
-        assert!(main.contains(
-            ".with_element_module(whisker_toggle::__whisker_element_module_definition())"
-        ));
-        assert!(main.contains(
-            ".with_module_definition(whisker_toggle_desktop_host::__whisker_module_definition())"
-        ));
+        assert!(main.contains(".with_module("));
+        assert!(main.contains("whisker_toggle_desktop_host::__whisker_module_definition()"));
         std::fs::remove_dir_all(root).ok();
     }
 }

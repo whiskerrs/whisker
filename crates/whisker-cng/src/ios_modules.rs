@@ -279,7 +279,7 @@ pub fn render_register_all_swift(modules: &[&ResolvedModule]) -> String {
     out.push_str("        registered = true\n");
     out.push_str("        let builtInModule = BuiltInElementModule()\n");
     out.push_str("        builtInModule.qualifiedName = builtInModule.definitionLazy.name\n");
-    out.push_str("        builtInModule.registerWithWhisker()\n");
+    out.push_str("        WhiskerModuleKernel.install(builtInModule)\n");
     if modules.is_empty() {
         out.push_str("        // (no Whisker module dependencies)\n");
     }
