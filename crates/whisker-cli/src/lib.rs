@@ -63,6 +63,11 @@ struct Cli {
     #[arg(long, short = 'v', global = true)]
     verbose: bool,
 
+    /// Disable the inline progress UI for long-running build/run workflows.
+    /// Plain deterministic output is always used when piping or under CI.
+    #[arg(long, global = true)]
+    no_tui: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -140,10 +145,10 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     }
     match cli.command {
         Command::Doctor(a) => doctor::run(a),
-        Command::Run(a) => run::run(a),
+        Command::Run(a) => run::run(a, cli.no_tui),
         Command::NewModule(a) => new_module::run(a),
         Command::New(a) => new_app::run(a),
-        Command::Build(a) => build::run(a),
+        Command::Build(a) => build::run(a, cli.no_tui),
         Command::Credential(a) => credential::run(a),
         Command::Fmt(a) => fmt::run(a),
         Command::BuildIos(a) => build_dispatch::run_ios(a),
@@ -216,6 +221,14 @@ mod tests {
     fn parses_build_web() {
         let cli = parse(["whisker", "build", "web"]).unwrap();
         assert!(matches!(cli.command, Command::Build(_)));
+    }
+
+    #[test]
+    fn parses_global_no_tui_for_run_and_build() {
+        let run = parse(["whisker", "run", "web", "--no-tui"]).unwrap();
+        assert!(run.no_tui);
+        let build = parse(["whisker", "--no-tui", "build", "web"]).unwrap();
+        assert!(build.no_tui);
     }
 
     #[test]

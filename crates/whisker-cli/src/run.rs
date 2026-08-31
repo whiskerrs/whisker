@@ -51,14 +51,6 @@ pub struct Args {
     /// the resolved manifest's parent dir.
     #[arg(long)]
     pub workspace_root: Option<PathBuf>,
-
-    /// Disable the inline ratatui status bar at the bottom of the
-    /// terminal. On by default when stderr is a TTY; auto-off when
-    /// piping to a file or running under CI. Use this when running
-    /// against a tmux pane that doesn't like inline viewports, or
-    /// when you specifically want grep'able scrollback-only output.
-    #[arg(long)]
-    pub no_tui: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,16 +72,8 @@ impl From<CliTarget> for Target {
     }
 }
 
-pub fn run(args: Args) -> Result<()> {
-    // Set the cross-crate TUI signal before any `whisker_build::ui::*`
-    // call fires — `whisker_build::ui::mode()` caches its lookup in a
-    // `OnceLock` on the first call, so flipping this env later doesn't
-    // unstick a `Curated` cache.
-    let tui_enabled = !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stderr());
-    if tui_enabled {
-        // FIXME: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::set_var("WHISKER_TUI", "1") };
-    }
+pub fn run(args: Args, no_tui: bool) -> Result<()> {
+    let tui_enabled = crate::tui::should_start(no_tui);
 
     // Resolve the user-facing manifest before doing anything UI-y so
     // that the TUI header can display the bundle id from the moment
@@ -122,15 +106,16 @@ pub fn run(args: Args) -> Result<()> {
     // long setup steps (sync, plugin build, initial build, install)
     // render with a proper progress indicator instead of leaking
     // ahead of an inline status bar.
-    let tui_pieces = if tui_enabled {
-        match crate::tui::Tui::start(target_label.to_string(), bundle.clone()) {
-            Ok((tui, handle)) => {
+    let tui_session = if tui_enabled {
+        match crate::tui::TuiSession::start(
+            crate::tui::WorkflowKind::Run,
+            target_label.to_string(),
+            bundle.clone(),
+        ) {
+            Ok(session) => {
+                let handle = session.handle();
                 handle.set_phase(crate::tui::AppPhase::Setup);
-                let render_handle = std::thread::Builder::new()
-                    .name("whisker-tui-render".into())
-                    .spawn(move || run_tui_render_loop(tui))
-                    .ok();
-                Some((handle, render_handle))
+                Some(session)
             }
             Err(e) => {
                 eprintln!("couldn't start TUI ({e:#}); falling back to plain output");
@@ -140,7 +125,7 @@ pub fn run(args: Args) -> Result<()> {
     } else {
         None
     };
-    let tui_handle = tui_pieces.as_ref().map(|(h, _)| h.clone());
+    let tui_handle = tui_session.as_ref().map(crate::tui::TuiSession::handle);
 
     // Run the rest of the cli pipeline. Each phase pushes its progress
     // through `tui_handle`. If the TUI isn't running, every step is
@@ -150,36 +135,10 @@ pub fn run(args: Args) -> Result<()> {
 
     // Stop the render thread + restore the terminal. Use should_quit
     // as the signal so the render thread exits cleanly.
-    if let Some((handle, render_thread)) = tui_pieces {
-        handle.request_quit();
-        if let Some(t) = render_thread {
-            let _ = t.join();
-        }
+    if let Some(session) = tui_session {
+        session.finish();
     }
     result
-}
-
-fn run_tui_render_loop(mut tui: crate::tui::Tui) {
-    let _ = tui.render_until_quit();
-    let user_quit = tui.was_user_quit();
-    let _ = tui.shutdown();
-    if user_quit {
-        // The dev-server runs to completion (i.e. forever) inside
-        // `rt.block_on(server.run())` on the cli thread, so simply
-        // tearing the TUI down here would leave a headless `whisker
-        // run` process alive after `q`. Hard-exit with a normal
-        // status; tokio sockets / file watchers get reaped by the
-        // kernel. cli-initiated shutdowns (build failed, etc.) take
-        // the other branch and let `run()`'s normal return path
-        // surface the error.
-        //
-        // `exit` skips destructors, so an in-flight cargo / gradle /
-        // xcodebuild would be orphaned — SIGTERM the tracked build
-        // children first (the gradle daemon, in its own session, is
-        // spared).
-        whisker_build::child_guard::kill_all();
-        std::process::exit(0);
-    }
 }
 
 fn run_inner(
@@ -289,7 +248,7 @@ fn run_inner(
         .map(|p| p.display().to_string())
         .collect();
     if let Some(t) = tui {
-        t.set_dev_server(config.bind_addr.to_string(), watching_paths);
+        t.set_dev_server(target_destination(&config), watching_paths);
         t.set_phase(crate::tui::AppPhase::Initializing);
     }
 
@@ -355,7 +314,7 @@ fn run_macos(
     let watch_roots = explicit_watch_paths.to_vec();
     if let Some(tui) = tui {
         tui.set_dev_server(
-            bind_addr.to_string(),
+            format!("{app_name} · local application"),
             watch_roots
                 .iter()
                 .map(|path| path.display().to_string())
@@ -405,6 +364,33 @@ fn run_macos(
             }
         });
     runtime.block_on(server.run())
+}
+
+fn target_destination(config: &Config) -> String {
+    match config.target {
+        Target::Android => config
+            .android
+            .as_ref()
+            .map(|params| params.application_id.clone())
+            .unwrap_or_else(|| "Android application".into()),
+        Target::IosSimulator => config
+            .ios
+            .as_ref()
+            .map(|params| {
+                format!(
+                    "{} · {}",
+                    params.device_override.as_deref().unwrap_or("iOS Simulator"),
+                    params.bundle_id
+                )
+            })
+            .unwrap_or_else(|| "iOS Simulator".into()),
+        Target::Macos => config
+            .macos
+            .as_ref()
+            .map(|params| format!("{} · local application", params.app_name))
+            .unwrap_or_else(|| "Desktop application".into()),
+        Target::Web => format!("http://127.0.0.1:{}/", config.bind_addr.port()),
+    }
 }
 
 /// Generate a random hex token for the hot-reload session.

@@ -254,7 +254,10 @@ pub fn build_framework_for_xcode_run_script(
     let mut slice_paths: Vec<PathBuf> = Vec::with_capacity(inputs.archs.len());
     for arch in inputs.archs {
         let triple = map_arch_to_triple(inputs.platform, arch)?;
-        let s = crate::ui::step("compile", format!("{} ({triple})", inputs.package));
+        let s = crate::ui::step(
+            crate::ui::OperationKind::Compile,
+            format!("{} ({triple})", inputs.package),
+        );
         cargo_build_ios_dylib(
             inputs.workspace_root,
             inputs.package,
@@ -430,7 +433,10 @@ pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
         ));
     }
 
-    let _xc_step = crate::ui::step("xcodebuild", args.xcodeproj_name.to_string());
+    let xc_step = crate::ui::step(
+        crate::ui::OperationKind::Xcodebuild,
+        args.xcodeproj_name.to_string(),
+    );
     let destination = match args.sdk {
         "iphonesimulator" => "generic/platform=iOS Simulator".to_string(),
         "iphoneos" => "generic/platform=iOS".to_string(),
@@ -457,10 +463,12 @@ pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
     if let Some(p) = args.whisker_ios_macros_path {
         cmd.env("WHISKER_IOS_MACROS", p);
     }
-    let status = cmd.status().context("spawn xcodebuild")?;
+    let status = xc_step.pipe(&mut cmd).context("spawn xcodebuild")?;
     if !status.success() {
+        xc_step.fail(status.to_string());
         return Err(anyhow!("xcodebuild failed ({status})"));
     }
+    xc_step.done("");
 
     let product_subdir = match args.sdk {
         "iphonesimulator" => format!("{}-iphonesimulator", args.configuration),
@@ -568,7 +576,10 @@ pub fn archive_and_export(inputs: &IosReleaseInputs<'_>) -> Result<PathBuf> {
     let archive_path = out_root.join(format!("{scheme}.xcarchive"));
 
     // ---- archive ---------------------------------------------------
-    let archive_step = crate::ui::step("xcodebuild", format!("archive {scheme}"));
+    let archive_step = crate::ui::step(
+        crate::ui::OperationKind::Xcodebuild,
+        format!("archive {scheme}"),
+    );
     let mut cmd = Command::new("xcodebuild");
     cmd.arg("-project")
         .arg(&xcode_project)
@@ -611,7 +622,10 @@ pub fn archive_and_export(inputs: &IosReleaseInputs<'_>) -> Result<PathBuf> {
     .with_context(|| format!("write {}", options_path.display()))?;
     let export_dir = out_root.join("export");
 
-    let export_step = crate::ui::step("xcodebuild", format!("export {}", method.plist_value()));
+    let export_step = crate::ui::step(
+        crate::ui::OperationKind::Xcodebuild,
+        format!("export {}", method.plist_value()),
+    );
     let mut cmd = Command::new("xcodebuild");
     cmd.arg("-exportArchive")
         .arg("-archivePath")

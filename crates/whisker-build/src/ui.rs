@@ -30,17 +30,177 @@
 //! pipeline so the env-var is the single source of truth across
 //! crate boundaries.
 //!
-//! ## Why free fns, not an `OutputSink` trait
+//! ## Presentation seam
 //!
-//! There is exactly one production sink (stderr), so threading a
-//! trait through every call site buys nothing a global mode knob
-//! doesn't already give.
+//! Call sites use the free functions in this module. A top-level
+//! workflow may install a scoped [`ProgressReporter`] to receive typed
+//! events; without one, the same calls render deterministic terminal
+//! output directly.
 
 use std::io::IsTerminal;
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+
+// ---- Structured progress interface ---------------------------------
+
+/// Stable vocabulary shared by `whisker build`, `whisker run`, plain
+/// terminal output, and future editor integrations. Presentation code must
+/// not infer workflow state by parsing rendered strings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperationKind {
+    Setup,
+    Compile,
+    Gradle,
+    Xcodebuild,
+    Boot,
+    Install,
+    Launch,
+    HotReload,
+    Package,
+    Open,
+}
+
+impl OperationKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Setup => "setup",
+            Self::Compile => "compile",
+            Self::Gradle => "gradle",
+            Self::Xcodebuild => "xcodebuild",
+            Self::Boot => "boot",
+            Self::Install => "install",
+            Self::Launch => "launch",
+            Self::HotReload => "hot reload",
+            Self::Package => "package",
+            Self::Open => "open",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperationOutcome {
+    Done,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageLevel {
+    Info,
+    Warning,
+    Error,
+    Debug,
+    Log,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProgressEvent {
+    Section(String),
+    OperationStarted {
+        kind: OperationKind,
+        detail: String,
+    },
+    OperationProgress {
+        kind: OperationKind,
+        message: String,
+    },
+    OperationFinished {
+        kind: OperationKind,
+        detail: String,
+        outcome: OperationOutcome,
+        summary: String,
+        elapsed: Duration,
+    },
+    Message {
+        level: MessageLevel,
+        text: String,
+    },
+    Status(String),
+}
+
+/// Adapter interface at the presentation seam. Only a top-level user-facing
+/// workflow installs a reporter; nested Gradle/Xcode helper commands keep
+/// their deterministic plain stderr/stdout contracts.
+pub trait ProgressReporter: Send + Sync {
+    fn report(&self, event: ProgressEvent);
+}
+
+impl<F> ProgressReporter for F
+where
+    F: Fn(ProgressEvent) + Send + Sync,
+{
+    fn report(&self, event: ProgressEvent) {
+        self(event);
+    }
+}
+
+struct ReporterSlot {
+    id: u64,
+    reporter: Arc<dyn ProgressReporter>,
+}
+
+static REPORTER: Mutex<Option<ReporterSlot>> = Mutex::new(None);
+static NEXT_REPORTER_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Keeps the installed reporter scoped to one top-level workflow.
+pub struct ReporterGuard {
+    id: u64,
+}
+
+impl Drop for ReporterGuard {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = REPORTER.lock() {
+            if slot.as_ref().map(|current| current.id) == Some(self.id) {
+                *slot = None;
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ReporterAlreadyInstalled;
+
+impl std::fmt::Display for ReporterAlreadyInstalled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a Whisker progress reporter is already installed")
+    }
+}
+
+impl std::error::Error for ReporterAlreadyInstalled {}
+
+pub fn install_reporter(
+    reporter: impl ProgressReporter + 'static,
+) -> Result<ReporterGuard, ReporterAlreadyInstalled> {
+    let id = NEXT_REPORTER_ID.fetch_add(1, Ordering::Relaxed);
+    let mut slot = REPORTER.lock().map_err(|_| ReporterAlreadyInstalled)?;
+    if slot.is_some() {
+        return Err(ReporterAlreadyInstalled);
+    }
+    *slot = Some(ReporterSlot {
+        id,
+        reporter: Arc::new(reporter),
+    });
+    Ok(ReporterGuard { id })
+}
+
+fn report(event: ProgressEvent) -> bool {
+    let reporter = REPORTER
+        .lock()
+        .ok()
+        .and_then(|slot| slot.as_ref().map(|slot| Arc::clone(&slot.reporter)));
+    if let Some(reporter) = reporter {
+        reporter.report(event);
+        true
+    } else {
+        false
+    }
+}
+
+fn reporter_active() -> bool {
+    REPORTER.lock().map(|slot| slot.is_some()).unwrap_or(false)
+}
 
 // ---- Shared MultiProgress + status bar -------------------------------
 //
@@ -61,25 +221,13 @@ enum Mode {
     Curated,
     /// `WHISKER_VERBOSE=1` — plain `[whisker] …` lines, no spinners.
     Verbose,
-    /// `WHISKER_TUI=1` — whisker-cli is rendering a ratatui inline
-    /// viewport at the bottom of the terminal. Same curated
-    /// formatting as [`Mode::Curated`] (section headers, `✓`/`⏵` step
-    /// glyphs, color), but routed through plain `eprintln!` so the
-    /// lines scroll above the viewport as normal terminal content.
-    /// indicatif spinners are suppressed — they'd race with ratatui's
-    /// redraw and corrupt both surfaces.
-    Tui,
 }
 
 fn mode() -> Mode {
     static MODE: OnceLock<Mode> = OnceLock::new();
     *MODE.get_or_init(|| {
-        // Verbose outranks TUI so `WHISKER_VERBOSE=1` stays a
-        // universal "show me everything plain" override.
         if is_verbose() {
             Mode::Verbose
-        } else if is_tui() {
-            Mode::Tui
         } else {
             Mode::Curated
         }
@@ -92,18 +240,6 @@ fn mode() -> Mode {
 /// can opt out under verbose mode and let everything through.
 pub fn is_verbose() -> bool {
     std::env::var("WHISKER_VERBOSE")
-        .map(|v| !v.is_empty() && v != "0")
-        .unwrap_or(false)
-}
-
-/// `true` when `WHISKER_TUI=1` is set — `whisker-cli` sets this when
-/// it's rendering an inline TUI status bar. The flag exists so the
-/// `ui::*` surface can suppress indicatif animations (which would
-/// race with ratatui's own redraw) while still producing the curated
-/// `✓` / `⏵` formatting via plain `eprintln!`. Public so other
-/// crates can check the same state if needed.
-pub fn is_tui() -> bool {
-    std::env::var("WHISKER_TUI")
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false)
 }
@@ -133,8 +269,7 @@ static LAST_STATUS: Mutex<Option<String>> = Mutex::new(None);
 /// beyond that: `whisker-dev-server` calls it as the sentinel meaning
 /// "`set_status` is allowed from here on".
 pub fn ensure_status(_label: impl Into<String>) {
-    if matches!(mode(), Mode::Tui) {
-        // The cli's live region already shows this.
+    if reporter_active() {
         return;
     }
     if let Ok(mut guard) = LAST_STATUS.lock() {
@@ -147,14 +282,13 @@ pub fn ensure_status(_label: impl Into<String>) {
 /// print the same content. The line goes through `info()` so it
 /// shares the `· <msg>` visual style with other one-shot lines.
 ///
-/// In TUI mode this is a no-op: `whisker-cli`'s live region already
-/// renders the ws addr and client count from the dev-server's
-/// `Event::ClientConnected / Disconnected` stream.
+/// With a structured reporter this becomes a [`ProgressEvent::Status`].
 pub fn set_status(msg: impl Into<String>) {
-    if matches!(mode(), Mode::Tui) {
+    let msg = msg.into();
+    if report(ProgressEvent::Status(msg.clone())) {
         return;
     }
-    let m = msg.into();
+    let m = msg;
     let m_for_dedupe = m.clone();
     if let Ok(mut guard) = LAST_STATUS.lock() {
         if guard.as_ref() == Some(&m_for_dedupe) {
@@ -167,13 +301,13 @@ pub fn set_status(msg: impl Into<String>) {
 
 /// Emit a final dev-server status line on shutdown. Like `set_status`
 /// minus the dedupe, so the goodbye shows even when it repeats the
-/// previous status. No-ops in TUI mode — the live region disappearing
-/// is the goodbye.
+/// previous status.
 pub fn finish_status(final_msg: impl Into<String>) {
-    if matches!(mode(), Mode::Tui) {
+    let final_msg = final_msg.into();
+    if report(ProgressEvent::Status(final_msg.clone())) {
         return;
     }
-    info(format!("dev-server · {}", final_msg.into()));
+    info(format!("dev-server · {final_msg}"));
 }
 
 // ---- Section headers --------------------------------------------------
@@ -182,13 +316,14 @@ pub fn finish_status(final_msg: impl Into<String>) {
 /// `"Build"`, `"Patch"`, `"Watch"`, `"Install"`. Keep names short
 /// (one word) so the visual rhythm is regular.
 pub fn section(name: &str) {
+    if report(ProgressEvent::Section(name.to_string())) {
+        return;
+    }
     match mode() {
         Mode::Verbose => {
             eprintln!("[whisker] ─── {name} ───");
         }
-        Mode::Curated | Mode::Tui => {
-            // SGR color only, no cursor motion — safe to emit in TUI
-            // mode where the ratatui viewport owns the bottom region.
+        Mode::Curated => {
             let bar_chars = "─".repeat(40usize.saturating_sub(name.len()));
             let line = if is_tty() {
                 format!("\n\x1b[1;36m──── {name} {bar_chars}\x1b[0m")
@@ -200,10 +335,8 @@ pub fn section(name: &str) {
     }
 }
 
-/// `true` when indicatif's in-place redraw machinery is allowed to
-/// run. Off in TUI mode: ratatui owns the cursor and would race with
-/// indicatif's bar redraws if we let MultiProgress animate spinners
-/// or `suspend()` around eprintlns.
+/// `true` when indicatif's in-place redraw machinery is allowed to run.
+/// Structured reporters return before reaching this plain renderer.
 fn indicatif_active() -> bool {
     matches!(mode(), Mode::Curated) && is_tty()
 }
@@ -217,8 +350,7 @@ fn emit_above_bars(line: &str) {
     // runs the closure, and redraws, whereas println leaves the bar's
     // then-current spinner frame stuck in scrollback above each line.
     if !indicatif_active() {
-        // Nothing is animating, and in TUI mode `suspend` would flush
-        // stale indicatif state into the ratatui-owned region.
+        // Nothing is animating.
         eprintln!("{line}");
         return;
     }
@@ -244,8 +376,9 @@ pub struct Step {
     started_at: Instant,
     /// Carried separately from the bar's prefix because verbose-mode
     /// transitions need it for the final line emission too.
-    name: String,
+    kind: OperationKind,
     detail: String,
+    reported: bool,
 }
 
 impl Step {
@@ -280,16 +413,20 @@ impl Step {
         cmd.stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         let mut child = cmd.spawn()?;
-        // Track the PID so `whisker run`'s hard-exit quit path can
-        // SIGTERM this build (cargo / gradle / xcodebuild) instead of
-        // orphaning it. The guard unregisters when `pipe` returns.
+        // Track the PID so build cancellation can SIGTERM cargo /
+        // gradle / xcodebuild instead of orphaning it. The guard
+        // unregisters when `pipe` returns.
         let _child_guard = crate::child_guard::track(child.id());
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let bar_stdout = self.bar.clone();
         let bar_stderr = self.bar.clone();
-        let t_out = std::thread::spawn(move || stream_through_bar(stdout, bar_stdout));
-        let t_err = std::thread::spawn(move || stream_through_bar(stderr, bar_stderr));
+        let reported = self.reported;
+        let kind = self.kind;
+        let t_out =
+            std::thread::spawn(move || stream_through_bar(stdout, bar_stdout, reported, kind));
+        let t_err =
+            std::thread::spawn(move || stream_through_bar(stderr, bar_stderr, reported, kind));
         let status = child.wait()?;
         let _ = t_out.join();
         let _ = t_err.join();
@@ -297,14 +434,28 @@ impl Step {
     }
 
     fn finish(self, kind: StepKind, summary: &str) {
-        let elapsed = format_elapsed(self.started_at.elapsed());
+        let duration = self.started_at.elapsed();
+        if self.reported {
+            report(ProgressEvent::OperationFinished {
+                kind: self.kind,
+                detail: self.detail,
+                outcome: match kind {
+                    StepKind::Done => OperationOutcome::Done,
+                    StepKind::Fail => OperationOutcome::Failed,
+                },
+                summary: summary.to_string(),
+                elapsed: duration,
+            });
+            return;
+        }
+        let elapsed = format_elapsed(duration);
         let summary = if summary.is_empty() {
             elapsed
         } else {
             format!("{summary}  {elapsed}")
         };
         let glyph = kind.glyph();
-        let line = render_step_line(glyph, &self.name, &self.detail, &summary, kind);
+        let line = render_step_line(glyph, self.kind.label(), &self.detail, &summary, kind);
         if let Some(bar) = self.bar {
             // Plain `{msg}` template so the final line is exactly the
             // text built above; the live template would re-render its
@@ -314,26 +465,10 @@ impl Step {
             );
             bar.finish_with_message(line);
         } else {
-            // The END marker pairs with the START one `step()` emits;
-            // it tells the cli to clear the live region's current step.
-            if matches!(mode(), Mode::Tui) {
-                eprintln!("{TUI_STEP_END_MARKER}");
-            }
             eprintln!("{line}");
         }
     }
 }
-
-/// Marker prefix the cli's capture thread looks for to learn that a
-/// step has *started*. Followed by `\x1e<name>\x1e<detail>` and a
-/// newline — i.e. one line per START. The `\x1e` (ASCII RS, "record
-/// separator") is deliberately non-printable so it can't collide
-/// with legitimate user output. See
-/// `whisker_cli::tui::capture_reader_loop`.
-pub const TUI_STEP_START_MARKER: &str = "\x1eWHISKER-TUI-STEP-START";
-/// Marker the cli's capture thread looks for to learn that the
-/// active step has *finished*. One token per line, no payload.
-pub const TUI_STEP_END_MARKER: &str = "\x1eWHISKER-TUI-STEP-END";
 
 /// Read `stream` line-by-line, classifying each line into one of
 /// three buckets:
@@ -352,14 +487,23 @@ pub const TUI_STEP_END_MARKER: &str = "\x1eWHISKER-TUI-STEP-END";
 fn stream_through_bar<R: std::io::Read + Send + 'static>(
     stream: Option<R>,
     bar: Option<ProgressBar>,
+    reported: bool,
+    kind: OperationKind,
 ) {
     use std::io::{BufRead, BufReader};
     let Some(s) = stream else { return };
     let reader = BufReader::new(s);
     for line in reader.lines().map_while(Result::ok) {
         if let Some(progress) = subprocess_progress_text(&line) {
+            if reported {
+                report(ProgressEvent::OperationProgress {
+                    kind,
+                    message: progress,
+                });
+                continue;
+            }
             if let Some(bar) = &bar {
-                bar.set_message(progress.to_string());
+                bar.set_message(progress);
                 // No steady tick (see `step`), so repaint by hand.
                 bar.tick();
             }
@@ -370,7 +514,14 @@ fn stream_through_bar<R: std::io::Read + Send + 'static>(
         } else if !line.is_empty() {
             // Verbose keeps everything, so a real diagnostic that gets
             // misclassified as noise is still reachable.
-            if matches!(mode(), Mode::Curated | Mode::Tui) && is_subprocess_noise(&line) {
+            if matches!(mode(), Mode::Curated) && is_subprocess_noise(&line) {
+                continue;
+            }
+            if reported {
+                report(ProgressEvent::Message {
+                    level: MessageLevel::Log,
+                    text: line,
+                });
                 continue;
             }
             // `multi.suspend`, not `bar.println` — see `emit_above_bars`.
@@ -538,10 +689,22 @@ impl StepKind {
 ///
 /// The split is purely typographical — keeping `name` to a small
 /// closed set lets readers visually align columns down the run log.
-pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
-    let name = name.into();
+pub fn step(kind: OperationKind, detail: impl Into<String>) -> Step {
     let detail = detail.into();
     let started_at = Instant::now();
+    if report(ProgressEvent::OperationStarted {
+        kind,
+        detail: detail.clone(),
+    }) {
+        return Step {
+            bar: None,
+            started_at,
+            kind,
+            detail,
+            reported: true,
+        };
+    }
+    let name = kind.label();
 
     match mode() {
         Mode::Verbose => {
@@ -549,22 +712,9 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
             Step {
                 bar: None,
                 started_at,
-                name,
+                kind,
                 detail,
-            }
-        }
-        Mode::Tui => {
-            // A committed scrollback line can't be overwritten, so a
-            // "⏵ started" line here would just stack above `finish()`'s
-            // "✓ done". The marker instead drives the cli's live-region
-            // spinner and never enters scrollback; see
-            // `whisker_cli::tui::capture_reader_loop`.
-            eprintln!("{TUI_STEP_START_MARKER}\x1e{name}\x1e{detail}");
-            Step {
-                bar: None,
-                started_at,
-                name,
-                detail,
+                reported: false,
             }
         }
         Mode::Curated if is_tty() => {
@@ -578,7 +728,7 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
                 ProgressStyle::with_template("  {spinner:.cyan} {prefix:<12} {msg:<24} …")
                     .expect("template literal is valid"),
             );
-            bar.set_prefix(name.clone());
+            bar.set_prefix(name);
             bar.set_message(detail.clone());
             let bar = multi().add(bar);
             // Show the bar now instead of at the first `set_message`.
@@ -586,8 +736,9 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
             Step {
                 bar: Some(bar),
                 started_at,
-                name,
+                kind,
                 detail,
+                reported: false,
             }
         }
         Mode::Curated => {
@@ -595,8 +746,9 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
             Step {
                 bar: None,
                 started_at,
-                name,
+                kind,
                 detail,
+                reported: false,
             }
         }
     }
@@ -639,9 +791,15 @@ fn format_elapsed(d: Duration) -> String {
 /// "watching examples/", "client connected", "patch sent").
 pub fn info(msg: impl AsRef<str>) {
     let m = msg.as_ref();
+    if report(ProgressEvent::Message {
+        level: MessageLevel::Info,
+        text: m.to_string(),
+    }) {
+        return;
+    }
     match mode() {
         Mode::Verbose => eprintln!("[whisker] {m}"),
-        Mode::Curated | Mode::Tui => {
+        Mode::Curated => {
             if is_tty() {
                 emit_above_bars(&format!("  \x1b[90m·\x1b[0m {m}"));
             } else {
@@ -657,9 +815,15 @@ pub fn info(msg: impl AsRef<str>) {
 /// rough edges that don't stop the pipeline.
 pub fn warn(msg: impl AsRef<str>) {
     let m = msg.as_ref();
+    if report(ProgressEvent::Message {
+        level: MessageLevel::Warning,
+        text: m.to_string(),
+    }) {
+        return;
+    }
     match mode() {
         Mode::Verbose => eprintln!("[whisker] warn: {m}"),
-        Mode::Curated | Mode::Tui => {
+        Mode::Curated => {
             if is_tty() {
                 emit_above_bars(&format!("  \x1b[33m⚠\x1b[0m {m}"));
             } else {
@@ -675,12 +839,21 @@ pub fn warn(msg: impl AsRef<str>) {
 /// (ASLR references, intermediate file paths, patcher symbol diffs)
 /// but distracting noise during normal `whisker run`.
 pub fn debug(msg: impl AsRef<str>) {
+    if reporter_active() {
+        if is_verbose() {
+            report(ProgressEvent::Message {
+                level: MessageLevel::Debug,
+                text: msg.as_ref().to_string(),
+            });
+        }
+        return;
+    }
     match mode() {
         Mode::Verbose => {
             let m = msg.as_ref();
             eprintln!("[whisker] debug: {m}");
         }
-        Mode::Curated | Mode::Tui => {}
+        Mode::Curated => {}
     }
 }
 
@@ -690,9 +863,15 @@ pub fn debug(msg: impl AsRef<str>) {
 /// + Err(anyhow!(...))?`).
 pub fn error(msg: impl AsRef<str>) {
     let m = msg.as_ref();
+    if report(ProgressEvent::Message {
+        level: MessageLevel::Error,
+        text: m.to_string(),
+    }) {
+        return;
+    }
     match mode() {
         Mode::Verbose => eprintln!("[whisker] error: {m}"),
-        Mode::Curated | Mode::Tui => {
+        Mode::Curated => {
             if is_tty() {
                 emit_above_bars(&format!("  \x1b[31m✗\x1b[0m {m}"));
             } else {
@@ -705,6 +884,43 @@ pub fn error(msg: impl AsRef<str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scoped_reporter_receives_typed_progress_events() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let guard = install_reporter(move |event| captured.lock().unwrap().push(event)).unwrap();
+
+        section("Build");
+        let operation = step(OperationKind::Compile, "host-smoke");
+        operation.done("ready");
+        info("artifact ready");
+
+        let events = events.lock().unwrap();
+        assert_eq!(
+            events.first(),
+            Some(&ProgressEvent::Section("Build".into()))
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ProgressEvent::OperationStarted {
+                kind: OperationKind::Compile,
+                detail,
+            } if detail == "host-smoke"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ProgressEvent::OperationFinished {
+                kind: OperationKind::Compile,
+                outcome: OperationOutcome::Done,
+                summary,
+                ..
+            } if summary == "ready"
+        )));
+        drop(events);
+        drop(guard);
+        assert!(!reporter_active());
+    }
 
     #[test]
     fn format_elapsed_chooses_unit_by_magnitude() {

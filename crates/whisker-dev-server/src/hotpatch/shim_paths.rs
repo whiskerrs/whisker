@@ -122,7 +122,8 @@ fn build_shims(workspace_root: &Path) -> Result<()> {
     // skip this step. Stream the cargo output through a step so it
     // looks like the rest of the initial-build section rather than
     // dumping ~200 lines of `Compiling X v…` ahead of any UI chrome.
-    let step = whisker_build::ui::step("setup", "whisker-cli shims");
+    let step =
+        whisker_build::ui::step(whisker_build::ui::OperationKind::Setup, "whisker-cli shims");
     let mut cmd = std::process::Command::new("cargo");
     cmd.args([
         "build",

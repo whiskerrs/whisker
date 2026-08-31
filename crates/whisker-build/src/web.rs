@@ -101,10 +101,18 @@ pub fn compile(config: &WebBuild) -> Result<PathBuf> {
         })?;
         command.envs(crate::capture_env_vars_all_crates(capture));
     }
-    let status = command.status().context("spawn Cargo Web build")?;
+    let compile_step = crate::ui::step(
+        crate::ui::OperationKind::Compile,
+        format!("{} ({TARGET})", config.package),
+    );
+    let status = compile_step
+        .pipe(&mut command)
+        .context("spawn Cargo Web build")?;
     if !status.success() {
+        compile_step.fail(status.to_string());
         anyhow::bail!("Cargo Web build exited with {status}");
     }
+    compile_step.done("");
 
     let crate_stem = config.package.replace('-', "_");
     let raw_wasm = config
@@ -124,6 +132,20 @@ pub fn compile(config: &WebBuild) -> Result<PathBuf> {
 
 /// Run wasm-bindgen and stage the static document around `raw_wasm`.
 pub fn bindgen(config: &WebBuild, raw_wasm: &Path) -> Result<WebArtifacts> {
+    let package_step = crate::ui::step(crate::ui::OperationKind::Package, "wasm-bindgen");
+    match bindgen_inner(config, raw_wasm) {
+        Ok(artifacts) => {
+            package_step.done("");
+            Ok(artifacts)
+        }
+        Err(error) => {
+            package_step.fail("wasm-bindgen failed");
+            Err(error)
+        }
+    }
+}
+
+fn bindgen_inner(config: &WebBuild, raw_wasm: &Path) -> Result<WebArtifacts> {
     if config.dist_dir.exists() {
         std::fs::remove_dir_all(&config.dist_dir)
             .with_context(|| format!("clean {}", config.dist_dir.display()))?;
