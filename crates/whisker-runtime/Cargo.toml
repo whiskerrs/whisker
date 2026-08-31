@@ -32,3 +32,6 @@ whisker-style = { workspace = true }
 whisker-value = { workspace = true }
 whisker-protocol = { workspace = true }
 whisker-engine = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+linkme = { workspace = true }

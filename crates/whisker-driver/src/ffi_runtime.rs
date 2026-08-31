@@ -23,7 +23,7 @@ use whisker_engine::whisker_style::StyleEnvironment;
 use whisker_engine::{FrameSink, LayoutOptions, MeasurementProvider};
 use whisker_runtime::module::{ModuleHost, with_module_host};
 use whisker_runtime::view::Element;
-use whisker_runtime::{RuntimeInstance, RuntimeWakeHandle, SurfaceRuntime};
+use whisker_runtime::{ElementRegistry, RuntimeInstance, RuntimeWakeHandle, SurfaceRuntime};
 
 mod frame;
 mod measurement;
@@ -218,10 +218,19 @@ pub unsafe fn create(
     };
     let wake_data = request_data as usize;
     let wake = RuntimeWakeHandle::new(move || request_frame(wake_data as *mut c_void));
+    let registry = match ElementRegistry::standard_with_linked_providers() {
+        Ok(registry) => registry,
+        Err(error) => {
+            mobile_error(format_args!(
+                "Whisker mobile element bootstrap failed: {error}"
+            ));
+            return std::ptr::null_mut();
+        }
+    };
     let surface = SurfaceRuntime::with_element_registry_and_protocol(
         SurfaceId::new(1).expect("mobile surface ID is non-zero"),
         viewport.environment(),
-        whisker_runtime::ElementRegistry::standard(),
+        registry,
         capabilities.protocol(),
     );
     let mut runtime = RuntimeInstance::new(surface, wake.clone());

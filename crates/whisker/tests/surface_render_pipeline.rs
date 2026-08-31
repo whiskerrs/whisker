@@ -12,8 +12,8 @@ use whisker::css::{
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
 use whisker::runtime::view::{
-    BindType, create_element_by_name, set_attribute_bool, set_event_listener, set_root,
-    try_invoke_element_command, with_installed_renderer,
+    BindType, create_element_by_name, create_element_by_schema, set_attribute_bool,
+    set_event_listener, set_root, try_invoke_element_command, with_installed_renderer,
 };
 use whisker::{
     ElementModuleDefinition, ElementProviderMetadata, ElementRegistry, ElementTag,
@@ -1382,20 +1382,22 @@ fn horizontal_list_virtualizes_grid_content_by_complete_columns() {
 }
 
 #[test]
-fn module_component_registers_its_schema_with_the_active_surface() {
+fn linked_module_component_is_bootstrapped_before_a_delayed_mount() {
     __reset_for_tests();
     let owner = Owner::new(None);
-    let surface = SurfaceRuntime::new(
+    let registry = ElementRegistry::standard_with_linked_providers()
+        .expect("linked module schemas form one valid bootstrap registry");
+    let surface = SurfaceRuntime::with_element_registry(
         SurfaceId::new(11).expect("test surface"),
         StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+        registry,
     );
-    assert!(
-        surface
-            .element_registrations()
-            .iter()
-            .all(|registration| registration.name != auto_registered_schema::NAME)
-    );
-
+    let bootstrap_registrations = surface.element_registrations();
+    let registration = bootstrap_registrations
+        .iter()
+        .find(|registration| registration.name == auto_registered_schema::NAME)
+        .expect("linked module schema is available before authoring")
+        .clone();
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
@@ -1407,12 +1409,18 @@ fn module_component_registers_its_schema_with_the_active_surface() {
         });
         set_root(root);
     });
+    assert_eq!(
+        surface.element_registrations(),
+        bootstrap_registrations,
+        "mounting the initial tree must not mutate the negotiated registry"
+    );
+
     assert_eq!(surface.binding_error(), None);
-    let registration = surface
-        .element_registrations()
-        .into_iter()
-        .find(|registration| registration.name == auto_registered_schema::NAME)
-        .expect("module component schema registered during authoring");
+    assert_eq!(
+        surface.element_registrations(),
+        bootstrap_registrations,
+        "a delayed custom element must use the bootstrap registry epoch"
+    );
 
     let mut host = TextHost::default();
     let mut renderer = RecordingRenderer::new(surface.surface());
@@ -1425,10 +1433,45 @@ fn module_component_registers_its_schema_with_the_active_surface() {
             &mut renderer,
             LayoutOptions::default(),
         )
-        .expect("auto-registered module frame");
+        .expect("pre-registered delayed module frame");
     assert!(renderer.frames()[0].packet.operations.iter().any(
         |operation| matches!(operation, Operation::CreateNode { element_type, .. } if *element_type == registration.element_type)
-    ));
+    ), "operations: {:?}", renderer.frames()[0].packet.operations);
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn surface_registry_rejects_a_schema_introduced_after_bootstrap() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(12).expect("test surface"),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    let bootstrap_registrations = surface.element_registrations();
+    let late_schema = ElementSchema {
+        name: "whisker.test/LateSchema".into(),
+        child_policy: whisker::ChildPolicy::None,
+        measurement: ElementMeasurement::None,
+        text_style: false,
+        properties: Vec::new(),
+        events: Vec::new(),
+        commands: Vec::new(),
+    };
+
+    with_installed_renderer(surface.renderer(), || {
+        owner.with(|| {
+            let _ = create_element_by_schema(&late_schema);
+        });
+    });
+
+    assert_eq!(
+        surface.binding_error(),
+        Some(RuntimeBindingError::UnsupportedCustomElement {
+            name: late_schema.name,
+        })
+    );
+    assert_eq!(surface.element_registrations(), bootstrap_registrations);
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 
@@ -1436,9 +1479,10 @@ fn module_component_registers_its_schema_with_the_active_surface() {
 fn custom_plain_text_children_lower_to_measurement_and_set_text() {
     __reset_for_tests();
     let owner = Owner::new(None);
-    let surface = SurfaceRuntime::new(
+    let surface = SurfaceRuntime::with_element_registry(
         SurfaceId::new(15).unwrap(),
         StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+        ElementRegistry::standard_with_linked_providers().unwrap(),
     );
 
     with_installed_renderer(surface.renderer(), || {

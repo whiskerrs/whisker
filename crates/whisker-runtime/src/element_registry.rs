@@ -12,6 +12,19 @@ use whisker_engine::whisker_style::SpecifiedStyle;
 
 type SchemaKey = String;
 
+/// Constructor for one custom element contract linked into an application.
+#[cfg(not(target_arch = "wasm32"))]
+pub type LinkedElementProvider = fn() -> ElementProviderMetadata;
+
+/// Custom element contracts contributed anywhere in the linked Rust graph.
+///
+/// The linker collects constructors only; schemas are built, sorted, validated,
+/// and assigned compact IDs synchronously before a native Host bootstraps.
+#[cfg(not(target_arch = "wasm32"))]
+#[linkme::distributed_slice]
+#[doc(hidden)]
+pub static LINKED_ELEMENT_PROVIDERS: [LinkedElementProvider];
+
 /// Authoring syntax generated for one element provider.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ElementAuthoringBinding {
@@ -127,6 +140,23 @@ impl ElementRegistry {
             .expect("standard element schemas are valid and uniquely bound")
     }
 
+    /// Builds the native application registry from every linked module schema.
+    ///
+    /// Sorting by package-qualified schema name makes compact IDs independent
+    /// of linker section order. The returned registry is the complete epoch a
+    /// native Host negotiates before application authoring begins.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn standard_with_linked_providers() -> Result<Self, ElementRegistryError> {
+        let mut providers = LINKED_ELEMENT_PROVIDERS
+            .iter()
+            .map(|provider| provider())
+            .collect::<Vec<_>>();
+        providers.sort_unstable_by(|left, right| left.schema.name.cmp(&right.schema.name));
+        Self::standard_builder()
+            .register_providers(providers)
+            .build()
+    }
+
     /// Returns the normalized contracts in compact-ID order.
     pub fn registrations(&self) -> &[ElementRegistration] {
         &self.registrations
@@ -151,41 +181,6 @@ impl ElementRegistry {
         self.names
             .get(name)
             .and_then(|index| self.registrations.get(*index))
-    }
-
-    /// Ensures a named module schema belongs to this registry epoch and
-    /// returns its compact registration. Repeating the same declaration is
-    /// idempotent; changing a schema under an existing name is rejected.
-    pub fn register_named(
-        &mut self,
-        schema: ElementSchema,
-    ) -> Result<&ElementRegistration, ElementRegistryError> {
-        schema
-            .validate()
-            .map_err(|error| ElementRegistryError::InvalidSchema {
-                name: schema.name.clone(),
-                error,
-            })?;
-        if let Some(index) = self.names.get(&schema.name).copied() {
-            let registration = &self.registrations[index];
-            if registration.schema() != schema {
-                return Err(ElementRegistryError::ConflictingSchema {
-                    name: registration.name.clone(),
-                });
-            }
-            return Ok(registration);
-        }
-        let raw_id = u32::try_from(self.registrations.len())
-            .ok()
-            .and_then(|value| value.checked_add(1))
-            .and_then(ElementTypeId::new)
-            .ok_or(ElementRegistryError::ElementTypeIdExhausted)?;
-        let name = schema.name.clone();
-        let index = self.registrations.len();
-        self.registrations.push(schema.bind(raw_id));
-        self.base_styles.push(SpecifiedStyle::new());
-        self.names.insert(name, index);
-        Ok(&self.registrations[index])
     }
 }
 

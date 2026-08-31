@@ -718,6 +718,17 @@ fn schema_tokens(
             pub fn element_provider() -> ::whisker::ElementProviderMetadata {
                 ::whisker::ElementProviderMetadata::named(schema())
             }
+
+            // Native application binaries collect every linked schema before
+            // mounting the first tree. Web composition roots already receive
+            // the same definitions explicitly from whisker-cng.
+            #[cfg(not(target_arch = "wasm32"))]
+            #[::whisker::runtime::__linked_elements::distributed_slice(
+                ::whisker::runtime::__linked_elements::LINKED_ELEMENT_PROVIDERS
+            )]
+            #[linkme(crate = ::whisker::runtime::__linked_elements)]
+            static __WHISKER_LINKED_ELEMENT_PROVIDER:
+                fn() -> ::whisker::ElementProviderMetadata = element_provider;
         }
     });
 
