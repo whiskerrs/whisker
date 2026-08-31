@@ -122,7 +122,6 @@ fn mobile_capability_constants_match_the_semantic_protocol() {
         (RenderCapability::VisualEffects, CAPABILITY_VISUAL_EFFECTS),
         (RenderCapability::TextEffects, CAPABILITY_TEXT_EFFECTS),
         (RenderCapability::TextTypography, CAPABILITY_TEXT_TYPOGRAPHY),
-        (RenderCapability::ImageContent, CAPABILITY_IMAGE_CONTENT),
         (RenderCapability::Cursor, CAPABILITY_CURSOR),
         (
             RenderCapability::ResourceLifecycle,

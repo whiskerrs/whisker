@@ -127,6 +127,39 @@ fn packet(mode: FrameMode, base: u64, target: u64, operations: Vec<Operation>) -
     }
 }
 
+#[test]
+fn pointer_capture_is_retained_and_released_by_the_desktop_surface() {
+    let node = id(1);
+    let pointer = whisker_protocol::PointerId::new(7).unwrap();
+    let mut scene = scene(SurfaceId::new(1).unwrap());
+
+    scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode {
+                    node,
+                    element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+                },
+                Operation::SetPointerCapture { node, pointer },
+            ],
+        ))
+        .unwrap();
+    assert_eq!(scene.pointer_captures.get(&pointer), Some(&node));
+
+    scene
+        .present(&packet(
+            FrameMode::Delta,
+            1,
+            2,
+            vec![Operation::ReleasePointerCapture { node, pointer }],
+        ))
+        .unwrap();
+    assert!(!scene.pointer_captures.contains_key(&pointer));
+}
+
 const CHECKED: PropertyId = PropertyId::new(1).unwrap();
 const DISABLED: PropertyId = PropertyId::new(2).unwrap();
 const CHANGE: EventId = EventId::new(1).unwrap();
