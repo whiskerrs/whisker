@@ -13,9 +13,9 @@ description = "Development-only runtime: WebSocket client + hot-reload patch rec
 
 [features]
 default = []
-# Pulls in the WebSocket client + subsecond bindings. `whisker-driver`
-# turns this on through its own `hot-reload` feature; release builds
-# get an empty crate.
+# Pulls in the WebSocket client + subsecond bindings. Mobile enables it
+# through `whisker-driver`; Desktop enables it directly. Release builds get
+# an empty crate.
 hot-reload = [
     "dep:tokio",
     "dep:tokio-tungstenite",
@@ -38,7 +38,6 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 subsecond = { workspace = true, optional = true }
 subsecond-types = { workspace = true, optional = true }
-# `pipe(2)` / `dup2` / `read` / `STDOUT_FILENO` for `log_capture` —
-# every device target we support is POSIX (Android NDK, iOS, macOS host,
-# Linux host), so libc covers the whole matrix.
+# `pipe(2)` / `dup2` / `read` / `STDOUT_FILENO` for POSIX log capture.
+# Windows keeps hot reload enabled but currently leaves log forwarding off.
 libc = { workspace = true, optional = true }

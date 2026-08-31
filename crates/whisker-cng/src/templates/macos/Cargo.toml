@@ -9,6 +9,9 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[features]
+hot-reload = ["whisker-macos/hot-reload"]
+
 [dependencies]
 whisker-app = { package = {{user_package_toml}}, path = {{user_crate_path_toml}} }
 whisker-macos = {{whisker_macos_dependency}}

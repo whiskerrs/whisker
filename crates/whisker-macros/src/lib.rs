@@ -1,8 +1,8 @@
 //! Procedural macros for Whisker.
 //!
-//! - [`main`] — designates the user's app entry. Generates the
-//!   `whisker_app_main` and `whisker_tick` FFI exports the native
-//!   host calls into; the user writes `fn app() -> Element`.
+//! - [`main`] — designates the user's app entry. Generates typed Rust
+//!   entry points for Desktop and the retained `whisker_view_*` ABI for
+//!   mobile Hosts; the user writes `fn app() -> Element`.
 //! - [`render!`] — fine-grained renderer macro. Emits imperative
 //!   `view::*` dispatch + `effect`s for dynamic parts. See
 //!   `crates/whisker-macros/src/render.rs` for the grammar.
@@ -79,7 +79,7 @@ pub fn WhiskerModule(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Annotates the user's app function (returning `whisker::Element`) and
-/// generates the FFI symbols the iOS/Android host expects.
+/// generates the native Host entry points.
 ///
 /// ```ignore
 /// use whisker::prelude::*;
@@ -95,27 +95,24 @@ pub fn WhiskerModule(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```ignore
 /// fn app() -> Element { /* user body */ }
 ///
-/// #[unsafe(no_mangle)]
-/// pub extern "C" fn whisker_app_main(
-///     engine: *mut std::ffi::c_void,
-///     request_frame: Option<extern "C" fn(*mut std::ffi::c_void)>,
-///     request_frame_data: *mut std::ffi::c_void,
-/// ) {
-///     ::whisker::__main_runtime::run(engine, request_frame, request_frame_data, app);
-/// }
+/// pub fn __whisker_application() -> Element { /* hot-patch dispatch to app */ }
+/// pub fn __whisker_application_hash() -> u64 { /* root-remount signal */ }
 ///
+/// // Android/iOS only: retained-runtime C ABI.
 /// #[unsafe(no_mangle)]
-/// pub extern "C" fn whisker_tick(engine: *mut std::ffi::c_void) -> bool {
-///     ::whisker::__main_runtime::tick(engine)
-/// }
+/// pub unsafe extern "C" fn whisker_view_create(/* Host callbacks */) -> *mut c_void;
+/// #[unsafe(no_mangle)]
+/// pub unsafe extern "C" fn whisker_view_tick(/* instance handle + viewport */) -> bool;
+/// #[unsafe(no_mangle)]
+/// pub unsafe extern "C" fn whisker_view_destroy(/* instance handle */);
 /// ```
 ///
 /// `request_frame` is the host's "wake up the render loop" callback. The
 /// runtime invokes it when a signal update marks the tree dirty so the
 /// host can unpause its `CADisplayLink` (or equivalent) to schedule the
-/// next tick. Pass `None` to opt into an unconditional 60Hz loop.
+/// next tick.
 ///
-/// `whisker_tick` returns `true` when the runtime is idle after the tick;
+/// `whisker_view_tick` returns `true` when the runtime is idle after the tick;
 /// the host can pause its render loop until the next `request_frame`
 /// fires.
 #[proc_macro_attribute]
@@ -150,6 +147,13 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             __whisker_app_dispatch()
         }
 
+        /// Source hash read through the same hot-patch dispatch as the app
+        /// body. Native Hosts use a changed value as the root-remount signal.
+        #[doc(hidden)]
+        pub fn __whisker_application_hash() -> u64 {
+            __whisker_app_hash_dispatch()
+        }
+
         // Source-hash pair for the full-remount trigger. The dispatch
         // wrapper routes through `call_app_hash`, so after a patch the
         // runtime reads the *patch dylib's* hash. A changed value means
@@ -173,10 +177,11 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // layout, and frame production stay in shared Rust.
         #[cfg(any(target_os = "android", target_os = "ios"))]
         #[unsafe(no_mangle)]
-        pub extern "C" fn whisker_view_create(
+        pub unsafe extern "C" fn whisker_view_create(
             width: f32,
             height: f32,
             scale: f32,
+            capabilities: *const ::whisker::__driver_abi::MobileHostCapabilities,
             request_frame: extern "C" fn(*mut ::std::ffi::c_void),
             request_frame_data: *mut ::std::ffi::c_void,
             bootstrap: ::whisker::__driver_abi::BootstrapCallback,
@@ -191,10 +196,11 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             observe_module: ::whisker::__driver_abi::ObserveModuleCallback,
             module_data: *mut ::std::ffi::c_void,
         ) -> *mut ::std::ffi::c_void {
-            ::whisker::__driver_runtime::create(
+            unsafe { ::whisker::__driver_runtime::create(
                 width,
                 height,
                 scale,
+                capabilities,
                 request_frame,
                 request_frame_data,
                 bootstrap,
@@ -209,7 +215,8 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 observe_module,
                 module_data,
                 __whisker_app_dispatch,
-            )
+                __whisker_app_hash_dispatch,
+            ) }
         }
 
         #[cfg(any(target_os = "android", target_os = "ios"))]

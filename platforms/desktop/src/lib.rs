@@ -33,6 +33,7 @@ pub type WhiskerMeasuredSize = whisker_protocol::MeasuredSize;
 pub type WhiskerTextStyle = whisker_protocol::TextStyleSnapshot;
 
 mod app;
+mod capabilities;
 mod element;
 mod gpu;
 mod input;
@@ -46,7 +47,7 @@ mod text;
 #[path = "../tests/host_conformance/mod.rs"]
 mod host_conformance_tests;
 
-pub use app::{DesktopAppConfig, DesktopAppError, run};
+pub use app::{DesktopAppConfig, DesktopAppError, run, run_with_application_hash};
 use element::DesktopElementRegistry;
 pub use element::{
     BuiltInElementModule, DesktopElementFactory, DesktopEventEmitter, DesktopModuleDefinition,
@@ -242,9 +243,9 @@ impl DesktopRuntime {
             .min(100.0) as f32;
         self.last_frame_timestamp_ms = Some(context.timestamp_ms);
         self.surface.advance_scroll_animations(delta_ms);
-        self.modules.with_host(|| {
-            self.modules.dispatch_pending_events();
-        });
+        self.modules
+            .dispatch_pending_events(runtime)
+            .map_err(|error| DesktopError(format!("dispatch Desktop module event: {error}")))?;
         self.drain_runtime_resource_commands(runtime)?;
         let dispatched_resource_event = self.dispatch_pending_resource_events(runtime)?;
         let events = self.surface.take_events();
@@ -264,9 +265,9 @@ impl DesktopRuntime {
                     DesktopError(format!("dispatch Desktop provider event: {error}"))
                 })?;
         }
-        self.modules.with_host(|| {
-            self.modules.dispatch_pending_events();
-        });
+        self.modules
+            .dispatch_pending_events(runtime)
+            .map_err(|error| DesktopError(format!("dispatch Desktop module event: {error}")))?;
         let environment = StyleEnvironment::new(
             context.logical_width,
             context.logical_height,
@@ -286,9 +287,9 @@ impl DesktopRuntime {
         });
         self.drain_runtime_resource_commands(runtime)?;
         let drive = drive.map_err(|error| DesktopError(format!("drive Desktop frame: {error}")))?;
-        self.modules.with_host(|| {
-            self.modules.dispatch_pending_events();
-        });
+        self.modules
+            .dispatch_pending_events(runtime)
+            .map_err(|error| DesktopError(format!("dispatch Desktop module event: {error}")))?;
         self.surface
             .paint(
                 &mut self.measurements,

@@ -2,26 +2,29 @@
 //!
 //! After a successful cold-rebuild, the freshly-built artifact has to
 //! land on the target and start (re-bootstrapping the dev-runtime so
-//! it dials the dev-server back). For Android we shell out to `adb`;
-//! for iOS Simulator to `xcrun simctl`.
+//! it dials the dev-server back). For Android we shell out to `adb`,
+//! for iOS Simulator to `xcrun simctl`, and for macOS we launch the
+//! generated app executable while retaining its child handle.
 //!
 //! Application identity (bundle id, applicationId, launcher activity,
 //! scheme, …) is **not** baked in here. The cli passes those as
-//! `Config::android` / `Config::ios` after reading the user's
+//! `Config::android` / `Config::ios` / `Config::macos` after reading the user's
 //! `whisker.rs::configure(&mut Config)`, so this module has zero
 //! knowledge of which example or external user crate is in play.
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::process::Command;
 
-use crate::{AndroidParams, IosParams, Target};
+use crate::{AndroidParams, IosParams, MacosParams, Target};
 use whisker_build::CaptureShims;
 
 pub struct Installer {
     target: Target,
     android: Option<AndroidParams>,
     ios: Option<IosParams>,
+    macos: Option<MacosParams>,
     workspace_root: PathBuf,
     package: String,
     /// Capture shims for hot reload. When `Some`, the xcodebuild
@@ -52,6 +55,8 @@ pub struct Installer {
     /// `SIMCTL_CHILD_WHISKER_DEV_TOKEN`; Android via
     /// `adb shell setprop debug.whisker_dev_token`. `None` = token-less.
     dev_token: Option<String>,
+    macos_child: tokio::sync::Mutex<Option<tokio::process::Child>>,
+    web_opened: AtomicBool,
 }
 
 impl Installer {
@@ -60,6 +65,7 @@ impl Installer {
         target: Target,
         android: Option<AndroidParams>,
         ios: Option<IosParams>,
+        macos: Option<MacosParams>,
         workspace_root: PathBuf,
         package: String,
         capture: Option<CaptureShims>,
@@ -71,12 +77,15 @@ impl Installer {
             target,
             android,
             ios,
+            macos,
             workspace_root,
             package,
             capture,
             features,
             dev_port,
             dev_token,
+            macos_child: tokio::sync::Mutex::new(None),
+            web_opened: AtomicBool::new(false),
         }
     }
 
@@ -104,13 +113,72 @@ impl Installer {
                 .await
             }
             Target::Macos => {
-                anyhow::bail!("macOS launch is driven by whisker-cli's local process supervisor")
+                let params = self.macos.as_ref().context(
+                    "target=Macos but no MacosParams — cli must provide the generated Host",
+                )?;
+                let executable = params
+                    .target_dir
+                    .join("bundles/debug")
+                    .join(format!("{}.app", params.app_name))
+                    .join("Contents/MacOS")
+                    .join(&params.binary_name);
+                if !executable.is_file() {
+                    anyhow::bail!(
+                        "macOS Host executable is missing at {}",
+                        executable.display()
+                    );
+                }
+                let mut slot = self.macos_child.lock().await;
+                if let Some(mut previous) = slot.take() {
+                    let _ = previous.kill().await;
+                    let _ = previous.wait().await;
+                }
+                let mut command = Command::new(&executable);
+                command
+                    .current_dir(executable.parent().expect("bundle executable has a parent"))
+                    .env("WHISKER_DEV_ADDR", format!("127.0.0.1:{}", self.dev_port))
+                    .kill_on_drop(true);
+                if let Some(token) = &self.dev_token {
+                    command.env("WHISKER_DEV_TOKEN", token);
+                }
+                *slot = Some(
+                    command
+                        .spawn()
+                        .with_context(|| format!("launch macOS Host {}", executable.display()))?,
+                );
+                Ok(())
             }
             Target::Web => {
-                anyhow::bail!("Web launch is driven by the CNG-generated Trunk project")
+                if self.web_opened.swap(true, Ordering::AcqRel) {
+                    Ok(())
+                } else {
+                    open_browser(self.dev_port).await
+                }
             }
         }
     }
+}
+
+async fn open_browser(port: u16) -> Result<()> {
+    let url = format!("http://127.0.0.1:{port}/");
+    let mut command = if cfg!(target_os = "macos") {
+        let mut command = Command::new("open");
+        command.arg(&url);
+        command
+    } else if cfg!(target_os = "windows") {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", &url]);
+        command
+    } else {
+        let mut command = Command::new("xdg-open");
+        command.arg(&url);
+        command
+    };
+    let status = command.status().await.context("open Web Host in browser")?;
+    if !status.success() {
+        anyhow::bail!("browser launcher exited with {status}");
+    }
+    Ok(())
 }
 
 /// Run a `tokio::process::Command` to completion, capture its stderr,
@@ -439,6 +507,7 @@ async fn ios_install_and_launch(
 
     let xc_step = whisker_build::ui::step("xcodebuild", p.scheme.clone());
     let mut xc_cmd = Command::new("xcodebuild");
+    use_current_whisker_cli(&mut xc_cmd)?;
     xc_cmd
         .arg("-project")
         .arg(&xcode_project)
@@ -568,6 +637,17 @@ async fn ios_install_and_launch(
     Ok(())
 }
 
+/// Make an Xcode build launched by this CLI call the exact same executable
+/// from its Rust build phase. This matters for `cargo run`: a bare `whisker`
+/// lookup may otherwise select an older cargo-installed binary from `PATH`.
+/// Xcode builds started independently keep the generated script's `whisker`
+/// fallback.
+fn use_current_whisker_cli(command: &mut Command) -> Result<()> {
+    let executable = std::env::current_exe().context("resolve current Whisker CLI executable")?;
+    command.env("WHISKER_CLI", executable);
+    Ok(())
+}
+
 /// Best-effort pick of an iPhone simulator that's installed on this
 /// machine. `pick_available_iphone()` returns `None` if simctl isn't
 /// available or the output doesn't parse; the caller substitutes a
@@ -613,6 +693,7 @@ mod tests {
             Target::Android,
             None,
             None,
+            None,
             PathBuf::new(),
             "x".into(),
             None,
@@ -633,6 +714,7 @@ mod tests {
     fn installer_for_ios_without_params_errors() {
         let inst = Installer::new(
             Target::IosSimulator,
+            None,
             None,
             None,
             PathBuf::new(),
@@ -661,5 +743,21 @@ mod tests {
             .block_on(async { android_install_and_launch(&p, 9876, None).await })
             .unwrap_err();
         assert!(err.to_string().contains("APK missing"), "got: {err:#}");
+    }
+
+    #[test]
+    fn xcodebuild_uses_the_current_whisker_cli() {
+        let mut command = Command::new("xcodebuild");
+        use_current_whisker_cli(&mut command).unwrap();
+
+        let configured = command
+            .as_std()
+            .get_envs()
+            .find_map(|(key, value)| (key == "WHISKER_CLI").then_some(value))
+            .flatten();
+        assert_eq!(
+            configured,
+            Some(std::env::current_exe().unwrap().as_os_str())
+        );
     }
 }

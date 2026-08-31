@@ -12,6 +12,7 @@ typealias WhiskerObserveModule = WhiskerMobileObserveModuleCallback
 
 func whiskerViewCreate(
     _ width: Float, _ height: Float, _ scale: Float,
+    _ capabilities: WhiskerMobileHostCapabilities,
     _ requestFrame: WhiskerRequestFrame, _ requestData: UnsafeMutableRawPointer?,
     _ bootstrap: WhiskerBootstrapHost, _ bootstrapData: UnsafeMutableRawPointer?,
     _ measure: WhiskerMeasureHost, _ measureData: UnsafeMutableRawPointer?,
@@ -20,15 +21,18 @@ func whiskerViewCreate(
     _ invokeModule: WhiskerInvokeModule, _ observeModule: WhiskerObserveModule,
     _ moduleData: UnsafeMutableRawPointer?
 ) -> UnsafeMutableRawPointer? {
-    whisker_view_create(
-        width, height, scale,
-        requestFrame, requestData,
-        bootstrap, bootstrapData,
-        measure, measureData,
-        presentFrame, presentData,
-        resourceCommand, resourceData,
-        invokeModule, observeModule, moduleData
-    )
+    var capabilities = capabilities
+    return withUnsafePointer(to: &capabilities) { capabilities in
+        whisker_view_create(
+            width, height, scale, capabilities,
+            requestFrame, requestData,
+            bootstrap, bootstrapData,
+            measure, measureData,
+            presentFrame, presentData,
+            resourceCommand, resourceData,
+            invokeModule, observeModule, moduleData
+        )
+    }
 }
 
 func whiskerViewTick(

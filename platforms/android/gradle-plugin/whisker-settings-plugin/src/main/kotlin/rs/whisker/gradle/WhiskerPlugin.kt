@@ -128,8 +128,11 @@ class WhiskerPlugin : Plugin<Settings> {
     }
 
     private fun runWhiskerBuildModules(workspace: File, userPackage: String): String {
+        val whiskerCli = System.getenv("WHISKER_CLI")
+            ?.takeIf { it.isNotBlank() }
+            ?: "whisker"
         val proc = ProcessBuilder(
-            "whisker",
+            whiskerCli,
             "modules",
             "--workspace=${workspace.absolutePath}",
             "--package=$userPackage",
@@ -141,6 +144,7 @@ class WhiskerPlugin : Plugin<Settings> {
             error(
                 "whisker modules failed (exit $rc).\n" +
                     "stderr:\n$err\n" +
+                    "Whisker CLI: $whiskerCli\n" +
                     "Hint: install with `cargo install whisker-cli` " +
                     "and make sure it's on the JVM's PATH.",
             )

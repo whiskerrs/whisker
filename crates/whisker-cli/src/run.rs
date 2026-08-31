@@ -13,7 +13,9 @@
 use anyhow::{Context, Result, anyhow};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use whisker_dev_server::{AndroidParams, Config, DevServer, HotPatchMode, IosParams, Target};
+use whisker_dev_server::{
+    AndroidParams, Config, DevServer, HotPatchMode, IosParams, Target, WebParams,
+};
 
 use crate::manifest;
 
@@ -83,9 +85,7 @@ pub fn run(args: Args) -> Result<()> {
     // call fires — `whisker_build::ui::mode()` caches its lookup in a
     // `OnceLock` on the first call, so flipping this env later doesn't
     // unstick a `Curated` cache.
-    let tui_enabled = args.target != CliTarget::Web
-        && !args.no_tui
-        && std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let tui_enabled = !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stderr());
     if tui_enabled {
         // FIXME: Audit that the environment access only happens in single-threaded code.
         unsafe { std::env::set_var("WHISKER_TUI", "1") };
@@ -233,13 +233,11 @@ fn run_inner(
             &workspace_root,
             &sync.gen_dir,
             &watch_paths_for(&m),
+            args.bind,
+            args.no_hot_patch,
             tui,
         );
     }
-    if target == Target::Web {
-        return run_web(&sync.gen_dir, args.bind);
-    }
-
     let android = match target {
         Target::Android => Some(android_params_from(&m, &sync.gen_dir)?),
         _ => None,
@@ -248,19 +246,18 @@ fn run_inner(
         Target::IosSimulator => Some(ios_params_from(&m, &sync.gen_dir)?),
         _ => None,
     };
+    let web = match target {
+        Target::Web => Some(WebParams {
+            project_dir: sync.gen_dir.clone(),
+            target_dir: workspace_root.join("target/.whisker/web"),
+            dist_dir: sync.gen_dir.join("dist"),
+            generated_package: format!("{}-whisker-web", m.package),
+        }),
+        _ => None,
+    };
 
     let watch_paths = watch_paths_for(&m);
 
-    // Android/iOS currently stop at the native-shell bootstrap boundary.
-    // There is deliberately no Rust dylib or patch receiver until the mobile
-    // FramePacket ABI lands, so advertising subsecond hot reload here would
-    // only produce a capture/connection failure after an otherwise healthy
-    // launch. Full Reload remains available while this slice is in place.
-    if !args.no_hot_patch {
-        whisker_build::ui::info(
-            "mobile native-shell mode · Rust hot reload activates with the renderer ABI slice",
-        );
-    }
     let config = Config {
         workspace_root,
         crate_dir: m.crate_dir,
@@ -273,10 +270,18 @@ fn run_inner(
         // receives, so without this an unauthenticated peer on a
         // LAN-exposed bind could push arbitrary native code; the gate
         // also defends an accidental `--bind 0.0.0.0`.
-        dev_token: Some(generate_dev_token()),
-        hot_patch_mode: HotPatchMode::FullReloadOnly,
+        // Web clients share this server's HTTP origin with the patch socket.
+        // Native-code patch transport keeps its random per-session token.
+        dev_token: (target != Target::Web).then(generate_dev_token),
+        hot_patch_mode: if args.no_hot_patch {
+            HotPatchMode::FullReloadOnly
+        } else {
+            HotPatchMode::HotReload
+        },
         android,
         ios,
+        macos: None,
+        web,
     };
 
     let watching_paths: Vec<String> = watch_paths
@@ -327,36 +332,6 @@ fn watch_paths_for(manifest: &manifest::ResolvedManifest) -> Vec<PathBuf> {
     ]
 }
 
-/// Run the generated browser project. Trunk owns incremental WASM rebuilds,
-/// serves the output, opens the browser, and reloads the page after each
-/// successful build; a page reload remounts the Whisker runtime from scratch.
-fn run_web(gen_dir: &Path, bind: SocketAddr) -> Result<()> {
-    whisker_build::ui::info(format!(
-        "starting Web Host at http://{bind} · source changes remount the app"
-    ));
-    let status = std::process::Command::new("trunk")
-        .arg("serve")
-        .arg("--config")
-        .arg(gen_dir.join("Trunk.toml"))
-        .arg("--address")
-        .arg(bind.ip().to_string())
-        .arg("--port")
-        .arg(bind.port().to_string())
-        .arg("--open")
-        // Whisker's subprocess UI convention uses `NO_COLOR=1`, while
-        // Trunk's clap parser accepts the boolean spellings only.
-        .env("NO_COLOR", "true")
-        .current_dir(gen_dir)
-        .status()
-        .context(
-            "start Trunk for Web Host (install it with `cargo install trunk --locked` if missing)",
-        )?;
-    if !status.success() {
-        return Err(anyhow!("Trunk Web development server exited with {status}"));
-    }
-    Ok(())
-}
-
 /// Drive the first Desktop development loop. The generated Cargo project is
 /// exactly the one `whisker build macos` consumes; development adds only file
 /// watching and process supervision around its Debug build.
@@ -365,6 +340,8 @@ fn run_macos(
     workspace_root: &Path,
     gen_dir: &Path,
     explicit_watch_paths: &[PathBuf],
+    bind_addr: SocketAddr,
+    no_hot_patch: bool,
     tui: Option<&crate::tui::TuiHandle>,
 ) -> Result<()> {
     let app_name = manifest
@@ -375,136 +352,59 @@ fn run_macos(
     let binary_name = format!("{}-whisker-macos", manifest.package);
     let target_dir = workspace_root.join("target/.whisker/macos");
 
-    let mut watch_roots: Vec<PathBuf> = whisker_dev_server::discover_path_deps(
-        &manifest.crate_dir.join("Cargo.toml"),
-        &manifest.package,
-    )
-    .unwrap_or_default()
-    .into_iter()
-    .map(|dependency| dependency.src_dir)
-    .filter(|path| path.is_dir())
-    .collect();
-    for path in explicit_watch_paths {
-        if path.exists() && !watch_roots.contains(path) {
-            watch_roots.push(path.clone());
-        }
-    }
-    if watch_roots.is_empty() {
-        watch_roots.push(manifest.crate_dir.join("src"));
-    }
+    let watch_roots = explicit_watch_paths.to_vec();
     if let Some(tui) = tui {
         tui.set_dev_server(
-            "local process",
+            bind_addr.to_string(),
             watch_roots
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
         );
-        tui.apply_event(&whisker_dev_server::Event::BuildingFull);
+        tui.set_phase(crate::tui::AppPhase::Initializing);
     }
-
-    let build = || {
-        whisker_build::macos::build_app(&whisker_build::macos::MacosBuild {
-            project_dir: gen_dir,
-            target_dir: &target_dir,
-            app_name,
-            binary_name: &binary_name,
-            profile: whisker_build::Profile::Debug,
-        })
+    let config = Config {
+        workspace_root: workspace_root.to_path_buf(),
+        crate_dir: manifest.crate_dir.clone(),
+        package: manifest.package.clone(),
+        target: Target::Macos,
+        watch_paths: watch_roots,
+        bind_addr,
+        dev_token: Some(generate_dev_token()),
+        hot_patch_mode: if no_hot_patch {
+            HotPatchMode::FullReloadOnly
+        } else {
+            HotPatchMode::HotReload
+        },
+        android: None,
+        ios: None,
+        macos: Some(whisker_dev_server::MacosParams {
+            project_dir: gen_dir.to_path_buf(),
+            target_dir,
+            app_name: app_name.to_string(),
+            binary_name,
+        }),
+        web: None,
     };
-    let bundle = match build() {
-        Ok(bundle) => bundle,
-        Err(error) => {
-            if let Some(tui) = tui {
-                tui.apply_event(&whisker_dev_server::Event::BuildFailed(format!(
-                    "{error:#}"
-                )));
-            }
-            return Err(error).context("initial macOS build");
-        }
-    };
-    if let Some(tui) = tui {
-        tui.apply_event(&whisker_dev_server::Event::BuildSucceeded);
-        tui.apply_event(&whisker_dev_server::Event::Started);
-    }
-    let mut running = launch_macos_bundle(&bundle, &binary_name)?;
-    let launch_binary_name = binary_name.clone();
-    whisker_build::ui::info(format!(
-        "launched {} · watching for rebuild/relaunch",
-        bundle.display()
-    ));
-
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("build macOS development runtime")?;
-    runtime.block_on(async move {
-        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let _watcher = whisker_dev_server::watcher::spawn_watcher(
-            watch_roots,
-            std::time::Duration::from_millis(200),
-            tx,
-        )?;
-        while let Some(change) = rx.recv().await {
-            let config_file = manifest.crate_dir.join("whisker.rs");
-            if change.paths.iter().any(|path| path == &config_file) {
-                whisker_build::ui::warn(
-                    "whisker.rs changed — restart `whisker run desktop` to regenerate gen/macos",
-                );
-                continue;
+    let tui_for_events = tui.cloned();
+    let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    if let Some(tui) = tui {
+        tui.set_command_sender(command_sender);
+    }
+    let server = DevServer::new(config)?
+        .with_command_receiver(command_receiver)
+        .on_event(move |event| {
+            if let Some(tui) = &tui_for_events {
+                tui.apply_event(&event);
+            } else {
+                forward_event_to_ui(event);
             }
-            if change.kind == whisker_dev_server::ChangeKind::Other {
-                continue;
-            }
-            if let Some(tui) = tui {
-                tui.apply_event(&whisker_dev_server::Event::BuildingFull);
-            }
-            match build() {
-                Ok(new_bundle) => {
-                    if let Some(tui) = tui {
-                        tui.apply_event(&whisker_dev_server::Event::BuildSucceeded);
-                    }
-                    stop_macos_app(&mut running);
-                    running = launch_macos_bundle(&new_bundle, &launch_binary_name)?;
-                    whisker_build::ui::info("macOS app rebuilt and relaunched");
-                }
-                Err(error) => {
-                    if let Some(tui) = tui {
-                        tui.apply_event(&whisker_dev_server::Event::BuildFailed(format!(
-                            "{error:#}"
-                        )));
-                    }
-                    whisker_build::ui::warn(format!(
-                        "macOS rebuild failed; the previous app remains running: {error:#}"
-                    ));
-                }
-            }
-        }
-        Ok::<(), anyhow::Error>(())
-    })
-}
-
-struct RunningMacosApp {
-    child: std::process::Child,
-    _track: whisker_build::child_guard::TrackGuard,
-}
-
-fn launch_macos_bundle(bundle: &Path, binary_name: &str) -> Result<RunningMacosApp> {
-    let executable = bundle.join("Contents/MacOS").join(binary_name);
-    let child = std::process::Command::new(&executable)
-        .current_dir(bundle)
-        .spawn()
-        .with_context(|| format!("launch {}", executable.display()))?;
-    let track = whisker_build::child_guard::track(child.id());
-    Ok(RunningMacosApp {
-        child,
-        _track: track,
-    })
-}
-
-fn stop_macos_app(app: &mut RunningMacosApp) {
-    let _ = app.child.kill();
-    let _ = app.child.wait();
+        });
+    runtime.block_on(server.run())
 }
 
 /// Generate a random hex token for the hot-reload session.

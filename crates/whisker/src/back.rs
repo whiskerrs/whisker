@@ -1,4 +1,4 @@
-//! Process-global back-interception registry — Whisker's analogue of
+//! Runtime-local back-interception registry — Whisker's analogue of
 //! React Native's `BackHandler`.
 //!
 //! [`on_back`] registers a handler for the platform back action
@@ -22,8 +22,8 @@
 //! mounted the registry is inert and the platform default applies.
 //! Main-thread only, like [`crate::focus`].
 
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
 
 use whisker_runtime::reactive::{Owner, RwSignal};
 
@@ -39,28 +39,33 @@ impl Entry {
     }
 }
 
-thread_local! {
-    static HANDLERS: RefCell<Vec<Entry>> = const { RefCell::new(Vec::new()) };
-    static NEXT_ID: Cell<u64> = const { Cell::new(0) };
-    static EXIT_IMPL: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
-    static REVISION: Cell<Option<RwSignal<u64>>> = const { Cell::new(None) };
+#[derive(Default)]
+struct BackState {
+    handlers: Vec<Entry>,
+    next_id: u64,
+    exit_impl: Option<Rc<dyn Fn()>>,
+    revision: Option<RwSignal<u64>>,
+}
+
+type SharedBackState = Rc<RefCell<BackState>>;
+
+fn state() -> SharedBackState {
+    whisker_runtime::runtime_local::state::<BackState>()
 }
 
 /// Registry-change signal, minted lazily under a detached root so its
-/// lifetime is the process, not whichever scope touches it first.
-fn revision_signal() -> RwSignal<u64> {
-    REVISION.with(|slot| {
-        if let Some(sig) = slot.get() {
-            return sig;
-        }
-        let sig = Owner::detached_root().with(|| RwSignal::new(0_u64));
-        slot.set(Some(sig));
-        sig
-    })
+/// lifetime is the runtime instance, not whichever scope touches it first.
+fn revision_signal(state: &SharedBackState) -> RwSignal<u64> {
+    if let Some(signal) = state.borrow().revision {
+        return signal;
+    }
+    let signal = Owner::detached_root().with(|| RwSignal::new(0_u64));
+    state.borrow_mut().revision = Some(signal);
+    signal
 }
 
-fn bump_revision() {
-    let sig = revision_signal();
+fn bump_revision(state: &SharedBackState) {
+    let sig = revision_signal(state);
     sig.set(sig.get_untracked() + 1);
 }
 
@@ -70,12 +75,19 @@ fn bump_revision() {
 #[must_use = "the handler is unregistered when the guard drops"]
 pub struct BackGuard {
     id: u64,
+    state: Weak<RefCell<BackState>>,
 }
 
 impl Drop for BackGuard {
     fn drop(&mut self) {
-        HANDLERS.with(|h| h.borrow_mut().retain(|e| e.id != self.id));
-        bump_revision();
+        let Some(state) = self.state.upgrade() else {
+            return;
+        };
+        state
+            .borrow_mut()
+            .handlers
+            .retain(|entry| entry.id != self.id);
+        bump_revision(&state);
     }
 }
 
@@ -95,20 +107,23 @@ impl Drop for BackGuard {
 /// // The dialog's "exit" button then calls `back::exit_app()`.
 /// ```
 pub fn on_back(handler: impl Fn() + 'static) -> BackGuard {
-    let id = NEXT_ID.with(|n| {
-        let id = n.get();
-        n.set(id + 1);
+    let state = state();
+    let id = {
+        let mut state = state.borrow_mut();
+        let id = state.next_id;
+        state.next_id = id.saturating_add(1);
         id
+    };
+    state.borrow_mut().handlers.push(Entry {
+        id,
+        owner: Owner::current(),
+        handler: Rc::new(handler),
     });
-    HANDLERS.with(|h| {
-        h.borrow_mut().push(Entry {
-            id,
-            owner: Owner::current(),
-            handler: Rc::new(handler),
-        })
-    });
-    bump_revision();
-    BackGuard { id }
+    bump_revision(&state);
+    BackGuard {
+        id,
+        state: Rc::downgrade(&state),
+    }
 }
 
 /// Trigger the platform's default back-out-of-the-app behavior
@@ -117,7 +132,7 @@ pub fn on_back(handler: impl Fn() + 'static) -> BackGuard {
 /// handler once the user confirms leaving. No-op where no platform
 /// exit is wired (iOS, or no router mounted).
 pub fn exit_app() {
-    let f = EXIT_IMPL.with(|e| e.borrow().clone());
+    let f = state().borrow().exit_impl.clone();
     if let Some(f) = f {
         f();
     }
@@ -126,7 +141,7 @@ pub fn exit_app() {
 /// Framework wiring: install the platform exit implementation
 /// [`exit_app`] calls. Registered by the platform gesture component.
 pub fn set_exit_impl(f: impl Fn() + 'static) {
-    EXIT_IMPL.with(|e| *e.borrow_mut() = Some(Rc::new(f)));
+    state().borrow_mut().exit_impl = Some(Rc::new(f));
 }
 
 /// Framework wiring: whether an active (non-paused) handler exists
@@ -134,8 +149,9 @@ pub fn set_exit_impl(f: impl Fn() + 'static) {
 /// the registry's revision signal, so calling inside an `effect`
 /// re-runs it on register / unregister.
 pub fn has_active_handler() -> bool {
-    let _ = revision_signal().get();
-    HANDLERS.with(|h| h.borrow().iter().any(Entry::is_active))
+    let state = state();
+    let _ = revision_signal(&state).get();
+    state.borrow().handlers.iter().any(Entry::is_active)
 }
 
 /// Framework wiring: whether ANY registration exists, paused or not —
@@ -147,21 +163,23 @@ pub fn has_active_handler() -> bool {
 /// the platform callback enabled; [`dispatch`]'s pause filter still
 /// routes the action to the pop instead of the buried handler.
 pub fn has_any_handler() -> bool {
-    let _ = revision_signal().get();
-    HANDLERS.with(|h| !h.borrow().is_empty())
+    let state = state();
+    let _ = revision_signal(&state).get();
+    !state.borrow().handlers.is_empty()
 }
 
 /// Framework wiring: deliver one back action to the most recent
 /// active handler. Returns `false` when no handler consumed it and
 /// the caller should fall back to its own behavior (pop / default).
 pub fn dispatch() -> bool {
-    let handler = HANDLERS.with(|h| {
-        h.borrow()
-            .iter()
-            .rev()
-            .find(|e| e.is_active())
-            .map(|e| e.handler.clone())
-    });
+    let state = state();
+    let handler = state
+        .borrow()
+        .handlers
+        .iter()
+        .rev()
+        .find(|e| e.is_active())
+        .map(|e| e.handler.clone());
     match handler {
         Some(f) => {
             f();
@@ -173,11 +191,15 @@ pub fn dispatch() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
 
     fn reset() {
-        HANDLERS.with(|h| h.borrow_mut().clear());
-        EXIT_IMPL.with(|e| *e.borrow_mut() = None);
+        let state = state();
+        let mut state = state.borrow_mut();
+        state.handlers.clear();
+        state.exit_impl = None;
     }
 
     #[test]
@@ -252,5 +274,57 @@ mod tests {
         set_exit_impl(move || h.set(h.get() + 1));
         exit_app();
         assert_eq!(hits.get(), 1);
+    }
+
+    #[test]
+    fn handlers_and_exit_callbacks_are_isolated_between_runtime_contexts() {
+        use whisker_runtime::{RuntimeContext, RuntimeWakeHandle};
+
+        reset();
+        let first = RuntimeContext::new(RuntimeWakeHandle::new(|| {}));
+        let second = RuntimeContext::new(RuntimeWakeHandle::new(|| {}));
+        let hits = Rc::new(RefCell::new(Vec::new()));
+        let first_hits = Rc::clone(&hits);
+        let second_hits = Rc::clone(&hits);
+        let first_guard = first.enter(|| {
+            set_exit_impl({
+                let hits = Rc::clone(&hits);
+                move || hits.borrow_mut().push("first-exit")
+            });
+            on_back(move || first_hits.borrow_mut().push("first"))
+        });
+        let second_guard = second.enter(|| {
+            set_exit_impl({
+                let hits = Rc::clone(&hits);
+                move || hits.borrow_mut().push("second-exit")
+            });
+            on_back(move || second_hits.borrow_mut().push("second"))
+        });
+
+        first.enter(|| {
+            assert!(dispatch());
+            exit_app();
+        });
+        second.enter(|| {
+            assert!(dispatch());
+            exit_app();
+        });
+        assert_eq!(
+            *hits.borrow(),
+            vec!["first", "first-exit", "second", "second-exit"]
+        );
+
+        first.enter(|| drop(first_guard));
+        second.enter(|| drop(second_guard));
+    }
+
+    #[test]
+    fn guard_can_outlive_runtime_shutdown() {
+        use whisker_runtime::{RuntimeContext, RuntimeWakeHandle};
+
+        let runtime = RuntimeContext::new(RuntimeWakeHandle::new(|| {}));
+        let guard = runtime.enter(|| on_back(|| {}));
+        runtime.shutdown();
+        drop(guard);
     }
 }

@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn ensure_patcher(
     config: &Config,
     hot_reload_init: &Option<HotReloadPrep>,
-    patcher: &mut Option<hotpatch::Patcher>,
+    patcher: &mut Option<RuntimePatcher>,
 ) {
     if patcher.is_some() {
         return;
@@ -28,7 +28,7 @@ pub(super) fn ensure_patcher(
 /// waits for the next save, and every infrastructure failure prompts
 /// for an explicit Full Reload.
 pub(super) async fn hot_reload_cycle(
-    patcher: &hotpatch::Patcher,
+    patcher: &RuntimePatcher,
     sender: &PatchSender,
     on_event: &Option<Arc<dyn Fn(Event) + Send + Sync>>,
     crate_key: Option<&str>,
@@ -156,8 +156,8 @@ pub(super) fn prepare_hot_reload_capture(config: &Config) -> Result<HotReloadPre
 }
 
 /// What Rust target triple `config.target` compiles for. Android
-/// derives the triple from `Config::android.abi`. Host returns
-/// `None`, falling back to the global RUSTFLAGS form.
+/// derives the triple from `Config::android.abi`; native macOS uses the
+/// current Host architecture so Apple linker flags remain target-scoped.
 pub(super) fn target_triple_for(config: &Config) -> Option<String> {
     match config.target {
         Target::Android => {
@@ -182,7 +182,11 @@ pub(super) fn target_triple_for(config: &Config) -> Option<String> {
             };
             Some(triple.to_string())
         }
-        Target::Macos => None,
+        Target::Macos => match std::env::consts::ARCH {
+            "aarch64" => Some("aarch64-apple-darwin".to_string()),
+            "x86_64" => Some("x86_64-apple-darwin".to_string()),
+            _ => None,
+        },
         Target::Web => Some("wasm32-unknown-unknown".to_string()),
     }
 }
@@ -209,14 +213,82 @@ pub(super) fn resolve_linker_for(config: &Config) -> Result<PathBuf> {
         }
         Target::IosSimulator => Ok(hotpatch::wrapper::resolve_linker()),
         Target::Macos => Ok(hotpatch::wrapper::resolve_linker()),
-        Target::Web => anyhow::bail!("Web builds are owned by the generated Trunk project"),
+        Target::Web => {
+            let output = std::process::Command::new("rustc")
+                .args(["--print", "sysroot"])
+                .output()
+                .context("query rustc sysroot for wasm-ld")?;
+            anyhow::ensure!(output.status.success(), "rustc --print sysroot failed");
+            let sysroot = PathBuf::from(String::from_utf8(output.stdout)?.trim());
+            let host = std::process::Command::new("rustc")
+                .arg("-vV")
+                .output()
+                .context("query rustc host triple")?;
+            let host = String::from_utf8(host.stdout)?
+                .lines()
+                .find_map(|line| line.strip_prefix("host: "))
+                .context("rustc -vV did not report a host triple")?
+                .to_string();
+            let linker = sysroot.join("lib/rustlib").join(host).join("bin/rust-lld");
+            anyhow::ensure!(
+                linker.is_file(),
+                "rust-lld is missing at {}",
+                linker.display()
+            );
+            Ok(linker)
+        }
     }
 }
 
 /// Construct the patcher from the captures the fat build just wrote.
 /// Splits out so [`DevServer::run`] is easier to read.
-pub(super) fn init_patcher_for(config: &Config, prep: &HotReloadPrep) -> Result<hotpatch::Patcher> {
+pub(super) enum RuntimePatcher {
+    Native(Box<hotpatch::Patcher>),
+    Web(Box<hotpatch::WebPatcher>),
+}
+
+impl RuntimePatcher {
+    async fn build_patch(
+        &self,
+        aslr_reference: u64,
+        crate_key: Option<&str>,
+    ) -> Result<hotpatch::PatchPlan> {
+        match self {
+            Self::Native(patcher) => patcher.build_patch(aslr_reference, crate_key).await,
+            Self::Web(patcher) => patcher.build_patch(crate_key).await,
+        }
+    }
+}
+
+pub(super) fn init_patcher_for(config: &Config, prep: &HotReloadPrep) -> Result<RuntimePatcher> {
+    if config.target == Target::Web {
+        let web = config
+            .web
+            .as_ref()
+            .context("target=Web but Config.web is missing")?;
+        let base_wasm = web
+            .dist_dir
+            .join(format!("{}_bg.wasm", whisker_build::web::OUTPUT_STEM));
+        return hotpatch::WebPatcher::initialize(
+            &config.workspace_root,
+            config.package.clone(),
+            &prep.capture.rustc_cache_dir,
+            &prep.capture.linker_cache_dir,
+            &prep.real_linker,
+            &base_wasm,
+        )
+        .map(Box::new)
+        .map(RuntimePatcher::Web);
+    }
     let original_binary = original_binary_path(config)?;
+    // Native macOS builds do not pass `--target`; the capture envelope still
+    // names the host triple to select Apple linker flags, but filtering rustc
+    // records by an explicit target would discard the user crate invocation.
+    let captured_target = if config.target == Target::Macos {
+        None
+    } else {
+        prep.capture.target_triple.as_deref()
+    };
     hotpatch::Patcher::initialize(
         &config.workspace_root,
         config.package.clone(),
@@ -225,8 +297,10 @@ pub(super) fn init_patcher_for(config: &Config, prep: &HotReloadPrep) -> Result<
         &prep.real_linker,
         &original_binary,
         target_os_for(config.target),
-        prep.capture.target_triple.as_deref(),
+        captured_target,
     )
+    .map(Box::new)
+    .map(RuntimePatcher::Native)
 }
 
 /// Locate the device-loadable original binary for the configured
@@ -330,11 +404,22 @@ pub(super) fn original_binary_path(config: &Config) -> Result<PathBuf> {
             }
             Ok(dylib)
         }
-        Target::Macos => anyhow::bail!(
-            "macOS desktop hot-patch capture is not wired yet; use the automatic rebuild/relaunch loop"
-        ),
+        Target::Macos => {
+            let macos = config
+                .macos
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("target=Macos but Config.macos is None"))?;
+            let executable = macos.target_dir.join("debug").join(&macos.binary_name);
+            if !executable.is_file() {
+                anyhow::bail!(
+                    "no macOS Host executable at {} — the initial Cargo build did not produce it",
+                    executable.display(),
+                );
+            }
+            Ok(executable)
+        }
         Target::Web => anyhow::bail!(
-            "Web hot-patch capture is not used; Trunk reloads and remounts the WASM application"
+            "Web hot patches use the generated post-bindgen WASM module, not a native executable"
         ),
     }
 }
@@ -390,6 +475,7 @@ pub(super) async fn run_build_cycle(
             if let Err(e) = installer.install_and_launch().await {
                 whisker_build::ui::error(format!("{label} install failed: {e}"));
             }
+            sender.reload_browser();
             whisker_build::ui::info(format!(
                 "{label} done · {} client(s) connected",
                 sender.client_count()

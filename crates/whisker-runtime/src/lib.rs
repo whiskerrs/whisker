@@ -24,6 +24,8 @@ pub mod module;
 pub mod reactive;
 mod runtime_context;
 mod runtime_instance;
+#[doc(hidden)]
+pub mod runtime_local;
 pub mod runtime_wake;
 mod standard_ui;
 mod surface_runtime;

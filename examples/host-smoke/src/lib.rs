@@ -3,41 +3,53 @@
 use whisker::css::BorderStyle;
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+use whisker_toggle::MODULE_NAME as TOGGLE_MODULE_NAME;
 use whisker_toggle::Toggle;
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
-async fn verify_mobile_module_bridge() -> String {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+async fn verify_mobile_module_bridge(
+    status: RwSignal<String>,
+    subscription_slot: StoredValue<Option<whisker::runtime::module::ModuleSubscription>>,
+) {
     use whisker::platform_module::WhiskerValue;
 
-    let module = whisker::PlatformModule::named("whisker.toggle/Toggle");
-    let received_event = Arc::new(AtomicBool::new(false));
-    let received_event_callback = Arc::clone(&received_event);
-    let subscription = module.on_event("ready", move |payload| {
-        received_event_callback.store(
-            matches!(payload, WhiskerValue::String(ref value) if value.ends_with("-ready")),
-            Ordering::Release,
-        );
-        eprintln!("Whisker mobile module event: {payload:?}");
-    });
-    if let Some(error) = subscription.error() {
-        eprintln!("Whisker mobile module subscription failed: {error}");
-    } else {
-        std::mem::forget(subscription);
-    }
+    let module = whisker::PlatformModule::named(TOGGLE_MODULE_NAME);
     let result = module.invoke("echo", vec![WhiskerValue::String("module-ready".into())]);
     let async_result = module
         .invoke_async("echoAsync", vec![WhiskerValue::String("async".into())])
         .await;
-    match (result, async_result, received_event.load(Ordering::Acquire)) {
-        (WhiskerValue::String(value), WhiskerValue::String(async_value), true) => {
-            format!("{value} + {async_value} + event")
+    let (value, async_value) = match (result, async_result) {
+        (WhiskerValue::String(value), WhiskerValue::String(async_value)) => (value, async_value),
+        error => {
+            status.set(format!("module-error: {error:?}"));
+            return;
         }
-        (WhiskerValue::String(value), WhiskerValue::String(async_value), false) => {
-            format!("{value} + {async_value} + missing-event")
+    };
+
+    status.set(format!("{value} + {async_value} + waiting-event"));
+    let subscription = module.on_event("ready", move |payload| {
+        eprintln!("Whisker mobile module event: {payload:?}");
+        if matches!(payload, WhiskerValue::String(ref event) if event.ends_with("-ready")) {
+            status.set(format!("{value} + {async_value} + event"));
+        } else {
+            status.set(format!("module-error: invalid ready event {payload:?}"));
         }
-        error => format!("module-error: {error:?}"),
+    });
+    if let Some(error) = subscription.error() {
+        status.set(format!("module-error: {error}"));
+    } else {
+        subscription_slot.set(Some(subscription));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_module_uses_the_toggle_service_name() {
+        assert_eq!(TOGGLE_MODULE_NAME, "whisker-toggle:WhiskerToggle");
     }
 }
 
@@ -65,8 +77,9 @@ pub fn app() -> Element {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let status = module_status;
+        let subscription_slot = StoredValue::new(None);
         spawn_local(async move {
-            status.set(verify_mobile_module_bridge().await);
+            verify_mobile_module_bridge(status, subscription_slot).await;
         });
     }
     render! {

@@ -59,6 +59,8 @@ pub fn run(args: Args) -> Result<()> {
         app_name,
         binary_name: &binary_name,
         profile: Profile::Release,
+        features: &[],
+        capture: None,
     })?;
     whisker_build::ui::info(format!("✓ {}", bundle.display()));
     whisker_build::ui::info("bundle is unsigned; distribution signing/notarization is a follow-up");

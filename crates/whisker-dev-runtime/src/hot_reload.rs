@@ -12,20 +12,25 @@
 //! ```
 //!
 //! The receiver writes the dylib bytes to a local cache file, rewrites
-//! `table.lib` to that path, and drops the resulting JumpTable into a
-//! single-slot mutex. The runtime thread later drains the slot at
-//! the top of its tick (via [`take_pending_patch`]) and invokes
-//! `subsecond::apply_patch` while **no** `subsecond::call` is on the
-//! stack — the only safe window.
+//! `table.lib` to that path, and publishes the JumpTable to a
+//! process-wide coordinator. Each registered runtime is woken and
+//! consumes every patch generation at the top of its own Host-driven
+//! transaction. The coordinator serialises `subsecond::apply_patch`
+//! process-wide while every runtime independently remounts the affected
+//! component sites (or its root application when required).
 //!
 //! The receiver retries on disconnect with a small backoff so a
 //! `whisker run` restart on the host doesn't require restarting the
 //! app on the device.
 
-use std::sync::Mutex;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use subsecond::JumpTable;
+use whisker_runtime::view::Element;
+use whisker_runtime::{RuntimeInstance, RuntimeWakeHandle};
 
 /// Log a one-line message tagged `whisker-dev`. On Android this goes
 /// to logcat and on iOS to `syslog(3)` — plain `eprintln!` reaches
@@ -81,13 +86,254 @@ pub fn devlog(line: &str) {
     }
 }
 
-/// Most-recent-wins: an older queued patch is silently superseded.
-static PENDING: Mutex<Option<JumpTable>> = Mutex::new(None);
+const MAX_PATCH_HISTORY: usize = 64;
 
-/// runtime-thread entry — pop the queued patch, if any. Safe to call
-/// every tick (returns `None` cheaply).
-pub fn take_pending_patch() -> Option<JumpTable> {
-    PENDING.lock().ok().and_then(|mut p| p.take())
+#[derive(Clone)]
+struct AppliedPatch {
+    generation: u64,
+    patched_functions: Vec<usize>,
+}
+
+struct Subscriber {
+    wake: RuntimeWakeHandle,
+    seen_generation: u64,
+}
+
+#[derive(Default)]
+struct Coordinator {
+    pending: Option<JumpTable>,
+    generation: u64,
+    history: VecDeque<AppliedPatch>,
+    subscribers: HashMap<u64, Subscriber>,
+}
+
+static COORDINATOR: LazyLock<Mutex<Coordinator>> =
+    LazyLock::new(|| Mutex::new(Coordinator::default()));
+static APPLY_LOCK: Mutex<()> = Mutex::new(());
+static NEXT_SUBSCRIBER: AtomicU64 = AtomicU64::new(1);
+
+/// One process-wide native code update as observed by a runtime instance.
+///
+/// Applying the dynamic-library patch is process-wide, while rebuilding the
+/// retained component tree is instance-local. A registration therefore sees
+/// every applied generation exactly once even when several Whisker surfaces
+/// share the same application process.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeCodeUpdate {
+    /// Monotonic process-wide patch generation.
+    pub generation: u64,
+    /// Host function addresses rewritten since this runtime last polled.
+    pub patched_functions: Vec<usize>,
+    /// Whether this runtime fell behind the bounded patch history and must
+    /// conservatively rebuild its application root.
+    pub requires_root_remount: bool,
+}
+
+/// Per-runtime subscription to the process-wide native patch coordinator.
+pub struct NativeHotReloadRegistration {
+    id: u64,
+}
+
+/// Platform-neutral native hot-reload adapter for one runtime instance.
+///
+/// Android, iOS, and Desktop all call [`Self::apply`] at the beginning of a
+/// Host-driven UI transaction. Transport, process-wide patching, targeted
+/// component reflection, and root fallback therefore have one implementation.
+pub struct NativeHotReload {
+    registration: NativeHotReloadRegistration,
+    application: fn() -> Element,
+    application_hash: fn() -> u64,
+    mounted_hash: u64,
+}
+
+impl NativeHotReload {
+    /// Registers a mounted runtime with the process coordinator.
+    pub fn new(
+        wake: RuntimeWakeHandle,
+        application: fn() -> Element,
+        application_hash: fn() -> u64,
+    ) -> Self {
+        Self {
+            registration: register_native_runtime(wake),
+            application,
+            application_hash,
+            mounted_hash: application_hash(),
+        }
+    }
+
+    /// Applies and reflects any patch not yet observed by `runtime`.
+    pub fn apply(&mut self, runtime: &mut RuntimeInstance) -> Result<bool, String> {
+        let Some(update) = self.registration.poll()? else {
+            return Ok(false);
+        };
+        let current_hash = (self.application_hash)();
+        let mut remount_root = update.requires_root_remount || current_hash != self.mounted_hash;
+        let generation = update.generation;
+        if !remount_root {
+            let patched_functions = update
+                .patched_functions
+                .iter()
+                .map(|address| *address as *const ())
+                .collect::<Vec<_>>();
+            let stats = runtime
+                .remount_components(&patched_functions)
+                .map_err(|error| error.to_string())?;
+            remount_root = stats.remounted == 0 || stats.layout_changed > 0;
+            devlog(&format!(
+                "patch generation {generation} reflected: {} component(s), {} layout mismatch(es)",
+                stats.remounted, stats.layout_changed,
+            ));
+        }
+        if remount_root {
+            runtime
+                .remount_root(self.application)
+                .map_err(|error| error.to_string())?;
+            devlog(&format!(
+                "patch generation {generation} reflected with an application-root remount"
+            ));
+        }
+        self.mounted_hash = current_hash;
+        Ok(true)
+    }
+}
+
+impl NativeHotReloadRegistration {
+    /// Applies a queued process patch at this Host transaction's safe point,
+    /// then returns the code updates this runtime has not reflected yet.
+    pub fn poll(&mut self) -> Result<Option<NativeCodeUpdate>, String> {
+        apply_pending_patch()?;
+        let mut coordinator = COORDINATOR
+            .lock()
+            .map_err(|_| "native hot-reload coordinator lock was poisoned".to_string())?;
+        let Some(subscriber) = coordinator.subscribers.get(&self.id) else {
+            return Ok(None);
+        };
+        let seen = subscriber.seen_generation;
+        if seen == coordinator.generation {
+            return Ok(None);
+        }
+
+        let requires_root_remount = coordinator
+            .history
+            .front()
+            .is_some_and(|patch| patch.generation > seen.saturating_add(1));
+        let mut patched_functions = Vec::new();
+        for patch in coordinator
+            .history
+            .iter()
+            .filter(|patch| patch.generation > seen)
+        {
+            for function in &patch.patched_functions {
+                if !patched_functions.contains(function) {
+                    patched_functions.push(*function);
+                }
+            }
+        }
+        let generation = coordinator.generation;
+        coordinator
+            .subscribers
+            .get_mut(&self.id)
+            .expect("subscriber remains registered while polling")
+            .seen_generation = generation;
+        discard_observed_history(&mut coordinator);
+        Ok(Some(NativeCodeUpdate {
+            generation,
+            patched_functions,
+            requires_root_remount,
+        }))
+    }
+}
+
+impl Drop for NativeHotReloadRegistration {
+    fn drop(&mut self) {
+        if let Ok(mut coordinator) = COORDINATOR.lock() {
+            coordinator.subscribers.remove(&self.id);
+            discard_observed_history(&mut coordinator);
+        }
+    }
+}
+
+/// Registers one native runtime and starts the process receiver on first use.
+pub fn register_native_runtime(wake: RuntimeWakeHandle) -> NativeHotReloadRegistration {
+    crate::log_capture::start_log_capture();
+    start_receiver();
+    let id = NEXT_SUBSCRIBER.fetch_add(1, Ordering::Relaxed);
+    let mut coordinator = COORDINATOR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let seen_generation = coordinator.generation;
+    coordinator.subscribers.insert(
+        id,
+        Subscriber {
+            wake,
+            seen_generation,
+        },
+    );
+    NativeHotReloadRegistration { id }
+}
+
+fn apply_pending_patch() -> Result<(), String> {
+    let _apply = APPLY_LOCK
+        .lock()
+        .map_err(|_| "native hot-reload apply lock was poisoned".to_string())?;
+    let pending = COORDINATOR
+        .lock()
+        .map_err(|_| "native hot-reload coordinator lock was poisoned".to_string())?
+        .pending
+        .take();
+    let Some(table) = pending else {
+        return Ok(());
+    };
+    let patched = unsafe { subsecond::apply_patch(table) }
+        .map_err(|error| format!("apply native hot-reload patch: {error}"))?;
+    let mut coordinator = COORDINATOR
+        .lock()
+        .map_err(|_| "native hot-reload coordinator lock was poisoned".to_string())?;
+    coordinator.generation = coordinator.generation.saturating_add(1);
+    let generation = coordinator.generation;
+    coordinator.history.push_back(AppliedPatch {
+        generation,
+        patched_functions: patched
+            .into_iter()
+            .map(|function| function as usize)
+            .collect(),
+    });
+    while coordinator.history.len() > MAX_PATCH_HISTORY {
+        coordinator.history.pop_front();
+    }
+    Ok(())
+}
+
+fn discard_observed_history(coordinator: &mut Coordinator) {
+    let minimum_seen = coordinator
+        .subscribers
+        .values()
+        .map(|subscriber| subscriber.seen_generation)
+        .min()
+        .unwrap_or(coordinator.generation);
+    while coordinator
+        .history
+        .front()
+        .is_some_and(|patch| patch.generation <= minimum_seen)
+    {
+        coordinator.history.pop_front();
+    }
+}
+
+fn wake_registered_runtimes() {
+    let wakes = COORDINATOR
+        .lock()
+        .map(|coordinator| {
+            coordinator
+                .subscribers
+                .values()
+                .map(|subscriber| subscriber.wake.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for wake in wakes {
+        wake.wake();
+    }
 }
 
 /// Spawn the receiver thread. Reads `WHISKER_DEV_ADDR` from the env;
@@ -262,8 +508,8 @@ where
     }
 }
 
-/// Decode one patch frame from the dev-server and park it in
-/// [`PENDING`] for the runtime thread to apply on the next tick.
+/// Decode one patch frame from the dev-server and park it in the process
+/// coordinator for a Host transaction to apply at its next safe point.
 fn handle_patch_frame(bytes: &[u8]) {
     devlog(&format!("patch frame received ({} bytes)", bytes.len()));
     let (mut table, dylib_bytes) = match parse_patch_frame(bytes) {
@@ -287,13 +533,13 @@ fn handle_patch_frame(bytes: &[u8]) {
     };
     devlog(&format!("patch dylib materialised at {}", local.display()));
     table.lib = local;
-    if let Ok(mut p) = PENDING.lock() {
-        *p = Some(table);
+    if let Ok(mut coordinator) = COORDINATOR.lock() {
+        coordinator.pending = Some(table);
         devlog("patch queued");
     }
-    // Wake the host so a frame is scheduled — `take_pending_patch`
-    // only runs inside the tick and the runtime thread may be idle.
-    whisker_runtime::runtime_wake::wake_runtime();
+    // Every retained surface must observe the new process generation. Its
+    // wake endpoint posts onto the owning Host UI lane.
+    wake_registered_runtimes();
 }
 
 /// Write the patch dylib payload to a file under the app's cache dir
@@ -319,7 +565,14 @@ fn materialise_patch_dylib(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let path = dir.join(format!("patch-{ts}-{n}.so"));
+    let extension = if cfg!(target_os = "windows") {
+        "dll"
+    } else if cfg!(any(target_os = "macos", target_os = "ios")) {
+        "dylib"
+    } else {
+        "so"
+    };
+    let path = dir.join(format!("patch-{ts}-{n}.{extension}"));
     std::fs::write(&path, bytes)?;
     Ok(path)
 }
@@ -426,6 +679,41 @@ fn parse_patch_frame(
 mod tests {
     use super::*;
 
+    #[test]
+    fn every_registered_runtime_observes_a_process_patch_once() {
+        let mut coordinator = COORDINATOR
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *coordinator = Coordinator::default();
+        coordinator.generation = 1;
+        coordinator.history.push_back(AppliedPatch {
+            generation: 1,
+            patched_functions: vec![0x1234, 0x5678],
+        });
+        for id in [41, 42] {
+            coordinator.subscribers.insert(
+                id,
+                Subscriber {
+                    wake: RuntimeWakeHandle::new(|| {}),
+                    seen_generation: 0,
+                },
+            );
+        }
+        drop(coordinator);
+
+        let mut first = NativeHotReloadRegistration { id: 41 };
+        let mut second = NativeHotReloadRegistration { id: 42 };
+        let expected = NativeCodeUpdate {
+            generation: 1,
+            patched_functions: vec![0x1234, 0x5678],
+            requires_root_remount: false,
+        };
+        assert_eq!(first.poll().unwrap(), Some(expected.clone()));
+        assert_eq!(first.poll().unwrap(), None);
+        assert_eq!(second.poll().unwrap(), Some(expected));
+        assert_eq!(second.poll().unwrap(), None);
+    }
+
     /// Pack a JSON header + raw dylib bytes into the on-the-wire
     /// binary frame, matching what the server emits.
     fn make_frame(json: &str, dylib: &[u8]) -> Vec<u8> {
@@ -510,10 +798,11 @@ mod tests {
     }
 
     #[test]
-    fn take_pending_returns_none_when_queue_is_empty() {
-        // The static slot is shared across the test binary; drain
-        // anything a sibling test parked, then assert empty.
-        let _ = take_pending_patch();
-        assert!(take_pending_patch().is_none());
+    fn coordinator_starts_without_a_pending_patch() {
+        let mut coordinator = COORDINATOR
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        coordinator.pending = None;
+        assert!(coordinator.pending.is_none());
     }
 }

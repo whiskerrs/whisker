@@ -21,6 +21,7 @@ use crate::{
 type ScrollListener = Closure<dyn FnMut(web_sys::Event)>;
 
 pub(crate) struct DomFrameSink {
+    capabilities: whisker_protocol::RenderCapabilities,
     document: web_sys::Document,
     root: web_sys::Element,
     projection: SceneProjection,
@@ -100,8 +101,10 @@ impl DomFrameSink {
         registrations: &[ElementRegistration],
         factories: &[WebElementFactory],
         resources: WebResourceStore,
+        capabilities: whisker_protocol::RenderCapabilities,
     ) -> Result<Self, WebError> {
         Ok(Self {
+            capabilities,
             document,
             root,
             projection: SceneProjection::new(surface),
@@ -743,56 +746,7 @@ impl FrameSink for DomFrameSink {
     type Error = WebError;
 
     fn capabilities(&self) -> whisker_protocol::RenderCapabilities {
-        whisker_protocol::RenderCapabilities::new(
-            whisker_protocol::ProtocolVersion::CURRENT,
-            [
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::EllipticalBorderRadius,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::VisualEffects,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::TextEffects,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::TextTypography,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::Cursor,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::LinearGradients,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::RadialGradients,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::ConicGradients,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::BackgroundGeometry,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::BackgroundLayerStacking,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-                whisker_protocol::CapabilityEntry {
-                    capability: whisker_protocol::RenderCapability::BackgroundImageResources,
-                    support: whisker_protocol::CapabilitySupport::Native,
-                },
-            ],
-        )
-        .expect("Web capability profile is unique")
+        self.capabilities
     }
 
     fn present(&mut self, packet: &FramePacket) -> Result<ApplyResult, Self::Error> {

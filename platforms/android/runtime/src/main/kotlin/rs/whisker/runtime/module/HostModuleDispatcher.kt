@@ -36,11 +36,7 @@ internal class HostModuleDispatcher(
         true
     }
 
-    fun observe(module: String, event: String, observing: Boolean) {
-        if (observing) {
-            WhiskerModuleEventCenter.fireStart(module, event)
-        } else {
-            WhiskerModuleEventCenter.fireStop(module, event)
-        }
+    fun observe(owner: Any, module: String, event: String, observing: Boolean) {
+        WhiskerModuleEventCenter.setObserving(owner, module, event, observing)
     }
 }

@@ -5,6 +5,7 @@ use std::cell::{Cell, RefCell};
 use crate::anim_hook::AnimationState;
 use crate::dispatch::RuntimeDispatcher;
 use crate::reactive::runtime::ReactiveRuntime;
+use crate::runtime_local::RuntimeLocalState;
 use crate::runtime_wake::RuntimeWakeHandle;
 use crate::tasks::TaskState;
 use crate::view::renderer::ViewRuntimeState;
@@ -18,6 +19,7 @@ struct ContextState {
     pending_mount: Option<(crate::reactive::MountId, crate::view::Element)>,
     wake: Option<RuntimeWakeHandle>,
     dispatcher: Option<RuntimeDispatcher>,
+    runtime_local: RuntimeLocalState,
 }
 
 impl ContextState {
@@ -31,6 +33,7 @@ impl ContextState {
             pending_mount: None,
             wake: Some(wake),
             dispatcher: Some(dispatcher),
+            runtime_local: RuntimeLocalState::new(),
         }
     }
 
@@ -42,15 +45,17 @@ impl ContextState {
         anim_hook::swap_state(&mut self.animation);
         runtime_wake::swap_active_wake(&mut self.wake);
         dispatch::swap_active(&mut self.dispatcher);
+        crate::runtime_local::swap_state(&mut self.runtime_local);
     }
 }
 
 /// Isolated single-threaded state for one mounted Whisker runtime.
 ///
-/// A context owns reactive nodes, view bookkeeping, local async tasks, and
-/// animation state while the Host is not executing it. [`Self::enter`] moves
-/// that state into the current UI thread for one short event or frame and
-/// restores the previous context even if application code panics.
+/// A context owns reactive nodes, view bookkeeping, local async tasks,
+/// animation state, and typed subsystem-local state while the Host is not
+/// executing it. [`Self::enter`] moves that state into the current UI thread
+/// for one short event or frame and restores the previous context even if
+/// application code panics.
 pub struct RuntimeContext {
     state: RefCell<ContextState>,
     entered: Cell<bool>,
@@ -116,6 +121,7 @@ impl RuntimeContext {
         state.view = ViewRuntimeState::new();
         state.tasks = TaskState::new();
         state.animation = AnimationState::new();
+        state.runtime_local = RuntimeLocalState::new();
         state.pending_mount = None;
     }
 }
@@ -242,5 +248,29 @@ mod tests {
         context.shutdown();
 
         assert!(!dispatcher.post(|| panic!("closed callback must be dropped")));
+    }
+
+    #[test]
+    fn typed_subsystem_state_is_isolated_and_restored_after_panic() {
+        #[derive(Default)]
+        struct Counter(usize);
+
+        let first = context();
+        let second = context();
+        first.enter(|| crate::runtime_local::state::<Counter>().borrow_mut().0 = 1);
+        second.enter(|| crate::runtime_local::state::<Counter>().borrow_mut().0 = 2);
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            first.enter(|| panic!("restore runtime-local state"));
+        }));
+        assert!(panic.is_err());
+        assert_eq!(
+            first.enter(|| crate::runtime_local::state::<Counter>().borrow().0),
+            1
+        );
+        assert_eq!(
+            second.enter(|| crate::runtime_local::state::<Counter>().borrow().0),
+            2
+        );
     }
 }

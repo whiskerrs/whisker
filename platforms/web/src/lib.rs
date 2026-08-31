@@ -25,6 +25,7 @@ pub type WhiskerMeasuredSize = whisker_protocol::MeasuredSize;
 pub type WhiskerTextStyle = whisker_protocol::TextStyleSnapshot;
 
 mod application;
+mod capabilities;
 mod dom;
 mod input;
 mod measure;
@@ -32,7 +33,11 @@ mod module_api;
 mod paint;
 mod scene;
 
-pub use application::{handle_resource_command, register_resource_url, run};
+#[cfg(feature = "hot-reload")]
+pub use application::apply_hot_patch;
+pub use application::{
+    handle_resource_command, register_resource_url, run, run_with_application_hash,
+};
 pub use dom::WebError;
 pub(crate) use dom::{js_error, px, set_style};
 pub(crate) use module_api::WebElementFactoryKind;

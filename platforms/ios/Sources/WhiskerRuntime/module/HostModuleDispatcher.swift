@@ -27,12 +27,13 @@ final class HostModuleDispatcher {
         return true
     }
 
-    func observe(module: String, event: String, observing: Bool) {
-        if observing {
-            WhiskerModuleEventCenter.fireStart(module: module, event: event)
-        } else {
-            WhiskerModuleEventCenter.fireStop(module: module, event: event)
-        }
+    func observe(owner: AnyObject, module: String, event: String, observing: Bool) {
+        WhiskerModuleEventCenter.setObserving(
+            owner: owner,
+            module: module,
+            event: event,
+            observing: observing
+        )
     }
 
     private func deliver(

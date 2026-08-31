@@ -640,7 +640,7 @@ pub fn inputs_from_with_engine(
         // Bump on any template or renderer change: it feeds the sync
         // fingerprint, and without it existing `gen/ios/` trees keep
         // their stale output.
-        template_version: 35,
+        template_version: 36,
     })
 }
 
@@ -672,7 +672,7 @@ mod tests {
             extra_info_plist: BTreeMap::new(),
             extra_files: BTreeMap::new(),
             pbxproj_ops: Vec::new(),
-            template_version: 35,
+            template_version: 36,
         }
     }
 
@@ -722,7 +722,8 @@ mod tests {
         assert!(pbxproj.contains("WhiskerModules in Frameworks"));
         assert!(pbxproj.contains("WhiskerDriver.framework in Embed Frameworks"));
         assert!(pbxproj.contains("Whisker Build Rust App"));
-        assert!(pbxproj.contains("whisker build-ios"));
+        assert!(pbxproj.contains("WHISKER_CLI=\\\"${WHISKER_CLI:-whisker}\\\""));
+        assert!(pbxproj.contains("\\\"$WHISKER_CLI\\\" build-ios"));
         assert!(pbxproj.contains("@executable_path/Frameworks"));
         assert!(pbxproj.contains("name = \"HelloWorld\""));
         assert!(pbxproj.contains("productName = \"HelloWorld\""));

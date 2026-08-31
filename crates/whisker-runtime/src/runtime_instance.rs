@@ -4,10 +4,12 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::fmt;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::RuntimeContext;
+use crate::module::{ModuleHost, with_module_host};
 use crate::reactive::{self, Owner};
 use crate::runtime_wake::RuntimeWakeHandle;
 use crate::view::{self, Element};
@@ -38,9 +40,13 @@ pub enum RuntimeLifecycle {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use super::*;
     use crate::element::ElementTag;
-    use crate::reactive::__reset_for_tests;
+    use crate::module::{ModuleHost, ModuleSubscription, PlatformModule, with_module_host};
+    use crate::reactive::{__reset_for_tests, RwSignal, effect};
     use crate::view::{
         BindType, append_child, create_element, set_attribute, set_event_listener,
         set_specified_style,
@@ -99,6 +105,117 @@ mod tests {
             .unwrap();
 
         assert_eq!(surface.surface_snapshot_count(), 1);
+    }
+
+    #[test]
+    fn module_events_run_inside_the_owning_runtime_context() {
+        __reset_for_tests();
+        let first_surface = SurfaceRuntime::new(
+            SurfaceId::new(77).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let second_surface = SurfaceRuntime::new(
+            SurfaceId::new(78).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let mut first = RuntimeInstance::new(first_surface, RuntimeWakeHandle::new(|| {}));
+        let mut second = RuntimeInstance::new(second_surface, RuntimeWakeHandle::new(|| {}));
+        let first_host = ModuleHost::new(|_, _, _, _, _| false, |_, _, _| {});
+        let second_host = ModuleHost::new(|_, _, _, _, _| false, |_, _, _| {});
+        let first_observed = Rc::new(Cell::new(0));
+        let second_observed = Rc::new(Cell::new(0));
+        let first_subscription = Rc::new(RefCell::new(None::<ModuleSubscription>));
+        let second_subscription = Rc::new(RefCell::new(None::<ModuleSubscription>));
+
+        with_module_host(&first_host, || {
+            first
+                .mount({
+                    let observed = Rc::clone(&first_observed);
+                    let subscription = Rc::clone(&first_subscription);
+                    move || {
+                        let signal = RwSignal::new(0_i64);
+                        effect(move || observed.set(signal.get()));
+                        *subscription.borrow_mut() = Some(PlatformModule::named("demo").on_event(
+                            "tick",
+                            move |payload| match payload {
+                                WhiskerValue::Int(value) => signal.set(value),
+                                _ => panic!("expected integer module payload"),
+                            },
+                        ));
+                        create_element(ElementTag::View)
+                    }
+                })
+                .unwrap();
+        });
+        with_module_host(&second_host, || {
+            second
+                .mount({
+                    let observed = Rc::clone(&second_observed);
+                    let subscription = Rc::clone(&second_subscription);
+                    move || {
+                        let signal = RwSignal::new(0_i64);
+                        effect(move || observed.set(signal.get()));
+                        *subscription.borrow_mut() = Some(PlatformModule::named("demo").on_event(
+                            "tick",
+                            move |payload| match payload {
+                                WhiskerValue::Int(value) => signal.set(value),
+                                _ => panic!("expected integer module payload"),
+                            },
+                        ));
+                        create_element(ElementTag::View)
+                    }
+                })
+                .unwrap();
+        });
+
+        assert!(
+            first
+                .dispatch_module_event(&first_host, "demo", "tick", WhiskerValue::Int(11))
+                .unwrap()
+        );
+        assert_eq!(first_observed.get(), 11);
+        assert_eq!(second_observed.get(), 0);
+
+        assert!(
+            second
+                .dispatch_module_event(&second_host, "demo", "tick", WhiskerValue::Int(22))
+                .unwrap()
+        );
+        assert_eq!(first_observed.get(), 11);
+        assert_eq!(second_observed.get(), 22);
+
+        first
+            .context
+            .enter(|| first_subscription.borrow_mut().take());
+        second
+            .context
+            .enter(|| second_subscription.borrow_mut().take());
+    }
+
+    #[test]
+    fn root_remount_replaces_only_the_instance_application_tree() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(79).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let wake_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let wake_observer = Arc::clone(&wake_count);
+        let mut runtime = RuntimeInstance::new(
+            surface.clone(),
+            RuntimeWakeHandle::new(move || {
+                wake_observer.fetch_add(1, Ordering::Relaxed);
+            }),
+        );
+        let first = runtime.mount(|| create_element(ElementTag::View)).unwrap();
+        let second = runtime
+            .remount_root(|| create_element(ElementTag::Text))
+            .unwrap();
+
+        assert_ne!(first, second);
+        assert_eq!(runtime.lifecycle(), RuntimeLifecycle::Running);
+        assert!(wake_count.load(Ordering::Relaxed) >= 2);
+        runtime.unmount().unwrap();
     }
 }
 
@@ -391,6 +508,86 @@ impl RuntimeInstance {
         Ok(())
     }
 
+    /// Rebuilds the application root inside this instance without replacing
+    /// the Host-owned surface or wake endpoint.
+    ///
+    /// Development adapters use this as the conservative fallback when a
+    /// code update cannot be reflected through an individual component. The
+    /// runtime deliberately knows nothing about patch transports or dynamic
+    /// libraries; it only provides the instance-scoped remount transaction.
+    pub fn remount_root(
+        &mut self,
+        application: impl FnOnce() -> Element,
+    ) -> Result<Element, RuntimeEventError> {
+        self.require(RuntimeLifecycle::Running, "remount the application root")
+            .map_err(RuntimeEventError::Lifecycle)?;
+        let previous = self
+            .owner
+            .take()
+            .expect("a running runtime has a root owner");
+        let surface = self.surface.clone();
+        let result = self.context.enter(|| {
+            view::with_installed_renderer(surface.renderer(), || {
+                surface.begin_mutation_batch();
+                previous.dispose();
+                let owner = Owner::new(None);
+                let root = owner.with(application);
+                view::set_root(root);
+                reactive::flush();
+                reactive::flush_mounts();
+                surface
+                    .finish_mutation_batch()
+                    .map_err(RuntimeInputError::Binding)
+                    .map_err(RuntimeEventError::Input)?;
+                Ok((owner, root))
+            })
+        });
+        match result {
+            Ok((owner, root)) => {
+                self.owner = Some(owner);
+                self.wake.wake();
+                Ok(root)
+            }
+            Err(error) => {
+                // The previous owner has already been disposed. Keeping the
+                // lifecycle running would let later Host callbacks enter a
+                // half-mounted instance, so make the failure terminal.
+                self.wake_enabled.store(false, Ordering::Release);
+                self.lifecycle = RuntimeLifecycle::Unmounted;
+                self.context.shutdown();
+                Err(error)
+            }
+        }
+    }
+
+    /// Rebuilds mounted component sites whose body function appears in
+    /// `patched_functions`.
+    ///
+    /// Function pointers are an opaque matching key supplied by a
+    /// development adapter. This API performs no code loading and remains
+    /// useful to any future patch engine that can identify changed bodies.
+    pub fn remount_components(
+        &self,
+        patched_functions: &[*const ()],
+    ) -> Result<reactive::RemountStats, RuntimeEventError> {
+        self.require(RuntimeLifecycle::Running, "remount updated components")
+            .map_err(RuntimeEventError::Lifecycle)?;
+        let surface = self.surface.clone();
+        self.context.enter(|| {
+            view::with_installed_renderer(surface.renderer(), || {
+                surface.begin_mutation_batch();
+                let stats = reactive::remount_components_for(patched_functions);
+                reactive::flush();
+                reactive::flush_mounts();
+                surface
+                    .finish_mutation_batch()
+                    .map_err(RuntimeInputError::Binding)
+                    .map_err(RuntimeEventError::Input)?;
+                Ok(stats)
+            })
+        })
+    }
+
     /// Delivers one Host-normalized event and flushes its reactive transaction.
     pub fn dispatch_input(&self, event: &InputEvent) -> Result<InputDispatch, RuntimeEventError> {
         self.require(RuntimeLifecycle::Running, "dispatch input")
@@ -431,6 +628,49 @@ impl RuntimeInstance {
                 self.drain_pending_input()
                     .map_err(RuntimeEventError::Input)?;
                 Ok(dispatch)
+            })
+        })
+    }
+
+    /// Delivers one native-module event inside this instance's renderer and
+    /// reactive transaction.
+    ///
+    /// Module objects may be process-wide on the Host, but subscriptions and
+    /// application callbacks belong to exactly one runtime instance. Paused
+    /// instances may retain state changes; their owner resumes effects later.
+    pub fn dispatch_module_event(
+        &self,
+        modules: &Rc<ModuleHost>,
+        module: &str,
+        event: &str,
+        payload: WhiskerValue,
+    ) -> Result<bool, RuntimeEventError> {
+        if !matches!(
+            self.lifecycle,
+            RuntimeLifecycle::Running | RuntimeLifecycle::Paused
+        ) {
+            return Err(RuntimeEventError::Lifecycle(RuntimeLifecycleError {
+                state: self.lifecycle,
+                operation: "dispatch a module event",
+            }));
+        }
+        let surface = self.surface.clone();
+        self.context.enter(|| {
+            view::with_installed_renderer(surface.renderer(), || {
+                with_module_host(modules, || {
+                    if self.lifecycle == RuntimeLifecycle::Running {
+                        crate::drain_runtime_dispatches();
+                    }
+                    surface.begin_mutation_batch();
+                    let dispatched = modules.dispatch_event(module, event, payload);
+                    reactive::flush();
+                    reactive::flush_mounts();
+                    surface
+                        .finish_mutation_batch()
+                        .map_err(RuntimeInputError::Binding)
+                        .map_err(RuntimeEventError::Input)?;
+                    Ok(dispatched)
+                })
             })
         })
     }

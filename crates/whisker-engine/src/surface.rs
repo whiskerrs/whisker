@@ -210,8 +210,13 @@ pub struct SurfaceEngine {
 impl SurfaceEngine {
     /// Creates an empty surface pipeline.
     pub fn new(surface: SurfaceId) -> Self {
+        Self::with_protocol(surface, whisker_protocol::ProtocolVersion::CURRENT)
+    }
+
+    /// Creates an empty pipeline using the protocol selected with its Host.
+    pub fn with_protocol(surface: SurfaceId, protocol: whisker_protocol::ProtocolVersion) -> Self {
         Self {
-            scene: Scene::new(surface),
+            scene: Scene::with_protocol(surface, protocol),
             layout: LayoutTree::new(),
             last_layout: None,
             last_inputs: None,

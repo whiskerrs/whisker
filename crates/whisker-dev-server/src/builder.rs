@@ -10,7 +10,7 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-use crate::Target;
+use crate::{MacosParams, Target, WebParams};
 use whisker_build::CaptureShims;
 
 /// Builder for cold (full reload) rebuilds. hot-reload patches live in
@@ -25,11 +25,14 @@ pub struct Builder {
     package: String,
     target: Target,
     /// Cargo features forwarded to whichever step compiles the user
-    /// crate. The dev loop turns on `whisker/hot-reload` here.
+    /// crate. The dev loop turns on `whisker/hot-reload` for mobile and
+    /// the generated Host's `hot-reload` feature for macOS.
     features: Vec<String>,
     /// `Some` → fat build (hot reload capture caches get populated).
     /// `None` → plain full reload.
     capture: Option<CaptureShims>,
+    macos: Option<MacosParams>,
+    web: Option<WebParams>,
 }
 
 impl Builder {
@@ -46,6 +49,8 @@ impl Builder {
             target,
             features: Vec::new(),
             capture: None,
+            macos: None,
+            web: None,
         }
     }
 
@@ -71,17 +76,25 @@ impl Builder {
         self
     }
 
+    /// Supplies the generated native macOS project when this builder targets
+    /// [`Target::Macos`].
+    pub fn with_macos(mut self, macos: Option<MacosParams>) -> Self {
+        self.macos = macos;
+        self
+    }
+
+    pub fn with_web(mut self, web: Option<WebParams>) -> Self {
+        self.web = web;
+        self
+    }
+
     /// Run the build for the current target. Inherits stdout/stderr.
     pub async fn build(&self) -> Result<()> {
         match self.target {
             Target::Android => self.build_android().await,
             Target::IosSimulator => self.build_ios_simulator().await,
-            Target::Macos => {
-                anyhow::bail!("macOS builds are driven through whisker_build::macos by whisker-cli")
-            }
-            Target::Web => {
-                anyhow::bail!("Web builds are driven by the CNG-generated Trunk project")
-            }
+            Target::Macos => self.build_macos().await,
+            Target::Web => self.build_web().await,
         }
     }
 
@@ -136,6 +149,40 @@ impl Builder {
         .context("spawn_blocking Android build")?
     }
 
+    async fn build_web(&self) -> Result<()> {
+        let web = self
+            .web
+            .clone()
+            .context("target=Web but Config.web is missing")?;
+        let features = self.features.clone();
+        let capture = self.capture.clone();
+        tokio::task::spawn_blocking(move || {
+            let config = whisker_build::web::WebBuild {
+                project_dir: web.project_dir,
+                target_dir: web.target_dir,
+                dist_dir: web.dist_dir,
+                package: web.generated_package,
+                profile: whisker_build::Profile::Debug,
+                features,
+                capture,
+                development: true,
+            };
+            let raw_wasm = whisker_build::web::compile(&config)?;
+            if config.capture.is_some() {
+                let bytes = std::fs::read(&raw_wasm)
+                    .with_context(|| format!("read {}", raw_wasm.display()))?;
+                let prepared = crate::hotpatch::prepare_wasm_base_module(&bytes)
+                    .context("prepare WebAssembly base module for Hot Reload")?;
+                std::fs::write(&raw_wasm, prepared)
+                    .with_context(|| format!("write {}", raw_wasm.display()))?;
+            }
+            whisker_build::web::bindgen(&config, &raw_wasm)?;
+            Ok(())
+        })
+        .await
+        .context("join Web build task")?
+    }
+
     async fn build_ios_simulator(&self) -> Result<()> {
         let workspace_root = self.workspace_root.clone();
         let crate_dir = self.crate_dir.clone();
@@ -178,6 +225,29 @@ impl Builder {
         })
         .await
         .context("spawn_blocking iOS Rust framework build")?
+    }
+
+    async fn build_macos(&self) -> Result<()> {
+        let params = self
+            .macos
+            .clone()
+            .context("target=Macos but no MacosParams were provided")?;
+        let features = self.features.clone();
+        let capture = self.capture.clone();
+        tokio::task::spawn_blocking(move || {
+            whisker_build::macos::build_app(&whisker_build::macos::MacosBuild {
+                project_dir: &params.project_dir,
+                target_dir: &params.target_dir,
+                app_name: &params.app_name,
+                binary_name: &params.binary_name,
+                profile: whisker_build::Profile::Debug,
+                features: &features,
+                capture: capture.as_ref(),
+            })
+            .map(|_| ())
+        })
+        .await
+        .context("spawn_blocking macOS Host build")?
     }
 }
 

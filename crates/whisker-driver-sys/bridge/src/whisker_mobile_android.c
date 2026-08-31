@@ -1057,9 +1057,13 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     return JNI_VERSION_1_6;
 }
 
-JNIEXPORT jlong JNICALL Java_rs_whisker_runtime_WhiskerView_nativeCreate(JNIEnv* env,jobject self,jfloat width,jfloat height,jfloat scale){
+JNIEXPORT jlong JNICALL Java_rs_whisker_runtime_WhiskerView_nativeCreate(JNIEnv* env,jobject self,jfloat width,jfloat height,jfloat scale,jlongArray raw_capabilities){
+    if(!raw_capabilities||(*env)->GetArrayLength(env,raw_capabilities)!=6)return 0;
+    jlong values[6]={0};(*env)->GetLongArrayRegion(env,raw_capabilities,0,6,values);if(clear_exception(env))return 0;
+    if(values[0]<0||values[0]>UINT16_MAX||values[1]<0||values[1]>UINT16_MAX||values[2]<0||values[2]>UINT16_MAX||values[3]<0||values[3]>UINT16_MAX)return 0;
+    WhiskerMobileHostCapabilities capabilities={(uint16_t)values[0],(uint16_t)values[1],(uint16_t)values[2],(uint16_t)values[3],(uint64_t)values[4],(uint64_t)values[5]};
     WhiskerAndroidView* view=calloc(1,sizeof(*view));if(!view)return 0;view->surface=(*env)->NewGlobalRef(env,self);if(!view->surface){free(view);return 0;}
-    view->runtime=whisker_view_create(width,height,scale,request_frame,view,bootstrap_host,view,measure_host,view,present_frame,view,resource_command,view,invoke_module,observe_module,view);
+    view->runtime=whisker_view_create(width,height,scale,&capabilities,request_frame,view,bootstrap_host,view,measure_host,view,present_frame,view,resource_command,view,invoke_module,observe_module,view);
     if(!view->runtime){(*env)->DeleteGlobalRef(env,view->surface);free(view);return 0;}return(jlong)(uintptr_t)view;
 }
 JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeTick(JNIEnv* env,jobject self,jlong handle,jdouble timestamp,jfloat width,jfloat height,jfloat scale){(void)env;(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;return view&&view->runtime&&whisker_view_tick(view->runtime,timestamp,width,height,scale)?JNI_TRUE:JNI_FALSE;}
