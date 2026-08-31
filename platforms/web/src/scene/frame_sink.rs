@@ -7,7 +7,7 @@ use wasm_bindgen::closure::Closure;
 use whisker_engine::FrameSink;
 use whisker_protocol::{
     ApplyResult, ElementRegistration, ElementTypeId, FrameMode, FramePacket, NodeId, Operation,
-    SceneProjection, SurfaceId,
+    PointerId, SceneProjection, SurfaceId,
 };
 
 use crate::application::{request_frame, request_urgent_frame};
@@ -37,6 +37,7 @@ pub(crate) struct DomFrameSink {
     presentation_pool: HashMap<ElementTypeId, Vec<PooledWebPresentation>>,
     event_masks: HashMap<NodeId, Rc<Cell<u64>>>,
     scroll_listeners: HashMap<NodeId, Vec<ScrollListener>>,
+    pointer_captures: HashMap<PointerId, NodeId>,
     pending_events: Rc<RefCell<VecDeque<WebProviderEvent>>>,
 }
 
@@ -120,6 +121,7 @@ impl DomFrameSink {
             presentation_pool: HashMap::new(),
             event_masks: HashMap::new(),
             scroll_listeners: HashMap::new(),
+            pointer_captures: HashMap::new(),
             pending_events: Rc::new(RefCell::new(VecDeque::new())),
         })
     }
@@ -151,7 +153,6 @@ impl DomFrameSink {
                 {
                     Some("visual-effects payload")
                 }
-                Operation::SetImage { .. } => Some("image-content"),
                 Operation::SetCursor { cursor, .. } if !cursor.resources.is_empty() => {
                     Some("resource-backed cursor")
                 }
@@ -193,6 +194,7 @@ impl DomFrameSink {
             )));
         }
         if packet.header.mode == FrameMode::Snapshot {
+            self.release_all_pointer_captures();
             self.root.set_inner_html("");
             self.nodes.clear();
             self.node_types.clear();
@@ -203,6 +205,7 @@ impl DomFrameSink {
             self.native_nodes.clear();
             self.event_masks.clear();
             self.scroll_listeners.clear();
+            self.pointer_captures.clear();
             self.pending_events.borrow_mut().clear();
         }
         for operation in &packet.operations {
@@ -583,9 +586,24 @@ impl DomFrameSink {
                     .invoke_command(*command, arguments)
                     .map_err(|error| js_error("invoke native DOM command", error))?;
             }
-            Operation::SetPointerCapture { .. } | Operation::ReleasePointerCapture { .. } => {}
-            Operation::SetImage { .. } => {
-                unreachable!("unsupported operations are rejected before DOM mutation")
+            Operation::SetPointerCapture { node, pointer } => {
+                let element = self.node(*node)?;
+                element
+                    .set_pointer_capture(browser_pointer_id(*pointer)?)
+                    .map_err(|error| js_error("capture DOM pointer", error))?;
+                self.pointer_captures.insert(*pointer, *node);
+            }
+            Operation::ReleasePointerCapture { node, pointer } => {
+                if self.pointer_captures.get(pointer) == Some(node) {
+                    let element = self.node(*node)?;
+                    let pointer_id = browser_pointer_id(*pointer)?;
+                    if element.has_pointer_capture(pointer_id) {
+                        element
+                            .release_pointer_capture(pointer_id)
+                            .map_err(|error| js_error("release DOM pointer", error))?;
+                    }
+                    self.pointer_captures.remove(pointer);
+                }
             }
         }
         Ok(())
@@ -716,6 +734,20 @@ impl DomFrameSink {
             cursor += 1;
         }
         for node in deleted {
+            let captures = self
+                .pointer_captures
+                .iter()
+                .filter_map(|(pointer, target)| (*target == node).then_some(*pointer))
+                .collect::<Vec<_>>();
+            for pointer in captures {
+                if let Some(element) = self.nodes.get(&node)
+                    && let Ok(pointer_id) = browser_pointer_id(pointer)
+                    && element.has_pointer_capture(pointer_id)
+                {
+                    let _ = element.release_pointer_capture(pointer_id);
+                }
+                self.pointer_captures.remove(&pointer);
+            }
             let element = self.nodes.remove(&node);
             let element_type = self.node_types.remove(&node);
             self.parents.remove(&node);
@@ -739,6 +771,55 @@ impl DomFrameSink {
                 }
             }
         }
+    }
+
+    fn release_all_pointer_captures(&self) {
+        for (pointer, node) in &self.pointer_captures {
+            let Some(element) = self.nodes.get(node) else {
+                continue;
+            };
+            let Ok(pointer_id) = browser_pointer_id(*pointer) else {
+                continue;
+            };
+            if element.has_pointer_capture(pointer_id) {
+                let _ = element.release_pointer_capture(pointer_id);
+            }
+        }
+    }
+}
+
+fn browser_pointer_id(pointer: PointerId) -> Result<i32, WebError> {
+    let value = pointer.get();
+    if value <= i32::MAX as u64 {
+        return Ok(value as i32);
+    }
+    let magnitude = u64::MAX - value;
+    if magnitude == 0 {
+        return Ok(0);
+    }
+    i32::try_from(magnitude).map(|value| -value).map_err(|_| {
+        WebError(format!(
+            "pointer id {value} cannot be represented by the DOM"
+        ))
+    })
+}
+
+#[cfg(test)]
+mod pointer_capture_tests {
+    use super::browser_pointer_id;
+    use whisker_protocol::PointerId;
+
+    #[test]
+    fn protocol_pointer_ids_round_trip_to_browser_ids() {
+        assert_eq!(browser_pointer_id(PointerId::new(7).unwrap()).unwrap(), 7);
+        assert_eq!(
+            browser_pointer_id(PointerId::new(u64::MAX).unwrap()).unwrap(),
+            0
+        );
+        assert_eq!(
+            browser_pointer_id(PointerId::new(u64::MAX - 1).unwrap()).unwrap(),
+            -1
+        );
     }
 }
 
