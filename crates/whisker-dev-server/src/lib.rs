@@ -117,6 +117,9 @@ pub struct Config {
     /// Native macOS build / launch params. Required iff
     /// `target == Target::Macos`; absent for other targets.
     pub macos: Option<MacosParams>,
+    /// Generated browser composition project. Required iff
+    /// `target == Target::Web`.
+    pub web: Option<WebParams>,
 }
 
 impl Config {
@@ -134,6 +137,7 @@ impl Config {
             android: None,
             ios: None,
             macos: None,
+            web: None,
         }
     }
 }
@@ -198,6 +202,19 @@ pub struct MacosParams {
     pub binary_name: String,
 }
 
+/// Flat parameters for Whisker's generated browser Host.
+#[derive(Debug, Clone)]
+pub struct WebParams {
+    /// Generated `gen/web` Cargo project.
+    pub project_dir: PathBuf,
+    /// Dedicated Cargo output directory for the wasm target.
+    pub target_dir: PathBuf,
+    /// Static directory served by the dev server.
+    pub dist_dir: PathBuf,
+    /// Generated composition crate/package name.
+    pub generated_package: String,
+}
+
 /// What kind of binary the dev server is rebuilding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
@@ -208,8 +225,7 @@ pub enum Target {
     /// Native macOS app. The dev server builds and launches the generated
     /// Cargo Host, and applies subsecond patches without restarting it.
     Macos,
-    /// Browser WASM application. The CLI delegates its remount development
-    /// loop to the CNG-generated Trunk project.
+    /// Browser WASM application built and served by Whisker.
     Web,
 }
 
@@ -376,13 +392,13 @@ impl DevServer {
             self.config.package.clone(),
             self.config.target,
         )
-        .with_macos(self.config.macos.clone());
+        .with_macos(self.config.macos.clone())
+        .with_web(self.config.web.clone());
 
         let hot_reload_init = if self.config.hot_patch_mode == HotPatchMode::HotReload {
-            let feature = if self.config.target == Target::Macos {
-                "hot-reload"
-            } else {
-                "whisker/hot-reload"
+            let feature = match self.config.target {
+                Target::Macos | Target::Web => "hot-reload",
+                Target::Android | Target::IosSimulator => "whisker/hot-reload",
             };
             builder = builder.with_features(vec![feature.into()]);
             match prepare_hot_reload_capture(&self.config) {
@@ -450,6 +466,7 @@ impl DevServer {
             self.config.bind_addr,
             self.on_event.clone(),
             self.config.dev_token.clone(),
+            self.config.web.as_ref().map(|web| web.dist_dir.clone()),
         )
         .await?;
         whisker_build::ui::set_status(format!("ws://{bound} · 0 client(s)"));

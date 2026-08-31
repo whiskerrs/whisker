@@ -213,6 +213,12 @@ mod tests {
     }
 
     #[test]
+    fn parses_build_web() {
+        let cli = parse(["whisker", "build", "web"]).unwrap();
+        assert!(matches!(cli.command, Command::Build(_)));
+    }
+
+    #[test]
     fn parses_run_with_explicit_target_and_flags() {
         // `target` moved from `--target <value>` to a positional
         // argument (`whisker run android`) — clap accepts it in any

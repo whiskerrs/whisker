@@ -14,6 +14,7 @@
 mod android;
 mod ios;
 mod macos;
+mod web;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -39,6 +40,8 @@ enum Cmd {
     Ipa(ios::Args),
     /// Native macOS `.app` bundle built from the CNG-generated Cargo project.
     Macos(macos::Args),
+    /// Static browser bundle (`index.html`, JavaScript glue, and WebAssembly).
+    Web(web::Args),
 }
 
 pub fn run(args: BuildArgs) -> Result<()> {
@@ -47,5 +50,6 @@ pub fn run(args: BuildArgs) -> Result<()> {
         Cmd::Apk(a) => android::run(ReleaseArtifact::Apk, a),
         Cmd::Ipa(a) => ios::run(a),
         Cmd::Macos(a) => macos::run(a),
+        Cmd::Web(a) => web::run(a),
     }
 }

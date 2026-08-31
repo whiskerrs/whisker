@@ -136,7 +136,19 @@ pub fn capture_env_vars_for_triple(
     // closure, so the `HotFunction::call_it` / `call_as_ptr` symbol the
     // JumpTable is keyed on is missing or mangled differently from the
     // patch's — lookups miss and the component keeps running old code.
-    let save_temps = format!("-Csave-temps=y -Cdebug-assertions=on -Copt-level=0 {export_dynamic}");
+    let save_temps = if triple_override.is_some_and(|triple| triple.starts_with("wasm32-")) {
+        // Keep the raw symbol/linking sections and make every callable
+        // function reachable through an extensible indirect table. The Web
+        // patch transformer consumes these before wasm-bindgen strips them.
+        "-Csave-temps=y -Cdebug-assertions=on -Copt-level=0 \
+         -Clink-arg=--no-gc-sections -Clink-arg=--growable-table \
+         -Clink-arg=--export-table -Clink-arg=--export-memory \
+         -Clink-arg=--emit-relocs -Clink-arg=--export=__stack_pointer \
+         -Clink-arg=--export=__heap_base -Clink-arg=--export=__data_end"
+            .to_string()
+    } else {
+        format!("-Csave-temps=y -Cdebug-assertions=on -Copt-level=0 {export_dynamic}")
+    };
     let save_temps = save_temps.as_str();
     match triple_override {
         Some(triple) => {

@@ -14,6 +14,7 @@
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::process::Command;
 
 use crate::{AndroidParams, IosParams, MacosParams, Target};
@@ -55,6 +56,7 @@ pub struct Installer {
     /// `adb shell setprop debug.whisker_dev_token`. `None` = token-less.
     dev_token: Option<String>,
     macos_child: tokio::sync::Mutex<Option<tokio::process::Child>>,
+    web_opened: AtomicBool,
 }
 
 impl Installer {
@@ -83,6 +85,7 @@ impl Installer {
             dev_port,
             dev_token,
             macos_child: tokio::sync::Mutex::new(None),
+            web_opened: AtomicBool::new(false),
         }
     }
 
@@ -146,10 +149,36 @@ impl Installer {
                 Ok(())
             }
             Target::Web => {
-                anyhow::bail!("Web launch is driven by the CNG-generated Trunk project")
+                if self.web_opened.swap(true, Ordering::AcqRel) {
+                    Ok(())
+                } else {
+                    open_browser(self.dev_port).await
+                }
             }
         }
     }
+}
+
+async fn open_browser(port: u16) -> Result<()> {
+    let url = format!("http://127.0.0.1:{port}/");
+    let mut command = if cfg!(target_os = "macos") {
+        let mut command = Command::new("open");
+        command.arg(&url);
+        command
+    } else if cfg!(target_os = "windows") {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", &url]);
+        command
+    } else {
+        let mut command = Command::new("xdg-open");
+        command.arg(&url);
+        command
+    };
+    let status = command.status().await.context("open Web Host in browser")?;
+    if !status.success() {
+        anyhow::bail!("browser launcher exited with {status}");
+    }
+    Ok(())
 }
 
 /// Run a `tokio::process::Command` to completion, capture its stderr,

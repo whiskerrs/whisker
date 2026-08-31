@@ -504,7 +504,40 @@ impl<A, M, F: HotFunction<A, M>> HotFn<A, M, F> {
 /// `component_owners` map. The Strategy C hot-reload path (Whisker A6+) uses
 /// this list to find live component owners whose body is now stale and re-mount
 /// them.
-pub unsafe fn apply_patch(mut table: JumpTable) -> Result<Vec<*const ()>, PatchError> {
+pub unsafe fn apply_patch(table: JumpTable) -> Result<Vec<*const ()>, PatchError> {
+    #[cfg(target_arch = "wasm32")]
+    return unsafe { apply_patch_impl(table, None) };
+    #[cfg(not(target_arch = "wasm32"))]
+    unsafe {
+        apply_patch_impl(table)
+    }
+}
+
+/// Apply a WebAssembly patch and invoke `completion` after its side module is
+/// instantiated and the jump table has been committed.
+///
+/// WebAssembly compilation is asynchronous in browsers, so framework
+/// integrations must not remount components immediately after [`apply_patch`]
+/// returns. Native platforms keep using the synchronous API above.
+///
+/// # Safety
+///
+/// The supplied jump table must map functions with compatible signatures and
+/// originate from the exact base WebAssembly module currently running. An
+/// invalid mapping can redirect calls to incompatible code.
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn apply_patch_with_callback(
+    table: JumpTable,
+    completion: impl FnOnce(Vec<*const ()>) + 'static,
+) -> Result<(), PatchError> {
+    unsafe { apply_patch_impl(table, Some(Box::new(completion))) }.map(|_| ())
+}
+
+unsafe fn apply_patch_impl(
+    mut table: JumpTable,
+    #[cfg(target_arch = "wasm32")] completion: Option<Box<dyn FnOnce(Vec<*const ()>)>>,
+) -> Result<Vec<*const ()>, PatchError> {
+    #[allow(unused_unsafe)]
     unsafe {
         // On non-wasm platforms we can just use libloading and the known aslr offsets to load the library
         #[cfg(any(unix, windows))]
@@ -598,14 +631,14 @@ pub unsafe fn apply_patch(mut table: JumpTable) -> Result<Vec<*const ()>, PatchE
             let exports: Object = wasm_bindgen::exports().unchecked_into();
 
             let path = table.lib.to_str().unwrap();
-            if !path.ends_with(".wasm") {
-                return;
-            }
+            // Whisker transfers patch bytes in the WebSocket frame and uses a
+            // browser `blob:` URL here. Such URLs intentionally have no file
+            // extension; WebAssembly compilation validates the payload.
 
             // Fetch + decode the patch wasm. Both awaits are pure I/O — they
             // touch no shared state, so the future is safe to drop here.
             let response: web_sys::Response =
-                JsFuture::from(web_sys::window().unwrap_throw().fetch_with_str(&path))
+                JsFuture::from(web_sys::window().unwrap_throw().fetch_with_str(path))
                     .await
                     .unwrap()
                     .unchecked_into();
@@ -720,7 +753,15 @@ pub unsafe fn apply_patch(mut table: JumpTable) -> Result<Vec<*const ()>, PatchE
                 }
             }
 
+            let patched = table
+                .map
+                .keys()
+                .map(|address| *address as usize as *const ())
+                .collect::<Vec<_>>();
             unsafe { commit_patch(table) };
+            if let Some(completion) = completion {
+                completion(patched);
+            }
         });
 
         // wasm path applies the patch asynchronously inside the spawned

@@ -20,6 +20,8 @@ pub mod stub_object;
 pub mod symbol_table;
 pub mod thin_build;
 pub mod validate;
+mod wasm_patch;
+mod web_patcher;
 pub mod wrapper;
 
 pub use cache::HotpatchModuleCache;
@@ -35,6 +37,11 @@ pub use stub_object::{
 pub use symbol_table::{SymbolInfo, SymbolTable, parse_symbol_table};
 pub use thin_build::{ObjBuildPlan, build_obj_plan, library_filename, object_filename};
 pub use validate::{ensure_target_supported, extract_target_triple, validate_environment};
+pub use wasm_patch::{
+    HotpatchModuleCache as WasmHotpatchModuleCache, create_wasm_jump_table,
+    prepare_wasm_base_module,
+};
+pub use web_patcher::WebPatcher;
 pub use wrapper::{
     CapturedLinkerInvocation, CapturedRustcInvocation, LinkerCaptureConfig, default_cache_dir,
     default_linker_cache_dir, load_captured_args, load_captured_linker_args, resolve_linker,

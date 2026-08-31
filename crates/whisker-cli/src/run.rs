@@ -13,7 +13,9 @@
 use anyhow::{Context, Result, anyhow};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use whisker_dev_server::{AndroidParams, Config, DevServer, HotPatchMode, IosParams, Target};
+use whisker_dev_server::{
+    AndroidParams, Config, DevServer, HotPatchMode, IosParams, Target, WebParams,
+};
 
 use crate::manifest;
 
@@ -83,9 +85,7 @@ pub fn run(args: Args) -> Result<()> {
     // call fires — `whisker_build::ui::mode()` caches its lookup in a
     // `OnceLock` on the first call, so flipping this env later doesn't
     // unstick a `Curated` cache.
-    let tui_enabled = args.target != CliTarget::Web
-        && !args.no_tui
-        && std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let tui_enabled = !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stderr());
     if tui_enabled {
         // FIXME: Audit that the environment access only happens in single-threaded code.
         unsafe { std::env::set_var("WHISKER_TUI", "1") };
@@ -238,16 +238,21 @@ fn run_inner(
             tui,
         );
     }
-    if target == Target::Web {
-        return run_web(&sync.gen_dir, args.bind);
-    }
-
     let android = match target {
         Target::Android => Some(android_params_from(&m, &sync.gen_dir)?),
         _ => None,
     };
     let ios = match target {
         Target::IosSimulator => Some(ios_params_from(&m, &sync.gen_dir)?),
+        _ => None,
+    };
+    let web = match target {
+        Target::Web => Some(WebParams {
+            project_dir: sync.gen_dir.clone(),
+            target_dir: workspace_root.join("target/.whisker/web"),
+            dist_dir: sync.gen_dir.join("dist"),
+            generated_package: format!("{}-whisker-web", m.package),
+        }),
         _ => None,
     };
 
@@ -265,7 +270,9 @@ fn run_inner(
         // receives, so without this an unauthenticated peer on a
         // LAN-exposed bind could push arbitrary native code; the gate
         // also defends an accidental `--bind 0.0.0.0`.
-        dev_token: Some(generate_dev_token()),
+        // Web clients share this server's HTTP origin with the patch socket.
+        // Native-code patch transport keeps its random per-session token.
+        dev_token: (target != Target::Web).then(generate_dev_token),
         hot_patch_mode: if args.no_hot_patch {
             HotPatchMode::FullReloadOnly
         } else {
@@ -274,6 +281,7 @@ fn run_inner(
         android,
         ios,
         macos: None,
+        web,
     };
 
     let watching_paths: Vec<String> = watch_paths
@@ -322,36 +330,6 @@ fn watch_paths_for(manifest: &manifest::ResolvedManifest) -> Vec<PathBuf> {
         manifest.crate_dir.join("Cargo.toml"),
         manifest.crate_dir.join("whisker.rs"),
     ]
-}
-
-/// Run the generated browser project. Trunk owns incremental WASM rebuilds,
-/// serves the output, opens the browser, and reloads the page after each
-/// successful build; a page reload remounts the Whisker runtime from scratch.
-fn run_web(gen_dir: &Path, bind: SocketAddr) -> Result<()> {
-    whisker_build::ui::info(format!(
-        "starting Web Host at http://{bind} · source changes remount the app"
-    ));
-    let status = std::process::Command::new("trunk")
-        .arg("serve")
-        .arg("--config")
-        .arg(gen_dir.join("Trunk.toml"))
-        .arg("--address")
-        .arg(bind.ip().to_string())
-        .arg("--port")
-        .arg(bind.port().to_string())
-        .arg("--open")
-        // Whisker's subprocess UI convention uses `NO_COLOR=1`, while
-        // Trunk's clap parser accepts the boolean spellings only.
-        .env("NO_COLOR", "true")
-        .current_dir(gen_dir)
-        .status()
-        .context(
-            "start Trunk for Web Host (install it with `cargo install trunk --locked` if missing)",
-        )?;
-    if !status.success() {
-        return Err(anyhow!("Trunk Web development server exited with {status}"));
-    }
-    Ok(())
 }
 
 /// Drive the first Desktop development loop. The generated Cargo project is
@@ -406,6 +384,7 @@ fn run_macos(
             app_name: app_name.to_string(),
             binary_name,
         }),
+        web: None,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
