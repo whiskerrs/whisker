@@ -13,7 +13,7 @@
 //!                                depends on: domain, ureq, serde
 //! podcast-ui-kit              ← reusable atomic widgets
 //!                                depends on: whisker, theme, domain
-//! podcast-feature-browse      ← Browse screen (sections + cards)
+//! podcast-feature-browse      ← Browse Screen (sections + cards)
 //!                                depends on: whisker, theme, domain,
 //!                                            data, ui-kit
 //! podcast-feature-detail      ← Show detail screen
@@ -67,7 +67,7 @@ pub type PodcastIndex = Rc<RefCell<HashMap<u64, Podcast>>>;
 /// an episode); `Some` while the mini-player is showing a track.
 ///
 /// Exposed as a type alias — same TypeId across crates — so the
-/// detail screen (writes on tap) and the mini-player (reads to
+/// detail Screen (writes on tap) and the mini-player (reads to
 /// render) match on `use_context<NowPlayingSignal>()` without
 /// importing it from this shell crate.
 pub type NowPlayingSignal = ArcRwSignal<Option<NowPlaying>>;
@@ -105,7 +105,7 @@ fn app() -> Element {
     provide_context(now_playing);
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             width: vw(100),
             height: vh(100),
@@ -135,5 +135,6 @@ fn app() -> Element {
 #[component]
 fn podcast_router(children: Children) -> Element {
     provide_context(build_navigator());
-    render! { children() }
+    let projected = children.clone();
+    render! { Fragment { { projected() } } }
 }

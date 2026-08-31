@@ -586,7 +586,7 @@ async fn typed_resource_commands_and_events_cross_the_web_runtime_boundary() {
             wake_count.fetch_add(1, Ordering::SeqCst);
         }),
     );
-    runtime.mount(|| render! { view() }).unwrap();
+    runtime.mount(|| render! { View() }).unwrap();
     let store = WebResourceStore::new();
     let service = WebResourceService::new(store);
     let resource = ResourceId::new(8).unwrap();
@@ -1131,8 +1131,8 @@ impl Driver {
                 StyleEnvironment::new(width, height, scale, 16.0),
             );
             let mut runtime = RuntimeInstance::new(surface, RuntimeWakeHandle::new(|| {}));
-            runtime.mount(|| render! { view() }).unwrap();
-            assert!(runtime.surface().root().is_some());
+            runtime.mount(|| render! { View() }).unwrap();
+            assert!(runtime.surface().Root().is_some());
             self.input_runtime = Some(runtime);
         }
         let root_origin = whisker_protocol::InputPoint { x: 13.0, y: 7.0 };
@@ -1923,7 +1923,7 @@ impl Driver {
             match &sample.color {
                 ColorFixture::Named { value } if value == "transparent" => assert!(
                     opaque_hit.is_none(),
-                    "transparent sample unexpectedly hit opaque scene stack {hit_nodes:?}"
+                    "transparent sample unexpectedly hit opaque scene Stack {hit_nodes:?}"
                 ),
                 ColorFixture::Srgba { .. } => {
                     let expected_node = expected
@@ -2718,7 +2718,7 @@ fn linear_gradient_layer(gradient: &LinearGradientFixture) -> BackgroundLayer {
 }
 
 fn background_paint_layer(layer: &BackgroundPaintLayerFixture) -> BackgroundLayer {
-    let image_layer = match &layer.image {
+    let image_layer = match &layer.Image {
         BackgroundImageFixture::Resource(id) => BackgroundLayer {
             image: PaintImage::Resource(ResourceId::new(*id).unwrap()),
             position: PaintPosition::default(),
@@ -3652,7 +3652,7 @@ fn assert_background_layers_are_projected(
 ) {
     let images = layers
         .iter()
-        .map(|layer| match &layer.image {
+        .map(|layer| match &layer.Image {
             BackgroundImageFixture::Resource(id) => {
                 format!("url(\"{}\")", resource_urls.get(id).unwrap())
             }
@@ -3842,7 +3842,7 @@ fn fixture_node_paints_at(
     }
     if !node.background_layers.is_empty() {
         return node.background_layers.iter().any(|layer| {
-            let intrinsic_size = match layer.image {
+            let intrinsic_size = match layer.Image {
                 BackgroundImageFixture::Resource(id) => resource_dimensions.get(&id).copied(),
                 _ => None,
             };

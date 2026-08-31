@@ -42,7 +42,7 @@ use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::ToTokens;
 use std::cell::Cell;
 use syn::Expr;
-use whisker_macro_syntax::CssInput;
+use whisker_macro_syntax::compose::{ComposeArgument, ComposeArguments};
 
 /// Pretty-print an adapted `render!` root ([`crate::ir::adapt_render_root`]).
 ///
@@ -111,7 +111,7 @@ pub(crate) fn print_render(
 /// with broken delimiters around one joined line.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn print_css(
-    input: &CssInput,
+    input: &ComposeArguments,
     map: &SourceMap,
     opts: &FmtOptions,
     base_indent: usize,
@@ -313,7 +313,7 @@ impl Printer<'_> {
             return None;
         };
         let name = em.mac.path.get_ident()?.to_string();
-        if name != "css" && name != "render" && name != "routes" {
+        if name != "compose" && name != "css" && name != "render" && name != "routes" {
             return None;
         }
         // The delimiter span, not `mac.tokens`'s: the latter excludes a
@@ -335,12 +335,12 @@ impl Printer<'_> {
         let bang = if open == '{' { "! " } else { "!" };
         match name.as_str() {
             "css" => {
-                let input = whisker_macro_syntax::css::parse_input(em.mac.tokens.clone()).ok()?;
-                if input.kwargs.is_empty() {
+                let input = syn::parse2::<ComposeArguments>(em.mac.tokens.clone()).ok()?;
+                if input.arguments.is_empty() {
                     return None;
                 }
                 let parts: Vec<String> = input
-                    .kwargs
+                    .arguments
                     .iter()
                     .map(|kw| self.css_kwarg(kw, level))
                     .collect();
@@ -359,9 +359,14 @@ impl Printer<'_> {
                 );
                 Some(format!("{name}{bang}{list}"))
             }
-            "render" => {
-                let root = whisker_macro_syntax::render::parse_root(em.mac.tokens.clone()).ok()?;
-                let ir_root = crate::ir::adapt_render_root(&root);
+            "compose" | "render" => {
+                let input =
+                    whisker_macro_syntax::compose::parse_input(em.mac.tokens.clone()).ok()?;
+                let mut roots = crate::ir::adapt_compose_input(&input);
+                if roots.len() != 1 {
+                    return None;
+                }
+                let ir_root = roots.remove(0);
                 let body = print_render(
                     &ir_root,
                     self.map,
@@ -376,11 +381,11 @@ impl Printer<'_> {
             }
             "routes" => {
                 let input =
-                    whisker_macro_syntax::routes::parse_input(em.mac.tokens.clone()).ok()?;
-                if input.roots.is_empty() {
+                    whisker_macro_syntax::compose::parse_input(em.mac.tokens.clone()).ok()?;
+                if input.nodes.is_empty() {
                     return None;
                 }
-                let roots = crate::ir::adapt_routes_roots(&input);
+                let roots = crate::ir::adapt_compose_input(&input);
                 let body = print_routes(
                     &roots,
                     self.map,
@@ -563,13 +568,11 @@ impl Printer<'_> {
         if between { None } else { Some(idx) }
     }
 
-    /// First source byte of an [`IrNode`] (its tag ident / spread expr /
-    /// `children()` ident). Shared by `render!` and `routes!` printing —
+    /// First source byte of an [`IrNode`] (its tag path or expression).
     /// both reduce to the same tag/kwargs/children shape.
     fn ir_node_start_byte(&self, node: &IrNode) -> Option<usize> {
         let span = match node {
             IrNode::Tag(tag) => tag.tag_span?,
-            IrNode::ChildrenSlot(span) => *span,
             IrNode::Text(value) => value.span(),
             IrNode::Expression(expr) => span_of(expr),
             IrNode::Spread(expr) => span_of(expr),
@@ -590,10 +593,6 @@ impl Printer<'_> {
     fn ir_node(&self, node: &IrNode, level: usize, out: &mut String) {
         match node {
             IrNode::Tag(tag) => self.ir_tag(tag, level, out),
-            IrNode::ChildrenSlot(_) => {
-                out.push_str(&self.indent(level));
-                out.push_str("children()");
-            }
             IrNode::Text(value) => {
                 out.push_str(&self.indent(level));
                 out.push_str(&format!("{:?}", value.value()));
@@ -771,14 +770,11 @@ impl Printer<'_> {
     /// `level` is the tag's own indent level; a value that needs wrapping
     /// lands at `level + 1`, so that is what reaches
     /// [`Printer::expr_src`] as the nested macro's width reference.
-    /// `IrValue::Literal` values (routes!'s `path`/`component`) are
-    /// hand-formatted and never go through `expr_src` at all.
     fn ir_kwarg(&self, kw: &IrKwarg, level: usize) -> String {
         match &kw.value {
             // Partial kwarg: just the name (mid-typing). Preserve the
             // author's `name` with no value.
             None => kw.name.clone(),
-            Some(IrValue::Literal(s)) => format!("{}: {s}", kw.name),
             Some(IrValue::Expr(e)) => {
                 let value = self.expr_src(span_of(e), e, level + 1);
                 format!("{}: {value}", kw.name)
@@ -788,8 +784,14 @@ impl Printer<'_> {
 
     // ---- css! ----------------------------------------------------------
 
-    fn css(&self, input: &CssInput, level: usize, body_len: usize, inline_budget: usize) -> String {
-        if input.kwargs.is_empty() {
+    fn css(
+        &self,
+        input: &ComposeArguments,
+        level: usize,
+        body_len: usize,
+        inline_budget: usize,
+    ) -> String {
+        if input.arguments.is_empty() {
             return String::new();
         }
 
@@ -801,7 +803,7 @@ impl Printer<'_> {
         // the macro's original line (`inline_budget`).
         if !has_comments {
             let parts: Vec<String> = input
-                .kwargs
+                .arguments
                 .iter()
                 .map(|kw| self.css_kwarg(kw, level))
                 .collect();
@@ -813,7 +815,7 @@ impl Printer<'_> {
             }
             let indent = self.indent(level);
             let mut out = String::new();
-            for (kw, part) in input.kwargs.iter().zip(&parts) {
+            for (kw, part) in input.arguments.iter().zip(&parts) {
                 if let Some((s, _)) = self.map.byte_range(kw.name.span()) {
                     self.maybe_blank_line(s, &mut out);
                 }
@@ -830,7 +832,7 @@ impl Printer<'_> {
         // comments before each field and after the last.
         let indent = self.indent(level);
         let mut out = String::new();
-        for kw in &input.kwargs {
+        for kw in &input.arguments {
             let start = self.map.byte_range(kw.name.span()).map(|(s, _)| s);
             if let Some(s) = start {
                 self.flush(s, level, &mut out);
@@ -855,23 +857,22 @@ impl Printer<'_> {
         out
     }
 
-    fn css_kwarg(&self, kw: &whisker_macro_syntax::CssKwarg, level: usize) -> String {
+    fn css_kwarg(&self, kw: &ComposeArgument, level: usize) -> String {
         let name = kw.name.to_string();
-        match &kw.value {
-            Some(expr) => {
-                let v = self.expr_src(span_of(expr), expr, level);
-                format!("{name}: {v}")
-            }
-            None => name,
+        if kw.partial {
+            name
+        } else {
+            let v = self.expr_src(span_of(&kw.value), &kw.value, level);
+            format!("{name}: {v}")
         }
     }
 }
 
 /// Byte just past a css field in the source: the value's end when
 /// present, else the name's.
-fn css_field_end(map: &SourceMap, kw: &whisker_macro_syntax::CssKwarg) -> usize {
-    kw.value
-        .as_ref()
+fn css_field_end(map: &SourceMap, kw: &ComposeArgument) -> usize {
+    (!kw.partial)
+        .then(|| &kw.value)
         .and_then(|e| map.byte_range(span_of(e)))
         .map(|(_, e)| e)
         .or_else(|| map.byte_range(kw.name.span()).map(|(_, e)| e))
@@ -976,7 +977,7 @@ fn unblock_macro_closure(fragment: &str, unit: &str) -> Option<String> {
         }
         body.push_str(line.strip_prefix(unit).unwrap_or(line));
     }
-    for name in ["render!", "css!", "routes!"] {
+    for name in ["compose!", "render!", "css!", "routes!"] {
         if body.trim_start().starts_with(name) {
             let ts: TokenStream = body.parse().ok()?;
             let trees: Vec<TokenTree> = ts.into_iter().collect();
@@ -1002,8 +1003,10 @@ fn contains_target_macro(tokens: TokenStream) -> bool {
     for (i, tree) in trees.iter().enumerate() {
         match tree {
             TokenTree::Ident(ident)
-                if matches!(ident.to_string().as_str(), "render" | "css" | "routes")
-                    && matches!(trees.get(i + 1), Some(TokenTree::Punct(p)) if p.as_char() == '!')
+                if matches!(
+                    ident.to_string().as_str(),
+                    "compose" | "render" | "css" | "routes"
+                ) && matches!(trees.get(i + 1), Some(TokenTree::Punct(p)) if p.as_char() == '!')
                     && matches!(trees.get(i + 2), Some(TokenTree::Group(_))) =>
             {
                 return true;

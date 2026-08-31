@@ -1,0 +1,10 @@
+error[E0599]: no method named `build` found for struct `TestButtonPropsBuilder<false>` in the current scope
+ --> tests/ui/missing_required_module_event.rs:5:35
+  |
+1 | #[whisker::module_element("test-button")]
+  | ----------------------------------------- method `build` not found for this struct
+...
+5 |     let _ = TestButton::builder().build();
+  |                                   ^^^^^ method not found in `TestButtonPropsBuilder<false>`
+  |
+  = note: the method was found for `TestButtonPropsBuilder<true>`

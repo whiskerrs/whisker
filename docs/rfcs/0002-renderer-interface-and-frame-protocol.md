@@ -925,7 +925,7 @@ module declaration contains identity, intrinsic measurement, and generated
 property/event/command members:
 
 ```rust,ignore
-#[whisker::module_component(
+#[whisker::module_element(
     name = "example.controls/Toggle",
     measurement = None,
 )]
@@ -1042,9 +1042,9 @@ fn player() -> Element {
     let video = VideoHandle::new();
 
     render! {
-        view {
+        View {
             Video(
-                ref: video.r(),
+                element_ref: video.r(),
                 src: "https://example.com/movie.mp4",
                 autoplay: true,
                 muted: false,
@@ -1058,8 +1058,8 @@ fn player() -> Element {
                 on_error: move |error| report(error),
             )
 
-            view(on_tap: move |_| video.play()) {
-                text(value: "Play")
+            View(on_tap: move |_| video.play()) {
+                Text(value: "Play")
             }
         }
     }

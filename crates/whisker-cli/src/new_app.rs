@@ -186,7 +186,7 @@ use whisker::runtime::view::Element;
 
 // `#[whisker::main]` is the app entry point. Keep it thin — it just
 // mounts the root component. Whisker provides the root `page` element
-// for you, so `app()` (and your components) just return a `view`.
+// for you, so `app()` (and your components) just return an `Element`.
 //
 // Splitting your UI into `#[component]`s (rather than writing everything
 // here) is what lets `whisker run` hot-reload your edits in well under a
@@ -212,7 +212,7 @@ fn root() -> Element {{
     render! {{
         // Styles use the typed `css!` macro: field names map to CSS
         // properties and values are checked at compile time.
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
@@ -223,7 +223,7 @@ fn root() -> Element {{
         )) {{
             // A card: column layout, padding, rounded corners, plus a
             // gap and a typed linear-gradient background.
-            view(style: css!(
+            View(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
@@ -238,7 +238,7 @@ fn root() -> Element {{
                     ],
                 }},
             )) {{
-                text(
+                Text(
                     value: "{display}",
                     style: css!(
                         color: Color::hex(0xffffff),
@@ -247,11 +247,11 @@ fn root() -> Element {{
                         letter_spacing: px(0.5),
                     ),
                 )
-                text(
+                Text(
                     value: "Edit `Root` and save — hot reload in under a second",
                     style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(13)),
                 )
-                text(
+                Text(
                     value: computed(move || format!("{{}}", count.get())),
                     style: css!(
                         color: Color::hex(0xffffff),
@@ -261,7 +261,7 @@ fn root() -> Element {{
                     ),
                 )
                 // A horizontal row; `gap` separates the two buttons.
-                view(style: css!(
+                View(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Row,
                     margin_top: px(16),
@@ -281,7 +281,7 @@ fn root() -> Element {{
 #[component]
 fn button(label: &'static str, delta: i32, count: RwSignal<i32>) -> Element {{
     render! {{
-        view(
+        View(
             style: css!(
                 border_radius: px(12),
                 background_color: Color::rgba(255, 255, 255, 0.18),
@@ -289,7 +289,7 @@ fn button(label: &'static str, delta: i32, count: RwSignal<i32>) -> Element {{
             ),
             on_tap: move |_| count.set(count.get() + delta),
         ) {{
-            text(
+            Text(
                 value: label,
                 style: css!(
                     color: Color::hex(0xffffff),

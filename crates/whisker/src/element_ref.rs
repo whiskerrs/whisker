@@ -11,7 +11,7 @@
 //! - **`RwSignal`-backed binding** — the inner `Option<Element>` lives
 //!   in the reactive runtime so [`ElementRef::bound`] returns a
 //!   `Signal<bool>` that `effect(...)` / `computed(...)` /
-//!   `text(value: ...)` can observe. The hot-path
+//!   `Text(value: ...)` can observe. The hot-path
 //!   [`ElementRef::command`] reads via `get_untracked()` so imperative
 //!   dispatch never accidentally subscribes its caller.
 //! - **One command shape** — `command(name, parameters: WhiskerValue) ->
@@ -21,7 +21,7 @@
 //!
 //! ## Where `ElementRef` appears
 //!
-//! Only in the signatures of `#[whisker::module_component]`-declared
+//! Only in the signatures of `#[whisker::module_element]`-declared
 //! functions, as a hidden `__ref` prop the macro emits, and inside
 //! module-author-written `#[whisker::component]` wrappers that bridge
 //! a Handle struct to native via `effect(...)` blocks. End-user app
@@ -65,7 +65,7 @@ impl std::fmt::Display for RefError {
 impl std::error::Error for RefError {}
 
 /// Framework-internal handle to a mounted platform element. Lives in
-/// `#[module_component]`-emitted prop tables and the wrapping
+/// `#[module_element]`-emitted prop tables and the wrapping
 /// `#[component]`s that drive a Handle. Not part of an app-author's
 /// surface — Handles wrap this.
 ///
@@ -83,7 +83,7 @@ pub struct ElementRef {
 impl ElementRef {
     /// Allocate a fresh, unbound ref.
     ///
-    /// Used by `#[module_component]` macro emission and by Handle
+    /// Used by `#[module_element]` macro emission and by Handle
     /// bridge wrappers (`fn video(handle: VideoHandle, ...) -> Element`).
     /// Allocates in the current reactive owner — see
     /// `whisker_runtime::reactive::signal()`.
@@ -167,7 +167,7 @@ impl ElementRef {
     }
 
     /// Clear the ref. Invoked at element unmount via the
-    /// `on_cleanup(...)` hook emitted by `#[module_component]`
+    /// `on_cleanup(...)` hook emitted by `#[module_element]`
     /// so subsequent commands cannot dispatch against a recycled `Element` ID.
     ///
     /// `try_set` because the underlying signal may have already been
@@ -216,15 +216,15 @@ impl std::fmt::Debug for ElementRef {
 }
 
 /// Imperative handle to any mounted element. Allocate with
-/// [`ElementHandle::new`], bind via `view(ref: handle.r())` (or `text`,
-/// `scroll_view`, …) in `render!`.
+/// [`ElementHandle::new`], bind via `View(element_ref: handle.r())` (or `Text`,
+/// `ScrollView`, …) in `render!`.
 ///
 /// `Copy` (the inner `ElementRef` is an arena handle), so it can be
 /// captured by value into multiple event closures.
 ///
 /// ```ignore
 /// let card = ElementHandle::new();
-/// render! { view(ref: card.r()) { /* … */ } }
+/// render! { View(element_ref: card.r()) { /* … */ } }
 /// ```
 #[derive(Copy, Clone)]
 pub struct ElementHandle {
@@ -239,8 +239,8 @@ impl ElementHandle {
         }
     }
 
-    /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind it
-    /// on mount (`view(ref: handle.r())`).
+    /// The underlying [`ElementRef`] — pass to a `element_ref:` prop to bind it
+    /// on mount (`View(element_ref: handle.r())`).
     pub fn r(&self) -> ElementRef {
         self.r
     }
@@ -253,7 +253,7 @@ impl Default for ElementHandle {
 }
 
 /// Imperative handle to a mounted `<scroll-view>`. Allocate with
-/// [`ScrollViewHandle::new`], bind via `scroll_view(ref: handle.r())`
+/// [`ScrollViewHandle::new`], bind via `ScrollView(element_ref: handle.r())`
 /// in `render!`, then issue scroll commands.
 ///
 /// `Copy` (the inner `ElementRef` is an arena handle), so it can be
@@ -271,8 +271,8 @@ impl ScrollViewHandle {
         }
     }
 
-    /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind
-    /// it on mount (`scroll_view(ref: handle.r())`).
+    /// The underlying [`ElementRef`] — pass to a `element_ref:` prop to bind
+    /// it on mount (`ScrollView(element_ref: handle.r())`).
     pub fn r(&self) -> ElementRef {
         self.r
     }
@@ -310,7 +310,7 @@ impl Default for ScrollViewHandle {
 }
 
 /// Imperative handle to a mounted `<text>`. Allocate with
-/// [`TextHandle::new`] and bind via `text(ref: handle.r())` in `render!`.
+/// [`TextHandle::new`] and bind via `Text(element_ref: handle.r())` in `render!`.
 ///
 /// `Copy` (the inner `ElementRef` is an arena handle), so it can be
 /// captured by value into multiple event closures.
@@ -327,8 +327,8 @@ impl TextHandle {
         }
     }
 
-    /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind it
-    /// on mount (`text(ref: handle.r())`).
+    /// The underlying [`ElementRef`] — pass to a `element_ref:` prop to bind it
+    /// on mount (`Text(element_ref: handle.r())`).
     pub fn r(&self) -> ElementRef {
         self.r
     }

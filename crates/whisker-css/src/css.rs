@@ -115,7 +115,7 @@ impl ToCss for CssProp {
 /// use whisker_css::ext::*;
 /// use whisker_css::{Color, Display, FlexDirection, Css};
 ///
-/// let s = Css::new()
+/// let s = Css::builder()
 ///     .display(Display::Flex)
 ///     .flex_direction(FlexDirection::Column)
 ///     .padding(px(12))
@@ -127,6 +127,11 @@ pub struct Css {
 }
 
 impl Css {
+    /// Starts the public CSS builder chain.
+    pub fn builder() -> Self {
+        Self::new()
+    }
+
     /// An empty style.
     pub fn new() -> Self {
         Self { props: Vec::new() }

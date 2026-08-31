@@ -15,15 +15,23 @@ fn opts(tab: usize, width: usize) -> FmtOptions {
 
 #[test]
 fn reformats_messy_render_body() {
-    let input = "fn ui() -> Element {\n    render! { view(style:\"x\",class:\"y\"){text(value:\"hi\")} }\n}\n";
+    let input = "fn ui() -> Element {\n    render! { View(style:\"x\",class:\"y\"){Text(value:\"hi\")} }\n}\n";
     let out = reformat_macros(input, &opts(4, 100)).unwrap();
-    let expected = "fn ui() -> Element {\n    render! {\n        view(style: \"x\", class: \"y\") {\n            text(value: \"hi\")\n        }\n    }\n}\n";
+    let expected = "fn ui() -> Element {\n    render! {\n        View(style: \"x\", class: \"y\") {\n            Text(value: \"hi\")\n        }\n    }\n}\n";
+    assert_eq!(out, expected, "got:\n{out}");
+}
+
+#[test]
+fn compose_uses_the_same_tree_formatter_as_render() {
+    let input = "fn ui() -> Element {\n    compose! { View(style:\"x\"){Text(value:\"hi\")} }\n}\n";
+    let out = reformat_macros(input, &opts(4, 100)).unwrap();
+    let expected = "fn ui() -> Element {\n    compose! {\n        View(style: \"x\") {\n            Text(value: \"hi\")\n        }\n    }\n}\n";
     assert_eq!(out, expected, "got:\n{out}");
 }
 
 #[test]
 fn idempotent() {
-    let input = "fn ui() -> Element {\n    render! { view(style:\"x\"){text(value:\"hi\")} }\n}\n";
+    let input = "fn ui() -> Element {\n    render! { View(style:\"x\"){Text(value:\"hi\")} }\n}\n";
     let once = reformat_macros(input, &opts(4, 100)).unwrap();
     let twice = reformat_macros(&once, &opts(4, 100)).unwrap();
     assert_eq!(
@@ -34,23 +42,23 @@ fn idempotent() {
 
 #[test]
 fn honors_tab_spaces_from_options() {
-    let input = "fn ui() -> Element {\n    render! { view(style:\"x\"){text(value:\"hi\")} }\n}\n";
+    let input = "fn ui() -> Element {\n    render! { View(style:\"x\"){Text(value:\"hi\")} }\n}\n";
     let four = reformat_macros(input, &opts(4, 100)).unwrap();
     let two = reformat_macros(input, &opts(2, 100)).unwrap();
     assert_ne!(four, two, "tab_spaces must change indentation");
     // 4-space variant indents the inner text 12 cols; 2-space, 6.
     assert!(
-        four.contains("            text(value: \"hi\")"),
+        four.contains("            Text(value: \"hi\")"),
         "4-space:\n{four}"
     );
-    assert!(two.contains("      text(value: \"hi\")"), "2-space:\n{two}");
+    assert!(two.contains("      Text(value: \"hi\")"), "2-space:\n{two}");
 }
 
 #[test]
 fn wraps_kwargs_over_max_width() {
-    let input = "fn ui() -> Element {\n    render! { view(style: \"a-long-value\", class: \"another-long-value\") }\n}\n";
+    let input = "fn ui() -> Element {\n    render! { View(style: \"a-long-value\", class: \"another-long-value\") }\n}\n";
     let out = reformat_macros(input, &opts(4, 40)).unwrap();
-    assert!(out.contains("view(\n"), "expected broken kwargs:\n{out}");
+    assert!(out.contains("View(\n"), "expected broken kwargs:\n{out}");
     assert!(
         out.contains("class: \"another-long-value\",\n"),
         "trailing comma expected:\n{out}"
@@ -59,7 +67,7 @@ fn wraps_kwargs_over_max_width() {
 
 #[test]
 fn preserves_user_expression_source() {
-    let input = "fn ui() -> Element {\n    render! { view(on_tap: move |_| do_thing(a, b)) }\n}\n";
+    let input = "fn ui() -> Element {\n    render! { View(on_tap: move |_| do_thing(a, b)) }\n}\n";
     let out = reformat_macros(input, &opts(4, 100)).unwrap();
     assert!(
         out.contains("on_tap: move |_| do_thing(a, b)"),
@@ -79,15 +87,15 @@ fn formats_css_body() {
 
 #[test]
 fn trailing_block_comment_preserved_and_reflowed() {
-    let input = "fn ui() -> Element {\n    render! { view(style:\"x\") /* keep me */ }\n}\n";
+    let input = "fn ui() -> Element {\n    render! { View(style:\"x\") /* keep me */ }\n}\n";
     let out = reformat_macros(input, &opts(4, 100)).unwrap();
-    let expected = "fn ui() -> Element {\n    render! { view(style: \"x\") /* keep me */ }\n}\n";
+    let expected = "fn ui() -> Element {\n    render! { View(style: \"x\") /* keep me */ }\n}\n";
     assert_eq!(out, expected, "got:\n{out}");
 }
 
 #[test]
 fn children_slot_preserved() {
-    let input = "fn ui() -> Element {\n    render! { view(style:\"x\"){children()} }\n}\n";
+    let input = "fn ui() -> Element {\n    render! { View(style:\"x\"){children()} }\n}\n";
     let out = reformat_macros(input, &opts(4, 100)).unwrap();
     assert!(
         out.contains("children()"),
@@ -168,7 +176,7 @@ fn routes_leaf_route_no_braces() {
 #[test]
 fn nested_css_in_render_kwarg_reformats() {
     let input =
-        "fn ui() -> Element {\n    render! { view(style: css!(color:red,padding:px(8))) }\n}\n";
+        "fn ui() -> Element {\n    render! { View(style: css!(color:red,padding:px(8))) }\n}\n";
     let out = reformat_macros(input, &opts(4, 100)).unwrap();
     assert!(
         out.contains("css!(color: red, padding: px(8))"),
@@ -178,7 +186,7 @@ fn nested_css_in_render_kwarg_reformats() {
 
 #[test]
 fn nested_css_in_render_kwarg_wraps_over_max_width() {
-    let input = "fn ui() -> Element {\n    render! { view(style: css!(flex_grow: 1.0, background_color: \"a-fairly-long-color-value\")) }\n}\n";
+    let input = "fn ui() -> Element {\n    render! { View(style: css!(flex_grow: 1.0, background_color: \"a-fairly-long-color-value\")) }\n}\n";
     let out = reformat_macros(input, &opts(4, 40)).unwrap();
     assert!(
         out.contains("css!(\n"),
@@ -210,17 +218,17 @@ fn nested_render_in_render_kwarg_reformats() {
     // through `nested_macro_src`, whereas a bare top-level
     // `render!{...}` hits `macro_body_edit`'s own "render" arm.
     let input =
-        "fn ui() -> Element {\n    render! { view(child: render!{text(value:\"nested\")}) }\n}\n";
+        "fn ui() -> Element {\n    render! { View(child: render!{Text(value:\"nested\")}) }\n}\n";
     let out = reformat_macros(input, &opts(4, 100)).unwrap();
     assert!(
-        out.contains("render! { text(value: \"nested\") }"),
+        out.contains("render! { Text(value: \"nested\") }"),
         "nested render! must be reformatted:\n{out}"
     );
 }
 
 #[test]
 fn nested_css_in_render_kwarg_idempotent() {
-    let input = "fn ui() -> Element {\n    render! { view(style: css!(flex_grow: 1.0, background_color: BG)) }\n}\n";
+    let input = "fn ui() -> Element {\n    render! { View(style: css!(flex_grow: 1.0, background_color: BG)) }\n}\n";
     let once = reformat_macros(input, &opts(4, 100)).unwrap();
     let twice = reformat_macros(&once, &opts(4, 100)).unwrap();
     assert_eq!(
@@ -233,7 +241,7 @@ fn nested_css_in_render_kwarg_idempotent() {
 fn nested_css_with_comment_left_untouched() {
     // A nested macro carrying a comment is left to the verbatim expr
     // path — grammar-comment recovery doesn't reach inside it.
-    let input = "fn ui() -> Element {\n    render! { view(style: css!(\n        // keep me\n        flex_grow: 1.0,\n    )) }\n}\n";
+    let input = "fn ui() -> Element {\n    render! { View(style: css!(\n        // keep me\n        flex_grow: 1.0,\n    )) }\n}\n";
     let out = reformat_macros(input, &opts(4, 100)).unwrap();
     assert!(out.contains("// keep me"), "comment must survive:\n{out}");
 }
@@ -243,7 +251,7 @@ fn nested_css_wraps_using_its_real_depth_not_a_fixed_shallow_one() {
     // A nested `css!`'s inline-vs-wrap fit check must use the depth
     // it will ACTUALLY print at — one deeper than its kwarg line once
     // a wide sibling forces the enclosing tag to break.
-    let input = "fn ui() -> Element {\n    render! { text(value: \"a-fairly-long-value-string-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold, color: Color::Named(NamedColor::Black))) }\n}\n";
+    let input = "fn ui() -> Element {\n    render! { Text(value: \"a-fairly-long-value-string-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold, color: Color::Named(NamedColor::Black))) }\n}\n";
     let out = reformat_macros(input, &opts(4, 100)).unwrap();
     assert!(
         out.contains("style: css!(\n"),
@@ -404,32 +412,32 @@ mod comment_tests {
 
     #[test]
     fn own_line_before_top_element() {
-        let input = "fn d() -> Element {\n    render! {\n        // header\n        view(style: \"x\") { text(value: \"hi\") }\n    }\n}\n";
-        let expected = "fn d() -> Element {\n    render! {\n        // header\n        view(style: \"x\") {\n            text(value: \"hi\")\n        }\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        // header\n        View(style: \"x\") { Text(value: \"hi\") }\n    }\n}\n";
+        let expected = "fn d() -> Element {\n    render! {\n        // header\n        View(style: \"x\") {\n            Text(value: \"hi\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), expected);
     }
 
     #[test]
     fn own_line_between_siblings() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // mid\n            text(value: \"b\")\n        }\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        View {\n            Text(value: \"a\")\n            // mid\n            Text(value: \"b\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
     #[test]
     fn own_line_first_child() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            // first\n            text(value: \"a\")\n        }\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        View {\n            // first\n            Text(value: \"a\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
     #[test]
     fn own_line_after_last_child() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // last\n        }\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        View {\n            Text(value: \"a\")\n            // last\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
     #[test]
     fn trailing_line_comment_on_child() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\") // tail\n        }\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        View {\n            Text(value: \"a\") // tail\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
@@ -447,19 +455,19 @@ mod comment_tests {
 
     #[test]
     fn block_comment_single_line() {
-        let input = "fn d() -> Element {\n    render! {\n        /* b */\n        view(style: \"x\")\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        /* b */\n        View(style: \"x\")\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
     #[test]
     fn block_comment_multiline_verbatim() {
-        let input = "fn d() -> Element {\n    render! {\n        /* line1\n           line2 */\n        view(style: \"x\")\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        /* line1\n           line2 */\n        View(style: \"x\")\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
     #[test]
     fn two_consecutive_comments() {
-        let input = "fn d() -> Element {\n    render! {\n        // one\n        // two\n        view(style: \"x\")\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        // one\n        // two\n        View(style: \"x\")\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
@@ -467,7 +475,7 @@ mod comment_tests {
     // via reattachment.
     #[test]
     fn comment_inside_embedded_expr_survives() {
-        let input = "fn d() -> Element {\n    render! {\n        view(on_tap: move |_| { /* keep */ go() })\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        View(on_tap: move |_| { /* keep */ go() })\n    }\n}\n";
         let out = fmt(input);
         assert!(out.contains("/* keep */"), "got:\n{out}");
         assert_eq!(out.matches("/* keep */").count(), 1, "got:\n{out}");
@@ -475,23 +483,23 @@ mod comment_tests {
 
     #[test]
     fn nested_inner_child_indent() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            scroll_view {\n                // inner\n                text(value: \"a\")\n            }\n        }\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        View {\n            ScrollView {\n                // inner\n                Text(value: \"a\")\n            }\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
     #[test]
     fn mixed_leading_and_trailing() {
-        let input = "fn d() -> Element {\n    render! {\n        // lead\n        view {\n            text(value: \"a\") // tail\n        }\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        // lead\n        View {\n            Text(value: \"a\") // tail\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
     #[test]
     fn idempotent_with_comments() {
         let inputs = [
-            "fn d() -> Element {\n    render! {\n        // header\n        view(style: \"x\") { text(value: \"hi\") }\n    }\n}\n",
-            "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // mid\n            text(value: \"b\")\n        }\n    }\n}\n",
+            "fn d() -> Element {\n    render! {\n        // header\n        View(style: \"x\") { Text(value: \"hi\") }\n    }\n}\n",
+            "fn d() -> Element {\n    render! {\n        View {\n            Text(value: \"a\")\n            // mid\n            Text(value: \"b\")\n        }\n    }\n}\n",
             "fn s() -> Css {\n    css! {\n        color: red, // c\n        padding: px(8),\n    }\n}\n",
-            "fn d() -> Element {\n    render! {\n        /* line1\n           line2 */\n        view(style: \"x\")\n    }\n}\n",
+            "fn d() -> Element {\n    render! {\n        /* line1\n           line2 */\n        View(style: \"x\")\n    }\n}\n",
         ];
         for input in inputs {
             let once = fmt(input);
@@ -534,7 +542,7 @@ mod comment_tests {
 
     #[test]
     fn wallet_style_section_comments() {
-        let input = "fn d() -> Element {\n    render! {\n        view {\n            // \u{2500}\u{2500} Header \u{2500}\u{2500}\n            text(value: \"hi\")\n            // \u{2500}\u{2500} Body \u{2500}\u{2500}\n            text(value: \"yo\")\n        }\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        View {\n            // \u{2500}\u{2500} Header \u{2500}\u{2500}\n            Text(value: \"hi\")\n            // \u{2500}\u{2500} Body \u{2500}\u{2500}\n            Text(value: \"yo\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
@@ -543,10 +551,10 @@ mod comment_tests {
     // comments at the corrected indent, and be idempotent.
     #[test]
     fn wallet_faithful_reduction_formats_and_preserves_comments() {
-        let input = "fn d() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n        view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false\n    )\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n        }\n        }\n    }\n}\n";
+        let input = "fn d() -> Element {\n    render! {\n        View(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n        View {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false\n    )\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n        }\n        }\n    }\n}\n";
         // The css!'s trailing comma keeps IT vertical, and last-argument
         // overflow keeps it combined on the view's own line.
-        let expected = "fn d() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
+        let expected = "fn d() -> Element {\n    render! {\n        View(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            View {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
         let out = fmt(input);
         assert_ne!(out, input, "must not fall back:\n{out}");
         assert_eq!(out, expected, "got:\n{out}");
@@ -558,7 +566,7 @@ mod comment_tests {
     // the body never reaches a fixed point.
     #[test]
     fn multiline_expr_value_is_idempotent() {
-        let input = "fn s() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n            display: Display::Flex,\n        ))\n    }\n}\n";
+        let input = "fn s() -> Element {\n    render! {\n        View(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n            display: Display::Flex,\n        ))\n    }\n}\n";
         let once = fmt(input);
         let twice = fmt(&once);
         assert_eq!(
@@ -573,7 +581,7 @@ mod comment_tests {
 // ---- broad grammar coverage ----------------------------------------------
 //
 // A wide sweep of render!/css!/routes! shapes and nesting combinations.
-// All feed already-rust-formatted input (no rustfmt binary needed).
+// All feed already-rust-formatted Input (no rustfmt binary needed).
 #[cfg(test)]
 mod coverage_tests {
     use super::*;
@@ -614,22 +622,22 @@ mod coverage_tests {
 
     #[test]
     fn render_three_levels_deep_indents_cascade() {
-        let input = "fn ui() -> Element {\n    render! { view { scroll_view { text(value: \"deep\") } } }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View { ScrollView { Text(value: \"deep\") } } }\n}\n";
         let out = fmt(input);
-        let expected = "fn ui() -> Element {\n    render! {\n        view {\n            scroll_view {\n                text(value: \"deep\")\n            }\n        }\n    }\n}\n";
+        let expected = "fn ui() -> Element {\n    render! {\n        View {\n            ScrollView {\n                Text(value: \"deep\")\n            }\n        }\n    }\n}\n";
         assert_eq!(out, expected, "got:\n{out}");
         assert_idempotent(input);
     }
 
     #[test]
-    fn render_snake_case_user_component_gets_pascal_alias() {
-        // A snake_case tag outside the built-in whitelist is a user
-        // component: it prints under its derived PascalCase alias.
+    fn render_preserves_the_builder_path_spelling() {
+        // Formatting is syntax-only. It must not guess whether a path is a
+        // component or rewrite it to a generated alias.
         let input = "fn ui() -> Element {\n    render! { my_card(title: \"hi\") }\n}\n";
         let out = fmt(input);
         assert!(
-            out.contains("MyCard(title: \"hi\")"),
-            "snake_case component must print its PascalCase alias:\n{out}"
+            out.contains("my_card(title: \"hi\")"),
+            "builder path spelling must be preserved:\n{out}"
         );
         assert_idempotent(input);
     }
@@ -645,14 +653,14 @@ mod coverage_tests {
     #[test]
     fn render_partial_kwarg_mid_typing_preserved() {
         // No `:` yet — mid-typing.
-        let input = "fn ui() -> Element {\n    render! { view(style) }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View(style) }\n}\n";
         let out = fmt(input);
-        assert!(out.contains("view(style)"), "got:\n{out}");
+        assert!(out.contains("View(style)"), "got:\n{out}");
     }
 
     #[test]
     fn render_children_slot_among_siblings() {
-        let input = "fn ui() -> Element {\n    render! { view { text(value: \"a\") children() text(value: \"b\") } }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View { Text(value: \"a\") children() Text(value: \"b\") } }\n}\n";
         let out = fmt(input);
         assert!(out.contains("children()"), "got:\n{out}");
         assert_idempotent(input);
@@ -695,7 +703,7 @@ mod coverage_tests {
 
     #[test]
     fn render_deeply_nested_with_kwargs_idempotent() {
-        let input = "fn ui() -> Element {\n    render! { view(style: \"a\") { scroll_view(style: \"b\") { text(value: \"c\") text(value: \"d\") } } }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View(style: \"a\") { ScrollView(style: \"b\") { Text(value: \"c\") Text(value: \"d\") } } }\n}\n";
         assert_idempotent(input);
     }
 
@@ -825,7 +833,7 @@ mod coverage_tests {
 
     #[test]
     fn css_nested_two_levels_deep_in_render() {
-        let input = "fn ui() -> Element {\n    render! { view { text(value: \"a-fairly-long-value-string-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold, color: Color::Named(NamedColor::Black))) } }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View { Text(value: \"a-fairly-long-value-string-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold, color: Color::Named(NamedColor::Black))) } }\n}\n";
         let out = fmt(input);
         assert!(out.contains("style: css!(\n"), "got:\n{out}");
         assert_no_line_over(&out, 100);
@@ -834,7 +842,7 @@ mod coverage_tests {
 
     #[test]
     fn routes_nested_two_levels_deep_in_render() {
-        let input = "fn ui() -> Element {\n    render! { view { Router(routes: routes!{Switch{Route(path:\"a\",component:A)Route(path:\"b\",component:B)}}) } }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View { Router(routes: routes!{Switch{Route(path:\"a\",component:A)Route(path:\"b\",component:B)}}) } }\n}\n";
         let out = fmt(input);
         assert!(out.contains("routes! {\n"), "got:\n{out}");
         assert!(out.contains("Switch {\n"), "got:\n{out}");
@@ -844,7 +852,7 @@ mod coverage_tests {
 
     #[test]
     fn css_and_routes_nested_as_sibling_kwargs() {
-        let input = "fn ui() -> Element {\n    render! { view(style: css!(flex_grow: 1.0)) { Router(routes: routes!{Route(path:\"a\",component:A)}) } }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View(style: css!(flex_grow: 1.0)) { Router(routes: routes!{Route(path:\"a\",component:A)}) } }\n}\n";
         let out = fmt(input);
         assert!(out.contains("css!(flex_grow: 1.0)"), "got:\n{out}");
         assert!(out.contains("routes!"), "got:\n{out}");
@@ -853,15 +861,15 @@ mod coverage_tests {
 
     #[test]
     fn render_nested_inside_render_two_levels() {
-        let input = "fn ui() -> Element {\n    render! { view(child: render!{view(child: render!{text(value:\"deep\")})}) }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View(child: render!{View(child: render!{Text(value:\"deep\")})}) }\n}\n";
         let out = fmt(input);
-        assert!(out.contains("text(value: \"deep\")"), "got:\n{out}");
+        assert!(out.contains("Text(value: \"deep\")"), "got:\n{out}");
         assert_idempotent(input);
     }
 
     #[test]
     fn multiple_nested_css_calls_as_sibling_kwargs() {
-        let input = "fn ui() -> Element {\n    render! { view(a: css!(x: 1), b: css!(y: 2)) }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View(a: css!(x: 1), b: css!(y: 2)) }\n}\n";
         let out = fmt(input);
         assert!(out.contains("a: css!(x: 1)"), "got:\n{out}");
         assert!(out.contains("b: css!(y: 2)"), "got:\n{out}");
@@ -871,10 +879,10 @@ mod coverage_tests {
 
     #[test]
     fn blockified_closure_macro_body_unblocks() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(child: move || {\n            render! { text(value: \"hi\") }\n        })\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View(child: move || {\n            render! { Text(value: \"hi\") }\n        })\n    }\n}\n";
         let out = fmt(input);
         assert!(
-            out.contains("child: move || render! { text(value: \"hi\") }"),
+            out.contains("child: move || render! { Text(value: \"hi\") }"),
             "sole-macro closure body must unblock:\n{out}"
         );
         assert_idempotent(input);
@@ -882,7 +890,7 @@ mod coverage_tests {
 
     #[test]
     fn closure_with_extra_statement_keeps_block() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(child: move || {\n            log_render();\n            render! { text(value: \"hi\") }\n        })\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View(child: move || {\n            log_render();\n            render! { Text(value: \"hi\") }\n        })\n    }\n}\n";
         let out = fmt(input);
         assert!(
             out.contains("move || {"),
@@ -894,7 +902,7 @@ mod coverage_tests {
 
     #[test]
     fn closure_with_leading_comment_keeps_block() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(child: move || {\n            // c\n            render! { text(value: \"hi\") }\n        })\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View(child: move || {\n            // c\n            render! { Text(value: \"hi\") }\n        })\n    }\n}\n";
         let out = fmt(input);
         assert!(out.contains("// c"), "comment must survive:\n{out}");
         assert!(
@@ -908,21 +916,21 @@ mod coverage_tests {
 
     #[test]
     fn multiline_last_kwarg_combines_on_open_line() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            text(value: \"hi\")\n        }\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            Text(value: \"hi\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
         assert_idempotent(input);
     }
 
     #[test]
     fn single_line_kwargs_before_multiline_last_stay_on_open_line() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(key: 1, style: css!(\n            flex_grow: 1.0,\n        ))\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View(key: 1, style: css!(\n            flex_grow: 1.0,\n        ))\n    }\n}\n";
         assert_eq!(fmt(input), input);
         assert_idempotent(input);
     }
 
     #[test]
     fn outer_trailing_comma_beats_combine() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(\n            style: css!(\n                flex_grow: 1.0,\n            ),\n        )\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View(\n            style: css!(\n                flex_grow: 1.0,\n            ),\n        )\n    }\n}\n";
         assert_eq!(
             fmt(input),
             input,
@@ -956,7 +964,7 @@ mod coverage_tests {
 
     #[test]
     fn kwarg_comments_reflow_from_messy_input() {
-        let input = "fn ui() -> Element {\n    render! {\n        TabButton(icon: home_icon,\n            // anchor\n            active: home_active) { text(value: \"x\") }\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        TabButton(icon: home_icon,\n            // anchor\n            active: home_active) { Text(value: \"x\") }\n    }\n}\n";
         let out = fmt(input);
         assert!(
             out.contains("            // anchor\n            active: home_active,\n"),
@@ -969,30 +977,30 @@ mod coverage_tests {
 
     #[test]
     fn blank_line_between_siblings_preserved() {
-        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            text(value: \"b\")\n        }\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View {\n            Text(value: \"a\")\n\n            Text(value: \"b\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
         assert_idempotent(input);
     }
 
     #[test]
     fn multiple_blank_lines_collapse_to_one() {
-        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n\n\n            text(value: \"b\")\n        }\n    }\n}\n";
-        let expected = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            text(value: \"b\")\n        }\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View {\n            Text(value: \"a\")\n\n\n\n            Text(value: \"b\")\n        }\n    }\n}\n";
+        let expected = "fn ui() -> Element {\n    render! {\n        View {\n            Text(value: \"a\")\n\n            Text(value: \"b\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), expected);
         assert_idempotent(input);
     }
 
     #[test]
     fn blank_line_before_section_comment_preserved() {
-        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            // section\n            text(value: \"b\")\n        }\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View {\n            Text(value: \"a\")\n\n            // section\n            Text(value: \"b\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
         assert_idempotent(input);
     }
 
     #[test]
     fn blank_lines_at_block_edges_dropped() {
-        let input = "fn ui() -> Element {\n    render! {\n        view {\n\n            text(value: \"a\")\n\n        }\n    }\n}\n";
-        let expected = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n        }\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View {\n\n            Text(value: \"a\")\n\n        }\n    }\n}\n";
+        let expected = "fn ui() -> Element {\n    render! {\n        View {\n            Text(value: \"a\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), expected);
         assert_idempotent(input);
     }
@@ -1050,7 +1058,7 @@ mod coverage_tests {
 
     #[test]
     fn tiny_render_body_stays_on_one_line() {
-        let input = "fn ui() -> Element {\n    return render! { view() };\n}\n";
+        let input = "fn ui() -> Element {\n    return render! { View() };\n}\n";
         assert_eq!(fmt(input), input);
         assert_idempotent(input);
     }
@@ -1089,17 +1097,17 @@ mod coverage_tests {
 
     #[test]
     fn trailing_comma_keeps_nested_css_vertical() {
-        let input = "fn ui() -> Element {\n    render! {\n        view(\n            style: css!(\n                flex_grow: 1.0,\n                background_color: BG,\n            ),\n        )\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View(\n            style: css!(\n                flex_grow: 1.0,\n                background_color: BG,\n            ),\n        )\n    }\n}\n";
         assert_eq!(fmt(input), input, "nested css! trailing comma must hold");
         assert_idempotent(input);
     }
 
     #[test]
     fn comma_inside_string_is_not_a_keep_vertical_hint() {
-        let input = "fn ui() -> Element {\n    render! {\n        text(\n            value: \"a, b,\"\n        )\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        Text(\n            value: \"a, b,\"\n        )\n    }\n}\n";
         let out = fmt(input);
         assert!(
-            out.contains("text(value: \"a, b,\")"),
+            out.contains("Text(value: \"a, b,\")"),
             "a comma inside a string is no hint:\n{out}"
         );
     }
@@ -1108,10 +1116,10 @@ mod coverage_tests {
 
     #[test]
     fn closure_wrapped_render_in_kwarg_reformats() {
-        let input = "fn ui() -> Element {\n    render! { view(child: move || render! { text(value:\"hi\") }) }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View(child: move || render! { Text(value:\"hi\") }) }\n}\n";
         let out = fmt(input);
         assert!(
-            out.contains("child: move || render! { text(value: \"hi\") }"),
+            out.contains("child: move || render! { Text(value: \"hi\") }"),
             "closure-wrapped render! body must be reformatted:\n{out}"
         );
         assert_idempotent(input);
@@ -1119,7 +1127,7 @@ mod coverage_tests {
 
     #[test]
     fn closure_wrapped_render_in_kwarg_wraps_when_too_wide() {
-        let input = "fn ui() -> Element {\n    render! { view(child: move || render! { text(value:\"a-value-plenty-wide-enough-to-overflow-the-line-budget-here\") }) }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View(child: move || render! { Text(value:\"a-value-plenty-wide-enough-to-overflow-the-line-budget-here\") }) }\n}\n";
         let out = fmt(input);
         assert!(
             out.contains("child: move || render! {\n"),
@@ -1127,7 +1135,7 @@ mod coverage_tests {
         );
         assert!(
             out.contains(
-                "text(value: \"a-value-plenty-wide-enough-to-overflow-the-line-budget-here\")"
+                "Text(value: \"a-value-plenty-wide-enough-to-overflow-the-line-budget-here\")"
             ),
             "inner body must be reformatted:\n{out}"
         );
@@ -1136,11 +1144,11 @@ mod coverage_tests {
 
     #[test]
     fn closure_wrapped_render_with_comment_survives_and_reformats() {
-        let input = "fn ui() -> Element {\n    render! { view(child: move || render! {\n        // note\n        text(value:\"hi\")\n    }) }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View(child: move || render! {\n        // note\n        Text(value:\"hi\")\n    }) }\n}\n";
         let out = fmt(input);
         assert!(out.contains("// note"), "comment must survive:\n{out}");
         assert!(
-            out.contains("text(value: \"hi\")"),
+            out.contains("Text(value: \"hi\")"),
             "body around the comment must still reformat:\n{out}"
         );
         assert_idempotent(input);
@@ -1164,7 +1172,7 @@ mod coverage_tests {
 
     #[test]
     fn url_string_in_nested_css_not_frozen() {
-        let input = "fn ui() -> Element {\n    render! { view(style: css!(background_image:\"https://x.com/a.png\",flex_grow:1.0)) }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View(style: css!(background_image:\"https://x.com/a.png\",flex_grow:1.0)) }\n}\n";
         let out = fmt(input);
         assert!(
             out.contains("css!(background_image: \"https://x.com/a.png\", flex_grow: 1.0)"),
@@ -1175,10 +1183,10 @@ mod coverage_tests {
 
     #[test]
     fn closure_wrapped_render_respects_max_width_at_real_depth() {
-        let input = "fn ui() -> Element {\n    render! { view { Show(fallback: move || render! { text(value: \"a-quite-long-fallback-value-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold)) }) } }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View { Show(fallback: move || render! { Text(value: \"a-quite-long-fallback-value-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold)) }) } }\n}\n";
         let out = fmt(input);
         assert!(
-            out.contains("text(\n"),
+            out.contains("Text(\n"),
             "inner kwargs must wrap at their real depth:\n{out}"
         );
         assert_no_line_over(&out, 100);
@@ -1192,11 +1200,11 @@ mod coverage_tests {
         // Engineered to land exactly at width 60.
         let value = "1".repeat(37);
         let input =
-            format!("fn ui() -> Element {{\n    render! {{ view(style: \"{value}\") }}\n}}\n");
+            format!("fn ui() -> Element {{\n    render! {{ View(style: \"{value}\") }}\n}}\n");
         let out = reformat_macros(&input, &opts(4, 60)).unwrap();
         let line = out
             .lines()
-            .find(|l| l.contains("view("))
+            .find(|l| l.contains("View("))
             .expect("view line present");
         assert_eq!(line.chars().count(), 60, "line:\n{line}");
         assert!(!line.trim_end().ends_with('('), "must stay inline:\n{out}");
@@ -1206,10 +1214,10 @@ mod coverage_tests {
     fn one_over_max_width_wraps() {
         let value = "1".repeat(38);
         let input =
-            format!("fn ui() -> Element {{\n    render! {{ view(style: \"{value}\") }}\n}}\n");
+            format!("fn ui() -> Element {{\n    render! {{ View(style: \"{value}\") }}\n}}\n");
         let out = reformat_macros(&input, &opts(4, 60)).unwrap();
         assert!(
-            out.contains("view(\n"),
+            out.contains("View(\n"),
             "must wrap once over budget:\n{out}"
         );
         assert_no_line_over(&out, 60);
@@ -1219,7 +1227,7 @@ mod coverage_tests {
 
     #[test]
     fn composite_wide_tree_is_idempotent_and_within_width() {
-        let input = "fn app() -> Element {\n    render! { view(style: css!(flex_grow: 1.0, width: vw(100), height: vh(100), background_color: podcast_theme::BG, display: Display::Flex, flex_direction: FlexDirection::Column, position: PositionKind::Relative)) { Router(routes: routes!{Stack{Route(path:\"\",component:BrowseScreen)Route(path:\"podcast/:id\",component:DetailScreen)Route(path:\"search\",component:SearchScreen)}}) { PodcastRouter { Outlet {} SwipeBack {} AndroidPredictiveBack {} } } MiniPlayer() } }\n}\n";
+        let input = "fn app() -> Element {\n    render! { View(style: css!(flex_grow: 1.0, width: vw(100), height: vh(100), background_color: podcast_theme::BG, display: Display::Flex, flex_direction: FlexDirection::Column, position: PositionKind::Relative)) { Router(routes: routes!{Stack{Route(path:\"\",component:BrowseScreen)Route(path:\"podcast/:id\",component:DetailScreen)Route(path:\"search\",component:SearchScreen)}}) { PodcastRouter { Outlet {} SwipeBack {} AndroidPredictiveBack {} } } MiniPlayer() } }\n}\n";
         let out = fmt(input);
         assert_no_line_over(&out, 100);
         assert_idempotent(input);
@@ -1245,7 +1253,7 @@ mod coverage_tests {
     fn nested_css_empty_parens_left_as_opaque_expr() {
         // `css!()` has no kwargs to parse, so it falls back to being an
         // opaque expr rather than vanishing.
-        let input = "fn ui() -> Element {\n    render! { view(style: css!()) }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View(style: css!()) }\n}\n";
         let out = fmt(input);
         assert!(out.contains("css!()"), "got:\n{out}");
     }
@@ -1256,7 +1264,7 @@ mod coverage_tests {
     fn comment_before_nested_css_kwarg_value_survives() {
         // The comment sits INSIDE the nested css! call, so
         // `nested_macro_src`'s own fail-safe leaves that call untouched.
-        let input = "fn ui() -> Element {\n    render! { view(style: css!(\n        // keep\n        flex_grow: 1.0,\n    )) }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View(style: css!(\n        // keep\n        flex_grow: 1.0,\n    )) }\n}\n";
         let out = fmt(input);
         assert!(out.contains("// keep"), "comment must survive:\n{out}");
     }
@@ -1271,7 +1279,7 @@ mod coverage_tests {
 
     #[test]
     fn comment_after_last_render_child_survives() {
-        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // trailing\n        }\n    }\n}\n";
+        let input = "fn ui() -> Element {\n    render! {\n        View {\n            Text(value: \"a\")\n            // trailing\n        }\n    }\n}\n";
         let out = fmt(input);
         assert!(out.contains("// trailing"), "got:\n{out}");
         assert_idempotent(input);
@@ -1281,7 +1289,7 @@ mod coverage_tests {
 
     #[test]
     fn event_handler_closure_preserved_verbatim_when_nested() {
-        let input = "fn ui() -> Element {\n    render! { view { scroll_view(on_tap: move |_| { do_a(); do_b(); }) } }\n}\n";
+        let input = "fn ui() -> Element {\n    render! { View { ScrollView(on_tap: move |_| { do_a(); do_b(); }) } }\n}\n";
         let out = fmt(input);
         assert!(
             out.contains("on_tap: move |_| { do_a(); do_b(); }"),
@@ -1308,7 +1316,7 @@ mod coverage_tests {
 
     #[test]
     fn two_space_tabs_nested_css_indent() {
-        let input = "fn ui() -> Element {\n  render! { view { text(value: \"a-fairly-long-value-string-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold, color: Color::Named(NamedColor::Black))) } }\n}\n";
+        let input = "fn ui() -> Element {\n  render! { View { Text(value: \"a-fairly-long-value-string-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold, color: Color::Named(NamedColor::Black))) } }\n}\n";
         let out = reformat_macros(input, &opts(2, 100)).unwrap();
         assert!(out.contains("style: css!(\n"), "got:\n{out}");
         assert!(

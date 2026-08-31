@@ -20,7 +20,7 @@ pub fn ranked_card(podcast: Podcast, rank: u32) -> Element {
     let artwork_src = podcast.artwork_url_600.clone();
 
     render! {
-        view(style: css!(
+        View(style: css!(
             width: theme::RANKED_CARD_SIDE,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
@@ -35,13 +35,13 @@ pub fn ranked_card(podcast: Podcast, rank: u32) -> Element {
                 src: artwork_src,
                 mode: ImageMode::AspectFill,
             )
-            view(style: css!(
+            View(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Row,
                 margin_top: px(10),
                 align_items: AlignItems::FlexStart,
             )) {
-                text(
+                Text(
                     style: css!(
                         font_size: px(18),
                         color: theme::TEXT_PRIMARY,
@@ -51,13 +51,13 @@ pub fn ranked_card(podcast: Podcast, rank: u32) -> Element {
                     ),
                     value: rank_text,
                 )
-                view(style: css!(
+                View(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Column,
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                 )) {
-                    text(
+                    Text(
                         style: css!(
                             font_size: theme::T_CARD_TITLE,
                             color: theme::TEXT_PRIMARY,
@@ -66,7 +66,7 @@ pub fn ranked_card(podcast: Podcast, rank: u32) -> Element {
                         ),
                         value: title_text,
                     )
-                    text(
+                    Text(
                         style: css!(
                             font_size: theme::T_CARD_SUBTITLE,
                             color: theme::TEXT_SECONDARY,

@@ -3,7 +3,7 @@
 //! **API shape — 2 (Component + ref-bound handle).** See
 //! [`docs/module-api-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/module-api-design.md)
 //! §"Shape 2". A native UI element ([`Video`]) plus a typed handle
-//! ([`VideoHandle`]) bound on mount via `ref:`; methods dispatch
+//! ([`VideoHandle`]) bound on mount via `element_ref:`; methods dispatch
 //! through the element handle. Backed by AVPlayer (iOS) and Media3
 //! ExoPlayer (Android).
 //!
@@ -17,15 +17,15 @@
 //! fn app() -> Element {
 //!     let video = VideoHandle::new();
 //!     render! {
-//!         view(style: css!(flex_direction: FlexDirection::Column)) {
-//!             Video(ref: video.r(), src: "https://example.com/clip.mp4",
+//!         View(style: css!(flex_direction: FlexDirection::Column)) {
+//!             Video(element_ref: video.r(), src: "https://example.com/clip.mp4",
 //!                   style: css!(width: percent(100), height: px(240)))
 //!             // `VideoHandle` is `Copy`, so each `move ||` closure
 //!             // captures its own copy — no `clone()` / pre-copy.
-//!             view(style: css!(flex_direction: FlexDirection::Row)) {
-//!                 text(value: "play",  on_tap: move |_| video.play())
-//!                 text(value: "pause", on_tap: move |_| video.pause())
-//!                 text(value: "+10s",  on_tap: move |_| video.seek(10.0))
+//!             View(style: css!(flex_direction: FlexDirection::Row)) {
+//!                 Text(value: "play",  on_tap: move |_| video.play())
+//!                 Text(value: "pause", on_tap: move |_| video.pause())
+//!                 Text(value: "+10s",  on_tap: move |_| video.seek(10.0))
 //!             }
 //!         }
 //!     }
@@ -34,7 +34,7 @@
 //!
 //! ## Implementation notes
 //!
-//! - `#[whisker::module_component("Video")]` declares the element for
+//! - `#[whisker::module_element("Video")]` declares the element for
 //!   `render!`. The native element tag is `whisker-video:Video` (the crate name
 //!   is auto-prepended).
 //! - [`VideoHandle`] wraps an `ElementRef` (the element-id handle
@@ -60,7 +60,7 @@ use whisker::{ElementRef, Signal};
 /// (`VideoModule`) registers a `VideoView` for this tag plus the
 /// `Prop("src")` setter + `play` / `pause` / `seek` commands. `src`
 /// is the media URL; `style` carries structured layout declarations.
-#[whisker::module_component(
+#[whisker::module_element(
     name = "whisker-video:Video",
     measurement = None,
     commands = [("play", Null), ("pause", Null), ("seek", Float)],
@@ -70,7 +70,7 @@ pub fn video(src: Signal<String>, style: whisker::Style) {}
 /// Typed imperative handle for a mounted `Video` element.
 ///
 /// Wraps the `ElementRef` (element-id handle) bound on mount when
-/// passed as the element's `ref:` prop. Each method dispatches the
+/// passed as the element's `element_ref:` prop. Each method dispatches the
 /// matching platform `Command` through `ElementRef::command`. Errors
 /// (element not mounted, platform-side failure) are swallowed because
 /// these are fire-and-forget UI controls.
@@ -84,14 +84,14 @@ pub struct VideoHandle {
 
 impl VideoHandle {
     /// Allocate a fresh, unbound handle. Pass `handle.r()` to the
-    /// element's `ref:` prop in `render!` to bind it on mount.
+    /// element's `element_ref:` prop in `render!` to bind it on mount.
     pub fn new() -> Self {
         Self {
             r: ElementRef::new(),
         }
     }
 
-    /// The underlying `ElementRef` to pass to `Video(ref: …)`.
+    /// The underlying `ElementRef` to pass to `Video(element_ref: …)`.
     pub fn r(&self) -> ElementRef {
         self.r
     }

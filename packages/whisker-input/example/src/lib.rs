@@ -40,13 +40,13 @@ pub fn app() -> Element {
         .margin_bottom(px(20));
 
     render! {
-        view(style: page_style) {
-            text(style: header_style, value: "whisker-input demo")
+        View(style: page_style) {
+            Text(style: header_style, value: "whisker-input demo")
 
-            two_way_demo()
-            controlled_demo()
-            multiline_demo()
-            secure_demo()
+            TwoWayDemo()
+            ControlledDemo()
+            MultilineDemo()
+            SecureDemo()
         }
     }
 }
@@ -61,8 +61,8 @@ fn two_way_demo() -> Element {
         .margin_top(px(6));
 
     render! {
-        view(style: section_style()) {
-            text(style: label_style(), value: "Two-way binding")
+        View(style: section_style()) {
+            Text(style: label_style(), value: "Two-way binding")
             Input(
                 text: text,
                 placeholder: "Type something…",
@@ -70,7 +70,7 @@ fn two_way_demo() -> Element {
                 caret_color: ACCENT,
                 style: field_style(),
             )
-            text(
+            Text(
                 style: preview,
                 value: computed(move || format!("Bound value: {}", text.get())),
             )
@@ -85,8 +85,8 @@ fn controlled_demo() -> Element {
     let value = signal(String::new());
 
     render! {
-        view(style: section_style()) {
-            text(style: label_style(), value: "Controlled (UPPER-CASE)")
+        View(style: section_style()) {
+            Text(style: label_style(), value: "Controlled (UPPER-CASE)")
             Input(
                 value: value,
                 on_input: move |s: String| value.set(s.to_uppercase()),
@@ -112,8 +112,8 @@ fn multiline_demo() -> Element {
         .min_height(px(96));
 
     render! {
-        view(style: section_style()) {
-            text(style: label_style(), value: "Multiline (4 lines)")
+        View(style: section_style()) {
+            Text(style: label_style(), value: "Multiline (4 lines)")
             Input(
                 text: notes,
                 multiline: true,
@@ -132,8 +132,8 @@ fn secure_demo() -> Element {
     let password = RwSignal::new(String::new());
 
     render! {
-        view(style: section_style()) {
-            text(style: label_style(), value: "Secure (password)")
+        View(style: section_style()) {
+            Text(style: label_style(), value: "Secure (password)")
             Input(
                 text: password,
                 secure: true,

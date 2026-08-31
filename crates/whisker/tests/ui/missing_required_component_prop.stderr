@@ -1,0 +1,10 @@
+error[E0599]: no method named `build` found for struct `GreetingPropsBuilder<false>` in the current scope
+ --> tests/ui/missing_required_component_prop.rs:9:33
+  |
+3 | #[component]
+  | ------------ method `build` not found for this struct
+...
+9 |     let _ = Greeting::builder().build();
+  |                                 ^^^^^ method not found in `GreetingPropsBuilder<false>`
+  |
+  = note: the method was found for `GreetingPropsBuilder<true>`

@@ -449,7 +449,7 @@ mod tests {
                 wake_count.fetch_add(1, Ordering::SeqCst);
             }),
         );
-        runtime.mount(|| render! { view() }).unwrap();
+        runtime.mount(|| render! { View() }).unwrap();
         let resource = ResourceId::new(7).unwrap();
         let command = ResourceCommand::Load(ResourceRequest {
             resource,

@@ -5,7 +5,7 @@
 //!
 //! `#[component]` bodies are `FnMut` (whisker's hot-reload wrapper —
 //! see [`Signal<T>`]'s docs). Moving a captured, non-`Copy` prop into a
-//! nested `move` closure (e.g. `view(on_tap: move |_| on_tap())`)
+//! nested `move` closure (e.g. `View(on_tap: move |_| on_tap())`)
 //! violates that `FnMut` contract: the prop is moved out of the body on
 //! the first call, so a second invocation can't move it again —
 //! `error[E0507]`. The alternative is an `Rc<dyn Fn()>` prop plus a
@@ -21,7 +21,7 @@
 //! #[component]
 //! fn tab_button(on_tap: Callback<()>) -> Element {
 //!     render! {
-//!         view(on_tap: move |_| on_tap.run(())) { … }
+//!         View(on_tap: move |_| on_tap.run(())) { … }
 //!         //           ^^^^^^^ moved into the closure directly — no `.clone()`
 //!     }
 //! }

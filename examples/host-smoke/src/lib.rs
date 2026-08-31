@@ -83,20 +83,20 @@ pub fn app() -> Element {
         });
     }
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
             background_color: Color::hex(0x20242A),
             padding: px(24),
         )) {
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0xF5F7FA),
                     font_size: px(18),
                 ),
                 value: "Whisker Host is running",
             )
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0x94A3B8),
                     font_size: px(12),
@@ -105,7 +105,7 @@ pub fn app() -> Element {
                 value: module_status,
             )
             ExternalToggle()
-            view(style: css!(
+            View(style: css!(
                 width: percent(100),
                 height: px(88),
                 margin_top: px(24),
@@ -114,7 +114,7 @@ pub fn app() -> Element {
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
             )) {
-                text(
+                Text(
                     style: css!(
                         color: Color::hex(0xFFFFFF),
                         font_size: px(16),
@@ -122,7 +122,7 @@ pub fn app() -> Element {
                     value: "24px radius",
                 )
             }
-            view(style: css!(
+            View(style: css!(
                 width: percent(100),
                 height: px(88),
                 margin_top: px(16),
@@ -146,7 +146,7 @@ pub fn app() -> Element {
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
             )) {
-                text(
+                Text(
                     style: css!(
                         color: Color::hex(0xFFFFFF),
                         font_size: px(16),
@@ -154,7 +154,7 @@ pub fn app() -> Element {
                     value: "Asymmetric radius + border",
                 )
             }
-            view(style: css!(
+            View(style: css!(
                 width: percent(100),
                 height: px(88),
                 margin_top: px(16),
@@ -163,7 +163,7 @@ pub fn app() -> Element {
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
             )) {
-                text(
+                Text(
                     style: css!(
                         color: Color::hex(0xFFFFFF),
                         font_size: px(16),

@@ -9,7 +9,7 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Shared parse AST for Whisker's `render!` and `css!` macros — consumed by whisker-macros (codegen) and whisker-fmt (formatting)."
+description = "Shared builder-composition AST for Whisker's macros and formatter."
 
 # NOTE: this is a plain library crate, NOT a proc-macro crate. It holds
 # only the `syn::parse::Parse` side of the DSLs so a non-proc-macro
@@ -18,5 +18,4 @@ description = "Shared parse AST for Whisker's `render!` and `css!` macros — co
 
 [dependencies]
 proc-macro2 = "1"
-quote = "1"
 syn = { version = "2", features = ["full"] }

@@ -95,7 +95,7 @@ pub trait DynRenderer {
     /// Returns a handle whose [`id`](Element::id) is `u32::MAX` when the
     /// tag is unknown to the element registry.
     fn create_element_by_name(&self, tag_name: &str) -> Element;
-    /// Schema-carrying path used by `#[module_component]`. Renderers that
+    /// Schema-carrying path used by `#[module_element]`. Renderers that
     /// negotiate schemas out of band can keep the default name-only behavior.
     fn create_element_by_schema(&self, schema: &ElementSchema) -> Element {
         self.create_element_by_name(&schema.name)
@@ -169,7 +169,7 @@ pub trait DynRenderer {
     /// The callback receives the event body Host hands the handler
     /// as a [`WhiskerValue`] tree (the same wire as module
     /// args/returns). A built-in builder's `on_<event>` method or a
-    /// `#[whisker::module_component]` `on_<event>` prop wraps a
+    /// `#[whisker::module_element]` `on_<event>` prop wraps a
     /// typed-event / unit / raw-value closure into this single
     /// shape, deserializing the payload as needed. An event with no
     /// body fires the callback with [`WhiskerValue::Null`].

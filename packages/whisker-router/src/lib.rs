@@ -61,7 +61,7 @@ pub mod render;
 pub use crate::plugin::{RouterPlugin, RouterPluginConfig};
 
 /// The declarative route-tree macro — see [`routes`](macro@routes).
-pub use whisker_router_macros::routes;
+pub use whisker_macros::routes;
 
 /// Completion markers for the `routes!` macro keywords — **not a public API**.
 ///

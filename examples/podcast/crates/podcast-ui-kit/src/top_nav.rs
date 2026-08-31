@@ -24,6 +24,8 @@ pub fn top_nav(
     action_label: String,
     on_action_tap: Option<Rc<dyn Fn()>>,
 ) -> Element {
+    let body_title = title.clone();
+    let body_action_label = action_label.clone();
     // Two-layer style: outer wrapper carries the safe-area inset
     // via `padding_top`, inner row keeps its content height. We
     // can't pile padding on top of a fixed-height row — the row's
@@ -54,8 +56,8 @@ pub fn top_nav(
     let tap_cb = on_action_tap.clone();
 
     render! {
-        view(style: wrapper_style) {
-            view(style: css!(
+        View(style: wrapper_style) {
+            View(style: css!(
                 width: percent(100),
                 min_height: theme::NAV_HEIGHT,
                 flex_shrink: 0.0,
@@ -69,7 +71,7 @@ pub fn top_nav(
                 // — each claiming an equal third so the title
                 // genuinely centres on the bar, not on the title
                 // text's own width.
-                view(style: css!(
+                View(style: css!(
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                     flex_basis: percent(0),
@@ -90,7 +92,7 @@ pub fn top_nav(
                         size: "22",
                     )
                 }
-                view(style: css!(
+                View(style: css!(
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                     flex_basis: percent(0),
@@ -99,16 +101,16 @@ pub fn top_nav(
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::Center,
                 )) {
-                    text(
+                    Text(
                         style: css!(
                             font_size: theme::T_NAV_TITLE,
                             color: theme::TEXT_PRIMARY,
                             font_weight: FontWeight::Numeric(600),
                         ),
-                        value: title.clone(),
+                        value: body_title.clone(),
                     )
                 }
-                view(
+                View(
                     style: css!(
                         flex_grow: 1.0,
                         flex_shrink: 1.0,
@@ -124,13 +126,13 @@ pub fn top_nav(
                         }
                     },
                 ) {
-                    text(
+                    Text(
                         style: css!(
                             font_size: theme::T_NAV_TITLE,
                             color: theme::ACCENT,
                             font_weight: FontWeight::Numeric(500),
                         ),
-                        value: action_label.clone(),
+                        value: body_action_label.clone(),
                     )
                 }
             }

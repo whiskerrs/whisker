@@ -1,6 +1,6 @@
 //! `whisker-asset` example app.
 //!
-//! Displays a single PNG that is **bundled** with the app (under this
+//! Displays a single PNG that is **bundled** with the App (under this
 //! crate's `assets/` dir) rather than fetched over the network. The
 //! image is referenced by its logical path:
 //!
@@ -34,7 +34,7 @@ pub fn app() -> Element {
     let logo_src = asset!("images/logo.png");
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             background_color: Color::hex(0x101012),
             flex_direction: FlexDirection::Column,
@@ -42,7 +42,7 @@ pub fn app() -> Element {
             justify_content: JustifyContent::Center,
             padding: px(24),
         )) {
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0xF5F5F7),
                     font_size: px(20),

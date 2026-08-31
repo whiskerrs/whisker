@@ -26,7 +26,7 @@ use whisker::platform_module::WhiskerValue;
 use whisker::runtime::event::bind_typed;
 use whisker::runtime::reactive::on_mount;
 use whisker::runtime::view::{BindType, Element};
-use whisker::{AnimationController, component, module, on_cleanup, render, use_context};
+use whisker::{AnimationController, Fragment, component, module, on_cleanup, render, use_context};
 
 use crate::render::components::RouterRoot;
 use crate::render::handle::{PoseBinding, RouterHandle, StackBridge, use_navigator};
@@ -88,7 +88,7 @@ pub fn swipe_back() -> Element {
     let nav = use_navigator();
     // Bind to the router's screen-spanning root (a phantom slot has no
     // extent and would never be hit by a touch). The `RouterRoot` context is
-    // published by `router()` BEFORE the children mount, so it is visible here.
+    // published by `Router()` BEFORE the children mount, so it is visible here.
     let container = use_context::<RouterRoot>().map(|r| r.0);
     on_mount(move || {
         // Android's back gesture belongs to the platform: it arrives
@@ -106,7 +106,7 @@ pub fn swipe_back() -> Element {
             install(container, nav.clone());
         }
     });
-    render! { fragment() }
+    render! { Fragment() }
 }
 
 fn install(container: Element, nav: RouterHandle) {
@@ -210,7 +210,7 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
         return None;
     }
     // The interactive preview is platform-native:
-    //  - Android: the Material **predictive-back** card (shrink + rounded
+    //  - Android: the Material **predictive-back** Card (shrink + rounded
     //    corners + backdrop dim).
     //  - iOS / others: the interactive **iOS slide-back** (the top slides
     //    off to the right, the under parallaxes back) — the route's slide
@@ -490,7 +490,7 @@ pub fn android_predictive_back() -> Element {
         drop(invoked);
     });
 
-    render! { fragment() }
+    render! { Fragment() }
 }
 
 /// Read `touchY` (0..1, finger Y as a fraction of screen height) from a

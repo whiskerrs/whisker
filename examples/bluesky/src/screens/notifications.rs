@@ -27,9 +27,9 @@ pub(super) fn notifications_screen() -> Element {
         )
     });
     render! {
-        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
-            view(style: header_style) {
-                text(
+        View(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            View(style: header_style) {
+                Text(
                     style: css!(font_size: px(20), font_weight: FontWeight::Bold, color: theme::TEXT_PRIMARY),
                     value: "通知",
                 )
@@ -37,13 +37,13 @@ pub(super) fn notifications_screen() -> Element {
             Show(
                 when: move || notifs.get().is_some(),
                 fallback: move || render! {
-                    status_pane(message: match notifs.error() {
+                    StatusPane(message: match notifs.error() {
                         Some(e) if !e.is_empty() => e,
                         _ => "読み込み中…".to_string(),
                     })
                 },
             ) {
-                notification_list(items: notifs.get().unwrap_or_default())
+                NotificationList(items: notifs.get().unwrap_or_default())
             }
         }
     }
@@ -58,14 +58,14 @@ const NOTIF_ACCENT: &str = "#1083FE";
 #[component]
 pub(super) fn notification_list(items: Vec<bsky_domain::Notification>) -> Element {
     render! {
-        list(
+        List(
             style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
             each: {
                 let items = items.clone();
                 move || items.clone()
             },
             key: |n: &bsky_domain::Notification| n.uri.clone(),
-            children: |n: ReadSignal<bsky_domain::Notification>| render! { notification_row(item: n.get()) },
+            children: |n: ReadSignal<bsky_domain::Notification>| render! { NotificationRow(item: n.get()) },
         )
     }
 }
@@ -119,7 +119,7 @@ pub(super) fn notification_row(item: bsky_domain::Notification) -> Element {
     };
 
     render! {
-        view(
+        View(
             style: css!(
                 flex_direction: FlexDirection::Row,
                 width: percent(100),
@@ -131,19 +131,19 @@ pub(super) fn notification_row(item: bsky_domain::Notification) -> Element {
                 let _ = nav.navigate(&target);
             },
         ) {
-            row_avatar(src: avatar)
-            view(style: css!(
+            RowAvatar(src: avatar)
+            View(style: css!(
                 flex_direction: FlexDirection::Column,
                 flex_grow: 1.0,
                 flex_shrink: 1.0,
                 margin_left: theme::ROW_GAP,
             )) {
-                view(style: css!(
+                View(style: css!(
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
                 )) {
                     Icon(svg: icon, color: icon_color, size: "15")
-                    text(
+                    Text(
                         style: css!(
                             font_size: theme::T_NAME,
                             color: theme::TEXT_PRIMARY,
@@ -154,8 +154,8 @@ pub(super) fn notification_row(item: bsky_domain::Notification) -> Element {
                         value: line,
                     )
                 }
-                Show(when: move || has_body, fallback: || render! { fragment() }) {
-                    text(
+                Show(when: move || has_body, fallback: || render! { Fragment() }) {
+                    Text(
                         style: css!(font_size: theme::T_BODY, color: theme::TEXT_SECONDARY, margin_top: px(4)),
                         value: body.clone(),
                     )

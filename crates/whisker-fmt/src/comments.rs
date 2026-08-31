@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn line_comment_own_line() {
-        let body = "view {\n    // hi\n    text\n}";
+        let body = "View {\n    // hi\n    text\n}";
         let cs = collect(body);
         assert_eq!(cs.len(), 1);
         assert_eq!(cs[0].text, "// hi");
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn slashes_in_string_not_comments() {
-        let body = "text(value: \"http://x // y\")";
+        let body = "Text(value: \"http://x // y\")";
         let cs = collect(body);
         assert!(cs.is_empty(), "got: {cs:?}");
     }

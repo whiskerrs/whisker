@@ -4,7 +4,7 @@
 //!
 //! - [`keyboard_height`] — a process-global
 //!   `ReadSignal<f64>` carrying the keyboard's current overlap from the
-//!   bottom of the screen (points on iOS, dp on Android), `0.0` when
+//!   bottom of the Screen (points on iOS, dp on Android), `0.0` when
 //!   hidden. Pad or scroll a container by this value so a focused input
 //!   isn't covered. This is Whisker's analogue of Flutter's
 //!   `MediaQuery.viewInsets.bottom` / React Native's
@@ -15,7 +15,7 @@
 //!   (`clearFocus()`) *and* hides the IME. Removing focus — rather than
 //!   only hiding the soft keyboard — is what prevents a **hardware
 //!   keyboard** from continuing to type into an input that has scrolled
-//!   or navigated off screen (on Android, `hideSoftInputFromWindow`
+//!   or navigated off Screen (on Android, `hideSoftInputFromWindow`
 //!   alone leaves the field focused). Mirrors React Native's
 //!   `Keyboard.dismiss()` / Flutter's `FocusManager.primaryFocus.unfocus()`.
 //!
@@ -32,7 +32,7 @@
 //!     let kb = keyboard_height();
 //!     let pad = move || format!("padding-bottom: {}px;", kb.get());
 //!     render! {
-//!         scroll_view(style: pad()) { /* fields … */ }
+//!         ScrollView(style: pad()) { /* fields … */ }
 //!     }
 //! }
 //! ```

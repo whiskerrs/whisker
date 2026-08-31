@@ -112,7 +112,7 @@ pub fn svg(content: Signal<String>, color: Signal<String>, style: Style) -> Elem
     }
 }
 
-/// Internal `module_component` — the platform-side `WhiskerSvgView`
+/// Internal `module_element` — the platform-side `WhiskerSvgView`
 /// receives `display_list` (base64 of the binary SPEC bytes),
 /// `color` (CSS colour string for tint substitution), and the
 /// standard `style:` cascade. Users don't touch this directly;
@@ -122,7 +122,7 @@ pub fn svg(content: Signal<String>, color: Signal<String>, style: Style) -> Elem
 /// signal "internal transport, not a user-facing API surface".
 /// (Whisker doesn't enforce visibility on Prop names yet — this
 /// is documentation-level.)
-#[whisker::module_component(
+#[whisker::module_element(
     name = "whisker-svg:Svg",
     measurement = None,
 )]

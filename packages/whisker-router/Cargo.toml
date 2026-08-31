@@ -58,9 +58,8 @@ whisker = { workspace = true }
 whisker-plugin = { workspace = true }
 serde = { workspace = true }
 anyhow = { workspace = true }
-# The `routes!` declarative route-tree macro (re-exported below). The old
-# `#[route]` enum macro also lives here but is no longer re-exported.
-whisker-router-macros = { workspace = true }
+# The `routes!` declarative route-tree macro, re-exported below.
+whisker-macros = { workspace = true }
 
 [dev-dependencies]
 # Test-only: drive animation frames (`__step_for_tests`) so the

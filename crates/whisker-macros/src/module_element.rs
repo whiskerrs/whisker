@@ -1,9 +1,9 @@
-//! `#[whisker::module_component]` proc-macro.
+//! `#[whisker::module_element]` proc-macro.
 //!
 //! Generates a builder-style API and, in the named form, the shared schema for
 //! a custom element. The macro shape mirrors `#[component]` —
-//! same `<Name>Props` struct, same hand-rolled builder, same
-//! PascalCase alias — but the function body is **auto-generated**
+//! same private `<Name>Props` representation, same hand-rolled builder, same
+//! public PascalCase marker — but the function body is **auto-generated**
 //! rather than supplied by the user. Each declared parameter becomes
 //! either a component-specific attribute, a structured-style write, a
 //! component-specific event handler, or the children list on the
@@ -15,7 +15,7 @@
 //! ## User syntax
 //!
 //! ```ignore
-//! #[whisker::module_component(
+//! #[whisker::module_element(
 //!     name = "example.forms/Input",
 //!     measurement = None,
 //! )]
@@ -55,40 +55,25 @@
 //!
 //! ## What the macro emits
 //!
-//! Conceptually:
+//! Conceptually, the generated public surface is:
 //!
 //! ```ignore
-//! pub struct XInputProps {
-//!     pub value: Signal<String>,
-//!     pub on_input: ::std::boxed::Box<dyn ::std::ops::Fn(TouchEvent) + 'static>,
-//!     pub children: Children,
-//!     __element: Element,
-//!     /* … */
+//! pub struct XInput;
+//! impl XInput {
+//!     pub fn builder() -> /* hidden typed builder */ { /* … */ }
 //! }
-//! impl XInputProps {
-//!     pub fn builder() -> XInputPropsBuilder {
-//!         XInputPropsBuilder {
-//!             __element: view::create_element_by_name("example.forms/Input"),
-//!             /* … */
-//!         }
-//!     }
-//! }
-//! impl ElementBuilder for XInputPropsBuilder { … }
-//! impl XInputPropsBuilder {
-//!     pub fn value(self, v: impl Into<Signal<String>>) -> Self { … }
-//!     pub fn on_input<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self { … }
-//!     pub fn children(self, c: Children) -> Self { … }
-//!     pub fn build(self) -> XInputProps { … }
-//! }
-//! pub fn XInput(props: XInputProps) -> Element {
-//!     let h = props.__element;
-//!     apply_attr::<_, String>(h, "value", props.value);
-//!     event::bind_typed::<TouchEvent, _>(h, "input", props.on_input);
-//!     let view: View = (props.children)();
-//!     view.attach_to(h);
-//!     h
-//! }
+//! XInput::builder()
+//!     .value(text)
+//!     .on_input(move |event| { /* … */ })
+//!     .body(|body| body.push(child))
+//!     .build(); // -> Element
 //! ```
+//!
+//! Props storage and type-state helpers are generated implementation details.
+//! Event handlers are required at compile time, while ordinary attribute,
+//! style, and children setters may be omitted. The builder creates the Host
+//! element, applies the declared schema through the same runtime operations as
+//! built-ins, and returns the ordinary [`Element`](::whisker::Element).
 //!
 //! ## Call-site shape
 //!
@@ -113,7 +98,7 @@ use syn::{
     Token, Type, TypePath, TypeTuple, Visibility, parse2,
 };
 
-enum ModuleComponentArgs {
+enum ModuleElementArgs {
     Legacy(LitStr),
     Schema {
         name: LitStr,
@@ -212,7 +197,7 @@ impl Parse for SchemaArgs {
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "unsupported module_component argument; expected `name`, `measurement`, `text_style`, or `commands`",
+                        "unsupported module_element argument; expected `name`, `measurement`, `text_style`, or `commands`",
                     ));
                 }
             }
@@ -233,12 +218,12 @@ impl Parse for SchemaArgs {
     }
 }
 
-fn parse_args(attr: TokenStream2) -> syn::Result<ModuleComponentArgs> {
+fn parse_args(attr: TokenStream2) -> syn::Result<ModuleElementArgs> {
     if let Ok(name) = parse2::<LitStr>(attr.clone()) {
-        return Ok(ModuleComponentArgs::Legacy(name));
+        return Ok(ModuleElementArgs::Legacy(name));
     }
     let args = parse2::<SchemaArgs>(attr)?;
-    Ok(ModuleComponentArgs::Schema {
+    Ok(ModuleElementArgs::Schema {
         name: args.name,
         measurement: args.measurement,
         text_style: args.text_style,
@@ -252,8 +237,8 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         Err(error) => return error.to_compile_error(),
     };
     let element_name = match &args {
-        ModuleComponentArgs::Legacy(name) => name,
-        ModuleComponentArgs::Schema { name, .. } => name,
+        ModuleElementArgs::Legacy(name) => name,
+        ModuleElementArgs::Schema { name, .. } => name,
     };
     let element_name_str = element_name.value();
 
@@ -270,7 +255,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     if !sig.generics.params.is_empty() {
         return syn::Error::new(
             sig.generics.span(),
-            "#[whisker::module_component] does not support generic parameters \
+            "#[whisker::module_element] does not support generic parameters \
              — platform components are tag-name driven, not type-parameterised. \
              Each tag is one registered Host element schema.",
         )
@@ -284,7 +269,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             FnArg::Receiver(r) => {
                 return syn::Error::new(
                     r.span(),
-                    "#[whisker::module_component] does not support method receivers",
+                    "#[whisker::module_element] does not support method receivers",
                 )
                 .to_compile_error();
             }
@@ -294,7 +279,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             other => {
                 return syn::Error::new(
                     other.span(),
-                    "#[whisker::module_component] parameters must be plain identifiers",
+                    "#[whisker::module_element] parameters must be plain identifiers",
                 )
                 .to_compile_error();
             }
@@ -310,6 +295,51 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     let props_name = format_ident!("{}", to_pascal_case(&fn_name.to_string()) + "Props");
     let builder_name = format_ident!("{}Builder", props_name);
     let internal_mod = format_ident!("__{}_props_internal", fn_name);
+    let required_props: Vec<&Prop> = props
+        .iter()
+        .filter(|prop| {
+            matches!(
+                prop.kind,
+                PropKind::EventNoPayload { .. } | PropKind::EventTyped { .. }
+            )
+        })
+        .collect();
+    let required_states: Vec<Ident> = required_props
+        .iter()
+        .map(|prop| format_ident!("__{}_SET", prop.ident.to_string().to_ascii_uppercase()))
+        .collect();
+    let builder_declaration = if required_states.is_empty() {
+        quote! { #builder_name }
+    } else {
+        quote! { #builder_name < #(const #required_states: bool),* > }
+    };
+    let builder_type = |states: &[TokenStream2]| {
+        if states.is_empty() {
+            quote! { #builder_name }
+        } else {
+            quote! { #builder_name < #(#states),* > }
+        }
+    };
+    let initial_states = required_states
+        .iter()
+        .map(|_| quote! { false })
+        .collect::<Vec<_>>();
+    let ready_states = required_states
+        .iter()
+        .map(|_| quote! { true })
+        .collect::<Vec<_>>();
+    let generic_states = required_states
+        .iter()
+        .map(|state| quote! { #state })
+        .collect::<Vec<_>>();
+    let initial_builder_type = builder_type(&initial_states);
+    let ready_builder_type = builder_type(&ready_states);
+    let generic_builder_type = builder_type(&generic_states);
+    let builder_impl_generics = if required_states.is_empty() {
+        quote! {}
+    } else {
+        quote! { <#(const #required_states: bool),*> }
+    };
 
     let props_fields: Vec<TokenStream2> = props.iter().map(prop_struct_field).collect();
 
@@ -323,7 +353,67 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         })
         .collect();
 
-    let setters: Vec<TokenStream2> = props.iter().map(prop_setter).collect();
+    let builder_field_idents: Vec<Ident> = props.iter().map(|prop| prop.ident.clone()).collect();
+    let setters: Vec<TokenStream2> = props
+        .iter()
+        .map(|prop| {
+            let Some(required_index) = required_props
+                .iter()
+                .position(|required| required.ident == prop.ident)
+            else {
+                return prop_setter(prop);
+            };
+            let target_states = required_states
+                .iter()
+                .enumerate()
+                .map(|(index, state)| {
+                    if index == required_index {
+                        quote! { true }
+                    } else {
+                        quote! { #state }
+                    }
+                })
+                .collect::<Vec<_>>();
+            let target_type = builder_type(&target_states);
+            let ident = &prop.ident;
+            let bindings = builder_field_idents
+                .iter()
+                .map(|field| format_ident!("__field_{field}"));
+            let bindings = bindings.collect::<Vec<_>>();
+            let assignments = builder_field_idents.iter().zip(bindings.iter()).map(
+                |(field, binding)| {
+                    if field == ident {
+                        quote! { #field: ::std::option::Option::Some(::std::boxed::Box::new(f)) }
+                    } else {
+                        quote! { #field: #binding }
+                    }
+                },
+            );
+            let signature = match &prop.kind {
+                PropKind::EventNoPayload { .. } => quote! { ::std::ops::Fn() + 'static },
+                PropKind::EventTyped { payload, .. } => {
+                    quote! { ::std::ops::Fn(#payload) + 'static }
+                }
+                _ => unreachable!(),
+            };
+            quote! {
+                pub fn #ident<F: #signature>(self, f: F) -> #target_type {
+                    let Self {
+                        #(#builder_field_idents: #bindings,)*
+                        __element,
+                        __ref,
+                        __required: _,
+                    } = self;
+                    #builder_name {
+                        #(#assignments,)*
+                        __element,
+                        __ref,
+                        __required: ::std::marker::PhantomData,
+                    }
+                }
+            }
+        })
+        .collect();
 
     let build_assignments: Vec<TokenStream2> = props
         .iter()
@@ -343,29 +433,51 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
 
     let pascal_alias_ident = format_ident!("{}", to_pascal_case(&fn_name.to_string()));
     let fn_name_str = fn_name.to_string();
-    // The alias name is emitted into both namespaces — a `pub use` for
-    // the fn and a type alias for Props — so `render!` can write
-    // `Alias::builder()` with only the alias imported. Same scheme as
-    // `#[component]`.
-    let alias_emission = if pascal_alias_ident == fn_name_str.as_str() {
-        quote! {
-            #[doc(hidden)]
-            #vis use #inner_mod::#fn_name;
-            #[doc(hidden)]
-            #[allow(non_camel_case_types)]
-            #vis type #fn_name = #props_name;
-        }
+    let marker_ident = if pascal_alias_ident == fn_name_str.as_str() {
+        fn_name.clone()
     } else {
-        quote! {
-            #[allow(non_snake_case)]
-            #vis use #inner_mod::#fn_name as #pascal_alias_ident;
-            #[doc(hidden)]
-            #vis type #pascal_alias_ident = #props_name;
+        pascal_alias_ident
+    };
+    let alias_emission = quote! {
+        #[allow(missing_docs)]
+        #vis struct #marker_ident;
+
+        #[allow(missing_docs)]
+        impl #marker_ident {
+            pub fn builder() -> #internal_mod::#initial_builder_type {
+                #props_name::builder()
+            }
         }
     };
 
+    let body_method = props.iter().find_map(|prop| match &prop.kind {
+        PropKind::Children | PropKind::TextChildren => {
+            let ident = &prop.ident;
+            let stored = if matches!(&prop.kind, PropKind::TextChildren) {
+                quote! { ::whisker::runtime::view::TextChildren::new(children) }
+            } else {
+                quote! { children }
+            };
+            Some(quote! {
+                pub fn body<F>(mut self, compose: F) -> Self
+                where
+                    F: ::std::ops::Fn(&mut ::whisker::ChildrenBuilder) + 'static,
+                {
+                    let children: ::whisker::Children = ::std::rc::Rc::new(move || {
+                        let mut body = ::whisker::ChildrenBuilder::new();
+                        compose(&mut body);
+                        body.finish()
+                    });
+                    self.#ident = ::std::option::Option::Some(#stored);
+                    self
+                }
+            })
+        }
+        _ => None,
+    });
+
     let (element_creation, schema_emission) = match &args {
-        ModuleComponentArgs::Legacy(tag_name) => (
+        ModuleElementArgs::Legacy(tag_name) => (
             quote! {
                 ::whisker::runtime::view::create_element_by_name(
                     concat!(env!("CARGO_PKG_NAME"), ":", #tag_name)
@@ -373,7 +485,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             },
             quote! {},
         ),
-        ModuleComponentArgs::Schema {
+        ModuleElementArgs::Schema {
             name,
             measurement,
             text_style,
@@ -402,7 +514,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
 
     // Every platform component implicitly carries a `__ref:
     // Option<ElementRef>` Props field. `render!` routes a call-site
-    // `ref: <expr>` to the `.with_ref(expr)` setter emitted below; the
+    // `element_ref: <expr>` to the `.with_ref(expr)` setter emitted below; the
     // generated body then binds it to the freshly-created handle.
 
     quote! {
@@ -414,37 +526,43 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
                 #(#props_fields,)*
                 #[doc(hidden)]
                 pub __element: ::whisker::runtime::view::Element,
-                /// Implicit `ref:` prop. Bound to the freshly-created
+                /// Implicit `element_ref:` prop. Bound to the freshly-created
                 /// element inside the macro-emitted body so user code
                 /// can invoke element methods after mount.
                 pub __ref: ::std::option::Option<::whisker::ElementRef>,
             }
 
             #[doc(hidden)]
-            pub struct #builder_name {
+            pub struct #builder_declaration {
                 #(#builder_fields,)*
                 pub __element: ::whisker::runtime::view::Element,
                 pub __ref: ::std::option::Option<::whisker::ElementRef>,
+                __required: ::std::marker::PhantomData<(#(RequiredState<#required_states>,)*)>,
             }
 
+            #[doc(hidden)]
+            struct RequiredState<const SET: bool>;
+
             impl #props_name {
-                pub fn builder() -> #builder_name {
+                pub fn builder() -> #initial_builder_type {
                     #builder_name {
                         #(#builder_init,)*
                         __element: #element_creation,
                         __ref: ::std::option::Option::None,
+                        __required: ::std::marker::PhantomData,
                     }
                 }
             }
 
-            impl #builder_name {
+            impl #builder_impl_generics #generic_builder_type {
                 #(#setters)*
+                #body_method
 
                 /// Bind an `ElementRef` to this element on mount.
-                /// `render!` routes the `ref:` kwarg here. Takes
+                /// `render!` routes the `element_ref:` kwarg here. Takes
                 /// the ref by value (a `Copy` slotmap handle) so
                 /// callers can keep theirs for later `invoke` calls.
-                pub fn with_ref(
+                pub fn element_ref(
                     mut self,
                     r: ::whisker::ElementRef,
                 ) -> Self {
@@ -452,16 +570,19 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
                     self
                 }
 
-                pub fn build(self) -> #props_name {
-                    #props_name {
+            }
+
+            impl #ready_builder_type {
+                pub fn build(self) -> ::whisker::Element {
+                    super::#inner_mod::#fn_name(#props_name {
                         #(#build_assignments,)*
                         __element: self.__element,
                         __ref: self.__ref,
-                    }
+                    })
                 }
             }
 
-            impl ::whisker::__element_builder::ElementBuilder for #builder_name {
+            impl #builder_impl_generics ::whisker::__element_builder::ElementBuilder for #generic_builder_type {
                 fn __element(&self) -> ::whisker::runtime::view::Element {
                     self.__element
                 }
@@ -505,16 +626,16 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
 /// only their Host-independent schema uses the shared declaration compiler.
 pub fn expand_builtin(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     let args = match parse_args(attr) {
-        Ok(ModuleComponentArgs::Schema {
+        Ok(ModuleElementArgs::Schema {
             name,
             measurement,
             text_style,
             commands,
         }) => (name, measurement, text_style, commands),
-        Ok(ModuleComponentArgs::Legacy(name)) => {
+        Ok(ModuleElementArgs::Legacy(name)) => {
             return syn::Error::new(
                 name.span(),
-                "#[builtin_component] requires `name = ...` and `measurement = ...`",
+                "#[builtin_element] requires `name = ...` and `measurement = ...`",
             )
             .to_compile_error();
         }
@@ -529,7 +650,7 @@ pub fn expand_builtin(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     if !signature.generics.params.is_empty() {
         return syn::Error::new(
             signature.generics.span(),
-            "#[builtin_component] does not support generic parameters",
+            "#[builtin_element] does not support generic parameters",
         )
         .to_compile_error();
     }
@@ -541,7 +662,7 @@ pub fn expand_builtin(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             FnArg::Receiver(receiver) => {
                 return syn::Error::new(
                     receiver.span(),
-                    "#[builtin_component] does not support method receivers",
+                    "#[builtin_element] does not support method receivers",
                 )
                 .to_compile_error();
             }
@@ -551,7 +672,7 @@ pub fn expand_builtin(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             pattern => {
                 return syn::Error::new(
                     pattern.span(),
-                    "#[builtin_component] parameters must be plain identifiers",
+                    "#[builtin_element] parameters must be plain identifiers",
                 )
                 .to_compile_error();
             }
@@ -908,7 +1029,7 @@ fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
         return Err(syn::Error::new(
             ident.span(),
             format!(
-                "#[whisker::module_component]: `{name}` is supplied by the common ElementBuilder API and must not be declared as a component-specific property or event"
+                "#[whisker::module_element]: `{name}` is supplied by the common ElementBuilder API and must not be declared as a component-specific property or event"
             ),
         ));
     }
@@ -920,7 +1041,7 @@ fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
         if event.is_empty() {
             return Err(syn::Error::new(
                 ident.span(),
-                "#[whisker::module_component]: event prop name `on_` is empty; \
+                "#[whisker::module_element]: event prop name `on_` is empty; \
                  use e.g. `on_press: ()` or `on_input: TouchEvent`",
             ));
         }
@@ -929,7 +1050,7 @@ fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
             return Err(syn::Error::new(
                 ident.span(),
                 format!(
-                    "#[whisker::module_component]: event name `{event}` collides with a \
+                    "#[whisker::module_element]: event name `{event}` collides with a \
                      common Whisker input or motion event. Rename it to a \
                      non-reserved, module-specific name — e.g. `on_{event}_gesture`, \
                      `on_press`, `on_page_changed`, or `on_activate`.",

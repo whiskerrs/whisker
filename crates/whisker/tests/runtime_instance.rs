@@ -140,7 +140,7 @@ fn render_ready_background(surface_id: u64, style: Css) -> BackgroundLayer {
     let surface = surface(surface_id);
     let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
     runtime
-        .mount(move || render! { view(style: style) })
+        .mount(move || render! { View(style: style) })
         .unwrap();
     let commands = surface.take_resource_commands();
     assert_eq!(commands.len(), 1, "one URL must produce one Host load");
@@ -183,7 +183,7 @@ fn render_gradient(surface_id: u64, gradient: Gradient) -> PaintImage {
     let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
     runtime
         .mount(move || {
-            render! { view(style: Css::new().width(px(100)).height(px(100)).background_image(gradient.clone())) }
+            render! { View(style: Css::new().width(px(100)).height(px(100)).background_image(gradient.clone())) }
         })
         .unwrap();
     assert!(surface.take_resource_commands().is_empty());
@@ -271,7 +271,7 @@ fn host_drives_mount_frame_pause_resume_and_unmount() {
     );
 
     runtime
-        .mount(|| render! { view(style: css!(width: px(100), height: px(100))) })
+        .mount(|| render! { View(style: css!(width: px(100), height: px(100))) })
         .unwrap();
     assert_eq!(runtime.lifecycle(), RuntimeLifecycle::Running);
     assert!(wakes.load(Ordering::SeqCst) > 0);
@@ -325,7 +325,7 @@ fn runtime_drive_requests_frames_until_an_opacity_transition_finishes() {
     let root = runtime
         .mount(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(40))
                     .height(px(20))
                     .opacity(0.2)
@@ -410,7 +410,7 @@ fn current_resource_completion_wakes_running_but_not_paused_runtime() {
             wake_count.fetch_add(1, Ordering::SeqCst);
         }),
     );
-    runtime.mount(|| render! { view() }).unwrap();
+    runtime.mount(|| render! { View() }).unwrap();
     let resource = ResourceId::new(5).unwrap();
     surface
         .enqueue_resource_command(ResourceCommand::Load(ResourceRequest {
@@ -461,7 +461,7 @@ fn background_url_loads_out_of_frame_and_is_emitted_only_after_ready() {
     runtime
         .mount(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(100))
                     .height(px(100))
                     .background_image(ImageRef::Url(CssString::new(
@@ -628,7 +628,7 @@ fn background_shorthand_preserves_geometry_for_each_url_layer() {
     let surface = surface(46);
     let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
     runtime
-        .mount(move || render! { view(style: style) })
+        .mount(move || render! { View(style: style) })
         .unwrap();
 
     let commands = surface.take_resource_commands();
@@ -921,7 +921,7 @@ fn background_url_is_shared_and_released_only_after_the_last_clear_is_accepted()
             let first = RwSignal::new(true);
             let second = RwSignal::new(true);
             render! {
-                view(
+                View(
                     style: css!(width: px(200), height: px(100)),
                     on_tap: move |_| {
                         let (show_first, show_second) = mounted_visibility.get();
@@ -930,10 +930,10 @@ fn background_url_is_shared_and_released_only_after_the_last_clear_is_accepted()
                     },
                 ) {
                     Show(when: move || first.get()) {
-                        view(style: url_background_style())
+                        View(style: url_background_style())
                     }
                     Show(when: move || second.get()) {
-                        view(style: url_background_style())
+                        View(style: url_background_style())
                     }
                 }
             }
@@ -1070,12 +1070,12 @@ fn background_url_reacquired_before_clear_ack_keeps_the_current_generation() {
         .mount(move || {
             let visible = RwSignal::new(true);
             render! {
-                view(
+                View(
                     style: css!(width: px(100), height: px(100)),
                     on_tap: move |_| visible.set(mounted_visibility.get()),
                 ) {
                     Show(when: move || visible.get()) {
-                        view(style: url_background_style())
+                        View(style: url_background_style())
                     }
                 }
             }
@@ -1164,12 +1164,12 @@ fn stale_ready_for_a_released_background_does_not_affect_its_replacement() {
         .mount(move || {
             let visible = RwSignal::new(true);
             render! {
-                view(
+                View(
                     style: css!(width: px(100), height: px(100)),
                     on_tap: move |_| visible.set(mounted_visibility.get()),
                 ) {
                     Show(when: move || visible.get()) {
-                        view(style: url_background_style())
+                        View(style: url_background_style())
                     }
                 }
             }
@@ -1320,8 +1320,8 @@ fn host_viewport_updates_re_resolve_styles_layout_and_measurement() {
     runtime
         .mount(|| {
             render! {
-                view(style: css!(width: vw(50), height: vh(50))) {
-                    text(value: "viewport", style: css!(font_size: vw(10)))
+                View(style: css!(width: vw(50), height: vh(50))) {
+                    Text(value: "viewport", style: css!(font_size: vw(10)))
                 }
             }
         })
@@ -1474,7 +1474,7 @@ fn render_root_flex_grow_fills_host_viewport_without_a_protocol_node() {
     let surface = surface(37);
     let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
     runtime
-        .mount(|| render! { view(style: css!(flex_grow: 1.0)) })
+        .mount(|| render! { View(style: css!(flex_grow: 1.0)) })
         .unwrap();
 
     let mut measurements = NoMeasurement;
@@ -1524,12 +1524,12 @@ fn pointer_hit_test_routes_capture_target_and_bubble_in_rust() {
     runtime
         .mount(move || {
             render! {
-                view(
+                View(
                     style: css!(width: px(100), height: px(100)),
                     on_capture_tap: move |_| root_capture.borrow_mut().push("root-capture"),
                     on_tap: move |_| root_bubble.borrow_mut().push("root-bubble"),
                 ) {
-                    view(
+                    View(
                         style: css!(width: px(50), height: px(50)),
                         on_tap: move |_| child_target.borrow_mut().push("child-target"),
                     )
@@ -1586,7 +1586,7 @@ fn raw_touch_stream_synthesizes_tap_but_drag_does_not() {
     runtime
         .mount(move || {
             render! {
-                view(
+                View(
                     style: css!(width: px(100), height: px(100)),
                     on_tap: move |_| tap_count.set(tap_count.get() + 1),
                 )
@@ -1673,7 +1673,7 @@ fn background_completion_parks_while_paused_and_resumes_on_host_drive() {
                 .await;
                 task_result.set(value);
             });
-            render! { view(style: css!(width: px(100), height: px(100))) }
+            render! { View(style: css!(width: px(100), height: px(100))) }
         })
         .unwrap();
 
@@ -1732,7 +1732,7 @@ fn reentrant_host_input_is_queued_until_the_event_boundary() {
         .borrow_mut()
         .mount(move || {
             render! {
-                view(
+                View(
                     style: css!(width: px(100), height: px(100)),
                     on_tap: move |_| {
                         tap_log.borrow_mut().push("tap");
@@ -1808,7 +1808,7 @@ fn deferred_measurement_event_wakes_and_completes_the_next_frame() {
         }),
     );
     runtime
-        .mount(|| render! { text(value: "deferred", style: css!(font_size: px(16))) })
+        .mount(|| render! { Text(value: "deferred", style: css!(font_size: px(16))) })
         .unwrap();
     let mut measurements = PendingTextMeasurement::default();
     let mut sink = RecordingRenderer::new(surface.surface());

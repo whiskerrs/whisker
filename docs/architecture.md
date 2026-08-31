@@ -15,7 +15,7 @@ through a narrow FFI Driver; Desktop and Web compose the same runtime directly.
 ```
                                   whisker-macros
                                   (#[main], #[component],
-                                   #[module_component], render!)
+                                   #[module_element], render!)
                                         │  emits ::whisker::… paths
                                         ▼
    whisker-config ──────────► whisker (umbrella)
@@ -120,7 +120,7 @@ through a narrow FFI Driver; Desktop and Web compose the same runtime directly.
 | `whisker-driver-sys` | Single Rust source of truth for the raw, borrowed Android/iOS ABI: version/tag constants, C-layout frame/measurement/resource/module values, callbacks, exported entry points, and Android's JNI entry shim. Checked-in C, Swift-imported, and Kotlin representations are generated and drift-checked from it. It contains no renderer or runtime ownership. Unsafe-only. | `whisker-driver` |
 | `whisker-driver` | Safe Android/iOS FFI adapter. It owns the opaque runtime handle, borrowed-value conversion, native callback adapters, and delegates lifecycle/frame/input work to `whisker-runtime`. It does not redefine the wire ABI. | `whisker` on Android/iOS only |
 | `whisker-dev-runtime` | Development WebSocket/log support used by tooling paths. It is not a runtime or Host abstraction. | development tooling |
-| `whisker-macros` | `#[whisker::main]`, `#[component]`, `#[module_component]`, and the `render!` DSL. | `whisker` |
+| `whisker-macros` | `#[whisker::main]`, `#[component]`, `#[module_element]`, and the `render!` DSL. | `whisker` |
 | `whisker-cli` | The `whisker` / `cargo-whisker` binary: `run`, `doctor`, `new`, `new-module`. Resolves Config via the `whisker.rs` probe; hands a flat Config to dev-server. | (binary) |
 | `whisker-dev-server` | Host dev loop, manifest-agnostic. Android/iOS currently use explicit full rebuild → install → relaunch; the retained mobile ABI will re-enable Rust hot reload. | `whisker-cli` |
 | `whisker-build` | Per-platform builds and packaging, including generated mobile shell builds and native macOS `.app` assembly. | `whisker-cli`, `whisker-dev-server` |
@@ -143,13 +143,13 @@ through a narrow FFI Driver; Desktop and Web compose the same runtime directly.
 First-party, app-facing add-on crates that depend on `whisker` like any
 user crate would. They are *not* part of the framework core:
 
-- **`whisker-router`** (+ `whisker-router-macros`) — type-safe,
+- **`whisker-router`** — type-safe,
   signal-backed routing over the shared Rust runtime, custom transitions, nested
   layouts (tabs/modal). `StackLayout` uses `Owner::pause`/`resume` to
   freeze off-screen back-stack entries.
 - **Platform modules** (`whisker-local-store`, `whisker-safe-area`,
   `whisker-audio`, `whisker-video`, `whisker-image`) — native bridges
-  exposed through `#[module_component]` / the `module!` macro and
+  exposed through `#[module_element]` / the `module!` macro and
   reactive signals fed by native events.
 - **Widgets** (`whisker-svg`, `whisker-icons`) — pure-Rust components
   built on the public API.

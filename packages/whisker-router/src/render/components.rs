@@ -67,17 +67,17 @@ pub fn router(routes: RouteSet, children: Children) -> Element {
     // container (wrappers are `position: absolute`) and the swipe-back
     // gesture has something to bind to.
     //
-    // The `children()` slot is bundled behind a phantom, and appending that
+    // The projected children are bundled behind a phantom, and appending that
     // phantom directly would hoist the children into a style-less container
     // with the default row direction, collapsing them horizontally. So
     // `root` itself is the `flex-direction: column` container they mount into.
     //
     // Build `root` EMPTY, publish the `RouterRoot` context, and only THEN
-    // mount the children: `children()` mounts where it is rendered, so a
+    // mount the children: projection mounts where it is invoked, so a
     // `SwipeBack` reading `RouterRoot` must run after the context exists or
     // it silently never installs its gesture.
     let root = render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
@@ -143,8 +143,8 @@ pub fn switch(path: NodePath) -> Element {
 /// ```ignore
 /// render! {
 ///     Layout(path: switch_path) {
-///         view(..) {
-///             view(style: css!(flex_grow: 1.0)) { Outlet {} }
+///         View(..) {
+///             View(style: css!(flex_grow: 1.0)) { Outlet {} }
 ///             MyCustomTabBar {}
 ///         }
 ///     }
@@ -153,5 +153,6 @@ pub fn switch(path: NodePath) -> Element {
 #[component]
 pub fn layout(path: NodePath, children: Children) -> Element {
     provide_context(OutletAnchor(path.clone()));
-    render! { children() }
+    let projected = children.clone();
+    render! { Fragment { { projected() } } }
 }

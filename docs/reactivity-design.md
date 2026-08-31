@@ -175,7 +175,7 @@ let history: StoredValue<Vec<String>> = StoredValue::new(Vec::new());
 ### `Signal<T>` — the prop-value type
 
 A 2-variant sum used by built-in tag builders, `#[component]`, and
-`#[whisker::module_component]` to receive prop values that may be either a
+`#[whisker::module_element]` to receive prop values that may be either a
 static `T` or a reactive `ReadSignal<T>`. One unified type lets all three
 component surfaces share one calling convention.
 
@@ -200,12 +200,12 @@ pub enum Signal<T: 'static> {
 So the **Static vs Dynamic decision is visible at the call site**:
 
 ```rust
-text(value: "literal")            // → Static
-text(value: my_string)            // → Static
-text(value: my_signal)            // → Dynamic (reactive)
-text(value: my_rw_signal)         // → Dynamic (reactive)
-text(value: computed(move || …))  // → Dynamic (memoised derivation)
-text(value: my_signal.get())      // → Static (snapshot — read happens at
+Text(value: "literal")            // → Static
+Text(value: my_string)            // → Static
+Text(value: my_signal)            // → Dynamic (reactive)
+Text(value: my_rw_signal)         // → Dynamic (reactive)
+Text(value: computed(move || …))  // → Dynamic (memoised derivation)
+Text(value: my_signal.get())      // → Static (snapshot — read happens at
                                   //   the call site, before any effect
                                   //   is on the observer stack)
 ```
@@ -230,7 +230,7 @@ prop on each body invocation.
 
 An earlier design had the macro silently wrap each kwarg in
 `move || …` so the builder always received a closure, making
-`text(value: signal.get())` reactive with no user effort. That was
+`Text(value: signal.get())` reactive with no user effort. That was
 dropped because it was (1) asymmetric — built-in tags got the auto-wrap
 but `#[component]` calls didn't; (2) hidden DX — no syntactic marker for
 where the reactive boundary was; and (3) closure-only — static values
@@ -305,10 +305,10 @@ fn counter(initial: i32, on_change: WriteSignal<i32>) -> Element {
     on_cleanup(|| log::info!("counter unmounted"));
 
     render! {
-        view(style: css!(flex_direction: FlexDirection::Column, padding: px(16))) {
-            text(value: computed(move || format!("Count: {}", count.get())))
-            view(on_tap: move |_| set_count.update(|n| *n += 1)) {
-                text(value: "+")
+        View(style: css!(flex_direction: FlexDirection::Column, padding: px(16))) {
+            Text(value: computed(move || format!("Count: {}", count.get())))
+            View(on_tap: move |_| set_count.update(|n| *n += 1)) {
+                Text(value: "+")
             }
         }
     }
@@ -317,8 +317,8 @@ fn counter(initial: i32, on_change: WriteSignal<i32>) -> Element {
 
 The `#[component]` macro generates, for `fn xxx(...)`:
 
-1. A `XxxProps` struct mirroring the parameters + a hand-rolled
-   `XxxPropsBuilder` (one setter per field). Required fields take
+1. A `XxxProps` struct mirroring the parameters plus a public PascalCase
+   marker and hand-rolled builder (one setter per field). Required fields take
    `impl Into<Type>`, so call sites omit conversions; for `Signal<T>`
    props that's the `Into<Signal<T>>` coercion above. `#[prop(default =
    …)]` marks optional props. (Hand-rolled rather than `#[derive(
@@ -328,8 +328,8 @@ The `#[component]` macro generates, for `fn xxx(...)`:
    fresh owner, runs the user body inside it (under `untrack`, so ambient
    `signal.get()` reads in the body don't contaminate an outer node), and
    returns the view via `mount_component_remountable`.
-3. A PascalCase alias (`Xxx`) the `render!` macro calls as
-   `Xxx(XxxProps::builder().k(v).build())`.
+3. A PascalCase marker (`Xxx`) whose `Xxx::builder()` API is usable directly;
+   `render! { Xxx(k: v) }` lowers to `Xxx::builder().k(v).build()`.
 
 Lifecycle hooks register against the current owner:
 

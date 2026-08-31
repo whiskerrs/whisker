@@ -17,12 +17,12 @@ authoring API:
 
 ```rust,ignore
 render! {
-    view(style: css!(
+    View(style: css!(
         flex_direction: FlexDirection::Column,
         padding: px(16),
         background_color: theme.surface,
     )) {
-        text(style: css!(font_size: px(18)), value: "Settings")
+        Text(style: css!(font_size: px(18)), value: "Settings")
     }
 }
 ```
@@ -70,7 +70,7 @@ defines limited text inheritance rather than a general cascade.
 
 ## Goals
 
-- Preserve `render! { view(style: css!(...)) { ... } }` as the public form.
+- Preserve `render! { View(style: css!(...)) { ... } }` as the public form.
 - Make all public common style properties typed.
 - Define deterministic composition without selectors or specificity.
 - Define a small, closed inherited text context.
@@ -116,8 +116,8 @@ fn card_style(theme: &Theme) -> Css {
 }
 
 render! {
-    view(style: card_style(&theme)) {
-        text(value: "Account")
+    View(style: card_style(&theme)) {
+        Text(value: "Account")
     }
 }
 ```
@@ -131,7 +131,7 @@ The same `style:` slot accepts static and reactive values as it does today:
 
 ```rust,ignore
 render! {
-    view(style: computed(move || css!(
+    View(style: computed(move || css!(
         opacity: if visible.get() { 1.0 } else { 0.0 },
         transform: translate_x(drag_x.get()),
     )))

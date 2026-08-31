@@ -2,7 +2,7 @@
 //!
 //! Covers:
 //! - `ElementRef::new()` allocates an unbound ref.
-//! - Passing `ref:` on a `#[module_component]` call site binds the
+//! - Passing `element_ref:` on a `#[module_element]` call site binds the
 //!   ref to the freshly-created element on mount.
 //! - Disposing the surrounding owner clears the binding (the macro
 //!   emits `on_cleanup(move || r.__unbind())`).
@@ -80,7 +80,7 @@ fn with_test_env<R>(f: impl FnOnce() -> R) -> R {
 
 // ---- Platform component declaration ---------------------------------------
 
-#[whisker::module_component("x-ref-target")]
+#[whisker::module_element("x-ref-target")]
 pub fn x_ref_target(value: Signal<String>) {}
 
 // ---- Tests -----------------------------------------------------------------
@@ -101,7 +101,7 @@ fn passing_ref_at_call_site_binds_on_mount() {
         assert!(!r.is_bound());
 
         let _h = render! {
-            XRefTarget(ref: r, value: "hello")
+            XRefTarget(element_ref: r, value: "hello")
         };
 
         assert!(r.is_bound(), "ref should be bound after mount");
@@ -123,7 +123,7 @@ fn disposing_owner_unbinds_ref() {
 
     let inner = Owner::new(None);
     inner.with(|| {
-        let _h = render! { XRefTarget(ref: r, value: "x") };
+        let _h = render! { XRefTarget(element_ref: r, value: "x") };
     });
     assert!(r.is_bound(), "ref should bind on mount");
 
@@ -157,7 +157,7 @@ fn bound_signal_is_reactive() {
 
     let inner = Owner::new(None);
     inner.with(|| {
-        let _h = render! { XRefTarget(ref: r, value: "x") };
+        let _h = render! { XRefTarget(element_ref: r, value: "x") };
     });
     flush();
     assert_eq!(

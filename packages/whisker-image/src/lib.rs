@@ -158,10 +158,10 @@ impl<F: Fn(ImageEvent) + 'static> From<F> for ImageCallback {
 }
 
 // The `whisker-image:Image` element itself. Crate-internal — only the
-// outer `image` component mounts it, because a `module_component`'s
+// outer `image` component mounts it, because a `module_element`'s
 // event props are all required and these two must not be.
 #[doc(hidden)]
-#[whisker::module_component("Image")]
+#[whisker::module_element("Image")]
 pub fn native_image(
     src: Signal<String>,
     mode: Signal<ImageMode>,
@@ -181,7 +181,7 @@ pub fn native_image(
 /// wrapper applies corner clipping independently of the image loader.
 ///
 /// A wrapper around the element rather than the element itself so that
-/// `on_load` / `on_error` can be optional: a `module_component`'s event
+/// `on_load` / `on_error` can be optional: a `module_element`'s event
 /// props are required, and most callers just want a picture.
 #[component]
 pub fn image(
@@ -223,24 +223,22 @@ pub fn image(
     let style_prop: whisker::Style = style.clone().unwrap_or_default();
     let load = on_load.clone();
     let error = on_error.clone();
-    NativeImage(
-        NativeImageProps::builder()
-            .src(src)
-            .mode(mode)
-            .headers(headers)
-            .style(style_prop)
-            .on_load(move |event: ImageEvent| {
-                if let Some(cb) = &load {
-                    cb.call(event);
-                }
-            })
-            .on_error(move |event: ImageEvent| {
-                if let Some(cb) = &error {
-                    cb.call(event);
-                }
-            })
-            .build(),
-    )
+    NativeImage::builder()
+        .src(src)
+        .mode(mode)
+        .headers(headers)
+        .style(style_prop)
+        .on_load(move |event: ImageEvent| {
+            if let Some(cb) = &load {
+                cb.call(event);
+            }
+        })
+        .on_error(move |event: ImageEvent| {
+            if let Some(cb) = &error {
+                cb.call(event);
+            }
+        })
+        .build()
 }
 
 /// Warm the cache for `urls` without showing them.
@@ -277,11 +275,7 @@ mod tests {
     fn an_image_needs_only_a_src() {
         // That this builds at all is most of the assertion: the element's
         // own event props are required, the wrapper's are not.
-        let props = ImageProps::builder()
-            .src("https://example.com/a.png")
-            .build();
-        assert!(props.on_load.is_none());
-        assert!(props.on_error.is_none());
+        let _builder = Image::builder().src("https://example.com/a.png");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! `whisker-icons` example app.
 //!
-//! Renders every Lucide icon (~1700) through Whisker's
-//! render-props `list(...)` so Whisker's virtualized list
+//! Renders every Lucide Icon (~1700) through Whisker's
+//! render-props `List(...)` so Whisker's virtualized list
 //! drives the scrolling — only the tiles inside the viewport
 //! are materialised on mount.
 //!
@@ -36,7 +36,7 @@ pub fn app() -> Element {
     let insets = safe_area_insets();
 
     render! {
-        view(style: computed(move || css!(
+        View(style: computed(move || css!(
             background_color: Color::hex(0x101012),
             flex_grow: 1.0,
             flex_shrink: 1.0,
@@ -52,11 +52,11 @@ pub fn app() -> Element {
             // Putting an intermediate flex container in between gives
             // the text a frame to lay out against. The wrapper is
             // otherwise transparent.
-            view(style: css!(
+            View(style: css!(
                 width: percent(100),
                 flex_shrink: 0.0,
             )) {
-                text(
+                Text(
                     style: css!(
                         color: Color::hex(0xF0F0F3),
                         font_size: px(22),
@@ -67,11 +67,11 @@ pub fn app() -> Element {
                     value: header_text,
                 )
             }
-            list(
+            List(
                 each: || icons::ALL.chunks(3).map(|row| row.to_vec()).collect::<Vec<_>>(),
                 key: |row: &Vec<(&'static str, &'static str)>| row[0].0,
                 children: |row: ReadSignal<Vec<(&'static str, &'static str)>>| render! {
-                    icon_row(icons: row)
+                    IconRow(icons: row)
                 },
                 style: css!(
                     flex_grow: 1.0,
@@ -86,13 +86,13 @@ pub fn app() -> Element {
 #[component]
 fn icon_row(icons: ReadSignal<Vec<(&'static str, &'static str)>>) -> Element {
     render! {
-        view(style: css!(width: percent(100), flex_direction: FlexDirection::Row)) {
+        View(style: css!(width: percent(100), flex_direction: FlexDirection::Row)) {
             ForEach(
                 each: move || icons.get(),
                 key: |(name, _): &(&'static str, &'static str)| *name,
                 children: |(name, svg): (&'static str, &'static str)| render! {
-                    view(style: css!(width: percent(33.333), flex_shrink: 0.0)) {
-                        tile(label: name, svg: svg)
+                    View(style: css!(width: percent(33.333), flex_shrink: 0.0)) {
+                        Tile(label: name, svg: svg)
                     }
                 },
             )
@@ -112,14 +112,14 @@ fn tile(label: &'static str, svg: &'static str) -> Element {
         // `flex-direction: column`) actually has a frame to center
         // against — without it the card collapses to its intrinsic
         // content width and pins to the left edge of the cell.
-        view(style: css!(
+        View(style: css!(
             width: percent(100),
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             padding: px(8),
         )) {
-            view(style: css!(
+            View(style: css!(
                 width: px(64),
                 height: px(64),
                 background_color: Color::hex(0x1C1C1F),
@@ -130,7 +130,7 @@ fn tile(label: &'static str, svg: &'static str) -> Element {
             )) {
                 Icon(svg: svg, color: "#f0f0f3", size: "32")
             }
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0xF0F0F3),
                     font_size: px(10),

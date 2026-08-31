@@ -72,11 +72,11 @@ pub(super) fn timeline_screen() -> Element {
     });
 
     render! {
-        view(style: root_style) {
+        View(style: root_style) {
             Show(
                 when: move || feed.get().is_some(),
                 fallback: move || render! {
-                    status_pane(
+                    StatusPane(
                         // Empty error == the "waiting for auth/restore"
                         // sentinel — show loading, not a blank error line.
                         message: match feed.error() {
@@ -86,7 +86,7 @@ pub(super) fn timeline_screen() -> Element {
                     )
                 },
             ) {
-                list(
+                List(
                     style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
                     end_reached_threshold: 320.0,
                     on_end_reached: move || load_more(()),
@@ -119,7 +119,7 @@ pub(super) fn timeline_screen() -> Element {
 pub(super) fn compose_fab() -> Element {
     let nav = use_navigator();
     render! {
-        view(
+        View(
             style: css!(
                 width: px(56),
                 height: px(56),
@@ -147,7 +147,7 @@ pub(super) fn post_list(posts: Vec<bsky_domain::FeedPost>) -> Element {
     // vertically by default. Scales to many posts without keeping every row
     // mounted (unlike scroll_view + ForEach).
     render! {
-        list(
+        List(
             style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
             each: {
                 let posts = posts.clone();
@@ -313,13 +313,13 @@ pub(super) fn post_detail_screen() -> Element {
 
     let nav_back = nav.clone();
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
             background_color: theme::BG,
         )) {
-            view(style: header_style) {
-                view(
+            View(style: header_style) {
+                View(
                     style: css!(
                         padding: px(8),
                         display: Display::Flex,
@@ -331,7 +331,7 @@ pub(super) fn post_detail_screen() -> Element {
                 ) {
                     Icon(svg: lucide::ChevronLeft, color: "#FFFFFF", size: "26")
                 }
-                text(
+                Text(
                     style: css!(
                         font_size: theme::T_NAME,
                         font_weight: FontWeight::Bold,
@@ -344,7 +344,7 @@ pub(super) fn post_detail_screen() -> Element {
             Show(
                 when: move || thread.get().is_some(),
                 fallback: move || render! {
-                    status_pane(
+                    StatusPane(
                         message: match thread.error() {
                             Some(e) if !e.is_empty() => e,
                             _ => "読み込み中…".to_string(),
@@ -352,7 +352,7 @@ pub(super) fn post_detail_screen() -> Element {
                     )
                 },
             ) {
-                post_list(posts: {
+                PostList(posts: {
                     let t = thread.get().unwrap_or_default();
                     let mut v = Vec::new();
                     if let Some(p) = t.post {
@@ -399,29 +399,29 @@ pub(super) fn compose_screen() -> Element {
     let nav_cancel = nav.clone();
     let nav_post = nav.clone();
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
             background_color: theme::BG,
         )) {
-            view(style: header_style) {
-                view(
+            View(style: header_style) {
+                View(
                     style: css!(padding: px(4)),
                     on_tap: move |_| {
                         let _ = nav_cancel.back();
                     },
                 ) {
-                    text(
+                    Text(
                         style: css!(font_size: px(16), color: theme::TEXT_PRIMARY),
                         value: "キャンセル",
                     )
                 }
-                view(style: css!(
+                View(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
                 )) {
-                    text(
+                    Text(
                         style: computed(move || css!(
                             font_size: theme::T_META,
                             color: if remaining.get() < 0 {
@@ -433,7 +433,7 @@ pub(super) fn compose_screen() -> Element {
                         )),
                         value: computed(move || remaining.get().to_string()),
                     )
-                    view(
+                    View(
                         style: computed(move || css!(
                             height: px(34),
                             padding_left: px(16),
@@ -466,7 +466,7 @@ pub(super) fn compose_screen() -> Element {
                             });
                         },
                     ) {
-                        text(
+                        Text(
                             style: css!(
                                 font_size: px(15),
                                 font_weight: FontWeight::Bold,
@@ -490,8 +490,8 @@ pub(super) fn compose_screen() -> Element {
                     .color(Color::hex(0xffffff))
                     .font_size(px(18)),
             )
-            Show(when: move || !error.get().is_empty(), fallback: || render! { fragment() }) {
-                text(
+            Show(when: move || !error.get().is_empty(), fallback: || render! { Fragment() }) {
+                Text(
                     style: css!(
                         font_size: theme::T_META,
                         color: Color::hex(0xFF6B6B),
@@ -506,16 +506,17 @@ pub(super) fn compose_screen() -> Element {
 
 #[component]
 pub(super) fn status_pane(message: String) -> Element {
+    let message = StoredValue::new(message.clone());
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
         )) {
-            text(
+            Text(
                 style: css!(font_size: theme::T_META, color: theme::TEXT_SECONDARY),
-                value: message.clone(),
+                value: message.get(),
             )
         }
     }

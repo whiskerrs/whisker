@@ -94,15 +94,15 @@ pub fn app() -> Element {
         .padding_right(px(12));
 
     render! {
-        view(style: page_style) {
-            text(style: header_style, value: "whisker-svg gallery")
-            view(style: grid_style) {
-                tile(label: "Rect (solid)",        svg: SVG_RECT,     color: FG_TEXT)
-                tile(label: "Path (triangle)",     svg: SVG_TRIANGLE, color: FG_TEXT)
-                tile(label: "Path (cubic curve)",  svg: SVG_CUBIC,    color: FG_TEXT)
-                tile(label: "Stroke + width",      svg: SVG_STROKE,   color: FG_TEXT)
-                tile(label: "currentColor tint",   svg: SVG_HEART,    color: ACCENT_TEXT)
-                tile(label: "Nested <g> transform",svg: SVG_NESTED,   color: FG_TEXT)
+        View(style: page_style) {
+            Text(style: header_style, value: "whisker-svg gallery")
+            View(style: grid_style) {
+                Tile(label: "Rect (solid)",        svg: SVG_RECT,     color: FG_TEXT)
+                Tile(label: "Path (triangle)",     svg: SVG_TRIANGLE, color: FG_TEXT)
+                Tile(label: "Path (cubic curve)",  svg: SVG_CUBIC,    color: FG_TEXT)
+                Tile(label: "Stroke + width",      svg: SVG_STROKE,   color: FG_TEXT)
+                Tile(label: "currentColor tint",   svg: SVG_HEART,    color: ACCENT_TEXT)
+                Tile(label: "Nested <g> transform",svg: SVG_NESTED,   color: FG_TEXT)
             }
         }
     }
@@ -113,6 +113,9 @@ pub fn app() -> Element {
 /// only variable in the visual is the SVG itself.
 #[component]
 fn tile(label: String, svg: String, color: String) -> Element {
+    let label = StoredValue::new(label.clone());
+    let svg = StoredValue::new(svg.clone());
+    let color = StoredValue::new(color.clone());
     let card_style = Css::new()
         .width(percent(50))
         .display_flex()
@@ -134,11 +137,11 @@ fn tile(label: String, svg: String, color: String) -> Element {
         .margin_top(px(8));
 
     render! {
-        view(style: card_style) {
-            view(style: frame_style) {
-                Svg(content: svg.clone(), color: color.clone(), style: svg_style.clone())
+        View(style: card_style) {
+            View(style: frame_style) {
+                Svg(content: svg.get(), color: color.get(), style: svg_style.clone())
             }
-            text(style: caption_style, value: label.clone())
+            Text(style: caption_style, value: label.get())
         }
     }
 }

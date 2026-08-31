@@ -33,8 +33,8 @@ pub use apply::{
 };
 pub use handle::Element;
 pub use into_view::{
-    Children, EachFn, Fallback, IntoView, ItemFn, KeyFn, TextChildren, View, WhenFn,
-    mount_children, mount_text_children, mount_view,
+    Children, ChildrenBuilder, EachFn, Fallback, IntoView, ItemFn, KeyFn, TextChildren, View,
+    WhenFn, mount_children, mount_text_children, mount_view,
 };
 pub use list::{
     ListHandle, ListHandleError, ListRef, ListScrollTarget, ListSnapshot, ScrollAlignment,

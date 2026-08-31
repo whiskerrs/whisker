@@ -1,6 +1,6 @@
 //! Section header row — "Title >" pattern.
 //!
-//! The chevron-suffix variant is the trailing form ("Top Shows >",
+//! The chevron-suffix variant is the trailing Form ("Top Shows >",
 //! "New Shows >"). The hero variant ("New") is the same component
 //! with `show_chevron: false` — a leading style cue that the
 //! section is a hero block, not a tappable list. The host screen
@@ -14,8 +14,9 @@ use whisker_icons::{Icon, lucide};
 
 #[component]
 pub fn section_header(title: String, #[prop(default = false)] show_chevron: bool) -> Element {
+    let body_title = title.clone();
     render! {
-        view(style: css!(
+        View(style: css!(
             width: percent(100),
             padding_left: theme::GUTTER,
             padding_right: theme::GUTTER,
@@ -23,20 +24,20 @@ pub fn section_header(title: String, #[prop(default = false)] show_chevron: bool
             flex_direction: FlexDirection::Row,
             align_items: whisker::css::AlignItems::Center,
         )) {
-            text(
+            Text(
                 style: css!(
                     font_size: theme::T_HERO,
                     font_weight: FontWeight::Bold,
                     color: theme::TEXT_PRIMARY,
                 ),
-                value: title.clone(),
+                value: body_title.clone(),
             )
             // `Show`'s `children:` closure re-runs on `when` changes
             // and captures by move, so any outer-scope String would
             // fail the second invocation. The Icon's props are
             // built fresh inside the closure to sidestep that.
-            Show(when: move || show_chevron, fallback: || render! { fragment() }) {
-                view(style: css!(
+            Show(when: move || show_chevron, fallback: || render! { Fragment() }) {
+                View(style: css!(
                     margin_left: px(8),
                     display: Display::Flex,
                     align_items: whisker::css::AlignItems::Center,

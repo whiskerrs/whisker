@@ -186,7 +186,7 @@ assume that `View == 1` or dispatch `Text` through a separate protocol.
 The author-facing definition states only the cross-platform contract:
 
 ```rust,ignore
-#[whisker::module_component(
+#[whisker::module_element(
     name = "example.controls/Toggle",
     measurement = None,
 )]
@@ -201,7 +201,7 @@ Rust builders and `ElementTag` lowering already exist, but the declaration
 shape and schema compiler are the same:
 
 ```rust,ignore
-#[whisker::builtin_component(
+#[whisker::builtin_element(
     name = "whisker.ui/View",
     measurement = None,
 )]
@@ -210,7 +210,7 @@ fn view(
     children: Children,
 ) {}
 
-#[whisker::builtin_component(
+#[whisker::builtin_element(
     name = "whisker.ui/Text",
     measurement = Text,
 )]
@@ -220,8 +220,8 @@ fn text(
 ) {}
 ```
 
-`module_component` emits a custom authoring builder and a name binding;
-`builtin_component` retains the built-in builder and emits only the shared
+`module_element` emits a custom authoring builder and a name binding;
+`builtin_element` retains the built-in builder and emits only the shared
 schema module. Both generate `NAME`, `schema()`, property/event IDs,
 `child_policy`, and measurement from the same compiler. The built-in
 definition then binds that schema to its internal `ElementTag`; that tag is not

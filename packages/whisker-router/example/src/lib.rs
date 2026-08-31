@@ -42,12 +42,12 @@ use whisker_router::routes;
 #[component]
 fn tabs_layout() -> Element {
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
         )) {
-            view(style: css!(
+            View(style: css!(
                 flex_grow: 1.0,
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
@@ -65,7 +65,7 @@ fn my_tab_bar() -> Element {
     let pathname = use_pathname();
 
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
             justify_content: JustifyContent::SpaceAround,
@@ -97,7 +97,7 @@ fn tab_bar_item(
     });
     let nav = nav.clone();
     render! {
-        view(
+        View(
             style: computed(move || {
                 let opacity = if is_active.get() { 1.0 } else { 0.5 };
                 css!(
@@ -113,7 +113,7 @@ fn tab_bar_item(
                 let _ = nav.select(url);
             },
         ) {
-            text(
+            Text(
                 value: label.to_string(),
                 style: css!(color: Color::hex(0xFFFFFF), font_size: px(13)),
             )
@@ -157,16 +157,16 @@ fn app() -> Element {
 fn home() -> Element {
     let nav = use_navigator();
     render! {
-        view(style: screen_style(0x101018)) {
-            text(value: "Home", style: title_style())
-            text(value: "Tab 0 · its own stack", style: subtitle_style())
-            view(
+        View(style: screen_style(0x101018)) {
+            Text(value: "Home", style: title_style())
+            Text(value: "Tab 0 · its own stack", style: subtitle_style())
+            View(
                 style: button_style(),
                 on_tap: move |_| {
                     let _ = nav.navigate("/detail/1");
                 },
             ) {
-                text(value: "Open Detail 1", style: button_label_style())
+                Text(value: "Open Detail 1", style: button_label_style())
             }
         }
     }
@@ -176,10 +176,10 @@ fn home() -> Element {
 fn list_screen() -> Element {
     let nav = use_navigator();
     render! {
-        view(style: screen_style(0x0E1414)) {
-            text(value: "List", style: title_style())
-            text(value: "Tab 1 · its own stack", style: subtitle_style())
-            view(
+        View(style: screen_style(0x0E1414)) {
+            Text(value: "List", style: title_style())
+            Text(value: "Tab 1 · its own stack", style: subtitle_style())
+            View(
                 style: button_style(),
                 on_tap: {
                     let nav = nav.clone();
@@ -188,15 +188,15 @@ fn list_screen() -> Element {
                     }
                 },
             ) {
-                text(value: "Open Detail 42", style: button_label_style())
+                Text(value: "Open Detail 42", style: button_label_style())
             }
-            view(
+            View(
                 style: button_style(),
                 on_tap: move |_| {
                     let _ = nav.navigate("/detail/99");
                 },
             ) {
-                text(value: "Open Detail 99", style: button_label_style())
+                Text(value: "Open Detail 99", style: button_label_style())
             }
         }
     }
@@ -211,69 +211,69 @@ fn detail() -> Element {
     let cur = id.get().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
     let next = cur + 1;
     render! {
-        view(style: screen_style(0x1A1422)) {
-            text(value: format!("Detail #{cur}"), style: title_style())
-            text(
+        View(style: screen_style(0x1A1422)) {
+            Text(value: format!("Detail #{cur}"), style: title_style())
+            Text(
                 value: "Try the stack ops below. Push/Back are the baseline; \
                         Replace and Reset are what #265 / #264 fixed.",
                 style: subtitle_style(),
             )
 
             // Push (baseline): grows the stack — slides in.
-            view(
+            View(
                 style: button_style(),
                 on_tap: {
                     let nav = nav.clone();
                     move |_| { let _ = nav.navigate(&format!("/detail/{next}")); }
                 },
             ) {
-                text(value: format!("Push → Detail #{next}"), style: button_label_style())
+                Text(value: format!("Push → Detail #{next}"), style: button_label_style())
             }
 
             // Replace (#265): swaps the top in place. Must SLIDE the new
             // screen in like a push, not snap instantly.
-            view(
+            View(
                 style: button_style(),
                 on_tap: {
                     let nav = nav.clone();
                     move |_| { let _ = nav.replace(&format!("/detail/{next}")); }
                 },
             ) {
-                text(value: format!("Replace → Detail #{next}"), style: button_label_style())
+                Text(value: format!("Replace → Detail #{next}"), style: button_label_style())
             }
 
             // Reset to a NEW route (not in the back stack): global reset
             // collapses every stack to `[detail/5]`. Direction would be a
             // push once reset animates.
-            view(
+            View(
                 style: button_style(),
                 on_tap: {
                     let nav = nav.clone();
                     move |_| { let _ = nav.reset("/detail/5"); }
                 },
             ) {
-                text(value: "Reset → Detail #5", style: button_label_style())
+                Text(value: "Reset → Detail #5", style: button_label_style())
             }
 
             // Reset to the Home tab. "/" resolves to the home index screen
             // (the "" route inside the "(home)" group), even from another tab.
-            view(
+            View(
                 style: button_style(),
                 on_tap: {
                     let nav = nav.clone();
                     move |_| { let _ = nav.reset("/"); }
                 },
             ) {
-                text(value: "Reset → Home", style: button_label_style())
+                Text(value: "Reset → Home", style: button_label_style())
             }
 
-            view(
+            View(
                 style: button_style(),
                 on_tap: move |_| {
                     let _ = nav.back();
                 },
             ) {
-                text(value: "Back (or swipe from the left edge)", style: button_label_style())
+                Text(value: "Back (or swipe from the left edge)", style: button_label_style())
             }
         }
     }

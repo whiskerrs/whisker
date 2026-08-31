@@ -6,23 +6,15 @@
 //! particular `whisker-fmt`, which re-parses macro bodies in order to
 //! reformat them.
 //!
-//! The codegen side (the `to_tokens` lowering) lives in
-//! `whisker-macros`. The orphan rule forbids it from adding *inherent*
-//! methods to these types, so the lowering is expressed there as free
-//! functions over `&Root` / `&Node` / … (see
-//! `whisker-macros/src/render.rs`).
+//! The codegen side lives in `whisker-macros`. `render!` lowers the shared
+//! tree directly to public builder calls, `css!` uses the shared named-
+//! argument list, and `routes!` applies router-specific validation to the
+//! same parsed nodes.
 //!
 //! Spans are retained throughout the AST (every ident / expr carries
 //! its `proc_macro2::Span`) so the formatter can recover source slices
 //! and comment trivia.
 
-pub mod css;
-pub mod render;
-pub mod routes;
+pub mod compose;
 
-pub use css::{CssInput, CssKwarg};
-pub use render::{
-    ElementNode, Kwarg, Node, Root, UserComponentNode, is_builtin_tag, is_pascal_case,
-    snake_to_pascal,
-};
-pub use routes::{RoutesInput, RoutesNode};
+pub use compose::{ComposeArgument, ComposeArguments, ComposeChild, ComposeInput, ComposeNode};

@@ -13,9 +13,10 @@ use whisker::runtime::view::Element;
 
 #[component]
 pub fn horizontal_row(children: Children) -> Element {
+    let projected = children.clone();
     render! {
         // Host scrolling behavior stays at the standard ScrollView defaults.
-        scroll_view(
+        ScrollView(
             style: css!(width: percent(100), display: Display::Flex),
             axis: ScrollAxis::Horizontal,
         ) {
@@ -24,14 +25,14 @@ pub fn horizontal_row(children: Children) -> Element {
             // Card-to-card gap is the caller's concern (the browse
             // screen inserts manual spacer views) so this component
             // stays style-agnostic.
-            view(style: css!(
+            View(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::FlexStart,
                 padding_left: theme::GUTTER,
                 padding_right: theme::GUTTER,
             )) {
-                children()
+                { projected() }
             }
         }
     }

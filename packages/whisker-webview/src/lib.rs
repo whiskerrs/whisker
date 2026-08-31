@@ -5,11 +5,11 @@
 //! `android.webkit.WebView` on Android, with a reactive `url` / inline
 //! `html` content prop, a single JavaScript bridge channel, declarative
 //! origin-whitelist navigation control, and a typed imperative handle
-//! ([`WebViewRef`]) bound on mount via `ref:` for `reload` / `goBack` /
+//! ([`WebViewRef`]) bound on mount via `element_ref:` for `reload` / `goBack` /
 //! `goForward` / `stopLoading` / `postMessage` / `evaluateJavaScript`.
 //!
 //! The native element tag is `whisker-webview:WebView` (the crate name is
-//! auto-prepended by `#[whisker::module_component]`).
+//! auto-prepended by `#[whisker::module_element]`).
 //!
 //! ## Usage
 //!
@@ -23,7 +23,7 @@
 //! fn app() -> Element {
 //!     let url = RwSignal::new("https://example.com".to_string());
 //!     render! {
-//!         view(style: css!(flex_direction: FlexDirection::Column, flex_grow: 1.0)) {
+//!         View(style: css!(flex_direction: FlexDirection::Column, flex_grow: 1.0)) {
 //!             WebView(url: url, style: css!(flex_grow: 1.0))
 //!             // `url.set("https://other.com")` navigates the view.
 //!         }
@@ -65,10 +65,10 @@
 //! ```ignore
 //! let webview = WebViewRef::new();
 //! render! {
-//!     view(style: css!(flex_direction: FlexDirection::Column)) {
+//!     View(style: css!(flex_direction: FlexDirection::Column)) {
 //!         WebView(url: url, webview_ref: webview.clone(), style: css!(flex_grow: 1.0))
-//!         view(style: css!(flex_direction: FlexDirection::Row)) {
-//!             text(value: "Reload", on_tap: {
+//!         View(style: css!(flex_direction: FlexDirection::Row)) {
+//!             Text(value: "Reload", on_tap: {
 //!                 let w = webview.clone();
 //!                 move |_| w.reload()
 //!             })
@@ -340,7 +340,7 @@ impl WebViewRef {
     }
 
     /// The underlying `ElementRef`. Framework-internal — the [`web_view`]
-    /// component reads it to wire the element's `ref:`. App code holds
+    /// component reads it to wire the element's `element_ref:`. App code holds
     /// the `WebViewRef` and calls the methods below.
     #[doc(hidden)]
     pub fn r(&self) -> ElementRef {
@@ -399,7 +399,7 @@ impl Default for WebViewRef {
 // attr. Attr names are the kebab-cased field names (`user-agent`).
 
 #[doc(hidden)]
-#[whisker::module_component(
+#[whisker::module_element(
     name = "whisker-webview:WebView",
     measurement = None,
     commands = [
@@ -558,10 +558,10 @@ pub fn web_view(
         .on_error(on_error_cb);
 
     if let Some(r) = element_ref {
-        builder = builder.with_ref(r);
+        builder = builder.element_ref(r);
     }
 
-    NativeWebview(builder.build())
+    builder.build()
 }
 
 /// `true` / `false` wire string for a bool attr.

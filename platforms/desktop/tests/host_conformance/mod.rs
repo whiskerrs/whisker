@@ -449,7 +449,7 @@ fn background_image_protocol(
     image: &BackgroundImageFixture,
     geometry: &BackgroundLayerFixture,
 ) -> BackgroundLayer {
-    match image {
+    match Image {
         BackgroundImageFixture::LinearGradient(gradient) => {
             linear_gradient_protocol(gradient, geometry)
         }
@@ -1346,7 +1346,7 @@ impl Driver {
                         PaintBox::Content => content_rect,
                         _ => continue,
                     };
-                    let (gradient, resource) = match &layer.image {
+                    let (gradient, resource) = match &layer.Image {
                         PaintImage::Resource(resource) => {
                             let Some(raster) = self.raster_resources.get(resource) else {
                                 continue;
@@ -2101,7 +2101,7 @@ fn render_taffy_protocol_and_desktop_box_paint_compose() {
     let _root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(100))
                     .height(px(100))
                     .background_color(Color::rgb(0, 255, 255))

@@ -1,7 +1,7 @@
 //! Integration test for the `render!` macro.
 //!
 //! Covers the compose-syntax surface: static elements + attrs, event
-//! handlers, builder-shaped text content (`text(value: …)`), dynamic
+//! handlers, builder-shaped text content (`Text(value: …)`), dynamic
 //! attribute closures, `Show` / `For` control flow.
 //!
 //! Tests install a small recording renderer, expand `render!`,
@@ -180,12 +180,35 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
     result
 }
 
+struct PlainValue;
+
+struct PlainValueBuilder {
+    value: i32,
+}
+
+impl PlainValue {
+    fn builder() -> PlainValueBuilder {
+        PlainValueBuilder { value: 0 }
+    }
+}
+
+impl PlainValueBuilder {
+    fn value(mut self, value: i32) -> Self {
+        self.value = value;
+        self
+    }
+
+    fn build(self) -> i32 {
+        self.value
+    }
+}
+
 // ----- Static element trees -------------------------------------------------
 
 #[test]
 fn single_view_emits_create_and_returns_handle() {
     with_recorder(|log| {
-        let h = render! { view() };
+        let h = render! { View() };
         assert_eq!(h.id(), 0);
         assert_eq!(
             *log.borrow(),
@@ -198,16 +221,63 @@ fn single_view_emits_create_and_returns_handle() {
 }
 
 #[test]
+fn compose_is_the_generic_adapter_over_the_same_builder_chain() {
+    with_recorder(|log| {
+        let h = compose! { View(id: "root") };
+        assert_eq!(h.id(), 0);
+        assert_eq!(
+            *log.borrow(),
+            vec![
+                Op::Create {
+                    id: 0,
+                    tag: ElementTag::View,
+                },
+                Op::SetId {
+                    id: 0,
+                    value: "root".into(),
+                },
+            ]
+        );
+    });
+}
+
+#[test]
+fn compose_does_not_special_case_whisker_elements() {
+    let value = compose! { PlainValue(value: 42) };
+    assert_eq!(value, 42);
+}
+
+#[test]
+fn builtin_builders_are_a_complete_public_non_macro_api() {
+    with_recorder(|log| {
+        let root = View::builder()
+            .id("root")
+            .body(|body| {
+                body.push(Text::builder().value("Hello").build());
+            })
+            .build();
+        assert_eq!(root.id(), 0);
+        assert!(log.borrow().iter().any(|op| matches!(
+            op,
+            Op::Append {
+                parent: 0,
+                child: 1
+            }
+        )));
+    });
+}
+
+#[test]
 fn nested_view_with_text_child() {
     with_recorder(|log| {
         let _h = render! {
-            view {
-                text(value: "Hello")
+            View {
+                Text(value: "Hello")
             }
         };
         // Expected ops:
-        //  Create view (0)
-        //  Create text (1)
+        //  Create View (0)
+        //  Create Text (1)
         //  Create raw_text (2)  ← from text's `value` method
         //  Append raw_text → text
         //  SetAttr text="Hello" on raw_text (in the effect)
@@ -261,7 +331,7 @@ fn nested_view_with_text_child() {
 fn style_attribute_emits_structured_style() {
     with_recorder(|log| {
         let _ = render! {
-            view(style: css!(padding: px(16)))
+            View(style: css!(padding: px(16)))
         };
         let ops = log.borrow();
         assert_eq!(
@@ -282,7 +352,7 @@ fn style_attribute_emits_structured_style() {
 fn common_metadata_uses_structured_renderer_paths() {
     with_recorder(|log| {
         let _ = render! {
-            view(
+            View(
                 id: "banner",
                 dataset: Dataset::new().int("index", 3),
                 accessibility: Accessibility::new().label("Example"),
@@ -317,7 +387,7 @@ fn built_in_control_options_route_to_typed_setters() {
 
     with_recorder(|log| {
         let _ = render! {
-            scroll_view(
+            ScrollView(
                 axis: ScrollAxis::Horizontal,
                 scroll_enabled: false,
                 snap: ScrollSnap::center(),
@@ -334,7 +404,7 @@ fn built_in_control_options_route_to_typed_setters() {
 
     with_recorder(|log| {
         let _ = render! {
-            text(value: "hi", max_lines: 2_u32)
+            Text(value: "hi", max_lines: 2_u32)
         };
         let ops = log.borrow();
         assert!(ops.contains(&Op::SetTextMaxLines { id: 0, value: 2 }));
@@ -347,7 +417,7 @@ fn on_tap_emits_set_event_listener() {
         let fired = Rc::new(RefCell::new(false));
         let f = fired.clone();
         let _ = render! {
-            view(on_tap: move |_| *f.borrow_mut() = true)
+            View(on_tap: move |_| *f.borrow_mut() = true)
         };
         let ops = log.borrow();
         assert!(ops.iter().any(|op| matches!(
@@ -366,11 +436,11 @@ fn tap_propagation_variants_route_to_bind_types() {
     // with the matching propagation `BindType`.
     with_recorder(|log| {
         let _ = render! {
-            view {
-                view(on_tap: |_| {})
-                view(on_tap_catch: |_| {})
-                view(on_capture_tap: |_| {})
-                view(on_capture_tap_catch: |_| {})
+            View {
+                View(on_tap: |_| {})
+                View(on_tap_catch: |_| {})
+                View(on_capture_tap: |_| {})
+                View(on_capture_tap_catch: |_| {})
             }
         };
         let kinds: Vec<BindType> = log
@@ -400,7 +470,7 @@ fn component_specific_events_route_bind_only() {
     // Tag-specific events use the binding declared by their public builder.
     with_recorder(|log| {
         let _ = render! {
-            scroll_view(on_scroll: |_| {})
+            ScrollView(on_scroll: |_| {})
         };
         let names: Vec<(String, BindType)> = log
             .borrow()
@@ -423,10 +493,10 @@ fn component_specific_events_route_bind_only() {
 fn multiple_children_append_in_order() {
     with_recorder(|log| {
         let _ = render! {
-            view {
-                text(value: "A")
-                text(value: "B")
-                text(value: "C")
+            View {
+                Text(value: "A")
+                Text(value: "B")
+                Text(value: "C")
             }
         };
         let appends: Vec<_> = log
@@ -442,7 +512,7 @@ fn multiple_children_append_in_order() {
     });
 }
 
-// ----- Dynamic value interpolation via `text(value: …)` --------------------
+// ----- Dynamic value interpolation via `Text(value: …)` --------------------
 
 #[test]
 fn dynamic_value_renders_initial_via_effect() {
@@ -453,7 +523,7 @@ fn dynamic_value_renders_initial_via_effect() {
         // the `value` builder as `Signal::Dynamic`.
         let label = computed(move || count.get().to_string());
         let _h = render! {
-            text(value: label)
+            Text(value: label)
         };
         let set_text: Vec<_> = log
             .borrow()
@@ -473,7 +543,7 @@ fn dynamic_value_updates_on_signal_write() {
         let (count, set_count) = signal(0_i32).split();
         let label = computed(move || count.get().to_string());
         let _h = render! {
-            text(value: label)
+            Text(value: label)
         };
         set_count.set(5);
         flush();
@@ -498,7 +568,7 @@ fn dynamic_style_re_runs_on_dep_change() {
         let (color, set_color) = signal(NamedColor::Red).split();
         let css = computed(move || Css::new().color(Color::Named(color.get())));
         let _h = render! {
-            view(style: css)
+            View(style: css)
         };
         set_color.set(NamedColor::Blue);
         flush();
@@ -520,7 +590,7 @@ fn dynamic_element_id_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
         let (id, set_id) = signal("first".to_string()).split();
         let _h = render! {
-            view(id: id)
+            View(id: id)
         };
         set_id.set("second".into());
         flush();
@@ -541,7 +611,7 @@ fn dynamic_element_id_re_runs_on_dep_change() {
 fn static_value_only_sets_text_once() {
     with_recorder_and_owner(|log| {
         let _h = render! {
-            text(value: "static")
+            Text(value: "static")
         };
         let set_text: Vec<_> = log
             .borrow()
@@ -561,7 +631,7 @@ fn text_value_combines_static_and_dynamic_content() {
         let (count, _set) = signal(7_i32).split();
         let count_label = computed(move || format!("count={}", count.get()));
         let _h = render! {
-            text(value: count_label)
+            Text(value: count_label)
         };
         let set_text: Vec<_> = log
             .borrow()
@@ -583,9 +653,9 @@ fn signal_only_updates_elements_that_read_it() {
         let a_label = computed(move || a.get().to_string());
         let b_label = computed(move || b.get().to_string());
         let _h = render! {
-            view {
-                text(value: a_label)
-                text(value: b_label)
+            View {
+                Text(value: a_label)
+                Text(value: b_label)
             }
         };
         log.borrow_mut().clear(); // ignore initial ops
@@ -610,9 +680,9 @@ fn show_renders_children_when_true() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(true).split();
         let _h = render! {
-            view {
+            View {
                 Show(when: move || cond.get()) {
-                    text(value: "main")
+                    Text(value: "main")
                 }
             }
         };
@@ -633,12 +703,12 @@ fn show_renders_fallback_when_false() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(false).split();
         let _h = render! {
-            view {
+            View {
                 Show(
                     when: move || cond.get(),
-                    fallback: || render! { text(value: "fallback") },
+                    fallback: || render! { Text(value: "fallback") },
                 ) {
-                    text(value: "main")
+                    Text(value: "main")
                 }
             }
         };
@@ -659,12 +729,12 @@ fn show_swaps_on_condition_flip() {
     with_recorder_and_owner(|log| {
         let (cond, set_cond) = signal(true).split();
         let _h = render! {
-            view {
+            View {
                 Show(
                     when: move || cond.get(),
-                    fallback: || render! { text(value: "fb") },
+                    fallback: || render! { Text(value: "fb") },
                 ) {
-                    text(value: "main")
+                    Text(value: "main")
                 }
             }
         };
@@ -689,9 +759,9 @@ fn show_without_fallback_renders_nothing_when_false() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(false).split();
         let _h = render! {
-            view {
+            View {
                 Show(when: move || cond.get()) {
-                    text(value: "only")
+                    Text(value: "only")
                 }
             }
         };
@@ -725,11 +795,11 @@ fn for_renders_initial_items() {
         ])
         .split();
         let _h = render! {
-            view {
+            View {
                 ForEach(
                     each: move || items.get(),
                     key: |i: &Item| i.id,
-                    children: move |i: Item| render! { text(value: i.name) },
+                    children: move |i: Item| render! { Text(value: i.name) },
                 )
             }
         };
@@ -754,11 +824,11 @@ fn for_adds_new_items_on_update() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2]).split();
         let _h = render! {
-            view {
+            View {
                 ForEach(
                     each: move || items.get(),
                     key: |x: &u32| *x,
-                    children: move |x: u32| render! { text(value: x.to_string()) },
+                    children: move |x: u32| render! { Text(value: x.to_string()) },
                 )
             }
         };
@@ -795,11 +865,11 @@ fn for_reorders_existing_items_visually() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]).split();
         let _h = render! {
-            view {
+            View {
                 ForEach(
                     each: move || items.get(),
                     key: |x: &u32| *x,
-                    children: move |x: u32| render! { text(value: x.to_string()) },
+                    children: move |x: u32| render! { Text(value: x.to_string()) },
                 )
             }
         };
@@ -825,11 +895,11 @@ fn for_removes_items_on_update() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]).split();
         let _h = render! {
-            view {
+            View {
                 ForEach(
                     each: move || items.get(),
                     key: |x: &u32| *x,
-                    children: move |x: u32| render! { text(value: x.to_string()) },
+                    children: move |x: u32| render! { Text(value: x.to_string()) },
                 )
             }
         };
@@ -854,9 +924,9 @@ fn for_removes_items_on_update() {
 fn view_scroll_view_tags_supported() {
     with_recorder(|log| {
         let _ = render! {
-            view {
-                scroll_view {
-                    view()
+            View {
+                ScrollView {
+                    View()
                 }
             }
         };
