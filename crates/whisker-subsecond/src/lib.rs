@@ -858,8 +858,8 @@ pub fn aslr_reference() -> usize {
 /// - https://developer.android.com/ndk/reference/structandroid/dlextinfo
 #[cfg(target_os = "android")]
 unsafe fn android_memmap_dlopen(file: &std::path::Path) -> Result<libloading::Library, PatchError> {
-    use std::ffi::{CStr, CString, c_void};
-    use std::os::fd::{AsRawFd, BorrowedFd};
+    use std::ffi::c_void;
+    use std::os::fd::AsRawFd;
     use std::ptr;
 
     #[repr(C)]
@@ -881,24 +881,25 @@ unsafe fn android_memmap_dlopen(file: &std::path::Path) -> Result<libloading::Li
         ) -> *const c_void;
     }
 
-    use memmap2::MmapAsRawDesc;
-    use std::os::unix::prelude::{FromRawFd, IntoRawFd};
-
     let contents = std::fs::read(file)
         .map_err(|e| PatchError::AndroidMemfd(format!("Failed to read file: {}", e)))?;
-    let mut mfd = memfd::MemfdOptions::default()
+    let mfd = memfd::MemfdOptions::default()
         .create("subsecond-patch")
         .map_err(|e| PatchError::AndroidMemfd(format!("Failed to create memfd: {}", e)))?;
     mfd.as_file()
         .set_len(contents.len() as u64)
         .map_err(|e| PatchError::AndroidMemfd(format!("Failed to set memfd length: {}", e)))?;
 
-    let raw_fd = mfd.into_raw_fd();
+    let raw_fd = mfd.as_file().as_raw_fd();
 
-    let mut map = memmap2::MmapMut::map_mut(raw_fd)
+    // SAFETY: `mfd` owns `raw_fd` and remains alive through both this mapping and
+    // `android_dlopen_ext` below. The mapping cannot outlive the descriptor here.
+    let mut map = unsafe { memmap2::MmapMut::map_mut(mfd.as_file()) }
         .map_err(|e| PatchError::AndroidMemfd(format!("Failed to map memfd: {}", e)))?;
     map.copy_from_slice(&contents);
-    let map = map
+    // Keep the executable mapping alive until the dynamic linker has consumed
+    // the descriptor. Both it and the owning memfd are released on return.
+    let _executable_map = map
         .make_exec()
         .map_err(|e| PatchError::AndroidMemfd(format!("Failed to make memfd executable: {}", e)))?;
 
@@ -918,7 +919,9 @@ unsafe fn android_memmap_dlopen(file: &std::path::Path) -> Result<libloading::Li
 
     let handle = libloading::os::unix::with_dlerror(
         || {
-            let ptr = android_dlopen_ext(filename.as_ptr() as _, flags, &info);
+            // SAFETY: `filename` is NUL-terminated, `info` points to a valid
+            // `ExtInfo`, and its `library_fd` remains open for this call.
+            let ptr = unsafe { android_dlopen_ext(filename.as_ptr() as _, flags, &info) };
             if ptr.is_null() {
                 return None;
             } else {
