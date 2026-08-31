@@ -8,6 +8,12 @@
 use whisker::Signal;
 use whisker::event::CustomEvent;
 
+/// Fully-qualified service name used by [`whisker::PlatformModule`].
+///
+/// This is distinct from the `whisker.toggle/Toggle` element name: a module
+/// may expose multiple elements alongside functions and events.
+pub const MODULE_NAME: &str = concat!(env!("CARGO_PKG_NAME"), ":WhiskerToggle");
+
 /// Rust-side authoring component for the external Toggle element.
 #[whisker::module_component(
     name = "whisker.toggle/Toggle",
@@ -37,6 +43,7 @@ mod tests {
 
     #[test]
     fn schema_is_versionless_and_covers_the_full_toggle_contract() {
+        assert_eq!(MODULE_NAME, "whisker-toggle:WhiskerToggle");
         let provider = toggle_schema::element_provider();
         assert_eq!(provider.schema, toggle_schema::schema());
         assert_eq!(provider.authoring, whisker::ElementAuthoringBinding::Named);
