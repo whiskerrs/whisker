@@ -52,6 +52,8 @@ members = [
     "packages/whisker-icons",
     "packages/whisker-icons/example",
     "packages/whisker-image",
+    "packages/whisker-image/desktop",
+    "packages/whisker-image/web",
     "packages/whisker-image/example",
     "packages/whisker-input",
     "packages/whisker-input/example",

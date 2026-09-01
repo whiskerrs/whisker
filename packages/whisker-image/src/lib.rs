@@ -9,6 +9,9 @@
 //!   for URL fetching, in-memory `NSCache`, and on-disk cache.
 //! - **Android**: `ImageView` + [Coil](https://coil-kt.github.io/coil/)
 //!   for URL fetching, `LruCache`, and disk cache.
+//! - **Web**: a native `<img>` element and the browser HTTP cache.
+//! - **Desktop**: background URL/file decoding into a GPU-uploaded raster,
+//!   backed by a shared bounded decoded-image cache.
 //!
 //! URL loading and caching live in this module rather than the renderer
 //! kernel, keeping the built-in Host surface small and making image policy
@@ -40,7 +43,9 @@
 //!   defaults to [`ImageMode::AspectFill`].
 //! - `headers` — extra request headers for remote sources, as a JSON
 //!   object. Hot-link protection is what this is for: those hosts 403
-//!   without the `Referer` their own pages send.
+//!   without the `Referer` their own pages send. Android, iOS, and Desktop
+//!   apply these headers; the initial Web Host supports ordinary browser image
+//!   requests but reports an error for non-empty custom headers.
 //! - `style` — structured Whisker CSS declarations. Width / height must be
 //!   set on the element (or via flex sizing) — Kingfisher / Coil
 //!   target-size the fetched bitmap against the rendered size, so an
