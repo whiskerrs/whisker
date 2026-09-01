@@ -449,7 +449,7 @@ fn background_image_protocol(
     image: &BackgroundImageFixture,
     geometry: &BackgroundLayerFixture,
 ) -> BackgroundLayer {
-    match Image {
+    match image {
         BackgroundImageFixture::LinearGradient(gradient) => {
             linear_gradient_protocol(gradient, geometry)
         }
@@ -1346,7 +1346,7 @@ impl Driver {
                         PaintBox::Content => content_rect,
                         _ => continue,
                     };
-                    let (gradient, resource) = match &layer.Image {
+                    let (gradient, resource) = match &layer.image {
                         PaintImage::Resource(resource) => {
                             let Some(raster) = self.raster_resources.get(resource) else {
                                 continue;

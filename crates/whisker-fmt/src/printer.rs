@@ -872,7 +872,7 @@ impl Printer<'_> {
 /// present, else the name's.
 fn css_field_end(map: &SourceMap, kw: &ComposeArgument) -> usize {
     (!kw.partial)
-        .then(|| &kw.value)
+        .then_some(&kw.value)
         .and_then(|e| map.byte_range(span_of(e)))
         .map(|(_, e)| e)
         .or_else(|| map.byte_range(kw.name.span()).map(|(_, e)| e))

@@ -1132,7 +1132,7 @@ impl Driver {
             );
             let mut runtime = RuntimeInstance::new(surface, RuntimeWakeHandle::new(|| {}));
             runtime.mount(|| render! { View() }).unwrap();
-            assert!(runtime.surface().Root().is_some());
+            assert!(runtime.surface().root().is_some());
             self.input_runtime = Some(runtime);
         }
         let root_origin = whisker_protocol::InputPoint { x: 13.0, y: 7.0 };
@@ -2718,7 +2718,7 @@ fn linear_gradient_layer(gradient: &LinearGradientFixture) -> BackgroundLayer {
 }
 
 fn background_paint_layer(layer: &BackgroundPaintLayerFixture) -> BackgroundLayer {
-    let image_layer = match &layer.Image {
+    let image_layer = match &layer.image {
         BackgroundImageFixture::Resource(id) => BackgroundLayer {
             image: PaintImage::Resource(ResourceId::new(*id).unwrap()),
             position: PaintPosition::default(),
@@ -3652,7 +3652,7 @@ fn assert_background_layers_are_projected(
 ) {
     let images = layers
         .iter()
-        .map(|layer| match &layer.Image {
+        .map(|layer| match &layer.image {
             BackgroundImageFixture::Resource(id) => {
                 format!("url(\"{}\")", resource_urls.get(id).unwrap())
             }
@@ -3842,7 +3842,7 @@ fn fixture_node_paints_at(
     }
     if !node.background_layers.is_empty() {
         return node.background_layers.iter().any(|layer| {
-            let intrinsic_size = match layer.Image {
+            let intrinsic_size = match layer.image {
                 BackgroundImageFixture::Resource(id) => resource_dimensions.get(&id).copied(),
                 _ => None,
             };
