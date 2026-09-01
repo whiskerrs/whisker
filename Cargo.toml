@@ -49,6 +49,7 @@ members = [
     "examples/carousel",
     "tests/mobile-link-test",
     "packages/whisker-haptics",
+    "packages/whisker-haptics/web",
     "packages/whisker-icons",
     "packages/whisker-icons/example",
     "packages/whisker-image",

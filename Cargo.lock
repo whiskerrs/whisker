@@ -6992,6 +6992,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-haptics-web"
+version = "0.12.0"
+dependencies = [
+ "js-sys",
+ "web-sys",
+ "whisker-web",
+]
+
+[[package]]
 name = "whisker-host-conformance"
 version = "0.0.0"
 dependencies = [

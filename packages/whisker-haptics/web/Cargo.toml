@@ -1,0 +1,13 @@
+[package]
+name = "whisker-haptics-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Web Host implementation for whisker-haptics."
+
+[dependencies]
+js-sys = "0.3"
+whisker-web = { workspace = true }
+web-sys = { version = "0.3", features = ["Navigator", "Window"] }
