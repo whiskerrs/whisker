@@ -60,6 +60,8 @@ members = [
     "packages/whisker-toggle/desktop",
     "packages/whisker-toggle/web",
     "packages/whisker-local-store",
+    "packages/whisker-local-store/desktop",
+    "packages/whisker-local-store/web",
     "packages/whisker-paths",
     "packages/whisker-paths/example",
     "packages/whisker-router",

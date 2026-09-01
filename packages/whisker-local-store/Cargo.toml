@@ -28,9 +28,11 @@ include = [
 [lib]
 crate-type = ["rlib"]
 
-# Module-system opt-in marker. See `whisker-video/Cargo.toml` for the
-# rationale; the bare table identifies this crate as a Whisker module.
-[package.metadata.whisker]
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { manifest = "Package.swift" }
+web = { manifest = "web/Cargo.toml" }
+desktop = { manifest = "desktop/Cargo.toml" }
 
 [dependencies]
 # The umbrella `whisker` crate — same dep app crates use. The proc
