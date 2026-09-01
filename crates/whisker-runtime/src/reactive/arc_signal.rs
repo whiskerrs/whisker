@@ -1,6 +1,6 @@
 //! Refcount-backed signal primitives — the `Arc*` family.
 //!
-//! Unlike the arena-backed [`signal`](super::signal) primitives,
+//! Unlike the arena-backed [`signal()`](super::signal()) primitives,
 //! whose lifetime is bounded by the [`Owner`](super::runtime::Owner)
 //! that allocated them, an Arc signal owns its value through an
 //! [`Rc`] and survives for as long as any handle on it remains.

@@ -417,7 +417,7 @@ impl TuiHandle {
     /// color and clears any in-progress step display. Does NOT push
     /// a scrollback entry — `whisker_build::ui::section` already emits
     /// labeled phase boundaries through the progress reporter, so a
-    /// duplicate "▶ <label>" line would just be noise. Only a failed
+    /// duplicate `▶ label` line would just be noise. Only a failed
     /// build emits a `HistoryItem::PhaseDone` summary, from [`apply_event`].
     pub fn set_phase(&self, phase: AppPhase) {
         self.with(|s| {

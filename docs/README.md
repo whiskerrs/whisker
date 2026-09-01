@@ -37,6 +37,9 @@ Whisker itself**.
   and the monorepo-dev caveat.
 - [`comment-style.md`](comment-style.md) — the comment/doc convention.
   Cite it in code review.
+- [`documentation.md`](documentation.md) — which facts belong in internal docs,
+  the website, Rustdoc, or RFCs, plus the validation commands and update
+  checklist.
 - [`rfcs/`](rfcs/README.md) — proposed and accepted architectural changes.
   An accepted RFC records a decision; it does not describe shipped behavior
   until its status is `Implemented` and the current-design docs are updated.
@@ -51,3 +54,5 @@ Whisker itself**.
   When you change a system, update its doc in the same PR (or delete the
   doc if it no longer applies). Git history keeps the past.
 - User-facing material belongs on the website, not here.
+- Public Rust API contracts belong in Rustdoc. Internal docs may explain how
+  those contracts compose, but should link to rather than duplicate signatures.

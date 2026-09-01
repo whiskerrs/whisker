@@ -10,7 +10,7 @@
 //! ```ignore
 //! Component(prop: value)              // static — set once
 //! Component(prop: signal)             // dynamic — tracked, reactively updated
-//! Component(prop: computed(…))        // dynamic — memo-style derivation
+//! Component(prop: computed(move || value())) // dynamic — memo-style derivation
 //! ```
 //!
 //! `Signal<T>` encodes this in two variants:
@@ -67,9 +67,9 @@
 //! internalise, and the explicit `computed(move || …)` both names the
 //! derivation and memoises it.
 //!
-//! [`computed`]: super::computed
-//! [`effect`]: super::effect
-//! [`Memo<T>`]: super::computed
+//! [`computed`]: super::computed()
+//! [`effect`]: super::effect()
+//! [`Memo<T>`]: super::computed()
 
 use super::signal::{ReadSignal, RwSignal};
 use super::stored::StoredValue;
@@ -106,13 +106,13 @@ pub enum Signal<T: 'static> {
     /// the `StoredValue` does not tick the dependency graph.
     Stored(StoredValue<T>),
     /// Reactive handle. The builder wraps its read in
-    /// [`super::effect`] — each read inside that effect registers
+    /// [`super::effect()`] — each read inside that effect registers
     /// the underlying signal as a dependency, so subsequent
     /// `.set` / `.update` calls trigger an attribute re-write.
     ///
     /// Constructed via the [`From`] impls below — users typically
     /// pass `ReadSignal<T>`, `RwSignal<T>`, or the
-    /// `ReadSignal<T>` returned by [`super::computed`].
+    /// `ReadSignal<T>` returned by [`super::computed()`].
     Dynamic(ReadSignal<T>),
 }
 
@@ -146,7 +146,7 @@ impl<T: 'static + Clone> Signal<T> {
     ///     //                                                  with the
     ///     //                                                  enclosing
     ///     //                                                  computed.
-    ///     render! { View(style: style) { … } }
+    ///     render! { View(style: style) { /* children */ } }
     /// }
     /// ```
     pub fn get(&self) -> T {

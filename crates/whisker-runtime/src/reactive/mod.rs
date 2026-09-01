@@ -5,15 +5,15 @@
 //! Quick map:
 //!
 //! - [`runtime`] — internal data structures: [`ReactiveRuntime`],
-//!   [`runtime::Scope`], [`ReactiveNode`], [`NodeData`].
+//!   [`runtime::Scope`], `ReactiveNode`, and `NodeData`.
 //! - [`owner`] — public owner API: the [`Owner`] handle and its
 //!   methods ([`Owner::new`], [`Owner::with`], [`Owner::dispose`],
 //!   [`Owner::pause`], [`Owner::resume`], [`Owner::is_paused`])
 //!   plus the free function [`on_cleanup`].
-//! - [`signal`] — [`signal`] / [`RwSignal`] / [`ReadSignal`] /
+//! - [`mod@signal`] — [`signal()`] / [`RwSignal`] / [`ReadSignal`] /
 //!   [`WriteSignal`].
-//! - [`effect`] — [`effect`] + dependency tracking.
-//! - [`computed`] — [`computed`] (returns [`ReadSignal<T>`]).
+//! - [`mod@effect`] — [`effect()`] + dependency tracking.
+//! - [`mod@computed`] — [`computed()`] (returns [`ReadSignal<T>`]).
 //! - [`scheduler`] — batching / flush.
 //! - [`prop`] — [`Signal<T>`](prop::Signal), the unified prop-value
 //!   type.

@@ -29,7 +29,7 @@ use crate::render::registry::RouteSet;
 pub struct RouterRoot(pub Element);
 
 /// The container path an [`Outlet`] renders. Published by [`Router`] (the
-/// root) and overridden by a [`Layout`] / [`Tabs`] so a nested `Outlet`
+/// root) and overridden by a [`Layout`] so a nested `Outlet`
 /// renders that layout's container.
 #[derive(Clone)]
 pub struct OutletAnchor(pub NodePath);
@@ -41,7 +41,7 @@ pub struct OutletAnchor(pub NodePath);
 ///
 /// `Router` deliberately **does not draw the route tree itself**. Its job
 /// is exactly: publish the context (handle, root [`OutletAnchor`],
-/// [`RouterRoot`]), create the positioned root `view`, and render its
+/// [`RouterRoot`]), create the positioned root `View`, and render its
 /// `children` into it. The tree is drawn **once** by an `Outlet`-family
 /// component you place as a child — a bare [`Outlet`] (anchored at root),
 /// a [`Stack`] / [`Switch`] at an explicit path, or a [`Tabs`] /

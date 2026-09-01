@@ -10,7 +10,7 @@
 //! ## Type erasure
 //!
 //! [`Plugin`] has an associated `Config` type. Storing different
-//! plugins in one collection means erasing it. [`DynPlugin`] is the
+//! plugins in one collection means erasing it. `DynPlugin` is the
 //! internal erased trait: `name` / `after` / `before` forward
 //! verbatim, while `run` consumes a JSON-encoded config (or `None`
 //! for "use the Config's `Default`"), deserializes it into the
@@ -419,7 +419,7 @@ fn detect_conflicts(journal: &MutationJournal) -> Result<()> {
 ///
 /// From [`Engine`]'s perspective a subprocess plugin behaves exactly
 /// like an in-process one: same `name` / `after` / `before` surface,
-/// same dispatch into [`DynPlugin::run`]. `run` spawns a child
+/// same dispatch into the internal `DynPlugin::run`. `run` spawns a child
 /// process, writes a [`PluginRequest`] to its stdin, parses a
 /// [`PluginResponse`] back, and swaps the response's context into the
 /// engine's running context.

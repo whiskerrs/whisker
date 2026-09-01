@@ -12,10 +12,10 @@
 //! ## Why a single-crate workspace?
 //!
 //! `whisker run` walks up from the crate's `Cargo.toml` looking for a
-//! `[workspace]` table — the workspace root anchors the shim cache
+//! a `[workspace]` table — the workspace root anchors the shim cache
 //! dirs, the gen tree and cargo's `target/`. A standalone app crate
 //! must therefore declare both `[package]` and `[workspace]`, or
-//! `whisker run` errors with "no [workspace] Cargo.toml at or above …".
+//! `whisker run` reports that it cannot find a workspace manifest.
 //!
 //! ## Naming
 //!

@@ -1,8 +1,8 @@
 //! # whisker-router
 //!
 //! Declarative routing for Whisker, built on **two graphs**: a static
-//! [`RouteTree`](core::RouteTree) describing the app's screen structure,
-//! and a dynamic [`RouteState`](core::RouteState) the runtime mutates as
+//! [`RouteTree`] describing the app's screen structure,
+//! and a dynamic [`RouteState`] the runtime mutates as
 //! the user navigates. The shown screen, where a `navigate` lands, and
 //! where a `back` returns are all *derived* from these two — there is no
 //! hand-maintained route table or stored "current screen" pointer. See
@@ -11,20 +11,17 @@
 //! ## The two layers
 //!
 //! - [`core`] — the **pure-logic** model:
-//!   [`RouteTree`](core::RouteTree) / [`CompiledTree`](core::CompiledTree),
-//!   [`RouteState`](core::RouteState), and the [`Navigator`](core::Navigator)
+//!   [`RouteTree`] / [`CompiledTree`], [`RouteState`], and the [`Navigator`]
 //!   with the five operations (`navigate` / `select` / `back` / `replace` /
 //!   `pop_to` / `reset`). No signals, no `Element` — unit-testable on its own.
 //! - [`render`] — the **reactive rendering** of that core in the Whisker
-//!   runtime. A signal-backed [`RouterHandle`](render::RouterHandle)
-//!   plus [`use_navigator`](render::use_navigator), the
-//!   [`Outlet`](render::Outlet), [`Stack`](render::Stack) and
-//!   [`Switch`](render::Switch) renderers, the [`Tabs`](render::Tabs) chrome,
+//!   runtime. A signal-backed [`RouterHandle`] plus [`use_navigator`], the
+//!   [`Outlet`], [`Stack`] and [`Switch`] renderers, layout chrome,
 //!   float-`Tween` transitions (via `whisker-animation`),
-//!   and the iOS [`SwipeBack`](render::SwipeBack) gesture.
+//!   and the iOS [`SwipeBack`] gesture.
 //!
 //! The route id → component mapping lives in a
-//! [`RouteRegistry`](render::RouteRegistry), which the `routes!` macro
+//! [`RouteRegistry`], which the `routes!` macro
 //! generates; it can also be built by hand.
 //!
 //! ## Minimal usage

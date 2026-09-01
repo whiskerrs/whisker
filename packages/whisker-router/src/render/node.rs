@@ -17,7 +17,7 @@
 //!   finishes.
 //!
 //! Each container reads only **its own slice** (via
-//! [`RouterHandle::slice_at`](crate::render::RouterHandle::slice_at)), so
+//! `RouterHandle::slice_at`), so
 //! an op that doesn't touch a given container produces an unchanged slice
 //! and that container's effect does not re-run — the fine-grained
 //! property.

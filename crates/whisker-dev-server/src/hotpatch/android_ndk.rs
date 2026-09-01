@@ -53,7 +53,7 @@ pub fn android_home() -> Result<PathBuf> {
 }
 
 /// Find the NDK root. `ANDROID_NDK_HOME` wins; otherwise picks the
-/// first installed entry from [`PREFERRED_NDKS`] under
+/// first installed entry from the internal preferred-version list under
 /// `<ANDROID_HOME>/ndk/`.
 pub fn ndk_home() -> Result<PathBuf> {
     if let Some(p) = std::env::var_os("ANDROID_NDK_HOME").map(PathBuf::from) {

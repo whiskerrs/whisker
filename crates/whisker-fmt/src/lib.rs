@@ -8,7 +8,7 @@
 //!
 //! 1. Shell out to the real **rustfmt binary** (`--emit stdout`),
 //!    letting it read the project's `rustfmt.toml` itself. This is the
-//!    base Rust formatting. ([`run_rustfmt`])
+//!    base Rust formatting. (the private `run_rustfmt` helper)
 //! 2. Parse that output with `syn` + `proc-macro2` (`span-locations`),
 //!    walk for composition macro invocations, re-parse each body with
 //!    [`whisker_macro_syntax`], pretty-print it, and splice the result
@@ -29,8 +29,8 @@
 //! `syn` drops comments and `proc-macro2` exposes them only as
 //! whitespace between tokens, so reprinting a composition macro body
 //! from the parsed AST would lose them. They are recovered from the
-//! body source text ([`comments`]) and reattached while pretty-printing
-//! ([`printer`]): own-line comments go on their own line at the block's
+//! body source text (the private `comments` module) and reattached while
+//! pretty-printing (the private `printer` module): own-line comments go on their own line at the block's
 //! indent, trailing comments are appended to the end of the preceding
 //! line. Comments INSIDE an embedded expr value are excluded — they
 //! ride along with the verbatim / rustfmt-formatted expr source.
@@ -38,7 +38,7 @@
 //! A **fail-safe** guards the result: if any recovered comment would be
 //! dropped, or the output is not idempotent (`f(f(x)) != f(x)`), the
 //! body is left **untouched** — so a comment can never be silently
-//! lost. See [`macro_body_edit`].
+//! lost. See the private `macro_body_edit` helper.
 
 mod comments;
 mod expr_fmt;
@@ -303,7 +303,7 @@ fn edition_from_cargo_value(value: &toml::Value) -> Option<String> {
 /// 1. The nearest `rustfmt.toml`'s `edition` key, if present (wins).
 /// 2. else the nearest `Cargo.toml`'s edition (`[package]` or
 ///    `[workspace.package]`), searching upward from `dir`.
-/// 3. else [`DEFAULT_EDITION`].
+/// 3. else the crate's default edition.
 ///
 /// The non-edition layout keys (`max_width`, `tab_spaces`, `hard_tabs`)
 /// come from the same `rustfmt.toml`. The returned `edition` is ALWAYS
@@ -335,9 +335,8 @@ pub fn resolve_options(dir: &Path) -> FmtOptions {
 /// ## Comments
 ///
 /// Comments inside a composition macro body are preserved: they're
-/// recovered from the body source ([`comments::collect_grammar_comments`])
-/// and reattached during pretty-printing. A fail-safe in
-/// [`macro_body_edit`] falls back to leaving the body untouched if any
+/// recovered from the body source and reattached during pretty-printing. A
+/// fail-safe in the private `macro_body_edit` helper falls back to leaving the body untouched if any
 /// comment would be dropped or the result is not idempotent, so comments
 /// are never lost.
 pub fn reformat_macros(rust_src: &str, opts: &FmtOptions) -> Result<String> {

@@ -21,7 +21,7 @@
 //! #[component]
 //! fn tab_button(on_tap: Callback<()>) -> Element {
 //!     render! {
-//!         View(on_tap: move |_| on_tap.run(())) { … }
+//!         View(on_tap: move |_| on_tap.run(())) { /* children */ }
 //!         //           ^^^^^^^ moved into the closure directly — no `.clone()`
 //!     }
 //! }

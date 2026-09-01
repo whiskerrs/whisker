@@ -392,10 +392,10 @@ impl Text {
 
 /// `<scroll-view>` — scrollable container.
 ///
-/// Use `scroll_view` for content the user should be able to pan
+/// Use `ScrollView` for content the user should be able to pan
 /// past the viewport. For long, *virtualised* lists where only
 /// the visible items should hold platform views, reach for
-/// [`list`] instead — `scroll_view` keeps every child mounted.
+/// [`List`] instead — `ScrollView` keeps every child mounted.
 /// Direction defaults to `Vertical`; flip with
 /// [`axis`](Self::axis).
 ///

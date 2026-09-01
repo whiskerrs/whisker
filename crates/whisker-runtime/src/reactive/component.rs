@@ -9,9 +9,8 @@
 //! 3. Returns the resulting view, leaving the owner alive (the parent
 //!    keeps the handle; disposing the parent will cascade).
 //!
-//! The macro also passes its own fn pointer to
-//! [`register_component`] so the hot-reload path can map
-//! subsecond-patched fn pointers back to live owners.
+//! The macro also passes its own fn pointer into the mount registry so the
+//! hot-reload path can map subsecond-patched fn pointers back to live owners.
 //!
 //! Lifecycle hooks:
 //!
@@ -249,7 +248,7 @@ pub fn __reset_pending_mount_for_tests() {
 /// To make remount work without a stable wrapper handle in the
 /// parent's child list, the function stashes a pending-mount entry
 /// in a thread-local just before returning. The next
-/// [`view::append_child`] call that sees this body_root being
+/// next `view::append_child` call that sees this body root being
 /// attached finalises the MountSite (recording parent + previous
 /// sibling). The [`on_component_root_attached`] callback handles
 /// that side of the handshake.
@@ -261,7 +260,7 @@ pub fn __reset_pending_mount_for_tests() {
 /// (using the recorded anchor).
 ///
 /// `props_hash_fn` reads the component's props-layout hash through
-/// subsecond dispatch (see [`MountSite::props_hash_fn`]); the value
+/// subsecond dispatch (through the internal `MountSite::props_hash_fn`); the value
 /// it returns *now* is recorded as the layout this site's `body`
 /// closure was built against. Non-hot-reload callers (tests) can
 /// pass `Box::new(|| 0)`.
@@ -572,8 +571,8 @@ pub struct RemountStats {
     /// Mount sites disposed and re-mounted in place.
     pub remounted: usize,
     /// Mount sites *refused* because their props layout changed
-    /// between the stored body closure and the patched code (see
-    /// [`MountSite::props_hash`]). Non-zero means the on-screen
+    /// between the stored body closure and the patched code (see the internal
+    /// `MountSite::props_hash`). Non-zero means the on-screen
     /// subtree for those sites is stale and only a full remount can
     /// safely rebuild it.
     pub layout_changed: usize,

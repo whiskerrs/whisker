@@ -7,7 +7,7 @@
 //!
 //! The first run is synchronous (no batching) so the caller can rely
 //! on the effect having executed by the time `effect` returns. Later
-//! runs are scheduled through the [scheduler](super::scheduler) and
+//! runs are scheduled through the [scheduler] and
 //! drained at flush time.
 
 use std::cell::RefCell;

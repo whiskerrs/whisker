@@ -1,6 +1,6 @@
 //! Async-data primitive — runs an `async` fetcher on Whisker's
 //! single-threaded task pool ([`crate::tasks`]) and exposes the
-//! loading / ready / error state through a [`ReadSignal`]-shaped
+//! loading / ready / error state through a `ReadSignal`-shaped
 //! handle.
 //!
 //! The fetcher runs on the Host UI thread under
@@ -134,7 +134,7 @@ impl<T: Clone + 'static> Resource<T> {
 /// resolved [`Result`] into the returned [`Resource`]'s signal — then
 /// **re-runs the fetcher whenever any signal it read changes**.
 ///
-/// Reactivity: the fetcher is wrapped in a reactive [`effect`] and the
+/// Reactivity: the fetcher is wrapped in a reactive [`super::effect()`] and the
 /// spawned future re-installs that effect node as the current observer
 /// on every `poll`. As a result, signals read **anywhere** in the
 /// fetcher are tracked as dependencies of the resource — both in the

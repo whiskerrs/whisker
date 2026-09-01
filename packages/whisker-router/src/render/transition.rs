@@ -3,7 +3,7 @@
 //! A transition here uses Whisker's continuous animation engine rather than
 //! a declarative keyframe (see `docs/animation-design.md`). It is a pair of
 //! pure `progress → Pose` functions driven
-//! by an [`AnimationController`]'s `0..1` value, composed into the screen
+//! by an `AnimationController`'s `0..1` value, composed into the screen
 //! wrapper's typed `transform` / `opacity` by a `computed`.
 //!
 //! ## Progress convention
@@ -412,7 +412,7 @@ fn translate_scale(x_percent: f32, scale: f32) -> Transform {
 ///
 /// The controller value spans **two phases** that share one timeline (the
 /// gesture scrubs only the upper half, the commit/cancel settle drives the
-/// rest — see [`crate::render::gesture::scrub`]):
+/// rest — see the router gesture scrub implementation):
 ///
 /// - **Preview** (`value` 1.0 → 0.5): present → the Material card preview.
 ///   Both cards shrink to `PB_MIN_SCALE`, corners round to the device

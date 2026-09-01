@@ -83,8 +83,8 @@ pub struct EventDispatchPlan {
 /// [`remove_child`](Self::remove_child) triggering a UIKit callback
 /// that dispatches a custom event) and re-enter through
 /// [`dispatch_event`]. With `&self` methods the thread-local
-/// [`CURRENT_RENDERER`] is held by a *shared* borrow in
-/// [`with_renderer`], so the nested call is granted instead of
+/// the thread-local renderer is held by a *shared* borrow in the private
+/// `with_renderer` helper, so the nested call is granted instead of
 /// panicking with "RefCell already borrowed". Renderers own their
 /// mutable state behind per-field `RefCell`s and must scope each field
 /// borrow so it does **not** span a re-entrant FFI call.
@@ -150,7 +150,7 @@ pub trait DynRenderer {
 
     /// Whether this renderer can insert a child before a reference
     /// sibling in one operation. When `false`, positioned insertion is
-    /// simulated by append + rotate (see [`insert_or_append`]).
+    /// simulated by append + rotate (see the private `insert_or_append`).
     /// Defaults to `false` so mock / host renderers opt in explicitly.
     fn supports_insert_before(&self) -> bool {
         false
@@ -806,7 +806,7 @@ fn insert_or_append(real_parent: Element, real_child: Element, position: usize) 
 /// Places `child` at mirror `index` in `parent`'s child list (appends
 /// when `index >= len`). The following siblings are **not touched** on
 /// the Host side: `child` is realized with a positioned insert
-/// ([`insert_or_append`] → native `insert_before` on Host), so a
+/// (the private `insert_or_append` → native `insert_before` on Host), so a
 /// stateful native sibling (a focused `<input>`, a scrolled list) keeps
 /// its state.
 pub fn insert_child_at(parent: Element, child: Element, index: usize) {

@@ -380,8 +380,8 @@ pub(crate) fn fnv1a64(s: &str) -> u64 {
 }
 
 /// Fine-grained renderer macro. Emits imperative element-creation
-/// code that calls into [`whisker::runtime::view`] through the
-/// thread-local installed renderer, and returns an [`Element`].
+/// code that calls into `whisker::runtime::view` through the
+/// thread-local installed renderer, and returns an `Element`.
 ///
 /// ```ignore
 /// use whisker::prelude::*;
@@ -411,9 +411,9 @@ pub fn compose(input: TokenStream) -> TokenStream {
     compose::expand_root(input.into()).into()
 }
 
-/// `css!(name: value, …)` — kwarg syntax for the [`Css`] builder.
+/// `css!(name: value, …)` — kwarg syntax for the `Css` builder.
 ///
-/// Lowers to a [`Css::builder()`] method chain (`Css::builder().name(value)
+/// Lowers to a `Css::builder()` method chain (`Css::builder().name(value)
 /// .…`). `Css` is taken from the call site's scope, so
 /// `use whisker::prelude::*` (which re-exports `Css`) is the only
 /// import callers need.
@@ -436,8 +436,6 @@ pub fn compose(input: TokenStream) -> TokenStream {
 /// );
 /// ```
 ///
-/// [`Css`]: whisker_css::Css
-/// [`Css::builder()`]: whisker_css::Css::builder
 #[proc_macro]
 pub fn css(input: TokenStream) -> TokenStream {
     css::expand(input.into()).into()

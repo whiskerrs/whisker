@@ -1,7 +1,7 @@
 //! [`RouterHandle`] — the signal-backed navigation handle, plus
 //! [`use_navigator`] / [`provide_router`] context plumbing.
 //!
-//! Phase-1's [`Navigator`](crate::core::Navigator) borrows
+//! Phase-1's [`Navigator`] borrows
 //! `&mut RouteState`; that is fine for pure-logic tests but not for the
 //! UI, where many components read the state reactively and a handful of
 //! event handlers mutate it. [`RouterHandle`] is the reactive wrapper:
@@ -16,13 +16,13 @@
 //!
 //! ## `current` is derived, never stored
 //!
-//! [`current`](RouterHandle::current) is a `computed` over the state
+//! `RouterHandle::current` is a `computed` over the state
 //! signal — there is no separate "current screen" field, matching the
 //! design doc's "derived `current`" rule.
 //!
 //! ## Fine-grained reads
 //!
-//! [`slice_at`](RouterHandle::slice_at) returns a `computed` that
+//! `RouterHandle::slice_at` returns a `computed` that
 //! extracts the [`RouteState`] subtree at a [`NodePath`]. Because
 //! `computed` only notifies subscribers when its value *changes*
 //! (`RouteState: PartialEq`), a push into tab A's stack produces an
@@ -360,7 +360,7 @@ pub(crate) struct RouteScope(pub NodePath);
 ///
 /// # Panics
 ///
-/// Panics if called outside a routed screen (no [`RouteScope`] in context).
+/// Panics if called outside a routed screen (no internal route scope in context).
 pub fn use_param(name: &str) -> ReadSignal<Option<String>> {
     let handle = use_navigator();
     let scope = use_context::<RouteScope>()

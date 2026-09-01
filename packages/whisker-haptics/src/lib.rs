@@ -31,7 +31,7 @@
 //! ## Android permission
 //!
 //! Requires `android.permission.VIBRATE` — injected automatically by
-//! this crate's [`plugin`] when the consuming app opts in via
+//! this crate's build plugin when the consuming app opts in via
 //! `app.plugin::<WhiskerHaptics>(|c| c)` in `whisker.rs`.
 //!
 //! ## Native source

@@ -50,6 +50,8 @@
 //! [`prelude`]; reaching into the long paths is only necessary when
 //! writing framework-level extension code.
 
+#![warn(missing_docs)]
+
 // Lets the `#[whisker::component]` / `render!` expansions inside this
 // crate (e.g. `ForEach` / `Show` in `control_flow.rs`) resolve their
 // emitted `::whisker::…` paths. Without this the macros only work
@@ -419,11 +421,9 @@ pub mod __hot {
 /// - **CSS** — [`Css`](crate::css::Css), the builder API,
 ///   numeric extension traits (`8.px()`, `45.deg()`, …), and the
 ///   `css!` macro.
-/// - **Built-in element builders** — [`View`](crate::View),
-///   [`Text`](crate::Text), [`ScrollView`](crate::ScrollView),
-///   [`List`](crate::List), and [`Fragment`](crate::Fragment).
-/// - **Typed control options** — [`ScrollAxis`](crate::ScrollAxis),
-///   [`ScrollSnap`](crate::ScrollSnap), and
+/// - **Built-in element builders** — [`View`], [`Text`], [`ScrollView`],
+///   [`List`], and [`Fragment`].
+/// - **Typed control options** — [`ScrollAxis`], [`ScrollSnap`], and
 ///   [`ScrollSnapStop`](crate::attrs::ScrollSnapStop).
 ///
 /// Framework-level code (custom control flow, custom routers, tests

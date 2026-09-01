@@ -243,7 +243,7 @@ pub fn image(
 
 /// Warm the cache for `urls` without showing them.
 ///
-/// The next [`image`] pointing at one of these paints from cache
+/// The next `Image` pointing at one of these paints from cache
 /// instead of the network — what a reader does with the pages after
 /// the one being read. Fire-and-forget: failures are the next real
 /// load's problem, not this call's.
