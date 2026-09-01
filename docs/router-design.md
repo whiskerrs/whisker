@@ -3,9 +3,8 @@
 Whisker's router is built on **two graphs**: a static **RouteTree** that
 the `routes!` macro produces at compile time, and a dynamic **RouteState**
 that the runtime mutates as the user navigates. Everything the router
-does — what URL a screen has, which screen is shown, where a `navigate`
-pushes, where `back` returns — is *derived* from these two graphs plus a
-single tie-break rule (declaration order). There is no hand-maintained
+does — what URL a screen has, which screen is shown, where a navigation
+lands, where `back` returns — is *derived* from these two graphs. There is no hand-maintained
 route table, no per-route priority config, and no separately-stored
 "current screen" pointer.
 
@@ -46,7 +45,7 @@ of speech:
   definition), `RouteState` (runtime state), and the node types `Route` /
   `Stack` / `Switch`.
 - **Verbs (the act of moving) use *navigate* and friends:** the
-  operations `navigate` / `select` / `back` / `replace` / `pop_to` /
+  operations `navigate` / `push` / `back` / `replace` / `pop_to` /
   `reset`, and the handle you call them on, the `RouterHandle`
   (obtained via `use_navigator()`).
 
@@ -72,23 +71,16 @@ is a **group route** (structural only, like Expo's `(group)` folders).
 
 ### URL derivation
 
-A `Route`'s URL is the concatenation of **all segments** along the path
-from the root — including group segments. Containers (`Stack`/`Switch`)
-are pathless and contribute nothing; `Route` nodes always contribute
-their segment.
+A `Route`'s public URL is the concatenation of its ordinary segments.
+Containers (`Stack`/`Switch`) and route-group segments contribute nothing.
+The router also derives an internal **qualified destination** that retains
+groups so callers can address one placement of a shared route precisely.
 
-**Group segments** `(name)` appear in the canonical URL but are
-**optional during matching**. This means:
-
-- The Home route's URL is `/(home)` (the group segment is included).
-- `navigate("/detail/42")` still matches `/(home)/detail/:id` because
-  `(home)` is skipped when absent from the input.
-- `select("/(home)")` explicitly targets the group route for tab
-  switching.
-
-Group segments are "parenthesised paths that can be ignored when the URL
-doesn't include them" — they organise the tree without forcing every URL
-to spell them out.
+- `/(home)/detail/42` and `/(search)/detail/42` are qualified destinations.
+- Both expose the same public location `/detail/42`.
+- `navigate("/detail/42")` prefers the active group's placement.
+- `navigate("/(home)")` selects or reselects the Home branch.
+- `push("/(search)/detail/42")` selects Search and pushes there.
 
 ```rust
 let content = routes! {            // a reusable sub-route set is just a value
@@ -98,16 +90,16 @@ let content = routes! {            // a reusable sub-route set is just a value
 
 let app = routes! {
     Route(component: TabsLayout) {                          // layout: tab bar chrome + Outlet
-        Switch {
-            Route(path: "(home)") {                         // group — URL: /(home)
+        Switch(initial: "(home)") {
+            Route(path: "(home)") {                         // group — not in public URL
                 Stack {
-                    Route(path: "", component: Timeline)    //   URL: /(home)  (= /)
+                    Route(path: "", component: Timeline)    // public URL: /
                     ..content                               //   /post/:id, /profile/:id
                 }
             }
-            Route(path: "(search)") {                       // group — URL: /(search)
+            Route(path: "(search)") {
                 Stack {
-                    Route(path: "search", component: Search) // URL: /(search)/search
+                    Route(path: "search", component: Search) // public URL: /search
                     ..content
                 }
             }
@@ -122,10 +114,8 @@ let app = routes! {
   each tab is its own `Stack` (independent history). `..content` spreads
   the shared sub-routes into each tab.
 - `Route(path: "(home)")` / `Route(path: "(search)")` are **group routes**
-  (expo-router's `(group)` folders). They **do** appear in the derived
-  URL — `/(home)`, `/(search)` — but are **optional during matching**: a
-  `navigate("/post/42")` matches `/(home)/post/:id` because group
-  segments are skipped when they don't appear in the input URL.
+  (expo-router's `(group)` folders). They identify placements internally
+  but never appear in the public URL.
 - `video`/`compose` sit *above* the tabs (no tab bar) — purely a
   consequence of where they are in the tree.
 
@@ -218,24 +208,24 @@ and chrome (the layout) orthogonal.
 
 The layout component renders the content area and the bar as an ordinary
 flex column — `Outlet` (content, `flex_grow: 1`) above a fixed-height
-bar. Tab switching uses `navigator.select("/(group-name)")`:
+bar. Tab switching uses `navigator.navigate("/(group-name)")`:
 
 ```rust
 #[component]
 fn tabs_layout() -> Element {
     let nav = use_navigator();
-    let pathname = use_pathname();        // reactive current URL
+    let active_group = use_group();       // Some("home"), Some("search"), …
     render! {
         View(style: css!(flex_grow: 1.0, display: Display::Flex,
                          flex_direction: FlexDirection::Column)) {
             View(style: css!(flex_grow: 1.0)) { Outlet {} }
             View(style: css!(display: Display::Flex, flex_direction: FlexDirection::Row,
                              height: px(56))) {
-                // select() with the group URL switches the tab
-                View(on_tap: move |_| { let _ = nav.select("/(home)"); }) {
+                // Inactive group: restore its stack. Active group: pop root.
+                View(on_tap: move |_| { let _ = nav.navigate("/(home)"); }) {
                     Text(value: "Home")
                 }
-                View(on_tap: move |_| { let _ = nav.select("/(search)"); }) {
+                View(on_tap: move |_| { let _ = nav.navigate("/(search)"); }) {
                     Text(value: "Search")
                 }
             }
@@ -247,13 +237,13 @@ fn tabs_layout() -> Element {
 ```rust
 routes! {
     Route(component: TabsLayout) {              // layout: chrome + Outlet
-        Switch {
-            Route(path: "(home)") {             // group → URL: /(home)
+        Switch(initial: "(home)") {
+            Route(path: "(home)") {             // internal group qualifier
                 Stack {
                     Route(path: "", component: Timeline)    ..content
                 }
             }
-            Route(path: "(search)") {           // group → URL: /(search)
+            Route(path: "(search)") {
                 Stack {
                     Route(path: "search", component: Search) ..content
                 }
@@ -329,8 +319,8 @@ question never arises because the `Switch` instance **retained
 
 The only case where the return branch is undefined is a **never-visited
 `Switch`** (e.g. a cold deep-link straight to `video`). That is resolved
-by a declared default: `Switch(default: A) { … }`, falling back to the
-first branch in declaration order.
+by its declared initial branch: `Switch(initial: "(home)") { … }`, falling
+back to the first branch only when `initial` is omitted.
 
 ## Resolution: which instance does a target hit?
 
@@ -339,27 +329,27 @@ When a URL matches **multiple** RouteState positions (e.g. the shared
 resolution**:
 
 > Among nodes matching the target, pick the one whose path shares the
-> **deepest common ancestor with the current position**. Break ties by
-> **declaration order** (first defined wins).
+> **deepest common ancestor with the current position**. If multiple
+> candidates remain equally near, the destination is ambiguous and must be
+> qualified with a route group.
 
-Operationally: walk up from the current screen; the first (deepest)
-ancestor whose subtree contains a match resolves it; within that subtree,
-declaration order breaks ties.
+Operationally: compare every placement with the current screen and choose the
+unique placement with the longest common path prefix. Cold resolution uses the
+configured initial branch as its current position.
 
-This single rule, derived only from graph shape + current position +
-declaration order (no manual priorities), yields the intuitive
-behaviours:
+This rule is derived from graph shape + current position, without manual route
+priorities, and yields the intuitive behaviours:
 
 | Situation | Resolves to | Why |
 | --- | --- | --- |
 | From tab A, `navigate("/post/42")` | tab A's `/post/:id` | current tab's stack is the deepest common ancestor |
 | From tab B, `navigate("/post/42")` | tab B's `/post/:id` | resolved within tab B's subtree |
-| From outside (video), `navigate("/post/42")` | first-declared `/post/:id` | common ancestor is the root ⇒ declaration order |
-| Cold deep-link `/post/42` | first-declared `/post/:id` | no current position ⇒ declaration order |
+| From outside, `navigate("/post/42")` with several equal candidates | `Err(AmbiguousRoute)` | changing tabs implicitly would be surprising |
+| `navigate("/(search)/post/42")` | Search's `/post/:id` | the group qualifier is exact |
+| Cold deep-link `/post/42` | configured initial group | a cold link has no active branch to prefer |
 
-An explicit override (`within(scope)`) targets a specific branch.
-This is the rare cross-tab case and is **deferred**; the default relative
-rule covers the common ones.
+The public cross-branch form is a qualified destination such as
+`/(search)/post/42`. `within(scope)` remains a lower-level core hook.
 
 ## Operations
 
@@ -370,34 +360,36 @@ automatically by matching the URL against the route patterns in the tree.
 
 ```rust
 let nav = use_navigator();
-nav.navigate("/detail/42");        // push — :id binds to "42"
-nav.select("/(search)");           // switch tab
+nav.navigate("/detail/42");        // unwind identical entry, else push
+nav.push("/detail/42");            // always append a new entry
+nav.navigate("/(search)");         // switch/reselect tab
+nav.push("/(search)/detail/42");   // select Search and append there
 nav.replace("/detail/99");         // swap top
 nav.back();                        // pop deepest stack
 nav.pop_to("/");                   // pop to target
 nav.reset("/");                    // clear stack
 ```
 
-Each operation is just a mutation of `history`/`selected`; `current`
-recomputes afterward. (Named `navigate`/`back` rather than `push`/`pop`:
-the operations act on the whole graph — selecting `Switch` branches and
-pushing `Stack`s — so the stack-only terms would mislead.)
+Each operation resolves completely before mutating state. Failed navigation
+is transactional: history, selection, focus and reactive signals are unchanged.
 
 | Op | Effect on RouteState |
 | --- | --- |
-| `navigate(url)` | Along the path root→target: `Switch` → select toward target; `Stack` → **always push a new instance** of the toward-target child (never unwind to an existing one); a buried intermediate container is revealed (entries above it popped). |
-| `select(url)` | Select the `Switch` branch containing the target without pushing onto any stack. Used for tab switching: `select("/(home)")`. |
+| `navigate(url)` | Route target: reveal an identical retained entry by unwinding, otherwise push. Group-only target: restore that branch; reselecting the active branch applies its `ReselectBehavior` (default `PopToRoot`). |
+| `push(url)` | Require a screen target and always append a fresh entry. A qualified group selects the destination branch. Group-only input is `Err(ExpectedRoute)`. |
 | `back()` | Pop the top of the **deepest non-trivial `Stack`** on the active path. `Switch` selection is **not** on the back history. At a tab root with nothing to pop → `Err(NothingToPop)`. |
 | `replace(url)` | Swap the **top** of the current stack with the target. **Same stack only.** |
 | `pop_to(url)` | Pop the current stack until the target is the top. Same stack only. |
-| `reset(url)` | Replace the **entire** current stack contents with `[target]`. The whole-stack-scope version of `replace`; used for auth/logout where the back stack must be cleared. |
+| `reset(url)` | Rebuild the **entire navigation state** onto one clean path to `target`, clearing retained history in every branch. Used for auth/logout where no stale back stack may survive. |
 
 Notes that pin down the corners:
 
-- **`navigate` always pushes within a stack** (no dedup/unwind). It is
-  *not* React Navigation's `navigate`. This keeps it predictable: a
-  `navigate` always advances by one screen. Param-distinct screens
-  (`/post/1` then `/post/2`) are different instances and stack normally.
+- **`navigate` may unwind; `push` never does.** Identical means the same
+  placement and concrete public location. Param-distinct screens
+  (`/post/1` and `/post/2`) remain distinct entries.
+- **Groups qualify placement, not location.** `/(home)/post/42` and
+  `/(search)/post/42` both expose `/post/42` through `use_location()` and
+  `use_pathname()`. `use_group()` reports the active group separately.
 - **`replace`/`pop_to` are same-stack only.** A cross-`Switch` "replace"
   has no clean meaning (it would silently mutate another tab while
   switching), so it is disallowed — use `navigate` to cross branches.
@@ -457,8 +449,8 @@ new.
 ## What `routes!` generates
 
 1. **A `CompiledTree`** — the `RouteTree` with pre-computed URLs, node
-   paths, and parent links. Group segments `(name)` are included in
-   derived URLs and flagged with `is_group: true` for optional matching.
+   paths, and parent links. Every route has a public URL (groups omitted) and
+   a qualified URL (groups included) used for exact branch targeting.
 2. **A `RouteRegistry`** — the id → render-function + transition map.
 3. **A `LayoutRegistry`** — layout routes (those with both a component
    and children) registered for `Outlet` wiring.
@@ -510,10 +502,10 @@ back stacks, sharing Flutter Navigator 2.0 / go_router's
 
 What is distinctive here: **three primitives + six operations + two
 graphs**, with resolution and `current` *derived* from graph shape and
-declaration order rather than configured; `Stack`/`Switch` unified as
-depth/branch in one instance tree; and `current` as a `computed` over
-`history`/`selected` (no stored marker), which fits Whisker's
-fine-grained reactive runtime directly.
+the current position rather than route priorities; `Stack`/`Switch` unified
+as depth/branch in one instance tree; and `current` as a `computed` over
+`history`/`selected` (no stored marker), which fits Whisker's fine-grained
+reactive runtime directly.
 
 Known gaps the prior art has already solved and this design will grow
 into: `Switch`-back history (the `BackHandler`), cold-start deep-link
@@ -524,8 +516,7 @@ stack synthesis, and the full interactive/predictive-back polish.
 - `within(scope)` explicit cross-branch targeting — deferred; default
   relative resolution covers the common cases.
 - Cold deep-link: synthesising a sensible back stack when entering deep
-  into a nested structure (use `Switch(default:)` + declaration order as
-  the seed).
+  into a nested structure (use `Switch(initial:)` as the seed).
 - Rendering substrate: one retained Whisker surface with shared state. The API
   keeps routing independent of the Host composition boundary so a future
   multi-surface container does not require changing `routes!`.

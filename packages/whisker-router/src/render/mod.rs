@@ -17,7 +17,7 @@
 //!
 //! [`RouterHandle`] owns the immutable [`CompiledTree`](crate::core::CompiledTree),
 //! the [`RouteRegistry`], and a single `RwSignal<RouteState>`. Every verb
-//! (`navigate` / `select` / `back` / `replace` / `pop_to` / `reset`)
+//! (`navigate` / `push` / `back` / `replace` / `pop_to` / `reset`)
 //! clones the state, runs the [`Navigator`](crate::core::Navigator) op,
 //! and writes the signal back. `current` is a `computed`, never stored.
 //!
@@ -68,7 +68,9 @@ pub use components::{
 };
 pub use components::{Outlet, OutletProps};
 pub use gesture::{AndroidPredictiveBack, AndroidPredictiveBackProps, SwipeBack, SwipeBackProps};
-pub use handle::{RouterHandle, provide_router, use_navigator, use_param, use_pathname};
+pub use handle::{
+    RouterHandle, provide_router, use_group, use_location, use_navigator, use_param, use_pathname,
+};
 pub use registry::{LayoutFn, LayoutRegistry, RenderFn, RouteFragment, RouteRegistry, RouteSet};
 pub use transition::{Direction, Pose, PoseContext, Role, RouteTransition, Transition};
 // Re-exported for custom `Transition` authors (the return type of

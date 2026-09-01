@@ -61,19 +61,26 @@ fn simple_handle() -> RouterHandle {
     RouterHandle::new((tree, registry()))
 }
 
-/// root Stack { Switch(tabs) { Stack{home, detail} Stack{list, detail} } }
+/// root Stack { Switch(tabs) { (home){Stack{home, detail}}
+///                             (search){Stack{list, detail}} } }
 fn tabbed_handle() -> RouterHandle {
     let tree = CompiledTree::new(RouteTree::Stack(vec![RouteTree::Switch(
         SwitchDef::new("tabs", 0),
         vec![
-            RouteTree::Stack(vec![
-                RouteTree::route("", "home"),
-                RouteTree::route("detail/:id", "detail"),
-            ]),
-            RouteTree::Stack(vec![
-                RouteTree::route("list", "list"),
-                RouteTree::route("detail/:id", "detail"),
-            ]),
+            RouteTree::route_with(
+                RouteDef::new("(home)", "home_group"),
+                vec![RouteTree::Stack(vec![
+                    RouteTree::route("", "home"),
+                    RouteTree::route("detail/:id", "detail"),
+                ])],
+            ),
+            RouteTree::route_with(
+                RouteDef::new("(search)", "search_group"),
+                vec![RouteTree::Stack(vec![
+                    RouteTree::route("list", "list"),
+                    RouteTree::route("detail/:id", "detail"),
+                ])],
+            ),
         ],
     )]));
     RouterHandle::new((tree, registry()))
@@ -223,7 +230,7 @@ fn stack_ops_work_under_a_layout_route() {
 }
 
 #[test]
-fn select_switches_tab_and_keeps_history() {
+fn group_navigation_switches_tab_and_keeps_history() {
     with_runtime(|| {
         let h = tabbed_handle();
         let switch_path = NodePath(vec![0]);
@@ -231,7 +238,7 @@ fn select_switches_tab_and_keeps_history() {
         assert_eq!(selected.get(), Some(0));
 
         h.navigate("/detail/1").unwrap();
-        h.select("/list").unwrap();
+        h.navigate("/(search)").unwrap();
         flush();
         assert_eq!(selected.get(), Some(1));
         // Tab 1 shows its own Home (list), depth 1.
@@ -239,15 +246,15 @@ fn select_switches_tab_and_keeps_history() {
             h.current().get().path,
             // tab 1 = branch index 1 under the switch; its stack's first
             // child (list) is path [0,1,0].
-            NodePath(vec![0, 1, 0])
+            NodePath(vec![0, 1, 0, 0])
         );
 
         // Switch back to tab 0 — its pushed detail is retained.
-        h.select("/").unwrap();
+        h.navigate("/(home)").unwrap();
         flush();
         assert_eq!(selected.get(), Some(0));
         // Back in tab 0 on the detail we pushed (path [0,0,1]).
-        assert_eq!(h.current().get().path, NodePath(vec![0, 0, 1]));
+        assert_eq!(h.current().get().path, NodePath(vec![0, 0, 0, 1]));
     });
 }
 
@@ -255,8 +262,8 @@ fn select_switches_tab_and_keeps_history() {
 fn slice_only_changes_for_touched_tab() {
     with_runtime(|| {
         let h = tabbed_handle();
-        let tab_a = NodePath(vec![0, 0]); // tab 0's stack
-        let tab_b = NodePath(vec![0, 1]); // tab 1's stack
+        let tab_a = NodePath(vec![0, 0, 0]); // tab 0's stack
+        let tab_b = NodePath(vec![0, 1, 0]); // tab 1's stack
         let slice_a = h.slice_at(tab_a);
         let slice_b = h.slice_at(tab_b);
 
@@ -285,14 +292,14 @@ fn state_at_walks_to_active_child() {
             state_at(&root, &NodePath(vec![0])),
             Some(RouteState::Switch(_))
         ));
-        // [0,0] is tab 0's stack.
+        // [0,0] is the group; [0,0,0] is tab 0's stack.
         assert!(matches!(
-            state_at(&root, &NodePath(vec![0, 0])),
+            state_at(&root, &NodePath(vec![0, 0, 0])),
             Some(RouteState::Stack(_))
         ));
-        // [0,0,1] is the pushed detail leaf.
+        // [0,0,0,1] is the pushed detail leaf.
         assert!(matches!(
-            state_at(&root, &NodePath(vec![0, 0, 1])),
+            state_at(&root, &NodePath(vec![0, 0, 0, 1])),
             Some(RouteState::Route(_))
         ));
     });
@@ -1867,18 +1874,18 @@ mod replace_repro {
                     rec.0.borrow().ops.join("\n")
                 );
 
-                // After selecting the branch, its wrapper flips visible —
+                // After navigating to the branch, its wrapper flips visible —
                 // nothing on the path to the leaf stays hidden. (A native
                 // view must repaint on this 0→real resize; that's the
                 // whisker-svg fix, not observable through this renderer.)
-                h.select("/b").unwrap();
+                h.navigate("/b").unwrap();
                 flush();
                 let displays = rec
                     .path_displays(root, native_b)
-                    .expect("native leaf still reachable after select");
+                    .expect("native leaf still reachable after group navigation");
                 assert!(
                     displays.iter().all(|d| d.as_deref() != Some("none")),
-                    "after selecting branch b, no ancestor of its leaf stays display:none\nops:\n{}",
+                    "after navigating to branch b, no ancestor of its leaf stays display:none\nops:\n{}",
                     rec.0.borrow().ops.join("\n")
                 );
             });

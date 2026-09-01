@@ -5,7 +5,10 @@
 //!
 //! ```ignore
 //! routes! {
-//!     Switch {
+//!     Switch(
+//!         initial: "(home)",
+//!         reselect: ReselectBehavior::PopToRoot,
+//!     ) {
 //!         Route(path: "(home)", component: TabLayout) {
 //!             Stack {
 //!                 Route(path: "", component: Home)
@@ -29,7 +32,8 @@
 //!   component (grouping only, expo-router's `(group)` folder).
 //! - `Route(component: Comp) { children }` — a pathless route with a layout
 //!   component.
-//! - `Stack { … }` / `Switch { … }` — the two containers.
+//! - `Stack { … }` / `Switch { … }` — the two containers. `Switch` accepts
+//!   `initial: "(group)"` and `reselect: ReselectBehavior` options.
 //! - `..frag` — **spread** a reusable [`RouteFragment`].
 //!
 //! Route IDs are derived from the component name in snake_case. Routes without
@@ -52,6 +56,8 @@ use whisker_macro_syntax::compose::{ComposeArgument, ComposeChild, ComposeInput,
 enum Node {
     Switch {
         kw: Ident,
+        initial: Option<LitStr>,
+        reselect: Option<Expr>,
         children: Vec<Node>,
     },
     Stack {
@@ -85,14 +91,61 @@ fn route_from_compose(node: ComposeNode) -> syn::Result<Node> {
     let children = compose_children(node.body)?;
     match kw.to_string().as_str() {
         "Switch" => {
-            reject_arguments(&kw, &node.arguments)?;
             if children.is_empty() {
                 return Err(syn::Error::new(
                     kw.span(),
                     "`Switch { }` needs at least one branch",
                 ));
             }
-            Ok(Node::Switch { kw, children })
+            let mut initial = None;
+            let mut reselect = None;
+            for argument in node.arguments {
+                match argument.name.to_string().as_str() {
+                    "initial" => {
+                        if initial.is_some() {
+                            return Err(syn::Error::new(
+                                argument.name.span(),
+                                "duplicate `initial` option",
+                            ));
+                        }
+                        match argument.value {
+                            Expr::Lit(ExprLit {
+                                lit: Lit::Str(value),
+                                ..
+                            }) if is_group_path(&value) => initial = Some(value),
+                            value => {
+                                return Err(syn::Error::new(
+                                    value.span(),
+                                    "`initial` must be a group path string such as `\"(home)\"`",
+                                ));
+                            }
+                        }
+                    }
+                    "reselect" => {
+                        if reselect.is_some() {
+                            return Err(syn::Error::new(
+                                argument.name.span(),
+                                "duplicate `reselect` option",
+                            ));
+                        }
+                        reselect = Some(argument.value);
+                    }
+                    other => {
+                        return Err(syn::Error::new(
+                            argument.name.span(),
+                            format!(
+                                "unknown Switch option `{other}`; expected `initial` or `reselect`"
+                            ),
+                        ));
+                    }
+                }
+            }
+            Ok(Node::Switch {
+                kw,
+                initial,
+                reselect,
+                children,
+            })
         }
         "Stack" => {
             reject_arguments(&kw, &node.arguments)?;
@@ -588,15 +641,44 @@ fn node_to_tree(
             let anchor = kw_anchor(kw);
             quote! {{ #anchor ::whisker_router::core::RouteTree::Stack(#kids) }}
         }
-        Node::Switch { kw, children } => {
+        Node::Switch {
+            kw,
+            initial,
+            reselect,
+            children,
+        } => {
             let id = format!("switch_{}", *switch_n);
             *switch_n += 1;
+            let default = match initial {
+                Some(initial) => {
+                    let expected = initial.value();
+                    match children.iter().position(|child| {
+                        matches!(child, Node::Route { path: Some(path), .. } if path.value() == expected)
+                    }) {
+                        Some(index) => index,
+                        None => {
+                            return syn::Error::new(
+                                initial.span(),
+                                format!(
+                                    "Switch initial group `{expected}` is not one of its direct branches"
+                                ),
+                            )
+                            .to_compile_error();
+                        }
+                    }
+                }
+                None => 0,
+            };
             let kids = children_vec_tokens(children, path, switch_n, layouts);
             let anchor = kw_anchor(kw);
+            let reselect = reselect.as_ref().map(|value| {
+                quote! { .with_reselect(#value) }
+            });
             quote! {{
                 #anchor
                 ::whisker_router::core::RouteTree::Switch(
-                    ::whisker_router::core::SwitchDef::new(#id, 0usize),
+                    ::whisker_router::core::SwitchDef::new(#id, #default)
+                        #reselect,
                     #kids,
                 )
             }}

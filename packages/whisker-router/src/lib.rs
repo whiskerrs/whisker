@@ -12,7 +12,7 @@
 //!
 //! - [`core`] — the **pure-logic** model:
 //!   [`RouteTree`] / [`CompiledTree`], [`RouteState`], and the [`Navigator`]
-//!   with the five operations (`navigate` / `select` / `back` / `replace` /
+//!   with the operations (`navigate` / `push` / `back` / `replace` /
 //!   `pop_to` / `reset`). No signals, no `Element` — unit-testable on its own.
 //! - [`render`] — the **reactive rendering** of that core in the Whisker
 //!   runtime. A signal-backed [`RouterHandle`] plus [`use_navigator`], the
@@ -80,11 +80,13 @@ pub mod __kw {
 }
 
 pub use crate::core::{
-    CompiledTree, NavError, Navigator, NodeId, NodeInfo, NodePath, RouteDef, RouteInstance,
-    RouteState, RouteTree, StackEntry, StackState, SwitchDef, SwitchState, resolve,
+    CompiledTree, Location, NavError, Navigator, NodeId, NodeInfo, NodePath, ReselectBehavior,
+    RouteDef, RouteInstance, RouteState, RouteTree, StackEntry, StackState, SwitchDef, SwitchState,
+    resolve,
 };
 pub use crate::render::{
     AndroidPredictiveBack, AnimConfig, Direction, Layout, Outlet, Pose, PoseContext, RenderFn,
     Role, RouteFragment, RouteRegistry, RouteSet, RouteTransition, Router, RouterHandle, Stack,
-    SwipeBack, Switch, Transition, provide_router, use_navigator, use_param, use_pathname,
+    SwipeBack, Switch, Transition, provide_router, use_group, use_location, use_navigator,
+    use_param, use_pathname,
 };

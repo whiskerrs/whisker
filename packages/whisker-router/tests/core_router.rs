@@ -2,12 +2,13 @@
 //!
 //! These build the Twitter-style tree from `docs/router-design.md` by
 //! hand and assert URL derivation, `current` derivation, the five
-//! operations, relative resolution, the buried-container reveal, and the
+//! six operations, relative resolution, the buried-container reveal, and the
 //! no-stored-marker invariant. The 14 numbered behaviours the design doc
 //! enumerates are tagged in the section comments below.
 
 use whisker_router::core::{
-    CompiledTree, NavError, Navigator, NodePath, RouteDef, RouteState, RouteTree, Scope, SwitchDef,
+    CompiledTree, NavError, Navigator, NodePath, ReselectBehavior, RouteDef, RouteState, RouteTree,
+    Scope, SwitchDef,
 };
 
 /// Mirror the router example: a layout `Route` over a `Switch` whose branches
@@ -43,7 +44,7 @@ fn reset_to_home_tab_from_another_tab() {
     let mut st = RouteState::initial(&t);
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.select("/list").unwrap(); // switch to the search tab
+        nav.navigate("/list").unwrap(); // switch to the search tab
         nav.navigate("/detail/1").unwrap(); // list → detail
         assert_eq!(
             nav.current().path,
@@ -63,31 +64,145 @@ fn reset_to_home_tab_from_another_tab() {
             "reset(\"/\") from the search tab lands on the Home tab"
         );
     }
-    // The explicit group URL works identically.
-    {
-        let mut st2 = RouteState::initial(&t);
-        let mut nav = Navigator::new(&t, &mut st2);
-        nav.select("/list").unwrap();
-        nav.navigate("/detail/1").unwrap();
-        nav.reset("/(home)").unwrap();
-        assert_eq!(nav.current().path, NodePath(vec![0, 0, 0, 0]));
-    }
 }
 
 #[test]
 fn bare_group_url_resolves_to_its_first_screen() {
     // The "(search)" group has no index "" child. A bare "/(search)" (e.g. a
-    // tab-bar `select("/(search)")`) must still resolve — to the group's first
-    // screen (list) — so the tab stays selectable.
+    // tab-bar `navigate("/(search)")`) selects the group and restores its
+    // retained stack without creating a screen entry.
     let t = grouped_tabs_tree();
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
-    nav.select("/(search)").unwrap();
+    nav.navigate("/(search)").unwrap();
     assert_eq!(
         nav.current().path,
         NodePath(vec![0, 1, 0, 0]),
-        "select(\"/(search)\") lands on the search tab's first screen (list)"
+        "navigate(\"/(search)\") lands on the search tab's first screen (list)"
     );
+}
+
+#[test]
+fn qualified_push_targets_that_group_and_keeps_the_public_location_clean() {
+    let t = grouped_tabs_tree();
+    let mut st = RouteState::initial(&t);
+    let mut nav = Navigator::new(&t, &mut st);
+
+    nav.push("/(search)/detail/42?from=home#reply").unwrap();
+
+    assert_eq!(nav.current().path, NodePath(vec![0, 1, 0, 1]));
+    assert_eq!(
+        nav.current().params.get("id").map(String::as_str),
+        Some("42")
+    );
+    assert_eq!(nav.current().location.pathname, "/detail/42");
+    assert_eq!(
+        nav.current().location.to_url(),
+        "/detail/42?from=home#reply"
+    );
+    assert_eq!(grouped_history(&st, 0).len(), 1, "home is untouched");
+    assert_eq!(grouped_history(&st, 1).len(), 2, "search receives the push");
+}
+
+#[test]
+fn group_reselect_pops_to_root_but_switching_back_restores_history() {
+    let t = grouped_tabs_tree();
+    let mut st = RouteState::initial(&t);
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        nav.push("/detail/1").unwrap();
+        nav.navigate("/(search)").unwrap();
+        nav.navigate("/(home)").unwrap();
+        assert_eq!(nav.current().path, NodePath(vec![0, 0, 0, 1]));
+    }
+    assert_eq!(grouped_history(&st, 0).len(), 2, "inactive switch restores");
+
+    let mut nav = Navigator::new(&t, &mut st);
+    nav.navigate("/(home)").unwrap();
+    assert_eq!(nav.current().path, NodePath(vec![0, 0, 0, 0]));
+    assert_eq!(
+        grouped_history(&st, 0).len(),
+        1,
+        "active reselect pops root"
+    );
+}
+
+#[test]
+fn group_reselect_can_preserve_the_active_stack() {
+    let tree = CompiledTree::new(RouteTree::route_with(
+        RouteDef::new("(home)", "home_group"),
+        vec![RouteTree::switch(
+            SwitchDef::new("tabs", 0).with_reselect(ReselectBehavior::Preserve),
+            vec![RouteTree::route_with(
+                RouteDef::new("(feed)", "feed_group"),
+                vec![RouteTree::stack(vec![
+                    RouteTree::route("", "feed"),
+                    RouteTree::route("detail/:id", "detail"),
+                ])],
+            )],
+        )],
+    ));
+    let mut state = RouteState::initial(&tree);
+    let mut nav = Navigator::new(&tree, &mut state);
+
+    nav.push("/(home)/(feed)/detail/1").unwrap();
+    nav.navigate("/(home)/(feed)").unwrap();
+
+    assert_eq!(nav.current().path, NodePath(vec![0, 0, 0, 1]));
+}
+
+#[test]
+fn push_rejects_a_group_without_a_screen() {
+    let t = grouped_tabs_tree();
+    let mut st = RouteState::initial(&t);
+    let before = st.clone();
+    let mut nav = Navigator::new(&t, &mut st);
+    assert_eq!(nav.push("/(search)").unwrap_err(), NavError::ExpectedRoute);
+    assert_eq!(st, before);
+}
+
+#[test]
+fn nested_group_destination_is_recognized_by_the_route_tree() {
+    let tree = CompiledTree::new(RouteTree::route_with(
+        RouteDef::new("settings", "settings_layout"),
+        vec![RouteTree::switch(
+            SwitchDef::new("settings_tabs", 0),
+            vec![
+                RouteTree::route_with(
+                    RouteDef::new("(account)", "account_group"),
+                    vec![RouteTree::stack(vec![RouteTree::route("", "account")])],
+                ),
+                RouteTree::route_with(
+                    RouteDef::new("(privacy)", "privacy_group"),
+                    vec![RouteTree::stack(vec![RouteTree::route("", "privacy")])],
+                ),
+            ],
+        )],
+    ));
+    let mut state = RouteState::initial(&tree);
+    let mut nav = Navigator::new(&tree, &mut state);
+
+    nav.navigate("/settings/(privacy)").unwrap();
+
+    assert_eq!(nav.current().path, NodePath(vec![0, 1, 0, 0]));
+    assert_eq!(nav.current().location.pathname, "/settings");
+}
+
+#[test]
+fn navigate_unwinds_an_identical_entry_while_push_duplicates_it() {
+    let t = grouped_tabs_tree();
+    let mut st = RouteState::initial(&t);
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        nav.push("/detail/1").unwrap();
+        nav.push("/detail/2").unwrap();
+        nav.navigate("/detail/1").unwrap();
+    }
+    assert_eq!(grouped_history(&st, 0).len(), 2);
+
+    let mut nav = Navigator::new(&t, &mut st);
+    nav.push("/detail/1").unwrap();
+    assert_eq!(grouped_history(&st, 0).len(), 3);
 }
 
 // ===================================================================
@@ -258,40 +373,30 @@ fn navigate_shared_route_resolves_within_current_tab() {
 
 // ===================================================================
 // 5. navigate to a shared route from OUTSIDE the tabs (video)
-//    → declaration-order first instance; selects that tab
+//    → ambiguous until the caller supplies a group qualifier
 // ===================================================================
 
 #[test]
-fn navigate_shared_route_from_outside_uses_declaration_order() {
+fn unqualified_shared_route_from_outside_is_ambiguous() {
     let t = twitter_tree();
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
     // Push video (outside the tabs, on the root stack).
     nav.navigate("/video/9").unwrap();
     assert_eq!(nav.current().path, p(&[1]));
-    // From video, go to post. Common ancestor is the root stack ⇒ the
-    // first-declared post = timeline tab's post [0,0,0,1].
-    nav.navigate("/post/7").unwrap();
-    assert_eq!(nav.current().path, p(&[0, 0, 1]));
-    // And the tabs Switch is now selected on timeline (branch 0).
-    if let RouteState::Stack(root) = &st {
-        if let RouteState::Switch(sw) = &root.history[0].state {
-            assert_eq!(sw.selected, 0);
-        } else {
-            panic!("first root entry should be the Switch");
-        }
-    } else {
-        panic!("root is a stack");
-    }
+    assert_eq!(
+        nav.navigate("/post/7").unwrap_err(),
+        NavError::AmbiguousRoute
+    );
+    assert_eq!(nav.current().path, p(&[1]), "failed resolution is atomic");
 }
 
 // ===================================================================
-// 6. navigate ALWAYS pushes (post(1), post(2) → two entries; even an
-//    identical instance pushes again)
+// 6. navigate pushes a missing concrete location; push always appends
 // ===================================================================
 
 #[test]
-fn navigate_always_pushes_distinct_instances() {
+fn navigate_pushes_distinct_locations() {
     let t = twitter_tree();
     let mut st = RouteState::initial(&t);
     {
@@ -308,12 +413,12 @@ fn navigate_always_pushes_distinct_instances() {
 }
 
 #[test]
-fn navigate_always_pushes_even_identical_instance() {
+fn push_always_pushes_even_identical_instance() {
     let t = twitter_tree();
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
-    nav.navigate("/post/1").unwrap();
-    nav.navigate("/post/1").unwrap();
+    nav.push("/post/1").unwrap();
+    nav.push("/post/1").unwrap();
     let hist = timeline_history(&st);
     // Two post entries even though params are identical ("always push").
     assert_eq!(hist.len(), 3);
@@ -347,7 +452,8 @@ fn navigate_reveals_buried_tabs_switch() {
     // timeline. Current path passes through the Switch again.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate("/post/5").unwrap();
+        nav.navigate_within("/post/5", &Scope::at(p(&[0, 0])))
+            .unwrap();
         assert_eq!(nav.current().path, p(&[0, 0, 1]));
     }
     // video was popped → root stack back to length 1 (just the Switch).
@@ -409,7 +515,7 @@ fn back_never_pops_switch_selection() {
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
     // Select search (a pure Switch change), no stack pushes.
-    nav.select("/search").unwrap();
+    nav.navigate("/search").unwrap();
     assert_eq!(nav.current().path, p(&[0, 1, 0]));
     // back has nothing to pop (search stack is trivial, root is trivial)
     // and must NOT revert the Switch selection.
@@ -537,7 +643,7 @@ fn reset_is_global_clears_every_stack_and_branch() {
         let mut nav = Navigator::new(&t, &mut st);
         nav.navigate("/post/1").unwrap();
         nav.navigate("/post/2").unwrap(); // timeline depth 3
-        nav.select("/search").unwrap();
+        nav.navigate("/search").unwrap();
         nav.navigate("/post/9").unwrap(); // search depth 2
     }
     assert_eq!(timeline_history(&st).len(), 3);
@@ -578,17 +684,17 @@ fn reset_crosses_into_another_branch() {
 }
 
 // ===================================================================
-// 12. cold-start resolution → declaration order; Switch(default) honored
+// 12. cold-start resolution follows the configured initial Switch branch
 // ===================================================================
 
 #[test]
-fn cold_start_resolution_uses_declaration_order() {
+fn cold_start_resolution_uses_initial_branch() {
     let t = twitter_tree();
     // No current position (cold deep-link): resolve directly with
-    // `current = None`. Must pick the first-declared post (timeline's).
+    // `current = None`. The configured initial branch is timeline.
     let dest = whisker_router::core::resolve(&t, "/post/1", None).unwrap();
     assert_eq!(dest, p(&[0, 0, 1]));
-    // And profile cold-start → first-declared profile too.
+    // Profile follows the same initial-branch rule.
     let prof = whisker_router::core::resolve(&t, "/profile/1", None).unwrap();
     assert_eq!(prof, p(&[0, 0, 2]));
 }
@@ -607,6 +713,20 @@ fn switch_default_honored_for_return_branch() {
     )]));
     let st = RouteState::initial(&tree);
     assert_eq!(st.current().path, p(&[0, 2, 0])); // branch 2, route "c"
+}
+
+#[test]
+fn cold_shared_route_resolution_prefers_nonzero_initial_branch() {
+    let tree = CompiledTree::new(RouteTree::switch(
+        SwitchDef::new("s", 1),
+        vec![
+            RouteTree::stack(vec![RouteTree::route("detail/:id", "detail")]),
+            RouteTree::stack(vec![RouteTree::route("detail/:id", "detail")]),
+        ],
+    ));
+
+    let destination = whisker_router::core::resolve(&tree, "/detail/42", None).unwrap();
+    assert_eq!(destination, p(&[1, 0]));
 }
 
 // ===================================================================
@@ -633,7 +753,8 @@ fn no_marker_current_is_always_the_walked_leaf() {
             n.navigate("/video/2").unwrap();
         }),
         Box::new(|n| {
-            n.navigate("/post/3").unwrap();
+            n.navigate_within("/post/3", &Scope::at(p(&[0, 0])))
+                .unwrap();
         }),
         Box::new(|n| {
             let _ = n.back();
@@ -677,26 +798,25 @@ fn manual_walk(state: &RouteState) -> NodePath {
 
 #[test]
 fn tabs_keep_independent_stacks() {
-    let t = twitter_tree();
+    let t = grouped_tabs_tree();
     let mut st = RouteState::initial(&t);
 
-    // Drive timeline into a post.
+    // Drive home into detail.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate("/post/11").unwrap();
-        assert_eq!(nav.current().path, p(&[0, 0, 1]));
+        nav.push("/detail/11").unwrap();
+        assert_eq!(nav.current().path, p(&[0, 0, 0, 1]));
     }
-    // Switch to search (a pure `select`) and drive it into a profile.
+    // Switch to search without touching home history, then push there.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.select("/search").unwrap();
-        nav.navigate("/profile/22").unwrap();
-        assert_eq!(nav.current().path, p(&[0, 1, 2]));
+        nav.navigate("/(search)").unwrap();
+        nav.push("/detail/22").unwrap();
+        assert_eq!(nav.current().path, p(&[0, 1, 0, 1]));
     }
-    // Timeline stack untouched: still [ "", post(11) ].
-    assert_eq!(timeline_history(&st).len(), 2);
+    assert_eq!(grouped_history(&st, 0).len(), 2);
     assert_eq!(
-        timeline_history(&st)[1]
+        grouped_history(&st, 0)[1]
             .state
             .current()
             .params
@@ -704,19 +824,17 @@ fn tabs_keep_independent_stacks() {
             .unwrap(),
         "11"
     );
-    // Switch back to timeline via `select`: its post is preserved exactly
-    // (no fresh home pushed — that is the whole point of `select` vs
-    // `navigate`).
+    // Switching back restores Home's retained top because the group was
+    // inactive. A second navigate would be the reselect that pops to root.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.select("/").unwrap();
-        assert_eq!(nav.current().path, p(&[0, 0, 1])); // back on the post
+        nav.navigate("/(home)").unwrap();
+        assert_eq!(nav.current().path, p(&[0, 0, 0, 1]));
     }
-    assert_eq!(timeline_history(&st).len(), 2);
-    // search stack still has its profile, untouched by timeline.
-    assert_eq!(search_history(&st).len(), 2);
+    assert_eq!(grouped_history(&st, 0).len(), 2);
+    assert_eq!(grouped_history(&st, 1).len(), 2);
     assert_eq!(
-        search_history(&st)[1]
+        grouped_history(&st, 1)[1]
             .state
             .current()
             .params
@@ -727,51 +845,46 @@ fn tabs_keep_independent_stacks() {
 }
 
 #[test]
-fn switching_tabs_preserves_each_stack_via_select() {
-    // Use the `select` primitive and confirm the OTHER tab's stack is
-    // preserved across the switch.
-    let t = twitter_tree();
+fn switching_tabs_preserves_each_stack_via_navigate() {
+    let t = grouped_tabs_tree();
     let mut st = RouteState::initial(&t);
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate("/post/1").unwrap(); // timeline: ["", post]
+        nav.push("/detail/1").unwrap();
     }
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.select("/search").unwrap(); // select search
+        nav.navigate("/(search)").unwrap();
     }
-    // timeline preserved its 2-entry stack while search is active.
-    assert_eq!(timeline_history(&st).len(), 2);
+    assert_eq!(grouped_history(&st, 0).len(), 2);
     // back in search (trivial) is a no-op and doesn't touch timeline.
     {
         let mut nav = Navigator::new(&t, &mut st);
         assert!(nav.back().is_err());
     }
-    assert_eq!(timeline_history(&st).len(), 2);
+    assert_eq!(grouped_history(&st, 0).len(), 2);
 }
 
 #[test]
-fn select_is_nondestructive_and_returns_to_retained_screen() {
-    let t = twitter_tree();
+fn group_navigation_is_nondestructive_and_returns_to_retained_screen() {
+    let t = grouped_tabs_tree();
     let mut st = RouteState::initial(&t);
-    // Drive timeline deep: ["", post(1), post(2)].
+    // Drive home deep: [home, detail(1), detail(2)].
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate("/post/1").unwrap();
-        nav.navigate("/post/2").unwrap();
+        nav.push("/detail/1").unwrap();
+        nav.push("/detail/2").unwrap();
     }
-    // select away to search, then back to timeline.
+    // Switch away, then back. The first return restores; it is not a reselect.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.select("/search").unwrap();
-        assert_eq!(nav.current().path, p(&[0, 1, 0])); // search home
-        nav.select("/").unwrap();
-        // Returns to timeline's RETAINED top (post(2)) — nothing pushed.
-        assert_eq!(nav.current().path, p(&[0, 0, 1]));
+        nav.navigate("/(search)").unwrap();
+        assert_eq!(nav.current().path, p(&[0, 1, 0, 0]));
+        nav.navigate("/(home)").unwrap();
+        assert_eq!(nav.current().path, p(&[0, 0, 0, 1]));
         assert_eq!(nav.current().params.get("id").unwrap(), "2");
     }
-    // timeline history untouched (still 3 deep).
-    assert_eq!(timeline_history(&st).len(), 3);
+    assert_eq!(grouped_history(&st, 0).len(), 3);
 }
 
 // ===================================================================
@@ -842,6 +955,19 @@ fn tab_history(st: &RouteState, branch: usize) -> &[whisker_router::core::StackE
         }
     }
     panic!("could not reach tab {branch} history");
+}
+
+fn grouped_history(st: &RouteState, branch: usize) -> &[whisker_router::core::StackEntry] {
+    if let RouteState::Route(layout) = st {
+        if let RouteState::Switch(switch) = &layout.children[0] {
+            if let RouteState::Route(group) = &switch.branches[branch] {
+                if let RouteState::Stack(stack) = &group.children[0] {
+                    return &stack.history;
+                }
+            }
+        }
+    }
+    panic!("could not reach grouped tab {branch} history");
 }
 
 fn active_chain_kinds(st: &RouteState) -> Vec<&'static str> {

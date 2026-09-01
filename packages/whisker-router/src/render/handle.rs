@@ -6,8 +6,8 @@
 //! UI, where many components read the state reactively and a handful of
 //! event handlers mutate it. [`RouterHandle`] is the reactive wrapper:
 //! it owns the immutable [`CompiledTree`], the [`RouteRegistry`], and a
-//! single `RwSignal<RouteState>`. The five navigation verbs
-//! ([`navigate`](RouterHandle::navigate), [`select`](RouterHandle::select),
+//! single `RwSignal<RouteState>`. The navigation verbs
+//! ([`navigate`](RouterHandle::navigate), [`push`](RouterHandle::push),
 //! [`back`](RouterHandle::back), [`replace`](RouterHandle::replace),
 //! [`pop_to`](RouterHandle::pop_to), [`reset`](RouterHandle::reset)) each
 //! **clone the state, run the Phase-1 `Navigator` op, and write the
@@ -38,7 +38,9 @@ use std::rc::Rc;
 use whisker::runtime::reactive::Owner;
 use whisker::{AnimationController, ReadSignal, RwSignal, computed, provide_context, use_context};
 
-use crate::core::{CompiledTree, NavError, Navigator, NodePath, RouteInstance, RouteState};
+use crate::core::{
+    CompiledTree, Location, NavError, Navigator, NodePath, RouteInstance, RouteState,
+};
 use crate::render::registry::{LayoutFn, LayoutRegistry, RenderFn, RouteRegistry, RouteSet};
 use crate::render::transition::RouteTransition;
 
@@ -242,36 +244,37 @@ impl RouterHandle {
     /// result back into the signal. The closure receives a `Navigator`
     /// bound to a *clone* of the current state; whatever it returns is
     /// propagated to the caller.
-    fn with_navigator<T>(&self, op: impl FnOnce(&mut Navigator) -> T) -> T {
-        // Release keyboard focus at the moment navigation is invoked —
-        // before the transition animates — so the keyboard drops crisply
-        // as the user leaves the screen. Blurs the *specific* field that
-        // was focused (never a blanket dismiss), so a late-landing blur
-        // can't resign a field the screen being entered has since
-        // auto-focused. See [`crate::render::keyboard`].
-        crate::render::keyboard::on_page_change_confirm(false);
-        let mut state = self.inner.state.get();
+    fn with_navigator<T>(
+        &self,
+        op: impl FnOnce(&mut Navigator) -> Result<T, NavError>,
+    ) -> Result<T, NavError> {
+        let before = self.inner.state.get();
+        let mut state = before.clone();
         let out = {
             let mut nav = Navigator::new(&self.inner.tree, &mut state);
             op(&mut nav)
-        };
-        self.inner.state.set(state);
-        out
+        }?;
+        if state != before {
+            // Release keyboard focus only after resolution succeeds and just
+            // before the changed state is published. Failed/no-op navigation
+            // is fully transactional and has no UI side effects.
+            crate::render::keyboard::on_page_change_confirm(false);
+            self.inner.state.set(state);
+        }
+        Ok(out)
     }
 
-    /// Navigate forward to `url`. The URL is matched against the route
-    /// patterns (`/(home)/detail/:id`) with its `:param`s captured, and
-    /// the matched route is pushed onto the active Stack. Group segments
-    /// are optional: both `"/detail/42"` and `"/(home)/detail/42"` work.
+    /// Make `url` active. This unwinds to an identical retained entry or
+    /// pushes it when absent. A bare group switches/restores that branch and
+    /// reselecting the active group applies its [`ReselectBehavior`](crate::core::ReselectBehavior).
     pub fn navigate(&self, url: &str) -> Result<(), NavError> {
         self.with_navigator(|nav| nav.navigate(url))
     }
 
-    /// Select the Switch branch containing the route matched by `url`
-    /// (the tab-switch primitive). The target tab's retained history is
-    /// preserved. E.g. `select("/(home)")` or `select("/list")`.
-    pub fn select(&self, url: &str) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.select(url))
+    /// Always append a fresh route entry. Qualified group segments select
+    /// the destination branch but are omitted from the public location.
+    pub fn push(&self, url: &str) -> Result<(), NavError> {
+        self.with_navigator(|nav| nav.push(url))
     }
 
     /// Pop the deepest non-trivial stack. [`NavError::NothingToPop`] when
@@ -373,21 +376,30 @@ pub fn use_param(name: &str) -> ReadSignal<Option<String>> {
     })
 }
 
-/// The current location as a URL string (e.g. `/podcast/42`) — the
-/// reactive "where am I" read, analogous to Expo Router's `usePathname()`.
+/// The current public pathname (e.g. `/podcast/42`) — the reactive "where am
+/// I" read, analogous to Expo Router's `usePathname()`. Route groups are not
+/// included; use [`use_group`] for active tab/group state.
 ///
 /// Derived from the active leaf's path; recomputes whenever navigation
 /// changes it. This is the general primitive custom chrome uses to reflect
 /// the current route. Returns `"/"` if the path can't be resolved
 /// (should not happen for a mounted router).
 pub fn use_pathname() -> ReadSignal<String> {
+    let location = use_location();
+    computed(move || location.get().pathname)
+}
+
+/// Reactively read the current public [`Location`].
+pub fn use_location() -> ReadSignal<Location> {
     let handle = use_navigator();
     let current = handle.current();
-    computed(move || {
-        let path = current.get().path;
-        handle
-            .tree()
-            .url_of(&path)
-            .unwrap_or_else(|| "/".to_string())
-    })
+    computed(move || current.get().location)
+}
+
+/// Reactively read the nearest active route-group name, without parentheses.
+/// Returns `None` when the current route is not inside a group.
+pub fn use_group() -> ReadSignal<Option<String>> {
+    let handle = use_navigator();
+    let current = handle.current();
+    computed(move || handle.tree().group_of(&current.get().path))
 }

@@ -30,23 +30,28 @@
 //!
 //! ## Operations
 //!
-//! The five verbs ([`navigate`], [`back`], [`replace`], [`pop_to`],
+//! The verbs ([`navigate`], [`push`], [`back`], [`replace`], [`pop_to`],
 //! [`reset`]) live on [`Navigator`], a thin handle wrapping
 //! `&mut RouteState` + `&CompiledTree`.
 //!
 //! [`navigate`]: Navigator::navigate
+//! [`push`]: Navigator::push
 //! [`back`]: Navigator::back
 //! [`replace`]: Navigator::replace
 //! [`pop_to`]: Navigator::pop_to
 //! [`reset`]: Navigator::reset
 //! [`docs/router-design.md`]: https://github.com/whiskerrs/whisker/blob/main/docs/router-design.md
 
+pub mod location;
 pub mod nav;
 pub mod resolve;
 pub mod state;
 pub mod tree;
 
+pub use location::Location;
 pub use nav::{NavError, Navigator};
 pub use resolve::{Scope, resolve, resolve_within};
 pub use state::{RouteInstance, RouteState, StackEntry, StackState, SwitchState};
-pub use tree::{CompiledTree, NodeId, NodeInfo, NodePath, RouteDef, RouteTree, SwitchDef};
+pub use tree::{
+    CompiledTree, NodeId, NodeInfo, NodePath, ReselectBehavior, RouteDef, RouteTree, SwitchDef,
+};

@@ -25,7 +25,7 @@
 //! - **Group routes**: `Route(path: "(home)")` and `Route(path: "(search)")`
 //!   are pathless groups (expo-router's `(group)` folders). They don't add a
 //!   URL segment but organize children under a Switch branch.
-//! - **Custom tab bar**: built with `use_pathname` + `navigator.select("/(home)")` —
+//! - **Custom tab bar**: built with `use_group` + `navigator.navigate("/(home)")` —
 //!   no built-in TabBar component needed.
 //! - **Back gestures**: `SwipeBack` (iOS) and `AndroidPredictiveBack` (Android 13+).
 
@@ -33,10 +33,10 @@ use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_router::render::{
-    AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, use_navigator, use_param,
-    use_pathname,
+    AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, use_group, use_navigator,
+    use_param,
 };
-use whisker_router::routes;
+use whisker_router::{ReselectBehavior, routes};
 
 /// Tab bar layout: an `Outlet` for the active branch above a custom tab bar.
 #[component]
@@ -62,7 +62,7 @@ fn tabs_layout() -> Element {
 #[component]
 fn my_tab_bar() -> Element {
     let nav = use_navigator();
-    let pathname = use_pathname();
+    let active_group = use_group();
 
     render! {
         View(style: css!(
@@ -73,8 +73,20 @@ fn my_tab_bar() -> Element {
             height: px(56),
             background_color: Color::hex(0x16161D),
         )) {
-            TabBarItem(label: "Home", url: "/(home)", pathname: pathname, nav: nav.clone())
-            TabBarItem(label: "List", url: "/(search)", pathname: pathname, nav: nav.clone())
+            TabBarItem(
+                label: "Home",
+                group: "home",
+                url: "/(home)",
+                active_group: active_group,
+                nav: nav.clone(),
+            )
+            TabBarItem(
+                label: "List",
+                group: "search",
+                url: "/(search)",
+                active_group: active_group,
+                nav: nav.clone(),
+            )
         }
     }
 }
@@ -82,19 +94,12 @@ fn my_tab_bar() -> Element {
 #[component]
 fn tab_bar_item(
     label: &'static str,
+    group: &'static str,
     url: &'static str,
-    pathname: ReadSignal<String>,
+    active_group: ReadSignal<Option<String>>,
     nav: RouterHandle,
 ) -> Element {
-    let is_home = label == "Home";
-    let is_active = computed(move || {
-        let p = pathname.get();
-        if is_home {
-            !p.contains("/list")
-        } else {
-            p.contains("/list")
-        }
-    });
+    let is_active = computed(move || active_group.get().as_deref() == Some(group));
     let nav = nav.clone();
     render! {
         View(
@@ -110,7 +115,7 @@ fn tab_bar_item(
                 )
             }),
             on_tap: move |_| {
-                let _ = nav.select(url);
+                let _ = nav.navigate(url);
             },
         ) {
             Text(
@@ -126,7 +131,10 @@ fn app() -> Element {
     render! {
         Router(routes: routes! {
             Route(component: TabsLayout) {
-                Switch {
+                Switch(
+                    initial: "(home)",
+                    reselect: ReselectBehavior::PopToRoot,
+                ) {
                     Route(path: "(home)") {
                         Stack {
                             Route(path: "", component: Home)

@@ -29,7 +29,7 @@
 //! // call site — a plain closure converts via `impl Into<Callback<In, Out>>`,
 //! // which #[component]'s generated builder setter accepts (non-generic
 //! // fields get `setter(into)`):
-//! TabButton(on_tap: move |_| { nav.select("/"); })
+//! TabButton(on_tap: move |_| { nav.navigate("/(home)"); })
 //! ```
 //!
 //! [`Signal<T>`]: super::prop::Signal

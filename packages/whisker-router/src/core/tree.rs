@@ -78,10 +78,11 @@ impl NodePath {
 /// | None | Some | empty | pathless screen (root, etc.) |
 /// | None | None | non-empty | transparent wrapper |
 ///
-/// A segment wrapped in `()` (e.g. `"(home)"`) is a **group**: it does
-/// not contribute a URL segment (expo-router `(group)` folder equivalent)
-/// but is visible in [`use_pathname`](crate::render::use_pathname) for
-/// identification (e.g. which tab is active).
+/// A segment wrapped in `()` (e.g. `"(home)"`) is a **group**: it qualifies
+/// an internal destination but never contributes to the public URL
+/// (Expo Router's `(group)` equivalent). Read the active group with
+/// [`use_group`](crate::render::use_group); [`use_pathname`](crate::render::use_pathname)
+/// returns only the public pathname.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RouteDef {
     /// The path segment, e.g. `"users"`, `":id"`, `"(home)"`.
@@ -95,7 +96,7 @@ pub struct RouteDef {
     /// either a transparent pass-through or a URL-only grouping).
     pub component: Option<String>,
     /// `true` when the segment is a group — `"(name)"`. Groups do not
-    /// contribute a URL segment but appear in the pathname.
+    /// contribute to the public pathname.
     pub is_group: bool,
 }
 
@@ -156,6 +157,18 @@ pub struct SwitchDef {
     /// The branch selected on cold start (when `selected` is otherwise
     /// undefined). `None` falls back to branch `0` (declaration order).
     pub default: Option<usize>,
+    /// What a group-only `navigate` does when its branch is already active.
+    pub reselect: ReselectBehavior,
+}
+
+/// Behavior when the active branch is selected again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReselectBehavior {
+    /// Pop the branch's first stack to its root screen.
+    #[default]
+    PopToRoot,
+    /// Keep the branch exactly as it is.
+    Preserve,
 }
 
 impl SwitchDef {
@@ -164,7 +177,14 @@ impl SwitchDef {
         SwitchDef {
             id: Some(id.into()),
             default: Some(default),
+            reselect: ReselectBehavior::PopToRoot,
         }
+    }
+
+    /// Configure active-branch reselect behavior.
+    pub fn with_reselect(mut self, reselect: ReselectBehavior) -> Self {
+        self.reselect = reselect;
+        self
     }
 
     /// The default branch index (the declared default, else `0`).
@@ -247,6 +267,10 @@ pub struct NodeInfo {
     /// The full URL of this node if it is a `Route` with a component
     /// (a renderable screen), else `None`.
     pub url: Option<String>,
+    /// The internal fully-qualified URL including route-group segments.
+    /// This identifies a specific placement without leaking groups into the
+    /// host-visible location.
+    pub qualified_url: Option<String>,
     /// The component id if this is a `Route` with a component.
     pub component: Option<String>,
     /// `true` if this is a group Route `"(name)"`.
@@ -278,6 +302,7 @@ impl CompiledTree {
             NodePath::root(),
             None,
             String::new(),
+            String::new(),
             &mut counter,
             &mut by_path,
             &mut by_id,
@@ -294,7 +319,8 @@ impl CompiledTree {
         node: &RouteTree,
         path: NodePath,
         parent: Option<NodePath>,
-        url_so_far: String,
+        public_url_so_far: String,
+        qualified_url_so_far: String,
         counter: &mut usize,
         by_path: &mut BTreeMap<Vec<usize>, NodeInfo>,
         by_id: &mut BTreeMap<usize, NodePath>,
@@ -302,37 +328,61 @@ impl CompiledTree {
         let id = NodeId(*counter);
         *counter += 1;
 
-        let (route_id, this_url, child_url_base, component, is_group) = match node {
+        let (
+            route_id,
+            this_url,
+            this_qualified_url,
+            child_public_url_base,
+            child_qualified_url_base,
+            component,
+            is_group,
+        ) = match node {
             RouteTree::Route(def, rt_children) => {
-                // Every route with a segment contributes to the URL —
-                // including groups like `(home)`. Group segments are
-                // optional when *matching* (see `match_url`), but they
-                // ARE part of the canonical URL so `select("/(home)")`
-                // and `use_pathname()` work.
-                let child_url_base = if def.segment.is_none() {
-                    url_so_far.clone()
+                let segment = def.segment.as_deref().unwrap_or("");
+                let child_qualified_url_base = if def.segment.is_none() {
+                    qualified_url_so_far.clone()
                 } else {
-                    join_url(&url_so_far, def.segment.as_deref().unwrap_or(""))
+                    join_url(&qualified_url_so_far, segment)
+                };
+                // Groups qualify a placement but are not part of the public
+                // URL, matching Expo Router's `(group)` semantics.
+                let child_public_url_base = if def.segment.is_none() || def.is_group {
+                    public_url_so_far.clone()
+                } else {
+                    join_url(&public_url_so_far, segment)
                 };
                 let has_url = def.component.is_some()
                     || (def.segment.is_some() && rt_children.is_empty())
                     || def.is_group;
                 let this_url = if has_url {
-                    Some(child_url_base.clone())
+                    Some(normalize_root(&child_public_url_base))
+                } else {
+                    None
+                };
+                let this_qualified_url = if has_url {
+                    Some(normalize_root(&child_qualified_url_base))
                 } else {
                     None
                 };
                 (
                     Some(def.id.clone()),
                     this_url,
-                    child_url_base,
+                    this_qualified_url,
+                    child_public_url_base,
+                    child_qualified_url_base,
                     def.component.clone(),
                     def.is_group,
                 )
             }
-            RouteTree::Stack(_) | RouteTree::Switch(_, _) => {
-                (None, None, url_so_far.clone(), None, false)
-            }
+            RouteTree::Stack(_) | RouteTree::Switch(_, _) => (
+                None,
+                None,
+                None,
+                public_url_so_far.clone(),
+                qualified_url_so_far.clone(),
+                None,
+                false,
+            ),
         };
 
         by_path.insert(
@@ -343,6 +393,7 @@ impl CompiledTree {
                 parent,
                 route_id,
                 url: this_url,
+                qualified_url: this_qualified_url,
                 component,
                 is_group,
             },
@@ -354,7 +405,8 @@ impl CompiledTree {
                 child,
                 path.child(i),
                 Some(path.clone()),
-                child_url_base.clone(),
+                child_public_url_base.clone(),
+                child_qualified_url_base.clone(),
                 counter,
                 by_path,
                 by_id,
@@ -395,6 +447,25 @@ impl CompiledTree {
         self.info_at(path).and_then(|i| i.url.clone())
     }
 
+    /// The internal URL of `path`, including route-group qualifiers.
+    pub fn qualified_url_of(&self, path: &NodePath) -> Option<String> {
+        self.info_at(path).and_then(|i| i.qualified_url.clone())
+    }
+
+    /// The nearest route-group name containing `path`, without parentheses.
+    pub fn group_of(&self, path: &NodePath) -> Option<String> {
+        for depth in (0..=path.len()).rev() {
+            let ancestor = NodePath(path.0[..depth].to_vec());
+            let Some(RouteTree::Route(def, _)) = self.node_at(&ancestor) else {
+                continue;
+            };
+            if let Some(group) = def.group_name() {
+                return Some(group.to_string());
+            }
+        }
+        None
+    }
+
     /// All [`NodePath`]s whose `Route` has the given [`RouteDef::id`],
     /// in **declaration order** (pre-order).
     pub fn paths_with_route_id(&self, route_id: &str) -> Vec<NodePath> {
@@ -409,15 +480,21 @@ impl CompiledTree {
     /// (`/(home)/detail/:id`), returning the matched route's id and the
     /// captured `:param` values. Returns `None` if no route matches.
     ///
-    /// Group segments (parenthesised, e.g. `(home)`) in the pattern are
-    /// **optional**: the input may include them verbatim or omit them
-    /// entirely. So both `/detail/42` and `/(home)/detail/42` match the
-    /// pattern `/(home)/detail/:id`.
+    /// An unqualified input matches public patterns, from which route groups
+    /// are omitted. An input containing a group qualifier matches qualified
+    /// patterns exactly. Thus `/detail/42` can yield several placements,
+    /// while `/(home)/detail/42` names only the Home placement.
     pub fn match_url(&self, url: &str) -> Option<(String, BTreeMap<String, String>)> {
-        let input: Vec<&str> = url.split('/').filter(|s| !s.is_empty()).collect();
+        let pathname = destination_pathname(url);
+        let qualified = contains_group_segment(pathname);
+        let input: Vec<&str> = pathname.split('/').filter(|s| !s.is_empty()).collect();
         for info in self.by_path.values() {
-            let (Some(pattern), Some(route_id)) = (info.url.as_deref(), info.route_id.as_deref())
-            else {
+            let pattern = if qualified {
+                info.qualified_url.as_deref()
+            } else {
+                info.url.as_deref()
+            };
+            let (Some(pattern), Some(route_id)) = (pattern, info.route_id.as_deref()) else {
                 continue;
             };
             let pat: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
@@ -428,13 +505,25 @@ impl CompiledTree {
         None
     }
 
-    /// All [`NodePath`]s whose route URL matches `url` (group segments
-    /// in the pattern are optional), in declaration order.
+    /// All [`NodePath`]s whose public or qualified route URL matches `url`,
+    /// in declaration order.
     pub fn paths_matching_url(&self, url: &str) -> Vec<NodePath> {
-        let input: Vec<&str> = url.split('/').filter(|s| !s.is_empty()).collect();
+        self.route_matches(url)
+            .into_iter()
+            .map(|matched| matched.path)
+            .collect()
+    }
+
+    /// All leaf-route matches for `url`, retaining each placement's own
+    /// captured parameters. Qualified destinations match qualified patterns
+    /// exactly; unqualified destinations match public patterns.
+    pub(crate) fn route_matches(&self, url: &str) -> Vec<RouteMatch> {
+        let pathname = destination_pathname(url);
+        let qualified = contains_group_segment(pathname);
+        let input: Vec<&str> = pathname.split('/').filter(|s| !s.is_empty()).collect();
         self.by_path
             .values()
-            .filter(|i| {
+            .filter_map(|i| {
                 // A destination is a navigable **leaf** screen, never a
                 // container Route (a `(group)` / layout with children). A
                 // group's URL equals its index child's, so without this a bare
@@ -442,15 +531,20 @@ impl CompiledTree {
                 // nearer common ancestor of the current position — gets picked
                 // over the index screen inside it.
                 if !self.is_leaf_route(&i.path) {
-                    return false;
+                    return None;
                 }
-                let Some(pattern) = i.url.as_deref() else {
-                    return false;
+                let pattern = if qualified {
+                    i.qualified_url.as_deref()
+                } else {
+                    i.url.as_deref()
                 };
+                let pattern = pattern?;
                 let pat: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-                match_segments(&pat, &input).is_some()
+                match_segments(&pat, &input).map(|params| RouteMatch {
+                    path: i.path.clone(),
+                    params,
+                })
             })
-            .map(|i| i.path.clone())
             .collect()
     }
 
@@ -465,20 +559,37 @@ impl CompiledTree {
     /// a bare `/(group)` whose group has no index `""` child; the caller
     /// descends the chosen container to its index leaf.
     pub fn container_paths_matching_url(&self, url: &str) -> Vec<NodePath> {
-        let input: Vec<&str> = url.split('/').filter(|s| !s.is_empty()).collect();
+        let pathname = destination_pathname(url);
+        let qualified = contains_group_segment(pathname);
+        let input: Vec<&str> = pathname.split('/').filter(|s| !s.is_empty()).collect();
         self.by_path
             .values()
             .filter(|i| {
                 if self.is_leaf_route(&i.path) {
                     return false;
                 }
-                let Some(pattern) = i.url.as_deref() else {
+                let pattern = if qualified {
+                    i.qualified_url.as_deref()
+                } else {
+                    i.url.as_deref()
+                };
+                let Some(pattern) = pattern else {
                     return false;
                 };
                 let pat: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
                 match_segments(&pat, &input).is_some()
             })
             .map(|i| i.path.clone())
+            .collect()
+    }
+
+    /// Group containers whose qualified URL exactly matches `url`.
+    pub(crate) fn group_paths_matching_url(&self, url: &str) -> Vec<NodePath> {
+        let pathname = destination_pathname(url);
+        self.by_path
+            .values()
+            .filter(|info| info.is_group && info.qualified_url.as_deref() == Some(pathname))
+            .map(|info| info.path.clone())
             .collect()
     }
 
@@ -498,48 +609,33 @@ impl CompiledTree {
     }
 }
 
+/// One concrete match, kept atomic so params cannot be captured from a
+/// different shared-route placement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RouteMatch {
+    pub path: NodePath,
+    pub params: BTreeMap<String, String>,
+}
+
 /// Join the static parts of a route segment onto an accumulated URL.
 ///
 /// `:name` dynamic parts are kept as `:name` placeholders in the URL so
 /// `post/:id` derives `/post/:id`. A pathless / empty segment leaves the
 /// base unchanged (apart from ensuring a leading `/` at the root).
-/// Match `input` segments against `pattern` segments. Group segments
-/// (parenthesised like `(home)`) in the pattern are optional — if the
-/// input includes them they must match verbatim, otherwise they are
-/// skipped. `:name` segments capture. Returns the captured params on
-/// success, `None` on mismatch.
+/// Match `input` against one already-selected public or qualified pattern.
+/// Group segments in qualified patterns are ordinary literals; public
+/// patterns contain no groups. `:name` segments capture.
 fn match_segments(pattern: &[&str], input: &[&str]) -> Option<BTreeMap<String, String>> {
     let mut params = BTreeMap::new();
-    let mut pi = 0; // pattern index
-    let mut ii = 0; // input index
-    while pi < pattern.len() {
-        let p = pattern[pi];
-        let is_group = p.starts_with('(') && p.ends_with(')');
-        if is_group {
-            // Group segment: check if the input includes it.
-            if ii < input.len() && input[ii] == p {
-                // Input explicitly includes the group segment.
-                pi += 1;
-                ii += 1;
-            } else {
-                // Group segment omitted in input — skip it.
-                pi += 1;
-            }
-        } else if ii >= input.len() {
-            return None;
-        } else if let Some(name) = p.strip_prefix(':') {
-            params.insert(name.to_string(), input[ii].to_string());
-            pi += 1;
-            ii += 1;
-        } else if p == input[ii] {
-            pi += 1;
-            ii += 1;
-        } else {
+    if pattern.len() != input.len() {
+        return None;
+    }
+    for (pattern_segment, input_segment) in pattern.iter().zip(input) {
+        if let Some(name) = pattern_segment.strip_prefix(':') {
+            params.insert(name.to_string(), (*input_segment).to_string());
+        } else if pattern_segment != input_segment {
             return None;
         }
-    }
-    if ii != input.len() {
-        return None;
     }
     Some(params)
 }
@@ -567,6 +663,25 @@ fn join_url(base: &str, segment: &str) -> String {
         url.push_str(part);
     }
     url
+}
+
+fn normalize_root(path: &str) -> String {
+    if path.is_empty() {
+        "/".to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+fn destination_pathname(url: &str) -> &str {
+    url.split(['?', '#']).next().unwrap_or(url)
+}
+
+fn contains_group_segment(pathname: &str) -> bool {
+    pathname
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .any(|segment| segment.starts_with('(') && segment.ends_with(')'))
 }
 
 #[cfg(test)]
@@ -661,13 +776,16 @@ mod tests {
             .iter_infos()
             .filter_map(|i| Some((i.route_id.as_deref()?, i.url.as_deref()?)))
             .collect();
-        eprintln!("URLS: {urls:#?}");
-        assert!(urls.contains(&("(home)", "/(home)")));
-        assert!(urls.contains(&("(search)", "/(search)")));
+        assert!(urls.contains(&("(home)", "/")));
+        assert!(urls.contains(&("(search)", "/")));
         let home_url = urls.iter().find(|(id, _)| *id == "home").map(|(_, u)| *u);
-        eprintln!("home_url = {home_url:?}");
+        assert_eq!(home_url, Some("/"));
         let list_url = urls.iter().find(|(id, _)| *id == "list").map(|(_, u)| *u);
-        assert_eq!(list_url, Some("/(search)/list"));
+        assert_eq!(list_url, Some("/list"));
+        assert_eq!(
+            t.qualified_url_of(&NodePath(vec![0, 1, 0, 0])).as_deref(),
+            Some("/(search)/list")
+        );
     }
 
     #[test]
@@ -688,7 +806,6 @@ mod tests {
         assert_eq!(params.get("id").map(String::as_str), Some("42"));
         let r = t.match_url("/(home)/detail/7");
         assert!(r.is_some(), "'/(home)/detail/7' should match");
-        let r = t.match_url("/");
-        eprintln!("match_url('/') = {r:?}");
+        assert!(t.match_url("/").is_some());
     }
 }
