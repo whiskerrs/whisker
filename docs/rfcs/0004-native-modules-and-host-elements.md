@@ -766,34 +766,51 @@ whisker-toggle/
   Cargo.toml              # platform-neutral module crate
   src/                    # schemas and authoring API only
   desktop/
-    Cargo.toml            # whisker-toggle-desktop-host
+    Cargo.toml            # whisker-toggle-desktop
     src/lib.rs
   web/
-    Cargo.toml            # whisker-toggle-web-host
+    Cargo.toml            # whisker-toggle-web
     src/lib.rs
   android/                # Gradle/Kotlin Host module
   ios/                    # SwiftPM/Swift Host module
 ```
 
-The `[package.metadata.whisker]` marker identifies the outer package. Local and
-git checkouts discover `desktop/Cargo.toml` and `web/Cargo.toml` by convention
-and verify the package names declared in the outer metadata:
+The outer package declares platform support explicitly. Directory presence is
+not a support signal, and the metadata never points back to the parent
+`Cargo.toml`:
 
 ```toml
-[package.metadata.whisker.desktop]
-package = "whisker-toggle-desktop-host"
-
-[package.metadata.whisker.web]
-package = "whisker-toggle-web-host"
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { manifest = "Package.swift" }
+web = { manifest = "web/Cargo.toml" }
+desktop = { kind = "common" }
 ```
 
-This small amount of metadata is package identity, not a source-file list or a
-generated binding contract. It is necessary because Cargo intentionally omits
-nested packages from an outer crates.io archive even when its `include` list
-names them. The Desktop and Web Host libraries are therefore separately
-published packages at the same version as the common module crate. Discovery
-uses a nested path dependency when its manifest is present and an exact registry
-version otherwise.
+An omitted key means unsupported. `kind = "common"` means the parent Rust crate
+fully implements that platform and no Host adapter is linked. `manifest` means
+the platform has a separate Host build manifest; it is always explicit and
+relative to the parent `Cargo.toml`. The two forms are mutually exclusive, and
+`common` is the only accepted `kind`.
+
+Manifest type is implied by the platform: Android accepts
+`build.gradle.kts`, iOS accepts `Package.swift`, and Web/Desktop/macOS/Windows/
+Linux accept `Cargo.toml`. Android and iOS do not acquire a Cargo adapter merely
+because their Host implementation happens to contain Rust elsewhere. Desktop is
+the fallback declaration for macOS, Windows, and Linux; an exact OS declaration
+overrides it.
+
+For a local or git checkout, CNG reads each Rust Host manifest and verifies its
+package name. The package naming rule is `<module>-<platform>` — for example
+`whisker-toggle-web` and `whisker-toggle-desktop`; the old `-host` suffix is not
+used. Cargo intentionally omits nested packages from an outer crates.io archive,
+so each Rust Host library is separately published at the parent module's exact
+version. For a registry dependency CNG derives the package name from this rule
+and pins that version without requiring a duplicate `package = "..."` field.
+
+`[package.metadata.whisker.plugins]` is an independent CNG extension seam. A
+crate that declares only plugins is not a Whisker module and does not enter the
+Host module graph.
 
 CNG adds the common crate and the selected Host crate as ordinary dependencies
 of the generated Host Cargo project. The generated composition code calls the

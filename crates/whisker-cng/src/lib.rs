@@ -47,8 +47,9 @@ pub use discovery::{DiscoveredPlugin, discover_plugins};
 pub use ios::{IosInputs, sync as sync_ios};
 pub use macos::{MacosInputs, sync as sync_macos};
 pub use modules::{
-    ResolvedModule, ResolvedRustHostSource, ResolvedRustModuleContribution, build_modules_report,
-    discover as discover_modules, refresh_gradle_module_cache,
+    ModulePlatform, NativeManifestKind, ResolvedModule, ResolvedNativeManifest,
+    ResolvedPlatformImplementation, ResolvedRustHostSource, ResolvedRustModuleContribution,
+    build_modules_report, discover as discover_modules, refresh_gradle_module_cache,
 };
 pub use web::{WebInputs, sync as sync_web};
 pub use whisker_config::Config;

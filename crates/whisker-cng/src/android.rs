@@ -83,7 +83,7 @@ pub struct AndroidInputs {
     /// Cargo crate name of the user app. Echoed into
     /// `whisker { userPackage = "..." }`. The Settings plugin
     /// walks the cargo dep graph rooted here for
-    /// `[package.metadata.whisker]`-tagged module deps.
+    /// `[package.metadata.whisker.module.platforms]` module deps.
     pub whisker_user_package: String,
     /// Version for `rs.whisker:whisker-runtime-android:<this>` and its
     /// sibling SDK coordinates.

@@ -2,7 +2,7 @@
 //!
 //! Creates a directory matching the supplied crate name with a
 //! complete module skeleton: `Cargo.toml` (carrying the
-//! `[package.metadata.whisker]` discovery marker), `Package.swift`,
+//! `[package.metadata.whisker.module.platforms]` support map), `Package.swift`,
 //! `build.gradle.kts`, `src/lib.rs`, and the platform sources under
 //! `ios/`, `android/`, `desktop/`, and `web/` (Expo-style layout). The skeleton compiles
 //! standalone — the consumer just runs `cargo build` and adds the
@@ -223,16 +223,11 @@ fn whisker_dep_version() -> String {
 
 fn cargo_toml(v: &Vars, shape: &ModuleShape) -> String {
     let rust_hosts = if matches!(shape, ModuleShape::ViewBearing) {
-        format!(
-            r#"
-[package.metadata.whisker.desktop]
-package = "{name}-desktop-host"
-
-[package.metadata.whisker.web]
-package = "{name}-web-host"
-"#,
-            name = v.crate_name,
-        )
+        r#"
+desktop = { manifest = "desktop/Cargo.toml" }
+web = { manifest = "web/Cargo.toml" }
+"#
+        .to_string()
     } else {
         String::new()
     };
@@ -257,10 +252,11 @@ include = [
 [lib]
 crate-type = ["rlib"]
 
-# Module-system opt-in marker — the bare table identifies this cargo
-# crate as a Whisker module, so `whisker-build` wires its `android/`
-# Gradle subproject + `ios/` SwiftPM package into the host build.
-[package.metadata.whisker]
+# Module support is explicit. An omitted platform is unsupported;
+# `kind = "common"` means the parent Rust crate needs no Host adapter.
+[package.metadata.whisker.module.platforms]
+android = {{ manifest = "build.gradle.kts" }}
+ios = {{ manifest = "Package.swift" }}
 {rust_hosts}
 
 [dependencies]
@@ -470,7 +466,7 @@ pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition
 fn desktop_cargo_toml(v: &Vars) -> String {
     format!(
         r#"[package]
-name = "{name}-desktop-host"
+name = "{name}-desktop"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -510,7 +506,7 @@ impl WhiskerModule for {tag}Module {{
 fn web_cargo_toml(v: &Vars) -> String {
     format!(
         r#"[package]
-name = "{name}-web-host"
+name = "{name}-web"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -916,8 +912,13 @@ mod tests {
         assert!(!common.contains("whisker_desktop"));
         assert!(!common.contains("whisker_web"));
         let manifest = std::fs::read_to_string(module.join("Cargo.toml")).unwrap();
-        assert!(manifest.contains("[package.metadata.whisker.desktop]"));
-        assert!(manifest.contains("package = \"whisker-switch-web-host\""));
+        assert!(manifest.contains("[package.metadata.whisker.module.platforms]"));
+        assert!(manifest.contains("web = { manifest = \"web/Cargo.toml\" }"));
+        assert!(manifest.contains("desktop = { manifest = \"desktop/Cargo.toml\" }"));
+        let desktop = std::fs::read_to_string(module.join("desktop/Cargo.toml")).unwrap();
+        assert!(desktop.contains("name = \"whisker-switch-desktop\""));
+        let web = std::fs::read_to_string(module.join("web/Cargo.toml")).unwrap();
+        assert!(web.contains("name = \"whisker-switch-web\""));
         std::fs::remove_dir_all(root).ok();
     }
 }
