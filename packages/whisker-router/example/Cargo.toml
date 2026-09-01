@@ -11,3 +11,4 @@ crate-type = ["rlib"]
 [dependencies]
 whisker = { workspace = true }
 whisker-router = { path = ".." }
+whisker-safe-area = { path = "../../whisker-safe-area" }

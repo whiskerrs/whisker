@@ -2,7 +2,7 @@
 //!
 //! A route-group segment such as `(home)` selects a navigator branch but is
 //! not part of the public URL.  [`Location`] therefore stores only the URL a
-//! host exposes, while [`Destination`] retains the qualified pathname used to
+//! host exposes, while the internal `Destination` retains the qualified pathname used to
 //! resolve a particular placement in the route tree.
 
 /// The public, host-visible location of a routed screen.

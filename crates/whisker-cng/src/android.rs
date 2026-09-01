@@ -735,7 +735,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 33,
+        template_version: 34,
     })
 }
 
@@ -778,15 +778,18 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 33,
+            template_version: 34,
         }
     }
 
     #[test]
     fn generated_activity_only_composes_the_sdk_view() {
+        assert!(MAIN_ACTIVITY_KT.contains("import androidx.activity.ComponentActivity"));
+        assert!(MAIN_ACTIVITY_KT.contains("class MainActivity : ComponentActivity()"));
         assert!(MAIN_ACTIVITY_KT.contains("import rs.whisker.runtime.WhiskerView"));
         assert!(MAIN_ACTIVITY_KT.contains("WhiskerWindow.enableEdgeToEdge(this)"));
         assert!(MAIN_ACTIVITY_KT.contains("setContentView(WhiskerView(this))"));
+        assert!(APP_BUILD_GRADLE_KTS.contains("androidx.activity:activity:1.8.2"));
     }
 
     #[test]
