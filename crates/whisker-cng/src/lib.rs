@@ -135,21 +135,20 @@ mod rust_host_dependency_tests {
     #[test]
     fn registry_host_dependency_is_pinned_to_the_common_module_version() {
         let dependencies = rust_element_module_dependencies(&[RustElementModuleInput {
-            package: "whisker-toggle".into(),
-            crate_path: "/cargo/registry/whisker-toggle-1.2.3".into(),
-            host_package: "whisker-toggle-web-host".into(),
+            package: "whisker-example".into(),
+            crate_path: "/cargo/registry/whisker-example-1.2.3".into(),
+            host_package: "whisker-example-web".into(),
             host_dependency: RustHostDependency::Registry {
                 version: "1.2.3".into(),
             },
         }]);
 
         assert!(dependencies.contains(
-            "whisker-toggle-web-host = { package = \"whisker-toggle-web-host\", version = \"=1.2.3\" }"
+            "whisker-example-web = { package = \"whisker-example-web\", version = \"=1.2.3\" }"
         ));
         assert!(
-            !dependencies.contains(
-                "whisker-toggle-web-host = { package = \"whisker-toggle-web-host\", path ="
-            )
+            !dependencies
+                .contains("whisker-example-web = { package = \"whisker-example-web\", path =")
         );
     }
 }

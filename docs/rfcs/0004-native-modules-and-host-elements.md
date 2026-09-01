@@ -762,14 +762,14 @@ is an ordinary Cargo library crate rather than a source file injected with
 `#[path]`:
 
 ```text
-whisker-toggle/
+whisker-map/
   Cargo.toml              # platform-neutral module crate
   src/                    # schemas and authoring API only
   desktop/
-    Cargo.toml            # whisker-toggle-desktop
+    Cargo.toml            # whisker-map-desktop
     src/lib.rs
   web/
-    Cargo.toml            # whisker-toggle-web
+    Cargo.toml            # whisker-map-web
     src/lib.rs
   android/                # Gradle/Kotlin Host module
   ios/                    # SwiftPM/Swift Host module
@@ -802,7 +802,7 @@ overrides it.
 
 For a local or git checkout, CNG reads each Rust Host manifest and verifies its
 package name. The package naming rule is `<module>-<platform>` — for example
-`whisker-toggle-web` and `whisker-toggle-desktop`; the old `-host` suffix is not
+`whisker-map-web` and `whisker-map-desktop`; the old `-host` suffix is not
 used. Cargo intentionally omits nested packages from an outer crates.io archive,
 so each Rust Host library is separately published at the parent module's exact
 version. For a registry dependency CNG derives the package name from this rule
@@ -1309,12 +1309,9 @@ The common mobile frame presenter decodes `SetText`, but it does not reference
 owned by the handwritten Kotlin/Swift `whisker.ui/Text` Host implementation,
 matching Desktop and Web's element-specific content implementation boundary.
 
-`whisker-toggle` is the first end-to-end native fixture. Its Rust declaration
-owns the application-facing `whisker.toggle/Toggle`, `checked`, `disabled`,
-and `change` schema; Android and iOS independently declare matching strings,
-the target view implementation, and callbacks. Component commands remain on
-the existing Whisker module function/handle path until the negotiated command
-channel is implemented.
+The cross-platform Host smoke app depends on a real package module rather than
+a framework-only fixture. Its Rust declaration and each Host implementation
+therefore exercise the same published module graph used by applications.
 
 1. Use the string-matched `ModuleDefinition` contract and make native Host
    source compile without Rust-generated public bindings. KSP/Swift codegen
