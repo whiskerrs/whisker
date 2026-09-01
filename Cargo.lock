@@ -7056,6 +7056,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-keyboard-web"
+version = "0.12.0"
+dependencies = [
+ "web-sys",
+ "whisker-web",
+]
+
+[[package]]
 name = "whisker-layout"
 version = "0.12.0"
 dependencies = [
