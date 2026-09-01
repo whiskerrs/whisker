@@ -2,6 +2,10 @@
 //! `open_auth_session_async` (`ASWebAuthenticationSession` /
 //! Chrome Custom Tabs) for in-app OAuth, plus a plain
 //! `open_browser_async` (`SFSafariViewController` / Custom Tabs).
+//! Web uses a popup and observes its same-origin redirect/close state.
+//! Desktop hands plain browser URLs to the system browser; auth-session
+//! redirect interception is reported as unsupported until a loopback/deep-link
+//! receiver is part of the Desktop Host.
 //!
 //! ## OAuth redirect
 //!

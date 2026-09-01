@@ -71,6 +71,8 @@ members = [
     "packages/whisker-splash-screen",
     "packages/whisker-status-bar",
     "packages/whisker-web-browser",
+    "packages/whisker-web-browser/desktop",
+    "packages/whisker-web-browser/web",
     "packages/whisker-svg",
     "packages/whisker-svg/desktop",
     "packages/whisker-svg/web",

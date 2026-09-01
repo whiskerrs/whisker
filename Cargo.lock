@@ -2910,6 +2910,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a756c3fac73139e83f14c2d742155dd2b78d3ee56597b419a0579b7bdd6dd78"
 
 [[package]]
+name = "is-docker"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "928bae27f42bc99b60d9ac7334e3a21d10ad8f1835a4e12ec3ec0464765ed1b3"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
+name = "is-wsl"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "173609498df190136aa7dea1a91db051746d339e18476eed5ca40521f02d7aa5"
+dependencies = [
+ "is-docker",
+ "once_cell",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3852,6 +3871,16 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
+name = "open"
+version = "5.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ade3be4664bc1ef537ce133015f04c176b737815c2ba9fd60edf212d6e90dd55"
+dependencies = [
+ "is-wsl",
+ "libc",
+]
 
 [[package]]
 name = "orbclient"
@@ -7349,6 +7378,23 @@ version = "0.12.0"
 dependencies = [
  "futures-channel",
  "whisker",
+]
+
+[[package]]
+name = "whisker-web-browser-desktop"
+version = "0.12.0"
+dependencies = [
+ "open",
+ "whisker-desktop",
+]
+
+[[package]]
+name = "whisker-web-browser-web"
+version = "0.12.0"
+dependencies = [
+ "web-sys",
+ "whisker",
+ "whisker-web",
 ]
 
 [[package]]
