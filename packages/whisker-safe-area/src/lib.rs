@@ -45,6 +45,9 @@
 //!   recreation (the default behaviour without
 //!   `android:configChanges="orientation|screenSize"` on the manifest)
 //!   transparently rewires.
+//! - **Web and Desktop**: returns zero on every edge. Whisker content owns the
+//!   browser viewport or desktop window and has no mobile system-bar inset to
+//!   avoid. No Host module is linked on these platforms.
 //!
 //! Both platforms report values that map 1:1 to padding on the host
 //! `WhiskerView`. Whisker's `WhiskerActivity` enforces Android edge-
@@ -72,8 +75,11 @@
 
 use std::sync::OnceLock;
 
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+use whisker::WhiskerValue;
+#[cfg(any(target_os = "android", target_os = "ios"))]
 use whisker::module;
-use whisker::{ArcRwSignal, ArcWriteSignal, Owner, ReadSignal, WhiskerValue};
+use whisker::{ArcRwSignal, ArcWriteSignal, Owner, ReadSignal};
 
 /// Safe-area inset amounts in **points (iOS) / dp (Android)** — the
 /// same density-independent units that the rest of Whisker's CSS
@@ -152,23 +158,34 @@ fn install() {
 /// — the signal lives for the process lifetime; dropping the
 /// subscription would also drop the closure the bridge holds.
 fn subscribe_to_native(writer: MainThreadOnly<ArcWriteSignal<SafeAreaInsets>>) {
-    let module = module!("SafeArea");
-    let sub = module.on_event("insetsChanged", move |payload| {
-        if let Some(insets) = decode_payload(payload) {
-            // Bind the wrapper (not `.inner`) so Rust 2021 disjoint
-            // captures move the `Send + Sync` impl as a whole.
-            let w = &writer;
-            w.inner.set(insets);
-        }
-    });
-    if let Some(err) = sub.error() {
-        eprintln!("[whisker-safe-area] failed to subscribe: {err}");
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        // The writer remains in `SLOT`, keeping the process-global signal
+        // alive. Web and desktop deliberately expose the all-zero value.
+        let _ = writer;
     }
-    std::mem::forget(sub);
+
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let module = module!("SafeArea");
+        let sub = module.on_event("insetsChanged", move |payload| {
+            if let Some(insets) = decode_payload(payload) {
+                // Bind the wrapper (not `.inner`) so Rust 2021 disjoint
+                // captures move the `Send + Sync` impl as a whole.
+                let w = &writer;
+                w.inner.set(insets);
+            }
+        });
+        if let Some(err) = sub.error() {
+            eprintln!("[whisker-safe-area] failed to subscribe: {err}");
+        }
+        std::mem::forget(sub);
+    }
 }
 
 // Missing or non-numeric keys default to `0.0` — a malformed message
 // degrades silently rather than wedging the subscription.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 fn decode_payload(value: WhiskerValue) -> Option<SafeAreaInsets> {
     let WhiskerValue::Map(fields) = value else {
         return None;
@@ -207,3 +224,34 @@ struct MainThreadOnly<T> {
 // contract. Misuse would corrupt the reactive arena.
 unsafe impl<T> Send for MainThreadOnly<T> {}
 unsafe impl<T> Sync for MainThreadOnly<T> {}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    #[test]
+    fn decodes_native_payload_and_defaults_missing_edges() {
+        let payload = WhiskerValue::Map(BTreeMap::from([
+            ("top".into(), WhiskerValue::Float(12.5)),
+            ("bottom".into(), WhiskerValue::Int(8)),
+        ]));
+
+        assert_eq!(
+            decode_payload(payload),
+            Some(SafeAreaInsets {
+                top: 12.5,
+                leading: 0.0,
+                trailing: 0.0,
+                bottom: 8.0,
+            })
+        );
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[test]
+    fn common_platform_fallback_is_all_zero() {
+        assert_eq!(safe_area_insets().get(), SafeAreaInsets::default());
+    }
+}
