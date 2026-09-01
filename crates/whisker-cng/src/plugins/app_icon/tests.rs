@@ -42,7 +42,9 @@ fn default_config_contributes_nothing() {
     let root = unique_tempdir("noop");
     let mut ctx = ctx_both(&root);
     AppIcon.apply(&mut ctx, &AppIconConfig::default()).unwrap();
-    assert!(ctx.ios.unwrap().extra_files.is_empty());
+    let ios = ctx.ios.unwrap();
+    assert!(ios.extra_files.is_empty());
+    assert!(ios.pbxproj_ops.is_empty());
     assert!(ctx.android.unwrap().extra_files.is_empty());
     assert!(ctx.journal.records.is_empty());
     let _ = std::fs::remove_dir_all(&root);
@@ -130,6 +132,13 @@ fn apply_populates_ios_catalog_and_resource_op() {
 
     assert!(ios.pbxproj_ops.iter().any(|op| {
         matches!(op, PbxprojOp::AddResource { path } if path == Path::new("Assets.xcassets"))
+    }));
+    assert!(ios.pbxproj_ops.iter().any(|op| {
+        matches!(
+            op,
+            PbxprojOp::SetBuildSetting { key, value }
+                if key == "ASSETCATALOG_COMPILER_APPICON_NAME" && value == "AppIcon"
+        )
     }));
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -387,6 +396,13 @@ fn apply_ios_icon_bundle_replaces_asset_catalog() {
     );
     assert!(ios.pbxproj_ops.iter().any(|op| {
         matches!(op, PbxprojOp::AddResource { path } if path == Path::new("AppIcon.icon"))
+    }));
+    assert!(ios.pbxproj_ops.iter().any(|op| {
+        matches!(
+            op,
+            PbxprojOp::SetBuildSetting { key, value }
+                if key == "ASSETCATALOG_COMPILER_APPICON_NAME" && value == "AppIcon"
+        )
     }));
     let _ = std::fs::remove_dir_all(&root);
 }

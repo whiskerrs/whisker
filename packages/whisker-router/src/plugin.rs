@@ -1,7 +1,7 @@
 //! Whisker build plugin for the router.
 //!
-//! The router's Android predictive-back gesture ([`AndroidPredictiveBack`])
-//! relies on the OS delivering the `handleOnBackStarted` /
+//! The router's internal Android predictive-back driver relies on the OS
+//! delivering the `handleOnBackStarted` /
 //! `handleOnBackProgressed` preview callbacks. Android only delivers those
 //! when the app's manifest opts in with
 //! `android:enableOnBackInvokedCallback="true"` on `<application>`;
@@ -15,8 +15,6 @@
 //! crate's `Cargo.toml`; the engine builds the `whisker-router-plugin`
 //! binary and runs it on every `whisker build` / `whisker run`, so any app
 //! depending on `whisker-router` automatically gets the attribute.
-//!
-//! [`AndroidPredictiveBack`]: crate::render::AndroidPredictiveBack
 
 use serde::{Deserialize, Serialize};
 use whisker_plugin::{
@@ -45,7 +43,7 @@ impl Plugin for RouterPlugin {
             return Ok(());
         };
         // Opt into the Android 13+ predictive-back API so the OS delivers
-        // the interactive preview callbacks `AndroidPredictiveBack` reads.
+        // the interactive preview callbacks the Router's driver reads.
         android
             .manifest
             .application_attributes

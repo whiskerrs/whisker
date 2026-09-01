@@ -2,7 +2,8 @@
 
 fn main() -> Result<(), whisker_macos::MacosError> {
     whisker_macos::run_with_application_hash(
-        whisker_macos::MacosAppConfig::new({{app_title_rust}}){{element_module_config}},
+        whisker_macos::MacosAppConfig::new({{app_title_rust}})
+            .with_background_rgb({{background_red}}, {{background_green}}, {{background_blue}}){{element_module_config}},
         whisker_app::__whisker_application,
         whisker_app::__whisker_application_hash,
     )

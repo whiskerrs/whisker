@@ -47,7 +47,7 @@ use whisker::css::{Display, FlexDirection, PositionKind};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_audio::Player;
-use whisker_router::{AndroidPredictiveBack, Outlet, Router, SwipeBack, routes, use_navigator};
+use whisker_router::{Outlet, Router, routes, use_navigator};
 
 /// Process-wide table mapping a podcast `id` to its full [`Podcast`]
 /// value. `Browse` populates it from the resource result as soon as
@@ -123,8 +123,6 @@ fn app() -> Element {
             }) {
                 PodcastRouter {
                     Outlet {}
-                    SwipeBack {}
-                    AndroidPredictiveBack {}
                 }
             }
             MiniPlayer()

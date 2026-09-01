@@ -11,6 +11,8 @@
 		46E97003F6597438A0AC93C2 /* WhiskerDriver.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BD0 /* WhiskerDriver.framework */; };
 		46E97003F6597438A0AC93C3 /* WhiskerDriver.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BD0 /* WhiskerDriver.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		46E97003F6597438A0AC93C4 /* WhiskerModules in Frameworks */ = {isa = PBXBuildFile; productRef = 4BEF20C6F91CCD1A10D66BD2 /* WhiskerModules */; };
+		46E97003F6597438A0AC93C5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BD3 /* Assets.xcassets */; };
+		46E97003F6597438A0AC93C6 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BD4 /* LaunchScreen.storyboard */; };
 {{extra_pbxproj_build_file_entries}}
 /* End PBXBuildFile section */
 
@@ -18,6 +20,8 @@
 		35D466DB8920E7A52C599EBC /* {{ios_scheme}}.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "{{ios_scheme}}.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		4BEF20C6F91CCD1A10D66BCE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		4BEF20C6F91CCD1A10D66BD0 /* WhiskerDriver.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = Frameworks/WhiskerDriver.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		4BEF20C6F91CCD1A10D66BD3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		4BEF20C6F91CCD1A10D66BD4 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 {{extra_pbxproj_file_reference_entries}}
 /* End PBXFileReference section */
 
@@ -65,10 +69,20 @@
 			path = Sources;
 			sourceTree = "<group>";
 		};
+		2AFB6256646F5C748E027F5F /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				4BEF20C6F91CCD1A10D66BD3 /* Assets.xcassets */,
+				4BEF20C6F91CCD1A10D66BD4 /* LaunchScreen.storyboard */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		E8630311BAB2B628B85BC5D2 = {
 			isa = PBXGroup;
 			children = (
 				2AFB6256646F5C748E027F5E /* Sources */,
+				2AFB6256646F5C748E027F5F /* Resources */,
 				F1F2F3F4F5F6F7F8F9FAFBFC /* Whisker Plugin Files */,
 				00961668E9C919BF4554CF95 /* Products */,
 			);
@@ -167,6 +181,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				46E97003F6597438A0AC93C5 /* Assets.xcassets in Resources */,
+				46E97003F6597438A0AC93C6 /* LaunchScreen.storyboard in Resources */,
 {{extra_pbxproj_resources_phase_files}}
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -213,7 +229,6 @@
 		72DC351F8133C2EE79D7230F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = Info.plist;
 				FRAMEWORK_SEARCH_PATHS = "$(BUILT_PRODUCTS_DIR)/Frameworks";
@@ -230,7 +245,6 @@
 		91C02734642ACB1BD6BF3AE6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = Info.plist;
 				FRAMEWORK_SEARCH_PATHS = "$(BUILT_PRODUCTS_DIR)/Frameworks";

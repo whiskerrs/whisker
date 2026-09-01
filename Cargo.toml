@@ -63,6 +63,7 @@ members = [
     "packages/whisker-paths",
     "packages/whisker-paths/example",
     "packages/whisker-router",
+    "packages/whisker-router/web",
     "packages/whisker-router/example",
     "packages/whisker-safe-area",
     "packages/whisker-secure-store",

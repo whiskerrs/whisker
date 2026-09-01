@@ -7161,6 +7161,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-router-web-host"
+version = "0.12.0"
+dependencies = [
+ "wasm-bindgen",
+ "web-sys",
+ "whisker",
+ "whisker-web",
+]
+
+[[package]]
 name = "whisker-runtime"
 version = "0.12.0"
 dependencies = [

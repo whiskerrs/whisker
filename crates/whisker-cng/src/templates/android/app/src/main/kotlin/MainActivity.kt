@@ -13,6 +13,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
 {{main_activity_pre_super}}        super.onCreate(savedInstanceState)
 
+        window.setBackgroundDrawableResource(R.color.whisker_background)
         WhiskerWindow.enableEdgeToEdge(this)
         System.loadLibrary("{{rust_lib_name}}")
         WhiskerModuleBehaviors.registerAll()

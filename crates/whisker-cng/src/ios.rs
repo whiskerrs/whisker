@@ -41,10 +41,18 @@ const XCSCHEME: &str =
     include_str!("templates/ios/Project.xcodeproj/xcshareddata/xcschemes/scheme.xcscheme");
 const INFO_PLIST: &str = include_str!("templates/ios/Info.plist");
 const APP_DELEGATE_SWIFT: &str = include_str!("templates/ios/Sources/AppDelegate.swift");
+const LAUNCH_SCREEN_STORYBOARD: &str =
+    include_str!("templates/ios/Resources/LaunchScreen.storyboard");
+const ASSET_CATALOG: &str = include_str!("templates/ios/Resources/Assets.xcassets/Contents.json");
+const BACKGROUND_COLORSET: &str = include_str!(
+    "templates/ios/Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json"
+);
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct IosInputs {
     pub app_name: String,
+    /// Static Host background configured in `whisker.rs` (`#RRGGBB`).
+    pub background: String,
     pub version: String,
     pub build_number: u32,
     pub scheme: String,
@@ -91,6 +99,8 @@ pub struct IosInputs {
 /// rewritten. See [`crate::android::sync`] for the fast-path / drift
 /// rationale — same approach.
 pub fn sync(out_dir: &Path, inputs: &IosInputs) -> Result<bool> {
+    crate::background::AppBackground::parse(&inputs.background)
+        .context("validate iOS application background")?;
     let new_fp = fingerprint::fingerprint(
         serde_json::to_vec(inputs)
             .context("serialize IosInputs for fingerprint")?
@@ -118,6 +128,12 @@ pub fn sync(out_dir: &Path, inputs: &IosInputs) -> Result<bool> {
 pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String> {
     let mut v = HashMap::new();
     v.insert("app_name", inputs.app_name.clone());
+    let background = crate::background::AppBackground::parse(&inputs.background)
+        .expect("IosInputs background is validated when it is resolved");
+    let [red, green, blue] = background.rgb();
+    v.insert("background_red", color_component(red));
+    v.insert("background_green", color_component(green));
+    v.insert("background_blue", color_component(blue));
     v.insert("version", inputs.version.clone());
     v.insert("build_number", inputs.build_number.to_string());
     v.insert("ios_scheme", inputs.scheme.clone());
@@ -132,12 +148,14 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
         inputs.workspace_root.display().to_string(),
     );
     v.insert("whisker_user_package", inputs.user_package.clone());
-    // `UILaunchScreen` is seeded rather than hardcoded in the template
-    // so a plugin can supply a launch image / color instead.
+    // A generated storyboard keeps the launch background available on the
+    // crate's iOS 13 deployment target (`UILaunchScreen` starts at iOS 14).
     let mut info_plist = inputs.extra_info_plist.clone();
-    info_plist
-        .entry("UILaunchScreen".to_string())
-        .or_insert_with(|| PlistValue::Dict(BTreeMap::new()));
+    info_plist.remove("UILaunchScreen");
+    info_plist.insert(
+        "UILaunchStoryboardName".to_string(),
+        PlistValue::String("LaunchScreen".to_string()),
+    );
     v.insert("extra_info_plist_kvs", render_extra_info_plist(&info_plist));
     let pbx = render_pbxproj_op_placeholders(&inputs.pbxproj_ops);
     v.insert("extra_pbxproj_build_file_entries", pbx.build_file_entries);
@@ -163,6 +181,10 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
         pbx.target_build_settings,
     );
     v
+}
+
+fn color_component(value: u8) -> String {
+    format!("{:.6}", f32::from(value) / 255.0)
 }
 
 /// Bundled output of [`render_pbxproj_op_placeholders`] — one field
@@ -456,6 +478,18 @@ fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
             out_dir.join("Sources/AppDelegate.swift"),
             APP_DELEGATE_SWIFT,
         ),
+        (
+            out_dir.join("Resources/LaunchScreen.storyboard"),
+            LAUNCH_SCREEN_STORYBOARD,
+        ),
+        (
+            out_dir.join("Resources/Assets.xcassets/Contents.json"),
+            ASSET_CATALOG,
+        ),
+        (
+            out_dir.join("Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json"),
+            BACKGROUND_COLORSET,
+        ),
     ];
     for (path, template) in text_files {
         let rendered =
@@ -626,6 +660,7 @@ pub fn inputs_from_with_engine(
         .deployment_target
         .clone()
         .unwrap_or_else(|| "13.0".to_string());
+    let background = crate::background::AppBackground::resolve(app_config)?;
 
     let extra_info_plist = ios_ir.info_plist.clone();
     let extra_files = ios_ir.extra_files.clone();
@@ -633,6 +668,7 @@ pub fn inputs_from_with_engine(
 
     Ok(IosInputs {
         app_name,
+        background: background.hex().to_string(),
         version,
         build_number,
         scheme,
@@ -648,7 +684,7 @@ pub fn inputs_from_with_engine(
         // Bump on any template or renderer change: it feeds the sync
         // fingerprint, and without it existing `gen/ios/` trees keep
         // their stale output.
-        template_version: 36,
+        template_version: 38,
     })
 }
 
@@ -669,6 +705,7 @@ mod tests {
     fn sample_inputs() -> IosInputs {
         IosInputs {
             app_name: "HelloWorld".into(),
+            background: "#FFFFFF".into(),
             version: "0.1.0".into(),
             build_number: 1,
             scheme: "HelloWorld".into(),
@@ -681,7 +718,7 @@ mod tests {
             extra_info_plist: BTreeMap::new(),
             extra_files: BTreeMap::new(),
             pbxproj_ops: Vec::new(),
-            template_version: 36,
+            template_version: 38,
         }
     }
 
@@ -700,6 +737,9 @@ mod tests {
         for expected in [
             "Info.plist",
             "Sources/AppDelegate.swift",
+            "Resources/LaunchScreen.storyboard",
+            "Resources/Assets.xcassets/Contents.json",
+            "Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json",
             "HelloWorld.xcodeproj/project.pbxproj",
             "HelloWorld.xcodeproj/project.xcworkspace/contents.xcworkspacedata",
             "HelloWorld.xcodeproj/xcshareddata/xcschemes/HelloWorld.xcscheme",
@@ -712,6 +752,44 @@ mod tests {
             "the generated app must consume WhiskerView from the iOS SDK"
         );
         assert!(!out.join("project.yml").exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sync_projects_static_background_into_ios_startup_and_container() {
+        let tmp = unique_tempdir();
+        let out = tmp.join("gen/ios");
+        let mut inputs = sample_inputs();
+        inputs.background = "#101018".into();
+        sync(&out, &inputs).unwrap();
+
+        let colorset = std::fs::read_to_string(
+            out.join("Resources/Assets.xcassets/WhiskerBackground.colorset/Contents.json"),
+        )
+        .unwrap();
+        let plist = std::fs::read_to_string(out.join("Info.plist")).unwrap();
+        let storyboard =
+            std::fs::read_to_string(out.join("Resources/LaunchScreen.storyboard")).unwrap();
+        let delegate = std::fs::read_to_string(out.join("Sources/AppDelegate.swift")).unwrap();
+        let pbxproj =
+            std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
+
+        assert!(colorset.contains("\"red\" : \"0.062745\""));
+        assert!(colorset.contains("\"green\" : \"0.062745\""));
+        assert!(colorset.contains("\"blue\" : \"0.094118\""));
+        assert!(plist.contains("<key>UILaunchStoryboardName</key>"));
+        assert!(plist.contains("<string>LaunchScreen</string>"));
+        assert!(storyboard.contains("red=\"0.062745\""));
+        assert!(storyboard.contains("green=\"0.062745\""));
+        assert!(storyboard.contains("blue=\"0.094118\""));
+        assert!(delegate.contains("UIColor(named: \"WhiskerBackground\")"));
+        assert!(delegate.contains("root.view.addSubview(whiskerView)"));
+        assert!(pbxproj.contains("Assets.xcassets in Resources"));
+        assert!(
+            !pbxproj.contains("ASSETCATALOG_COMPILER_APPICON_NAME"),
+            "a background color catalog must not require an AppIcon catalog",
+        );
+
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

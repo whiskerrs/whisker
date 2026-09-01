@@ -27,6 +27,7 @@
 //! completes, which keeps the renderer unit-testable against tempdirs.
 
 pub mod android;
+mod background;
 pub mod compose;
 pub mod dependency_graph;
 pub mod discovery;

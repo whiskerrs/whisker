@@ -197,6 +197,11 @@ Containers (`Stack`/`Switch`) own *no* animation — they are passive views
 that render whichever child the RouteState selects. (See **Interactive
 transitions** for the one nuance.)
 
+When a route does not specify `transition`, the default is platform-aware:
+iOS uses a slide transition, Android uses its native-style transition, and
+Web/Desktop switch screens immediately. An explicit `transition` on the
+`Route` overrides that default on every platform.
+
 ### Chrome (tab bar) is a layout `Route`, not the `Switch`
 
 A `Switch` is **navigation logic only** — it decides which branch is
@@ -403,6 +408,26 @@ Notes that pin down the corners:
   RouteState and decides — kept out of the core pop rule so the graph stays
   clean.
 
+## Web History synchronization
+
+On Web, `RouterHandle` and the browser History API describe the same
+navigation. The initial browser URL seeds `RouteState`; `navigate` and `push`
+append a browser history entry; `replace`, `pop_to`, and `reset` replace the
+current entry. `back` updates `RouteState` synchronously and then steps back
+through Whisker-managed browser history when such an entry exists. Browser
+back/forward (`popstate`) performs the inverse operation and drives the router
+to the restored target.
+
+Route groups remain placement qualifiers rather than public URL segments. For
+example, both `/(home)/post/42` and `/(search)/post/42` expose `/post/42` in
+the address bar. The qualified target is retained in the browser history
+entry's private state so back/forward can restore the correct branch without
+leaking the group into the URL.
+
+Direct navigation to a nested URL relies on the Web host serving the generated
+`index.html` as its SPA fallback. Generated browser assets use root-absolute
+URLs so the same bootstrap works at `/`, `/post/42`, and other nested paths.
+
 ## Modals
 
 A modal is **a `Route`**, not a new concept:
@@ -436,15 +461,15 @@ enter/exit, but a gesture spans **two** routes. Resolution:
 - **The runtime composes the pair** from the two routes' own transitions
   (read off RouteState). The "spans two routes" problem is solved by
   computation, not by a new place to write a combined animation.
-- **Gesture enablement** (which stacks allow swipe-back, edge, etc.) is a
-  **`Stack`-level** option — "can you go back here" is a container
-  concern.
+- **Host navigation input is installed by `Router`.** Applications do not
+  mount empty gesture components: Android system/predictive back and iOS edge
+  swipe are internal platform drivers, while Web History is connected through
+  the same Router lifecycle. A driver begins an interactive transition only
+  when the active stack can pop and no active back handler owns the action.
 
 So: animation *values* live on the `Route`; the *pairing* is derived by
-the runtime; gesture *enablement* lives on the `Stack`; the intermediate
-0..1 state lives only in the animation layer. A rare interactive-only
-visual can override at the `Stack` level, but the default writes nothing
-new.
+the runtime; Host input belongs to the Router's internal platform driver;
+and the intermediate 0..1 state lives only in the animation layer.
 
 ## What `routes!` generates
 

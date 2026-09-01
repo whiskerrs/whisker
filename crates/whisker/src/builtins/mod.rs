@@ -85,7 +85,9 @@ pub trait ElementBuilder: Sized {
     // retained Rust scene performs hit testing and event propagation, so
     // these semantics are identical on every Host.
 
-    /// `tap` — single tap (won't fire if the finger moved far).
+    /// `tap` — pointer-source-independent activation (won't fire if the
+    /// pointer moved far). Mouse, touch, and pen input all reach this handler,
+    /// so it is the normal cross-Host choice for buttons and navigation.
     /// Bubble phase, lets the event continue up the chain.
     ///
     /// The closure receives a [`TouchEvent`] with the tap
@@ -118,7 +120,9 @@ pub trait ElementBuilder: Sized {
         self
     }
 
-    /// `click` — click on the nearest listening node.
+    /// `click` — mouse-compatible activation on the nearest listening node.
+    /// A mouse activation emits `tap` first and then `click`; touch and pen
+    /// activation emit only `tap`.
     fn on_click<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
         bind_typed(self.__element(), "click", BindType::Bind, f);
         self

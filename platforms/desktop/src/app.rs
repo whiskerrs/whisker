@@ -103,6 +103,8 @@ pub struct DesktopAppConfig {
     pub width: f64,
     /// Initial logical height in points.
     pub height: f64,
+    /// Static Host background visible before and behind Whisker content.
+    background_rgb: [u8; 3],
     /// Modules selected for this target, paired with their portable schema.
     modules: Vec<DesktopModuleInstallation>,
     element_factories: Vec<DesktopElementFactory>,
@@ -122,10 +124,20 @@ impl DesktopAppConfig {
             title: title.into(),
             width: 1024.0,
             height: 720.0,
+            background_rgb: [255, 255, 255],
             modules: Vec::new(),
             element_factories: Vec::new(),
             module_services: Vec::new(),
         }
+    }
+
+    /// Sets the static native-window background.
+    ///
+    /// Application code normally configures this through `app.background(...)`
+    /// in `whisker.rs`; generated Desktop Hosts call this method.
+    pub fn with_background_rgb(mut self, red: u8, green: u8, blue: u8) -> Self {
+        self.background_rgb = [red, green, blue];
+        self
     }
 
     /// Installs one module's portable element schema and Desktop implementation.
@@ -295,9 +307,12 @@ impl DesktopApplication {
         let wake = RuntimeWakeHandle::new(move || {
             let _ = wake_proxy.send_event(HostEvent::RequestFrame);
         });
-        let host = pollster::block_on(DesktopRuntime::new(
+        let host = pollster::block_on(DesktopRuntime::new_with_surface_config(
             window.clone(),
-            [self.viewport.width, self.viewport.height],
+            crate::DesktopSurfaceConfig::new(
+                [self.viewport.width, self.viewport.height],
+                self.config.background_rgb,
+            ),
             surface_id,
             &element_registrations,
             &self.config.element_factories,
@@ -317,11 +332,17 @@ impl DesktopApplication {
         self.runtime = Some(runtime);
         self.accessibility_adapter = Some(accessibility_adapter);
         self.window = Some(window);
+        // Present the configured Host background and first Whisker scene while
+        // the native window is still hidden. Showing an unpresented swapchain
+        // here would briefly expose an OS-specific default color.
+        self.drive_frame();
         self.window
             .as_ref()
             .expect("mounted Desktop window")
             .set_visible(true);
-        self.request_frame();
+        if !self.frame_failed {
+            self.request_frame();
+        }
         Ok(())
     }
 
@@ -629,8 +650,15 @@ mod tests {
         assert_eq!(config.title, "Whisker");
         assert_eq!(config.width, 1024.0);
         assert_eq!(config.height, 720.0);
+        assert_eq!(config.background_rgb, [255, 255, 255]);
         assert!(config.modules.is_empty());
         assert!(config.element_factories.is_empty());
         assert!(config.module_services.is_empty());
+    }
+
+    #[test]
+    fn generated_host_can_set_static_background() {
+        let config = DesktopAppConfig::new("Whisker").with_background_rgb(16, 16, 24);
+        assert_eq!(config.background_rgb, [16, 16, 24]);
     }
 }

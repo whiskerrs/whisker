@@ -20,13 +20,14 @@ impl DesktopSurface {
     pub(crate) async fn new(
         target: impl Into<wgpu::SurfaceTarget<'static>>,
         physical_size: [u32; 2],
+        background_rgb: [u8; 3],
         surface: SurfaceId,
         elements: DesktopElementRegistry,
         event_wake: RuntimeWakeHandle,
     ) -> Result<Self, GpuError> {
         Ok(Self {
             scene: DesktopScene::new_with_wake(surface, elements, event_wake),
-            gpu: GpuRenderer::new(target, physical_size).await?,
+            gpu: GpuRenderer::new(target, physical_size, background_rgb).await?,
         })
     }
 

@@ -27,15 +27,13 @@
 //!   URL segment but organize children under a Switch branch.
 //! - **Custom tab bar**: built with `use_group` + `navigator.navigate("/(home)")` —
 //!   no built-in TabBar component needed.
-//! - **Back gestures**: `SwipeBack` (iOS) and `AndroidPredictiveBack` (Android 13+).
+//! - **Platform back**: iOS edge swipe, Android predictive back, and Web
+//!   History are installed by `Router`.
 
 use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent, TextAlign};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_router::render::{
-    AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, use_group, use_navigator,
-    use_param,
-};
+use whisker_router::render::{Outlet, Router, RouterHandle, use_group, use_navigator, use_param};
 use whisker_router::{ReselectBehavior, routes};
 use whisker_safe_area::{SafeAreaInsets, safe_area_insets};
 
@@ -160,8 +158,6 @@ fn app() -> Element {
             }
         }) {
             Outlet {}
-            AndroidPredictiveBack {}
-            SwipeBack {}
         }
     }
 }

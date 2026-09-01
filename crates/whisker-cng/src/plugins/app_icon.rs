@@ -17,8 +17,9 @@
 //! ## What `apply` produces
 //!
 //! - **iOS** — one of two shapes, both registered via a
-//!   `PbxprojOp::AddResource` and resolved by the template's
-//!   hardcoded `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`:
+//!   `PbxprojOp::AddResource`. This plugin also contributes
+//!   `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`; the base Host
+//!   project does not require an icon when this plugin has no source:
 //!   - default: `Assets.xcassets/AppIcon.appiconset/` with a
 //!     *single-size* `Contents.json` + one 1024×1024 PNG. actool
 //!     derives every runtime size (120×120, 180×180, …) and the
@@ -270,8 +271,7 @@ impl Plugin for AppIcon {
         if let Some(ios) = ctx.ios.as_mut() {
             let (resource, count) = if let Some(icon_bundle) = &cfg.ios_icon {
                 // Stage the bundle under the fixed name
-                // `AppIcon.icon` so the template's hardcoded
-                // `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`
+                // `AppIcon.icon` so the build setting contributed below
                 // resolves regardless of the user's export name.
                 let files = collect_icon_bundle(&crate_root, icon_bundle)?;
                 let count = files.len();
@@ -313,11 +313,15 @@ impl Plugin for AppIcon {
             ios.pbxproj_ops.push(PbxprojOp::AddResource {
                 path: PathBuf::from(resource),
             });
+            ios.pbxproj_ops.push(PbxprojOp::SetBuildSetting {
+                key: "ASSETCATALOG_COMPILER_APPICON_NAME".to_string(),
+                value: "AppIcon".to_string(),
+            });
             ctx.journal.record(
                 AppIconConfig::NAME,
                 Target::Ios,
                 "pbxproj_ops",
-                Operation::ArrayPush { count: 1 },
+                Operation::ArrayPush { count: 2 },
             );
         }
 

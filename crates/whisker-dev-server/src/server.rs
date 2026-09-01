@@ -592,6 +592,7 @@ mod tests {
         }
 
         assert!(get(addr, "/").await.ends_with("INDEX"));
+        assert!(get(addr, "/detail/42").await.ends_with("INDEX"));
         assert!(get(addr, "/whisker_app.js").await.ends_with("JAVASCRIPT"));
         std::fs::remove_dir_all(root).ok();
     }

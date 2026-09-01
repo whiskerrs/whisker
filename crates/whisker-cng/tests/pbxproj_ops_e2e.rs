@@ -217,16 +217,20 @@ fn baseline_pbxproj_is_intact_when_no_plugin_declared() {
     // Baseline still present.
     assert!(pbxproj.contains("PRODUCT_BUNDLE_IDENTIFIER = \"rs.whisker.examples.helloWorld\""));
     assert!(pbxproj.contains("AppDelegate.swift"));
-    // PBXResourcesBuildPhase exists (it's always emitted), but
-    // its files list is empty.
+    // PBXResourcesBuildPhase always contains Whisker's app-background asset
+    // catalog and launch storyboard, but no plugin-contributed resource.
     let resources_open = pbxproj.find("isa = PBXResourcesBuildPhase;").unwrap();
     let resources_close = pbxproj[resources_open..]
         .find("\n\t\t};")
         .map(|i| resources_open + i)
         .unwrap();
     let inside = &pbxproj[resources_open..resources_close];
-    // No entries beyond the empty files = () marker.
-    assert!(!inside.contains("in Resources */,"), "{inside}");
+    assert!(inside.contains("Assets.xcassets in Resources"), "{inside}");
+    assert!(
+        inside.contains("LaunchScreen.storyboard in Resources"),
+        "{inside}"
+    );
+    assert_eq!(inside.matches("in Resources */,").count(), 2, "{inside}");
     // No SetBuildSetting noise either.
     assert!(!pbxproj.contains("/* extra-pbxproj */"));
     let _ = std::fs::remove_dir_all(&tmp);

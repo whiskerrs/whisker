@@ -21,10 +21,7 @@ use whisker_icons::{Icon, lucide};
 use whisker_image::{Image, ImageMode};
 use whisker_input::{AutoCapitalize, Input, KeyboardType, ReturnKey};
 use whisker_keyboard::keyboard_height;
-use whisker_router::render::{
-    AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, use_group, use_navigator,
-    use_param,
-};
+use whisker_router::render::{Outlet, Router, RouterHandle, use_group, use_navigator, use_param};
 use whisker_router::routes;
 use whisker_safe_area::safe_area_insets;
 use whisker_webview::WebView;
@@ -105,8 +102,6 @@ pub fn app() -> Element {
                 }
             }) {
                 Outlet {}
-                SwipeBack {}
-                AndroidPredictiveBack {}
             }
         }
     }

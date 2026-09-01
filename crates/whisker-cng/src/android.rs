@@ -41,6 +41,10 @@ use crate::render::{escape_xml, render};
 
 const APP_BUILD_GRADLE_KTS: &str = include_str!("templates/android/app/build.gradle.kts");
 const APP_MANIFEST_XML: &str = include_str!("templates/android/app/src/main/AndroidManifest.xml");
+const COLORS_XML: &str = include_str!("templates/android/app/src/main/res/values/colors.xml");
+const STYLES_XML: &str = include_str!("templates/android/app/src/main/res/values/styles.xml");
+const STYLES_V31_XML: &str =
+    include_str!("templates/android/app/src/main/res/values-v31/styles.xml");
 const MAIN_ACTIVITY_KT: &str =
     include_str!("templates/android/app/src/main/kotlin/MainActivity.kt");
 const ROOT_BUILD_GRADLE_KTS: &str = include_str!("templates/android/build.gradle.kts");
@@ -60,6 +64,8 @@ const GRADLE_WRAPPER_JAR: &[u8] =
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AndroidInputs {
     pub app_name: String,
+    /// Static Host background configured in `whisker.rs` (`#RRGGBB`).
+    pub background: String,
     pub version: String,
     pub build_number: u32,
     pub application_id: String,
@@ -159,6 +165,8 @@ pub struct AndroidInputs {
 /// rewritten — `false` means the cached fingerprint matched and the
 /// existing tree was reused.
 pub fn sync(out_dir: &Path, inputs: &AndroidInputs) -> Result<bool> {
+    crate::background::AppBackground::parse(&inputs.background)
+        .context("validate Android application background")?;
     let new_fp = fingerprint::fingerprint(
         serde_json::to_vec(inputs)
             .context("serialize AndroidInputs for fingerprint")?
@@ -181,6 +189,7 @@ pub fn sync(out_dir: &Path, inputs: &AndroidInputs) -> Result<bool> {
 pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, String> {
     let mut v = HashMap::new();
     v.insert("app_name", inputs.app_name.clone());
+    v.insert("background", inputs.background.clone());
     v.insert("version", inputs.version.clone());
     v.insert("build_number", inputs.build_number.to_string());
     v.insert("android_application_id", inputs.application_id.clone());
@@ -240,7 +249,7 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
         inputs
             .android_theme
             .clone()
-            .unwrap_or_else(|| "@android:style/Theme.Material.Light.NoActionBar".to_string()),
+            .unwrap_or_else(|| "@style/Theme.Whisker".to_string()),
     );
     let (main_activity_imports, main_activity_pre_super, main_activity_post_super) =
         render_main_activity(
@@ -475,6 +484,18 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
             out_dir.join("app/src/main/AndroidManifest.xml"),
             APP_MANIFEST_XML,
         ),
+        (
+            out_dir.join("app/src/main/res/values/colors.xml"),
+            COLORS_XML,
+        ),
+        (
+            out_dir.join("app/src/main/res/values/styles.xml"),
+            STYLES_XML,
+        ),
+        (
+            out_dir.join("app/src/main/res/values-v31/styles.xml"),
+            STYLES_V31_XML,
+        ),
         (kotlin_pkg.join("MainActivity.kt"), MAIN_ACTIVITY_KT),
         (out_dir.join("build.gradle.kts"), ROOT_BUILD_GRADLE_KTS),
         (out_dir.join("settings.gradle.kts"), SETTINGS_GRADLE_KTS),
@@ -698,6 +719,7 @@ pub fn inputs_from_with_engine(
     })?;
     let min_sdk = android_ir.min_sdk.unwrap_or(24);
     let target_sdk = android_ir.target_sdk.unwrap_or(34);
+    let background = crate::background::AppBackground::resolve(app_config)?;
 
     let extra_permissions = android_ir.manifest.permissions.clone();
     let extra_meta_data = android_ir.manifest.application_meta_data.clone();
@@ -713,6 +735,7 @@ pub fn inputs_from_with_engine(
 
     Ok(AndroidInputs {
         app_name,
+        background: background.hex().to_string(),
         version,
         build_number,
         application_id,
@@ -735,7 +758,7 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        template_version: 34,
+        template_version: 35,
     })
 }
 
@@ -756,6 +779,7 @@ mod tests {
     fn sample_inputs() -> AndroidInputs {
         AndroidInputs {
             app_name: "HelloWorld".into(),
+            background: "#FFFFFF".into(),
             version: "0.1.0".into(),
             build_number: 1,
             application_id: "rs.whisker.examples.helloworld".into(),
@@ -778,7 +802,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 34,
+            template_version: 35,
         }
     }
 
@@ -788,6 +812,10 @@ mod tests {
         assert!(MAIN_ACTIVITY_KT.contains("class MainActivity : ComponentActivity()"));
         assert!(MAIN_ACTIVITY_KT.contains("import rs.whisker.runtime.WhiskerView"));
         assert!(MAIN_ACTIVITY_KT.contains("WhiskerWindow.enableEdgeToEdge(this)"));
+        assert!(
+            MAIN_ACTIVITY_KT
+                .contains("window.setBackgroundDrawableResource(R.color.whisker_background)")
+        );
         assert!(MAIN_ACTIVITY_KT.contains("setContentView(WhiskerView(this))"));
         assert!(APP_BUILD_GRADLE_KTS.contains("androidx.activity:activity:1.8.2"));
     }
@@ -830,13 +858,35 @@ mod tests {
         let mut inputs = sample_inputs();
         assert_eq!(
             template_vars(&inputs)["android_theme"],
-            "@android:style/Theme.Material.Light.NoActionBar"
+            "@style/Theme.Whisker"
         );
         inputs.android_theme = Some("@style/Theme.App.Splash".into());
         assert_eq!(
             template_vars(&inputs)["android_theme"],
             "@style/Theme.App.Splash"
         );
+    }
+
+    #[test]
+    fn inputs_resolve_static_background_from_app_config() {
+        let mut config = Config::default();
+        config
+            .name("Background")
+            .bundle_id("rs.whisker.background")
+            .background("#101018");
+
+        let inputs = inputs_from(
+            &config,
+            "background".into(),
+            PathBuf::from("../.."),
+            "background".into(),
+            "0.1.0".into(),
+            "0.1.0".into(),
+            "https://example.invalid/maven".into(),
+        )
+        .unwrap();
+
+        assert_eq!(inputs.background, "#101018");
     }
 
     #[test]
@@ -893,6 +943,9 @@ mod tests {
         for expected in [
             "app/build.gradle.kts",
             "app/src/main/AndroidManifest.xml",
+            "app/src/main/res/values/colors.xml",
+            "app/src/main/res/values/styles.xml",
+            "app/src/main/res/values-v31/styles.xml",
             "app/src/main/kotlin/rs/whisker/examples/helloworld/MainActivity.kt",
             "build.gradle.kts",
             "settings.gradle.kts",
@@ -910,6 +963,37 @@ mod tests {
                 .exists(),
             "the generated app must consume WhiskerView from the Android SDK"
         );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sync_projects_static_background_into_android_startup_resources() {
+        let tmp = unique_tempdir();
+        let out = tmp.join("gen/android");
+        let mut inputs = sample_inputs();
+        inputs.background = "#101018".into();
+        sync(&out, &inputs).unwrap();
+
+        let colors =
+            std::fs::read_to_string(out.join("app/src/main/res/values/colors.xml")).unwrap();
+        let styles =
+            std::fs::read_to_string(out.join("app/src/main/res/values/styles.xml")).unwrap();
+        let styles_v31 =
+            std::fs::read_to_string(out.join("app/src/main/res/values-v31/styles.xml")).unwrap();
+        let manifest =
+            std::fs::read_to_string(out.join("app/src/main/AndroidManifest.xml")).unwrap();
+
+        assert!(colors.contains("<color name=\"whisker_background\">#101018</color>"));
+        assert!(
+            styles.contains(
+                "<item name=\"android:windowBackground\">@color/whisker_background</item>"
+            )
+        );
+        assert!(styles_v31.contains(
+            "<item name=\"android:windowSplashScreenBackground\">@color/whisker_background</item>"
+        ));
+        assert!(manifest.contains("android:theme=\"@style/Theme.Whisker\""));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

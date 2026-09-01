@@ -1645,6 +1645,69 @@ fn raw_touch_stream_synthesizes_tap_but_drag_does_not() {
 }
 
 #[test]
+fn raw_mouse_stream_synthesizes_cross_host_tap_and_mouse_click() {
+    let surface = surface(37);
+    let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+    let taps = Rc::new(Cell::new(0));
+    let clicks = Rc::new(Cell::new(0));
+    let tap_count = Rc::clone(&taps);
+    let click_count = Rc::clone(&clicks);
+
+    runtime
+        .mount(move || {
+            render! {
+                View(
+                    style: css!(width: px(100), height: px(100)),
+                    on_tap: move |_| tap_count.set(tap_count.get() + 1),
+                    on_click: move |_| click_count.set(click_count.get() + 1),
+                )
+            }
+        })
+        .unwrap();
+
+    let mut measurements = NoMeasurement;
+    let mut sink = RecordingRenderer::new(surface.surface());
+    runtime
+        .drive_frame(
+            1.0,
+            StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
+            1,
+            1,
+            &mut measurements,
+            &mut sink,
+            LayoutOptions::default(),
+        )
+        .unwrap();
+
+    let pointer = |timestamp_ms, kind, buttons| InputEvent {
+        surface: surface.surface(),
+        timestamp_ms,
+        kind,
+        pointer: Some(PointerInput {
+            id: PointerId::new(1).unwrap(),
+            kind: PointerKind::Mouse,
+            position: InputPoint { x: 10.0, y: 10.0 },
+            buttons,
+            changed_button: 0,
+        }),
+        target: None,
+        detail: WhiskerValue::Null,
+    };
+
+    runtime
+        .dispatch_input(&pointer(2.0, InputEventKind::PointerDown, 1))
+        .unwrap();
+    let up = runtime
+        .dispatch_input(&pointer(30.0, InputEventKind::PointerUp, 0))
+        .unwrap();
+
+    assert!(up.consumed);
+    assert_eq!(up.listener_count, 2);
+    assert_eq!(taps.get(), 1);
+    assert_eq!(clicks.get(), 1);
+}
+
+#[test]
 fn background_completion_parks_while_paused_and_resumes_on_host_drive() {
     let wakes = Arc::new(AtomicUsize::new(0));
     let wake_count = Arc::clone(&wakes);
