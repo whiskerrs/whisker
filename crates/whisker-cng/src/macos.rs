@@ -22,6 +22,8 @@ const ENTITLEMENTS: &str = include_str!("templates/macos/Entitlements.plist");
 pub struct MacosInputs {
     /// Human-readable application name and `.app` bundle name.
     pub app_name: String,
+    /// Static Host background configured in `whisker.rs` (`#RRGGBB`).
+    pub background: String,
     /// Reverse-DNS bundle identifier.
     pub bundle_id: String,
     /// User-visible semantic version.
@@ -98,9 +100,11 @@ pub fn inputs_from(
         .clone()
         .unwrap_or_else(|| "0.1.0".to_string());
     let build_number = app_config.build_number.unwrap_or(1);
+    let background = crate::background::AppBackground::resolve(app_config)?;
     let generated_package = format!("{}-whisker-macos", user_package);
     Ok(MacosInputs {
         app_name,
+        background: background.hex().to_string(),
         bundle_id,
         version,
         build_number,
@@ -111,7 +115,7 @@ pub fn inputs_from(
         whisker_desktop_dependency: format!("{:?}", env!("CARGO_PKG_VERSION")),
         element_modules: Vec::new(),
         minimum_system_version: "12.0".to_string(),
-        template_version: 8,
+        template_version: 9,
     })
 }
 
@@ -125,6 +129,8 @@ fn validate(inputs: &MacosInputs) -> Result<()> {
     if inputs.generated_package.trim().is_empty() || inputs.user_package.trim().is_empty() {
         bail!("macOS Cargo package names must not be empty");
     }
+    crate::background::AppBackground::parse(&inputs.background)
+        .context("validate macOS application background")?;
     Ok(())
 }
 
@@ -132,6 +138,12 @@ fn template_vars(inputs: &MacosInputs) -> std::collections::HashMap<&'static str
     let mut vars = std::collections::HashMap::new();
     vars.insert("app_name", xml_escape(&inputs.app_name));
     vars.insert("app_title_rust", rust_string(&inputs.app_name));
+    let background = crate::background::AppBackground::parse(&inputs.background)
+        .expect("MacosInputs background is validated when it is resolved");
+    let [red, green, blue] = background.rgb();
+    vars.insert("background_red", red.to_string());
+    vars.insert("background_green", green.to_string());
+    vars.insert("background_blue", blue.to_string());
     vars.insert("bundle_id", xml_escape(&inputs.bundle_id));
     vars.insert("version", xml_escape(&inputs.version));
     vars.insert("build_number", inputs.build_number.to_string());
@@ -226,6 +238,7 @@ mod tests {
     fn sample() -> MacosInputs {
         MacosInputs {
             app_name: "Hello Mac".into(),
+            background: "#FFFFFF".into(),
             bundle_id: "rs.whisker.hello".into(),
             version: "1.2.3".into(),
             build_number: 7,
@@ -236,7 +249,7 @@ mod tests {
             whisker_desktop_dependency: "{ path = \"/tmp/whisker/platforms/desktop\" }".into(),
             element_modules: Vec::new(),
             minimum_system_version: "12.0".into(),
-            template_version: 3,
+            template_version: 9,
         }
     }
 
@@ -266,8 +279,33 @@ mod tests {
         assert!(main.contains("whisker_app::__whisker_application"));
         assert!(main.contains("whisker_app::__whisker_application_hash"));
         assert!(main.contains("run_with_application_hash"));
+        assert!(main.contains(".with_background_rgb(255, 255, 255)"));
         assert!(!main.contains("{{"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn configured_background_is_projected_into_desktop_host_config() {
+        let mut config = Config::default();
+        config
+            .name("Desktop")
+            .bundle_id("rs.whisker.desktop")
+            .background("#101018");
+        let inputs = inputs_from(
+            &config,
+            "demo".into(),
+            PathBuf::from("/app"),
+            "\"0.12\"".into(),
+        )
+        .unwrap();
+        assert_eq!(inputs.background, "#101018");
+
+        let root = tempdir();
+        let out = root.join("gen/macos");
+        sync(&out, &inputs).unwrap();
+        let main = std::fs::read_to_string(out.join("src/main.rs")).unwrap();
+        assert!(main.contains(".with_background_rgb(16, 16, 24)"));
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

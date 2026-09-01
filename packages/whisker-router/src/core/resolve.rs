@@ -2,16 +2,21 @@
 //! does a [`navigate`](super::nav::Navigator::navigate) hit?
 //!
 //! > Among nodes matching the target, pick the one whose path shares the
-//! > **deepest common ancestor with the current position**. Break ties
-//! > by **declaration order** (first defined wins).
+//! > **deepest common ancestor with the current position**. An equal tie is
+//! > ambiguous and must be qualified with a route group.
 //!
-//! Operationally ([`resolve`]): walk up from the current leaf to the
-//! root; the first (deepest) ancestor whose subtree contains a match
-//! resolves it; within that subtree, declaration (pre-order) order
-//! breaks ties. Cold start (no current) resolves from the root, i.e.
-//! pure declaration order.
+//! Cold resolution uses the tree's configured initial state as its current
+//! position, so a shared public route prefers the initial `Switch` branch.
 
-use super::tree::{CompiledTree, NodePath};
+use super::state::RouteState;
+use super::tree::{CompiledTree, NodePath, RouteMatch};
+
+/// Failure to choose one concrete placement for a destination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolveError {
+    NotFound,
+    Ambiguous,
+}
 
 /// An explicit resolution-scope override hook (`within(scope)`).
 ///
@@ -35,16 +40,17 @@ impl Scope {
 /// Resolve a URL relative to `current` (the path of the current leaf,
 /// or `None` for cold start).
 ///
-/// Group segments in the URL are optional: `"/detail/42"` and
-/// `"/(home)/detail/42"` both resolve against the pattern
-/// `/(home)/detail/:id`.
+/// An unqualified public URL such as `"/detail/42"` is resolved relative to
+/// the active branch. A qualified destination such as
+/// `"/(home)/detail/42"` selects that exact placement.
 ///
 /// Returns the chosen candidate's [`NodePath`], or `None` if nothing
 /// matches.
 pub fn resolve(tree: &CompiledTree, url: &str, current: Option<&NodePath>) -> Option<NodePath> {
-    // Prefer a leaf **screen** matching the URL.
-    if let Some(found) = pick_relative(&tree.paths_matching_url(url), current) {
-        return Some(found);
+    match resolve_route(tree, url, current) {
+        Ok(found) => return Some(found.path),
+        Err(ResolveError::Ambiguous) => return None,
+        Err(ResolveError::NotFound) => {}
     }
     // Fallback: the URL named a **container** (e.g. a bare `/(group)` whose
     // group has no index `""` screen) — resolve to the index leaf inside the
@@ -58,9 +64,58 @@ pub fn resolve(tree: &CompiledTree, url: &str, current: Option<&NodePath>) -> Op
     )
 }
 
-/// Pick from `cands` by the deepest-common-ancestor-with-`current` rule
-/// (declaration order breaks ties); cold start (no current) takes the first.
-/// `None` when `cands` is empty.
+/// Resolve a leaf route together with the params captured for that exact
+/// placement. An unqualified shared route prefers the current branch. If
+/// several candidates are equally near, the destination is ambiguous rather
+/// than silently choosing declaration order.
+pub(crate) fn resolve_route(
+    tree: &CompiledTree,
+    url: &str,
+    current: Option<&NodePath>,
+) -> Result<RouteMatch, ResolveError> {
+    let initial_current = current
+        .is_none()
+        .then(|| RouteState::initial(tree).current().path.clone());
+    pick_relative_match(
+        tree.route_matches(url),
+        current.or(initial_current.as_ref()),
+    )
+}
+
+fn pick_relative_match(
+    candidates: Vec<RouteMatch>,
+    current: Option<&NodePath>,
+) -> Result<RouteMatch, ResolveError> {
+    if candidates.is_empty() {
+        return Err(ResolveError::NotFound);
+    }
+    let Some(current) = current else {
+        return Ok(candidates.into_iter().next().expect("non-empty"));
+    };
+
+    let best_depth = candidates
+        .iter()
+        .map(|candidate| common_prefix_len(&candidate.path, current))
+        .max()
+        .expect("non-empty");
+    let mut nearest = candidates
+        .into_iter()
+        .filter(|candidate| common_prefix_len(&candidate.path, current) == best_depth);
+    let found = nearest.next().expect("best candidate exists");
+    if nearest.next().is_some() {
+        Err(ResolveError::Ambiguous)
+    } else {
+        Ok(found)
+    }
+}
+
+fn common_prefix_len(a: &NodePath, b: &NodePath) -> usize {
+    a.0.iter().zip(&b.0).take_while(|(x, y)| x == y).count()
+}
+
+/// Pick a legacy container candidate relative to `current`. Container
+/// resolution is kept for the low-level [`resolve`] compatibility API;
+/// navigation verbs handle qualified group destinations directly.
 fn pick_relative(cands: &[NodePath], current: Option<&NodePath>) -> Option<NodePath> {
     if cands.is_empty() {
         return None;
@@ -87,8 +142,13 @@ pub fn resolve_within(
     current: Option<&NodePath>,
     scope: &Scope,
 ) -> Option<NodePath> {
+    match resolve_route_within(tree, url, current, scope) {
+        Ok(found) => return Some(found.path),
+        Err(ResolveError::Ambiguous) => return None,
+        Err(ResolveError::NotFound) => {}
+    }
     let cands: Vec<NodePath> = tree
-        .paths_matching_url(url)
+        .container_paths_matching_url(url)
         .into_iter()
         .filter(|c| scope.root.is_ancestor_of(c))
         .collect();
@@ -110,4 +170,18 @@ pub fn resolve_within(
             Some(cands[0].clone())
         }
     }
+}
+
+pub(crate) fn resolve_route_within(
+    tree: &CompiledTree,
+    url: &str,
+    current: Option<&NodePath>,
+    scope: &Scope,
+) -> Result<RouteMatch, ResolveError> {
+    let candidates = tree
+        .route_matches(url)
+        .into_iter()
+        .filter(|candidate| scope.root.is_ancestor_of(&candidate.path))
+        .collect();
+    pick_relative_match(candidates, current)
 }

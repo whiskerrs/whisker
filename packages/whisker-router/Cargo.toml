@@ -19,6 +19,8 @@ include = [
     "bin/**/*.rs",
     "android/**/*.kt",
     "ios/**/*.swift",
+    "web/Cargo.toml",
+    "web/src/**/*.rs",
     "README.md",
 ]
 
@@ -32,6 +34,9 @@ crate-type = ["rlib"]
 # trees for this table to discover module crates and stage their
 # `ios/` + `android/` directories into the platform builds.
 [package.metadata.whisker]
+
+[package.metadata.whisker.web]
+package = "whisker-router-web-host"
 
 # Plugin registration — Whisker walks the consuming app's dep tree, picks
 # this up, builds the `whisker-router-plugin` binary below, and runs it on

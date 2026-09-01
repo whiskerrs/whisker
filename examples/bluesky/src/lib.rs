@@ -21,10 +21,7 @@ use whisker_icons::{Icon, lucide};
 use whisker_image::{Image, ImageMode};
 use whisker_input::{AutoCapitalize, Input, KeyboardType, ReturnKey};
 use whisker_keyboard::keyboard_height;
-use whisker_router::render::{
-    AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, use_navigator, use_param,
-    use_pathname,
-};
+use whisker_router::render::{Outlet, Router, RouterHandle, use_group, use_navigator, use_param};
 use whisker_router::routes;
 use whisker_safe_area::safe_area_insets;
 use whisker_webview::WebView;
@@ -54,7 +51,7 @@ pub fn app() -> Element {
             // pre-auth login flow is a sibling `(auth)` branch (no tab bar).
             Router(routes: routes! {
                 Route(component: TabsLayout) {
-                    Switch {
+                    Switch(initial: "(home)") {
                         Route(path: "(home)") {
                             Stack {
                                 Route(path: "", component: TimelineScreen)
@@ -105,8 +102,6 @@ pub fn app() -> Element {
                 }
             }) {
                 Outlet {}
-                SwipeBack {}
-                AndroidPredictiveBack {}
             }
         }
     }
@@ -118,7 +113,7 @@ pub fn app() -> Element {
 #[component]
 fn tabs_layout() -> Element {
     let nav = use_navigator();
-    let pathname = use_pathname();
+    let active_group = use_group();
     let AuthState(authed) = use_context::<AuthState>().expect("AuthState provided at root");
 
     on_mount(move || {
@@ -130,12 +125,12 @@ fn tabs_layout() -> Element {
             if bsky_auth::restore_session().await {
                 authed.set(true);
             } else {
-                let _ = nav.select("/(auth)");
+                let _ = nav.navigate("/(auth)");
             }
         });
     });
 
-    let on_auth = computed(move || pathname.get().contains("/(auth)"));
+    let on_auth = computed(move || active_group.get().as_deref() == Some("auth"));
 
     render! {
         View(style: css!(
@@ -158,13 +153,13 @@ fn tabs_layout() -> Element {
     }
 }
 
-/// Bottom tab bar. Active tab is derived from the current pathname (the
-/// group segment, e.g. `/(search)`); tapping selects that branch,
+/// Bottom tab bar. Active tab is derived from the current route group;
+/// tapping navigates to that branch,
 /// preserving each tab's own stack.
 #[component]
 fn tab_bar() -> Element {
     let nav = use_navigator();
-    let pathname = use_pathname();
+    let active_group = use_group();
     let insets = safe_area_insets();
     let bar_style = computed(move || {
         css!(
@@ -181,10 +176,10 @@ fn tab_bar() -> Element {
     });
     render! {
         View(style: bar_style) {
-            TabBarItem(group: "(home)", url: "/(home)", icon: lucide::House, pathname: pathname, nav: nav.clone())
-            TabBarItem(group: "(search)", url: "/(search)", icon: lucide::Search, pathname: pathname, nav: nav.clone())
-            TabBarItem(group: "(notifications)", url: "/(notifications)", icon: lucide::Bell, pathname: pathname, nav: nav.clone())
-            TabBarItem(group: "(profile)", url: "/(profile)", icon: lucide::User, pathname: pathname, nav: nav.clone())
+            TabBarItem(group: "home", url: "/(home)", icon: lucide::House, active_group: active_group, nav: nav.clone())
+            TabBarItem(group: "search", url: "/(search)", icon: lucide::Search, active_group: active_group, nav: nav.clone())
+            TabBarItem(group: "notifications", url: "/(notifications)", icon: lucide::Bell, active_group: active_group, nav: nav.clone())
+            TabBarItem(group: "profile", url: "/(profile)", icon: lucide::User, active_group: active_group, nav: nav.clone())
         }
     }
 }
@@ -194,22 +189,10 @@ fn tab_bar_item(
     group: &'static str,
     url: &'static str,
     icon: Signal<String>,
-    pathname: ReadSignal<String>,
+    active_group: ReadSignal<Option<String>>,
     nav: RouterHandle,
 ) -> Element {
-    // The home group has no segment in the pathname, so it's active when no
-    // other group segment is present.
-    let is_active = computed(move || {
-        let p = pathname.get();
-        if group == "(home)" {
-            !p.contains("/(search)")
-                && !p.contains("/(notifications)")
-                && !p.contains("/(profile)")
-                && !p.contains("/(auth)")
-        } else {
-            p.contains(group)
-        }
-    });
+    let is_active = computed(move || active_group.get().as_deref() == Some(group));
     let color = computed(move || {
         if is_active.get() {
             "#1083FE".to_string()
@@ -230,7 +213,7 @@ fn tab_bar_item(
                 height: px(52),
             ),
             on_tap: move |_| {
-                let _ = nav.select(url);
+                let _ = nav.navigate(url);
             },
         ) {
             Icon(svg: icon, color: color, size: "26")

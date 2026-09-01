@@ -2,8 +2,8 @@
 //
 // Subscribes to the host Activity's `OnBackPressedDispatcher` while at
 // least one Rust subscriber is registered. The Rust half is
-// `AndroidPredictiveBack` in `src/render/gesture.rs`, which drives the
-// same coordinated two-screen scrub as the iOS `SwipeBack`.
+// The Router's internal platform navigation driver uses these events to drive
+// the same coordinated two-screen scrub as the iOS edge-swipe driver.
 //
 // `androidx.activity.OnBackPressedDispatcher` rather than the raw
 // API-33+ `Activity.onBackInvokedDispatcher`, so one code path covers

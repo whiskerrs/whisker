@@ -306,7 +306,7 @@ fn button(label: &'static str, delta: i32, count: RwSignal<i32>) -> Element {{
 
 fn whisker_rs(v: &Vars) -> String {
     format!(
-        r#"// `whisker.rs` — Whisker app configuration.
+        r##"// `whisker.rs` — Whisker app configuration.
 //
 // `whisker run` compiles this file as a tiny probe binary that
 // serializes the resulting `Config` to JSON; the CLI reads that
@@ -315,6 +315,7 @@ fn whisker_rs(v: &Vars) -> String {
 pub fn configure(app: &mut whisker_config::Config) {{
     app.name("{display}")
         .bundle_id("{bundle_id}")
+        .background("#FFFFFF")
         .version("0.1.0")
         .build_number(1);
 
@@ -332,7 +333,7 @@ pub fn configure(app: &mut whisker_config::Config) {{
             .deployment_target("13.0");
     }});
 }}
-"#,
+"##,
         display = v.display_name,
         bundle_id = v.bundle_id,
     )
@@ -590,6 +591,7 @@ mod tests {
         // Default display name + bundle id are derived.
         assert!(whisker_rs.contains("Demo App"));
         assert!(whisker_rs.contains("rs.example.demo_app"));
+        assert!(whisker_rs.contains(".background(\"#FFFFFF\")"));
 
         let gitignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
         // Sanity-check the load-bearing entries — losing either of

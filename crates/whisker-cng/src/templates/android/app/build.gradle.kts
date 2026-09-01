@@ -56,6 +56,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.activity:activity:1.8.2")
     if (rootProject.findProject(":whisker-runtime") != null) {
         implementation(project(":whisker-runtime"))
     } else {

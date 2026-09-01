@@ -17,6 +17,7 @@
 
 use std::collections::BTreeMap;
 
+use super::location::Location;
 use super::tree::{CompiledTree, NodePath, RouteTree, SwitchDef};
 
 /// The runtime state of one node, mirroring the static tree's shape.
@@ -35,8 +36,9 @@ pub enum RouteState {
 /// A concrete `Route` instance: which static node it is + its param
 /// values.
 ///
-/// `post(1)` and `post(2)` are two distinct instances of the same
-/// static `Route` node, differing only in [`params`](RouteInstance::params).
+/// `post(1)` and `post(2)` are two distinct instances of the same static
+/// `Route` node. Query strings and fragments in [`location`](Self::location)
+/// also distinguish retained entries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RouteInstance {
@@ -44,6 +46,9 @@ pub struct RouteInstance {
     pub path: NodePath,
     /// Concrete param values, keyed by segment name (e.g. `id` → `42`).
     pub params: BTreeMap<String, String>,
+    /// The concrete, public location represented by this history entry.
+    /// Group qualifiers are never present in its pathname.
+    pub location: Location,
     /// Child states, mirroring the static Route's children. Empty for
     /// leaf Routes; non-empty when the Route has Stack/Switch/Route children.
     pub children: Vec<RouteState>,
@@ -55,6 +60,7 @@ impl RouteInstance {
         RouteInstance {
             path,
             params: BTreeMap::new(),
+            location: Location::root(),
             children: Vec::new(),
         }
     }
@@ -66,6 +72,7 @@ impl RouteInstance {
         RouteInstance {
             path,
             params,
+            location: Location::root(),
             children: Vec::new(),
         }
     }
@@ -131,6 +138,14 @@ impl RouteState {
                 RouteState::Route(RouteInstance {
                     path: path.clone(),
                     params: BTreeMap::new(),
+                    location: tree
+                        .url_of(path)
+                        .map(|pathname| Location {
+                            pathname,
+                            search: None,
+                            fragment: None,
+                        })
+                        .unwrap_or_default(),
                     children: child_states,
                 })
             }
@@ -174,8 +189,9 @@ impl RouteState {
         tree: &CompiledTree,
         dest: &NodePath,
         params: BTreeMap<String, String>,
+        location: Location,
     ) -> RouteState {
-        Self::focused_inner(tree, &NodePath::root(), dest, &params)
+        Self::focused_inner(tree, &NodePath::root(), dest, &params, &location)
     }
 
     fn focused_inner(
@@ -183,6 +199,7 @@ impl RouteState {
         path: &NodePath,
         dest: &NodePath,
         params: &BTreeMap<String, String>,
+        location: &Location,
     ) -> RouteState {
         let node = tree
             .node_at(path)
@@ -195,7 +212,7 @@ impl RouteState {
                 let child_states = children
                     .iter()
                     .enumerate()
-                    .map(|(i, _)| Self::focused_inner(tree, &path.child(i), dest, params))
+                    .map(|(i, _)| Self::focused_inner(tree, &path.child(i), dest, params, location))
                     .collect();
                 RouteState::Route(RouteInstance {
                     path: path.clone(),
@@ -203,6 +220,17 @@ impl RouteState {
                         params.clone()
                     } else {
                         BTreeMap::new()
+                    },
+                    location: if path == dest {
+                        location.clone()
+                    } else {
+                        tree.url_of(path)
+                            .map(|pathname| Location {
+                                pathname,
+                                search: None,
+                                fragment: None,
+                            })
+                            .unwrap_or_default()
                     },
                     children: child_states,
                 })
@@ -216,7 +244,7 @@ impl RouteState {
                     path: path.clone(),
                     history: vec![StackEntry {
                         child: child_path.clone(),
-                        state: Self::focused_inner(tree, &child_path, dest, params),
+                        state: Self::focused_inner(tree, &child_path, dest, params, location),
                     }],
                 })
             }
@@ -228,7 +256,7 @@ impl RouteState {
                 let selected =
                     toward(branches.len()).unwrap_or_else(|| clamp_default(def, branches.len()));
                 let branch_states = (0..branches.len())
-                    .map(|i| Self::focused_inner(tree, &path.child(i), dest, params))
+                    .map(|i| Self::focused_inner(tree, &path.child(i), dest, params, location))
                     .collect();
                 RouteState::Switch(SwitchState {
                     path: path.clone(),

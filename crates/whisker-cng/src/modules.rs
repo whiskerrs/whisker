@@ -693,6 +693,26 @@ mod tests {
     }
 
     #[test]
+    fn discovers_router_history_as_a_service_only_web_host() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .join("Cargo.toml");
+        let modules = discover(&workspace, "whisker-router-example").unwrap();
+        let router = modules
+            .iter()
+            .find(|module| module.package == "whisker-router")
+            .unwrap();
+        let web = router.web.as_ref().unwrap();
+        assert_eq!(web.package, "whisker-router-web-host");
+        assert!(matches!(
+            &web.source,
+            ResolvedRustHostSource::Path(path) if path.ends_with("whisker-router/web")
+        ));
+    }
+
+    #[test]
     fn published_rust_host_falls_back_to_the_outer_package_version() {
         let contribution = resolve_rust_host_crate(
             "whisker-toggle",

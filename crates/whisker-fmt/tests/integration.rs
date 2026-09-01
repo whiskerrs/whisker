@@ -294,7 +294,7 @@ fn full_pipeline_composite_podcast_like_tree() {
     }
     // A shape close to the real `examples/podcast` app, through the FULL
     // pipeline, checked for idempotency and the max_width budget.
-    let messy = "fn app()->Element{render!{View(style:css!(flex_grow:1.0,width:vw(100),height:vh(100),background_color:BG,display:Display::Flex)){Router(routes:routes!{Stack{Route(path:\"\",component:Home)Route(path:\"detail/:id\",component:Detail)}}){Outlet{}SwipeBack{}}}}}\n";
+    let messy = "fn app()->Element{render!{View(style:css!(flex_grow:1.0,width:vw(100),height:vh(100),background_color:BG,display:Display::Flex)){Router(routes:routes!{Stack{Route(path:\"\",component:Home)Route(path:\"detail/:id\",component:Detail)}}){Outlet{}}}}}\n";
     let once = format_source(messy, &opts(4, 100)).unwrap();
     let twice = format_source(&once, &opts(4, 100)).unwrap();
     assert_eq!(

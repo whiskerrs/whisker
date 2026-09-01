@@ -117,6 +117,21 @@ pub struct DesktopRuntime {
     last_frame_timestamp_ms: Option<f64>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DesktopSurfaceConfig {
+    physical_size: [u32; 2],
+    background_rgb: [u8; 3],
+}
+
+impl DesktopSurfaceConfig {
+    pub(crate) fn new(physical_size: [u32; 2], background_rgb: [u8; 3]) -> Self {
+        Self {
+            physical_size,
+            background_rgb,
+        }
+    }
+}
+
 impl DesktopRuntime {
     /// Creates shared Host state for an owned native window target.
     ///
@@ -132,11 +147,33 @@ impl DesktopRuntime {
         module_definitions: impl IntoIterator<Item = RustModuleDefinition>,
         resource_wake: RuntimeWakeHandle,
     ) -> Result<Self, DesktopError> {
+        Self::new_with_surface_config(
+            target,
+            DesktopSurfaceConfig::new(physical_size, [255, 255, 255]),
+            surface,
+            elements,
+            element_factories,
+            module_definitions,
+            resource_wake,
+        )
+        .await
+    }
+
+    pub(crate) async fn new_with_surface_config(
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        config: DesktopSurfaceConfig,
+        surface: SurfaceId,
+        elements: &[ElementRegistration],
+        element_factories: &[DesktopElementFactory],
+        module_definitions: impl IntoIterator<Item = RustModuleDefinition>,
+        resource_wake: RuntimeWakeHandle,
+    ) -> Result<Self, DesktopError> {
         let elements = DesktopElementRegistry::bind(elements, element_factories)
             .map_err(|error| DesktopError(format!("bind Desktop elements: {error}")))?;
         let surface = DesktopSurface::new(
             target,
-            physical_size,
+            config.physical_size,
+            config.background_rgb,
             surface,
             elements.clone(),
             resource_wake.clone(),

@@ -257,8 +257,12 @@ struct StackWrapper {
     fingerprint: RouteState,
     /// The wrapper element (carries the transition transform).
     wrapper: Element,
-    /// The child node's owner (so we can pause/resume/dispose it).
+    /// Presentation/lifetime owner for the wrapper, pose effect, and nested
+    /// content owner. It remains active until the whole entry is disposed.
     owner: Owner,
+    /// Reactive content below the presentation wrapper. Buried content is
+    /// paused independently while the wrapper's pose effect remains live.
+    content_owner: Owner,
     /// This wrapper's **own** controller — the one used to drive the
     /// transition when *this* wrapper is the moving top (push-in /
     /// pop-out). It is also what an under wrapper's pose is pointed at
@@ -379,39 +383,19 @@ fn reconcile_stack(
                 let drive = w.ctrl.clone();
                 w.ctrl.set_value(0.0);
                 set_pose(&w, &drive, Role::Top, Direction::Push);
-                let under_owner = {
+                {
                     let l = live.borrow();
-                    l.last().map(|under| {
-                        under.owner.resume(); // animate it while covered
+                    if let Some(under) = l.last() {
+                        // Freeze routed content as soon as it becomes covered.
+                        // The presentation effect belongs to `owner`, not this
+                        // child owner, and therefore still animates in lockstep.
+                        under.content_owner.pause();
                         set_pose(under, &drive, Role::Under, Direction::Push);
-                        under.owner
-                    })
-                };
+                    }
+                }
                 if w.transition.is_instant() {
                     drive.set_value(1.0);
-                    if let Some(owner) = under_owner {
-                        owner.pause();
-                    }
                 } else {
-                    // The steady-state settle skips wrappers whose pose is
-                    // still animating and no reconcile re-runs after the
-                    // slide, so the covered under has to be frozen from the
-                    // run's own completion. One-shot: `on_finish` callbacks
-                    // persist across a controller's later runs, and firing
-                    // again on a pop's reverse would pause the screen that
-                    // pop just revealed.
-                    if let Some(owner) = under_owner {
-                        let mut done = false;
-                        drive.on_finish(move |finished| {
-                            if done {
-                                return;
-                            }
-                            done = true;
-                            if finished {
-                                owner.pause();
-                            }
-                        });
-                    }
                     drive.forward();
                 }
                 live.borrow_mut().push(w);
@@ -442,7 +426,7 @@ fn reconcile_stack(
             // (multi-pop) just vanish.
             let mut popped = popped.into_iter();
             if let Some(top_popped) = popped.next() {
-                run_pop(slot, live, top_popped);
+                run_pop(slot, dim, live, top_popped);
             }
             for w in popped {
                 dispose_wrapper(slot, w);
@@ -493,7 +477,7 @@ fn reconcile_stack(
             // fighting over shared state and native handles. Only `replace`
             // hits this: a pop's entry leaves `history`, so its slice goes
             // `None` and the leaf no-ops.
-            old.owner.pause();
+            old.content_owner.pause();
 
             let w = mount_wrapper(handle, slot, top_idx, entry);
             let drive = w.ctrl.clone();
@@ -539,18 +523,20 @@ fn reconcile_stack(
         for (i, w) in l.iter().enumerate() {
             let pose_animating = w.pose_ctrl.get_untracked().is_animating();
             if i == top {
-                w.owner.resume();
+                w.content_owner.resume();
                 if !pose_animating {
                     // Steady top: own controller, fully present (0%).
                     w.ctrl.set_value(1.0);
                     set_pose(w, &w.ctrl.clone(), Role::Top, Direction::Push);
                 }
-            } else if !pose_animating {
-                // A buried entry not part of an in-flight transition:
-                // freeze it fully covered.
-                w.ctrl.set_value(1.0);
-                set_pose(w, &w.ctrl.clone(), Role::Under, Direction::Push);
-                w.owner.pause();
+            } else {
+                w.content_owner.pause();
+                if !pose_animating {
+                    // A buried entry not part of an in-flight transition:
+                    // freeze its presentation fully covered.
+                    w.ctrl.set_value(1.0);
+                    set_pose(w, &w.ctrl.clone(), Role::Under, Direction::Push);
+                }
             }
             let _ = w.key;
         }
@@ -591,7 +577,8 @@ fn reconcile_stack(
         top_ctrl: top_w.map(|w| w.ctrl.clone()),
         top_pose: top_w.map(pose_of),
         under_pose: under_w.map(pose_of),
-        under_owner: under_w.map(|w| w.owner),
+        #[cfg(test)]
+        under_content_owner: under_w.map(|w| w.content_owner),
         dim_drive: Some(dim_drive),
         can_back: l.len() > 1,
     };
@@ -603,7 +590,12 @@ fn reconcile_stack(
 /// `Role::Under` so it slides back from covered to rest in lockstep. On
 /// finish, unmount the popped entry and settle the survivor to its own
 /// resting controller.
-fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWrapper) {
+fn run_pop(
+    slot: Element,
+    dim: Element,
+    live: &Rc<RefCell<Vec<StackWrapper>>>,
+    popped: StackWrapper,
+) {
     let drive = popped.ctrl.clone();
     let transition = popped.transition.clone();
 
@@ -618,21 +610,25 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
     let survivor_handle = {
         let l = live.borrow();
         l.last().map(|w| {
-            w.owner.resume();
+            // Navigation state already points at this entry when reconcile
+            // runs, so its content can safely become reactive again.
+            w.content_owner.resume();
             set_pose(w, &drive, Role::Under, Direction::Pop);
-            // Capture what we need to re-settle the survivor on finish.
-            (w.wrapper, w.ctrl.clone(), w.pose_ctrl, w.pose_role)
+            SurvivorHandle {
+                wrapper: w.wrapper,
+                ctrl: w.ctrl.clone(),
+                pose_ctrl: w.pose_ctrl,
+                pose_role: w.pose_role,
+                pose_mode: w.pose_mode,
+                transition: w.transition.clone(),
+            }
         })
     };
 
     if transition.is_instant() {
         // No animation: drop immediately and settle the survivor.
         dispose_wrapper(slot, popped);
-        if let Some((_w, ctrl, pose_ctrl, pose_role)) = survivor_handle {
-            ctrl.set_value(1.0);
-            pose_ctrl.set(ctrl);
-            pose_role.set(Role::Top);
-        }
+        settle_survivor(slot, dim, survivor_handle.as_ref());
         return;
     }
 
@@ -656,13 +652,39 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
         // Re-settle the revealed survivor onto its own controller at the
         // active (Role::Top / 1.0 = translateX 0%) pose so no parallax
         // residue remains.
-        if let Some((_w, ctrl, pose_ctrl, pose_role)) = &survivor_handle {
-            ctrl.set_value(1.0);
-            pose_ctrl.set(ctrl.clone());
-            pose_role.set(Role::Top);
-        }
+        settle_survivor(slot, dim, survivor_handle.as_ref());
     });
     drive.reverse();
+}
+
+struct SurvivorHandle {
+    wrapper: Element,
+    ctrl: AnimationController,
+    pose_ctrl: whisker::RwSignal<AnimationController>,
+    pose_role: whisker::RwSignal<Role>,
+    pose_mode: whisker::RwSignal<PoseMode>,
+    transition: RouteTransition,
+}
+
+/// Restore the revealed wrapper's resting pose and structural paint order.
+/// The dim must be immediately below the active top; otherwise a second
+/// predictive gesture darkens the current screen instead of the revealed one.
+fn settle_survivor(slot: Element, dim: Element, survivor: Option<&SurvivorHandle>) {
+    let Some(survivor) = survivor else {
+        return;
+    };
+    survivor.ctrl.set_value(1.0);
+    survivor.pose_ctrl.set(survivor.ctrl.clone());
+    survivor.pose_role.set(Role::Top);
+    survivor.pose_mode.set(PoseMode::Transition(
+        survivor.transition.clone(),
+        Direction::Push,
+    ));
+
+    remove_child(slot, dim);
+    remove_child(slot, survivor.wrapper);
+    append_child(slot, dim);
+    append_child(slot, survivor.wrapper);
 }
 
 /// Build a wrapper for `entry` at history index `idx`: choose its
@@ -691,7 +713,7 @@ fn mount_wrapper(
     // owner by `create_element`), the style effect, the child subtree,
     // and deregisters the controller.
     let owner = Owner::new(None);
-    let (wrapper, ctrl, pose_ctrl, pose_role, pose_mode) = owner.with(|| {
+    let (wrapper, content_owner, ctrl, pose_ctrl, pose_role, pose_mode) = owner.with(|| {
         // A real `view` (not a phantom): the wrapper carries the
         // transition `transform` / `opacity` and `position: absolute`
         // stacking — none of which a style-less phantom can apply.
@@ -732,10 +754,18 @@ fn mount_wrapper(
             apply_style(clip, clip_view_style(pose.radius_px));
         });
 
-        let child = mount_node(handle, child_path);
+        let content_owner = Owner::new(Some(owner));
+        let child = content_owner.with(|| mount_node(handle, child_path));
         append_child(clip, child);
         append_child(wrapper, clip);
-        (wrapper, ctrl, pose_ctrl, pose_role, pose_mode)
+        (
+            wrapper,
+            content_owner,
+            ctrl,
+            pose_ctrl,
+            pose_role,
+            pose_mode,
+        )
     });
     append_child(slot, wrapper);
 
@@ -745,6 +775,7 @@ fn mount_wrapper(
         fingerprint: entry.state.clone(),
         wrapper,
         owner,
+        content_owner,
         ctrl,
         pose_ctrl,
         pose_role,

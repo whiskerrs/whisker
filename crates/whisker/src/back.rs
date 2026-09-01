@@ -17,9 +17,9 @@
 //! tied to that component's scope, so a screen buried in the back
 //! stack (paused) stops intercepting until it is on top again.
 //!
-//! Delivery is wired by the platform gesture component
-//! (`whisker-router`'s `AndroidPredictiveBack`); without a router
-//! mounted the registry is inert and the platform default applies.
+//! Delivery is wired by `whisker-router`'s internal platform navigation
+//! driver; without a router mounted the registry is inert and the platform
+//! default applies.
 //! Main-thread only, like [`crate::focus`].
 
 use std::cell::RefCell;

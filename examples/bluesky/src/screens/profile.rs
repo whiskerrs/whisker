@@ -623,7 +623,7 @@ pub(super) fn logout_button() -> Element {
                 spawn_local(async move {
                     bsky_auth::logout().await;
                     authed.set(false);
-                    let _ = nav.select("/(auth)");
+                    let _ = nav.navigate("/(auth)");
                 });
             },
         ) {

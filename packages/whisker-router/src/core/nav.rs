@@ -1,4 +1,4 @@
-//! The [`Navigator`] — the five operations over a [`RouteState`].
+//! The [`Navigator`] — navigation operations over a [`RouteState`].
 //!
 //! A `Navigator` is a thin handle wrapping `&mut RouteState` +
 //! `&CompiledTree`. Each operation is a mutation of `history` /
@@ -6,23 +6,32 @@
 //!
 //! | Op | Effect |
 //! | --- | --- |
-//! | [`navigate`](Navigator::navigate) | resolve target; along root→target select `Switch` branches and **always push** the toward-target `Stack` child; reveal a buried intermediate container by popping entries above it |
+//! | [`navigate`](Navigator::navigate) | reveal the destination; unwind to an identical retained entry or push when absent; a group-only destination switches/reselects its branch |
+//! | [`push`](Navigator::push) | resolve a screen and always append a fresh entry, selecting its branch |
 //! | [`back`](Navigator::back) | pop the top of the **deepest non-trivial `Stack`** (history > 1) on the active path; `Switch` selection is never popped; tab-root with nothing to pop → no-op |
 //! | [`replace`](Navigator::replace) | swap the **top** of the current stack with the target; same stack only (else [`NavError::CrossStack`]) |
 //! | [`pop_to`](Navigator::pop_to) | pop the current stack until the target is the top; same stack only |
 //! | [`reset`](Navigator::reset) | *global*: rebuild the whole state onto one clean path to `target` — select `Switch`es toward it and collapse **every** `Stack` to a single entry (no back history anywhere) |
 
-use super::resolve::{self, Scope};
+use super::location::{Destination, Location};
+use super::resolve::{self, ResolveError, Scope};
 use super::state::{RouteInstance, RouteState, StackEntry, StackState};
-use super::tree::{CompiledTree, NodePath};
+use super::tree::{CompiledTree, NodePath, ReselectBehavior, RouteTree};
 
 /// An error from an operation that cannot be expressed as a clean
 /// mutation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive] // new failure modes (e.g. NothingToPop) can be added later
 pub enum NavError {
+    /// The destination is not an absolute router path.
+    InvalidDestination,
     /// The target id/url matched no node in the tree.
     NoSuchTarget,
+    /// More than one equally relevant placement matched an unqualified URL.
+    AmbiguousRoute,
+    /// The operation requires a screen, but the destination names only a
+    /// route group.
+    ExpectedRoute,
     /// `replace` / `pop_to` resolved to a node that is **not in the
     /// current stack**. These operations are same-stack only; crossing a
     /// `Switch` has no clean meaning, so it is a hard error (use
@@ -37,7 +46,7 @@ pub enum NavError {
 }
 
 /// A handle bundling the static tree with the mutable state, exposing
-/// the five navigation verbs.
+/// the navigation verbs.
 pub struct Navigator<'a> {
     tree: &'a CompiledTree,
     state: &'a mut RouteState,
@@ -59,24 +68,58 @@ impl<'a> Navigator<'a> {
         self.state.current().path.clone()
     }
 
-    /// Navigate forward to `url`. The URL is matched against route
-    /// patterns (group segments optional, `:param`s captured), and the
-    /// matched route is pushed onto the active Stack.
+    /// Make `url` active. Existing identical entries are revealed by
+    /// unwinding; absent entries are pushed. A group-only target switches to
+    /// that branch, or pops it to its root when reselected.
     pub fn navigate(&mut self, url: &str) -> Result<(), NavError> {
+        let destination = Destination::parse(url).ok_or(NavError::InvalidDestination)?;
+        if let Some(group) = self.resolve_group_destination(&destination)? {
+            return self.navigate_group(&group);
+        }
         let current = self.current_path();
-        let dest =
-            resolve::resolve(self.tree, url, Some(&current)).ok_or(NavError::NoSuchTarget)?;
-        let params = self.tree.match_url(url).map(|(_, p)| p).unwrap_or_default();
-        self.navigate_to_path(&dest, params);
+        let matched = resolve::resolve_route(self.tree, url, Some(&current)).map_err(nav_error)?;
+        self.navigate_to_path(
+            &matched.path,
+            matched.params,
+            destination.location,
+            ForwardMode::Navigate,
+        );
+        Ok(())
+    }
+
+    /// Always append a fresh screen entry for `url`. A qualified destination
+    /// selects that group before displaying the new entry.
+    pub fn push(&mut self, url: &str) -> Result<(), NavError> {
+        let destination = Destination::parse(url).ok_or(NavError::InvalidDestination)?;
+        if self.resolve_group_destination(&destination)?.is_some() {
+            return Err(NavError::ExpectedRoute);
+        }
+        let current = self.current_path();
+        let matched = resolve::resolve_route(self.tree, url, Some(&current)).map_err(nav_error)?;
+        self.navigate_to_path(
+            &matched.path,
+            matched.params,
+            destination.location,
+            ForwardMode::Push,
+        );
         Ok(())
     }
 
     /// Navigate to `url` within an explicit [`Scope`]. See [`Scope`].
     pub fn navigate_within(&mut self, url: &str, scope: &Scope) -> Result<(), NavError> {
+        let destination = Destination::parse(url).ok_or(NavError::InvalidDestination)?;
+        if self.resolve_group_destination(&destination)?.is_some() {
+            return Err(NavError::ExpectedRoute);
+        }
         let current = self.current_path();
-        let dest = resolve::resolve_within(self.tree, url, Some(&current), scope)
-            .ok_or(NavError::NoSuchTarget)?;
-        self.navigate_to_path(&dest, Default::default());
+        let matched = resolve::resolve_route_within(self.tree, url, Some(&current), scope)
+            .map_err(nav_error)?;
+        self.navigate_to_path(
+            &matched.path,
+            matched.params,
+            destination.location,
+            ForwardMode::Navigate,
+        );
         Ok(())
     }
 
@@ -87,30 +130,37 @@ impl<'a> Navigator<'a> {
         &mut self,
         dest: &NodePath,
         params: std::collections::BTreeMap<String, String>,
+        location: Location,
+        mode: ForwardMode,
     ) {
         let tree = self.tree;
-        walk_navigate(tree, self.state, dest, 0, &params);
+        walk_navigate(tree, self.state, dest, 0, &params, &location, mode);
     }
 
-    /// Select the `Switch` branch that leads toward `target`, **without
-    /// pushing** anything onto any `Stack`.
-    ///
-    /// This is the tab-switch primitive (`select_tab` in the design
-    /// doc's `Layout` example): switching tabs is a pure `Switch.selected`
-    /// change that preserves every tab's retained history — unlike
-    /// [`navigate`](Navigator::navigate), which always advances a stack
-    /// by one. `target` is resolved relative to the current position
-    /// (so a `select` to a shared route stays in the most relevant
-    /// branch).
-    ///
-    /// Only `Switch` selections along the path to `target` are changed;
-    /// `Stack` histories are left exactly as they are (the target tab's
-    /// own current screen is whatever it was last left at).
-    pub fn select(&mut self, url: &str) -> Result<(), NavError> {
-        let current = self.current_path();
-        let dest =
-            resolve::resolve(self.tree, url, Some(&current)).ok_or(NavError::NoSuchTarget)?;
-        select_toward(self.state, &dest, 0);
+    fn resolve_group_destination(
+        &self,
+        destination: &Destination,
+    ) -> Result<Option<NodePath>, NavError> {
+        let groups = self
+            .tree
+            .group_paths_matching_url(&destination.qualified_pathname);
+        match groups.as_slice() {
+            [] => Ok(None),
+            [group] => Ok(Some(group.clone())),
+            _ => Err(NavError::AmbiguousRoute),
+        }
+    }
+
+    fn navigate_group(&mut self, group: &NodePath) -> Result<(), NavError> {
+        if group.is_ancestor_of(&self.current_path()) {
+            if reselect_behavior(self.tree, group) == ReselectBehavior::PopToRoot {
+                if let Some(group_state) = state_at_path_mut(self.state, group) {
+                    pop_first_stack_to_root(group_state);
+                }
+            }
+        } else {
+            activate_container(self.tree, self.state, group, 0);
+        }
         Ok(())
     }
 
@@ -129,10 +179,13 @@ impl<'a> Navigator<'a> {
     /// only: if `target` resolves outside the current stack,
     /// [`NavError::CrossStack`] is returned and the state is unchanged.
     pub fn replace(&mut self, url: &str) -> Result<(), NavError> {
+        let destination = Destination::parse(url).ok_or(NavError::InvalidDestination)?;
+        if self.resolve_group_destination(&destination)?.is_some() {
+            return Err(NavError::ExpectedRoute);
+        }
         let current = self.current_path();
-        let params = self.tree.match_url(url).map(|(_, p)| p).unwrap_or_default();
-        let dest =
-            resolve::resolve(self.tree, url, Some(&current)).ok_or(NavError::NoSuchTarget)?;
+        let matched = resolve::resolve_route(self.tree, url, Some(&current)).map_err(nav_error)?;
+        let dest = matched.path;
 
         let stack_path = deepest_active_stack_path(self.state).ok_or(NavError::CrossStack)?;
         // The destination must be a *direct child* of the current stack
@@ -141,7 +194,7 @@ impl<'a> Navigator<'a> {
             return Err(NavError::CrossStack);
         }
         let stack = active_stack_mut(self.state).expect("stack exists");
-        let entry = make_entry(self.tree, &dest, params);
+        let entry = make_entry(self.tree, &dest, matched.params, destination.location);
         let top = stack.history.len() - 1;
         stack.history[top] = entry;
         Ok(())
@@ -177,12 +230,32 @@ impl<'a> Navigator<'a> {
     /// so no back history survives anywhere — on the path to the target or in
     /// any other branch. Errors only with [`NavError::NoSuchTarget`].
     pub fn reset(&mut self, url: &str) -> Result<(), NavError> {
+        let destination = Destination::parse(url).ok_or(NavError::InvalidDestination)?;
+        if self.resolve_group_destination(&destination)?.is_some() {
+            return Err(NavError::ExpectedRoute);
+        }
         let current = self.current_path();
-        let params = self.tree.match_url(url).map(|(_, p)| p).unwrap_or_default();
-        let dest =
-            resolve::resolve(self.tree, url, Some(&current)).ok_or(NavError::NoSuchTarget)?;
-        *self.state = RouteState::focused_at(self.tree, &dest, params);
+        let matched = resolve::resolve_route(self.tree, url, Some(&current)).map_err(nav_error)?;
+        *self.state = RouteState::focused_at(
+            self.tree,
+            &matched.path,
+            matched.params,
+            destination.location,
+        );
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ForwardMode {
+    Navigate,
+    Push,
+}
+
+fn nav_error(error: ResolveError) -> NavError {
+    match error {
+        ResolveError::NotFound => NavError::NoSuchTarget,
+        ResolveError::Ambiguous => NavError::AmbiguousRoute,
     }
 }
 
@@ -196,6 +269,8 @@ fn walk_navigate(
     dest: &NodePath,
     depth: usize,
     params: &std::collections::BTreeMap<String, String>,
+    location: &Location,
+    mode: ForwardMode,
 ) {
     if depth == dest.0.len() {
         // `state` is the destination node itself. If it is a leaf, set
@@ -203,6 +278,7 @@ fn walk_navigate(
         // caller having pushed/selected us here) — nothing more to do.
         if let RouteState::Route(r) = state {
             r.params = params.clone();
+            r.location = location.clone();
         }
         return;
     }
@@ -212,7 +288,15 @@ fn walk_navigate(
         RouteState::Switch(s) => {
             // Select the branch toward dest, then descend into it.
             s.selected = toward;
-            walk_navigate(tree, &mut s.branches[toward], dest, depth + 1, params);
+            walk_navigate(
+                tree,
+                &mut s.branches[toward],
+                dest,
+                depth + 1,
+                params,
+                location,
+                mode,
+            );
         }
         RouteState::Stack(s) => {
             let child_path = s.path.child(toward);
@@ -220,15 +304,22 @@ fn walk_navigate(
             let arrives_at_leaf = depth + 1 == dest.0.len();
 
             if arrives_at_leaf {
-                // Always push a fresh leaf instance.
-                let mut state_child = RouteState::initial_at(tree, &child_path);
-                if let RouteState::Route(r) = &mut state_child {
-                    r.params = params.clone();
+                if mode == ForwardMode::Navigate {
+                    if let Some(index) = s
+                        .history
+                        .iter()
+                        .rposition(|entry| entry_matches(entry, &child_path, params, location))
+                    {
+                        s.history.truncate(index + 1);
+                        return;
+                    }
                 }
-                s.history.push(StackEntry {
-                    child: child_path,
-                    state: state_child,
-                });
+                s.history.push(make_entry(
+                    tree,
+                    &child_path,
+                    params.clone(),
+                    location.clone(),
+                ));
             } else {
                 // The destination passes *through* a container child of
                 // this stack. Reveal a buried instance of that container
@@ -236,7 +327,15 @@ fn walk_navigate(
                 // retained `selected`/`history`; otherwise push a fresh
                 // one. Then descend.
                 let i = reveal_or_push(tree, s, &child_path);
-                walk_navigate(tree, &mut s.history[i].state, dest, depth + 1, params);
+                walk_navigate(
+                    tree,
+                    &mut s.history[i].state,
+                    dest,
+                    depth + 1,
+                    params,
+                    location,
+                    mode,
+                );
             }
         }
         RouteState::Route(r) => {
@@ -244,22 +343,24 @@ fn walk_navigate(
             if !r.children.is_empty() && depth < dest.0.len() {
                 let toward = dest.0[depth];
                 if toward < r.children.len() {
-                    walk_navigate(tree, &mut r.children[toward], dest, depth + 1, params);
+                    walk_navigate(
+                        tree,
+                        &mut r.children[toward],
+                        dest,
+                        depth + 1,
+                        params,
+                        location,
+                        mode,
+                    );
                 }
             }
         }
     }
 }
 
-/// Drive only the `Switch` selections along the path to `dest`,
-/// touching no `Stack` history. Used by [`Navigator::select`].
-///
-/// At a `Stack` we follow the **currently active** entry if it leads
-/// toward `dest` (a buried container is *not* revealed and nothing is
-/// pushed — `select` is non-destructive); if the active entry does not
-/// lead toward `dest`, the descent simply stops (the relevant Switch
-/// selections above it have already been set).
-fn select_toward(state: &mut RouteState, dest: &NodePath, depth: usize) {
+/// Select/reveal the container at `dest` without changing the retained stack
+/// inside it.
+fn activate_container(tree: &CompiledTree, state: &mut RouteState, dest: &NodePath, depth: usize) {
     if depth == dest.0.len() {
         return;
     }
@@ -267,21 +368,19 @@ fn select_toward(state: &mut RouteState, dest: &NodePath, depth: usize) {
     match state {
         RouteState::Switch(s) => {
             s.selected = toward;
-            select_toward(&mut s.branches[toward], dest, depth + 1);
+            activate_container(tree, &mut s.branches[toward], dest, depth + 1);
         }
         RouteState::Stack(s) => {
-            // Follow the active top only if it already leads toward dest.
-            let top = s.history.len() - 1;
-            if s.history[top].child.0.last() == Some(&toward) {
-                select_toward(&mut s.history[top].state, dest, depth + 1);
-            }
+            let child_path = s.path.child(toward);
+            let index = reveal_or_push(tree, s, &child_path);
+            activate_container(tree, &mut s.history[index].state, dest, depth + 1);
         }
         RouteState::Route(r) => {
             // Route with children: descend into the matching child.
             if !r.children.is_empty() && depth < dest.0.len() {
                 let toward = dest.0[depth];
                 if toward < r.children.len() {
-                    select_toward(&mut r.children[toward], dest, depth + 1);
+                    activate_container(tree, &mut r.children[toward], dest, depth + 1);
                 }
             }
         }
@@ -316,14 +415,73 @@ fn make_entry(
     tree: &CompiledTree,
     dest: &NodePath,
     params: std::collections::BTreeMap<String, String>,
+    location: Location,
 ) -> StackEntry {
     let mut state = RouteState::initial_at(tree, dest);
     if let RouteState::Route(r) = &mut state {
         r.params = params;
+        r.location = location;
     }
     StackEntry {
         child: dest.clone(),
         state,
+    }
+}
+
+fn entry_matches(
+    entry: &StackEntry,
+    dest: &NodePath,
+    params: &std::collections::BTreeMap<String, String>,
+    location: &Location,
+) -> bool {
+    entry.child == *dest
+        && matches!(
+            &entry.state,
+            RouteState::Route(route)
+                if route.params == *params && route.location == *location
+        )
+}
+
+fn reselect_behavior(tree: &CompiledTree, group: &NodePath) -> ReselectBehavior {
+    for depth in (0..group.len()).rev() {
+        let ancestor = NodePath(group.0[..depth].to_vec());
+        if let Some(RouteTree::Switch(def, _)) = tree.node_at(&ancestor) {
+            return def.reselect;
+        }
+    }
+    ReselectBehavior::PopToRoot
+}
+
+fn state_at_path_mut<'a>(state: &'a mut RouteState, path: &NodePath) -> Option<&'a mut RouteState> {
+    let mut current = state;
+    for &index in &path.0 {
+        current = match current {
+            RouteState::Switch(switch) => switch.branches.get_mut(index)?,
+            RouteState::Route(route) => route.children.get_mut(index)?,
+            RouteState::Stack(stack) => {
+                let entry = stack
+                    .history
+                    .iter_mut()
+                    .rev()
+                    .find(|entry| entry.child.0.last() == Some(&index))?;
+                &mut entry.state
+            }
+        };
+    }
+    Some(current)
+}
+
+fn pop_first_stack_to_root(state: &mut RouteState) -> bool {
+    match state {
+        RouteState::Stack(stack) => {
+            let changed = stack.history.len() > 1;
+            stack.history.truncate(1);
+            changed
+        }
+        RouteState::Switch(switch) => {
+            pop_first_stack_to_root(&mut switch.branches[switch.selected])
+        }
+        RouteState::Route(route) => route.children.iter_mut().any(pop_first_stack_to_root),
     }
 }
 

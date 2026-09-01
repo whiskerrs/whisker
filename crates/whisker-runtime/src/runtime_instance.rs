@@ -48,7 +48,7 @@ mod tests {
     use crate::module::{ModuleHost, ModuleSubscription, PlatformModule, with_module_host};
     use crate::reactive::{__reset_for_tests, RwSignal, effect};
     use crate::view::{
-        BindType, append_child, create_element, set_attribute, set_event_listener,
+        BindType, append_child, create_element, remove_child, set_attribute, set_event_listener,
         set_specified_style,
     };
     use whisker_engine::whisker_protocol::{InputEventKind, SurfaceId};
@@ -105,6 +105,50 @@ mod tests {
             .unwrap();
 
         assert_eq!(surface.surface_snapshot_count(), 1);
+    }
+
+    #[test]
+    fn one_input_event_can_style_and_release_an_element_in_the_same_batch() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(77).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+        runtime
+            .mount(|| {
+                let root = create_element(ElementTag::View);
+                let transient_owner = Owner::new(None);
+                let transient = transient_owner.with(|| create_element(ElementTag::View));
+                append_child(root, transient);
+                set_event_listener(
+                    root,
+                    "dismiss",
+                    BindType::Bind,
+                    Box::new(move |_| {
+                        let style = SpecifiedStyle::new().push(
+                            StyleProperty::Opacity,
+                            StyleValue::Number(StyleNumber::new(0.0)),
+                        );
+                        set_specified_style(transient, &style);
+                        remove_child(root, transient);
+                        transient_owner.dispose();
+                    }),
+                );
+                root
+            })
+            .unwrap();
+
+        runtime
+            .dispatch_input(&InputEvent {
+                surface: surface.surface(),
+                timestamp_ms: 1.0,
+                kind: InputEventKind::Named("dismiss".to_owned()),
+                pointer: None,
+                target: surface.root(),
+                detail: WhiskerValue::Null,
+            })
+            .expect("releasing a just-styled element must not poison the mutation batch");
     }
 
     #[test]
@@ -324,13 +368,29 @@ struct ActivationCandidate {
     cancelled: bool,
 }
 
+struct RecognizedActivation {
+    tap: InputEvent,
+    emits_click: bool,
+}
+
+fn merge_input_dispatch(dispatch: &mut InputDispatch, synthesized: InputDispatch) {
+    dispatch.target = synthesized.target.or(dispatch.target);
+    dispatch.consumed |= synthesized.consumed;
+    dispatch.listener_count += synthesized.listener_count;
+    dispatch.queued |= synthesized.queued;
+}
+
 #[derive(Default)]
 struct ActivationRecognizer {
     pointers: HashMap<PointerId, ActivationCandidate>,
 }
 
 impl ActivationRecognizer {
-    fn observe(&mut self, event: &InputEvent, hit_target: Option<NodeId>) -> Option<InputEvent> {
+    fn observe(
+        &mut self,
+        event: &InputEvent,
+        hit_target: Option<NodeId>,
+    ) -> Option<RecognizedActivation> {
         let pointer = event.pointer?;
         match event.kind {
             InputEventKind::PointerDown => {
@@ -370,17 +430,16 @@ impl ActivationRecognizer {
                 {
                     return None;
                 }
-                Some(InputEvent {
-                    surface: event.surface,
-                    timestamp_ms: event.timestamp_ms,
-                    kind: if candidate.pointer_kind == PointerKind::Mouse {
-                        InputEventKind::Click
-                    } else {
-                        InputEventKind::Tap
+                Some(RecognizedActivation {
+                    tap: InputEvent {
+                        surface: event.surface,
+                        timestamp_ms: event.timestamp_ms,
+                        kind: InputEventKind::Tap,
+                        pointer: Some(pointer),
+                        target: Some(candidate.target),
+                        detail: WhiskerValue::Null,
                     },
-                    pointer: Some(pointer),
-                    target: Some(candidate.target),
-                    detail: WhiskerValue::Null,
+                    emits_click: candidate.pointer_kind == PointerKind::Mouse,
                 })
             }
             _ => None,
@@ -820,11 +879,16 @@ impl RuntimeInstance {
                 .borrow_mut()
                 .observe(event, dispatch.target);
             if let Some(activation) = activation {
-                let synthesized = self.surface.dispatch_input(&activation)?;
-                dispatch.target = synthesized.target.or(dispatch.target);
-                dispatch.consumed |= synthesized.consumed;
-                dispatch.listener_count += synthesized.listener_count;
-                dispatch.queued |= synthesized.queued;
+                let synthesized = self.surface.dispatch_input(&activation.tap)?;
+                merge_input_dispatch(&mut dispatch, synthesized);
+                if activation.emits_click {
+                    let click = InputEvent {
+                        kind: InputEventKind::Click,
+                        ..activation.tap
+                    };
+                    let synthesized = self.surface.dispatch_input(&click)?;
+                    merge_input_dispatch(&mut dispatch, synthesized);
+                }
             }
             reactive::flush();
             reactive::flush_mounts();

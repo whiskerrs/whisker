@@ -9,6 +9,7 @@
         width: 100%;
         height: 100%;
         margin: 0;
+        background: {{background_css}};
       }
     </style>
   </head>
@@ -16,7 +17,7 @@
     <div id="whisker-root"></div>
     <pre id="whisker-dev-error" hidden></pre>
     <script type="module">
-      import init, * as whisker from "./whisker_app.js";
+      import init, * as whisker from "/whisker_app.js";
       const reportDevelopmentError = (error) => {
         const output = document.getElementById("whisker-dev-error");
         output.hidden = false;

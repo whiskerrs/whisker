@@ -326,6 +326,7 @@ pub(crate) struct GpuRenderer {
     pub(super) device: Device,
     pub(super) queue: Queue,
     pub(super) config: SurfaceConfiguration,
+    pub(super) clear_color: wgpu::Color,
     pub(super) box_gpu: BoxGpuPipeline,
     pub(super) backdrop_gpu: BackdropGpuPipeline,
     pub(super) text_viewport: Viewport,

@@ -16,6 +16,8 @@ const INDEX_HTML: &str = include_str!("templates/web/index.html");
 pub struct WebInputs {
     /// Browser document title.
     pub app_name: String,
+    /// Static document background configured in `whisker.rs` (`#RRGGBB`).
+    pub background: String,
     /// Cargo package name of the generated WASM composition root.
     pub generated_package: String,
     /// Cargo package name of the user's application crate.
@@ -41,14 +43,16 @@ pub fn inputs_from(
         .name
         .clone()
         .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required for Web"))?;
+    let background = crate::background::AppBackground::resolve(app_config)?;
     Ok(WebInputs {
         app_name,
+        background: background.hex().to_string(),
         generated_package: format!("{user_package}-whisker-web"),
         user_package,
         user_crate_path,
         whisker_web_dependency,
         element_modules: Vec::new(),
-        template_version: 10,
+        template_version: 12,
     })
 }
 
@@ -88,12 +92,15 @@ fn validate(inputs: &WebInputs) -> Result<()> {
     if inputs.generated_package.trim().is_empty() || inputs.user_package.trim().is_empty() {
         bail!("Web Cargo package names must not be empty");
     }
+    crate::background::AppBackground::parse(&inputs.background)
+        .context("validate Web application background")?;
     Ok(())
 }
 
 fn template_vars(inputs: &WebInputs) -> std::collections::HashMap<&'static str, String> {
     let mut vars = std::collections::HashMap::new();
     vars.insert("app_name_html", html_escape(&inputs.app_name));
+    vars.insert("background_css", inputs.background.clone());
     vars.insert("app_title_rust", format!("{:?}", inputs.app_name));
     vars.insert("generated_package", inputs.generated_package.clone());
     vars.insert("user_package_toml", format!("{:?}", inputs.user_package));
@@ -173,12 +180,13 @@ mod tests {
     fn sample() -> WebInputs {
         WebInputs {
             app_name: "Hello Web".into(),
+            background: "#FFFFFF".into(),
             generated_package: "hello-whisker-web".into(),
             user_package: "hello".into(),
             user_crate_path: PathBuf::from("/tmp/hello"),
             whisker_web_dependency: "{ path = \"/tmp/whisker/platforms/web\" }".into(),
             element_modules: Vec::new(),
-            template_version: 3,
+            template_version: 12,
         }
     }
 
@@ -202,9 +210,32 @@ mod tests {
         assert!(manifest.contains("whisker-web"));
         let html = std::fs::read_to_string(out.join("index.html")).unwrap();
         assert!(html.contains("<title>Hello Web</title>"));
+        assert!(html.contains("background: #FFFFFF"));
         assert!(html.contains("import init, * as whisker"));
+        assert!(html.contains("from \"/whisker_app.js\""));
         assert!(html.contains("__WHISKER_DEVELOPMENT_BOOTSTRAP__"));
         assert!(!html.contains("new WebSocket"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn inputs_and_generated_document_use_static_background() {
+        let mut config = Config::default();
+        config.name("Background").background("#101018");
+        let inputs = inputs_from(
+            &config,
+            "background".into(),
+            PathBuf::from("/tmp/background"),
+            "\"0.12\"".into(),
+        )
+        .unwrap();
+        assert_eq!(inputs.background, "#101018");
+
+        let root = tempdir();
+        let out = root.join("gen/web");
+        sync(&out, &inputs).unwrap();
+        let html = std::fs::read_to_string(out.join("index.html")).unwrap();
+        assert!(html.contains("background: #101018"));
         std::fs::remove_dir_all(root).ok();
     }
 

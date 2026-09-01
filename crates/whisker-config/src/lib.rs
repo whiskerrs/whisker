@@ -5,6 +5,7 @@
 //! pub fn configure(app: &mut Config) {
 //!     app.name("MyApp")
 //!        .bundle_id("dev.example.myapp")
+//!        .background("#FFFFFF")
 //!        .version("1.0.0");
 //!
 //!     app.android(|a| a
@@ -42,6 +43,15 @@ pub struct Config {
     pub bundle_id: Option<String>,
     pub version: Option<String>,
     pub build_number: Option<u32>,
+    /// Static application background written into generated Host startup
+    /// metadata. This is visible before Rust renders its first frame and
+    /// behind transparent Whisker content; it is distinct from the CSS
+    /// `background_color` painted by an Element.
+    ///
+    /// Values use the `#RRGGBB` form. CNG validates the value before writing
+    /// platform projects. When omitted, generated Hosts use `#FFFFFF`.
+    #[serde(default)]
+    pub background: Option<String>,
     /// Custom URL schemes for incoming deep links (e.g. `"giga"`).
     /// Currently only wired into Android's manifest; iOS's
     /// `ASWebAuthenticationSession` doesn't need one registered.
@@ -85,6 +95,15 @@ impl Config {
 
     pub fn build_number(&mut self, n: u32) -> &mut Self {
         self.build_number = Some(n);
+        self
+    }
+
+    /// Set the generated Host's static application background (`#RRGGBB`).
+    ///
+    /// This is not a CSS declaration. Use Element `background_color` for
+    /// backgrounds that change after the Whisker runtime starts.
+    pub fn background(&mut self, color: impl Into<String>) -> &mut Self {
+        self.background = Some(color.into());
         self
     }
 
@@ -556,6 +575,17 @@ mod tests {
         assert_eq!(back.name.as_deref(), Some("Demo"));
         assert_eq!(back.plugins.len(), 1);
         assert!(back.plugins.contains_key("whisker-firebase"));
+    }
+
+    #[test]
+    fn background_is_static_app_config_and_round_trips() {
+        let mut app = Config::default();
+        app.background("#101018");
+
+        let json = serde_json::to_string(&app).unwrap();
+        let back: Config = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.background.as_deref(), Some("#101018"));
     }
 
     #[test]

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add distinct `navigate` and `push` semantics, group-qualified destinations,
+  public `Location` state, and configurable active-tab reselect behavior.
+
+### Removed
+
+- **Breaking:** remove `select`; switch or reselect a route group with
+  `navigate("/(group)")` instead.
+
 ## [0.11.1](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.11.0...whisker-router-v0.11.1) - 2026-08-12
 
 ### Other

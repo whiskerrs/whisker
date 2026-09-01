@@ -11,7 +11,7 @@
 //! For a wrapper, **`progress` is "how present the top screen is"**:
 //!
 //! - `1.0` → the top (incoming) screen fully on screen, the screen
-//!   beneath it parallaxed/dimmed out of the way.
+//!   beneath it transformed out of the way.
 //! - `0.0` → the top screen fully off screen (its enter-from edge), the
 //!   screen beneath it back at rest.
 //!
@@ -37,9 +37,9 @@ use whisker::css::{Number, Transform, TransformFn};
 /// [`modal`](RouteTransition::modal), [`none`](RouteTransition::none)) are just
 /// in-crate impls; apps add their own with [`RouteTransition::custom`].
 ///
-/// `Rc`-backed so it is cheap to [`Clone`] and store per-route. Edge-swipe
-/// back is **not** part of a transition — it is enabled by mounting a
-/// gesture component (`SwipeBack` / `AndroidPredictiveBack`).
+/// `Rc`-backed so it is cheap to [`Clone`] and store per-route. Interactive
+/// back input is installed internally by the Router's platform driver rather
+/// than being part of a transition.
 #[derive(Clone)]
 pub struct RouteTransition(Rc<dyn Transition>);
 
@@ -84,7 +84,7 @@ impl RouteTransition {
     }
 
     /// Horizontal iOS slide (the iOS default): the incoming screen slides
-    /// in from the right, the covered screen parallax-slides left + dims.
+    /// in from the right while the covered screen parallax-slides left.
     pub fn slide() -> Self {
         RouteTransition::custom(Slide)
     }
@@ -104,10 +104,9 @@ impl RouteTransition {
         RouteTransition::custom(Modal)
     }
 
-    /// The Android default: a small horizontal slide combined with a fade
-    /// (Material shared-axis feel) — subtler than the full iOS slide.
-    pub fn android_default() -> Self {
-        RouteTransition::custom(SmallSlideFade)
+    /// A subtle horizontal slide combined with a fade.
+    pub fn slide_fade() -> Self {
+        RouteTransition::custom(SlideFade)
     }
 
     /// The animation config (duration + easing) for this transition.
@@ -137,19 +136,23 @@ impl std::fmt::Debug for RouteTransition {
     }
 }
 
-/// The platform default: iOS gets the full [`slide`](RouteTransition::slide);
-/// Android gets the subtler [`android_default`](RouteTransition::android_default)
-/// (small slide + fade). This is whisker's analogue of Flutter's
-/// `PageTransitionsTheme` per-`TargetPlatform` default.
+/// The platform default: iOS gets the full [`slide`](RouteTransition::slide),
+/// Android gets the subtler [`slide_fade`](RouteTransition::slide_fade)
+/// (small slide + fade), and Web/Desktop swap instantly. This is whisker's
+/// analogue of Flutter's `PageTransitionsTheme` per-`TargetPlatform` default.
 impl Default for RouteTransition {
     fn default() -> Self {
         #[cfg(target_os = "android")]
         {
-            RouteTransition::android_default()
+            RouteTransition::slide_fade()
         }
-        #[cfg(not(target_os = "android"))]
+        #[cfg(target_os = "ios")]
         {
             RouteTransition::slide()
+        }
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            RouteTransition::none()
         }
     }
 }
@@ -323,9 +326,6 @@ fn decelerate(t: f32) -> f32 {
 /// How far the covered screen parallax-slides while the top screen is
 /// fully present (fraction of width). Mirrors `IosSlide`'s 30% feel.
 const PARALLAX: f32 = 0.30;
-
-/// How much the covered screen dims at full cover (0 = none, 1 = black).
-const DIM: f32 = 0.12;
 
 /// How a wrapper poses itself for a given progress: either the normal
 /// route [`RouteTransition`] (push/pop/button-back), or the Material
@@ -501,8 +501,8 @@ pub fn predictive_dim(value: f32) -> f32 {
 
 /// Push/pop duration (ms) of the iOS [`Slide`].
 const SLIDE_MS: u32 = 300;
-/// Push/pop duration (ms) of the Android-default [`SmallSlideFade`].
-const ANDROID_DEFAULT_MS: u32 = 280;
+/// Push/pop duration (ms) of [`SlideFade`].
+const SLIDE_FADE_MS: u32 = 280;
 /// Push/pop duration (ms) of the [`Modal`] presentation.
 const MODAL_MS: u32 = 340;
 /// Cross-fade duration (ms) of the [`Fade`].
@@ -512,18 +512,14 @@ const FADE_MS: u32 = 220;
 /// uniform.
 const INSTANT_MS: u32 = 1;
 
-/// [`SmallSlideFade`] top: distance (fraction of width, %) it slides from the
+/// [`SlideFade`] top: distance (fraction of width, %) it slides from the
 /// right while fading in.
 const ANDROID_TOP_SLIDE_PCT: f32 = 8.0;
-/// [`SmallSlideFade`] under: distance (%) it reverse-slides as it is covered.
+/// [`SlideFade`] under: distance (%) it reverse-slides as it is covered.
 const ANDROID_UNDER_SLIDE_PCT: f32 = 4.0;
-/// [`SmallSlideFade`] under: how much it dims (0..1) at full cover.
-const ANDROID_UNDER_DIM: f32 = 0.3;
-/// [`Fade`] under: how much it fades out (0..1) at full cover.
-const FADE_UNDER_DIM: f32 = 0.5;
-
 /// Horizontal iOS slide: top enters from the right (100% → 0%), under
-/// parallaxes left (0% → -30%) and dims slightly.
+/// parallaxes left (0% → -30%). The under route stays opaque so the native
+/// Host background cannot leak through the transition.
 struct Slide;
 impl Transition for Slide {
     fn config(&self) -> AnimConfig {
@@ -543,9 +539,9 @@ impl Transition for Slide {
                 Pose::new(translate_x(x), 1.0)
             }
             Role::Under => {
-                // p=0 → at rest, p=1 → parallaxed left + dimmed.
+                // p=0 → at rest, p=1 → parallaxed left.
                 let x = -(p * PARALLAX * 100.0);
-                Pose::new(translate_x(x), 1.0 - p * DIM)
+                Pose::new(translate_x(x), 1.0)
             }
         }
     }
@@ -553,14 +549,14 @@ impl Transition for Slide {
 
 /// The Android default: a small horizontal slide + a fade (Material
 /// shared-axis feel). The top slides only a short distance from the right
-/// while fading in; the under fades out a touch without a big parallax.
-struct SmallSlideFade;
-impl Transition for SmallSlideFade {
+/// while fading in; the under shifts slightly without becoming transparent.
+struct SlideFade;
+impl Transition for SlideFade {
     fn config(&self) -> AnimConfig {
-        AnimConfig::ease_out(ANDROID_DEFAULT_MS)
+        AnimConfig::ease_out(SLIDE_FADE_MS)
     }
     fn name(&self) -> &'static str {
-        "android-default"
+        "slide-fade"
     }
     fn pose(&self, ctx: PoseContext) -> Pose {
         // The built-ins are symmetric: they ignore `ctx.direction`.
@@ -573,9 +569,10 @@ impl Transition for SmallSlideFade {
                 Pose::new(translate_x(x), p)
             }
             Role::Under => {
-                // A slight reverse slide + fade out so the swap reads.
+                // A slight reverse slide; opacity remains one because the
+                // top route's own fade already provides the visual blend.
                 let x = -(p * ANDROID_UNDER_SLIDE_PCT);
-                Pose::new(translate_x(x), 1.0 - p * ANDROID_UNDER_DIM)
+                Pose::new(translate_x(x), 1.0)
             }
         }
     }
@@ -605,8 +602,7 @@ impl Transition for Modal {
     }
 }
 
-/// Cross-fade: top fades in (opacity 0 → 1), no translation; under
-/// fades out a touch so the swap reads as a dissolve.
+/// Cross-fade: top fades in (opacity 0 → 1) over an opaque under route.
 struct Fade;
 impl Transition for Fade {
     fn config(&self) -> AnimConfig {
@@ -621,7 +617,7 @@ impl Transition for Fade {
         let p = progress.clamp(0.0, 1.0);
         match role {
             Role::Top => Pose::new(Transform::new(), p),
-            Role::Under => Pose::new(Transform::new(), 1.0 - p * FADE_UNDER_DIM),
+            Role::Under => Pose::new(Transform::new(), 1.0),
         }
     }
 }
@@ -650,6 +646,39 @@ impl Transition for NoneTransition {
             // flash an off-screen frame.
             Role::Top => Pose::new(Transform::new(), if p > 0.0 { 1.0 } else { 0.0 }),
             Role::Under => Pose::new(Transform::new(), 1.0),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_and_web_default_to_an_instant_transition() {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        assert_eq!(RouteTransition::default().name(), "none");
+    }
+
+    #[test]
+    fn built_in_transitions_keep_the_under_route_opaque() {
+        for transition in [
+            RouteTransition::slide(),
+            RouteTransition::slide_fade(),
+            RouteTransition::fade(),
+            RouteTransition::modal(),
+            RouteTransition::none(),
+        ] {
+            for progress in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                let pose =
+                    transition.pose(PoseContext::new(Role::Under, progress, Direction::Push));
+                assert_eq!(
+                    pose.opacity,
+                    1.0,
+                    "{} exposes the Host background at progress {progress}",
+                    transition.name(),
+                );
+            }
         }
     }
 }

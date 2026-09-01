@@ -154,7 +154,7 @@ pub(super) fn auth_screen() -> Element {
                     // Flip auth state (so the keep-alive timeline re-fetches)
                     // and switch from the `(auth)` branch to the Home tab.
                     authed.set(true);
-                    let _ = nav.select("/(home)");
+                    let _ = nav.navigate("/(home)");
                 }
                 Err(e) => {
                     error.set(e);

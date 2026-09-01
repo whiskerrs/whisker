@@ -942,6 +942,15 @@ impl BindingState {
             .style_changes
             .into_iter()
             .flat_map(|(_, change)| change.snapshots)
+            // An event may style an element and dispose its owning view in
+            // the same reactive flush (an instant route pop is the common
+            // case). The retained-scene mutation has already removed that
+            // element, so its pre-event motion snapshot is stale and must not
+            // be configured against the now-released handle. A parent style
+            // change can capture snapshots for a whole subtree, hence this
+            // filters individual snapshots rather than only top-level style
+            // changes.
+            .filter(|snapshot| self.elements.contains_key(&snapshot.element))
             .collect::<Vec<_>>();
         if !snapshots.is_empty()
             && let Err(error) = self.configure_style_motion(snapshots)

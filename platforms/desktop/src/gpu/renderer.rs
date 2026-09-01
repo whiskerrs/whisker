@@ -4,6 +4,7 @@ impl GpuRenderer {
     pub(crate) async fn new(
         target: impl Into<SurfaceTarget<'static>>,
         physical_size: [u32; 2],
+        background_rgb: [u8; 3],
     ) -> Result<Self, GpuError> {
         let instance = Instance::new(&InstanceDescriptor::default());
         let surface = instance
@@ -60,6 +61,12 @@ impl GpuRenderer {
             device,
             queue,
             config,
+            clear_color: wgpu::Color {
+                r: f64::from(background_rgb[0]) / 255.0,
+                g: f64::from(background_rgb[1]) / 255.0,
+                b: f64::from(background_rgb[2]) / 255.0,
+                a: 1.0,
+            },
             box_gpu,
             backdrop_gpu,
             text_viewport,
@@ -606,7 +613,7 @@ impl GpuRenderer {
                     view: &scene_view,
                     resolve_target: None,
                     ops: Operations {
-                        load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        load: LoadOp::Clear(self.clear_color),
                         store: StoreOp::Store,
                     },
                 })],
@@ -844,7 +851,7 @@ impl GpuRenderer {
                     view: &view,
                     resolve_target: None,
                     ops: Operations {
-                        load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        load: LoadOp::Clear(self.clear_color),
                         store: StoreOp::Store,
                     },
                 })],

@@ -1,6 +1,6 @@
-//! Interactive back gestures — iOS edge [`SwipeBack`] and Android
-//! [`AndroidPredictiveBack`] — both driving the **same coordinated
-//! two-screen scrub** the non-interactive pop uses.
+//! Platform navigation drivers — iOS edge swipe and Android predictive back —
+//! both driving the **same coordinated two-screen scrub** the
+//! non-interactive pop uses.
 //!
 //! A back gesture has a continuous `0..1` progress (finger drag on iOS, a
 //! `BackEventCompat` on Android). Both gestures map that progress onto one
@@ -26,10 +26,9 @@ use whisker::platform_module::WhiskerValue;
 use whisker::runtime::event::bind_typed;
 use whisker::runtime::reactive::on_mount;
 use whisker::runtime::view::{BindType, Element};
-use whisker::{AnimationController, Fragment, component, module, on_cleanup, render, use_context};
+use whisker::{AnimationController, module, on_cleanup};
 
-use crate::render::components::RouterRoot;
-use crate::render::handle::{PoseBinding, RouterHandle, StackBridge, use_navigator};
+use crate::render::handle::{PoseBinding, RouterHandle, StackBridge};
 use crate::render::transition::{self, PoseMode, Role, RouteTransition, SwipeEdge};
 
 /// Viewport width (pt) the finger travels for a full swipe — a hardcoded
@@ -81,35 +80,22 @@ struct Gesture {
     progress: f32,
 }
 
-/// iOS edge swipe-back gesture component. Renders nothing; binds touch
-/// handlers in `on_mount`.
-#[component]
-pub fn swipe_back() -> Element {
-    let nav = use_navigator();
-    // Bind to the router's screen-spanning root (a phantom slot has no
-    // extent and would never be hit by a touch). The `RouterRoot` context is
-    // published by `Router()` BEFORE the children mount, so it is visible here.
-    let container = use_context::<RouterRoot>().map(|r| r.0);
-    on_mount(move || {
-        // Android's back gesture belongs to the platform: it arrives
-        // through `AndroidPredictiveBack`, and the two mounted together
-        // is the documented setup. Installing here as well would let a
-        // left-edge swipe drive both — and the platform cancels the
-        // touch stream once it takes the gesture over, so this half
-        // reads that as a cancelled swipe and *restores* the focus the
-        // gesture had just dismissed. The keyboard drops and springs
-        // back, on the left edge only.
-        if cfg!(target_os = "android") {
-            return;
-        }
-        if let Some(container) = container {
-            install(container, nav.clone());
-        }
-    });
-    render! { Fragment() }
+/// Install the Host navigation inputs owned by one [`Router`](crate::render::Router).
+///
+/// Host integration is an implementation detail of the Router rather than an
+/// empty visual element callers must remember to mount. Android installs the
+/// system back / predictive-back module subscription, iOS binds an edge swipe
+/// to the Router's real root element, and Web/Desktop need no gesture input
+/// here (Web History is installed by [`RouterHandle`]).
+pub(crate) fn install(container: Element, nav: RouterHandle) {
+    if cfg!(target_os = "android") {
+        install_android_predictive_back(nav);
+    } else if cfg!(target_os = "ios") {
+        on_mount(move || install_edge_swipe(container, nav));
+    }
 }
 
-fn install(container: Element, nav: RouterHandle) {
+fn install_edge_swipe(container: Element, nav: RouterHandle) {
     let gesture: Rc<RefCell<Option<Gesture>>> = Rc::new(RefCell::new(None));
 
     {
@@ -203,9 +189,9 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
         return None;
     }
     let bridge = nav.active_stack_bridge()?;
-    // Edge-swipe back is opt-in by *mounting* a gesture component
-    // (`SwipeBack` / `AndroidPredictiveBack`); it is NOT gated on the
-    // route's transition. The only requirement is that the stack can pop.
+    // Edge-swipe back is installed by the Router's platform driver. It is
+    // not gated on the route's transition; the only requirement is that the
+    // stack can pop.
     if !bridge.can_back {
         return None;
     }
@@ -225,13 +211,10 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
     if let (Some(ctrl), Some(top), Some(under)) =
         (&bridge.top_ctrl, &bridge.top_pose, &bridge.under_pose)
     {
-        // The under may be a paused buried entry (after a `replace` the
-        // settle freezes it); resume it so its pose effect runs and follows
-        // the finger through the scrub. Without this the under stays frozen
-        // and only snaps at the end of the gesture.
-        if let Some(under_owner) = bridge.under_owner {
-            under_owner.resume();
-        }
+        // Only the under screen's presentation follows the finger. Its
+        // content owner deliberately remains paused until a committed pop
+        // changes navigation state, so a repeated static route such as
+        // `detail/:id` keeps the revealed entry's own params during preview.
         point(top, ctrl, Role::Top, mode.clone());
         point(under, ctrl, Role::Under, mode);
         // The Material backdrop dim is Android-only; the iOS slide carries
@@ -342,58 +325,51 @@ fn point(binding: &PoseBinding, c: &AnimationController, role: Role, mode: PoseM
     binding.mode.set(mode);
 }
 
-/// Android 13+ predictive-back gesture component — the platform-back twin
-/// of [`SwipeBack`], driving the identical coordinated scrub.
-///
-/// Mount it as a child of the [`Router`](crate::render::Router) (alongside
-/// `SwipeBack`; each simply waits on its own platform's input). It
-/// subscribes to the `whisker-router:PredictiveBack` native module:
+/// Install Android's system-back and predictive-back input for one Router.
+/// Subscribes to the `whisker-router:PredictiveBack` native module:
 ///
 /// - `backStarted` → [`begin`] the gesture on the active stack.
 /// - `backProgressed { progress }` → [`scrub`] the pair by `progress`.
 /// - `backCancelled` → [`settle`] as a cancel (spring back to present).
 /// - `backInvoked` (commit) → [`settle`] as a commit → `navigator.back()`.
 ///
-/// On API < 34 the platform delivers only `backInvoked` (no preview); the
-/// component then just commits — back still works, without the drag
-/// preview. Renders nothing.
-#[component]
-pub fn android_predictive_back() -> Element {
-    let nav = use_navigator();
+/// On API < 34 the platform delivers only `backInvoked` (no preview), so
+/// back still works without the interactive drag preview.
+fn install_android_predictive_back(nav: RouterHandle) {
     let module = pb_module();
 
-    if cfg!(target_os = "android") {
-        whisker::back::set_exit_impl(|| {
-            let _ = pb_module().invoke(PB_M_EXIT_APP, std::vec![]);
-        });
-        // Mirror "something here will consume back" into the Kotlin
-        // callback's enabled state; when false, the OS default (exit /
-        // background) runs instead of a swallowed press.
-        let nav_for_enabled = nav.clone();
-        let last_sent: Rc<std::cell::Cell<Option<bool>>> = Rc::new(std::cell::Cell::new(None));
-        whisker::runtime::reactive::effect(move || {
-            // Derived from the state itself, not the gesture bridges:
-            // `Stack` re-registers its bridge during reconcile AFTER the
-            // state write, so a bridge-based read here is one navigation
-            // stale (first push → back exits the app).
-            let state = nav_for_enabled.state().get();
-            let can_pop = state.active_chain().iter().any(
-                |node| matches!(node, crate::core::RouteState::Stack(s) if s.history.len() > 1),
+    // Prime the device radius once the Host view is attached. Gesture events
+    // retry when attachment was not ready yet.
+    on_mount(try_fetch_device_corner_radius);
+
+    whisker::back::set_exit_impl(|| {
+        let _ = pb_module().invoke(PB_M_EXIT_APP, std::vec![]);
+    });
+    // Mirror "something here will consume back" into the Kotlin callback's
+    // enabled state; when false, the OS default (exit / background) runs
+    // instead of a swallowed press.
+    let nav_for_enabled = nav.clone();
+    let last_sent: Rc<std::cell::Cell<Option<bool>>> = Rc::new(std::cell::Cell::new(None));
+    whisker::runtime::reactive::effect(move || {
+        // Derived from the state itself, not the gesture bridges: `Stack`
+        // re-registers its bridge during reconcile after the state write, so
+        // a bridge-based read here is one navigation stale.
+        let state = nav_for_enabled.state().get();
+        let can_pop = state
+            .active_chain()
+            .iter()
+            .any(|node| matches!(node, crate::core::RouteState::Stack(s) if s.history.len() > 1));
+        // A pop's survivor stays paused until its settle finishes, so use the
+        // pause-independent predicate for the Host callback's enabled state.
+        let enabled = can_pop || whisker::back::has_any_handler();
+        if last_sent.get() != Some(enabled) {
+            last_sent.set(Some(enabled));
+            let _ = pb_module().invoke(
+                PB_M_SET_BACK_ENABLED,
+                std::vec![WhiskerValue::Bool(enabled)],
             );
-            // `has_any_handler`, not `has_active_handler`: a pop's
-            // survivor stays paused until its settle finishes, and the
-            // pause-filtered predicate would disable back past a
-            // guarded root for that whole window.
-            let enabled = can_pop || whisker::back::has_any_handler();
-            if last_sent.get() != Some(enabled) {
-                last_sent.set(Some(enabled));
-                let _ = pb_module().invoke(
-                    PB_M_SET_BACK_ENABLED,
-                    std::vec![WhiskerValue::Bool(enabled)],
-                );
-            }
-        });
-    }
+        }
+    });
 
     // The in-flight bridge for the current predictive-back gesture. Shared
     // across the four event listeners. The native `PredictiveBack` module
@@ -489,8 +465,6 @@ pub fn android_predictive_back() -> Element {
         drop(cancelled);
         drop(invoked);
     });
-
-    render! { Fragment() }
 }
 
 /// Read `touchY` (0..1, finger Y as a fraction of screen height) from a

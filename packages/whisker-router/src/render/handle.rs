@@ -6,8 +6,8 @@
 //! UI, where many components read the state reactively and a handful of
 //! event handlers mutate it. [`RouterHandle`] is the reactive wrapper:
 //! it owns the immutable [`CompiledTree`], the [`RouteRegistry`], and a
-//! single `RwSignal<RouteState>`. The five navigation verbs
-//! ([`navigate`](RouterHandle::navigate), [`select`](RouterHandle::select),
+//! single `RwSignal<RouteState>`. The navigation verbs
+//! ([`navigate`](RouterHandle::navigate), [`push`](RouterHandle::push),
 //! [`back`](RouterHandle::back), [`replace`](RouterHandle::replace),
 //! [`pop_to`](RouterHandle::pop_to), [`reset`](RouterHandle::reset)) each
 //! **clone the state, run the Phase-1 `Navigator` op, and write the
@@ -38,9 +38,20 @@ use std::rc::Rc;
 use whisker::runtime::reactive::Owner;
 use whisker::{AnimationController, ReadSignal, RwSignal, computed, provide_context, use_context};
 
-use crate::core::{CompiledTree, NavError, Navigator, NodePath, RouteInstance, RouteState};
+use crate::core::{
+    CompiledTree, Location, NavError, Navigator, NodePath, RouteInstance, RouteState,
+};
+use crate::render::history;
 use crate::render::registry::{LayoutFn, LayoutRegistry, RenderFn, RouteRegistry, RouteSet};
 use crate::render::transition::RouteTransition;
+
+#[derive(Clone, Copy)]
+enum HistoryMutation<'a> {
+    None,
+    Push(&'a str),
+    Replace(&'a str),
+    Back,
+}
 
 /// A repointable pose binding for one stack wrapper: the controller whose
 /// progress drives it + the role it plays. The swipe-back gesture sets
@@ -71,12 +82,13 @@ pub(crate) struct StackBridge {
     pub top_pose: Option<PoseBinding>,
     /// The revealed-under wrapper's pose binding, if any.
     pub under_pose: Option<PoseBinding>,
-    /// The revealed-under wrapper's owner. A gesture re-points the under's
-    /// pose bindings but must also `resume()` it: a buried under is paused
-    /// (no effects run), so without this its pose effect would not follow
-    /// the finger during an interactive back. `run_pop` resumes the survivor
-    /// itself; the gesture path has only the bridge, hence this handle.
-    pub under_owner: Option<Owner>,
+    /// The revealed-under screen's content owner. Its presentation wrapper
+    /// remains live so transforms follow an interactive gesture, while this
+    /// owner stays paused until a committed pop actually reveals the screen.
+    /// Keeping content and presentation lifecycles separate prevents a
+    /// covered `detail/:id` from adopting the current top route's params.
+    #[cfg(test)]
+    pub under_content_owner: Option<Owner>,
     /// The stack's backdrop-dim **drive**: when `Some(ctrl)`, the dim
     /// opacity reactively follows `(1 - ctrl.value()) * PB_MAX_DIM`, so it
     /// darkens during the drag AND animates in lockstep with the settle
@@ -111,6 +123,10 @@ struct Inner {
     /// the swipe-back gesture to find the deepest active stack's top
     /// wrapper + controller.
     bridges: RefCell<HashMap<NodePath, StackBridge>>,
+    /// Whether a Host history adapter was installed for this Router.
+    history_enabled: bool,
+    /// Retains the Host `popstate` subscription for this handle's lifetime.
+    history_subscription: RefCell<Option<history::Subscription>>,
     /// Owns the `state` signal. A detached root so the signal lives for
     /// the handle's lifetime, not the (often transient) owner that
     /// happened to be current at construction — the same footgun the
@@ -128,18 +144,57 @@ impl RouterHandle {
             layouts,
         } = routes.into();
         let owner = Owner::detached_root();
-        let initial = RouteState::initial(&tree);
+        let initial_location = history::initialize();
+        let history_enabled = initial_location.is_some();
+        let mut initial = RouteState::initial(&tree);
+        if let Some(location) = &initial_location {
+            let result = Navigator::new(&tree, &mut initial).reset(&location.target);
+            if let Err(error) = result {
+                eprintln!(
+                    "[whisker-router] ignoring unmatched browser location `{}`: {error:?}",
+                    location.target
+                );
+                initial = RouteState::initial(&tree);
+                let fallback = initial.current().location.to_url();
+                history::replace(&fallback, &fallback);
+            }
+        }
         let state = owner.with(|| RwSignal::new(initial));
-        RouterHandle {
+        let handle = RouterHandle {
             inner: Rc::new(Inner {
                 tree,
                 registry,
                 layouts,
                 state,
                 bridges: RefCell::new(HashMap::new()),
+                history_enabled,
+                history_subscription: RefCell::new(None),
                 _owner: owner,
             }),
+        };
+        handle.install_history_subscription();
+        handle
+    }
+
+    fn install_history_subscription(&self) {
+        if !self.inner.history_enabled {
+            return;
         }
+        let inner = Rc::downgrade(&self.inner);
+        let subscription = history::subscribe(move |target| {
+            let Some(inner) = inner.upgrade() else {
+                return;
+            };
+            let handle = RouterHandle { inner };
+            if let Err(error) = handle.with_navigator(HistoryMutation::None, |navigator| {
+                navigator.navigate(&target)
+            }) {
+                eprintln!(
+                    "[whisker-router] browser history target `{target}` did not match: {error:?}"
+                );
+            }
+        });
+        *self.inner.history_subscription.borrow_mut() = subscription;
     }
 
     /// The `Layout(X)` chrome registered for the container at `path`, if any.
@@ -242,57 +297,75 @@ impl RouterHandle {
     /// result back into the signal. The closure receives a `Navigator`
     /// bound to a *clone* of the current state; whatever it returns is
     /// propagated to the caller.
-    fn with_navigator<T>(&self, op: impl FnOnce(&mut Navigator) -> T) -> T {
-        // Release keyboard focus at the moment navigation is invoked —
-        // before the transition animates — so the keyboard drops crisply
-        // as the user leaves the screen. Blurs the *specific* field that
-        // was focused (never a blanket dismiss), so a late-landing blur
-        // can't resign a field the screen being entered has since
-        // auto-focused. See [`crate::render::keyboard`].
-        crate::render::keyboard::on_page_change_confirm(false);
-        let mut state = self.inner.state.get();
+    fn with_navigator<T>(
+        &self,
+        history_mutation: HistoryMutation<'_>,
+        op: impl FnOnce(&mut Navigator) -> Result<T, NavError>,
+    ) -> Result<T, NavError> {
+        let before = self.inner.state.get();
+        let mut state = before.clone();
         let out = {
             let mut nav = Navigator::new(&self.inner.tree, &mut state);
             op(&mut nav)
-        };
-        self.inner.state.set(state);
-        out
+        }?;
+        if state != before {
+            // Release keyboard focus only after resolution succeeds and just
+            // before the changed state is published. Failed/no-op navigation
+            // is fully transactional and has no UI side effects.
+            crate::render::keyboard::on_page_change_confirm(false);
+            self.inner.state.set(state);
+            if self.inner.history_enabled {
+                let public_url = self
+                    .inner
+                    .state
+                    .with_untracked(|state| state.current().location.to_url());
+                match history_mutation {
+                    HistoryMutation::None => {}
+                    HistoryMutation::Push(target) => history::push(&public_url, target),
+                    HistoryMutation::Replace(target) => history::replace(&public_url, target),
+                    HistoryMutation::Back => {
+                        if history::back() != Some(true) {
+                            history::replace(&public_url, &public_url);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
-    /// Navigate forward to `url`. The URL is matched against the route
-    /// patterns (`/(home)/detail/:id`) with its `:param`s captured, and
-    /// the matched route is pushed onto the active Stack. Group segments
-    /// are optional: both `"/detail/42"` and `"/(home)/detail/42"` work.
+    /// Make `url` active. This unwinds to an identical retained entry or
+    /// pushes it when absent. A bare group switches/restores that branch and
+    /// reselecting the active group applies its [`ReselectBehavior`](crate::core::ReselectBehavior).
     pub fn navigate(&self, url: &str) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.navigate(url))
+        self.with_navigator(HistoryMutation::Push(url), |nav| nav.navigate(url))
     }
 
-    /// Select the Switch branch containing the route matched by `url`
-    /// (the tab-switch primitive). The target tab's retained history is
-    /// preserved. E.g. `select("/(home)")` or `select("/list")`.
-    pub fn select(&self, url: &str) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.select(url))
+    /// Always append a fresh route entry. Qualified group segments select
+    /// the destination branch but are omitted from the public location.
+    pub fn push(&self, url: &str) -> Result<(), NavError> {
+        self.with_navigator(HistoryMutation::Push(url), |nav| nav.push(url))
     }
 
     /// Pop the deepest non-trivial stack. [`NavError::NothingToPop`] when
     /// there is nothing to pop (e.g. at a tab root).
     pub fn back(&self) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.back())
+        self.with_navigator(HistoryMutation::Back, |nav| nav.back())
     }
 
     /// Swap the top of the current stack with the route matched by `url`.
     pub fn replace(&self, url: &str) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.replace(url))
+        self.with_navigator(HistoryMutation::Replace(url), |nav| nav.replace(url))
     }
 
     /// Pop the current stack until the route matched by `url` is the top.
     pub fn pop_to(&self, url: &str) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.pop_to(url))
+        self.with_navigator(HistoryMutation::Replace(url), |nav| nav.pop_to(url))
     }
 
     /// Replace the entire current stack with the route matched by `url`.
     pub fn reset(&self, url: &str) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.reset(url))
+        self.with_navigator(HistoryMutation::Replace(url), |nav| nav.reset(url))
     }
 }
 
@@ -373,21 +446,30 @@ pub fn use_param(name: &str) -> ReadSignal<Option<String>> {
     })
 }
 
-/// The current location as a URL string (e.g. `/podcast/42`) — the
-/// reactive "where am I" read, analogous to Expo Router's `usePathname()`.
+/// The current public pathname (e.g. `/podcast/42`) — the reactive "where am
+/// I" read, analogous to Expo Router's `usePathname()`. Route groups are not
+/// included; use [`use_group`] for active tab/group state.
 ///
 /// Derived from the active leaf's path; recomputes whenever navigation
 /// changes it. This is the general primitive custom chrome uses to reflect
 /// the current route. Returns `"/"` if the path can't be resolved
 /// (should not happen for a mounted router).
 pub fn use_pathname() -> ReadSignal<String> {
+    let location = use_location();
+    computed(move || location.get().pathname)
+}
+
+/// Reactively read the current public [`Location`].
+pub fn use_location() -> ReadSignal<Location> {
     let handle = use_navigator();
     let current = handle.current();
-    computed(move || {
-        let path = current.get().path;
-        handle
-            .tree()
-            .url_of(&path)
-            .unwrap_or_else(|| "/".to_string())
-    })
+    computed(move || current.get().location)
+}
+
+/// Reactively read the nearest active route-group name, without parentheses.
+/// Returns `None` when the current route is not inside a group.
+pub fn use_group() -> ReadSignal<Option<String>> {
+    let handle = use_navigator();
+    let current = handle.current();
+    computed(move || handle.tree().group_of(&current.get().path))
 }

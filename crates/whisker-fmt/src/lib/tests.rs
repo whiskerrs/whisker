@@ -1236,7 +1236,7 @@ mod coverage_tests {
 
     #[test]
     fn composite_wide_tree_is_idempotent_and_within_width() {
-        let input = "fn app() -> Element {\n    render! { View(style: css!(flex_grow: 1.0, width: vw(100), height: vh(100), background_color: podcast_theme::BG, display: Display::Flex, flex_direction: FlexDirection::Column, position: PositionKind::Relative)) { Router(routes: routes!{Stack{Route(path:\"\",component:BrowseScreen)Route(path:\"podcast/:id\",component:DetailScreen)Route(path:\"search\",component:SearchScreen)}}) { PodcastRouter { Outlet {} SwipeBack {} AndroidPredictiveBack {} } } MiniPlayer() } }\n}\n";
+        let input = "fn app() -> Element {\n    render! { View(style: css!(flex_grow: 1.0, width: vw(100), height: vh(100), background_color: podcast_theme::BG, display: Display::Flex, flex_direction: FlexDirection::Column, position: PositionKind::Relative)) { Router(routes: routes!{Stack{Route(path:\"\",component:BrowseScreen)Route(path:\"podcast/:id\",component:DetailScreen)Route(path:\"search\",component:SearchScreen)}}) { PodcastRouter { Outlet {} } } MiniPlayer() } }\n}\n";
         let out = fmt(input);
         assert_no_line_over(&out, 100);
         assert_idempotent(input);

@@ -10,10 +10,15 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         WhiskerModuleBehaviors.registerAll()
+        let background = UIColor(named: "WhiskerBackground") ?? .white
         let root = UIViewController()
-        root.view = WhiskerView(frame: UIScreen.main.bounds)
+        root.view.backgroundColor = background
+        let whiskerView = WhiskerView(frame: root.view.bounds)
+        whiskerView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        root.view.addSubview(whiskerView)
 
         let window = UIWindow(frame: UIScreen.main.bounds)
+        window.backgroundColor = background
         window.rootViewController = root
         window.makeKeyAndVisible()
         self.window = window
