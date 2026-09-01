@@ -92,7 +92,7 @@ In words:
 
 Every shape below uses one of two Rust-side macros:
 
-- `#[whisker::module_component(name = "package/Name", ...)]` — declares a
+- `#[whisker::module_element(name = "package/Name", ...)]` — declares a
   **Host view** element and its portable schema for `render!`. The element
   name is explicit, stable, and versionless. Shapes 1 and 2 use it.
 - `whisker::module!("Name")` — resolves a **function module** handle
@@ -138,7 +138,7 @@ public final class LocalStoreModule: Module {
 ## Shape 1 — Pure Component
 
 ```rust
-#[whisker::module_component(
+#[whisker::module_element(
     name = "whisker.image/Image",
     measurement = ReplacedContent,
 )]
@@ -176,7 +176,7 @@ there's nothing to observe.
 ## Shape 2 — Component + ref-bound handle
 
 ```rust
-#[whisker::module_component(
+#[whisker::module_element(
     name = "whisker.video/Video",
     measurement = None,
     commands = [("play", Null), ("pause", Null), ("seek", Float)],
@@ -188,7 +188,7 @@ pub struct VideoHandle { r: ElementRef }
 
 impl VideoHandle {
     pub fn new() -> Self;
-    pub fn r(&self) -> ElementRef;     // attach via `Video(ref: handle.r())`
+    pub fn r(&self) -> ElementRef;     // attach via `Video(element_ref: handle.r())`
     pub fn play(&self) { let _ = self.r.command("play", WhiskerValue::Null); }
     pub fn pause(&self) { let _ = self.r.command("pause", WhiskerValue::Null); }
     pub fn seek(&self, secs: f64) {
@@ -201,9 +201,9 @@ impl VideoHandle {
 // Usage
 let video = VideoHandle::new();
 render! {
-    view {
-        Video(ref: video.r(), src: "clip.mp4", style: css!(height: px(200)))
-        view(on_tap: move |_| video.play()) { text(value: "play") }
+    View {
+        Video(element_ref: video.r(), src: "clip.mp4", style: css!(height: px(200)))
+        View(on_tap: move |_| video.play()) { Text(value: "play") }
     }
 }
 ```
@@ -219,7 +219,7 @@ shape — the handle is `Copy` (just a slotmap key) so it copies freely
 into `on_tap` closures.
 
 **Lifetime:** the *handle* is just a key; constructing one before the
-element mounts is fine (methods no-op until the `ref:` binds). The
+element mounts is fine (methods no-op until `element_ref:` binds). The
 *native player* tracks the mounted element and is released when the
 element is unmounted by its owner.
 
@@ -253,9 +253,9 @@ impl Player {
 let player = Player::new("clip.mp3");
 let status = player.status();
 render! {
-    text(value: move || format!("{:.1}s", status.get().position))
-    view(on_tap: { let p = player.clone(); move |_| p.play() }) {
-        text(value: "play")
+    Text(value: computed(move || format!("{:.1}s", status.get().position)))
+    View(on_tap: { let p = player.clone(); move |_| p.play() }) {
+        Text(value: "play")
     }
 }
 ```
@@ -302,7 +302,7 @@ let insets = safe_area_insets();
 let padding_style = computed(move || {
     format!("padding-top: {}px", insets.get().top as i32)
 });
-render! { view(style: padding_style) { … } }
+render! { View(style: padding_style) { … } }
 ```
 
 **When:** the value is a **singleton observable** for the whole

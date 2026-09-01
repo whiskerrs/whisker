@@ -51,13 +51,13 @@ impl Clone for CloneTrackedRow {
     }
 }
 
-#[whisker::module_component(
+#[whisker::module_element(
     name = "whisker.test/AutoRegistered",
     measurement = None,
 )]
 fn auto_registered(enabled: Signal<bool>, style: whisker::Style) {}
 
-#[whisker::module_component(
+#[whisker::module_element(
     name = "whisker.test/NativeLabel",
     measurement = Text,
     text_style = true,
@@ -109,7 +109,7 @@ fn common_metadata_reaches_frames_and_event_targets() {
         let root = owner.with(|| {
             let received = Rc::clone(&received);
             render! {
-                view(
+                View(
                     id: "account-card",
                     dataset: Dataset::new().int("account-id", 42).bool("selected", true),
                     accessibility: Accessibility::new()
@@ -204,14 +204,14 @@ fn list_virtualizes_through_scroll_view_and_reacts_to_host_scroll_geometry() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                list(
+                List(
                     style: css!(width: percent(100), height: px(100)),
                     each: || (0_u32..100).collect::<Vec<_>>(),
                     key: |row: &u32| *row,
                     children: |row: ReadSignal<u32>| {
                         let value = computed(move || format!("row-{}", row.get()));
                         render! {
-                            text(style: css!(height: px(20), font_size: px(20)), value: value)
+                            Text(style: css!(height: px(20), font_size: px(20)), value: value)
                         }
                     },
                 )
@@ -329,14 +329,14 @@ fn carousel_scroll_contract_reaches_the_host_as_typed_properties() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                scroll_view(
+                ScrollView(
                     axis: whisker::ScrollAxis::Horizontal,
                     snap: whisker::ScrollSnap::start().with_offset(12.0),
                     scroll_snap_stop: whisker::attrs::ScrollSnapStop::Always,
                     style: css!(width: px(320), height: px(180), flex_direction: FlexDirection::Row),
                 ) {
-                    view(style: css!(width: px(280), height: px(180), flex_shrink: 0.0))
-                    view(style: css!(width: px(280), height: px(180), flex_shrink: 0.0))
+                    View(style: css!(width: px(280), height: px(180), flex_shrink: 0.0))
+                    View(style: css!(width: px(280), height: px(180), flex_shrink: 0.0))
                 }
             }
         });
@@ -419,7 +419,7 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
         let item_clones = Rc::clone(&item_clones);
         let root = owner.with(|| {
             render! {
-                list(
+                List(
                     style: css!(width: percent(100), height: px(100)),
                     each: move || {
                         source_reads.set(source_reads.get() + 1);
@@ -437,7 +437,7 @@ fn list_scroll_reuses_the_indexed_source_and_only_mutates_window_edges() {
                     children: |row: ReadSignal<CloneTrackedRow>| {
                         let value = computed(move || row.with(|row| format!("row-{}", row.index)));
                         render! {
-                            text(
+                            Text(
                                 style: css!(height: px(44), font_size: px(20)),
                                 value: value,
                             )
@@ -604,7 +604,7 @@ fn list_updates_the_item_signal_without_recycling_keyed_state() {
         let item_cleanups = Rc::clone(&item_cleanups);
         let root = owner.with(|| {
             render! {
-                list(
+                List(
                     style: css!(width: percent(100), height: px(100)),
                     each: move || rows.get(),
                     key: |row: &Row| row.id,
@@ -614,7 +614,7 @@ fn list_updates_the_item_signal_without_recycling_keyed_state() {
                         on_cleanup(move || cleanups.set(cleanups.get() + 1));
                         let value = computed(move || row.with(|row| row.label.to_owned()));
                         render! {
-                            text(
+                            Text(
                                 style: css!(height: px(44), font_size: px(20)),
                                 value: value,
                             )
@@ -713,14 +713,14 @@ fn typed_list_handle_resolves_keys_from_the_rust_snapshot() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                list(
-                    ref: list_handle.r(),
+                List(
+                    list_ref: list_handle.r(),
                     style: css!(width: percent(100), height: px(100)),
                     each: || (0_u32..100).collect::<Vec<_>>(),
                     key: |row: &u32| *row,
                     children: |row: ReadSignal<u32>| {
                         let value = computed(move || format!("row-{}", row.get()));
-                        render! { text(value: value, style: css!(height: px(44), font_size: px(20))) }
+                        render! { Text(value: value, style: css!(height: px(44), font_size: px(20))) }
                     },
                 )
             }
@@ -798,7 +798,7 @@ fn list_applies_axis_scroll_control_and_initial_key_target() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                list(
+                List(
                     axis: ScrollAxis::Horizontal,
                     scroll_enabled: false,
                     initial_scroll: ListScrollTarget::key(3_u32, ScrollAlignment::Start),
@@ -806,7 +806,7 @@ fn list_applies_axis_scroll_control_and_initial_key_target() {
                     each: || (0_u32..20).collect::<Vec<_>>(),
                     key: |row: &u32| *row,
                     children: |row: ReadSignal<u32>| render! {
-                        text(value: computed(move || row.get().to_string()), style: css!(width: px(44), font_size: px(20)))
+                        Text(value: computed(move || row.get().to_string()), style: css!(width: px(44), font_size: px(20)))
                     },
                 )
             }
@@ -882,14 +882,14 @@ fn list_mounts_header_footer_and_empty_content_without_host_list_nodes() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                list(
+                List(
                     style: css!(width: px(320), height: px(200)),
-                    header: || render! { text(value: "header", style: css!(font_size: px(20))) },
-                    footer: || render! { text(value: "footer", style: css!(font_size: px(20))) },
-                    empty: || render! { text(value: "empty", style: css!(font_size: px(20))) },
+                    header: || render! { Text(value: "header", style: css!(font_size: px(20))) },
+                    footer: || render! { Text(value: "footer", style: css!(font_size: px(20))) },
+                    empty: || render! { Text(value: "empty", style: css!(font_size: px(20))) },
                     each: Vec::<u32>::new,
                     key: |row: &u32| *row,
-                    children: |row: ReadSignal<u32>| render! { text(value: computed(move || row.get().to_string()), style: css!(font_size: px(20))) },
+                    children: |row: ReadSignal<u32>| render! { Text(value: computed(move || row.get().to_string()), style: css!(font_size: px(20))) },
                 )
             }
         });
@@ -935,11 +935,11 @@ fn list_preserves_the_first_visible_key_when_items_are_prepended() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                list(
+                List(
                     style: css!(width: px(320), height: px(100)),
                     each: move || rows.get(),
                     key: |row: &u32| *row,
-                    children: |_row: ReadSignal<u32>| render! { view(style: css!(height: px(44))) },
+                    children: |_row: ReadSignal<u32>| render! { View(style: css!(height: px(44))) },
                 )
             }
         });
@@ -1049,14 +1049,14 @@ fn list_learns_variable_item_sizes_from_rust_layout() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                list(
-                    ref: list_handle.r(),
+                List(
+                    list_ref: list_handle.r(),
                     style: css!(width: percent(100), height: px(600)),
                     each: || vec![(1_u32, 100_i32), (2, 200)],
                     key: |row: &(u32, i32)| row.0,
                     children: |row: ReadSignal<(u32, i32)>| {
                         let style = computed(move || css!(height: px(row.get().1), flex_shrink: 0.0));
-                        render! { view(style: style) }
+                        render! { View(style: style) }
                     },
                 )
             }
@@ -1102,15 +1102,15 @@ fn list_virtualizes_supported_grid_content_by_complete_rows() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                list(
-                    ref: list_handle.r(),
+                List(
+                    list_ref: list_handle.r(),
                     style: css!(width: px(200), height: px(100)),
                     content_style: grid,
                     each: || (0_u32..8).collect::<Vec<_>>(),
                     key: |row: &u32| *row,
                     children: |row: ReadSignal<u32>| {
                         render! {
-                            text(
+                            Text(
                                 value: computed(move || format!("grid-{}", row.get())),
                                 style: css!(height: px(40), font_size: px(20)),
                             )
@@ -1283,11 +1283,11 @@ fn list_rejects_dense_grid_before_host_presentation() {
     with_installed_renderer(surface.renderer(), || {
         owner.with(|| {
             render! {
-                list(
+                List(
                     content_style: unsupported,
                     each: || vec![0_u32, 1],
                     key: |row: &u32| *row,
-                    children: |_row: ReadSignal<u32>| render! { view() },
+                    children: |_row: ReadSignal<u32>| render! { View() },
                 )
             }
         });
@@ -1315,12 +1315,12 @@ fn list_rejects_explicit_grid_item_placement() {
     with_installed_renderer(surface.renderer(), || {
         owner.with(|| {
             render! {
-                list(
+                List(
                     content_style: grid,
                     each: || vec![0_u32, 1],
                     key: |row: &u32| *row,
                     children: |_row: ReadSignal<u32>| render! {
-                        view(style: Css::new().grid_column_start(GridLine::Number(2)))
+                        View(style: Css::new().grid_column_start(GridLine::Number(2)))
                     },
                 )
             }
@@ -1348,15 +1348,15 @@ fn horizontal_list_virtualizes_grid_content_by_complete_columns() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                list(
-                    ref: list_handle.r(),
+                List(
+                    list_ref: list_handle.r(),
                     axis: ScrollAxis::Horizontal,
                     style: css!(width: px(100), height: px(100)),
                     content_style: grid,
                     each: || (0_u32..8).collect::<Vec<_>>(),
                     key: |item: &u32| *item,
                     children: |_item: ReadSignal<u32>| render! {
-                        view(style: css!(width: px(30), height: px(50)))
+                        View(style: css!(width: px(30), height: px(50)))
                     },
                 )
             }
@@ -1382,7 +1382,7 @@ fn horizontal_list_virtualizes_grid_content_by_complete_columns() {
 }
 
 #[test]
-fn linked_module_component_is_bootstrapped_before_a_delayed_mount() {
+fn linked_module_element_is_bootstrapped_before_a_delayed_mount() {
     __reset_for_tests();
     let owner = Owner::new(None);
     let registry = ElementRegistry::standard_with_linked_providers()
@@ -1543,7 +1543,7 @@ fn builtin_text_accepts_owned_values() {
 
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
-            render! { text(style: css!(font_size: px(20)), value: "dynamic".to_string()) }
+            render! { Text(style: css!(font_size: px(20)), value: "dynamic".to_string()) }
         });
         set_root(root);
     });
@@ -1579,8 +1579,8 @@ fn render_text_reaches_measured_frame_and_paint_only_delta() {
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: css!(color: Color::rgba(220, 30, 40, 0.75))) {
-                    text(
+                View(style: css!(color: Color::rgba(220, 30, 40, 0.75))) {
+                    Text(
                         value: value,
                         style: css!(font_size: px(20)),
                     )
@@ -1732,8 +1732,8 @@ fn computed_css_direction_reaches_text_measurement_and_paint() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: css!(direction: Direction::Rtl)) {
-                    text(
+                View(style: css!(direction: Direction::Rtl)) {
+                    Text(
                         value: "مرحبا Whisker",
                         style: css!(font_size: px(20)),
                     )
@@ -1798,7 +1798,7 @@ fn opacity_transition_is_sampled_in_rust_and_emitted_as_ordinary_frame_deltas() 
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(40))
                     .height(px(20))
                     .opacity(0.2)
@@ -1893,7 +1893,7 @@ fn layout_transition_is_sampled_before_taffy_and_emits_geometry_deltas() {
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(40))
                     .height(px(20))
                     .transition(transition()))
@@ -1978,7 +1978,7 @@ fn box_color_transitions_are_composited_into_one_set_box_paint_delta() {
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: painted(Color::rgb(0, 0, 0), Color::rgb(255, 0, 0)))
+                View(style: painted(Color::rgb(0, 0, 0), Color::rgb(255, 0, 0)))
             }
         });
         set_root(root);
@@ -2120,10 +2120,10 @@ fn inherited_text_color_transition_is_sampled_on_its_parent() {
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: colored(NamedColor::Black.into())) {
-                    text(style: css!(font_size: px(20)), value: "inherited")
-                    view(style: css!(color: Color::Named(NamedColor::Red))) {
-                        text(style: css!(font_size: px(20)), value: "blocked")
+                View(style: colored(NamedColor::Black.into())) {
+                    Text(style: css!(font_size: px(20)), value: "inherited")
+                    View(style: css!(color: Color::Named(NamedColor::Red))) {
+                        Text(style: css!(font_size: px(20)), value: "blocked")
                     }
                 }
             }
@@ -2216,7 +2216,7 @@ fn compatible_transform_transition_resolves_percentages_after_layout() {
             )
     };
     let root = with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { view(style: transformed(0, None)) });
+        let root = owner.with(|| render! { View(style: transformed(0, None)) });
         set_root(root);
         root
     });
@@ -2284,7 +2284,7 @@ fn builder_keyframes_are_sampled_in_rust_and_emit_frame_deltas() {
     let _root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(40))
                     .height(px(20))
                     .opacity(0.25)
@@ -2363,7 +2363,7 @@ fn css_motion_lifecycle_events_are_dispatched_by_the_rust_timeline() {
         .unwrap();
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
-            render! { view(style: Css::new().width(px(40)).height(px(20)).opacity(0.0)) }
+            render! { View(style: Css::new().width(px(40)).height(px(20)).opacity(0.0)) }
         });
         set_root(root);
         root
@@ -2483,7 +2483,7 @@ fn replacing_active_css_motion_dispatches_cancel_events() {
         .unwrap();
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
-            render! { view(style: Css::new().width(px(40)).height(px(20)).opacity(0.0)) }
+            render! { View(style: Css::new().width(px(40)).height(px(20)).opacity(0.0)) }
         });
         set_root(root);
         root
@@ -2566,7 +2566,7 @@ fn incompatible_transform_transition_uses_matrix_decomposition() {
     };
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
-            render! { view(style: transformed(TransformFn::Rotate(0.deg().into()))) }
+            render! { View(style: transformed(TransformFn::Rotate(0.deg().into()))) }
         });
         set_root(root);
         root
@@ -2631,7 +2631,7 @@ fn incompatible_keyframe_transforms_use_matrix_decomposition_after_layout() {
     let _root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(40))
                     .height(px(20))
                     .transform_origin(Position::Coords(px(0).into(), px(0).into()))
@@ -2714,7 +2714,7 @@ fn render_box_paint_and_clip_reach_the_frame_sink() {
         StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
     );
     let root = with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { view(style: painted_box(Color::rgb(200, 30, 40))) });
+        let root = owner.with(|| render! { View(style: painted_box(Color::rgb(200, 30, 40))) });
         set_root(root);
         root
     });
@@ -2807,7 +2807,7 @@ fn render_transform_and_origin_reach_the_frame_sink_after_layout() {
         .transform(TransformFn::Scale(2.0.into(), 2.0.into()))
         .transform_origin(Position::Coords(percent(25).into(), percent(50).into()));
     let root_element = with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { view(style: style) });
+        let root = owner.with(|| render! { View(style: style) });
         set_root(root);
         root
     });
@@ -2915,7 +2915,7 @@ fn render_projective_matrix3d_reaches_the_frame_sink() {
         .transform(TransformFn::Matrix3d(matrix))
         .transform_origin(Position::Coords(px(0).into(), px(0).into()));
     with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { view(style: style) });
+        let root = owner.with(|| render! { View(style: style) });
         set_root(root);
     });
 
@@ -2961,7 +2961,7 @@ fn render_current_node_perspective_is_lowered_into_the_current_node_transform() 
         .transform(TransformFn::RotateY(Angle::Deg(60.0).into()))
         .transform_origin(Position::Coords(px(0).into(), px(0).into()));
     with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { view(style: style) });
+        let root = owner.with(|| render! { View(style: style) });
         set_root(root);
     });
 
@@ -3011,7 +3011,7 @@ fn render_motion_path_is_baked_into_the_existing_transform_operation() {
         .offset_distance(percent(75))
         .offset_rotate(OffsetRotate::Auto);
     with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { view(style: style) });
+        let root = owner.with(|| render! { View(style: style) });
         set_root(root);
     });
 
@@ -3065,7 +3065,7 @@ fn render_curved_motion_path_uses_rust_resolved_position_and_tangent() {
         .offset_distance(percent(50))
         .offset_rotate(OffsetRotate::Auto);
     with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { view(style: style) });
+        let root = owner.with(|| render! { View(style: style) });
         set_root(root);
     });
 
@@ -3113,7 +3113,7 @@ fn render_circle_motion_path_resolves_against_the_border_box() {
         .offset_distance(percent(25))
         .offset_rotate(OffsetRotate::Auto);
     with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { view(style: style) });
+        let root = owner.with(|| render! { View(style: style) });
         set_root(root);
     });
 
@@ -3167,7 +3167,7 @@ fn render_rounded_inset_motion_path_uses_the_standard_clockwise_start() {
         .offset_distance(percent(50))
         .offset_rotate(OffsetRotate::Auto);
     with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { view(style: style) });
+        let root = owner.with(|| render! { View(style: style) });
         set_root(root);
     });
 
@@ -3225,7 +3225,7 @@ fn render_svg_arc_motion_path_resolves_endpoint_flags_in_rust() {
         .offset_distance(percent(50))
         .offset_rotate(OffsetRotate::Auto);
     with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { view(style: style) });
+        let root = owner.with(|| render! { View(style: style) });
         set_root(root);
     });
 
@@ -3281,7 +3281,7 @@ fn render_logical_borders_reach_physical_frame_edges_in_rtl() {
         .border_end_start_radius(px(13))
         .border_end_end_radius(px(14));
     with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { view(style: style) });
+        let root = owner.with(|| render! { View(style: style) });
         set_root(root);
     });
 
@@ -3342,9 +3342,9 @@ fn render_grid_layout_reaches_frame_packet_geometry() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: root_style) {
-                    view(style: Css::new().grid_column(GridLine::Number(1), GridLine::Number(2)))
-                    view(style: Css::new().grid_column(GridLine::Number(2), GridLine::Number(3)))
+                View(style: root_style) {
+                    View(style: Css::new().grid_column(GridLine::Number(1), GridLine::Number(2)))
+                    View(style: Css::new().grid_column(GridLine::Number(2), GridLine::Number(3)))
                 }
             }
         });
@@ -3408,10 +3408,10 @@ fn render_block_float_and_clear_reach_frame_packet_geometry() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: Css::new().display_block().width(px(200))) {
-                    view(style: Css::new().width(px(50)).height(px(40)).float(Float::Left))
-                    view(style: Css::new().width(px(60)).height(px(30)).float(Float::Right))
-                    view(style: Css::new().width(px(100)).height(px(10)).clear(Clear::Both))
+                View(style: Css::new().display_block().width(px(200))) {
+                    View(style: Css::new().width(px(50)).height(px(40)).float(Float::Left))
+                    View(style: Css::new().width(px(60)).height(px(30)).float(Float::Right))
+                    View(style: Css::new().width(px(100)).height(px(10)).clear(Clear::Both))
                 }
             }
         });
@@ -3487,7 +3487,7 @@ fn frame_element_type_comes_from_the_surface_registry() {
     );
 
     with_installed_renderer(surface.renderer(), || {
-        let root = owner.with(|| render! { scroll_view() });
+        let root = owner.with(|| render! { ScrollView() });
         set_root(root);
     });
     let mut host = TextHost::default();
@@ -3705,7 +3705,7 @@ fn image_rendering_reaches_the_frame_protocol_from_render_macro() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(40))
                     .height(px(40))
                     .image_rendering(ImageRendering::Pixelated))
@@ -3753,7 +3753,7 @@ fn structured_shadow_and_clip_path_reach_the_frame_protocol() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(40))
                     .height(px(40))
                     .box_shadow(px(2), px(3), px(4), px(1), Color::hex(0x112233))
@@ -3811,7 +3811,7 @@ fn wpt_border_radius_sum_of_radii_001_reaches_layout_and_frame_protocol() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(100))
                     .height(px(100))
                     .background_color(Color::rgba(0, 0, 0, 0.0))
@@ -3885,11 +3885,11 @@ fn inherited_custom_property_reaches_taffy_and_frame_protocol() {
     with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(200))
                     .height(px(100))
                     .custom_property(card_width.clone(), Size::from(px(72)))) {
-                    view(style: Css::new()
+                    View(style: Css::new()
                         .property_variable(StyleProperty::Width, card_width)
                         .height(px(20)))
                 }
@@ -3939,6 +3939,7 @@ fn inherited_custom_property_update_drives_descendant_layout_transition() {
         StyleEnvironment::new(200.0, 100.0, 1.0, 14.0),
     );
     let card_width = CustomPropertyName::new("--card-width").unwrap();
+    let initial_card_width = card_width.clone();
     let transition = || {
         Transition::new(TransitionPropertyKind::name("width"))
             .duration(100.ms())
@@ -3947,12 +3948,12 @@ fn inherited_custom_property_update_drives_descendant_layout_transition() {
     let root = with_installed_renderer(surface.renderer(), || {
         let root = owner.with(|| {
             render! {
-                view(style: Css::new()
+                View(style: Css::new()
                     .width(px(200))
                     .height(px(100))
-                    .custom_property(card_width.clone(), Size::from(px(40)))) {
-                    view(style: Css::new()
-                        .property_variable(StyleProperty::Width, card_width.clone())
+                    .custom_property(initial_card_width.clone(), Size::from(px(40)))) {
+                    View(style: Css::new()
+                        .property_variable(StyleProperty::Width, initial_card_width.clone())
                         .height(px(20))
                         .transition(transition()))
                 }

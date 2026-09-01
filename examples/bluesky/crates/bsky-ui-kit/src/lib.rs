@@ -53,7 +53,7 @@ pub fn post_card(
     let author_cb = on_author.clone();
 
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
             // A virtualised `<list>` cell shrink-wraps to its content width,
@@ -64,10 +64,10 @@ pub fn post_card(
             border_bottom_width: px(1),
             border_bottom_color: theme::BORDER,
         )) {
-            view(on_tap: move |_| (author_cb)()) {
-                avatar_view(src: avatar)
+            View(on_tap: move |_| (author_cb)()) {
+                AvatarView(src: avatar)
             }
-            view(style: css!(
+            View(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 flex_grow: 1.0,
@@ -75,16 +75,16 @@ pub fn post_card(
                 margin_left: theme::ROW_GAP,
             )) {
                 // Tappable header + body → open the post detail.
-                view(
+                View(
                     style: css!(display: Display::Flex, flex_direction: FlexDirection::Column),
                     on_tap: move |_| (open)(),
                 ) {
-                    view(style: css!(
+                    View(style: css!(
                         display: Display::Flex,
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
                     )) {
-                        text(
+                        Text(
                             style: css!(
                                 font_size: theme::T_NAME,
                                 font_weight: FontWeight::Bold,
@@ -93,12 +93,12 @@ pub fn post_card(
                             ),
                             value: name,
                         )
-                        text(
+                        Text(
                             style: css!(font_size: theme::T_HANDLE, color: theme::TEXT_SECONDARY),
                             value: handle,
                         )
                     }
-                    text(
+                    Text(
                         style: css!(
                             font_size: theme::T_BODY,
                             color: theme::TEXT_PRIMARY,
@@ -107,21 +107,21 @@ pub fn post_card(
                         value: body,
                     )
                 }
-                view(style: css!(
+                View(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
                     margin_top: px(8),
                 )) {
-                    static_metric(icon: lucide::MessageCircle, count: reply_count)
-                    action_metric(
+                    StaticMetric(icon: lucide::MessageCircle, count: reply_count)
+                    ActionMetric(
                         icon: lucide::Repeat2,
                         active: reposted,
                         active_color: REPOST_ON,
                         count: repost_count,
                         on_tap: repost_cb,
                     )
-                    action_metric(
+                    ActionMetric(
                         icon: lucide::Heart,
                         active: liked,
                         active_color: LIKE_ON,
@@ -138,14 +138,14 @@ pub fn post_card(
 #[component]
 fn static_metric(icon: Signal<String>, count: u64) -> Element {
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
             margin_right: px(20),
         )) {
             Icon(svg: icon, color: META_OFF, size: "15")
-            text(
+            Text(
                 style: css!(
                     font_size: theme::T_META,
                     color: theme::TEXT_SECONDARY,
@@ -180,7 +180,7 @@ fn action_metric(
     let label = computed(move || count.get().to_string());
     let cb = on_tap.clone();
     render! {
-        view(
+        View(
             style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Row,
@@ -190,7 +190,7 @@ fn action_metric(
             on_tap: move |_| (cb)(),
         ) {
             Icon(svg: icon, color: color, size: "15")
-            text(
+            Text(
                 style: css!(
                     font_size: theme::T_META,
                     color: theme::TEXT_SECONDARY,
@@ -208,7 +208,7 @@ fn action_metric(
 fn avatar_view(src: String) -> Element {
     if src.is_empty() {
         render! {
-            view(style: css!(
+            View(style: css!(
                 width: theme::AVATAR_SIDE,
                 height: theme::AVATAR_SIDE,
                 border_radius: px(theme::AVATAR_RADIUS_PX as f32),

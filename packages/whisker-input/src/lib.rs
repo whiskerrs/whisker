@@ -4,11 +4,11 @@
 //! element ([`Input`]) backed by `UITextField` / `UITextView` on iOS
 //! and `EditText` on Android, with a Leptos-style **two-way binding**
 //! as the headline API plus a typed imperative handle ([`InputRef`])
-//! bound on mount via `ref:` for `focus` / `blur` / `clear` /
+//! bound on mount via `element_ref:` for `focus` / `blur` / `clear` /
 //! `setValue`.
 //!
 //! The native element tag is `whisker-input:Input` (the crate name is
-//! auto-prepended by `#[whisker::module_component]`).
+//! auto-prepended by `#[whisker::module_element]`).
 //!
 //! ## Usage
 //!
@@ -22,14 +22,14 @@
 //! fn app() -> Element {
 //!     let text = RwSignal::new(String::new());
 //!     render! {
-//!         view(style: css!(flex_direction: FlexDirection::Column)) {
+//!         View(style: css!(flex_direction: FlexDirection::Column)) {
 //!             Input(
 //!                 text: text,
 //!                 placeholder: "Type something…",
 //!                 style: css!(height: px(44), font_size: px(16)),
 //!             )
 //!             // The bound signal updates on every keystroke.
-//!             text(value: move || format!("You typed: {}", text.get()))
+//!             Text(value: computed(move || format!("You typed: {}", text.get())))
 //!         }
 //!     }
 //! }
@@ -69,9 +69,9 @@
 //! ```ignore
 //! let field = InputRef::new();
 //! render! {
-//!     view(style: css!(flex_direction: FlexDirection::Row)) {
+//!     View(style: css!(flex_direction: FlexDirection::Row)) {
 //!         Input(text: text, input_ref: field.clone())
-//!         text(value: "Clear", on_tap: {
+//!         Text(value: "Clear", on_tap: {
 //!             let field = field.clone();
 //!             move |_| field.clear()
 //!         })
@@ -93,7 +93,7 @@
 //! | `placeholder`      | `Signal<String>`                      | `""`          | Placeholder text shown when empty. |
 //! | `multiline`        | `bool`                                | `false`       | Single-line field vs multiline area. |
 //! | `lines`            | `u32`                                 | unset (`0`)   | Fixed visible line count (multiline only). |
-//! | `secure`           | `bool`                                | `false`       | Mask input (password entry). |
+//! | `secure`           | `bool`                                | `false`       | Mask Input (password entry). |
 //! | `editable`         | `bool`                                | `true`        | Allow editing. |
 //! | `auto_focus`       | `bool`                                | `false`       | Focus + raise keyboard on mount. |
 //! | `max_length`       | `u32`                                 | unset (`0`)   | Maximum character count. |
@@ -368,7 +368,7 @@ impl InputRef {
     }
 
     /// The underlying `ElementRef`. Framework-internal — the [`input`]
-    /// component reads it to wire the element's `ref:`. App code holds
+    /// component reads it to wire the element's `element_ref:`. App code holds
     /// the `InputRef` and calls the methods below.
     #[doc(hidden)]
     pub fn r(&self) -> ElementRef {
@@ -423,7 +423,7 @@ impl Default for InputRef {
 // (`placeholder-color`, `caret-color`, `selection-color`).
 
 #[doc(hidden)]
-#[whisker::module_component(
+#[whisker::module_element(
     name = "whisker-input:Input",
     measurement = None,
     commands = [
@@ -488,7 +488,7 @@ pub fn input(
     multiline: bool,
     /// Fixed visible line count (multiline only).
     lines: Option<u32>,
-    /// Mask input (password entry).
+    /// Mask Input (password entry).
     #[prop(default = false)]
     secure: bool,
     /// Allow editing.
@@ -658,9 +658,9 @@ pub fn input(
         .on_blur(on_blur_cb)
         .on_submit(on_submit_cb);
 
-    builder = builder.with_ref(element_ref);
+    builder = builder.element_ref(element_ref);
 
-    NativeInput(builder.build())
+    builder.build()
 }
 
 /// `true` / `false` wire string for a bool attr.

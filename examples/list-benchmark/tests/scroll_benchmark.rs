@@ -53,12 +53,12 @@ fn scrolls_a_hundred_thousand_row_list() {
     runtime
         .mount(|| {
             render! {
-                list(
+                List(
                     style: css!(width: percent(100), height: px(844)),
                     each: || (0..ITEM_COUNT).collect::<Vec<_>>(),
                     key: |row: &u32| *row,
                     children: |_row: ReadSignal<u32>| render! {
-                        view(style: css!(width: percent(100), height: px(ROW_HEIGHT as i32)))
+                        View(style: css!(width: percent(100), height: px(ROW_HEIGHT as i32)))
                     },
                 )
             }

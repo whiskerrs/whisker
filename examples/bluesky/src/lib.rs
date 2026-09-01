@@ -43,7 +43,7 @@ pub fn app() -> Element {
     // Seed from any in-process session (none on a cold start).
     provide_context(AuthState(RwSignal::new(bsky_auth::is_authenticated())));
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             background_color: theme::BG,
             flex_direction: FlexDirection::Column,
@@ -138,12 +138,12 @@ fn tabs_layout() -> Element {
     let on_auth = computed(move || pathname.get().contains("/(auth)"));
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
         )) {
-            view(style: css!(
+            View(style: css!(
                 flex_grow: 1.0,
                 flex_shrink: 1.0,
                 display: Display::Flex,
@@ -151,7 +151,7 @@ fn tabs_layout() -> Element {
             )) {
                 Outlet {}
             }
-            Show(when: move || !on_auth.get(), fallback: || render! { fragment() }) {
+            Show(when: move || !on_auth.get(), fallback: || render! { Fragment() }) {
                 TabBar {}
             }
         }
@@ -180,7 +180,7 @@ fn tab_bar() -> Element {
         )
     });
     render! {
-        view(style: bar_style) {
+        View(style: bar_style) {
             TabBarItem(group: "(home)", url: "/(home)", icon: lucide::House, pathname: pathname, nav: nav.clone())
             TabBarItem(group: "(search)", url: "/(search)", icon: lucide::Search, pathname: pathname, nav: nav.clone())
             TabBarItem(group: "(notifications)", url: "/(notifications)", icon: lucide::Bell, pathname: pathname, nav: nav.clone())
@@ -221,7 +221,7 @@ fn tab_bar_item(
     // handle into the (re-usable) `on_tap` closure.
     let nav = nav.clone();
     render! {
-        view(
+        View(
             style: css!(
                 flex_grow: 1.0,
                 display: Display::Flex,
@@ -241,6 +241,7 @@ fn tab_bar_item(
 /// Placeholder shown by tabs whose real screen lands in a later phase.
 #[component]
 fn placeholder_screen(title: String) -> Element {
+    let title = StoredValue::new(title.clone());
     let insets = safe_area_insets();
     let style = computed(move || {
         let i = insets.get();
@@ -255,10 +256,10 @@ fn placeholder_screen(title: String) -> Element {
         )
     });
     render! {
-        view(style: style) {
-            text(
+        View(style: style) {
+            Text(
                 style: css!(font_size: theme::T_BODY, color: theme::TEXT_SECONDARY),
-                value: title.clone(),
+                value: title.get(),
             )
         }
     }

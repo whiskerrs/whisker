@@ -1,6 +1,6 @@
 use super::*;
 
-// ---- list (Rust-owned virtualized control primitive) ----------------
+// ---- List (Rust-owned virtualized control primitive) ----------------
 
 /// `list` keeps a bounded window of ordinary item subtrees mounted below
 /// the standard `ScrollView`. It is control flow like [`ForEach`], not a
@@ -15,10 +15,10 @@ use super::*;
 /// ```ignore
 /// let items = signal(vec!["alpha".to_string(), "beta".to_string()]);
 /// render! {
-///     list(
+///     List(
 ///         each: move || items.get(),
 ///         key: |s: &String| s.clone(),
-///         children: |s: ReadSignal<String>| render! { view { text(value: s) } },
+///         children: |s: ReadSignal<String>| render! { View { Text(value: s) } },
 ///     )
 /// }
 /// ```
@@ -27,13 +27,13 @@ use super::*;
 ///
 /// The builder takes its items source as three kwargs (`each`,
 /// `key`, `children`) and **does not accept a body** — the macro
-/// rejects `list { … }` invocations because items can only come
+/// rejects `List { … }` invocations because items can only come
 /// through the reactive props. The three setters are
-/// **type-stated**: `__h()` is only callable when all three have
+/// **type-stated**: `build()` is only callable when all three have
 /// been supplied, so a missing prop is a compile-time error at
 /// the close of the builder chain rather than a runtime panic.
 ///
-/// `__h()` installs one reactive keyed reconciler and one ordinary
+/// `build()` installs one reactive keyed reconciler and one ordinary
 /// ScrollView `scroll` listener. The Host reports geometry with the same
 /// node event path used by custom elements; no list-specific bridge call
 /// exists.
@@ -62,8 +62,7 @@ fn configure_list_presentation(
     )
 }
 
-#[allow(non_camel_case_types)]
-pub struct list<EachF = (), KeyF = (), ChildF = (), RefF = (), InitialF = ()> {
+pub struct List<EachF = (), KeyF = (), ChildF = (), RefF = (), InitialF = ()> {
     handle: Element,
     options: ListOptions,
     each: EachF,
@@ -72,37 +71,38 @@ pub struct list<EachF = (), KeyF = (), ChildF = (), RefF = (), InitialF = ()> {
     list_ref: RefF,
     initial_scroll: InitialF,
 }
-#[allow(non_snake_case)]
-pub fn __list_ctor() -> list<(), (), ()> {
-    // `list` is a Rust control primitive, not a Host element. Its only
-    // Host-visible container is the same built-in ScrollView that an app
-    // can author directly; the Rust virtualizer mounts ordinary children
-    // into a bounded window below it.
-    let handle = create_element(ElementTag::ScrollView);
-    let content = create_element(ElementTag::View);
-    list {
-        handle,
-        options: ListOptions {
-            content,
-            content_style: None,
-            axis: ::whisker_runtime::view::ScrollAxis::Vertical,
-            start_reached_threshold: 0.0,
-            end_reached_threshold: 0.0,
-            on_start_reached: None,
-            on_end_reached: None,
-            header: None,
-            footer: None,
-            empty: None,
-        },
-        each: (),
-        key: (),
-        children: (),
-        list_ref: (),
-        initial_scroll: (),
+impl List<(), (), ()> {
+    pub fn builder() -> Self {
+        // `list` is a Rust control primitive, not a Host element. Its only
+        // Host-visible container is the same built-in ScrollView that an app
+        // can author directly; the Rust virtualizer mounts ordinary children
+        // into a bounded window below it.
+        let handle = create_element(ElementTag::ScrollView);
+        let content = create_element(ElementTag::View);
+        Self {
+            handle,
+            options: ListOptions {
+                content,
+                content_style: None,
+                axis: ::whisker_runtime::view::ScrollAxis::Vertical,
+                start_reached_threshold: 0.0,
+                end_reached_threshold: 0.0,
+                on_start_reached: None,
+                on_end_reached: None,
+                header: None,
+                footer: None,
+                empty: None,
+            },
+            each: (),
+            key: (),
+            children: (),
+            list_ref: (),
+            initial_scroll: (),
+        }
     }
 }
 impl<EachF, KeyF, ChildF, RefF, InitialF> ElementBuilder
-    for list<EachF, KeyF, ChildF, RefF, InitialF>
+    for List<EachF, KeyF, ChildF, RefF, InitialF>
 {
     fn __element(&self) -> Element {
         self.handle
@@ -110,7 +110,7 @@ impl<EachF, KeyF, ChildF, RefF, InitialF> ElementBuilder
     // `list` takes its items through the `each`/`key`/`children`
     // render props, never body children.
 }
-impl<EachF, KeyF, ChildF, RefF, InitialF> list<EachF, KeyF, ChildF, RefF, InitialF> {
+impl<EachF, KeyF, ChildF, RefF, InitialF> List<EachF, KeyF, ChildF, RefF, InitialF> {
     /// Styles the internal content View while `style:` styles the outer
     /// ScrollView viewport. A static typed style may select the constrained
     /// virtualized Grid subset documented in `docs/list-design.md`.
@@ -192,18 +192,18 @@ impl<EachF, KeyF, ChildF, RefF, InitialF> list<EachF, KeyF, ChildF, RefF, Initia
 // ---- Type-stated render-props setters ----
 //
 // Each setter advances one type parameter from `()` to the
-// function-shaped newtype; the `__h()` finaliser is only impl'd
+// function-shaped newtype; the `build()` finaliser is only impl'd
 // on the fully-populated state. The user can call the three in
 // any order — the render! macro emits them in whatever order
 // they appear in the source.
-impl<EachF, KeyF, ChildF, InitialF> list<EachF, KeyF, ChildF, (), InitialF> {
+impl<EachF, KeyF, ChildF, InitialF> List<EachF, KeyF, ChildF, (), InitialF> {
     /// Binds the typed Rust List controller. Unlike ordinary element refs,
     /// this also exposes key/index resolution and cached snapshots.
-    pub fn bind_ref<K: 'static>(
+    pub fn list_ref<K: 'static>(
         self,
         list_ref: ::whisker_runtime::view::ListRef<K>,
-    ) -> list<EachF, KeyF, ChildF, ::whisker_runtime::view::ListRef<K>, InitialF> {
-        list {
+    ) -> List<EachF, KeyF, ChildF, ::whisker_runtime::view::ListRef<K>, InitialF> {
+        List {
             handle: self.handle,
             options: self.options,
             each: self.each,
@@ -215,15 +215,15 @@ impl<EachF, KeyF, ChildF, InitialF> list<EachF, KeyF, ChildF, (), InitialF> {
     }
 }
 
-impl<KeyF, ChildF, RefF, InitialF> list<(), KeyF, ChildF, RefF, InitialF> {
+impl<KeyF, ChildF, RefF, InitialF> List<(), KeyF, ChildF, RefF, InitialF> {
     pub fn each<T: 'static, F>(
         self,
         f: F,
-    ) -> list<::whisker_runtime::view::EachFn<T>, KeyF, ChildF, RefF, InitialF>
+    ) -> List<::whisker_runtime::view::EachFn<T>, KeyF, ChildF, RefF, InitialF>
     where
         F: ::std::convert::Into<::whisker_runtime::view::EachFn<T>>,
     {
-        list {
+        List {
             handle: self.handle,
             options: self.options,
             each: f.into(),
@@ -234,16 +234,16 @@ impl<KeyF, ChildF, RefF, InitialF> list<(), KeyF, ChildF, RefF, InitialF> {
         }
     }
 }
-impl<EachF, ChildF, RefF, InitialF> list<EachF, (), ChildF, RefF, InitialF> {
+impl<EachF, ChildF, RefF, InitialF> List<EachF, (), ChildF, RefF, InitialF> {
     /// Stable logical identity extractor, matching [`ForEach`](crate::ForEach).
     pub fn key<T: 'static, K: 'static, F>(
         self,
         f: F,
-    ) -> list<EachF, ::whisker_runtime::view::KeyFn<T, K>, ChildF, RefF, InitialF>
+    ) -> List<EachF, ::whisker_runtime::view::KeyFn<T, K>, ChildF, RefF, InitialF>
     where
         F: ::std::convert::Into<::whisker_runtime::view::KeyFn<T, K>>,
     {
-        list {
+        List {
             handle: self.handle,
             options: self.options,
             each: self.each,
@@ -254,13 +254,13 @@ impl<EachF, ChildF, RefF, InitialF> list<EachF, (), ChildF, RefF, InitialF> {
         }
     }
 }
-impl<EachF, KeyF, RefF, InitialF> list<EachF, KeyF, (), RefF, InitialF> {
+impl<EachF, KeyF, RefF, InitialF> List<EachF, KeyF, (), RefF, InitialF> {
     /// Builds one keyed row. The signal is updated when data for the same
     /// key changes; leaving the mounted window disposes its owner.
     pub fn children<T: 'static, F>(
         self,
         f: F,
-    ) -> list<
+    ) -> List<
         EachF,
         KeyF,
         ::whisker_runtime::view::ItemFn<::whisker_runtime::reactive::ReadSignal<T>>,
@@ -272,7 +272,7 @@ impl<EachF, KeyF, RefF, InitialF> list<EachF, KeyF, (), RefF, InitialF> {
                 ::whisker_runtime::view::ItemFn<::whisker_runtime::reactive::ReadSignal<T>>,
             >,
     {
-        list {
+        List {
             handle: self.handle,
             options: self.options,
             each: self.each,
@@ -284,15 +284,15 @@ impl<EachF, KeyF, RefF, InitialF> list<EachF, KeyF, (), RefF, InitialF> {
     }
 }
 
-impl<EachF, KeyF, ChildF, RefF> list<EachF, KeyF, ChildF, RefF, ()> {
+impl<EachF, KeyF, ChildF, RefF> List<EachF, KeyF, ChildF, RefF, ()> {
     /// Applies one logical target after the initial source snapshot is
     /// indexed. Key targets are checked against the List's key type at
     /// compile time.
     pub fn initial_scroll<K: 'static>(
         self,
         target: ::whisker_runtime::view::ListScrollTarget<K>,
-    ) -> list<EachF, KeyF, ChildF, RefF, ::whisker_runtime::view::ListScrollTarget<K>> {
-        list {
+    ) -> List<EachF, KeyF, ChildF, RefF, ::whisker_runtime::view::ListScrollTarget<K>> {
+        List {
             handle: self.handle,
             options: self.options,
             each: self.each,
@@ -322,7 +322,7 @@ impl<K> ListInitialScroll<K> for ::whisker_runtime::view::ListScrollTarget<K> {
 }
 // ---- Finaliser, only on fully-populated state ----
 impl<T, K, InitialF>
-    list<
+    List<
         ::whisker_runtime::view::EachFn<T>,
         ::whisker_runtime::view::KeyFn<T, K>,
         ::whisker_runtime::view::ItemFn<::whisker_runtime::reactive::ReadSignal<T>>,
@@ -336,7 +336,7 @@ where
 {
     /// Finalises the Rust-owned keyed windowing core.
     #[allow(non_snake_case)]
-    pub fn __h(self) -> Element {
+    pub fn build(self) -> Element {
         let virtual_layout = configure_list_presentation(self.handle, &self.options);
         let handle = self.handle;
         let content = self.options.content;
@@ -374,7 +374,7 @@ where
 }
 
 impl<T, K, InitialF>
-    list<
+    List<
         ::whisker_runtime::view::EachFn<T>,
         ::whisker_runtime::view::KeyFn<T, K>,
         ::whisker_runtime::view::ItemFn<::whisker_runtime::reactive::ReadSignal<T>>,
@@ -387,7 +387,7 @@ where
     InitialF: ListInitialScroll<K>,
 {
     #[allow(non_snake_case)]
-    pub fn __h(self) -> Element {
+    pub fn build(self) -> Element {
         let virtual_layout = configure_list_presentation(self.handle, &self.options);
         let handle = self.handle;
         let content = self.options.content;

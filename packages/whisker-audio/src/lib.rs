@@ -29,20 +29,20 @@
 //!     let status = player.status();
 //!
 //!     render! {
-//!         view(style: css!(flex_direction: FlexDirection::Column, padding: px(16))) {
-//!             text(value: move || format!(
+//!         View(style: css!(flex_direction: FlexDirection::Column, padding: px(16))) {
+//!             Text(value: computed(move || format!(
 //!                 "{:.1}s / {:.1}s",
 //!                 status.get().position,
 //!                 status.get().duration,
-//!             ))
-//!             view(on_tap: {
+//!             )))
+//!             View(on_tap: {
 //!                 let p = player.clone();
 //!                 move |_| p.play()
-//!             }) { text(value: "play") }
-//!             view(on_tap: {
+//!             }) { Text(value: "play") }
+//!             View(on_tap: {
 //!                 let p = player.clone();
 //!                 move |_| p.pause()
-//!             }) { text(value: "pause") }
+//!             }) { Text(value: "pause") }
 //!         }
 //!     }
 //! }
@@ -73,7 +73,7 @@
 /// entries when the consuming app declares
 /// `app.plugin::<WhiskerAudio>(|c| …)` in `whisker.rs`. Always
 /// available — independent of the `runtime` feature so the
-/// `whisker.rs` config probe (which pulls this crate with
+/// `whisker.rs` config Probe (which pulls this crate with
 /// `default-features = false`) can still resolve `WhiskerAudio`.
 mod plugin;
 pub use plugin::*;

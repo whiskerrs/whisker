@@ -586,7 +586,7 @@ async fn typed_resource_commands_and_events_cross_the_web_runtime_boundary() {
             wake_count.fetch_add(1, Ordering::SeqCst);
         }),
     );
-    runtime.mount(|| render! { view() }).unwrap();
+    runtime.mount(|| render! { View() }).unwrap();
     let store = WebResourceStore::new();
     let service = WebResourceService::new(store);
     let resource = ResourceId::new(8).unwrap();
@@ -1131,7 +1131,7 @@ impl Driver {
                 StyleEnvironment::new(width, height, scale, 16.0),
             );
             let mut runtime = RuntimeInstance::new(surface, RuntimeWakeHandle::new(|| {}));
-            runtime.mount(|| render! { view() }).unwrap();
+            runtime.mount(|| render! { View() }).unwrap();
             assert!(runtime.surface().root().is_some());
             self.input_runtime = Some(runtime);
         }
@@ -1923,7 +1923,7 @@ impl Driver {
             match &sample.color {
                 ColorFixture::Named { value } if value == "transparent" => assert!(
                     opaque_hit.is_none(),
-                    "transparent sample unexpectedly hit opaque scene stack {hit_nodes:?}"
+                    "transparent sample unexpectedly hit opaque scene Stack {hit_nodes:?}"
                 ),
                 ColorFixture::Srgba { .. } => {
                     let expected_node = expected

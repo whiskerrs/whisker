@@ -1,7 +1,7 @@
-//! `#[whisker::module_component]` end-to-end tests.
+//! `#[whisker::module_element]` end-to-end tests.
 //!
 //! Verifies the proc-macro lowers a tag-name + prop list into:
-//! - `XxxProps::builder().<prop>(v).build()` shape
+//! - `Xxx::builder().<prop>(v).build()` shape
 //! - a body that calls `view::create_element_by_name(tag)`
 //! - structured `apply_style` plus per-prop `apply_attr` routing
 //!
@@ -148,31 +148,31 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 
 // ---- Platform component declarations ------------------------------------------
 
-#[whisker::module_component("x-zero-props")]
+#[whisker::module_element("x-zero-props")]
 pub fn x_zero_props() {}
 
-#[whisker::module_component("x-styled")]
+#[whisker::module_element("x-styled")]
 pub fn x_styled(style: whisker::Style) {}
 
-#[whisker::module_component("x-input")]
+#[whisker::module_element("x-input")]
 pub fn x_input(value: Signal<String>, placeholder: Signal<String>) {}
 
-#[whisker::module_component("x-typed-checkbox")]
+#[whisker::module_element("x-typed-checkbox")]
 pub fn x_typed_checkbox(checked: Signal<bool>, count: Signal<i32>) {}
 
-#[whisker::module_component("x-button")]
+#[whisker::module_element("x-button")]
 pub fn x_button(label: Signal<String>, on_press: ()) {}
 
-#[whisker::module_component("x-input-payload")]
+#[whisker::module_element("x-input-payload")]
 pub fn x_input_payload(value: Signal<String>, on_input: ::whisker::WhiskerValue) {}
 
-#[whisker::module_component("x-typed-input")]
+#[whisker::module_element("x-typed-input")]
 pub fn x_typed_input(on_change: ::whisker::event::TouchEvent) {}
 
-#[whisker::module_component("x-container")]
+#[whisker::module_element("x-container")]
 pub fn x_container(style: whisker::Style, children: ::whisker::Children) {}
 
-#[whisker::module_component(
+#[whisker::module_element(
     name = "whisker.test/GeneratedSchema",
     measurement = Custom,
     text_style = true,
@@ -187,7 +187,7 @@ pub fn generated_schema(
 ) {
 }
 
-#[whisker::module_component(
+#[whisker::module_element(
     name = "whisker.test/NativeLabel",
     measurement = Text,
 )]
@@ -282,7 +282,7 @@ fn named_form_uses_the_same_name_for_runtime_lookup() {
 }
 
 #[test]
-fn module_component_builder_inherits_common_element_api() {
+fn module_element_builder_inherits_common_element_api() {
     with_recorder_and_owner(|log| {
         let _handle = render! {
             GeneratedSchema(
@@ -332,6 +332,23 @@ fn module_component_builder_inherits_common_element_api() {
             .collect::<Vec<_>>(),
         vec!["change"]
     );
+}
+
+#[test]
+fn module_element_builder_is_usable_without_render_macro() {
+    with_recorder_and_owner(|log| {
+        let handle = GeneratedSchema::builder()
+            .enabled(true)
+            .label("direct")
+            .on_change(|_event| {})
+            .build();
+        assert_eq!(handle.id(), 0);
+        let operations = log.borrow();
+        assert!(operations.iter().any(|operation| matches!(
+            operation,
+            Op::SetAttr { key, value, .. } if key == "label" && value == "direct"
+        )));
+    });
 }
 
 #[test]
@@ -563,8 +580,8 @@ fn children_prop_attaches_inner_view() {
     with_recorder_and_owner(|log| {
         let _h = render! {
             XContainer(style: css!(padding: px(10))) {
-                text(value: "child 1")
-                text(value: "child 2")
+                Text(value: "child 1")
+                Text(value: "child 2")
             }
         };
         let log_b = log.borrow();

@@ -25,7 +25,7 @@
 //!         )
 //!     };
 //!     render! {
-//!         view(style: outer_style()) {
+//!         View(style: outer_style()) {
 //!             // ...
 //!         }
 //!     }

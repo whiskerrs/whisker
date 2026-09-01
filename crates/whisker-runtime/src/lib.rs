@@ -34,7 +34,7 @@ mod transform_interpolation;
 pub mod value;
 pub mod view;
 
-/// Link-time registration hooks used by `#[whisker::module_component]`.
+/// Link-time registration hooks used by `#[whisker::module_element]`.
 ///
 /// This is macro plumbing rather than application API.
 #[cfg(not(target_arch = "wasm32"))]

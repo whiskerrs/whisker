@@ -24,7 +24,7 @@
 //! use whisker_css::ext::*;
 //! use whisker_css::{Css, FlexDirection, Color};
 //!
-//! let s = Css::new()
+//! let s = Css::builder()
 //!     .display_flex()
 //!     .flex_direction(FlexDirection::Column)
 //!     .padding(px(12))

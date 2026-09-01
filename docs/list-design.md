@@ -4,7 +4,7 @@ Status: **implemented**
 
 ## Decision
 
-`list` is keyed Rust control flow built on the ordinary
+`List` is keyed Rust control flow built on the ordinary
 `whisker.ui/ScrollView`. It is not a Host element and does not wrap a native
 `RecyclerView` or `UICollectionView`.
 
@@ -12,13 +12,13 @@ Status: **implemented**
 let handle = ListHandle::<RowId>::new();
 
 render! {
-    list(
-        ref: handle.r(),
+    List(
+        list_ref: handle.r(),
         style: css!(height: px(480)),          // viewport
         content_style: css!(row_gap: px(8)),  // content layout
         each: move || rows.get(),
         key: |row: &Row| row.id,
-        children: |row: ReadSignal<Row>| render! { row_view(row: row) },
+        children: |row: ReadSignal<Row>| render! { RowView(row: row) },
     )
 }
 ```

@@ -33,14 +33,15 @@
 //! - `..frag` — **spread** a reusable [`RouteFragment`].
 //!
 //! Route IDs are derived from the component name in snake_case. Routes without
-//! a component get their ID from the path segment (or a generated ID for
+//! a component get their ID from the path Segment (or a generated ID for
 //! pathless/group routes).
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::parse::{Parse, ParseStream};
+use syn::parse::ParseStream;
 use syn::spanned::Spanned;
-use syn::{Expr, Ident, LitStr, Token, braced, parenthesized};
+use syn::{Expr, ExprLit, ExprPath, Ident, Lit, LitStr, Path};
+use whisker_macro_syntax::compose::{ComposeArgument, ComposeChild, ComposeInput, ComposeNode};
 
 /// One node in the route-tree DSL.
 ///
@@ -60,7 +61,7 @@ enum Node {
     Route {
         kw: Ident,
         path: Option<LitStr>,
-        component: Option<Ident>,
+        component: Option<Path>,
         transition: Option<Expr>,
         children: Vec<Node>,
     },
@@ -73,106 +74,83 @@ enum Node {
     Unknown(Ident),
 }
 
-impl Parse for Node {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        // `..frag` — a spread of a `RouteFragment` value.
-        if input.peek(Token![..]) {
-            input.parse::<Token![..]>()?;
-            let expr: Expr = input.parse()?;
-            return Ok(Node::Spread(expr));
+fn route_from_compose(node: ComposeNode) -> syn::Result<Node> {
+    let kw = node
+        .path
+        .segments
+        .last()
+        .ok_or_else(|| syn::Error::new(node.path.span(), "expected a route builder name"))?
+        .ident
+        .clone();
+    let children = compose_children(node.body)?;
+    match kw.to_string().as_str() {
+        "Switch" => {
+            reject_arguments(&kw, &node.arguments)?;
+            if children.is_empty() {
+                return Err(syn::Error::new(
+                    kw.span(),
+                    "`Switch { }` needs at least one branch",
+                ));
+            }
+            Ok(Node::Switch { kw, children })
         }
-        let kw: Ident = input.parse()?;
-        match kw.to_string().as_str() {
-            "Switch" => {
-                let content;
-                braced!(content in input);
-                let children = parse_nodes(&content)?;
-                if children.is_empty() {
-                    return Err(syn::Error::new(
-                        kw.span(),
-                        "`Switch { }` needs at least one branch",
-                    ));
-                }
-                Ok(Node::Switch { kw, children })
+        "Stack" => {
+            reject_arguments(&kw, &node.arguments)?;
+            if children.is_empty() {
+                return Err(syn::Error::new(
+                    kw.span(),
+                    "`Stack { }` needs at least one route or container",
+                ));
             }
-            "Stack" => {
-                let content;
-                braced!(content in input);
-                let children = parse_nodes(&content)?;
-                if children.is_empty() {
-                    return Err(syn::Error::new(
-                        kw.span(),
-                        "`Stack { }` needs at least one route or container",
-                    ));
-                }
-                Ok(Node::Stack { kw, children })
-            }
-            "Route" => parse_route(input, kw),
-            _ => {
-                // Unknown keyword — possibly half-typed. Absorb an optional
-                // braced or parenthesised body so the rest of the stream
-                // stays parseable, then emit an `Unknown` node (the RA probe).
-                if input.peek(syn::token::Paren) {
-                    let _content;
-                    parenthesized!(_content in input);
-                }
-                if input.peek(syn::token::Brace) {
-                    let _content;
-                    braced!(_content in input);
-                }
-                Ok(Node::Unknown(kw))
-            }
+            Ok(Node::Stack { kw, children })
         }
+        "Route" => route_from_arguments(kw, node.arguments, children),
+        _ => Ok(Node::Unknown(kw)),
     }
 }
 
-/// Parse a `Route(...)` node with named keyword arguments.
-///
-/// Supported kwargs: `path`, `component`, `transition`.
-fn parse_route(input: ParseStream, kw: Ident) -> syn::Result<Node> {
+fn route_from_arguments(
+    kw: Ident,
+    arguments: Vec<ComposeArgument>,
+    children: Vec<Node>,
+) -> syn::Result<Node> {
     let mut path: Option<LitStr> = None;
-    let mut component: Option<Ident> = None;
+    let mut component: Option<Path> = None;
     let mut transition: Option<Expr> = None;
-
-    if input.peek(syn::token::Paren) {
-        let content;
-        parenthesized!(content in input);
-        while !content.is_empty() {
-            let key: Ident = content.parse()?;
-            content.parse::<Token![:]>()?;
-            match key.to_string().as_str() {
-                "path" => {
-                    path = Some(content.parse()?);
-                }
-                "component" => {
-                    component = Some(content.parse()?);
-                }
-                "transition" => {
-                    transition = Some(content.parse()?);
-                }
-                other => {
+    for argument in arguments {
+        match argument.name.to_string().as_str() {
+            "path" => match argument.value {
+                Expr::Lit(ExprLit {
+                    lit: Lit::Str(value),
+                    ..
+                }) => path = Some(value),
+                value => {
                     return Err(syn::Error::new(
-                        key.span(),
-                        format!(
-                            "unknown Route option `{other}`; expected `path`, `component`, \
-                             or `transition`"
-                        ),
+                        value.span(),
+                        "`path` must be a string literal",
                     ));
                 }
-            }
-            if content.peek(Token![,]) {
-                content.parse::<Token![,]>()?;
+            },
+            "component" => match argument.value {
+                Expr::Path(ExprPath { path: value, .. }) => component = Some(value),
+                value => {
+                    return Err(syn::Error::new(
+                        value.span(),
+                        "`component` must be a component path",
+                    ));
+                }
+            },
+            "transition" => transition = Some(argument.value),
+            other => {
+                return Err(syn::Error::new(
+                    argument.name.span(),
+                    format!(
+                        "unknown Route option `{other}`; expected `path`, `component`, or `transition`"
+                    ),
+                ));
             }
         }
     }
-
-    let children = if input.peek(syn::token::Brace) {
-        let content;
-        braced!(content in input);
-        parse_nodes(&content)?
-    } else {
-        Vec::new()
-    };
 
     // A Route must have at least a path or a component.
     if path.is_none() && component.is_none() {
@@ -191,12 +169,33 @@ fn parse_route(input: ParseStream, kw: Ident) -> syn::Result<Node> {
     })
 }
 
-fn parse_nodes(input: ParseStream) -> syn::Result<Vec<Node>> {
-    let mut nodes = Vec::new();
-    while !input.is_empty() {
-        nodes.push(input.parse()?);
+fn compose_children(children: Vec<ComposeChild>) -> syn::Result<Vec<Node>> {
+    children
+        .into_iter()
+        .map(|child| match child {
+            ComposeChild::Node(node) => route_from_compose(node),
+            ComposeChild::Spread(expr) => Ok(Node::Spread(expr)),
+            ComposeChild::Text(value) => Err(syn::Error::new(
+                value.span(),
+                "route bodies cannot contain text",
+            )),
+            ComposeChild::Expression(value) => Err(syn::Error::new(
+                value.span(),
+                "use `..fragment` to splice route values",
+            )),
+        })
+        .collect()
+}
+
+fn reject_arguments(kw: &Ident, arguments: &[ComposeArgument]) -> syn::Result<()> {
+    if let Some(argument) = arguments.first() {
+        Err(syn::Error::new(
+            argument.name.span(),
+            format!("`{kw}` does not accept arguments"),
+        ))
+    } else {
+        Ok(())
     }
-    Ok(nodes)
 }
 
 /// The whole `routes! { … }` input.
@@ -204,17 +203,26 @@ pub struct Routes {
     roots: Vec<Node>,
 }
 
-impl Parse for Routes {
+impl syn::parse::Parse for Routes {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let input: ComposeInput = input.parse()?;
         Ok(Routes {
-            roots: parse_nodes(input)?,
+            roots: input
+                .nodes
+                .into_iter()
+                .map(route_from_compose)
+                .collect::<syn::Result<_>>()?,
         })
     }
 }
 
 /// snake_case a PascalCase component name (`ListScreen` → `list_screen`).
-fn snake_case(ident: &Ident) -> String {
-    let s = ident.to_string();
+fn snake_case(path: &Path) -> String {
+    let s = path
+        .segments
+        .last()
+        .map(|segment| segment.ident.to_string())
+        .unwrap_or_default();
     let mut out = String::with_capacity(s.len() + 4);
     for (i, ch) in s.chars().enumerate() {
         if ch.is_uppercase() {
@@ -232,7 +240,7 @@ fn snake_case(ident: &Ident) -> String {
 /// Derive a route ID from a `Route` node. Component name wins (snake_case);
 /// if no component, use the path segment as-is; if neither, fall back to
 /// `"route"`.
-fn route_id(component: &Option<Ident>, path: &Option<LitStr>) -> String {
+fn route_id(component: &Option<Path>, path: &Option<LitStr>) -> String {
     if let Some(comp) = component {
         return snake_case(comp);
     }
@@ -293,13 +301,13 @@ pub fn expand(routes: Routes) -> TokenStream {
                 .route_with(
                     #id,
                     #t,
-                    |_: &::whisker_router::core::RouteInstance| #comp(#comp::builder().build()),
+                    |_: &::whisker_router::core::RouteInstance| #comp::builder().build(),
                 )
             },
             None => quote! {
                 .route(
                     #id,
-                    |_: &::whisker_router::core::RouteInstance| #comp(#comp::builder().build()),
+                    |_: &::whisker_router::core::RouteInstance| #comp::builder().build(),
                 )
             },
         }
@@ -318,7 +326,7 @@ pub fn expand(routes: Routes) -> TokenStream {
     };
 
     let mut switch_n = 0usize;
-    let mut layouts: Vec<(Vec<usize>, Ident)> = Vec::new();
+    let mut layouts: Vec<(Vec<usize>, Path)> = Vec::new();
 
     if is_rooted {
         let root_tree = node_to_tree(&routes.roots[0], &[], &mut switch_n, &mut layouts);
@@ -350,7 +358,7 @@ pub fn expand(routes: Routes) -> TokenStream {
 }
 
 /// Emit the `LayoutRegistry` `.with(path, layout)` inserts.
-fn layout_inserts(layouts: &[(Vec<usize>, Ident)]) -> Vec<TokenStream> {
+fn layout_inserts(layouts: &[(Vec<usize>, Path)]) -> Vec<TokenStream> {
     layouts
         .iter()
         .map(|(path, comp)| {
@@ -358,7 +366,7 @@ fn layout_inserts(layouts: &[(Vec<usize>, Ident)]) -> Vec<TokenStream> {
             quote! {
                 .with(
                     ::whisker_router::core::NodePath(::std::vec![ #(#idxs),* ]),
-                    ::whisker_router::render::LayoutFn::new(|| #comp(#comp::builder().build())),
+                    ::whisker_router::render::LayoutFn::new(|| #comp::builder().build()),
                 )
             }
         })
@@ -427,7 +435,7 @@ fn validate(nodes: &[Node], err: &mut Option<syn::Error>) {
 /// One collected registry entry.
 struct RegEntry {
     id: String,
-    component: Option<Ident>,
+    component: Option<Path>,
     transition: Option<Expr>,
 }
 
@@ -455,19 +463,20 @@ fn collect(
                     let id = route_id(&Some(comp.clone()), path);
                     match reg.iter_mut().find(|e| e.id == id) {
                         Some(existing) => {
-                            if existing.component.as_ref() != Some(comp) {
+                            if existing.component.as_ref().map(path_key) != Some(path_key(comp)) {
                                 push_err(
                                     err,
                                     syn::Error::new(
                                         comp.span(),
                                         format!(
-                                            "route id `{id}` maps to both `{}` and `{comp}`; \
+                                            "route id `{id}` maps to both `{}` and `{}`; \
                                              routes sharing an id must use the same component",
                                             existing
                                                 .component
                                                 .as_ref()
-                                                .map(|c| c.to_string())
-                                                .unwrap_or_default()
+                                                .map(path_key)
+                                                .unwrap_or_default(),
+                                            path_key(comp),
                                         ),
                                     ),
                                 );
@@ -503,12 +512,16 @@ fn collect(
     }
 }
 
+fn path_key(path: &Path) -> String {
+    quote!(#path).to_string().replace(" :: ", "::")
+}
+
 /// Emit the `RouteTree` for `node`.
 fn node_to_tree(
     node: &Node,
     path: &[usize],
     switch_n: &mut usize,
-    layouts: &mut Vec<(Vec<usize>, Ident)>,
+    layouts: &mut Vec<(Vec<usize>, Path)>,
 ) -> TokenStream {
     match node {
         Node::Route {
@@ -573,7 +586,7 @@ fn node_to_tree(
         Node::Stack { kw, children } => {
             let kids = children_vec_tokens(children, path, switch_n, layouts);
             let anchor = kw_anchor(kw);
-            quote! {{ #anchor ::whisker_router::core::RouteTree::stack(#kids) }}
+            quote! {{ #anchor ::whisker_router::core::RouteTree::Stack(#kids) }}
         }
         Node::Switch { kw, children } => {
             let id = format!("switch_{}", *switch_n);
@@ -582,7 +595,7 @@ fn node_to_tree(
             let anchor = kw_anchor(kw);
             quote! {{
                 #anchor
-                ::whisker_router::core::RouteTree::switch(
+                ::whisker_router::core::RouteTree::Switch(
                     ::whisker_router::core::SwitchDef::new(#id, 0usize),
                     #kids,
                 )
@@ -622,7 +635,7 @@ fn children_vec_tokens(
     children: &[Node],
     path: &[usize],
     switch_n: &mut usize,
-    layouts: &mut Vec<(Vec<usize>, Ident)>,
+    layouts: &mut Vec<(Vec<usize>, Path)>,
 ) -> TokenStream {
     let has_spread = children.iter().any(|c| matches!(c, Node::Spread(_)));
     if !has_spread {

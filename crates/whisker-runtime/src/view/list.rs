@@ -150,7 +150,7 @@ impl<K> Default for ListState<K> {
     }
 }
 
-/// Binding token passed to `list(ref: handle.r())`.
+/// Binding token passed to `List(list_ref: handle.r())`.
 pub struct ListRef<K: 'static> {
     state: Rc<RefCell<ListState<K>>>,
     bound: RwSignal<bool>,

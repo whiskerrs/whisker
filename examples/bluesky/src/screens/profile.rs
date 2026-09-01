@@ -22,13 +22,13 @@ pub(super) fn my_profile_screen() -> Element {
     let insets = safe_area_insets();
     let pad = computed(move || css!(padding_top: px(insets.get().top as f32 + 8.0)));
     render! {
-        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
-            view(style: pad) {}
+        View(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            View(style: pad) {}
             Show(
                 when: move || me.get().is_some(),
-                fallback: move || render! { status_pane(message: "読み込み中…".to_string()) },
+                fallback: move || render! { StatusPane(message: "読み込み中…".to_string()) },
             ) {
-                profile_view(actor: me.get().unwrap_or_default(), show_logout: true)
+                ProfileView(actor: me.get().unwrap_or_default(), show_logout: true)
             }
         }
     }
@@ -44,9 +44,9 @@ pub(super) fn profile_screen() -> Element {
         .map(|c| c.into_owned())
         .unwrap_or(enc);
     render! {
-        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
-            nav_header(title: "プロフィール".to_string())
-            profile_view(actor: actor, show_logout: false)
+        View(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            NavHeader(title: "プロフィール".to_string())
+            ProfileView(actor: actor, show_logout: false)
         }
     }
 }
@@ -97,7 +97,7 @@ pub(super) fn profile_view(actor: String, show_logout: bool) -> Element {
     // sibling. The header gets its own `reuse_identifier` (never recycles into
     // a post cell) + `full_span`; posts stream in once the feed resolves.
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
             width: percent(100),
@@ -105,13 +105,13 @@ pub(super) fn profile_view(actor: String, show_logout: bool) -> Element {
             Show(
                 when: move || prof.get().is_some(),
                 fallback: move || render! {
-                    status_pane(message: match prof.error() {
+                    StatusPane(message: match prof.error() {
                         Some(e) if !e.is_empty() => e,
                         _ => "読み込み中…".to_string(),
                     })
                 },
             ) {
-                list(
+                List(
                     style: css!(flex_grow: 1.0, width: percent(100)),
                     each: move || {
                         let mut rows = Vec::new();
@@ -137,7 +137,7 @@ pub(super) fn profile_view(actor: String, show_logout: bool) -> Element {
                             my_did,
                             show_logout,
                         } => render! {
-                            profile_header(
+                            ProfileHeader(
                                 profile: profile,
                                 my_did: my_did,
                                 show_logout: show_logout,
@@ -186,7 +186,7 @@ pub(super) fn profile_header(
     let menu_open = RwSignal::new(false);
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_direction: FlexDirection::Column,
             // The virtualised `<list>` sizes each cell to its content width,
             // not the list's cross-axis width. Without this the header (and
@@ -202,14 +202,14 @@ pub(super) fn profile_header(
             border_bottom_width: px(1),
             border_bottom_color: theme::BORDER,
         )) {
-            Show(when: { let b = !banner.is_empty(); move || b }, fallback: || render! { fragment() }) {
+            Show(when: { let b = !banner.is_empty(); move || b }, fallback: || render! { Fragment() }) {
                 Image(
                     style: css!(width: percent(100), height: px(120), background_color: theme::SURFACE),
                     src: banner.clone(),
                     mode: ImageMode::AspectFill,
                 )
             }
-            view(style: css!(
+            View(style: css!(
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::SpaceBetween,
@@ -217,13 +217,13 @@ pub(super) fn profile_header(
                 padding_right: theme::GUTTER,
                 margin_top: px(8),
             )) {
-                avatar_disc(src: avatar)
-                view(style: css!(flex_direction: FlexDirection::Row, align_items: AlignItems::Center)) {
-                    Show(when: move || show_logout, fallback: || render! { fragment() }) {
-                        settings_button()
+                AvatarDisc(src: avatar)
+                View(style: css!(flex_direction: FlexDirection::Row, align_items: AlignItems::Center)) {
+                    Show(when: move || show_logout, fallback: || render! { Fragment() }) {
+                        SettingsButton()
                     }
-                    Show(when: move || show_actions, fallback: || render! { fragment() }) {
-                        view(
+                    Show(when: move || show_actions, fallback: || render! { Fragment() }) {
+                        View(
                             style: css!(
                                 width: px(34),
                                 height: px(34),
@@ -239,23 +239,23 @@ pub(super) fn profile_header(
                             Icon(svg: lucide::Ellipsis, color: "#FFFFFF", size: "18")
                         }
                     }
-                    Show(when: move || show_actions, fallback: || render! { fragment() }) {
-                        follow_button(
+                    Show(when: move || show_actions, fallback: || render! { Fragment() }) {
+                        FollowButton(
                             did: follow_did.clone(),
                             following_uri: follow_uri.clone(),
                         )
                     }
                 }
             }
-            Show(when: move || show_actions, fallback: || render! { fragment() }) {
-                moderation_menu(
+            Show(when: move || show_actions, fallback: || render! { Fragment() }) {
+                ModerationMenu(
                     did: mod_did.clone(),
                     muted: muted,
                     blocking_uri: blocking.clone(),
                     open: menu_open,
                 )
             }
-            text(
+            Text(
                 style: css!(
                     font_size: px(20),
                     font_weight: FontWeight::Bold,
@@ -265,12 +265,12 @@ pub(super) fn profile_header(
                 ),
                 value: name,
             )
-            text(
+            Text(
                 style: css!(font_size: theme::T_HANDLE, color: theme::TEXT_SECONDARY, margin_left: theme::GUTTER),
                 value: handle,
             )
-            Show(when: move || has_desc, fallback: || render! { fragment() }) {
-                text(
+            Show(when: move || has_desc, fallback: || render! { Fragment() }) {
+                Text(
                     style: css!(
                         font_size: theme::T_BODY,
                         color: theme::TEXT_PRIMARY,
@@ -282,41 +282,41 @@ pub(super) fn profile_header(
                 )
             }
             // Counts row: フォロー中 / フォロワー are tappable → their lists.
-            view(style: css!(
+            View(style: css!(
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
                 margin_top: px(10),
                 margin_left: theme::GUTTER,
             )) {
-                view(on_tap: {
+                View(on_tap: {
                     let nav = nav.clone();
                     let did = count_did.clone();
                     move |_| {
                         let _ = nav.navigate(&format!("/following/{}", urlencoding::encode(&did)));
                     }
                 }) {
-                    text(
+                    Text(
                         style: css!(font_size: theme::T_META, color: theme::TEXT_PRIMARY),
                         value: format!("{follows_count} フォロー中"),
                     )
                 }
-                text(
+                Text(
                     style: css!(font_size: theme::T_META, color: theme::TEXT_SECONDARY),
                     value: "  ·  ",
                 )
-                view(on_tap: {
+                View(on_tap: {
                     let nav = nav.clone();
                     let did = count_did.clone();
                     move |_| {
                         let _ = nav.navigate(&format!("/followers/{}", urlencoding::encode(&did)));
                     }
                 }) {
-                    text(
+                    Text(
                         style: css!(font_size: theme::T_META, color: theme::TEXT_PRIMARY),
                         value: format!("{followers_count} フォロワー"),
                     )
                 }
-                text(
+                Text(
                     style: css!(font_size: theme::T_META, color: theme::TEXT_SECONDARY),
                     value: format!("  ·  {posts_count} ポスト"),
                 )
@@ -358,10 +358,10 @@ pub(super) fn moderation_menu(
     // Clone the captured param into a body-local once; the per-action
     // closures clone *this* (cloning the captured param directly inside a
     // nested `move` block makes the macro's FnMut wrapper move it out).
-    let menu_did = did.clone();
+    let menu_did = StoredValue::new(did.clone());
     render! {
-        Show(when: move || open.get(), fallback: || render! { fragment() }) {
-            view(style: css!(
+        Show(when: move || open.get(), fallback: || render! { Fragment() }) {
+            View(style: css!(
                 flex_direction: FlexDirection::Column,
                 margin_top: px(10),
                 margin_left: theme::GUTTER,
@@ -369,14 +369,14 @@ pub(super) fn moderation_menu(
                 border_radius: px(10),
                 background_color: theme::SURFACE,
             )) {
-                view(
+                View(
                     style: css!(
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
                         padding: px(12),
                     ),
                     on_tap: {
-                        let did = menu_did.clone();
+                        let did = menu_did.get();
                         move |_| {
                             let was = is_muted.get();
                             is_muted.set(!was);
@@ -395,12 +395,12 @@ pub(super) fn moderation_menu(
                     },
                 ) {
                     Icon(svg: lucide::VolumeX, color: "#FFFFFF", size: "18")
-                    text(
+                    Text(
                         style: css!(font_size: theme::T_BODY, color: theme::TEXT_PRIMARY, margin_left: px(10)),
                         value: mute_label,
                     )
                 }
-                view(
+                View(
                     style: css!(
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
@@ -409,7 +409,7 @@ pub(super) fn moderation_menu(
                         border_top_color: theme::BORDER,
                     ),
                     on_tap: {
-                        let did = menu_did.clone();
+                        let did = menu_did.get();
                         move |_| match block_uri.get() {
                             Some(uri) => {
                                 block_uri.set(None);
@@ -431,7 +431,7 @@ pub(super) fn moderation_menu(
                     },
                 ) {
                     Icon(svg: lucide::Ban, color: "#FF6B6B", size: "18")
-                    text(
+                    Text(
                         style: css!(font_size: theme::T_BODY, color: Color::hex(0xFF6B6B), margin_left: px(10)),
                         value: block_label,
                     )
@@ -450,9 +450,9 @@ pub(super) fn followers_screen() -> Element {
         .map(|c| c.into_owned())
         .unwrap_or(enc);
     render! {
-        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
-            nav_header(title: "フォロワー".to_string())
-            follow_list(actor: actor, followers: true)
+        View(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            NavHeader(title: "フォロワー".to_string())
+            FollowList(actor: actor, followers: true)
         }
     }
 }
@@ -466,9 +466,9 @@ pub(super) fn following_screen() -> Element {
         .map(|c| c.into_owned())
         .unwrap_or(enc);
     render! {
-        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
-            nav_header(title: "フォロー中".to_string())
-            follow_list(actor: actor, followers: false)
+        View(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            NavHeader(title: "フォロー中".to_string())
+            FollowList(actor: actor, followers: false)
         }
     }
 }
@@ -494,13 +494,13 @@ pub(super) fn follow_list(actor: String, followers: bool) -> Element {
         Show(
             when: move || res.get().is_some(),
             fallback: move || render! {
-                status_pane(message: match res.error() {
+                StatusPane(message: match res.error() {
                     Some(e) if !e.is_empty() => e,
                     _ => "読み込み中…".to_string(),
                 })
             },
         ) {
-            actor_list(actors: res.get().unwrap_or_default())
+            ActorList(actors: res.get().unwrap_or_default())
         }
     }
 }
@@ -510,7 +510,7 @@ pub(super) fn follow_list(actor: String, followers: bool) -> Element {
 pub(super) fn avatar_disc(src: String) -> Element {
     if src.is_empty() {
         render! {
-            view(style: css!(
+            View(style: css!(
                 width: px(64),
                 height: px(64),
                 border_radius: px(32),
@@ -553,7 +553,7 @@ pub(super) fn follow_button(did: String, following_uri: String) -> Element {
         }
     });
     render! {
-        view(
+        View(
             style: computed(move || {
                 let on = following.get();
                 css!(
@@ -589,7 +589,7 @@ pub(super) fn follow_button(did: String, following_uri: String) -> Element {
                 });
             },
         ) {
-            text(
+            Text(
                 style: computed(move || css!(
                     font_size: px(14),
                     font_weight: FontWeight::Bold,
@@ -607,7 +607,7 @@ pub(super) fn logout_button() -> Element {
     let nav = use_navigator();
     let AuthState(authed) = use_context::<AuthState>().expect("AuthState provided at root");
     render! {
-        view(
+        View(
             style: css!(
                 height: px(34),
                 padding_left: px(16),
@@ -627,7 +627,7 @@ pub(super) fn logout_button() -> Element {
                 });
             },
         ) {
-            text(
+            Text(
                 style: css!(font_size: px(14), color: theme::TEXT_PRIMARY),
                 value: "ログアウト",
             )
@@ -640,7 +640,7 @@ pub(super) fn logout_button() -> Element {
 pub(super) fn settings_button() -> Element {
     let nav = use_navigator();
     render! {
-        view(
+        View(
             style: css!(
                 width: px(34),
                 height: px(34),
@@ -681,11 +681,11 @@ pub(super) fn settings_screen() -> Element {
     });
     let handle_label = computed(move || handle.get().unwrap_or_default());
     render! {
-        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
-            nav_header(title: "設定".to_string())
-            view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
-                settings_section(title: "アカウント".to_string())
-                view(style: css!(
+        View(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            NavHeader(title: "設定".to_string())
+            View(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+                SettingsSection(title: "アカウント".to_string())
+                View(style: css!(
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::SpaceBetween,
@@ -694,25 +694,25 @@ pub(super) fn settings_screen() -> Element {
                     padding_top: px(12),
                     padding_bottom: px(12),
                 )) {
-                    text(
+                    Text(
                         style: css!(font_size: theme::T_BODY, color: theme::TEXT_PRIMARY),
                         value: handle_label,
                     )
-                    logout_button()
+                    LogoutButton()
                 }
-                settings_section(title: "モデレーション".to_string())
-                settings_row(
+                SettingsSection(title: "モデレーション".to_string())
+                SettingsRow(
                     icon: lucide::VolumeX,
                     label: "ミュート中のアカウント".to_string(),
                     route: "/settings/muted".to_string(),
                 )
-                settings_row(
+                SettingsRow(
                     icon: lucide::Ban,
                     label: "ブロック中のアカウント".to_string(),
                     route: "/settings/blocked".to_string(),
                 )
-                settings_section(title: "アプリ情報".to_string())
-                view(style: css!(
+                SettingsSection(title: "アプリ情報".to_string())
+                View(style: css!(
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::SpaceBetween,
@@ -721,11 +721,11 @@ pub(super) fn settings_screen() -> Element {
                     padding_top: px(12),
                     padding_bottom: px(12),
                 )) {
-                    text(
+                    Text(
                         style: css!(font_size: theme::T_BODY, color: theme::TEXT_PRIMARY),
                         value: "バージョン",
                     )
-                    text(
+                    Text(
                         style: css!(font_size: theme::T_META, color: theme::TEXT_SECONDARY),
                         // `option_env!` (not `env!`): the tier-1 hot-patch runs
                         // raw `rustc` without Cargo's env, so `env!` is a hard
@@ -742,7 +742,7 @@ pub(super) fn settings_screen() -> Element {
 #[component]
 pub(super) fn settings_section(title: String) -> Element {
     render! {
-        text(
+        Text(
             style: css!(
                 font_size: theme::T_META,
                 font_weight: FontWeight::Bold,
@@ -761,8 +761,9 @@ pub(super) fn settings_section(title: String) -> Element {
 #[component]
 pub(super) fn settings_row(icon: &'static str, label: String, route: String) -> Element {
     let nav = use_navigator();
+    let label = StoredValue::new(label.clone());
     render! {
-        view(
+        View(
             style: css!(
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
@@ -782,14 +783,14 @@ pub(super) fn settings_row(icon: &'static str, label: String, route: String) -> 
             },
         ) {
             Icon(svg: icon, color: "#FFFFFF", size: "20")
-            text(
+            Text(
                 style: css!(
                     flex_grow: 1.0,
                     font_size: theme::T_BODY,
                     color: theme::TEXT_PRIMARY,
                     margin_left: px(12),
                 ),
-                value: label.clone(),
+                value: label.get(),
             )
             Icon(svg: lucide::ChevronRight, color: "#8B98A5", size: "20")
         }
@@ -801,9 +802,9 @@ pub(super) fn settings_row(icon: &'static str, label: String, route: String) -> 
 pub(super) fn muted_accounts_screen() -> Element {
     let res = resource(|| async { bsky_auth::get_mutes(50).await });
     render! {
-        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
-            nav_header(title: "ミュート中のアカウント".to_string())
-            moderation_account_list(res: res)
+        View(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            NavHeader(title: "ミュート中のアカウント".to_string())
+            ModerationAccountList(res: res)
         }
     }
 }
@@ -813,9 +814,9 @@ pub(super) fn muted_accounts_screen() -> Element {
 pub(super) fn blocked_accounts_screen() -> Element {
     let res = resource(|| async { bsky_auth::get_blocks(50).await });
     render! {
-        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
-            nav_header(title: "ブロック中のアカウント".to_string())
-            moderation_account_list(res: res)
+        View(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            NavHeader(title: "ブロック中のアカウント".to_string())
+            ModerationAccountList(res: res)
         }
     }
 }
@@ -828,7 +829,7 @@ pub(super) fn moderation_account_list(res: Resource<Vec<bsky_domain::ActorView>>
         Show(
             when: move || res.get().is_some(),
             fallback: move || render! {
-                status_pane(message: match res.error() {
+                StatusPane(message: match res.error() {
                     Some(e) if !e.is_empty() => e,
                     _ => "読み込み中…".to_string(),
                 })
@@ -836,9 +837,9 @@ pub(super) fn moderation_account_list(res: Resource<Vec<bsky_domain::ActorView>>
         ) {
             Show(
                 when: move || !res.get().unwrap_or_default().is_empty(),
-                fallback: move || render! { status_pane(message: "該当するアカウントはありません".to_string()) },
+                fallback: move || render! { StatusPane(message: "該当するアカウントはありません".to_string()) },
             ) {
-                actor_list(actors: res.get().unwrap_or_default())
+                ActorList(actors: res.get().unwrap_or_default())
             }
         }
     }
@@ -847,6 +848,7 @@ pub(super) fn moderation_account_list(res: Resource<Vec<bsky_domain::ActorView>>
 /// Reusable top bar with a back chevron + title (safe-area aware).
 #[component]
 pub(super) fn nav_header(title: String) -> Element {
+    let title = StoredValue::new(title.clone());
     let nav = use_navigator();
     let insets = safe_area_insets();
     let style = computed(move || {
@@ -869,8 +871,8 @@ pub(super) fn nav_header(title: String) -> Element {
         )
     });
     render! {
-        view(style: style) {
-            view(
+        View(style: style) {
+            View(
                 style: css!(padding: px(8), display: Display::Flex, align_items: AlignItems::Center),
                 on_tap: move |_| {
                     let _ = nav.back();
@@ -878,14 +880,14 @@ pub(super) fn nav_header(title: String) -> Element {
             ) {
                 Icon(svg: lucide::ChevronLeft, color: "#FFFFFF", size: "26")
             }
-            text(
+            Text(
                 style: css!(
                     font_size: theme::T_NAME,
                     font_weight: FontWeight::Bold,
                     color: theme::TEXT_PRIMARY,
                     margin_left: px(4),
                 ),
-                value: title.clone(),
+                value: title.get(),
             )
         }
     }

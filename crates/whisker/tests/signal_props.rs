@@ -166,7 +166,7 @@ fn colored_tile(color: Signal<String>) -> Element {
         Css::new().width(px(width))
     });
     render! {
-        view(style: style)
+        View(style: style)
     }
 }
 
@@ -244,7 +244,7 @@ fn rw_signal_prop_tracks_underlying_signal() {
 fn show_flips_when_signal_holding_option_transitions() {
     // A `Show` whose `when` reads a signal going from `None` (fallback)
     // to `Some(_)` (children) — the Show + signal-read chain the
-    // simpler `text(value: …)` tests don't reach.
+    // simpler `Text(value: …)` tests don't reach.
     with_recorder_and_owner(|log| {
         let (state, set_state) = signal::<Option<&'static str>>(None).split();
         let _h = render! {

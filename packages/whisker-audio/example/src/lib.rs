@@ -26,7 +26,7 @@ pub fn app() -> Element {
     let insets = safe_area_insets();
 
     render! {
-        view(style: computed(move || css!(
+        View(style: computed(move || css!(
             background_color: Color::hex(0x101012),
             flex_grow: 1.0,
             display: Display::Flex,
@@ -39,7 +39,7 @@ pub fn app() -> Element {
             padding_right: px(24),
         ))) {
             // Header
-            view(style: css!(
+            View(style: css!(
                 width: percent(100),
                 flex_shrink: 0.0,
                 margin_bottom: px(24),
@@ -47,7 +47,7 @@ pub fn app() -> Element {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
             )) {
-                text(
+                Text(
                     style: css!(
                         color: Color::hex(0xF0F0F3),
                         font_size: px(22),
@@ -61,7 +61,7 @@ pub fn app() -> Element {
             // — `status.get()` inside the `computed` closure registers
             // it as a dependent of the underlying RwSignal that the
             // native module writes through.
-            view(style: css!(
+            View(style: css!(
                 width: percent(100),
                 max_width: px(320),
                 flex_shrink: 0.0,
@@ -72,23 +72,23 @@ pub fn app() -> Element {
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
             )) {
-                status_row(label: "is_playing", value: computed(move || {
+                StatusRow(label: "is_playing", value: computed(move || {
                     fmt_bool(status.get().is_playing)
                 }))
-                status_row(label: "is_loaded", value: computed(move || {
+                StatusRow(label: "is_loaded", value: computed(move || {
                     fmt_bool(status.get().is_loaded)
                 }))
-                status_row(label: "position", value: computed(move || {
+                StatusRow(label: "position", value: computed(move || {
                     format!("{:.2}s", status.get().position)
                 }))
-                status_row(label: "duration", value: computed(move || {
+                StatusRow(label: "duration", value: computed(move || {
                     let d = status.get().duration;
                     if d > 0.0 { format!("{:.2}s", d) } else { "—".into() }
                 }))
                 // Progress fraction — only meaningful once `duration`
                 // is non-zero. The `format!` is cheap; the surrounding
                 // computed re-runs on every status tick.
-                status_row(label: "progress", value: computed(move || {
+                StatusRow(label: "progress", value: computed(move || {
                     let s = status.get();
                     if s.duration > 0.0 {
                         format!("{:.1}%", 100.0 * s.position / s.duration)
@@ -100,22 +100,22 @@ pub fn app() -> Element {
 
             // Controls. Each closure captures its own clone of the
             // handle. Inline `style:` to keep the example focused.
-            view(style: button_style(), on_tap: {
+            View(style: button_style(), on_tap: {
                 let p = player.clone();
                 move |_| p.play()
-            }) { text(style: button_text_style(), value: "Play") }
-            view(style: button_style(), on_tap: {
+            }) { Text(style: button_text_style(), value: "Play") }
+            View(style: button_style(), on_tap: {
                 let p = player.clone();
                 move |_| p.pause()
-            }) { text(style: button_text_style(), value: "Pause") }
-            view(style: button_style(), on_tap: {
+            }) { Text(style: button_text_style(), value: "Pause") }
+            View(style: button_style(), on_tap: {
                 let p = player.clone();
                 move |_| p.stop()
-            }) { text(style: button_text_style(), value: "Stop") }
-            view(style: button_style(), on_tap: {
+            }) { Text(style: button_text_style(), value: "Stop") }
+            View(style: button_style(), on_tap: {
                 let p = player.clone();
                 move |_| p.seek_to(30.0)
-            }) { text(style: button_text_style(), value: "Seek to 30s") }
+            }) { Text(style: button_text_style(), value: "Seek to 30s") }
         }
     }
 }
@@ -153,14 +153,14 @@ fn fmt_bool(b: bool) -> String {
 #[component]
 fn status_row(label: &'static str, value: ReadSignal<String>) -> Element {
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
             margin_top: px(4),
             margin_bottom: px(4),
         )) {
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0x9090A0),
                     font_size: px(13),
@@ -170,7 +170,7 @@ fn status_row(label: &'static str, value: ReadSignal<String>) -> Element {
                 ),
                 value: label,
             )
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0xF0F0F3),
                     font_size: px(13),

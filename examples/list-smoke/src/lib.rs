@@ -110,14 +110,14 @@ pub fn app() -> Element {
     };
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
             background_color: Color::hex(0x101012),
             padding_top: px(48),
         )) {
-            view(style: css!(flex_direction: FlexDirection::Row, padding: px(12), flex_shrink: 0.0)) {
-                view(
+            View(style: css!(flex_direction: FlexDirection::Row, padding: px(12), flex_shrink: 0.0)) {
+                View(
                     style: css!(
                         background_color: Color::hex(0x2563EB),
                         padding: px(12),
@@ -126,9 +126,9 @@ pub fn app() -> Element {
                     ),
                     on_tap: rotate,
                 ) {
-                    text(style: css!(color: Color::hex(0xFFFFFF), font_weight: FontWeight::Bold), value: "Rotate")
+                    Text(style: css!(color: Color::hex(0xFFFFFF), font_weight: FontWeight::Bold), value: "Rotate")
                 }
-                view(
+                View(
                     style: css!(
                         background_color: Color::hex(0x16A34A),
                         padding: px(12),
@@ -136,10 +136,10 @@ pub fn app() -> Element {
                     ),
                     on_tap: prepend,
                 ) {
-                    text(style: css!(color: Color::hex(0xFFFFFF), font_weight: FontWeight::Bold), value: "Prepend +")
+                    Text(style: css!(color: Color::hex(0xFFFFFF), font_weight: FontWeight::Bold), value: "Prepend +")
                 }
             }
-            list(
+            List(
                 style: css!(flex_grow: 1.0, width: percent(100)),
                 start_reached_threshold: 88.0,
                 end_reached_threshold: 88.0,
@@ -150,7 +150,7 @@ pub fn app() -> Element {
                 } else {
                     ListScrollTarget::start()
                 },
-                ref: list_handle.r(),
+                list_ref: list_handle.r(),
                 on_scroll: |e| eprintln!("[SMOKE] scroll fired: {e:?}"),
                 each: move || {
                     let mut rows = vec![Row::Header];
@@ -160,32 +160,32 @@ pub fn app() -> Element {
                 key: |r: &Row| r.key(),
                 children: |r: ReadSignal<Row>| match r.get() {
                     Row::Header => render! {
-                        view(style: css!(
+                        View(style: css!(
                             width: percent(100),
                             height: px(160),
                             background_color: Color::hex(0x2563EB),
                             align_items: AlignItems::Center,
                             justify_content: JustifyContent::Center,
                         )) {
-                            text(
+                            Text(
                                 style: css!(color: Color::hex(0xFFFFFF), font_size: px(20), font_weight: FontWeight::Bold),
                                 value: "FULL-SPAN HEADER (item 0)",
                             )
                         }
                     },
                     Row::Item(n) => render! {
-                        view(style: css!(
+                        View(style: css!(
                             width: percent(100),
                             padding: px(16),
                             flex_direction: FlexDirection::Column,
                             background_color: Color::hex(0x18181B),
                             margin_bottom: px(1),
                         )) {
-                            text(
+                            Text(
                                 style: css!(color: Color::hex(0xF5F5F7), font_size: px(16), font_weight: FontWeight::Bold),
                                 value: format!("Row {n}"),
                             )
-                            text(
+                            Text(
                                 style: css!(color: Color::hex(0x9AA0AA), font_size: px(13)),
                                 value: body_text(n),
                             )

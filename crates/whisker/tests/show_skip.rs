@@ -84,11 +84,11 @@ fn unchanged_cond_does_not_rebuild_branch() {
     with_test_env(|log| {
         let s = RwSignal::new(0i32);
         let _tree = render! {
-            view() {
+            View() {
                 Show(when: move || s.get() < 10) {
-                    text(value: "branch")
+                    Text(value: "branch")
                 }
-                text(value: "sibling")
+                Text(value: "sibling")
             }
         };
         flush();
@@ -113,9 +113,9 @@ fn changed_cond_still_rebuilds_branch() {
     with_test_env(|log| {
         let s = RwSignal::new(0i32);
         let _tree = render! {
-            view() {
+            View() {
                 Show(when: move || s.get() < 10) {
-                    text(value: "branch")
+                    Text(value: "branch")
                 }
             }
         };

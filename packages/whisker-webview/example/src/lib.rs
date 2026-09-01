@@ -42,11 +42,11 @@ pub fn app() -> Element {
         .margin_bottom(px(20));
 
     render! {
-        view(style: page_style) {
-            text(style: header_style, value: "whisker-webview demo")
+        View(style: page_style) {
+            Text(style: header_style, value: "whisker-webview demo")
 
-            url_demo()
-            inline_html_demo()
+            UrlDemo()
+            InlineHtmlDemo()
         }
     }
 }
@@ -65,8 +65,8 @@ fn url_demo() -> Element {
         .margin_top(px(6));
 
     render! {
-        view(style: section_style()) {
-            text(style: label_style(), value: "URL load + JS bridge")
+        View(style: section_style()) {
+            Text(style: label_style(), value: "URL load + JS bridge")
 
             WebView(
                 url: url,
@@ -78,20 +78,20 @@ fn url_demo() -> Element {
                 style: webview_style(),
             )
 
-            view(style: Css::new().display_flex().flex_direction(FlexDirection::Row).margin_top(px(10))) {
-                text(style: button_style(), value: "Reload", on_tap: {
+            View(style: Css::new().display_flex().flex_direction(FlexDirection::Row).margin_top(px(10))) {
+                Text(style: button_style(), value: "Reload", on_tap: {
                     let w = webview.clone();
                     move |_| w.reload()
                 })
-                text(style: button_style(), value: "Back", on_tap: {
+                Text(style: button_style(), value: "Back", on_tap: {
                     let w = webview.clone();
                     move |_| w.go_back()
                 })
-                text(style: button_style(), value: "Forward", on_tap: {
+                Text(style: button_style(), value: "Forward", on_tap: {
                     let w = webview.clone();
                     move |_| w.go_forward()
                 })
-                text(style: button_style(), value: "Ping JS", on_tap: {
+                Text(style: button_style(), value: "Ping JS", on_tap: {
                     let w = webview.clone();
                     move |_| {
                         w.post_message("ping from rust");
@@ -102,7 +102,7 @@ fn url_demo() -> Element {
                 })
             }
 
-            text(
+            Text(
                 style: msg_style,
                 value: computed(move || format!("Last JS message: {}", last_message.get())),
             )
@@ -120,14 +120,14 @@ fn inline_html_demo() -> Element {
         .margin_top(px(6));
 
     render! {
-        view(style: section_style()) {
-            text(style: label_style(), value: "Inline HTML")
+        View(style: section_style()) {
+            Text(style: label_style(), value: "Inline HTML")
             WebView(
                 html: INLINE_HTML.to_string(),
                 on_message: move |msg: String| last_message.set(msg),
                 style: webview_style(),
             )
-            text(
+            Text(
                 style: msg_style,
                 value: computed(move || format!("From inline page: {}", last_message.get())),
             )

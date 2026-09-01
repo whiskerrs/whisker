@@ -14,7 +14,7 @@
 //!     `detail`.
 //!
 //! A built-in builder's `on_<event>` method, or a
-//! `#[whisker::module_component]` `on_<event>: TouchEvent` prop,
+//! `#[whisker::module_element]` `on_<event>: TouchEvent` prop,
 //! receives the event body as a [`WhiskerValue`] and recovers the
 //! struct via [`WhiskerValue::deserialize_into`]. Every field is
 //! `#[serde(default)]` so a body missing an optional key (or an
@@ -95,7 +95,7 @@ impl Dataset {
 /// The event body crosses the bridge as a [`WhiskerValue`]; this
 /// deserializes it into `E` before calling `handler`. Used by the
 /// built-in builders' `on_<event>` methods and by
-/// `#[whisker::module_component]` for typed `on_<event>: E` props.
+/// `#[whisker::module_element]` for typed `on_<event>: E` props.
 ///
 /// **The handler always fires when the event fires.** "The event
 /// happened" is the primary signal; the typed payload is

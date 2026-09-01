@@ -39,42 +39,56 @@ const WARM: [&str; 3] = [
 
 #[whisker::main]
 pub fn app() -> Element {
-    let page = Css::new()
-        .background_color(Color::hex(BG))
-        .flex_grow(1.0)
-        .flex_direction(FlexDirection::Column)
-        .padding(px(16))
-        .padding_top(px(64));
-    let card = Css::new()
-        .background_color(Color::hex(CARD_BG))
-        .border_radius(px(12))
-        .padding(px(12))
-        .margin_bottom(px(16))
-        .flex_direction(FlexDirection::Column);
-    let heading = Css::new()
-        .color(Color::hex(FG))
-        .font_size(px(16))
-        .font_weight(FontWeight::Bold);
-    let note = Css::new()
-        .color(Color::hex(MUTED))
-        .font_size(px(13))
-        .margin_top(px(4));
-    let thumb = Css::new()
-        .width(percent(100))
-        .height(px(140))
-        .border_radius(px(8))
-        .margin_top(px(8));
-    let button = Css::new()
-        .background_color(Color::hex(BAD))
-        .border_radius(px(8))
-        .padding(px(10))
-        .align_items(AlignItems::Center)
-        .justify_content(JustifyContent::Center)
-        .margin_top(px(8));
-    let button_text = Css::new()
-        .color(Color::hex(FG))
-        .font_size(px(14))
-        .font_weight(FontWeight::Bold);
+    let page = StoredValue::new(
+        Css::new()
+            .background_color(Color::hex(BG))
+            .flex_grow(1.0)
+            .flex_direction(FlexDirection::Column)
+            .padding(px(16))
+            .padding_top(px(64)),
+    );
+    let card = StoredValue::new(
+        Css::new()
+            .background_color(Color::hex(CARD_BG))
+            .border_radius(px(12))
+            .padding(px(12))
+            .margin_bottom(px(16))
+            .flex_direction(FlexDirection::Column),
+    );
+    let heading = StoredValue::new(
+        Css::new()
+            .color(Color::hex(FG))
+            .font_size(px(16))
+            .font_weight(FontWeight::Bold),
+    );
+    let note = StoredValue::new(
+        Css::new()
+            .color(Color::hex(MUTED))
+            .font_size(px(13))
+            .margin_top(px(4)),
+    );
+    let thumb = StoredValue::new(
+        Css::new()
+            .width(percent(100))
+            .height(px(140))
+            .border_radius(px(8))
+            .margin_top(px(8)),
+    );
+    let button = StoredValue::new(
+        Css::new()
+            .background_color(Color::hex(BAD))
+            .border_radius(px(8))
+            .padding(px(10))
+            .align_items(AlignItems::Center)
+            .justify_content(JustifyContent::Center)
+            .margin_top(px(8)),
+    );
+    let button_text = StoredValue::new(
+        Css::new()
+            .color(Color::hex(FG))
+            .font_size(px(14))
+            .font_weight(FontWeight::Bold),
+    );
 
     // Card 1 — the header actually leaving the phone.
     // 0 none, 1 an Accept the host likes, 2 one it refuses. Platforms
@@ -103,15 +117,15 @@ pub fn app() -> Element {
     let warmed = RwSignal::new(false);
 
     render! {
-        scroll_view(style: page, axis: ScrollAxis::Vertical) {
-            view(style: card.clone()) {
-                text(value: "headers", style: heading.clone())
-                text(
+        ScrollView(style: page.get(), axis: ScrollAxis::Vertical) {
+            View(style: card.get()) {
+                Text(value: "headers", style: heading.get())
+                Text(
                     value: "httpbin answers 406 without an Accept it likes. \
                             Toggling the header changes nothing else.",
-                    style: note.clone(),
+                    style: note.get(),
                 )
-                text(value: probe_status, style: probe_style)
+                Text(value: probe_status, style: probe_style)
                 Image(
                     src: HEADER_PROBE,
                     mode: ImageMode::AspectFit,
@@ -129,29 +143,29 @@ pub fn app() -> Element {
                     on_error: move |event: ImageEvent| {
                         probe_status.set(format!("error: {}", event.error()));
                     },
-                    style: thumb.clone(),
+                    style: thumb.get(),
                 )
-                view(
-                    style: button.clone(),
+                View(
+                    style: button.get(),
                     on_tap: move |_| {
                         probe_status.set("waiting".to_string());
                         accept.set((accept.get_untracked() + 1) % 3);
                     },
                 ) {
-                    text(
+                    Text(
                         value: computed(move || match accept.get() {
                             1 => "Accept: image/png — tap for one the host refuses".to_string(),
                             2 => "Accept: text/plain — tap to drop headers".to_string(),
                             _ => "no headers — tap to send Accept: image/png".to_string(),
                         }),
-                        style: button_text.clone(),
+                        style: button_text.get(),
                     )
                 }
             }
 
-            view(style: card.clone()) {
-                text(value: "on_load", style: heading.clone())
-                text(value: photo_status, style: note.clone())
+            View(style: card.get()) {
+                Text(value: "on_load", style: heading.get())
+                Text(value: photo_status, style: note.get())
                 Image(
                     src: PHOTO,
                     mode: ImageMode::AspectFill,
@@ -164,13 +178,13 @@ pub fn app() -> Element {
                     on_error: move |event: ImageEvent| {
                         photo_status.set(format!("error: {}", event.error()));
                     },
-                    style: thumb.clone(),
+                    style: thumb.get(),
                 )
             }
 
-            view(style: card.clone()) {
-                text(value: "on_error", style: heading.clone())
-                text(value: missing_status, style: note.clone())
+            View(style: card.get()) {
+                Text(value: "on_error", style: heading.get())
+                Text(value: missing_status, style: note.get())
                 Image(
                     src: MISSING,
                     on_load: move |_: ImageEvent| {
@@ -179,19 +193,19 @@ pub fn app() -> Element {
                     on_error: move |event: ImageEvent| {
                         missing_status.set(format!("error: {}", event.error()));
                     },
-                    style: thumb,
+                    style: thumb.get(),
                 )
             }
 
-            view(style: card) {
-                text(value: "prefetch", style: heading)
-                text(
+            View(style: card.get()) {
+                Text(value: "prefetch", style: heading.get())
+                Text(
                     value: "Warm three URLs, then show them. The second tap \
                             should paint without a network wait.",
-                    style: note,
+                    style: note.get(),
                 )
-                view(
-                    style: button,
+                View(
+                    style: button.get(),
                     on_tap: move |_| {
                         prefetch(
                             &WARM.iter().map(|u| u.to_string()).collect::<Vec<_>>(),
@@ -200,7 +214,7 @@ pub fn app() -> Element {
                         warmed.set(true);
                     },
                 ) {
-                    text(
+                    Text(
                         value: computed(move || {
                             if warmed.get() {
                                 "warmed — tap again to show".to_string()
@@ -208,11 +222,11 @@ pub fn app() -> Element {
                                 "prefetch three images".to_string()
                             }
                         }),
-                        style: button_text,
+                        style: button_text.get(),
                     )
                 }
                 Show(when: move || warmed.get()) {
-                    view(style: Css::new().flex_direction(FlexDirection::Row).gap(px(8)).margin_top(px(8))) {
+                    View(style: Css::new().flex_direction(FlexDirection::Row).gap(px(8)).margin_top(px(8))) {
                         Image(src: WARM[0], style: css!(flex_grow: 1.0, height: px(80)))
                         Image(src: WARM[1], style: css!(flex_grow: 1.0, height: px(80)))
                         Image(src: WARM[2], style: css!(flex_grow: 1.0, height: px(80)))

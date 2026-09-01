@@ -44,7 +44,7 @@ fn muted() -> Color {
 
 #[whisker::main]
 pub fn app() -> Element {
-    // Selected segment (0 = Day, 1 = Week, 2 = Month) and whether the
+    // Selected Segment (0 = Day, 1 = Week, 2 = Month) and whether the
     // balance figure is masked. Both survive a hot patch.
     let selected = RwSignal::new(1usize);
     let hidden = RwSignal::new(false);
@@ -76,19 +76,19 @@ pub fn app() -> Element {
     render! {
         // Whisker provides the root `page`; this root `view` fills it
         // (`flex_grow: 1`) and carries the app background + layout.
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             background_color: BG,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
         )) {
-        scroll_view(
+        ScrollView(
             style: css!(
                 flex_grow: 1.0,
                 width: percent(100),
             ),
         ) {
-            view(style: css!(
+            View(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 padding: px(20),
@@ -96,24 +96,24 @@ pub fn app() -> Element {
                 padding_bottom: px(40),
             )) {
                 // ── Header ───────────────────────────────────────────
-                view(style: css!(
+                View(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::SpaceBetween,
                     margin_bottom: px(20),
                 )) {
-                    view(style: css!(display: Display::Flex, flex_direction: FlexDirection::Column)) {
-                        text(
+                    View(style: css!(display: Display::Flex, flex_direction: FlexDirection::Column)) {
+                        Text(
                             style: css!(color: muted(), font_size: px(13), margin_bottom: px(2)),
                             value: "Good morning",
                         )
-                        text(
+                        Text(
                             style: css!(color: TEXT, font_size: px(22), font_weight: FontWeight::Bold),
                             value: USER,
                         )
                     }
-                    view(style: css!(
+                    View(style: css!(
                         width: px(40),
                         height: px(40),
                         border_radius: px(20),
@@ -127,7 +127,7 @@ pub fn app() -> Element {
                 }
 
                 // ── Balance card ─────────────────────────────────────
-                view(style: css!(
+                View(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Column,
                     border_radius: px(CARD_RADIUS),
@@ -140,24 +140,24 @@ pub fn app() -> Element {
                         ColorStop::new(Color::hex(0x4E9BFF)),
                     ],
                 })) {
-                    view(style: css!(
+                    View(style: css!(
                         display: Display::Flex,
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
                         justify_content: JustifyContent::SpaceBetween,
                     )) {
-                        text(
+                        Text(
                             style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(14)),
                             value: "Total balance",
                         )
-                        view(
+                        View(
                             on_tap: move |_| hidden.set(!hidden.get()),
                             on_click: move |_| hidden.set(!hidden.get()),
                         ) {
                             Icon(svg: eye_icon, color: "#FFFFFF", size: "18")
                         }
                     }
-                    text(
+                    Text(
                         style: css!(
                             color: Color::hex(0xFFFFFF),
                             font_size: px(38),
@@ -166,14 +166,14 @@ pub fn app() -> Element {
                         ),
                         value: balance_text,
                     )
-                    text(
+                    Text(
                         style: css!(color: Color::rgba(255, 255, 255, 0.9), font_size: px(13), margin_top: px(6)),
                         value: delta_text,
                     )
                 }
 
                 // ── Segmented control ────────────────────────────────
-                view(style: css!(
+                View(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Row,
                     background_color: SURFACE,
@@ -187,11 +187,11 @@ pub fn app() -> Element {
                 }
 
                 // ── Spending bar chart ───────────────────────────────
-                text(
+                Text(
                     style: css!(color: TEXT, font_size: px(17), font_weight: FontWeight::Bold, margin_bottom: px(14)),
                     value: "Spending",
                 )
-                view(style: css!(
+                View(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::FlexEnd,
@@ -209,7 +209,7 @@ pub fn app() -> Element {
                 }
 
                 // ── Recent transactions ──────────────────────────────
-                text(
+                Text(
                     style: css!(color: TEXT, font_size: px(17), font_weight: FontWeight::Bold, margin_bottom: px(10)),
                     value: "Recent",
                 )
@@ -253,12 +253,12 @@ fn segment(label: &'static str, index: usize, selected: RwSignal<usize>) -> Elem
     });
 
     render! {
-        view(
+        View(
             style: pill_style,
             on_tap: move |_| selected.set(index),
             on_click: move |_| selected.set(index),
         ) {
-            text(style: label_style, value: label)
+            Text(style: label_style, value: label)
         }
     }
 }
@@ -273,7 +273,7 @@ fn bar(height: i32, active: bool) -> Element {
         Color::rgba(124, 92, 255, 0.25)
     };
     render! {
-        view(style: css!(
+        View(style: css!(
             width: px(26),
             height: px(height),
             border_radius: px(7),
@@ -295,7 +295,7 @@ fn tx(
     let amount_color = if positive { POSITIVE } else { NEGATIVE };
     let amount_text = format!("{}{CURRENCY}{}", if positive { "+" } else { "-" }, amount);
     render! {
-        view(style: css!(
+        View(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
@@ -304,7 +304,7 @@ fn tx(
             padding: px(12),
             margin_bottom: px(10),
         )) {
-            view(style: css!(
+            View(style: css!(
                 width: px(40),
                 height: px(40),
                 border_radius: px(12),
@@ -316,11 +316,11 @@ fn tx(
             )) {
                 Icon(svg: icon, color: "#B9A3FF", size: "20")
             }
-            view(style: css!(display: Display::Flex, flex_direction: FlexDirection::Column, flex_grow: 1.0)) {
-                text(style: css!(color: TEXT, font_size: px(15), font_weight: FontWeight::Numeric(600)), value: name)
-                text(style: css!(color: muted(), font_size: px(12), margin_top: px(2)), value: sub)
+            View(style: css!(display: Display::Flex, flex_direction: FlexDirection::Column, flex_grow: 1.0)) {
+                Text(style: css!(color: TEXT, font_size: px(15), font_weight: FontWeight::Numeric(600)), value: name)
+                Text(style: css!(color: muted(), font_size: px(12), margin_top: px(2)), value: sub)
             }
-            text(
+            Text(
                 style: css!(color: amount_color, font_size: px(15), font_weight: FontWeight::Numeric(600)),
                 value: amount_text,
             )

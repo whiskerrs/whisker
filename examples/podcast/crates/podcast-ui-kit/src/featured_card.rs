@@ -24,12 +24,12 @@ pub fn featured_card(podcast: Podcast) -> Element {
     let artwork_src = podcast.artwork_url_600.clone();
 
     render! {
-        view(style: css!(
+        View(style: css!(
             width: theme::FEATURED_CARD_WIDTH,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
         )) {
-            text(
+            Text(
                 style: css!(
                     font_size: theme::T_CATEGORY,
                     color: theme::TEXT_SECONDARY,
@@ -38,7 +38,7 @@ pub fn featured_card(podcast: Podcast) -> Element {
                 ),
                 value: category_label,
             )
-            text(
+            Text(
                 style: css!(
                     font_size: theme::T_FEATURED_TITLE,
                     color: theme::TEXT_PRIMARY,

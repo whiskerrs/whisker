@@ -15,7 +15,7 @@ use whisker::event::CustomEvent;
 pub const MODULE_NAME: &str = concat!(env!("CARGO_PKG_NAME"), ":WhiskerToggle");
 
 /// Rust-side authoring component for the external Toggle element.
-#[whisker::module_component(
+#[whisker::module_element(
     name = "whisker.toggle/Toggle",
     measurement = None,
     commands = [("setChecked", Bool)],

@@ -54,7 +54,7 @@ fn registry() -> RouteRegistry {
 
 /// root Stack { Route("", home)  Route("detail/:id", detail) }
 fn simple_handle() -> RouterHandle {
-    let tree = CompiledTree::new(RouteTree::stack(vec![
+    let tree = CompiledTree::new(RouteTree::Stack(vec![
         RouteTree::route("", "home"),
         RouteTree::route("detail/:id", "detail"),
     ]));
@@ -63,14 +63,14 @@ fn simple_handle() -> RouterHandle {
 
 /// root Stack { Switch(tabs) { Stack{home, detail} Stack{list, detail} } }
 fn tabbed_handle() -> RouterHandle {
-    let tree = CompiledTree::new(RouteTree::stack(vec![RouteTree::switch(
+    let tree = CompiledTree::new(RouteTree::Stack(vec![RouteTree::Switch(
         SwitchDef::new("tabs", 0),
         vec![
-            RouteTree::stack(vec![
+            RouteTree::Stack(vec![
                 RouteTree::route("", "home"),
                 RouteTree::route("detail/:id", "detail"),
             ]),
-            RouteTree::stack(vec![
+            RouteTree::Stack(vec![
                 RouteTree::route("list", "list"),
                 RouteTree::route("detail/:id", "detail"),
             ]),
@@ -174,7 +174,7 @@ fn reset_clears_stack_to_target() {
 fn layout_wrapped_handle() -> RouterHandle {
     let tree = CompiledTree::new(RouteTree::route_with(
         RouteDef::new("", "layout"),
-        vec![RouteTree::stack(vec![
+        vec![RouteTree::Stack(vec![
             RouteTree::route("", "home"),
             RouteTree::route("detail/:id", "detail"),
         ])],
@@ -234,7 +234,7 @@ fn select_switches_tab_and_keeps_history() {
         h.select("/list").unwrap();
         flush();
         assert_eq!(selected.get(), Some(1));
-        // Tab 1 shows its own home (list), depth 1.
+        // Tab 1 shows its own Home (list), depth 1.
         assert_eq!(
             h.current().get().path,
             // tab 1 = branch index 1 under the switch; its stack's first
@@ -304,14 +304,14 @@ fn state_at_walks_to_active_child() {
 type Counts = Rc<RefCell<HashMap<&'static str, usize>>>;
 
 fn counting_tabbed_handle(counts: Counts) -> RouterHandle {
-    let tree = CompiledTree::new(RouteTree::switch(
+    let tree = CompiledTree::new(RouteTree::Switch(
         SwitchDef::new("tabs", 0),
         vec![
-            RouteTree::stack(vec![
+            RouteTree::Stack(vec![
                 RouteTree::route("", "home"),
                 RouteTree::route("detail/:id", "detail"),
             ]),
-            RouteTree::stack(vec![
+            RouteTree::Stack(vec![
                 RouteTree::route("list", "list"),
                 RouteTree::route("detail/:id", "detail"),
             ]),
@@ -344,7 +344,7 @@ fn tree_is_drawn_once_no_double_mount() {
         let _slot = mount_node(&h, NodePath::root());
         flush();
 
-        // home (the selected tab's leaf) mounts exactly once; the List
+        // Home (the selected tab's leaf) mounts exactly once; the list
         // tab's `list` also mounts once (Switch keeps all branches alive),
         // but neither mounts twice.
         let c = counts.borrow();
@@ -375,7 +375,7 @@ fn navigate_mounts_new_leaf_exactly_once() {
 /// A single root Stack with mount-counting leaves (`home` at `""`, `detail`
 /// at `detail/:id`).
 fn counting_simple_handle(counts: Counts) -> RouterHandle {
-    let tree = CompiledTree::new(RouteTree::stack(vec![
+    let tree = CompiledTree::new(RouteTree::Stack(vec![
         RouteTree::route("", "home"),
         RouteTree::route("detail/:id", "detail"),
     ]));
@@ -425,7 +425,7 @@ fn reset_to_different_route_reinstantiates_revealed_top() {
         };
         assert_eq!(s.history.len(), 1, "reset collapses to a single entry");
 
-        // The revealed top is a NEW detail leaf (mounted for /2), so detail
+        // The revealed top is a NEW detail Leaf (mounted for /2), so detail
         // mounted twice total.
         assert_eq!(
             counts.borrow().get("detail").copied(),
@@ -438,7 +438,7 @@ fn reset_to_different_route_reinstantiates_revealed_top() {
 /// A single-stack handle with Slide routes so a push/pop runs a real
 /// transition we can step to completion.
 fn slide_stack_handle() -> RouterHandle {
-    let tree = CompiledTree::new(RouteTree::stack(vec![
+    let tree = CompiledTree::new(RouteTree::Stack(vec![
         RouteTree::route("", "home"),
         RouteTree::route("detail/:id", "detail"),
     ]));
@@ -452,13 +452,13 @@ fn slide_stack_handle() -> RouterHandle {
     RouterHandle::new((tree, registry))
 }
 
-/// `Route(layout) { Stack { home(slide), detail/:id(slide) } }` — the same
+/// `Route(layout) { Stack { Home(slide), detail/:id(slide) } }` — the same
 /// layout-Route-above-a-stack shape as the tabbed example, with slide
 /// transitions so animation is observable.
 fn layout_slide_handle() -> RouterHandle {
     let tree = CompiledTree::new(RouteTree::route_with(
         RouteDef::new("", "layout"),
-        vec![RouteTree::stack(vec![
+        vec![RouteTree::Stack(vec![
             RouteTree::route("", "home"),
             RouteTree::route("detail/:id", "detail"),
         ])],
@@ -723,7 +723,7 @@ fn back_after_replace_animates_the_revealed_survivor() {
     owner.dispose();
 }
 
-/// Same as above but with a layout Route above the stack (the tabbed example's
+/// Same as above but with a layout Route above the Stack (the tabbed example's
 /// shape). Reproduces the "Home doesn't animate on back after replace" report.
 #[test]
 fn back_after_replace_animates_under_a_layout_route() {
@@ -863,7 +863,7 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
         // Detail's render fn registers an `on_cleanup` bumping a counter,
         // so we can observe exactly WHEN its content subtree is disposed.
         let cleanups = Rc::new(RefCell::new(0usize));
-        let tree = CompiledTree::new(RouteTree::stack(vec![
+        let tree = CompiledTree::new(RouteTree::Stack(vec![
             RouteTree::route("", "home"),
             RouteTree::route("detail/:id", "detail"),
         ]));
@@ -1118,7 +1118,7 @@ fn predictive_back_works_with_grouped_tabs() {
                 component: Some("tabs_layout".into()),
                 is_group: false,
             },
-            vec![RouteTree::switch(
+            vec![RouteTree::Switch(
                 SwitchDef::new("tabs", 0),
                 vec![
                     RouteTree::route_with(
@@ -1129,7 +1129,7 @@ fn predictive_back_works_with_grouped_tabs() {
                             component: None,
                             is_group: true,
                         },
-                        vec![RouteTree::stack(vec![
+                        vec![RouteTree::Stack(vec![
                             RouteTree::route("", "home"),
                             RouteTree::route("detail/:id", "detail"),
                         ])],
@@ -1142,7 +1142,7 @@ fn predictive_back_works_with_grouped_tabs() {
                             component: None,
                             is_group: true,
                         },
-                        vec![RouteTree::stack(vec![
+                        vec![RouteTree::Stack(vec![
                             RouteTree::route("list", "list"),
                             RouteTree::route("detail/:id", "detail"),
                         ])],
@@ -1281,7 +1281,7 @@ fn predictive_pose_material_shape() {
         "top fades out on commit: {committed:?}"
     );
 
-    // Under (entering) scales together with the top card (down to 0.9) and
+    // Under (entering) scales together with the top Card (down to 0.9) and
     // peeks from the left during the drag, then slides in to fully present
     // and grows back to full size on commit.
     let under_preview = predictive_pose(Role::Under, 0.5, SwipeEdge::Left);
@@ -1674,7 +1674,7 @@ mod replace_repro {
     /// leaves render a REAL `view` tagged with the route param `id` as a
     /// `cid` attribute, so the recorder can locate each screen's content.
     fn real_leaf_handle() -> RouterHandle {
-        let tree = CompiledTree::new(RouteTree::stack(vec![
+        let tree = CompiledTree::new(RouteTree::Stack(vec![
             RouteTree::route("", "home"),
             RouteTree::route("detail/:id", "detail"),
         ]));
@@ -1707,7 +1707,7 @@ mod replace_repro {
                 let slot = mount_node(&h, NodePath::root());
                 flush();
 
-                // Push detail/1 over home (group -> reader).
+                // Push detail/1 over Home (group -> reader).
                 h.navigate("/detail/1").unwrap();
                 flush();
                 let c1 = rec.by_cid("1").expect("detail/1 content created");
@@ -1738,7 +1738,7 @@ mod replace_repro {
         });
     }
 
-    /// On a `replace`, the OUTGOING screen (kept mounted as the
+    /// On a `replace`, the OUTGOING Screen (kept mounted as the
     /// slide-out `Under`) must be FROZEN showing its own route. It shares the
     /// leaf's static path with the incoming wrapper, so when `replace` swaps
     /// the top instance the outgoing leaf's `instance` computed also flips to
@@ -1786,15 +1786,15 @@ mod replace_repro {
 
     /// Two-tab `Switch`; the NON-first branch's leaf renders a
     /// `create_element_by_name` element (standing in for a
-    /// `module_component` / `whisker-svg` `SvgRenderer`, i.e. what
+    /// `module_element` / `whisker-svg` `SvgRenderer`, i.e. what
     /// `whisker-icons::Icon` mounts), tagged `cid=native-b` and given a
     /// `display-list` attr (a stand-in for the native prop).
     fn switch_with_native_second_branch() -> RouterHandle {
-        let tree = CompiledTree::new(RouteTree::switch(
+        let tree = CompiledTree::new(RouteTree::Switch(
             SwitchDef::new("tabs", 0),
             vec![
-                RouteTree::stack(vec![RouteTree::route("", "a")]),
-                RouteTree::stack(vec![RouteTree::route("b", "b")]),
+                RouteTree::Stack(vec![RouteTree::route("", "a")]),
+                RouteTree::Stack(vec![RouteTree::route("b", "b")]),
             ],
         ));
         let mk_a = move |_: &RouteInstance| {
@@ -1803,7 +1803,7 @@ mod replace_repro {
             el
         };
         let mk_b = move |_: &RouteInstance| {
-            // A named (module_component) element, like `whisker-svg:Svg`.
+            // A named (module_element) element, like `whisker-svg:Svg`.
             let el = whisker::runtime::view::create_element_by_name("whisker-svg:Svg");
             whisker::runtime::view::set_attribute(el, "cid", "native-b");
             // The prop the native view needs to paint — dispatched here,
@@ -1815,7 +1815,7 @@ mod replace_repro {
         RouterHandle::new((tree, registry))
     }
 
-    /// #306: a `module_component` (native) leaf in a Switch branch OTHER
+    /// #306: a `module_element` (native) leaf in a Switch branch OTHER
     /// than the first-declared one is eager-mounted — and has its props
     /// dispatched — while its branch wrapper is `display: none`, because
     /// `mount_switch` sets the wrapper hidden BEFORE mounting descendants

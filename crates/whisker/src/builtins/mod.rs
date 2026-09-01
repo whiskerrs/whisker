@@ -18,7 +18,7 @@ use whisker_runtime::view::{
 /// Shared builder methods for built-in and module element tags.
 ///
 /// Each method consumes `self` and returns it, so calls chain:
-/// `view().style(…).on_tap(…).child(…)`. Reactive-capable
+/// `View::builder().style(…).on_tap(…).build()`. Reactive-capable
 /// attributes accept any `Into<Signal<T>>` (a static value, a
 /// `ReadSignal`, an `RwSignal`, …) and re-apply on change.
 pub trait ElementBuilder: Sized {
@@ -39,9 +39,9 @@ pub trait ElementBuilder: Sized {
     /// signal changes.
     ///
     /// ```ignore
-    /// view(style: css!(padding: px(8), background_color: Color::hex(0xff0000)))
-    /// view(style: Css::new().padding(px(8)).background_color(Color::hex(0xff0000)))
-    /// view(style: computed(move || Css::new().opacity(alpha.get())))
+    /// View(style: css!(padding: px(8), background_color: Color::hex(0xff0000)))
+    /// View(style: Css::new().padding(px(8)).background_color(Color::hex(0xff0000)))
+    /// View(style: computed(move || Css::new().opacity(alpha.get())))
     /// ```
     fn style<V>(self, v: V) -> Self
     where
@@ -95,7 +95,7 @@ pub trait ElementBuilder: Sized {
     /// variants.
     ///
     /// ```ignore
-    /// view(on_tap: move |e| println!("tap at {:?}", e.detail))
+    /// View(on_tap: move |e| println!("tap at {:?}", e.detail))
     /// ```
     fn on_tap<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
         bind_typed(self.__element(), "tap", BindType::Bind, f);
@@ -278,17 +278,11 @@ pub trait ElementBuilder: Sized {
     // ---- Ref --------------------------------------------------------
 
     /// Bind an [`ElementRef`](crate::ElementRef) to this element so
-    /// its commands can be invoked after mount. `render!` routes the `ref:`
-    /// kwarg here (`view(ref: my_ref) { … }`).
-    fn bind_ref(self, r: crate::ElementRef) -> Self {
+    /// its commands can be invoked after mount. `render!` routes the `element_ref:`
+    /// kwarg here (`View(element_ref: my_ref) { … }`).
+    fn element_ref(self, r: crate::ElementRef) -> Self {
         r.__bind(self.__element());
         self
-    }
-
-    /// Finish building and return the underlying handle.
-    #[doc(hidden)]
-    fn __h(self) -> Element {
-        self.__element()
     }
 }
 
@@ -301,26 +295,37 @@ pub trait ElementBuilder: Sized {
 ///
 /// ```ignore
 /// render! {
-///     view(
+///     View(
 ///         style: css!(flex_direction: FlexDirection::Column, padding: px(16)),
 ///         on_tap: move |_| println!("tapped"),
 ///     ) {
-///         text(value: "Title")
-///         text(value: "Subtitle")
+///         Text(value: "Title")
+///         Text(value: "Subtitle")
 ///     }
 /// }
 /// ```
-#[allow(non_camel_case_types)]
-pub struct view {
+pub struct View {
     handle: Element,
 }
-#[allow(non_snake_case)]
-pub fn __view_ctor() -> view {
-    view {
-        handle: create_element(ElementTag::View),
+impl View {
+    pub fn builder() -> Self {
+        Self {
+            handle: create_element(ElementTag::View),
+        }
+    }
+
+    pub fn build(self) -> Element {
+        self.handle
+    }
+
+    pub fn body(self, compose: impl FnOnce(&mut crate::ChildrenBuilder)) -> Self {
+        let mut body = crate::ChildrenBuilder::new();
+        compose(&mut body);
+        body.finish().attach_to(self.handle);
+        self
     }
 }
-impl ElementBuilder for view {
+impl ElementBuilder for View {
     fn __element(&self) -> Element {
         self.handle
     }
@@ -338,28 +343,32 @@ impl ElementBuilder for view {
 /// ```ignore
 /// let count = signal(0_i32);
 /// render! {
-///     text {
+///     Text {
 ///         style: css!(font_size: px(18), color: Color::hex(0x000000)),
 ///         value: computed(move || format!("count: {}", count.get())),
 ///     }
 /// }
 /// ```
-#[allow(non_camel_case_types)]
-pub struct text {
+pub struct Text {
     handle: Element,
 }
-#[allow(non_snake_case)]
-pub fn __text_ctor() -> text {
-    text {
-        handle: create_element(ElementTag::Text),
+impl Text {
+    pub fn builder() -> Self {
+        Self {
+            handle: create_element(ElementTag::Text),
+        }
+    }
+
+    pub fn build(self) -> Element {
+        self.handle
     }
 }
-impl ElementBuilder for text {
+impl ElementBuilder for Text {
     fn __element(&self) -> Element {
         self.handle
     }
 }
-impl text {
+impl Text {
     /// `value` — the text string (reactive-capable).
     pub fn value<V>(self, v: V) -> Self
     where
@@ -392,30 +401,41 @@ impl text {
 ///
 /// ```ignore
 /// render! {
-///     scroll_view {
+///     ScrollView {
 ///         style: css!(flex_grow: 1.0),
 ///         axis: ScrollAxis::Vertical,
 ///         on_scroll: |e| println!("y = {}", e.detail.scroll_top),
-///         view { /* ... long content ... */ }
+///         View { /* ... long content ... */ }
 ///     }
 /// }
 /// ```
-#[allow(non_camel_case_types)]
-pub struct scroll_view {
+pub struct ScrollView {
     handle: Element,
 }
-#[allow(non_snake_case)]
-pub fn __scroll_view_ctor() -> scroll_view {
-    scroll_view {
-        handle: create_element(ElementTag::ScrollView),
+impl ScrollView {
+    pub fn builder() -> Self {
+        Self {
+            handle: create_element(ElementTag::ScrollView),
+        }
+    }
+
+    pub fn build(self) -> Element {
+        self.handle
+    }
+
+    pub fn body(self, compose: impl FnOnce(&mut crate::ChildrenBuilder)) -> Self {
+        let mut body = crate::ChildrenBuilder::new();
+        compose(&mut body);
+        body.finish().attach_to(self.handle);
+        self
     }
 }
-impl ElementBuilder for scroll_view {
+impl ElementBuilder for ScrollView {
     fn __element(&self) -> Element {
         self.handle
     }
 }
-impl scroll_view {
+impl ScrollView {
     /// Logical scroll axis (vertical by default).
     pub fn axis<V>(self, v: V) -> Self
     where
@@ -516,17 +536,28 @@ pub use virtual_list::*;
 /// attach to. The builder exposes only `.child(...)`. Fragments
 /// inside a `<list>` are not supported (use the list builder's
 /// `each` / `key` / `children` render-props instead).
-#[allow(non_camel_case_types)]
-pub struct fragment {
+pub struct Fragment {
     handle: Element,
 }
-#[allow(non_snake_case)]
-pub fn __fragment_ctor() -> fragment {
-    fragment {
-        handle: create_phantom_element(),
+impl Fragment {
+    pub fn builder() -> Self {
+        Self {
+            handle: create_phantom_element(),
+        }
+    }
+
+    pub fn build(self) -> Element {
+        self.handle
+    }
+
+    pub fn body(self, compose: impl FnOnce(&mut crate::ChildrenBuilder)) -> Self {
+        let mut body = crate::ChildrenBuilder::new();
+        compose(&mut body);
+        body.finish().attach_to(self.handle);
+        self
     }
 }
-impl ElementBuilder for fragment {
+impl ElementBuilder for Fragment {
     fn __element(&self) -> Element {
         self.handle
     }

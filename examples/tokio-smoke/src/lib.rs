@@ -47,7 +47,7 @@ pub fn app() -> Element {
     });
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             background_color: Color::hex(0x101012),
             flex_direction: FlexDirection::Column,
@@ -55,7 +55,7 @@ pub fn app() -> Element {
             justify_content: JustifyContent::Center,
             padding: px(24),
         )) {
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0xF5F5F7),
                     font_size: px(18),
@@ -64,7 +64,7 @@ pub fn app() -> Element {
                 ),
                 value: "tokio feature smoke",
             )
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0x9AA0AA),
                     font_size: px(14),
@@ -72,7 +72,7 @@ pub fn app() -> Element {
                 ),
                 value: "reqwest (I/O) + spawn_blocking (CPU offload)",
             )
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0x4ADE80),
                     font_size: px(16),

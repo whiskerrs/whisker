@@ -16,7 +16,7 @@ pub(super) fn search_screen() -> Element {
     let query = RwSignal::new(String::new());
     let mode = RwSignal::new(SearchMode::People);
     // Drives the swipeable pager: keyed `scroll_to` on a tab tap, bound
-    // via `ref:` on the horizontal `<list>` below.
+    // via `list_ref:` on the horizontal `List` below.
     let pager = ListHandle::<&'static str>::new();
 
     // One resource per result kind. Both fetch on every committed `query`
@@ -49,13 +49,13 @@ pub(super) fn search_screen() -> Element {
     let people_pager = pager.clone();
     let posts_pager = pager.clone();
     render! {
-        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+        View(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
             // Search field + segmented control: fixed above the results list
             // (the same fixed-header + list shape the profile uses). Each is
             // pinned `flex-shrink: 0` so the virtualised results `list`
             // (flex-grow:1, huge intrinsic height) can't squeeze them to zero.
-            view(style: top_pad) {}
-            view(style: css!(
+            View(style: top_pad) {}
+            View(style: css!(
                 flex_shrink: 0.0,
                 padding_left: theme::GUTTER,
                 padding_right: theme::GUTTER,
@@ -83,14 +83,14 @@ pub(super) fn search_screen() -> Element {
                         .padding_right(px(14)),
                 )
             }
-            view(style: css!(
+            View(style: css!(
                 flex_shrink: 0.0,
                 flex_direction: FlexDirection::Row,
                 border_bottom_width: px(1),
                 border_bottom_color: theme::BORDER,
             )) {
-                search_tab(label: "ユーザー", active: computed(move || mode.get() == SearchMode::People), on_tap: std::rc::Rc::new(move || { mode.set(SearchMode::People); let _ = people_pager.scroll_to(ListScrollTarget::key("people", ScrollAlignment::Start), ScrollBehavior::Smooth); }) as std::rc::Rc<dyn Fn()>)
-                search_tab(label: "投稿", active: computed(move || mode.get() == SearchMode::Posts), on_tap: std::rc::Rc::new(move || { mode.set(SearchMode::Posts); let _ = posts_pager.scroll_to(ListScrollTarget::key("posts", ScrollAlignment::Start), ScrollBehavior::Smooth); }) as std::rc::Rc<dyn Fn()>)
+                SearchTab(label: "ユーザー", active: computed(move || mode.get() == SearchMode::People), on_tap: std::rc::Rc::new(move || { mode.set(SearchMode::People); let _ = people_pager.scroll_to(ListScrollTarget::key("people", ScrollAlignment::Start), ScrollBehavior::Smooth); }) as std::rc::Rc<dyn Fn()>)
+                SearchTab(label: "投稿", active: computed(move || mode.get() == SearchMode::Posts), on_tap: std::rc::Rc::new(move || { mode.set(SearchMode::Posts); let _ = posts_pager.scroll_to(ListScrollTarget::key("posts", ScrollAlignment::Start), ScrollBehavior::Smooth); }) as std::rc::Rc<dyn Fn()>)
             }
             // Swipeable pager: a horizontal `<list>` of two full-viewport-width
             // pages (People / Posts) with item snapping for ViewPager-style
@@ -98,8 +98,8 @@ pub(super) fn search_screen() -> Element {
             // page showing its own empty state. Swiping snaps to a page →
             // `on_snap` syncs the tab highlight; tapping a tab calls
             // keyed `scroll_to` to page over.
-            list(
-                ref: pager.r(),
+            List(
+                list_ref: pager.r(),
                 style: css!(flex_grow: 1.0, width: percent(100)),
                 axis: ScrollAxis::Horizontal,
                 on_scroll: move |e| {
@@ -119,19 +119,19 @@ pub(super) fn search_screen() -> Element {
                 },
                 children: move |m: ReadSignal<SearchMode>| match m.get() {
                     SearchMode::People => render! {
-                        view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
-                            Show(when: move || !query.get().trim().is_empty(), fallback: || render! { status_pane(message: "ユーザーを検索できます".to_string()) }) {
-                                Show(when: move || actors.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
-                                    actor_list(actors: actors.get().unwrap_or_default())
+                        View(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+                            Show(when: move || !query.get().trim().is_empty(), fallback: || render! { StatusPane(message: "ユーザーを検索できます".to_string()) }) {
+                                Show(when: move || actors.get().is_some(), fallback: || render! { StatusPane(message: "検索中…".to_string()) }) {
+                                    ActorList(actors: actors.get().unwrap_or_default())
                                 }
                             }
                         }
                     },
                     SearchMode::Posts => render! {
-                        view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
-                            Show(when: move || !query.get().trim().is_empty(), fallback: || render! { status_pane(message: "投稿を検索できます".to_string()) }) {
-                                Show(when: move || posts.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
-                                    post_list(posts: posts.get().unwrap_or_default())
+                        View(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+                            Show(when: move || !query.get().trim().is_empty(), fallback: || render! { StatusPane(message: "投稿を検索できます".to_string()) }) {
+                                Show(when: move || posts.get().is_some(), fallback: || render! { StatusPane(message: "検索中…".to_string()) }) {
+                                    PostList(posts: posts.get().unwrap_or_default())
                                 }
                             }
                         }
@@ -168,7 +168,7 @@ pub(super) fn search_tab(
         )
     });
     render! {
-        view(
+        View(
             style: css!(
                 flex_grow: 1.0,
                 flex_direction: FlexDirection::Column,
@@ -177,8 +177,8 @@ pub(super) fn search_tab(
             ),
             on_tap: move |_| (cb)(),
         ) {
-            text(style: label_style, value: label)
-            view(style: underline_style) {}
+            Text(style: label_style, value: label)
+            View(style: underline_style) {}
         }
     }
 }
@@ -187,14 +187,14 @@ pub(super) fn search_tab(
 #[component]
 pub(super) fn actor_list(actors: Vec<bsky_domain::ActorView>) -> Element {
     render! {
-        list(
+        List(
             style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
             each: {
                 let actors = actors.clone();
                 move || actors.clone()
             },
             key: |a: &bsky_domain::ActorView| a.did.clone(),
-            children: |a: ReadSignal<bsky_domain::ActorView>| render! { actor_row(actor: a.get()) },
+            children: |a: ReadSignal<bsky_domain::ActorView>| render! { ActorRow(actor: a.get()) },
         )
     }
 }
@@ -211,7 +211,7 @@ pub(super) fn actor_row(actor: bsky_domain::ActorView) -> Element {
     let description = actor.description.clone().unwrap_or_default();
     let has_desc = !description.trim().is_empty();
     render! {
-        view(
+        View(
             style: css!(
                 flex_direction: FlexDirection::Row,
                 width: percent(100),
@@ -224,23 +224,23 @@ pub(super) fn actor_row(actor: bsky_domain::ActorView) -> Element {
                 let _ = nav.navigate(&format!("/profile/{enc}"));
             },
         ) {
-            row_avatar(src: avatar)
-            view(style: css!(
+            RowAvatar(src: avatar)
+            View(style: css!(
                 flex_direction: FlexDirection::Column,
                 flex_grow: 1.0,
                 flex_shrink: 1.0,
                 margin_left: theme::ROW_GAP,
             )) {
-                text(
+                Text(
                     style: css!(font_size: theme::T_NAME, font_weight: FontWeight::Bold, color: theme::TEXT_PRIMARY),
                     value: name,
                 )
-                text(
+                Text(
                     style: css!(font_size: theme::T_HANDLE, color: theme::TEXT_SECONDARY),
                     value: handle,
                 )
-                Show(when: move || has_desc, fallback: || render! { fragment() }) {
-                    text(
+                Show(when: move || has_desc, fallback: || render! { Fragment() }) {
+                    Text(
                         style: css!(font_size: theme::T_BODY, color: theme::TEXT_PRIMARY, margin_top: px(2)),
                         value: description.clone(),
                     )
@@ -256,7 +256,7 @@ pub(super) fn actor_row(actor: bsky_domain::ActorView) -> Element {
 pub(super) fn row_avatar(src: String) -> Element {
     if src.is_empty() {
         render! {
-            view(style: css!(
+            View(style: css!(
                 width: px(44),
                 height: px(44),
                 border_radius: px(22),

@@ -46,8 +46,8 @@ pub(super) fn login_screen() -> Element {
     });
 
     render! {
-        view(style: root_style) {
-            text(
+        View(style: root_style) {
+            Text(
                 style: css!(
                     font_size: theme::T_TITLE,
                     font_weight: FontWeight::Bold,
@@ -79,8 +79,8 @@ pub(super) fn login_screen() -> Element {
                     .padding_right(px(14))
                     .margin_bottom(px(12)),
             )
-            Show(when: move || !error.get().is_empty(), fallback: || render! { fragment() }) {
-                text(
+            Show(when: move || !error.get().is_empty(), fallback: || render! { Fragment() }) {
+                Text(
                     style: css!(
                         font_size: theme::T_META,
                         color: Color::hex(0xFF6B6B),
@@ -89,7 +89,7 @@ pub(super) fn login_screen() -> Element {
                     value: computed(move || error.get()),
                 )
             }
-            view(
+            View(
                 style: css!(
                     height: px(48),
                     border_radius: px(10),
@@ -100,7 +100,7 @@ pub(super) fn login_screen() -> Element {
                 ),
                 on_tap: go,
             ) {
-                text(
+                Text(
                     style: css!(
                         font_size: px(16),
                         font_weight: FontWeight::Bold,
@@ -186,10 +186,10 @@ pub(super) fn auth_screen() -> Element {
     });
 
     render! {
-        view(style: root_style) {
+        View(style: root_style) {
             Show(
                 when: move || !auth_url.get().is_empty(),
-                fallback: move || render! { auth_loading(error: error) },
+                fallback: move || render! { AuthLoading(error: error) },
             ) {
                 WebView(
                     url: auth_url,
@@ -204,14 +204,14 @@ pub(super) fn auth_screen() -> Element {
 #[component]
 pub(super) fn auth_loading(error: RwSignal<String>) -> Element {
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
             padding: px(24),
         )) {
-            text(
+            Text(
                 // Dark text — the auth screen is on a white background.
                 style: css!(font_size: theme::T_BODY, color: Color::hex(0x536471)),
                 value: computed(move || {

@@ -1,5 +1,6 @@
 //! `whisker-fmt` — a rustfmt drop-in that also formats Whisker's
-//! `render!` and `css!` macro bodies.
+//! builder-composition macro bodies (`compose!`, `render!`, `css!`, and
+//! `routes!`).
 //!
 //! # Architecture (mirrors yew-fmt)
 //!
@@ -9,7 +10,7 @@
 //!    letting it read the project's `rustfmt.toml` itself. This is the
 //!    base Rust formatting. ([`run_rustfmt`])
 //! 2. Parse that output with `syn` + `proc-macro2` (`span-locations`),
-//!    walk for `render!` / `css!` invocations, re-parse each body with
+//!    walk for composition macro invocations, re-parse each body with
 //!    [`whisker_macro_syntax`], pretty-print it, and splice the result
 //!    back over the original body token range. ([`reformat_macros`])
 //!
@@ -26,7 +27,7 @@
 //! # Comments inside macros
 //!
 //! `syn` drops comments and `proc-macro2` exposes them only as
-//! whitespace between tokens, so reprinting a `render!` / `css!` body
+//! whitespace between tokens, so reprinting a composition macro body
 //! from the parsed AST would lose them. They are recovered from the
 //! body source text ([`comments`]) and reattached while pretty-printing
 //! ([`printer`]): own-line comments go on their own line at the block's
@@ -56,7 +57,7 @@ use std::path::Path;
 use std::process::Command;
 
 /// Run the full pipeline: rustfmt the source, then reformat every
-/// `render!` / `css!` body found in the rustfmt output.
+/// composition macro body found in the rustfmt output.
 ///
 /// `opts` supplies the layout values the macro pretty-printer needs.
 /// The rustfmt binary independently reads `rustfmt.toml`; pass
@@ -326,14 +327,14 @@ pub fn resolve_options(dir: &Path) -> FmtOptions {
 
 // ---- macro reformatting pass --------------------------------------------
 
-/// Reformat every `render!` / `css!` macro body found in `rust_src`
+/// Reformat every supported composition macro body found in `rust_src`
 /// (which must already be valid, rustfmt-formatted Rust).
 ///
 /// This is the testable core that does NOT need the rustfmt binary.
 ///
 /// ## Comments
 ///
-/// Comments inside a `render!` / `css!` body ARE preserved: they're
+/// Comments inside a composition macro body are preserved: they're
 /// recovered from the body source ([`comments::collect_grammar_comments`])
 /// and reattached during pretty-printing. A fail-safe in
 /// [`macro_body_edit`] falls back to leaving the body untouched if any
@@ -401,9 +402,8 @@ struct MacroEdit {
     replacement: String,
 }
 
-/// Recursively walk a token stream, finding `render! { … }` /
-/// `css! { … }` (or `(…)` / `[…]`) invocations and queueing an edit for
-/// each body.
+/// Recursively walk a token stream, finding supported composition macro
+/// invocations and queueing an edit for each body.
 #[allow(clippy::too_many_arguments)]
 fn collect_macro_edits(
     tokens: TokenStream,
@@ -417,10 +417,10 @@ fn collect_macro_edits(
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
     let mut i = 0;
     while i < trees.len() {
-        // Look for `IDENT ! GROUP` where IDENT is render/css.
+        // Look for `IDENT ! GROUP` where IDENT is a supported macro.
         if let TokenTree::Ident(ident) = &trees[i] {
             let name = ident.to_string();
-            if (name == "render" || name == "css" || name == "routes")
+            if matches!(name.as_str(), "compose" | "render" | "css" | "routes")
                 && i + 2 < trees.len()
                 && matches!(&trees[i + 1], TokenTree::Punct(p) if p.as_char() == '!')
             {
@@ -431,7 +431,7 @@ fn collect_macro_edits(
                         edits.push(edit);
                     }
                     // Never recurse into a macro body: nested
-                    // `render!`/`css!` are re-printed by the body's own
+                    // Nested composition macros are re-printed by the body's own
                     // printer, so an inner edit would splice into byte
                     // ranges the outer edit already owns.
                     i += 3;
@@ -502,9 +502,10 @@ fn macro_body_edit(
     // comments so only GRAMMAR comments get reattached (expr-internal
     // ones ride along with the expr's own source).
     let (formatted, grammar_comments) = match macro_name {
-        "render" => match whisker_macro_syntax::render::parse_root(body_ts.clone()) {
-            Ok(root) => {
-                let ir_root = ir::adapt_render_root(&root);
+        "compose" | "render" => match whisker_macro_syntax::compose::parse_input(body_ts.clone()) {
+            Ok(input) if input.nodes.len() == 1 => {
+                let mut roots = ir::adapt_compose_input(&input);
+                let ir_root = roots.remove(0);
                 let mut spans = Vec::new();
                 ir::collect_ir_expr_spans(&ir_root, &mut spans);
                 let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
@@ -522,14 +523,14 @@ fn macro_body_edit(
                 (s, comments)
             }
             // Not a well-formed body (e.g. mid-edit) — leave it.
-            Err(_) => return Ok(None),
+            Ok(_) | Err(_) => return Ok(None),
         },
-        "routes" => match whisker_macro_syntax::routes::parse_input(body_ts.clone()) {
+        "routes" => match whisker_macro_syntax::compose::parse_input(body_ts.clone()) {
             Ok(input) => {
-                if input.roots.is_empty() {
+                if input.nodes.is_empty() {
                     return Ok(None);
                 }
-                let ir_roots = ir::adapt_routes_roots(&input);
+                let ir_roots = ir::adapt_compose_input(&input);
                 let mut spans = Vec::new();
                 for root in &ir_roots {
                     ir::collect_ir_expr_spans(root, &mut spans);
@@ -550,42 +551,44 @@ fn macro_body_edit(
             }
             Err(_) => return Ok(None),
         },
-        "css" => match whisker_macro_syntax::css::parse_input(body_ts.clone()) {
-            Ok(input) => {
-                if input.kwargs.is_empty() {
-                    return Ok(None);
-                }
-                let mut spans = Vec::new();
-                for kw in &input.kwargs {
-                    if let Some(expr) = &kw.value {
-                        spans.push(span_of_expr(expr));
+        "css" => {
+            match syn::parse2::<whisker_macro_syntax::compose::ComposeArguments>(body_ts.clone()) {
+                Ok(input) => {
+                    if input.arguments.is_empty() {
+                        return Ok(None);
                     }
+                    let mut spans = Vec::new();
+                    for kw in &input.arguments {
+                        if !kw.partial {
+                            spans.push(span_of_expr(&kw.value));
+                        }
+                    }
+                    let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
+                    let expr_map = build_expr_map(&spans, &body_map, exprfmt);
+                    let inline_budget = inline_body_budget(
+                        group.delimiter(),
+                        rust_src,
+                        line_start,
+                        group_start,
+                        close_byte,
+                        opts,
+                    );
+                    let s = printer::print_css(
+                        &input,
+                        &body_map,
+                        opts,
+                        base_indent,
+                        &expr_map,
+                        exprfmt,
+                        &comments,
+                        body_len,
+                        inline_budget,
+                    );
+                    (s, comments)
                 }
-                let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
-                let expr_map = build_expr_map(&spans, &body_map, exprfmt);
-                let inline_budget = inline_body_budget(
-                    group.delimiter(),
-                    rust_src,
-                    line_start,
-                    group_start,
-                    close_byte,
-                    opts,
-                );
-                let s = printer::print_css(
-                    &input,
-                    &body_map,
-                    opts,
-                    base_indent,
-                    &expr_map,
-                    exprfmt,
-                    &comments,
-                    body_len,
-                    inline_budget,
-                );
-                (s, comments)
+                Err(_) => return Ok(None),
             }
-            Err(_) => return Ok(None),
-        },
+        }
         _ => return Ok(None),
     };
 

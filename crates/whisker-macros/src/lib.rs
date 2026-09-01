@@ -3,9 +3,9 @@
 //! - [`main`] — designates the user's app entry. Generates typed Rust
 //!   entry points for Desktop and the retained `whisker_view_*` ABI for
 //!   mobile Hosts; the user writes `fn app() -> Element`.
-//! - [`render!`] — fine-grained renderer macro. Emits imperative
-//!   `view::*` dispatch + `effect`s for dynamic parts. See
-//!   `crates/whisker-macros/src/render.rs` for the grammar.
+//! - [`compose!`] — common named-argument/body syntax lowered to public
+//!   builders. [`render!`] is its UI-named adapter; [`css!`] and [`routes!`]
+//!   reuse the same syntax model.
 //! - [`component`] — wraps a function so it runs inside a fresh
 //!   reactive owner. The owner is registered against the function's
 //!   fn pointer so the hot-reload remount path can find it. See
@@ -16,9 +16,19 @@ use quote::quote;
 use syn::{ImplItem, ItemFn, ItemImpl, parse_macro_input};
 
 mod component;
+mod compose;
 mod css;
-mod module_component;
+mod module_element;
 mod render;
+mod routes;
+
+/// Compose a declarative route tree using the same named-argument syntax as
+/// [`render!`](macro@render) and [`css!`](macro@css).
+#[proc_macro]
+pub fn routes(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as routes::Routes);
+    routes::expand(parsed).into()
+}
 
 /// Marks one platform implementation of [`WhiskerModule`].
 ///
@@ -86,7 +96,7 @@ pub fn WhiskerModule(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// #[whisker::main]
 /// fn app() -> Element {
-///     render! { view(style: css!(flex_grow: 1.0)) { text(value: "Hello") } }
+///     render! { View(style: css!(flex_grow: 1.0)) { Text(value: "Hello") } }
 /// }
 /// ```
 ///
@@ -377,26 +387,33 @@ pub(crate) fn fnv1a64(s: &str) -> u64 {
 /// use whisker::prelude::*;
 ///
 /// let handle = render! {
-///     view(
+///     View(
 ///         style: css!(padding: px(16)),
 ///         on_tap: move |_| println!("tapped"),
 ///     ) {
-///         text(value: "Hello, world")
+///         Text(value: "Hello, world")
 ///     }
 /// };
 /// ```
 ///
-/// See `crates/whisker-macros/src/render.rs` for the full kwarg
-/// grammar. Children may be components, string literals, or `{expr}` values;
-/// the Rust renderer validates them against the parent's child policy.
+/// Every node resolves as an ordinary Rust path with `builder`, setter,
+/// optional `body`, and `build` methods. Children may be builder nodes, string
+/// literals, `{expr}` values, or `..iterable` spreads.
 #[proc_macro]
 pub fn render(input: TokenStream) -> TokenStream {
     render::expand(input)
 }
 
+/// Compose one public builder tree. `render!` is the UI-named adapter over
+/// this same lowering.
+#[proc_macro]
+pub fn compose(input: TokenStream) -> TokenStream {
+    compose::expand_root(input.into()).into()
+}
+
 /// `css!(name: value, …)` — kwarg syntax for the [`Css`] builder.
 ///
-/// Lowers to a [`Css::new()`] method chain (`Css::new().name(value)
+/// Lowers to a [`Css::builder()`] method chain (`Css::builder().name(value)
 /// .…`). `Css` is taken from the call site's scope, so
 /// `use whisker::prelude::*` (which re-exports `Css`) is the only
 /// import callers need.
@@ -420,7 +437,7 @@ pub fn render(input: TokenStream) -> TokenStream {
 /// ```
 ///
 /// [`Css`]: whisker_css::Css
-/// [`Css::new()`]: whisker_css::Css::new
+/// [`Css::builder()`]: whisker_css::Css::builder
 #[proc_macro]
 pub fn css(input: TokenStream) -> TokenStream {
     css::expand(input.into()).into()
@@ -431,18 +448,15 @@ pub fn css(input: TokenStream) -> TokenStream {
 /// The macro takes the user's `fn xxx(a: A, b: B) -> Element`
 /// and emits both:
 ///
-/// 1. A `XxxProps` struct (Pascal-cased function name + `Props`)
-///    derived from the parameter list, plus a hand-rolled
-///    `XxxPropsBuilder` so callers can construct Props via
-///    `XxxProps::builder().a(...).b(...).build()`.
+/// 1. A `XxxProps` struct plus a public PascalCase marker and hand-rolled
+///    builder, so callers can use `Xxx::builder().a(...).b(...).build()`.
 ///    Each setter accepts `impl Into<T>` for `Into` coercion on the
 ///    call side (`&str` → `String`, `i32` → `f64`, …).
 ///    `Option<T>` props get a strip-option setter (accept the inner
 ///    `T`) and default to `None` when omitted. `Children` props get
 ///    a default empty closure. A `#[prop(default = expr)]` attribute
 ///    on a parameter inserts `expr` as the field's default at `.build()`.
-///    Required fields that the user didn't set panic at `.build()` with
-///    `"required field `xxx` was not set"`.
+///    Const-bool type state makes every required field a compile-time check.
 ///
 /// 2. A rewritten `fn xxx(__props: XxxProps) -> Element` whose
 ///    body destructures the props back into local variables and runs
@@ -450,11 +464,9 @@ pub fn css(input: TokenStream) -> TokenStream {
 ///    `mount_component_remountable` machinery (per-component
 ///    remount + subsecond hot-reload integration).
 ///
-/// The signature change is deliberate: positional `xxx(a, b)`
-/// invocations do not compile. User components are invoked exclusively
-/// through `render!`'s `Xxx(a: …, b: …)` syntax, which lowers to
-/// `Xxx(XxxProps::builder().a(…).b(…).build())`. This unifies the
-/// call-site shape with built-in elements (`view(…)`).
+/// The generated marker is a normal public Rust API. `render!`'s
+/// `Xxx(a: …, b: …)` syntax lowers to the same builder chain and adds no
+/// component-specific execution path.
 ///
 /// ```ignore
 /// use whisker::prelude::*;
@@ -465,8 +477,9 @@ pub fn css(input: TokenStream) -> TokenStream {
 ///     render! { /* ... */ }
 /// }
 ///
-/// // Call site (always through `render!`, under the PascalCase alias):
+/// // Macro and direct-builder call sites are equivalent:
 /// render! { Counter(initial: 0) }
+/// Counter::builder().initial(0).build();
 /// ```
 #[proc_macro_attribute]
 pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -476,14 +489,14 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Declare a Whisker-side wrapper for a Host-registered module element.
 ///
 /// ```ignore
-/// #[whisker::module_component(
+/// #[whisker::module_element(
 ///     name = "example.ui/Hello",
 ///     measurement = None,
 /// )]
 /// pub fn hello(style: whisker::Style) {}
 /// ```
 ///
-/// Generates the same Props + builder + PascalCase-alias surface as
+/// Generates the same private Props + public builder-marker surface as
 /// `#[component]`, but the function body is **auto-generated**: it
 /// calls `view::create_element_by_name(tag)` and then applies each
 /// declared prop as either structured CSS (for the `style` prop) or
@@ -504,7 +517,7 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// entries. A declared `style` parameter remains supported for compatibility
 /// and is excluded from the schema.
 /// Imperative methods on a mounted element are dispatched through
-/// the element's `ElementRef` (`ref:` prop) via
+/// the element's `ElementRef` (`element_ref:` prop) via
 /// `ElementRef::command(name, parameters)`. Commands must be declared
 /// in the macro's `commands = [("name", ValueKind)]` schema.
 ///
@@ -516,21 +529,21 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// See `crates/whisker-macros/src/module_component.rs` for the
+/// See `crates/whisker-macros/src/module_element.rs` for the
 /// emission details.
 #[proc_macro_attribute]
-pub fn module_component(attr: TokenStream, item: TokenStream) -> TokenStream {
-    module_component::expand(attr.into(), item.into()).into()
+pub fn module_element(attr: TokenStream, item: TokenStream) -> TokenStream {
+    module_element::expand(attr.into(), item.into()).into()
 }
 
 /// Declares the schema half of a Whisker built-in component.
 ///
 /// This internal macro accepts the same `name`, `measurement`, and function
-/// signature model as [`module_component`], but deliberately does not generate
+/// signature model as [`module_element`], but deliberately does not generate
 /// an authoring builder. Whisker's built-in builders retain their specialized
 /// lowering and bind the generated schema to an internal `ElementTag`.
 #[doc(hidden)]
 #[proc_macro_attribute]
-pub fn builtin_component(attr: TokenStream, item: TokenStream) -> TokenStream {
-    module_component::expand_builtin(attr.into(), item.into()).into()
+pub fn builtin_element(attr: TokenStream, item: TokenStream) -> TokenStream {
+    module_element::expand_builtin(attr.into(), item.into()).into()
 }

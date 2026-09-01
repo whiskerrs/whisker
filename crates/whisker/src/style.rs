@@ -32,7 +32,7 @@ use whisker_runtime::view::{Element, ScrollAxis, VirtualGridLayout, VirtualListL
 ///
 /// `Clone` is cheap: dynamic variants hold an [`Rc`], so a clone
 /// shares the same closure rather than re-boxing it. This lets
-/// the `#[component]` / `#[module_component]` macros store a `Style`
+/// the `#[component]` / `#[module_element]` macros store a `Style`
 /// prop and re-clone it on every re-invoke (hot-reload remount path).
 ///
 /// Raw CSS is intentionally not part of the authoring contract:

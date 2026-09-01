@@ -19,7 +19,7 @@ fn benchmark_card(item: Signal<u32>) -> Element {
     });
 
     render! {
-        view(style: css!(
+        View(style: css!(
             width: percent(100),
             height: px(116),
             flex_direction: FlexDirection::Column,
@@ -27,7 +27,7 @@ fn benchmark_card(item: Signal<u32>) -> Element {
             border_radius: px(12),
             background_color: Color::hex(0x111827),
         )) {
-            text(
+            Text(
                 style: css!(
                     color: Color::hex(0xF8FAFC),
                     font_size: px(15),
@@ -35,11 +35,11 @@ fn benchmark_card(item: Signal<u32>) -> Element {
                 ),
                 value: title,
             )
-            text(
+            Text(
                 style: css!(color: Color::hex(0x94A3B8), font_size: px(12)),
                 value: subtitle,
             )
-            text(
+            Text(
                 style: css!(color: Color::hex(0x22C55E), font_size: px(12)),
                 value: amount,
             )
@@ -53,7 +53,7 @@ fn benchmark_grid_row(row: Signal<u32>) -> Element {
     let second = computed(move || row.get() * COLUMN_COUNT + 1);
 
     render! {
-        view(style: Css::new()
+        View(style: Css::new()
             .display_grid()
             .width(percent(100))
             .height(px(GRID_ROW_HEIGHT))
@@ -67,8 +67,8 @@ fn benchmark_grid_row(row: Signal<u32>) -> Element {
             .padding_bottom(px(8))
             .padding_left(px(12))
         ) {
-            benchmark_card(item: first)
-            benchmark_card(item: second)
+            BenchmarkCard(item: first)
+            BenchmarkCard(item: second)
         }
     }
 }
@@ -76,12 +76,12 @@ fn benchmark_grid_row(row: Signal<u32>) -> Element {
 #[whisker::main]
 pub fn app() -> Element {
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
             background_color: Color::hex(0x09090B),
         )) {
-            view(style: css!(
+            View(style: css!(
                 width: percent(100),
                 height: px(104),
                 flex_shrink: 0.0,
@@ -92,7 +92,7 @@ pub fn app() -> Element {
                 padding_left: px(16),
                 background_color: Color::hex(0x18181B),
             )) {
-                text(
+                Text(
                     style: css!(
                         color: Color::hex(0xFAFAFA),
                         font_size: px(18),
@@ -100,17 +100,17 @@ pub fn app() -> Element {
                     ),
                     value: "Whisker List · 100,000 cells",
                 )
-                text(
+                Text(
                     style: css!(color: Color::hex(0xA1A1AA), font_size: px(12)),
                     value: "2-column CSS Grid · Rust-owned virtualized rows",
                 )
             }
-            list(
+            List(
                 style: css!(flex_grow: 1.0, width: percent(100)),
                 each: || (0..GRID_ROW_COUNT).collect::<Vec<_>>(),
                 key: |row: &u32| *row,
                 children: |row: ReadSignal<u32>| render! {
-                    benchmark_grid_row(row: row)
+                    BenchmarkGridRow(row: row)
                 },
             )
         }

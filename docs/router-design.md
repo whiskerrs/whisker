@@ -226,17 +226,17 @@ fn tabs_layout() -> Element {
     let nav = use_navigator();
     let pathname = use_pathname();        // reactive current URL
     render! {
-        view(style: css!(flex_grow: 1.0, display: Display::Flex,
+        View(style: css!(flex_grow: 1.0, display: Display::Flex,
                          flex_direction: FlexDirection::Column)) {
-            view(style: css!(flex_grow: 1.0)) { Outlet {} }
-            view(style: css!(display: Display::Flex, flex_direction: FlexDirection::Row,
+            View(style: css!(flex_grow: 1.0)) { Outlet {} }
+            View(style: css!(display: Display::Flex, flex_direction: FlexDirection::Row,
                              height: px(56))) {
                 // select() with the group URL switches the tab
-                view(on_tap: move |_| { let _ = nav.select("/(home)"); }) {
-                    text(value: "Home")
+                View(on_tap: move |_| { let _ = nav.select("/(home)"); }) {
+                    Text(value: "Home")
                 }
-                view(on_tap: move |_| { let _ = nav.select("/(search)"); }) {
-                    text(value: "Search")
+                View(on_tap: move |_| { let _ = nav.select("/(search)"); }) {
+                    Text(value: "Search")
                 }
             }
         }

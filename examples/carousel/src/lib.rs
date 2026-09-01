@@ -12,7 +12,7 @@ const CARD_COUNT: i32 = 6;
 #[component]
 fn carousel_card(index: i32, title: &'static str, body: &'static str, color: Color) -> Element {
     render! {
-        view(style: css!(
+        View(style: css!(
             width: px(CARD_WIDTH as i32),
             height: px(300),
             flex_shrink: 0.0,
@@ -23,7 +23,7 @@ fn carousel_card(index: i32, title: &'static str, body: &'static str, color: Col
             border_radius: px(28),
             background_color: color,
         )) {
-            view(style: css!(
+            View(style: css!(
                 width: px(48),
                 height: px(48),
                 border_radius: percent(50),
@@ -31,7 +31,7 @@ fn carousel_card(index: i32, title: &'static str, body: &'static str, color: Col
                 justify_content: JustifyContent::Center,
                 background_color: Color::rgba(255, 255, 255, 0.2),
             )) {
-                text(
+                Text(
                     style: css!(
                         color: Color::hex(0xFFFFFF),
                         font_size: px(16),
@@ -40,8 +40,8 @@ fn carousel_card(index: i32, title: &'static str, body: &'static str, color: Col
                     value: format!("{:02}", index + 1),
                 )
             }
-            view(style: css!(flex_direction: FlexDirection::Column)) {
-                text(
+            View(style: css!(flex_direction: FlexDirection::Column)) {
+                Text(
                     style: css!(
                         color: Color::hex(0xFFFFFF),
                         font_size: px(26),
@@ -49,7 +49,7 @@ fn carousel_card(index: i32, title: &'static str, body: &'static str, color: Col
                     ),
                     value: title,
                 )
-                text(
+                Text(
                     style: css!(
                         color: Color::rgba(255, 255, 255, 0.78),
                         font_size: px(14),
@@ -79,7 +79,7 @@ fn page_dot(index: i32, current: ReadSignal<i32>) -> Element {
             },
         )
     });
-    render! { view(style: style) }
+    render! { View(style: style) }
 }
 
 #[whisker::main]
@@ -95,20 +95,20 @@ pub fn app() -> Element {
     };
 
     render! {
-        view(style: css!(
+        View(style: css!(
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
             background_color: Color::hex(0x070B14),
             padding_top: px(48),
             padding_bottom: px(28),
         )) {
-            view(style: css!(
+            View(style: css!(
                 flex_direction: FlexDirection::Column,
                 padding_left: px(20),
                 padding_right: px(20),
                 margin_bottom: px(24),
             )) {
-                text(
+                Text(
                     style: css!(
                         color: Color::hex(0xF8FAFC),
                         font_size: px(28),
@@ -116,7 +116,7 @@ pub fn app() -> Element {
                     ),
                     value: "Scroll snap carousel",
                 )
-                text(
+                Text(
                     style: css!(
                         color: Color::hex(0x94A3B8),
                         font_size: px(14),
@@ -125,7 +125,7 @@ pub fn app() -> Element {
                     value: "Flick quickly: Always should advance exactly one card.",
                 )
             }
-            scroll_view(
+            ScrollView(
                 axis: ScrollAxis::Horizontal,
                 snap: ScrollSnap::start().with_offset(-16.0),
                 scroll_snap_stop: ScrollSnapStop::Always,
@@ -137,26 +137,26 @@ pub fn app() -> Element {
                     flex_direction: FlexDirection::Row,
                 ),
             ) {
-                carousel_card(index: 0, title: "Aurora", body: "The first card verifies the leading-edge clamp.", color: Color::hex(0x7C3AED))
-                carousel_card(index: 1, title: "Current", body: "A short drag should choose the nearest direct child.", color: Color::hex(0x2563EB))
-                carousel_card(index: 2, title: "Momentum", body: "Even a fast fling must stop at the adjacent card.", color: Color::hex(0x0891B2))
-                carousel_card(index: 3, title: "Native", body: "Each Host keeps its own scrolling physics and presentation.", color: Color::hex(0x059669))
-                carousel_card(index: 4, title: "Shared", body: "The same typed ScrollView contract drives every Host.", color: Color::hex(0xD97706))
-                carousel_card(index: 5, title: "Finish", body: "The last card verifies trailing-content clamping.", color: Color::hex(0xDC2626))
+                CarouselCard(index: 0, title: "Aurora", body: "The first card verifies the leading-edge clamp.", color: Color::hex(0x7C3AED))
+                CarouselCard(index: 1, title: "Current", body: "A short drag should choose the nearest direct child.", color: Color::hex(0x2563EB))
+                CarouselCard(index: 2, title: "Momentum", body: "Even a fast fling must stop at the adjacent card.", color: Color::hex(0x0891B2))
+                CarouselCard(index: 3, title: "Native", body: "Each Host keeps its own scrolling physics and presentation.", color: Color::hex(0x059669))
+                CarouselCard(index: 4, title: "Shared", body: "The same typed ScrollView contract drives every Host.", color: Color::hex(0xD97706))
+                CarouselCard(index: 5, title: "Finish", body: "The last card verifies trailing-content clamping.", color: Color::hex(0xDC2626))
             }
-            view(style: css!(
+            View(style: css!(
                 flex_grow: 1.0,
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
             )) {
-                view(style: css!(flex_direction: FlexDirection::Row, align_items: AlignItems::Center)) {
-                    page_dot(index: 0, current: current.read_only())
-                    page_dot(index: 1, current: current.read_only())
-                    page_dot(index: 2, current: current.read_only())
-                    page_dot(index: 3, current: current.read_only())
-                    page_dot(index: 4, current: current.read_only())
-                    page_dot(index: 5, current: current.read_only())
+                View(style: css!(flex_direction: FlexDirection::Row, align_items: AlignItems::Center)) {
+                    PageDot(index: 0, current: current.read_only())
+                    PageDot(index: 1, current: current.read_only())
+                    PageDot(index: 2, current: current.read_only())
+                    PageDot(index: 3, current: current.read_only())
+                    PageDot(index: 4, current: current.read_only())
+                    PageDot(index: 5, current: current.read_only())
                 }
             }
         }

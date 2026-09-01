@@ -10,8 +10,8 @@
 //! #[whisker::main]
 //! fn app() -> Element {
 //!     render! {
-//!         view(style: css!(flex_grow: 1.0, background_color: Color::hex(0xffffff))) {
-//!             text(value: "Hello, Whisker")
+//!         View(style: css!(flex_grow: 1.0, background_color: Color::hex(0xffffff))) {
+//!             Text(value: "Hello, Whisker")
 //!         }
 //!     }
 //! }
@@ -24,9 +24,9 @@
 //! a single import root so app code never needs to know which inner
 //! crate owns which symbol. The conceptual groupings:
 //!
-//! - **Macros** ([`component`], [`main`], [`module_component`], [`render`])
-//!   — proc macros that lower component definitions and the `render! { … }`
-//!   DSL into builder chains over the items in [`__tags`].
+//! - **Macros** ([`component`], [`main`], [`module_element`], [`compose`],
+//!   [`render`]) — proc macros that generate or invoke the same public builder
+//!   APIs available to ordinary Rust code.
 //! - **Reactive primitives** — [`signal()`], [`computed()`], [`effect()`],
 //!   [`on_cleanup`], [`on_mount`], [`provide_context`], [`use_context`],
 //!   [`resource()`], and their handle types ([`Signal`], [`ReadSignal`],
@@ -36,10 +36,9 @@
 //! - **Control flow** — [`ForEach`] (keyed list), [`Show`] (conditional).
 //!   Both are written as ordinary `#[component]` functions.
 //! - **CSS** — the [`css`] type-safe builder + the `css!` macro.
-//! - **Built-in elements** — `view`, `text`, `scroll_view`, `list`,
-//!   `fragment`. The `render!` macro lowers each
-//!   tag invocation into a builder chain on the corresponding struct in
-//!   [`__tags`]; the [`__tags::ElementBuilder`] trait provides the
+//! - **Built-in elements** — [`View`], [`Text`], [`ScrollView`], [`List`],
+//!   and [`Fragment`]. The `render!` macro lowers each invocation into the
+//!   same public builder chain; [`ElementBuilder`] provides the
 //!   shared `style` / semantics / `on_<event>` methods.
 //! - **Platform bridges** — [`PlatformModule`] + [`module!`] for
 //!   function-shaped native modules, [`ElementRef`]
@@ -81,8 +80,8 @@ pub use whisker_runtime::element::ElementTag;
 pub use whisker_runtime::view::Element;
 
 #[doc(hidden)]
-pub use whisker_macros::builtin_component;
-pub use whisker_macros::{WhiskerModule, component, main, module_component, render};
+pub use whisker_macros::builtin_element;
+pub use whisker_macros::{WhiskerModule, component, compose, main, module_element, render};
 
 /// A platform implementation contributed by a Whisker module package.
 ///
@@ -113,9 +112,9 @@ pub use whisker_runtime::event::Dataset;
 pub use whisker_value::WhiskerValue;
 
 /// Typed event objects handed to `on_<event>` handlers on built-in
-/// elements and `#[whisker::module_component]` view methods.
+/// elements and `#[whisker::module_element]` view methods.
 ///
-/// A `view(on_tap: |e| …)` handler receives a [`TouchEvent`](event::TouchEvent);
+/// A `View(on_tap: |e| …)` handler receives a [`TouchEvent`](event::TouchEvent);
 /// `on_animationend` an [`AnimationEvent`](event::AnimationEvent);
 /// component-specific state events a [`CustomEvent`](event::CustomEvent).
 pub mod event {
@@ -185,16 +184,16 @@ pub use whisker_runtime::{
 };
 
 pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
-pub use whisker_runtime::view::{Children, TextChildren};
+pub use whisker_runtime::view::{Children, ChildrenBuilder, TextChildren};
 pub use whisker_runtime::view::{
     EachFn, Fallback, ItemFn, KeyFn, ListHandle, ListHandleError, ListRef, ListScrollTarget,
     ListSnapshot, ScrollAlignment, ScrollAxis, ScrollBehavior, WhenFn,
 };
 
-/// Built-in tag builders. The `render!` macro lowers each built-in
-/// element invocation (`view(style: css!(flex_grow: 1.0), on_tap: move |_| {})`) into a
+/// Built-in element builders. The `render!` macro lowers each built-in
+/// element invocation (`View(style: css!(flex_grow: 1.0), on_tap: move |_| {})`) into a
 /// builder method chain on one of these types
-/// (`__tags::view().style(|| "x").on_tap(|| {}).__h()`). Methods
+/// (`View::builder().style(css).on_tap(handler).build()`). Methods
 /// internally invoke the imperative runtime primitives
 /// (`create_element`, `set_specified_style`, …).
 ///
@@ -202,14 +201,14 @@ pub use whisker_runtime::view::{
 /// codegen:** rust-analyzer's auto-completion picks up methods on
 /// known receiver types far more reliably than field names inside
 /// proc-macro-emitted struct-init expressions. The user typing
-/// `view { sty|` inside `render! { … }` ends up — after the macro
+/// `View { sty|` inside `render! { … }` ends up — after the macro
 /// expansion + cursor-position mapping — at `.style|(…)` in the
 /// chain, which is exactly the shape RA's method-completion
 /// engine knows how to drive. Same mechanism Leptos uses for its
 /// `view!` DX.
 ///
-/// Internal. Not part of the public surface — users go through
-/// `render!`.
+/// The types and trait are re-exported publicly below; this hidden module only
+/// gives proc-macro expansions a stable implementation path.
 #[doc(hidden)]
 pub mod __element_builder {
     pub use crate::__tags::ElementBuilder;
@@ -218,6 +217,8 @@ pub mod __element_builder {
 #[doc(hidden)]
 #[path = "builtins/mod.rs"]
 pub mod __tags;
+
+pub use __tags::{ElementBuilder, Fragment, List, ScrollView, Text, View};
 
 /// Whisker platform module invocation entry point.
 ///
@@ -418,10 +419,9 @@ pub mod __hot {
 /// - **CSS** — [`Css`](crate::css::Css), the builder API,
 ///   numeric extension traits (`8.px()`, `45.deg()`, …), and the
 ///   `css!` macro.
-/// - **Built-in element tags** — `view`, `text`, `scroll_view`,
-///   `list`, `fragment` (re-exported from the
-///   hidden [`__tags`] module so rust-analyzer
-///   completes `vie|` → `view` inside `render!`).
+/// - **Built-in element builders** — [`View`](crate::View),
+///   [`Text`](crate::Text), [`ScrollView`](crate::ScrollView),
+///   [`List`](crate::List), and [`Fragment`](crate::Fragment).
 /// - **Typed control options** — [`ScrollAxis`](crate::ScrollAxis),
 ///   [`ScrollSnap`](crate::ScrollSnap), and
 ///   [`ScrollSnapStop`](crate::attrs::ScrollSnapStop).
@@ -450,7 +450,7 @@ pub mod prelude {
         TextHandle,
     };
     pub use crate::{ForEach, ForEachProps, Show, ShowProps};
-    pub use crate::{component, main, render};
+    pub use crate::{component, compose, main, render};
     // The `css!` macro coexists with the `crate::css` module
     // re-export above because the macro and module namespaces are
     // disjoint.
@@ -459,16 +459,15 @@ pub mod prelude {
     pub use crate::{
         Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, Dataset,
     };
-    // Re-exporting the `__tags` struct names is what lets RA complete
-    // `vie|` → `view`, `te|` → `text`, etc. inside render! — the
+    // Re-exporting the public builder names is what lets RA complete
+    // `Vie|` → `View`, `Te|` → `Text`, etc. inside render! — the
     // macro source position is a value-expression context, so RA does
     // identifier completion against the surrounding scope. Mixing
-    // these with kwarg completion (`view(sty|)`) is safe because the
+    // these with kwarg completion (`View(sty|)`) is safe because the
     // macro unconditionally emits `.name(())` for every partial
     // kwarg, so RA's macro-expansion completion path sees the
-    // method-call shape regardless of what `view` resolves to.
-    #[doc(hidden)]
-    pub use crate::__tags::{fragment, list, scroll_view, text, view};
-    // A separate list-item builder is intentionally absent — the `list` render-props
+    // method-call shape regardless of what the builder path resolves to.
+    pub use crate::{ElementBuilder, Fragment, List, ScrollView, Text, View};
+    // A separate list-item builder is intentionally absent — the `List` render-props
     // builder auto-wraps every item internally.
 }

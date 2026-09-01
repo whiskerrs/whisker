@@ -1,10 +1,10 @@
 //! [`Signal<T>`] — the unified prop-value type used by built-in tags,
-//! `#[component]`, and `#[whisker::module_component]` builders.
+//! `#[component]`, and `#[whisker::module_element]` builders.
 //!
 //! ## Why this type exists
 //!
 //! Whisker's three "component" surfaces — built-in tags (`view`,
-//! `text`, …), user `#[component]`s, and `#[whisker::module_component]`
+//! `text`, …), user `#[component]`s, and `#[whisker::module_element]`
 //! — share a single calling convention for props:
 //!
 //! ```ignore
@@ -31,10 +31,10 @@
 //!
 //! ```ignore
 //! // user writes:
-//! text(value: my_signal)
+//! Text(value: my_signal)
 //!
 //! // render! macro emits (no auto move-closure wrapping):
-//! __tags::__text_ctor().value(my_signal).__h()
+//! Text::builder().value(my_signal).build()
 //!
 //! // .value() does:
 //! fn value(self, v: impl Into<Signal<String>>) -> Self {
@@ -62,7 +62,7 @@
 //! ## Why not a closure variant?
 //!
 //! A `Closure(Box<dyn Fn() -> T>)` variant would let callers write
-//! `text(value: || format!(…))` and get reactivity without naming an
+//! `Text(value: || format!(…))` and get reactivity without naming an
 //! intermediate, but the "closure ⇒ dynamic" rule is hard to
 //! internalise, and the explicit `computed(move || …)` both names the
 //! derivation and memoises it.
@@ -77,7 +77,7 @@ use super::stored::StoredValue;
 /// Prop value: either a static `T` or a reactive [`ReadSignal<T>`].
 ///
 /// Built-in tag builders / `#[component]` generated builders /
-/// `#[whisker::module_component]` generated builders all accept
+/// `#[whisker::module_element]` generated builders all accept
 /// `impl Into<Signal<T>>`. The variant determines whether the
 /// builder sets the attribute once ([`Stored`]) or wraps the read
 /// in an `effect` ([`Dynamic`]).
@@ -134,7 +134,7 @@ impl<T: 'static + Clone> Signal<T> {
     ///   stack. Outside any tracking scope this is just a value
     ///   read.
     ///
-    /// User-facing `#[component]` / `#[whisker::module_component]`
+    /// User-facing `#[component]` / `#[whisker::module_element]`
     /// bodies use this to read a `Signal<T>` prop:
     ///
     /// ```ignore
@@ -146,7 +146,7 @@ impl<T: 'static + Clone> Signal<T> {
     ///     //                                                  with the
     ///     //                                                  enclosing
     ///     //                                                  computed.
-    ///     render! { view(style: style) { … } }
+    ///     render! { View(style: style) { … } }
     /// }
     /// ```
     pub fn get(&self) -> T {
@@ -173,7 +173,7 @@ impl<T: 'static> From<T> for Signal<T> {
 }
 
 // A prop the caller omits falls back to `unwrap_or_default()` in
-// `#[whisker::module_component]`'s builder, which needs to produce a
+// `#[whisker::module_element]`'s builder, which needs to produce a
 // reasonable "attribute not set" value (`""` for `Signal<String>`,
 // `false` for `Signal<bool>`).
 impl<T: 'static + Default> Default for Signal<T> {

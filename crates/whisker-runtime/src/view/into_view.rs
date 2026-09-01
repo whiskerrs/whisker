@@ -19,6 +19,39 @@ pub trait IntoView {
     fn into_view(self) -> View;
 }
 
+/// Collector used by public builder `body` methods.
+///
+/// The compose macros only call [`push`](Self::push); the concrete parent
+/// builder decides whether to attach the collected views immediately or keep
+/// a closure for later component remounts.
+#[derive(Default)]
+pub struct ChildrenBuilder {
+    children: Vec<View>,
+}
+
+impl ChildrenBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, child: impl IntoView) {
+        self.children.push(child.into_view());
+    }
+
+    pub fn extend(&mut self, children: impl IntoIterator<Item = impl IntoView>) {
+        self.children
+            .extend(children.into_iter().map(IntoView::into_view));
+    }
+
+    pub fn finish(self) -> View {
+        match self.children.len() {
+            0 => View::Empty,
+            1 => self.children.into_iter().next().unwrap_or(View::Empty),
+            _ => View::Fragment(self.children),
+        }
+    }
+}
+
 /// Type used by `#[component]` for the conventional `children` prop.
 /// The `render!` macro routes a component invocation's non-kwarg
 /// children into a `move || View::Fragment(…)` closure of this type;
@@ -56,8 +89,8 @@ impl TextChildren {
 ///
 /// Returns a phantom element (no on-screen footprint — `is_phantom`
 /// is true) with the children's view attached. The caller (typically
-/// the `render!` macro lowering for the `children()` special node)
-/// hands this back to the parent's `.child(...)` chain so the parent
+/// framework-level control flow projecting a [`Children`] handle)
+/// hands this back to the parent so the parent
 /// sees a single Element handle, exactly like any other child node.
 ///
 /// Takes `&Children` so nothing moves out of the surrounding

@@ -80,9 +80,9 @@ pub fn app() -> Element {
         .line_height(px(22));
 
     render! {
-        view(style: page) {
-            text(style: title, value: "whisker-paths")
-            text(style: body, value: computed(move || log.get()))
+        View(style: page) {
+            Text(style: title, value: "whisker-paths")
+            Text(style: body, value: computed(move || log.get()))
         }
     }
 }

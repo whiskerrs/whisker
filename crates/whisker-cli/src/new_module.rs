@@ -45,7 +45,7 @@ pub struct NewModuleArgs {
     pub path: Option<PathBuf>,
 
     /// Module shape. `view-bearing` (the default) generates a
-    /// `#[whisker::module_component]` shim + a DSL module with a
+    /// `#[whisker::module_element]` shim + a DSL module with a
     /// `View(...)` block and a `WhiskerUI<View>` subclass.
     /// `function-only` generates a `#[whisker::platform_module]`
     /// proxy + a DSL module with module-level `Function`s and no
@@ -448,7 +448,7 @@ fn lib_rs_view(v: &Vars) -> String {
 use whisker::Style;
 
 /// View-bearing element shared by every Host implementation.
-#[whisker::module_component(name = "{element_name}", measurement = None)]
+#[whisker::module_element(name = "{element_name}", measurement = None)]
 pub fn {ident}(style: Style) {{}}
 
 /// Element schemas exported by this package for surface bootstrap.

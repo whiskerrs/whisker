@@ -450,8 +450,8 @@ Android, iOS, browser, or Desktop process entry point:
 #[whisker::main]
 fn app() -> Element {
     render! {
-        view {
-            text(value: "Hello, Whisker")
+        View {
+            Text(value: "Hello, Whisker")
         }
     }
 }

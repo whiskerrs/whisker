@@ -14,6 +14,7 @@
 //! adapted here and keeps its own small printer.
 
 use proc_macro2::Span;
+use quote::ToTokens;
 use syn::{Expr, LitStr};
 
 /// One node in the normalized tree.
@@ -23,10 +24,6 @@ pub(crate) enum IrNode {
     /// printer) and routes!'s `Switch`/`Stack`/`Route`/unknown-ident
     /// nodes.
     Tag(IrTag),
-    /// render!'s `children()` slot — always prints literally as
-    /// `children()`, never subject to the "omit `()` with no kwargs"
-    /// rule other tags get.
-    ChildrenSlot(Span),
     /// A static render child string.
     Text(LitStr),
     /// A dynamic `{expr}` render child.
@@ -71,142 +68,56 @@ pub(crate) struct IrKwarg {
 pub(crate) enum IrValue {
     /// A real Rust expression — printed through
     /// [`crate::printer::Printer::expr_src`] (ExprMap / verbatim /
-    /// nested-macro recursion). Boxed: `Expr` is far larger than
-    /// [`IrValue::Literal`]'s `String`, and this enum lives inside every
-    /// [`IrKwarg`] in a tree.
+    /// nested-macro recursion). Boxed to keep the tree compact.
     Expr(Box<Expr>),
-    /// Pre-rendered text, printed as-is with no `expr_src` machinery.
-    /// Used for routes!'s `Route(path: "…", component: Foo)`, whose
-    /// `path`/`component` are a `LitStr`/`Ident` rather than full exprs:
-    /// a debug-quoted string and a bare ident respectively.
-    Literal(String),
 }
 
-// ---- adapters -------------------------------------------------------------
-
-/// Adapt a `render!` body's single root into an [`IrNode`].
-pub(crate) fn adapt_render_root(root: &whisker_macro_syntax::render::Root) -> IrNode {
-    adapt_render_node(&root.node)
+/// Adapt the shared builder-composition AST used by `compose!`, `render!`,
+/// and `routes!` into the formatter's layout tree.
+pub(crate) fn adapt_compose_input(
+    input: &whisker_macro_syntax::compose::ComposeInput,
+) -> Vec<IrNode> {
+    input.nodes.iter().map(adapt_compose_node).collect()
 }
 
-fn adapt_render_node(node: &whisker_macro_syntax::render::Node) -> IrNode {
-    use whisker_macro_syntax::render::Node;
-    match node {
-        Node::Element(el) => IrNode::Tag(IrTag {
-            tag: el.tag.to_string(),
-            tag_span: Some(el.tag.span()),
-            kwargs: adapt_render_kwargs(&el.kwargs),
-            children: el.children.iter().map(adapt_render_node).collect(),
-            always_block: false,
-        }),
-        Node::UserComponent(uc) => IrNode::Tag(IrTag {
-            tag: uc.alias_ident.to_string(),
-            tag_span: Some(uc.alias_ident.span()),
-            kwargs: adapt_render_kwargs(&uc.kwargs),
-            children: uc.children.iter().map(adapt_render_node).collect(),
-            always_block: false,
-        }),
-        Node::ChildrenSlot { span } => IrNode::ChildrenSlot(*span),
-        Node::TextLiteral(value) => IrNode::Text(value.clone()),
-        Node::Expression(expression) => IrNode::Expression(expression.clone()),
-    }
-}
-
-fn adapt_render_kwargs(kwargs: &[whisker_macro_syntax::render::Kwarg]) -> Vec<IrKwarg> {
+pub(crate) fn adapt_compose_node(node: &whisker_macro_syntax::compose::ComposeNode) -> IrNode {
     use syn::spanned::Spanned;
-    kwargs
-        .iter()
-        .map(|kw| IrKwarg {
-            name: kw.name.to_string(),
-            name_span: Some(kw.name.span()),
-            value: if kw.partial {
-                None
-            } else {
-                Some(IrValue::Expr(Box::new(kw.value.clone())))
-            },
-            value_span: (!kw.partial).then(|| kw.value.span()),
-        })
-        .collect()
-}
+    use whisker_macro_syntax::compose::ComposeChild;
 
-/// Adapt a `routes!` body's root list into a sequence of [`IrNode`]s.
-pub(crate) fn adapt_routes_roots(input: &whisker_macro_syntax::routes::RoutesInput) -> Vec<IrNode> {
-    input.roots.iter().map(adapt_routes_node).collect()
-}
-
-fn adapt_routes_node(node: &whisker_macro_syntax::routes::RoutesNode) -> IrNode {
-    use whisker_macro_syntax::routes::RoutesNode;
-    match node {
-        RoutesNode::Switch { kw, children } => IrNode::Tag(IrTag {
-            tag: kw.to_string(),
-            tag_span: Some(kw.span()),
-            kwargs: Vec::new(),
-            children: children.iter().map(adapt_routes_node).collect(),
-            always_block: true,
-        }),
-        RoutesNode::Stack { kw, children } => IrNode::Tag(IrTag {
-            tag: kw.to_string(),
-            tag_span: Some(kw.span()),
-            kwargs: Vec::new(),
-            children: children.iter().map(adapt_routes_node).collect(),
-            always_block: true,
-        }),
-        RoutesNode::Route {
-            kw,
-            path,
-            component,
-            transition,
-            children,
-        } => {
-            use syn::spanned::Spanned;
-            let mut kwargs = Vec::new();
-            if let Some(p) = path {
-                kwargs.push(IrKwarg {
-                    name: "path".to_string(),
-                    name_span: Some(p.span()),
-                    value: Some(IrValue::Literal(format!("{:?}", p.value()))),
-                    value_span: Some(p.span()),
-                });
-            }
-            if let Some(c) = component {
-                kwargs.push(IrKwarg {
-                    name: "component".to_string(),
-                    name_span: Some(c.span()),
-                    value: Some(IrValue::Literal(c.to_string())),
-                    value_span: Some(c.span()),
-                });
-            }
-            if let Some(t) = transition {
-                kwargs.push(IrKwarg {
-                    name: "transition".to_string(),
-                    name_span: Some(t.span()),
-                    value: Some(IrValue::Expr(Box::new(t.clone()))),
-                    value_span: Some(t.span()),
-                });
-            }
-            IrNode::Tag(IrTag {
-                tag: kw.to_string(),
-                tag_span: Some(kw.span()),
-                kwargs,
-                children: children.iter().map(adapt_routes_node).collect(),
-                always_block: false,
+    let tag = node
+        .path
+        .to_token_stream()
+        .to_string()
+        .replace(" :: ", "::");
+    IrNode::Tag(IrTag {
+        tag,
+        tag_span: Some(node.path.span()),
+        kwargs: node
+            .arguments
+            .iter()
+            .map(|argument| IrKwarg {
+                name: argument.name.to_string(),
+                name_span: Some(argument.name.span()),
+                value: (!argument.partial).then(|| IrValue::Expr(Box::new(argument.value.clone()))),
+                value_span: (!argument.partial).then(|| argument.value.span()),
             })
-        }
-        RoutesNode::Spread(expr) => IrNode::Spread(expr.clone()),
-        RoutesNode::Unknown(ident) => IrNode::Tag(IrTag {
-            tag: ident.to_string(),
-            tag_span: Some(ident.span()),
-            kwargs: Vec::new(),
-            children: Vec::new(),
-            always_block: false,
-        }),
-    }
+            .collect(),
+        children: node
+            .body
+            .iter()
+            .map(|child| match child {
+                ComposeChild::Node(node) => adapt_compose_node(node),
+                ComposeChild::Text(value) => IrNode::Text(value.clone()),
+                ComposeChild::Expression(value) => IrNode::Expression(value.clone()),
+                ComposeChild::Spread(value) => IrNode::Spread(value.clone()),
+            })
+            .collect(),
+        always_block: node.has_body,
+    })
 }
 
 /// Walk an adapted tree collecting the span of every embedded `Expr`.
-/// `IrValue::Literal` values (routes!'s `path`/`component`) contribute
-/// no span: they are neither batch-rustfmt'd nor excluded from comment
-/// recovery.
+/// Walk an adapted tree collecting every embedded Rust expression.
 pub(crate) fn collect_ir_expr_spans(node: &IrNode, out: &mut Vec<Span>) {
     use syn::spanned::Spanned;
     match node {
@@ -220,7 +131,6 @@ pub(crate) fn collect_ir_expr_spans(node: &IrNode, out: &mut Vec<Span>) {
                 collect_ir_expr_spans(child, out);
             }
         }
-        IrNode::ChildrenSlot(_) => {}
         IrNode::Text(_) => {}
         IrNode::Expression(expr) => out.push(expr.span()),
         IrNode::Spread(expr) => out.push(expr.span()),
