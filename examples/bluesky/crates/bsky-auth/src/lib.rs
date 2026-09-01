@@ -265,7 +265,7 @@ pub async fn like(subject_uri: &str, subject_cid: &str) -> Result<String, String
     create_record(&agent, "app.bsky.feed.like", record).await
 }
 
-/// Undo a like, given the like record URI returned by [`like`].
+/// Undo a like, given the like record URI returned by [`like()`].
 pub async fn unlike(like_uri: &str) -> Result<(), String> {
     let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
     delete_record(&agent, "app.bsky.feed.like", like_uri).await
@@ -284,7 +284,7 @@ pub async fn repost(subject_uri: &str, subject_cid: &str) -> Result<String, Stri
     create_record(&agent, "app.bsky.feed.repost", record).await
 }
 
-/// Undo a repost, given the repost record URI returned by [`repost`].
+/// Undo a repost, given the repost record URI returned by [`repost()`].
 pub async fn unrepost(repost_uri: &str) -> Result<(), String> {
     let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
     delete_record(&agent, "app.bsky.feed.repost", repost_uri).await
@@ -452,7 +452,7 @@ pub async fn block(did: &str) -> Result<String, String> {
     create_record(&agent, "app.bsky.graph.block", record).await
 }
 
-/// Undo a block, given the block record URI returned by [`block`].
+/// Undo a block, given the block record URI returned by [`block()`].
 pub async fn unblock(block_uri: &str) -> Result<(), String> {
     let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
     delete_record(&agent, "app.bsky.graph.block", block_uri).await
@@ -620,7 +620,7 @@ pub async fn follow(did: &str) -> Result<String, String> {
     create_record(&agent, "app.bsky.graph.follow", record).await
 }
 
-/// Undo a follow, given the follow record URI returned by [`follow`].
+/// Undo a follow, given the follow record URI returned by [`follow()`].
 pub async fn unfollow(follow_uri: &str) -> Result<(), String> {
     let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
     delete_record(&agent, "app.bsky.graph.follow", follow_uri).await

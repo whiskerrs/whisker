@@ -529,7 +529,7 @@ impl AnimationController {
     /// interrupts a spring that is still moving, the in-flight velocity is
     /// carried into the new target (so a swipe hand-off keeps momentum);
     /// otherwise the run starts from the spring's configured initial
-    /// velocity (default `0`). See [`start_run`](Self::start_run).
+    /// velocity (default `0`).
     pub fn animate_to(&self, target: f32) {
         self.start_run(target, None);
     }

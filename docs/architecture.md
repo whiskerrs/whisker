@@ -56,7 +56,6 @@ through a narrow FFI Driver; Desktop and Web compose the same runtime directly.
 
    subsecond  (= whisker-subsecond, [lib] name = "subsecond")
      pulled into whisker when `hot-reload` is on.
-     when `hot-reload` is on.
 
    User crate (e.g. examples/podcast)
    ├── src/lib.rs   — `#[whisker::main] fn app() -> Element { render!{…} }`

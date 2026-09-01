@@ -5,7 +5,7 @@
 //! parameters (paths, bundle ids, application ids, …) via
 //! `whisker_dev_server::Config`. Translating the user's
 //! `whisker.rs::configure(&mut Config)` result into those flat
-//! values is the CLI's job and lives in [`super::run`].
+//! values is the CLI's job and lives in [`mod@super::run`].
 //!
 //! ## Discovery
 //!

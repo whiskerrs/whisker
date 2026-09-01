@@ -4,8 +4,8 @@
 //!
 //! A back gesture has a continuous `0..1` progress (finger drag on iOS, a
 //! `BackEventCompat` on Android). Both gestures map that progress onto one
-//! stack-transition controller via the shared helpers ([`begin`] /
-//! [`scrub`] / [`settle`]): they point **both** the top wrapper
+//! stack-transition controller via shared begin/scrub/settle helpers: they
+//! point **both** the top wrapper
 //! (`Role::Top`) and the revealed-under wrapper (`Role::Under`) at the top
 //! controller and scrub it (`set_value(1.0 - back_progress)`), so the top
 //! tracks the gesture while the screen beneath slides back from covered to

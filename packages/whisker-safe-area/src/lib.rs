@@ -95,7 +95,7 @@ pub struct SafeAreaInsets {
 /// Reactive accessor for the current safe-area insets.
 ///
 /// All calls share one underlying signal: the value lives in a
-/// process-global [`ArcRwSignal`] stashed in [`SLOT`], so reading
+/// process-global [`ArcRwSignal`] stashed in an internal slot, so reading
 /// from many components or effects is cheap (no extra subscription,
 /// no extra cross-platform round-trip). The signal starts at
 /// `SafeAreaInsets::default()` and updates as soon as the native side
@@ -103,7 +103,7 @@ pub struct SafeAreaInsets {
 ///
 /// The returned handle is a `Copy` [`ReadSignal`], minted **once**
 /// under a process-lifetime [`Owner::detached_root`] and cached in
-/// [`SLOT`], so every call hands back the *same* arena entry. That
+/// that slot, so every call hands back the *same* arena entry. That
 /// pinning is what keeps a short-lived owner (a per-route scope, say)
 /// from freeing the entry out from under a surviving reader.
 ///

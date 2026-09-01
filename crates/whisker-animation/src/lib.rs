@@ -4,7 +4,7 @@
 //! `docs/animation-design.md`). Unlike a discrete CSS-keyframe
 //! animator, this engine lives entirely in Rust and drives a `0..1`
 //! **progress** signal that the reactive runtime advances each frame —
-//! so an animated value is just a [`ReadSignal`] you can read anywhere
+//! so an animated value is just a [`whisker_runtime::reactive::ReadSignal`] you can read anywhere
 //! in the signal graph, with full control over forward / reverse /
 //! stop / scrub.
 //!
@@ -39,7 +39,9 @@
 //! is invoked from the driver's `tick_frame` via the runtime's
 //! `anim_hook`; progress is derived from a monotonic millisecond
 //! timestamp, which tests inject directly through
-//! [`__step_for_tests`](controller::__step_for_tests).
+//! [`__step_for_tests`].
+
+#![warn(missing_docs)]
 
 mod animatable;
 mod config;

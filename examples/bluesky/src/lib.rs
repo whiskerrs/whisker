@@ -1,7 +1,7 @@
 //! Bluesky (AT Protocol) client example.
 //!
 //! Navigation is driven by `whisker-router`. The root is a stack: an index
-//! [`tabs_layout`] (the authenticated, tabbed shell) plus full-screen
+//! `tabs_layout` (the authenticated, tabbed shell) plus full-screen
 //! `login` / `auth/:handle` routes pushed over it.
 //!
 //! The tabbed shell is a `Switch` of four branches — Home / Search /

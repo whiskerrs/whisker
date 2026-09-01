@@ -52,7 +52,7 @@ pub const OP_END: u8 = 0xFF;
 // ---- reserved opcode ranges (NOT emitted in v1) ----------------------------
 
 /// First byte of every reserved range. A replayer encountering
-/// any value in [`reserved_ranges`] MUST report
+/// any value in the reserved ranges MUST report
 /// `unsupported opcode 0x{HH}` and stop. Listed here so a future
 /// PR adding (say) gradients only needs to drop entries.
 pub const RESERVED_RANGES: &[(u8, u8)] = &[

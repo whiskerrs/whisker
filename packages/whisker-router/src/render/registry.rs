@@ -144,7 +144,7 @@ impl RouteRegistry {
 /// id → render/transition [`RouteRegistry`] entries they need. Spreading the
 /// same fragment into N containers creates N tree instances of each route
 /// that **dedupe to a single nav target** by id (the registry holds one
-/// entry; [`resolve`](crate::core::resolve) picks the right instance
+/// entry; [`crate::core::resolve()`] picks the right instance
 /// relative to the current position).
 ///
 /// `Clone` (cheap — `RouteTree` is a small tree, the registry is

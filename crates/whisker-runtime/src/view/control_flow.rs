@@ -5,7 +5,7 @@
 //! same author surface as user-defined control flow. They build on the
 //! primitives this crate exposes:
 //! [`create_phantom_element`](super::create_phantom_element),
-//! [`effect`](crate::reactive::effect), and the per-control-flow
+//! [`effect`](crate::reactive::effect()), and the per-control-flow
 //! function types in [`super::into_view`].
 //!
 //! Custom control flow follows the same outline:

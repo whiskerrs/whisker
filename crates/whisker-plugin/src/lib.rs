@@ -101,7 +101,7 @@
 //!   one of them used `override`")
 //! - Render a human-readable summary on `whisker generate --verbose`
 //! - Diagnose 3rd-party plugins ("plugin foo mutated
-//!   android.manifest.permissions[3] at sequence index 42, after
+//!   `android.manifest.permissions[3]` at sequence index 42, after
 //!   plugin bar at 38")
 //!
 //! ## Subprocess wire format

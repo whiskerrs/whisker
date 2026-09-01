@@ -396,7 +396,7 @@ impl Step {
     }
 
     /// Spawn `cmd`, stream its stdout + stderr line-by-line, and
-    /// return its [`ExitStatus`]. Cargo-style progress lines
+    /// return its [`std::process::ExitStatus`]. Cargo-style progress lines
     /// (`    Compiling X v0.1.0`, `    Finished …`, `    Updating
     /// crates.io …`) update the spinner's message in place so the
     /// step stays a single live line; everything else — rustc

@@ -5,7 +5,7 @@
 //! image is referenced by its logical path:
 //!
 //! ```ignore
-//! Image(src: asset!("images/logo.png"), …)
+//! Image(src: asset!("images/logo.png"))
 //! ```
 //!
 //! `asset!` lowers to `whisker_asset::resolve("images/logo.png")`,

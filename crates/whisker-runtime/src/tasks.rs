@@ -23,7 +23,7 @@
 //! `Send + Sync`: it captures the instance's any-thread Host wake handle and
 //! never polls UI code on the waking thread.
 //!
-//! [`resource`]: crate::reactive::resource
+//! [`resource`]: crate::reactive::resource()
 
 use std::cell::RefCell;
 use std::future::Future;

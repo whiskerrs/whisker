@@ -9,8 +9,8 @@ use whisker_style::{FontFeatureValue, FontOpticalSizingValue, FontVariationValue
 
 impl Css {
     /// Sets `font-family`. Pass a single family name; for multiple
-    /// families, call this method once per family or use the
-    /// [`Css::raw`] escape hatch with a comma-separated list.
+    /// families, use a structured font-family value when that form is
+    /// available rather than passing an unparsed CSS string.
     /// <https://lynxjs.org/api/css/properties/font-family>
     pub fn font_family(self, v: impl Into<String>) -> Self {
         // Lynx accepts either bare identifiers or quoted strings; quoting

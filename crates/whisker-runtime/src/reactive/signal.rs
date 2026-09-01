@@ -303,7 +303,7 @@ impl<T: 'static> RwSignal<T> {
         .set(value);
     }
 
-    /// Non-panicking variant of [`set`]. Returns `true` if the write
+    /// Non-panicking variant of [`Self::set`]. Returns `true` if the write
     /// happened, `false` if the underlying signal has already been
     /// disposed (e.g. its owner was torn down). Used by callers that
     /// legitimately race owner disposal — the canonical example is
@@ -313,8 +313,8 @@ impl<T: 'static> RwSignal<T> {
         try_write_and_notify(self.id, move |slot| *slot = value, true)
     }
 
-    /// Non-panicking variant of [`update`]. Same semantics as
-    /// [`try_set`].
+    /// Non-panicking variant of [`Self::update`]. Same semantics as
+    /// [`Self::try_set`].
     pub fn try_update(self, f: impl FnOnce(&mut T)) -> bool {
         try_write_and_notify(self.id, f, true)
     }
@@ -398,7 +398,7 @@ impl<T: 'static> From<super::arc_signal::ArcRwSignal<T>> for RwSignal<T> {
 
 impl<T: 'static> From<super::arc_signal::ArcReadSignal<T>> for ReadSignal<T> {
     /// Build an arena-backed read handle whose underlying signal is
-    /// shared with the source [`ArcReadSignal`]. Writes through any
+    /// shared with the source [`super::ArcReadSignal`]. Writes through any
     /// handle (the Arc, another converted `WriteSignal`, …) propagate
     /// to this handle's subscribers via the shared Arc inner.
     fn from(arc_r: super::arc_signal::ArcReadSignal<T>) -> Self {
@@ -413,7 +413,7 @@ impl<T: 'static> From<super::arc_signal::ArcReadSignal<T>> for ReadSignal<T> {
 
 impl<T: 'static> From<super::arc_signal::ArcWriteSignal<T>> for WriteSignal<T> {
     /// Build an arena-backed write handle whose underlying signal is
-    /// shared with the source [`ArcWriteSignal`].
+    /// shared with the source [`super::ArcWriteSignal`].
     fn from(arc_w: super::arc_signal::ArcWriteSignal<T>) -> Self {
         let arc = super::arc_signal::ArcRwSignal { inner: arc_w.inner };
         let id = register_arc_in_current_owner(arc);

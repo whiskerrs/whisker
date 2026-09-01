@@ -22,8 +22,8 @@ pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.12";
 /// `.package(path: …)`. The Host SDK itself is the released Whisker
 /// package pinned by [`WHISKER_IOS_SPM_VERSION`].
 ///
-/// Mirror of [`crate::android::generate_module_aggregator`] for
-/// iOS. The Android path generates `settings.gradle.kts` includes;
+/// Mirror of Android's module-aggregator generation for iOS. The Android path
+/// generates `settings.gradle.kts` includes;
 /// the iOS equivalent produces a tiny SwiftPM package the user
 /// app declares as a local Swift Package Dependency.
 ///

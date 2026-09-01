@@ -66,7 +66,7 @@ pub struct IosInputs {
     pub modules: Vec<ResolvedModule>,
     /// Plugin-supplied `Info.plist` entries from the engine's
     /// post-pipeline IR (`ctx.ios.info_plist`), emitted just before the
-    /// closing `</dict>` by [`render_extra_info_plist`]. Every
+    /// closing `</dict>` by the private `render_extra_info_plist` helper. Every
     /// `PlistValue` variant renders recursively except a mixed-type
     /// array, which the hand-rolled XML renderer drops.
     #[serde(default)]
@@ -79,7 +79,7 @@ pub struct IosInputs {
     pub extra_files: BTreeMap<PathBuf, FileEntry>,
     /// Plugin-supplied structural mutations against the Xcode
     /// `project.pbxproj`; see [`PbxprojOp`] for the supported ops and
-    /// [`render_pbxproj_op_placeholders`] for how each renders.
+    /// the private `render_pbxproj_op_placeholders` helper for how each renders.
     /// Deterministic UUIDs (FNV-1a over each op's content) keep the
     /// rendered file byte-identical across rebuilds.
     #[serde(default)]

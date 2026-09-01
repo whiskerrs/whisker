@@ -3,8 +3,8 @@
 //! When the dev-server runs a full reload for hot-reload, it
 //! transparently elevates that build into a **fat build**: cargo
 //! still produces the same artifact, but the rustc and linker
-//! invocations get intercepted by [`whisker-rustc-shim`] and
-//! [`whisker-linker-shim`] respectively, which dump their argv to
+//! invocations get intercepted by the `whisker-rustc-shim` and
+//! `whisker-linker-shim` binaries respectively, which dump their argv to
 //! JSON files under the configured cache dirs. The hot reload thin
 //! rebuild later replays those argvs to produce a patch dylib.
 //!

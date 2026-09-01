@@ -2,7 +2,7 @@
 //!
 //! Public surface:
 //!
-//! - [`element`] — the [`ElementTag`](element::ElementTag) enum that
+//! - [`element`] — the [`ElementTag`] enum that
 //!   the macro emit and the C bridge agree on.
 //! - [`reactive`] — Leptos-style fine-grained reactivity: signals,
 //!   effects, memos, owner tree, component lifecycle, context.
@@ -11,7 +11,7 @@
 //!   control flow.
 //! - [`runtime_wake`] — Host's "wake up" callback, pinged by the reactive
 //!   scheduler when new work appears.
-//! - [`dispatch`] — instance-scoped posting back to the Host-owned runtime
+//! - `dispatch` — instance-scoped posting back to the Host-owned runtime
 //!   thread from background work.
 
 pub mod anim_hook;

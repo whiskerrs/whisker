@@ -48,7 +48,12 @@ pub enum RefError {
     /// Platform side surfaced a dispatch error (unknown method, type
     /// mismatch, platform-side exception, …). The `message` is the
     /// bridge's verbatim UTF-8 description.
-    DispatchFailed { method: String, message: String },
+    DispatchFailed {
+        /// Command name rejected by the runtime or Host.
+        method: String,
+        /// Diagnostic supplied by the rejecting layer.
+        message: String,
+    },
 }
 
 impl std::fmt::Display for RefError {

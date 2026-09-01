@@ -216,8 +216,7 @@ pub struct XcodeRunScriptInputs<'a> {
     pub workspace_root: &'a Path,
     pub package: &'a str,
     /// `PLATFORM_NAME` — `"iphoneos"` or `"iphonesimulator"`. Drives
-    /// the (arch → rust triple) mapping inside
-    /// [`map_arch_to_triple`].
+    /// the internal arch-to-Rust-triple mapping.
     pub platform: &'a str,
     /// `ARCHS`, split on whitespace by the caller. Each entry is
     /// `"arm64"` or `"x86_64"`. Multi-arch is only meaningful when

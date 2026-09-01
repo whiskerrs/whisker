@@ -24,7 +24,7 @@
 //! ## Fine-grained re-render
 //!
 //! Each container renders from its **own slice** of the state
-//! ([`RouterHandle::slice_at`]); because `computed` memoises by
+//! (`RouterHandle::slice_at`); because `computed` memoises by
 //! `PartialEq` (`RouteState: Eq`), an op that doesn't change a given
 //! container's subtree produces an unchanged slice and that container's
 //! mount effect does not re-run. So pushing into tab A's stack does not
