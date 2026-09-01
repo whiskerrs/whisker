@@ -1,7 +1,7 @@
 //! Private Router ↔ Host history seam.
 //!
 //! The Router core stays independent of browser bindings. On Web this module
-//! talks to the checked-in `whisker-router-web-host` implementation through the
+//! talks to the checked-in `whisker-router-web` implementation through the
 //! same `WhiskerValue` service-module path used by native modules. Other Hosts
 //! compile the no-op adapter and keep navigation entirely in Rust.
 
