@@ -23,6 +23,12 @@
 //! | `AndroidAssets`            | `file:///android_asset/whisker/images/logo.png`       |
 //! | *(unset)*                  | the relative path, unchanged (see "Fallback")         |
 //!
+//! Web and Desktop are not declared as supported package targets yet. Their
+//! development servers may resolve the relative fallback, but production
+//! support also requires the CNG plugin IR to copy assets into those generated
+//! outputs. Advertising support before that build-time half exists would make
+//! release builds depend on their launch working directory.
+//!
 //! # Fallback
 //!
 //! If no base has been installed yet (unit tests, or any render that runs
