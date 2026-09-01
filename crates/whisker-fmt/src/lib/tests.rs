@@ -552,9 +552,9 @@ mod comment_tests {
     #[test]
     fn wallet_faithful_reduction_formats_and_preserves_comments() {
         let input = "fn d() -> Element {\n    render! {\n        View(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n        View {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false\n    )\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n        }\n        }\n    }\n}\n";
-        // The css!'s trailing comma keeps IT vertical, and last-argument
-        // overflow keeps it combined on the view's own line.
-        let expected = "fn d() -> Element {\n    render! {\n        View(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            View {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
+        // The css!'s trailing comma keeps it vertical, which propagates
+        // outward and makes the containing View kwargs vertical too.
+        let expected = "fn d() -> Element {\n    render! {\n        View(\n            style: css!(\n                flex_grow: 1.0,\n                background_color: BG,\n            ),\n        ) {\n            View {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
         let out = fmt(input);
         assert_ne!(out, input, "must not fall back:\n{out}");
         assert_eq!(out, expected, "got:\n{out}");
@@ -912,24 +912,33 @@ mod coverage_tests {
         assert_idempotent(input);
     }
 
-    // ---- last-argument overflow (combine) ---------------------------------
+    // ---- multi-line argument propagation ----------------------------------
 
     #[test]
-    fn multiline_last_kwarg_combines_on_open_line() {
+    fn multiline_nested_css_breaks_the_parent_kwarg_list() {
         let input = "fn ui() -> Element {\n    render! {\n        View(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            Text(value: \"hi\")\n        }\n    }\n}\n";
-        assert_eq!(fmt(input), input);
+        let expected = "fn ui() -> Element {\n    render! {\n        View(\n            style: css!(\n                flex_grow: 1.0,\n                background_color: BG,\n            ),\n        ) {\n            Text(value: \"hi\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), expected);
         assert_idempotent(input);
     }
 
     #[test]
-    fn single_line_kwargs_before_multiline_last_stay_on_open_line() {
+    fn multiline_last_value_breaks_all_parent_kwargs() {
         let input = "fn ui() -> Element {\n    render! {\n        View(key: 1, style: css!(\n            flex_grow: 1.0,\n        ))\n    }\n}\n";
+        let expected = "fn ui() -> Element {\n    render! {\n        View(\n            key: 1,\n            style: css!(\n                flex_grow: 1.0,\n            ),\n        )\n    }\n}\n";
+        assert_eq!(fmt(input), expected);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn compact_nested_css_stays_inline_when_it_fits() {
+        let input = "fn ui() -> Element {\n    render! { View(style: css!(width: px(100))) }\n}\n";
         assert_eq!(fmt(input), input);
         assert_idempotent(input);
     }
 
     #[test]
-    fn outer_trailing_comma_beats_combine() {
+    fn outer_trailing_comma_keeps_the_same_vertical_form() {
         let input = "fn ui() -> Element {\n    render! {\n        View(\n            style: css!(\n                flex_grow: 1.0,\n            ),\n        )\n    }\n}\n";
         assert_eq!(
             fmt(input),

@@ -465,33 +465,11 @@ impl Printer<'_> {
         if fits {
             return delimited;
         }
-        // Combine a multi-line LAST item (nested macro, closure) with the
-        // earlier single-line items on the open line — rustfmt's
-        // last-argument overflow — instead of wrapping the whole list.
-        if !force_wrap
-            && parts.last().is_some_and(|p| p.contains('\n'))
-            && parts[..parts.len() - 1].iter().all(|p| !p.contains('\n'))
-        {
-            let last = parts.last().unwrap();
-            let head = if parts.len() > 1 {
-                format!("{}, ", parts[..parts.len() - 1].join(", "))
-            } else {
-                String::new()
-            };
-            let first_line = last.lines().next().unwrap_or("");
-            let last_line = last.lines().last().unwrap_or("");
-            let first_width = self.opts.indent_width(check_level)
-                + prefix_width
-                + 1
-                + head.chars().count()
-                + first_line.chars().count();
-            let close_width =
-                self.opts.indent_width(output_level) + last_line.chars().count() + 1 + suffix_width;
-            if first_width <= self.opts.max_width && close_width <= self.opts.max_width {
-                let re = reindent(last, &self.indent(output_level));
-                return format!("{open}{head}{re}{close}");
-            }
-        }
+        // A multi-line argument makes the containing argument list
+        // vertical as well. Keeping the opening delimiter beside the
+        // first line of a nested macro produces an asymmetric shape such
+        // as `View(style: css!(\n...))`; propagating the break outward
+        // matches rustfmt's ordinary nested-call layout.
         let body = self.wrap_one_per_line(output_level + 1, parts);
         format!("{open}\n{body}\n{}{close}", self.indent(output_level))
     }
