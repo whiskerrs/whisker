@@ -17,6 +17,7 @@ public final class WhiskerView: UIView {
         return recognizer
     }()
     private var touchIdentities = HostTouchIdentityMap()
+    private var dirtyScrollOffsets: [UInt64: CGPoint] = [:]
     private let modules = HostModuleDispatcher()
     private let resources = HostResourceStore()
     private lazy var resourceService = HostResourceService(store: resources)
@@ -27,6 +28,12 @@ public final class WhiskerView: UIView {
         logicalBounds: { [unowned self] in self.logicalBounds },
         emitElementEvent: { [weak self] node, name, detail in
             self?.dispatchElementEvent(node: node, name: name, detail: detail)
+        },
+        updateScrollOffset: { [weak self] node, offset in
+            self?.dirtyScrollOffsets[node] = offset
+        },
+        removeScrollOffset: { [weak self] node in
+            self?.dirtyScrollOffsets.removeValue(forKey: node)
         }
     )
 
@@ -237,8 +244,15 @@ public final class WhiskerView: UIView {
               ) else { return }
         _ = dispatchWhiskerPointer(
             handle: handle,
-            input: input
+            input: input,
+            scrollOffsets: takeScrollOffsets()
         )
+    }
+
+    private func takeScrollOffsets() -> [UInt64: CGPoint] {
+        let result = dirtyScrollOffsets
+        dirtyScrollOffsets.removeAll(keepingCapacity: true)
+        return result
     }
 
     private func unmount() {
@@ -256,6 +270,7 @@ public final class WhiskerView: UIView {
         if ownedRuntime { scene.clear() }
         pendingModuleEvents.clear()
         touchIdentities.clear()
+        dirtyScrollOffsets.removeAll(keepingCapacity: false)
         if let token = hostToken {
             Unmanaged<WhiskerView>.fromOpaque(token).release()
             hostToken = nil

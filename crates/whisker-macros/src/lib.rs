@@ -291,6 +291,9 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             y: f32,
             buttons: u32,
             changed_button: i16,
+            scroll_nodes: *const u64,
+            scroll_offsets: *const f32,
+            scroll_count: usize,
         ) -> bool {
             unsafe {
                 ::whisker::__driver_runtime::dispatch_pointer(
@@ -303,6 +306,9 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     y,
                     buttons,
                     changed_button,
+                    scroll_nodes,
+                    scroll_offsets,
+                    scroll_count,
                 )
             }
         }

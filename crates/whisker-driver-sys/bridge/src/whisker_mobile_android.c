@@ -1076,11 +1076,21 @@ JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchEve
     release_raw(&raw);free(bytes);return consumed?JNI_TRUE:JNI_FALSE;
 }
 
-JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchPointer(JNIEnv* env,jobject self,jlong handle,jdouble timestamp,jint event,jlong pointer_id,jint pointer_kind,jfloat x,jfloat y,jint buttons,jint changed_button){
-    (void)env;(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;
+JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchPointer(JNIEnv* env,jobject self,jlong handle,jdouble timestamp,jint event,jlong pointer_id,jint pointer_kind,jfloat x,jfloat y,jint buttons,jint changed_button,jlongArray scroll_nodes,jfloatArray scroll_offsets){
+    (void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;
     if(!view||!view->runtime||pointer_id<=0||buttons<0||changed_button<INT16_MIN||changed_button>INT16_MAX)return JNI_FALSE;
-    return whisker_view_dispatch_pointer(view->runtime,timestamp,(uint32_t)event,(uint64_t)pointer_id,
-        (uint32_t)pointer_kind,x,y,(uint32_t)buttons,(int16_t)changed_button)?JNI_TRUE:JNI_FALSE;
+    if(!scroll_nodes||!scroll_offsets)return JNI_FALSE;
+    jsize scroll_count=(*env)->GetArrayLength(env,scroll_nodes);
+    if(scroll_count<0||(*env)->GetArrayLength(env,scroll_offsets)!=scroll_count*2)return JNI_FALSE;
+    jlong* nodes=scroll_count?(*env)->GetLongArrayElements(env,scroll_nodes,NULL):NULL;
+    jfloat* offsets=scroll_count?(*env)->GetFloatArrayElements(env,scroll_offsets,NULL):NULL;
+    if(scroll_count&&(!nodes||!offsets)){if(nodes)(*env)->ReleaseLongArrayElements(env,scroll_nodes,nodes,JNI_ABORT);if(offsets)(*env)->ReleaseFloatArrayElements(env,scroll_offsets,offsets,JNI_ABORT);return JNI_FALSE;}
+    bool consumed=whisker_view_dispatch_pointer(view->runtime,timestamp,(uint32_t)event,(uint64_t)pointer_id,
+        (uint32_t)pointer_kind,x,y,(uint32_t)buttons,(int16_t)changed_button,
+        (const uint64_t*)nodes,(const float*)offsets,(size_t)scroll_count);
+    if(nodes)(*env)->ReleaseLongArrayElements(env,scroll_nodes,nodes,JNI_ABORT);
+    if(offsets)(*env)->ReleaseFloatArrayElements(env,scroll_offsets,offsets,JNI_ABORT);
+    return consumed?JNI_TRUE:JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL Java_rs_whisker_runtime_WhiskerView_nativeResolveModule(JNIEnv* env,jobject self,jlong callback_ptr,jlong data_ptr,jobject payload){

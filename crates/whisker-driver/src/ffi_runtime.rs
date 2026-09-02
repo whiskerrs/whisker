@@ -395,6 +395,9 @@ pub unsafe fn dispatch_pointer(
     y: f32,
     buttons: u32,
     changed_button: i16,
+    scroll_nodes: *const u64,
+    scroll_offsets: *const f32,
+    scroll_count: usize,
 ) -> bool {
     let Some(mobile) = (unsafe { handle.cast::<MobileRuntime>().as_ref() }) else {
         return false;
@@ -411,13 +414,46 @@ pub unsafe fn dispatch_pointer(
     ) else {
         return false;
     };
+    if scroll_count != 0 && (scroll_nodes.is_null() || scroll_offsets.is_null()) {
+        return false;
+    }
+    let Some(offset_count) = scroll_count.checked_mul(2) else {
+        return false;
+    };
+    let (nodes, offsets) = if scroll_count == 0 {
+        (&[][..], &[][..])
+    } else {
+        (
+            unsafe { std::slice::from_raw_parts(scroll_nodes, scroll_count) },
+            unsafe { std::slice::from_raw_parts(scroll_offsets, offset_count) },
+        )
+    };
+    let mut presentation = Vec::with_capacity(scroll_count);
+    for (index, raw_node) in nodes.iter().copied().enumerate() {
+        let Some(node) = NodeId::new(raw_node) else {
+            return false;
+        };
+        presentation.push(
+            whisker_engine::whisker_protocol::HostPresentationUpdate::ScrollOffset {
+                node,
+                offset: InputPoint {
+                    x: offsets[index * 2],
+                    y: offsets[index * 2 + 1],
+                },
+            },
+        );
+    }
     let modules = std::rc::Rc::clone(&mobile.modules);
-    with_module_host(&modules, || mobile.runtime.dispatch_input(&event))
-        .map(|value| value.consumed)
-        .unwrap_or_else(|error| {
-            eprintln!("Whisker mobile pointer input failed: {error}");
-            false
-        })
+    with_module_host(&modules, || {
+        mobile
+            .runtime
+            .dispatch_input_with_presentation(&event, &presentation)
+    })
+    .map(|value| value.consumed)
+    .unwrap_or_else(|error| {
+        eprintln!("Whisker mobile pointer input failed: {error}");
+        false
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

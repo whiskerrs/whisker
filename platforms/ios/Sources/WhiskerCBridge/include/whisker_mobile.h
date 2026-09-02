@@ -32,7 +32,7 @@
 
 #define WHISKER_MOBILE_ABI_MAJOR 2
 
-#define WHISKER_MOBILE_ABI_MINOR 29
+#define WHISKER_MOBILE_ABI_MINOR 30
 
 #define WHISKER_FRAME_PROTOCOL_MAJOR 1
 
@@ -797,7 +797,10 @@ extern bool whisker_view_dispatch_pointer(void *handle,
                                           float x,
                                           float y,
                                           uint32_t buttons,
-                                          int16_t changed_button);
+                                          int16_t changed_button,
+                                          const uint64_t *scroll_nodes,
+                                          const float *scroll_offsets,
+                                          size_t scroll_count);
 
 extern bool whisker_view_dispatch_module_event(void *handle,
                                                const uint8_t *module,

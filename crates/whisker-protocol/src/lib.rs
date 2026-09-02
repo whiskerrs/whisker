@@ -49,7 +49,8 @@ pub use id::{
     PreparedContentId, PropertyId, ResourceId, SurfaceId,
 };
 pub use input::{
-    InputEvent, InputEventError, InputEventKind, InputPoint, PointerInput, PointerKind,
+    HostPresentationUpdate, InputEvent, InputEventError, InputEventKind, InputPoint, PointerInput,
+    PointerKind,
 };
 pub use measurement::{
     AvailableSpace, CustomMeasurePayload, EmbeddedSurfaceMeasurePayload, FontFeature,
