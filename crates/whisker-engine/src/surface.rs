@@ -965,7 +965,12 @@ impl SurfaceEngine {
                 .iter()
                 .filter_map(|(node, geometry)| {
                     let sources = self.radial_backgrounds.get(node)?;
-                    let mut layers = self.scene.node(*node)?.background_layers().to_vec();
+                    let mut layers = self
+                        .scene
+                        .node(*node)
+                        .expect("radial background owners remain live")
+                        .background_layers()
+                        .to_vec();
                     canonicalize_radial_backgrounds(
                         &mut layers,
                         sources,
@@ -1184,12 +1189,37 @@ mod tests {
         }
     }
 
+    type RadialParts<'a> = (
+        RadialGradientShape,
+        RadialGradientExtent,
+        Option<(PaintLengthPercentage, PaintLengthPercentage)>,
+        &'a [whisker_protocol::GradientStop],
+    );
+
+    fn radial_parts(image: &PaintImage) -> Option<RadialParts<'_>> {
+        match image {
+            PaintImage::RadialGradient {
+                shape,
+                extent,
+                radii,
+                stops,
+                ..
+            } => Some((*shape, *extent, *radii, stops)),
+            _ => None,
+        }
+    }
+
     #[test]
     fn layout_canonicalizes_radial_keyword_geometry_and_absolute_stops() {
+        assert!(radial_parts(&PaintImage::None).is_none());
         let mut surface = SurfaceEngine::new(surface_id());
         let root = surface
             .create_node(element_type(), sized(200.0, 100.0))
             .expect("root");
+        let plain_child = surface
+            .create_node(element_type(), sized(10.0, 10.0))
+            .expect("plain child");
+        surface.insert_child(root, plain_child, 0).expect("insert");
         surface
             .set_background_layers(
                 root,
@@ -1203,22 +1233,26 @@ mod tests {
         surface
             .compute_layout(root, LayoutSize::new(200.0, 100.0), &mut zero_measure)
             .expect("layout");
+        surface
+            .set_background_layers(
+                root,
+                vec![radial_background(
+                    RadialGradientShape::Circle,
+                    RadialGradientExtent::FarthestCorner,
+                    None,
+                )],
+            )
+            .expect("post-layout background");
 
-        let PaintImage::RadialGradient {
-            shape,
-            extent,
-            radii: Some((radius_x, radius_y)),
-            stops,
-            ..
-        } = &surface.node(root).unwrap().background_layers()[0].image
-        else {
-            panic!("expected canonical radial gradient")
-        };
+        let (shape, extent, radii, stops) =
+            radial_parts(&surface.node(root).unwrap().background_layers()[0].image)
+                .expect("canonical radial gradient");
+        let (radius_x, radius_y) = radii.expect("canonical radii");
         let expected_radius = 100.0_f32.hypot(50.0);
-        assert_eq!(*shape, RadialGradientShape::Ellipse);
-        assert_eq!(*extent, RadialGradientExtent::Explicit);
+        assert_eq!(shape, RadialGradientShape::Ellipse);
+        assert_eq!(extent, RadialGradientExtent::Explicit);
         assert!((radius_x.length - expected_radius).abs() < 0.001);
-        assert_eq!(*radius_x, *radius_y);
+        assert_eq!(radius_x, radius_y);
         assert_eq!(radius_x.fraction, 0.0);
         assert_eq!(stops[1].position.unwrap().length, 0.0);
         assert!((stops[1].position.unwrap().fraction - 25.0 / expected_radius).abs() < 0.0001);
@@ -1229,14 +1263,10 @@ mod tests {
         surface
             .compute_layout(root, LayoutSize::new(100.0, 100.0), &mut zero_measure)
             .expect("resized layout");
-        let PaintImage::RadialGradient {
-            radii: Some((resized_radius, _)),
-            stops: resized_stops,
-            ..
-        } = &surface.node(root).unwrap().background_layers()[0].image
-        else {
-            panic!("expected resized radial gradient")
-        };
+        let (_, _, resized_radii, resized_stops) =
+            radial_parts(&surface.node(root).unwrap().background_layers()[0].image)
+                .expect("resized radial gradient");
+        let (resized_radius, _) = resized_radii.expect("resized radii");
         let resized_expected = 50.0_f32.hypot(50.0);
         assert!((resized_radius.length - resized_expected).abs() < 0.001);
         assert!(
@@ -1266,23 +1296,12 @@ mod tests {
         let sources = radial_background_sources(&layers);
         canonicalize_radial_backgrounds(&mut layers, &sources, geometry, None);
 
-        let PaintImage::RadialGradient {
-            radii: Some((ellipse_x, ellipse_y)),
-            ..
-        } = layers[0].image
-        else {
-            panic!("expected ellipse")
-        };
+        let (_, _, ellipse_radii, _) = radial_parts(&layers[0].image).expect("ellipse");
+        let (ellipse_x, ellipse_y) = ellipse_radii.expect("ellipse radii");
         assert!((ellipse_x.length - 100.0 * 2.0_f32.sqrt()).abs() < 0.001);
         assert!((ellipse_y.length - 50.0 * 2.0_f32.sqrt()).abs() < 0.001);
-        let PaintImage::RadialGradient {
-            shape,
-            radii: Some((circle_x, circle_y)),
-            ..
-        } = layers[1].image
-        else {
-            panic!("expected circle")
-        };
+        let (shape, _, circle_radii, _) = radial_parts(&layers[1].image).expect("circle");
+        let (circle_x, circle_y) = circle_radii.expect("circle radii");
         assert_eq!(shape, RadialGradientShape::Ellipse);
         assert_eq!(circle_x, absolute_length(20.0));
         assert_eq!(circle_y, absolute_length(20.0));
