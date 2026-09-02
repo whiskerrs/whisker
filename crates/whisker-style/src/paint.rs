@@ -558,7 +558,7 @@ fn resolve_box_shadow(
             environment,
             property,
         )?),
-        color: component(&value.color).clone(),
+        color: crate::resolution::normalize_color_for(component(&value.color), property)?,
         inset: value.inset,
     })
 }
@@ -813,7 +813,8 @@ pub(crate) fn resolve_paint_style(
                 let StyleValue::Background(value) = value else {
                     return Err(invalid(property));
                 };
-                paint.background_color = component(&value.color).clone();
+                paint.background_color =
+                    crate::resolution::normalize_color_for(component(&value.color), property)?;
                 paint.background_images = value
                     .layers
                     .iter()

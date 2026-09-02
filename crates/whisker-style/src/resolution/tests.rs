@@ -795,7 +795,7 @@ fn text_shadow_resolves_inherits_clears_and_rejects_negative_blur() {
     );
     assert_eq!(
         resolve_text_style(&invalid_color, None, environment).unwrap_err(),
-        StyleResolutionError::InvalidPropertyValue(StyleProperty::Color)
+        StyleResolutionError::InvalidPropertyValue(StyleProperty::TextShadow)
     );
 }
 
@@ -847,7 +847,7 @@ fn text_decoration_resolves_current_color_and_inherits() {
     );
     assert_eq!(
         resolve_text_style(&invalid_color, None, environment).unwrap_err(),
-        StyleResolutionError::InvalidPropertyValue(StyleProperty::Color)
+        StyleResolutionError::InvalidPropertyValue(StyleProperty::TextDecoration)
     );
 }
 

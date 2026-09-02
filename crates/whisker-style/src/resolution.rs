@@ -820,7 +820,9 @@ fn resolve_style_once(
             style: *style,
             color: decoration_color
                 .as_ref()
-                .map(|color| normalize_color(resolved_component(color)))
+                .map(|color| {
+                    normalize_color_for(resolved_component(color), StyleProperty::TextDecoration)
+                })
                 .transpose()?
                 .unwrap_or_else(|| color.clone()),
         },
@@ -862,7 +864,7 @@ fn resolve_style_once(
                 offset_x: StyleNumber::new(offset_x),
                 offset_y: StyleNumber::new(offset_y),
                 blur_radius: StyleNumber::new(blur_radius),
-                color: normalize_color(resolved_component(color))?,
+                color: normalize_color_for(resolved_component(color), StyleProperty::TextShadow)?,
             })
         }
         Some(_) => return Err(wrong_type(StyleProperty::TextShadow)),
