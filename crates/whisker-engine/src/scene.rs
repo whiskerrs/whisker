@@ -1689,11 +1689,24 @@ mod tests {
         scene
             .insert_child(child, grandchild, 0)
             .expect("insert grandchild");
+        let removed_pointer = pointer(41);
+        let retained_pointer = pointer(42);
+        scene
+            .set_pointer_capture(grandchild, removed_pointer)
+            .expect("capture removed descendant");
+        scene
+            .set_pointer_capture(sibling, retained_pointer)
+            .expect("capture retained sibling");
         scene.delete_node(child).expect("delete attached subtree");
         assert_eq!(scene.node_count(), 2);
         assert_eq!(scene.node(root).expect("root").children(), &[sibling]);
         assert!(scene.node(child).is_none());
         assert!(scene.node(grandchild).is_none());
+        assert_eq!(scene.pointer_capture_target(removed_pointer), None);
+        assert_eq!(
+            scene.pointer_capture_target(retained_pointer),
+            Some(sibling)
+        );
         present_and_accept(&mut scene, &mut renderer);
 
         scene.delete_node(root).expect("delete unattached root");
@@ -2112,6 +2125,9 @@ mod tests {
         scene.set_z_order(front, 2).unwrap();
         let point = InputPoint { x: 10.0, y: 10.0 };
         assert_eq!(scene.hit_test(root, point), Ok(Some(front)));
+        scene.set_z_order(back, 3).unwrap();
+        assert_eq!(scene.hit_test(root, point), Ok(Some(back)));
+        scene.set_z_order(back, 1).unwrap();
 
         scene.set_hit_test(root, HitTestBehavior::BoxOnly).unwrap();
         assert_eq!(scene.hit_test(root, point), Ok(Some(root)));

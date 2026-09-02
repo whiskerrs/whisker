@@ -522,7 +522,8 @@ fn path_contains(
 #[cfg(test)]
 mod tests {
     use whisker_protocol::{
-        BoxClip, ElementTypeId, LayoutRect, PaintColor, PaintEdges, SurfaceId, VisualEffects,
+        BorderLineStyle, BoxClip, BoxPaint, ElementTypeId, LayoutRect, PaintColor, PaintEdges,
+        SurfaceId, VisualEffects,
     };
 
     use super::*;
@@ -558,6 +559,62 @@ mod tests {
         (scene, root, child)
     }
 
+    fn length(value: f32) -> PaintLengthPercentage {
+        PaintLengthPercentage {
+            length: value,
+            fraction: 0.0,
+        }
+    }
+
+    fn coordinate(x: f32, y: f32) -> PaintPosition {
+        PaintPosition {
+            x: PaintCoordinate {
+                length: x,
+                fraction: 0.0,
+            },
+            y: PaintCoordinate {
+                length: y,
+                fraction: 0.0,
+            },
+        }
+    }
+
+    fn radii(value: f32) -> PaintCorners<PaintCornerRadius> {
+        let radius = PaintCornerRadius::circular(length(value));
+        PaintCorners {
+            top_left: radius,
+            top_right: radius,
+            bottom_right: radius,
+            bottom_left: radius,
+        }
+    }
+
+    fn bordered_paint(width: f32, radius: f32) -> BoxPaint {
+        let transparent = PaintColor::Named("transparent".into());
+        BoxPaint {
+            background_color: transparent.clone(),
+            border_widths: PaintEdges {
+                top: length(width),
+                right: length(width),
+                bottom: length(width),
+                left: length(width),
+            },
+            border_colors: PaintEdges {
+                top: transparent.clone(),
+                right: transparent.clone(),
+                bottom: transparent.clone(),
+                left: transparent,
+            },
+            border_styles: PaintEdges {
+                top: BorderLineStyle::None,
+                right: BorderLineStyle::None,
+                bottom: BorderLineStyle::None,
+                left: BorderLineStyle::None,
+            },
+            border_radii: radii(radius),
+        }
+    }
+
     #[test]
     fn transforms_hit_geometry_and_hidden_parents_keep_visible_descendants() {
         let (mut scene, root, child) = scene_with_child();
@@ -585,6 +642,10 @@ mod tests {
     #[test]
     fn host_scroll_offset_tracks_native_presentation_without_dirtying_a_frame() {
         let (mut scene, root, child) = scene_with_child();
+        assert_eq!(
+            scene.update_host_scroll_offset(root, [f32::NAN, 0.0]),
+            Err(SceneError::NonFiniteNumber)
+        );
         scene
             .set_layout(
                 child,
@@ -711,6 +772,256 @@ mod tests {
         assert_eq!(
             scene.hit_test(root, InputPoint { x: 10.0, y: 10.0 }),
             Ok(Some(root))
+        );
+    }
+
+    #[test]
+    fn inverse_mapping_rejects_singular_and_projective_horizon_matrices() {
+        let point = InputPoint { x: 1.0, y: 1.0 };
+        assert_eq!(
+            inverse_map_around(Some(Transform([0.0; 16])), point, [0.0; 2]),
+            None
+        );
+
+        let mut projective = Transform::IDENTITY;
+        projective.0[3] = 1.0;
+        assert_eq!(inverse_map_around(Some(projective), point, [0.0; 2]), None);
+        assert_eq!(inverse_map_around(None, point, [0.0; 2]), Some(point));
+        assert_eq!(
+            inverse_map_around(Some(Transform::IDENTITY), point, [0.0; 2]),
+            Some(point)
+        );
+
+        let (mut scene, root, _) = scene_with_child();
+        scene.set_transform(root, Transform([0.0; 16])).unwrap();
+        assert_eq!(scene.hit_test(root, point), Ok(None));
+    }
+
+    #[test]
+    fn clip_reference_boxes_and_shape_families_are_resolved_in_rust() {
+        let (mut scene, root, _) = scene_with_child();
+        let border = LayoutRect {
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 80.0,
+        };
+        let content = LayoutRect {
+            x: 10.0,
+            y: 10.0,
+            width: 80.0,
+            height: 60.0,
+        };
+        assert_eq!(padding_box(scene.node(root).unwrap(), border), border);
+
+        scene
+            .set_box_paint(root, bordered_paint(5.0, 10.0))
+            .unwrap();
+        assert_eq!(
+            padding_box(scene.node(root).unwrap(), border),
+            LayoutRect {
+                x: 15.0,
+                y: 25.0,
+                width: 90.0,
+                height: 70.0,
+            }
+        );
+
+        for reference_box in [PaintBox::Content, PaintBox::Padding] {
+            scene
+                .set_visual_effects(
+                    root,
+                    VisualEffects {
+                        clip_path: Some((
+                            reference_box,
+                            ClipShape::Ellipse {
+                                radius_x: length(100.0),
+                                radius_y: length(100.0),
+                                center: coordinate(50.0, 40.0),
+                            },
+                        )),
+                        ..VisualEffects::default()
+                    },
+                )
+                .unwrap();
+            assert!(clip_path_contains(
+                scene.node(root).unwrap(),
+                content,
+                border,
+                InputPoint { x: 60.0, y: 60.0 },
+            ));
+        }
+
+        let reference = LayoutRect {
+            width: 100.0,
+            height: 100.0,
+            ..LayoutRect::default()
+        };
+        let point = InputPoint { x: 50.0, y: 50.0 };
+        assert!(shape_contains(
+            &ClipShape::Inset {
+                edges: PaintEdges {
+                    top: PaintCoordinate::default(),
+                    right: PaintCoordinate::default(),
+                    bottom: PaintCoordinate::default(),
+                    left: PaintCoordinate::default(),
+                },
+                radii: radii(0.0),
+            },
+            reference,
+            point,
+        ));
+        assert!(shape_contains(
+            &ClipShape::Ellipse {
+                radius_x: length(50.0),
+                radius_y: length(25.0),
+                center: coordinate(50.0, 50.0),
+            },
+            reference,
+            point,
+        ));
+        assert!(!shape_contains(
+            &ClipShape::Polygon {
+                fill_rule: FillRule::NonZero,
+                points: Vec::new(),
+            },
+            reference,
+            point,
+        ));
+        let square = vec![
+            coordinate(0.0, 0.0),
+            coordinate(100.0, 0.0),
+            coordinate(100.0, 100.0),
+            coordinate(0.0, 100.0),
+        ];
+        for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
+            assert!(shape_contains(
+                &ClipShape::Polygon {
+                    fill_rule,
+                    points: square.clone(),
+                },
+                reference,
+                point,
+            ));
+        }
+        assert!(!ellipse_contains([0.0, 0.0], [0.0, 1.0], point));
+    }
+
+    #[test]
+    fn path_hit_testing_flattens_lines_and_curves() {
+        let reference = LayoutRect {
+            width: 100.0,
+            height: 100.0,
+            ..LayoutRect::default()
+        };
+        let inside = InputPoint { x: 50.0, y: 50.0 };
+        assert!(!path_contains(
+            FillRule::NonZero,
+            &[PathCommand::QuadraticTo {
+                control: coordinate(1.0, 1.0),
+                end: coordinate(2.0, 2.0),
+            }],
+            reference,
+            inside,
+        ));
+        assert!(!path_contains(
+            FillRule::NonZero,
+            &[PathCommand::CubicTo {
+                control_1: coordinate(1.0, 1.0),
+                control_2: coordinate(2.0, 2.0),
+                end: coordinate(3.0, 3.0),
+            }],
+            reference,
+            inside,
+        ));
+        assert!(!path_contains(
+            FillRule::NonZero,
+            &[PathCommand::LineTo(coordinate(1.0, 1.0))],
+            reference,
+            inside,
+        ));
+
+        let curved_box = ClipShape::Path {
+            fill_rule: FillRule::EvenOdd,
+            commands: vec![
+                PathCommand::MoveTo(coordinate(0.0, 0.0)),
+                PathCommand::MoveTo(coordinate(0.0, 0.0)),
+                PathCommand::LineTo(coordinate(100.0, 0.0)),
+                PathCommand::QuadraticTo {
+                    control: coordinate(100.0, 50.0),
+                    end: coordinate(100.0, 100.0),
+                },
+                PathCommand::CubicTo {
+                    control_1: coordinate(50.0, 100.0),
+                    control_2: coordinate(0.0, 100.0),
+                    end: coordinate(0.0, 0.0),
+                },
+                PathCommand::Close,
+            ],
+        };
+        assert!(shape_contains(&curved_box, reference, inside));
+    }
+
+    #[test]
+    fn winding_rounding_and_one_axis_overflow_cover_edge_geometry() {
+        let point = InputPoint { x: 0.0, y: 0.0 };
+        let mut winding = Winding::new(FillRule::NonZero, point);
+        winding.segment([-2.0, -2.0], [-2.0, 2.0]);
+        winding.segment([-2.0, 2.0], [2.0, 2.0]);
+        winding.segment([2.0, 2.0], [2.0, -2.0]);
+        assert!(winding.contains());
+        winding.segment([2.0, -2.0], [-2.0, -2.0]);
+        assert!(winding.contains());
+        let mut even_odd = Winding::new(FillRule::EvenOdd, point);
+        even_odd.segment([2.0, -2.0], [2.0, 2.0]);
+        assert!(even_odd.contains());
+
+        let rect = LayoutRect {
+            width: 100.0,
+            height: 100.0,
+            ..LayoutRect::default()
+        };
+        assert!(!rounded_rect_contains(
+            rect,
+            ([10.0; 4], [10.0; 4]),
+            InputPoint { x: -1.0, y: 50.0 },
+        ));
+        for point in [
+            InputPoint { x: 1.0, y: 1.0 },
+            InputPoint { x: 99.0, y: 1.0 },
+            InputPoint { x: 99.0, y: 99.0 },
+            InputPoint { x: 1.0, y: 99.0 },
+        ] {
+            assert!(!rounded_rect_contains(rect, ([10.0; 4], [10.0; 4]), point));
+        }
+        assert!(rounded_rect_contains(
+            rect,
+            ([10.0; 4], [10.0; 4]),
+            InputPoint { x: 50.0, y: 50.0 },
+        ));
+        let (horizontal, vertical) = resolve_radii(&radii(80.0), rect);
+        assert_eq!(horizontal, [50.0; 4]);
+        assert_eq!(vertical, [50.0; 4]);
+        assert_eq!(radius_scale(0.0, 0.0), 1.0);
+
+        let (mut scene, root, _) = scene_with_child();
+        scene.set_box_paint(root, bordered_paint(5.0, 0.0)).unwrap();
+        scene
+            .set_clip(
+                root,
+                BoxClip {
+                    horizontal: OverflowClip::Hidden,
+                    vertical: OverflowClip::Visible,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            overflow_clip_contains(
+                scene.node(root).unwrap(),
+                rect,
+                InputPoint { x: 50.0, y: 50.0 },
+            ),
+            [true, true]
         );
     }
 }
