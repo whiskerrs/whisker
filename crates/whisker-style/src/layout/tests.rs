@@ -579,7 +579,7 @@ fn complete_box_and_flex_style_resolves_without_backend_types() {
         )
         .push(
             StyleProperty::BorderBottomWidth,
-            StyleValue::LengthPercentage(percent(3.0)),
+            StyleValue::LengthPercentage(px(3.0)),
         )
         .push(
             StyleProperty::BorderLeftWidth,
@@ -649,7 +649,7 @@ fn complete_box_and_flex_style_resolves_without_backend_types() {
     assert_eq!(style.padding.bottom.fraction(), 0.07);
     assert_eq!(style.border.top.length(), 1.0);
     assert_eq!(style.border.right.length(), 2.0);
-    assert_eq!(style.border.bottom.fraction(), 0.03);
+    assert_eq!(style.border.bottom.length(), 3.0);
     assert_eq!(style.border.left.length(), 4.0);
     assert_eq!(style.flex_direction, FlexDirectionValue::Column);
     assert_eq!(style.flex_wrap, FlexWrapValue::Wrap);
@@ -1072,6 +1072,43 @@ fn invalid_numbers_are_rejected_or_clamped_by_property_semantics() {
     }
     assert_eq!(AspectRatioValue::new(4.0, 3.0).width(), 4.0);
     assert_eq!(AspectRatioValue::new(4.0, 3.0).height(), 3.0);
+}
+
+#[test]
+fn border_width_accepts_lengths_and_rejects_percentage_components() {
+    let property = StyleProperty::BorderTopWidth;
+    let pure_length = LengthPercentageValue::Calc(Box::new(CalcExpression::Add(
+        Box::new(CalcExpression::Value(Box::new(px(2.0)))),
+        Box::new(CalcExpression::Value(Box::new(px(3.0)))),
+    )));
+    assert_eq!(
+        resolve(&declaration(
+            property,
+            StyleValue::LengthPercentage(pure_length),
+        ))
+        .unwrap()
+        .border
+        .top
+        .length(),
+        5.0
+    );
+
+    for value in [
+        percent(10.0),
+        LengthPercentageValue::Calc(Box::new(CalcExpression::Add(
+            Box::new(CalcExpression::Value(Box::new(px(2.0)))),
+            Box::new(CalcExpression::Value(Box::new(percent(10.0)))),
+        ))),
+        LengthPercentageValue::Calc(Box::new(CalcExpression::Sub(
+            Box::new(CalcExpression::Value(Box::new(percent(10.0)))),
+            Box::new(CalcExpression::Value(Box::new(percent(10.0)))),
+        ))),
+    ] {
+        assert_eq!(
+            resolve(&declaration(property, StyleValue::LengthPercentage(value),)),
+            Err(StyleResolutionError::InvalidPropertyValue(property))
+        );
+    }
 }
 
 #[test]
