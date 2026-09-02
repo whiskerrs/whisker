@@ -27,7 +27,7 @@
 //
 // The ONE exception is `@JavascriptInterface`, which fires on JavaBridge,
 // a background thread. That path must hop to the UI thread via
-// `view?.post { … }` before touching any Android View / Host event emitter
+// `view().post { … }` before touching any Android View / Host event emitter
 // state — a genuine thread transition, not a reentrancy guard.
 //
 // ## Teardown
@@ -41,6 +41,8 @@ package rs.whisker.elements.webview
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -99,9 +101,9 @@ open class WhiskerWebView(context: WhiskerContext) :
     /** The current `html` prop value. Only rendered when `url` is empty. */
     private var pendingHtml: String = ""
 
-    private var jsEnabled: Boolean = false
-
     private var scrollEnabled: Boolean = true
+
+    private val cleanupHandler = Handler(Looper.getMainLooper())
 
     /** Glob patterns; an empty list means "allow all". */
     private var originWhitelist: List<String> = listOf("https://*", "http://*")
@@ -266,9 +268,16 @@ open class WhiskerWebView(context: WhiskerContext) :
 
                 override fun onViewDetachedFromWindow(v: android.view.View) {
                     val webView = v as? android.webkit.WebView ?: return
-                    webView.stopLoading()
-                    webView.removeJavascriptInterface("__whisker_android")
-                    webView.destroy()
+                    // A Host reparent can detach and attach synchronously in
+                    // one frame. Defer destruction so that path keeps the
+                    // live browsing context.
+                    cleanupHandler.post {
+                        if (!webView.isAttachedToWindow) {
+                            webView.stopLoading()
+                            webView.removeJavascriptInterface("__whisker_android")
+                            webView.destroy()
+                        }
+                    }
                 }
             }
         )
@@ -285,8 +294,14 @@ open class WhiskerWebView(context: WhiskerContext) :
      * re-render that touches an unrelated prop from re-loading the page.
      */
     fun setUrl(incoming: String) {
-        val wv = view ?: return
-        if (incoming.isEmpty()) return
+        val wv = view()
+        if (incoming.isEmpty()) {
+            if (lastLoadedUrl != null) {
+                lastLoadedUrl = null
+                loadInlineContent(wv)
+            }
+            return
+        }
         if (incoming == lastLoadedUrl) return
         lastLoadedUrl = incoming
         wv.loadUrl(incoming)
@@ -298,32 +313,30 @@ open class WhiskerWebView(context: WhiskerContext) :
      */
     fun setHtml(html: String) {
         pendingHtml = html
-        val wv = view ?: return
+        val wv = view()
         if (lastLoadedUrl != null && lastLoadedUrl!!.isNotEmpty()) return
-        if (html.isEmpty()) return
-        wv.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+        loadInlineContent(wv)
     }
 
     /** `user-agent` prop setter. Must be set before any load to take effect. */
     fun setUserAgent(ua: String) {
-        val wv = view ?: return
+        val wv = view()
         wv.settings.userAgentString = ua.ifEmpty { null }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    fun setJavascriptEnabled(flag: String) {
-        jsEnabled = flag == "true"
-        val wv = view ?: return
-        wv.settings.javaScriptEnabled = jsEnabled
+    fun setJavascriptEnabled(enabled: Boolean) {
+        val wv = view()
+        wv.settings.javaScriptEnabled = enabled
     }
 
     /**
      * `scroll-enabled` prop setter. Disabling only blocks touch-driven
      * scrolling; programmatic `scrollTo()` still works.
      */
-    fun setScrollEnabled(flag: String) {
-        scrollEnabled = flag != "false"
-        val wv = view ?: return
+    fun setScrollEnabled(enabled: Boolean) {
+        scrollEnabled = enabled
+        val wv = view()
         wv.isVerticalScrollBarEnabled = scrollEnabled
         wv.isHorizontalScrollBarEnabled = scrollEnabled
         if (!scrollEnabled) {
@@ -365,49 +378,37 @@ open class WhiskerWebView(context: WhiskerContext) :
     // -------------------------------------------------------------------------
 
     fun reload() {
-        view?.reload()
+        view().reload()
     }
 
     fun goBack() {
-        val wv = view ?: return
+        val wv = view()
         if (wv.canGoBack()) wv.goBack()
     }
 
     fun goForward() {
-        val wv = view ?: return
+        val wv = view()
         if (wv.canGoForward()) wv.goForward()
     }
 
     fun stopLoading() {
-        view?.stopLoading()
+        view().stopLoading()
     }
 
     /**
      * Rust → page message delivery, via `window.whisker._receive(data)`.
      */
     fun postMessageToPage(data: String) {
-        val wv = view ?: return
+        val wv = view()
         // Encode as a JSON string literal so the page receives a JS string
         // rather than a bare token that would break the injected expression.
-        val encoded = buildString {
-            append('"')
-            for (c in data) {
-                when (c) {
-                    '\\' -> append("\\\\")
-                    '"' -> append("\\\"")
-                    '\n' -> append("\\n")
-                    '\r' -> append("\\r")
-                    else -> append(c)
-                }
-            }
-            append('"')
-        }
+        val encoded = org.json.JSONObject.quote(data)
         wv.evaluateJavascript("window.whisker._receive($encoded)", null)
     }
 
     /** Run [script] in the page for its side effects. */
     fun evaluateJs(script: String) {
-        view?.evaluateJavascript(script, null)
+        view().evaluateJavascript(script, null)
     }
 
     // -------------------------------------------------------------------------
@@ -418,13 +419,13 @@ open class WhiskerWebView(context: WhiskerContext) :
      * Receives `window.whisker.postMessage(data)` calls from the page.
      *
      * `@JavascriptInterface` methods run on the JavaBridge background
-     * thread, so the hop back to the UI thread via `view?.post { … }` must
+     * thread, so the hop back to the UI thread via `view().post { … }` must
      * happen before any View API or Host event emitter state is touched.
      */
     private inner class WhiskerBridge {
         @JavascriptInterface
         fun postMessage(data: String) {
-            view?.post {
+            view().post {
                 WhiskerCustomEvent.dispatch(
                     ui = this@WhiskerWebView,
                     name = "message",
@@ -437,6 +438,14 @@ open class WhiskerWebView(context: WhiskerContext) :
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
+
+    private fun loadInlineContent(webView: android.webkit.WebView) {
+        if (pendingHtml.isEmpty()) {
+            webView.loadUrl("about:blank")
+        } else {
+            webView.loadDataWithBaseURL(null, pendingHtml, "text/html", "utf-8", null)
+        }
+    }
 
     /**
      * Match a URL against a glob pattern. Only `*` is meaningful; every

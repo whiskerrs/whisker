@@ -8,8 +8,8 @@
 //
 // ## Prop delivery
 //
-// Bool props and the JSON-array whitelist are pre-stringified by the Rust
-// layer, so every prop reads through `value.asString`.
+// Bool props remain typed Whisker values. The JSON-array whitelist is the
+// one string-encoded collection until element schemas support array props.
 
 import WhiskerModule
 
@@ -22,27 +22,32 @@ public final class WebViewModule: Module {
 
                 // ---- Content props ---------------------------------------
 
-                Prop("url") { (view: WhiskerWebViewView, value: WhiskerValue) in
+                Prop("url", clear: { (view: WhiskerWebViewView) in view.setUrl("") }) { (view: WhiskerWebViewView, value: WhiskerValue) in
                     view.setUrl(value.asString ?? "")
                 }
-                Prop("html") { (view: WhiskerWebViewView, value: WhiskerValue) in
+                Prop("html", clear: { (view: WhiskerWebViewView) in view.setHtml("") }) { (view: WhiskerWebViewView, value: WhiskerValue) in
                     view.setHtml(value.asString ?? "")
                 }
 
                 // ---- Browser behaviour props -----------------------------
 
-                Prop("user-agent") { (view: WhiskerWebViewView, value: WhiskerValue) in
+                Prop("user-agent", clear: { (view: WhiskerWebViewView) in view.setUserAgent("") }) { (view: WhiskerWebViewView, value: WhiskerValue) in
                     view.setUserAgent(value.asString ?? "")
                 }
-                // "true" / "false" string sent by the Rust bool_attr() helper.
-                Prop("javascript-enabled") { (view: WhiskerWebViewView, value: WhiskerValue) in
-                    view.setJavascriptEnabled(value.asString ?? "true")
+                Prop("javascript-enabled", clear: { (view: WhiskerWebViewView) in
+                    view.setJavascriptEnabled(true)
+                }) { (view: WhiskerWebViewView, value: WhiskerValue) in
+                    view.setJavascriptEnabled(value.asBool ?? true)
                 }
-                Prop("scroll-enabled") { (view: WhiskerWebViewView, value: WhiskerValue) in
-                    view.setScrollEnabled(value.asString ?? "true")
+                Prop("scroll-enabled", clear: { (view: WhiskerWebViewView) in
+                    view.setScrollEnabled(true)
+                }) { (view: WhiskerWebViewView, value: WhiskerValue) in
+                    view.setScrollEnabled(value.asBool ?? true)
                 }
                 // JSON array string, e.g. `["https://*","http://*"]`.
-                Prop("origin-whitelist") { (view: WhiskerWebViewView, value: WhiskerValue) in
+                Prop("origin-whitelist", clear: { (view: WhiskerWebViewView) in
+                    view.setOriginWhitelist("")
+                }) { (view: WhiskerWebViewView, value: WhiskerValue) in
                     view.setOriginWhitelist(value.asString ?? "")
                 }
 

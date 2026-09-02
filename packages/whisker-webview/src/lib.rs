@@ -50,7 +50,7 @@
 //! render! {
 //!     WebView(
 //!         url: url,
-//!         webview_ref: webview.clone(),
+//!         webview_ref: webview,
 //!         // JS → Rust: the page calls window.whisker.postMessage("…").
 //!         on_message: move |msg: String| log::info!("from page: {msg}"),
 //!     )
@@ -66,10 +66,10 @@
 //! let webview = WebViewRef::new();
 //! render! {
 //!     View(style: css!(flex_direction: FlexDirection::Column)) {
-//!         WebView(url: url, webview_ref: webview.clone(), style: css!(flex_grow: 1.0))
+//!         WebView(url: url, webview_ref: webview, style: css!(flex_grow: 1.0))
 //!         View(style: css!(flex_direction: FlexDirection::Row)) {
 //!             Text(value: "Reload", on_tap: {
-//!                 let w = webview.clone();
+//!                 let w = webview;
 //!                 move |_| w.reload()
 //!             })
 //!         }
@@ -81,7 +81,7 @@
 //!
 //! | Prop                | Type                       | Default                       | Description |
 //! |---------------------|----------------------------|-------------------------------|-------------|
-//! | `url`               | `RwSignal<String>`         | —                             | Controlled load address. `set()` navigates. One-way down. |
+//! | `url`               | `Signal<String>`           | —                             | Controlled load address. A reactive change navigates. One-way down. |
 //! | `html`              | `Signal<String>`           | —                             | Inline HTML to render (ignored when `url` is set). |
 //! | `user_agent`        | `Signal<String>`           | `""`                          | Custom User-Agent string. |
 //! | `javascript_enabled`| `bool`                     | `true`                        | Allow JavaScript execution. |
@@ -142,12 +142,10 @@
 //!
 //! Contributors: the matching platform module lives at
 //!
-//! - iOS: `packages/whisker-webview/ios/Sources/WhiskerWebView/WebViewModule.swift`
-//!   (view: `WebViewView.swift`)
+//! - iOS: `packages/whisker-webview/ios/Sources/WhiskerWebview/WebViewModule.swift`
+//!   (view: `WhiskerWebView.swift`)
 //! - Android: `packages/whisker-webview/android/src/main/kotlin/rs/whisker/elements/webview/WebViewModule.kt`
-//!   (view: `WhiskerWebViewView.kt`)
-
-use std::rc::Rc;
+//!   (view: `WhiskerWebView.kt`)
 
 use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
@@ -284,29 +282,6 @@ pub struct WebViewError {
     pub description: String,
 }
 
-/// A cloneable user callback for a [`WebView`] event prop.
-///
-/// Wraps `Rc<dyn Fn(A)>` so it's `Clone` (required: `#[component]`
-/// re-clones every prop for the hot-reload remount path) and so a bare
-/// closure coerces into it via `Into` at the call site
-/// (`on_message: move |s| …`). `A` is `String` for the URL / message
-/// events, `f32` for `on_progress`, and [`WebViewError`] for `on_error`.
-#[derive(Clone)]
-pub struct Callback<A>(Rc<dyn Fn(A) + 'static>);
-
-impl<A> Callback<A> {
-    /// Invoke the wrapped callback.
-    pub fn call(&self, arg: A) {
-        (self.0)(arg)
-    }
-}
-
-impl<A, F: Fn(A) + 'static> From<F> for Callback<A> {
-    fn from(f: F) -> Self {
-        Callback(Rc::new(f))
-    }
-}
-
 /// The default navigation origin whitelist: `["https://*", "http://*"]`.
 ///
 /// Permits any HTTPS or HTTP origin. Tighten it per-app by passing an
@@ -323,9 +298,9 @@ pub fn default_origin_whitelist() -> Vec<String> {
 /// one-way operations; these convenience methods swallow "not mounted"
 /// / platform errors.
 ///
-/// `Clone` produces a shared handle (same backing arena slot), so the
-/// same handle can drive multiple event closures.
-#[derive(Clone)]
+/// `Copy` produces a shared handle (same backing arena slot), so the
+/// same handle can drive multiple event closures without allocation.
+#[derive(Copy, Clone)]
 pub struct WebViewRef {
     r: ElementRef,
 }
@@ -394,9 +369,9 @@ impl Default for WebViewRef {
     }
 }
 
-// Bool props reach the native side pre-stringified ("true" / "false") and the
-// origin whitelist as a JSON-array string, so it parses one stable form per
-// attr. Attr names are the kebab-cased field names (`user-agent`).
+// The origin whitelist crosses as a JSON-array string because the element
+// schema currently supports primitive property values. Bool props remain
+// typed `WhiskerValue::Bool` values throughout the module protocol.
 
 #[doc(hidden)]
 #[whisker::module_element(
@@ -412,12 +387,12 @@ impl Default for WebViewRef {
     ],
 )]
 pub fn native_webview(
+    user_agent: Signal<String>,
+    javascript_enabled: Signal<bool>,
+    scroll_enabled: Signal<bool>,
+    origin_whitelist: Signal<String>,
     url: Signal<String>,
     html: Signal<String>,
-    user_agent: Signal<String>,
-    javascript_enabled: Signal<String>,
-    scroll_enabled: Signal<String>,
-    origin_whitelist: Signal<String>,
     style: Style,
     on_message: MessageEvent,
     on_load_start: NavEvent,
@@ -438,7 +413,7 @@ pub fn native_webview(
 pub fn web_view(
     /// Controlled load address. Writing `url.set(...)` navigates the
     /// view. One-way down — internal navigations are not written back.
-    url: Option<RwSignal<String>>,
+    url: Option<Signal<String>>,
     /// Inline HTML to render (ignored when `url` is set).
     html: Option<Signal<String>>,
     /// Custom User-Agent string.
@@ -464,66 +439,54 @@ pub fn web_view(
     on_progress: Option<Callback<f32>>,
     /// Navigation failed (url / code / description).
     on_error: Option<Callback<WebViewError>>,
-    /// Standard Whisker style. Accepts a `Css` builder, a raw string,
-    /// or a reactive signal of either — same as a built-in element's
-    /// `style:`.
+    /// Standard structured Whisker style, identical to built-in elements.
     style: Option<Style>,
     /// Imperative handle ([`WebViewRef`]).
     webview_ref: Option<WebViewRef>,
 ) -> Element {
-    // `Signal::Dynamic` so an external `url.set(...)` re-applies natively.
-    // An unset `url` leaves the attr empty and the native side falls back
-    // to `html`.
-    let url_prop: Signal<String> = Signal::Dynamic(computed(move || match url {
-        Some(u) => u.get(),
-        None => String::new(),
-    }));
+    // An unset `url` leaves the property empty and the native side falls
+    // back to `html`; dynamic signals re-apply when their source changes.
+    let url_prop = url.unwrap_or_default();
 
     let on_message_cb = {
-        let on_message = on_message.clone();
         move |ev: MessageEvent| {
             if let Some(cb) = &on_message {
-                cb.call(ev.into_data());
+                cb.run(ev.into_data());
             }
         }
     };
     let on_load_start_cb = {
-        let on_load_start = on_load_start.clone();
         move |ev: NavEvent| {
             if let Some(cb) = &on_load_start {
-                cb.call(ev.into_url());
+                cb.run(ev.into_url());
             }
         }
     };
     let on_load_cb = {
-        let on_load = on_load.clone();
         move |ev: NavEvent| {
             if let Some(cb) = &on_load {
-                cb.call(ev.into_url());
+                cb.run(ev.into_url());
             }
         }
     };
     let on_navigation_cb = {
-        let on_navigation = on_navigation.clone();
         move |ev: NavEvent| {
             if let Some(cb) = &on_navigation {
-                cb.call(ev.into_url());
+                cb.run(ev.into_url());
             }
         }
     };
     let on_progress_cb = {
-        let on_progress = on_progress.clone();
         move |ev: ProgressEvent| {
             if let Some(cb) = &on_progress {
-                cb.call(ev.detail.progress as f32);
+                cb.run(ev.detail.progress as f32);
             }
         }
     };
     let on_error_cb = {
-        let on_error = on_error.clone();
         move |ev: ErrorEvent| {
             if let Some(cb) = &on_error {
-                cb.call(WebViewError {
+                cb.run(WebViewError {
                     url: ev.detail.url,
                     code: ev.detail.code,
                     description: ev.detail.description,
@@ -536,19 +499,17 @@ pub fn web_view(
     let user_agent_prop: Signal<String> = user_agent.unwrap_or_default();
     let style_prop: Style = style.clone().unwrap_or_default();
 
-    let javascript_enabled_attr = bool_attr(javascript_enabled);
-    let scroll_enabled_attr = bool_attr(scroll_enabled);
     let origin_whitelist_attr = origin_whitelist_json(&origin_whitelist);
 
     let element_ref = webview_ref.as_ref().map(|h| h.r());
 
     let mut builder = NativeWebview::builder()
+        .user_agent(user_agent_prop)
+        .javascript_enabled(javascript_enabled)
+        .scroll_enabled(scroll_enabled)
+        .origin_whitelist(origin_whitelist_attr)
         .url(url_prop)
         .html(html_prop)
-        .user_agent(user_agent_prop)
-        .javascript_enabled(javascript_enabled_attr)
-        .scroll_enabled(scroll_enabled_attr)
-        .origin_whitelist(origin_whitelist_attr)
         .style(style_prop)
         .on_message(on_message_cb)
         .on_load_start(on_load_start_cb)
@@ -562,11 +523,6 @@ pub fn web_view(
     }
 
     builder.build()
-}
-
-/// `true` / `false` wire string for a bool attr.
-fn bool_attr(b: bool) -> String {
-    if b { "true" } else { "false" }.to_string()
 }
 
 /// Serialize an origin whitelist to a JSON array string the native side
@@ -618,9 +574,41 @@ mod tests {
     }
 
     #[test]
-    fn bool_attr_strings() {
-        assert_eq!(bool_attr(true), "true");
-        assert_eq!(bool_attr(false), "false");
+    fn component_schema_preserves_boolean_property_types() {
+        let schema = native_webview_schema::schema();
+        let property = |name| {
+            schema
+                .properties
+                .iter()
+                .find(|property| property.name == name)
+                .expect("property is declared")
+                .value
+        };
+        assert_eq!(
+            property("javascript-enabled"),
+            whisker::ElementValueKind::Bool
+        );
+        assert_eq!(property("scroll-enabled"), whisker::ElementValueKind::Bool);
+    }
+
+    #[test]
+    fn browser_configuration_precedes_initial_content() {
+        let names = native_webview_schema::schema()
+            .properties
+            .into_iter()
+            .map(|property| property.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "user-agent",
+                "javascript-enabled",
+                "scroll-enabled",
+                "origin-whitelist",
+                "url",
+                "html",
+            ]
+        );
     }
 
     #[test]

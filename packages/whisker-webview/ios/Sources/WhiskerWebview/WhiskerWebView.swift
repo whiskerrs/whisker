@@ -143,6 +143,8 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
             self.emitProgress(progress)
         }
 
+        wv.frame = containerView.bounds
+        wv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         containerView.addSubview(wv)
 
         // `setUrl` / `setHtml` optional-chain on `webView` and silently
@@ -158,11 +160,6 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
         }
 
         return containerView
-    }
-
-    @objc public override func frameDidChange() {
-        super.frameDidChange()
-        webView?.frame = self.view().bounds
     }
 
     /// `WhiskerUI` / `WhiskerUI` exposes no teardown override, so cleanup has
@@ -187,7 +184,13 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
     /// re-renders that don't touch the value from reloading the page.
     public func setUrl(_ urlString: String) {
         cachedUrl = urlString
-        guard !urlString.isEmpty else { return }
+        if urlString.isEmpty {
+            if !lastLoadedUrl.isEmpty {
+                lastLoadedUrl = ""
+                loadInlineContent()
+            }
+            return
+        }
         guard urlString != lastLoadedUrl else { return }
         lastLoadedUrl = urlString
         guard let url = URL(string: urlString) else { return }
@@ -199,7 +202,7 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
     public func setHtml(_ html: String) {
         cachedHtml = html
         guard cachedUrl.isEmpty else { return }
-        webView?.loadHTMLString(html, baseURL: nil)
+        loadInlineContent()
     }
 
     // ---- Browser behaviour -----------------------------------------------
@@ -208,53 +211,36 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
         webView?.customUserAgent = ua.isEmpty ? nil : ua
     }
 
-    public func setJavascriptEnabled(_ s: String) {
-        guard #available(iOS 14.0, *) else { return }
-        webView?.configuration.defaultWebpagePreferences.allowsContentJavaScript = (s != "false")
+    public func setJavascriptEnabled(_ enabled: Bool) {
+        if #available(iOS 14.0, *) {
+            webView?.configuration.defaultWebpagePreferences.allowsContentJavaScript = enabled
+        } else {
+            webView?.configuration.preferences.javaScriptEnabled = enabled
+        }
     }
 
-    public func setScrollEnabled(_ s: String) {
-        webView?.scrollView.isScrollEnabled = (s != "false")
+    public func setScrollEnabled(_ enabled: Bool) {
+        webView?.scrollView.isScrollEnabled = enabled
     }
 
     /// Parses a JSON-array string like `["https://*","http://*"]` into the
     /// local `originWhitelist` used by `decidePolicyFor`.
     public func setOriginWhitelist(_ json: String) {
-        guard !json.isEmpty else { return }
-        // Hand-rolled quoted-token scan rather than JSONSerialization: the
-        // only legal input is a JSON string array from the Rust
-        // `origin_whitelist_json` helper.
-        var patterns: [String] = []
-        var idx = json.startIndex
-        while idx < json.endIndex {
-            guard let open = json[idx...].firstIndex(of: "\"") else { break }
-            let afterOpen = json.index(after: open)
-            guard afterOpen < json.endIndex else { break }
-            // Scan to the closing quote, honouring `\"` escapes.
-            var end = afterOpen
-            while end < json.endIndex {
-                if json[end] == "\\" {
-                    let next = json.index(after: end)
-                    if next < json.endIndex { end = json.index(after: next) } else { end = next }
-                } else if json[end] == "\"" {
-                    break
-                } else {
-                    end = json.index(after: end)
-                }
-            }
-            let raw = String(json[afterOpen..<end])
-            let unescaped = raw
-                .replacingOccurrences(of: "\\\"", with: "\"")
-                .replacingOccurrences(of: "\\\\", with: "\\")
-            patterns.append(unescaped)
-            idx = end < json.endIndex ? json.index(after: end) : json.endIndex
+        guard !json.isEmpty else {
+            originWhitelist = ["https://*", "http://*"]
+            return
         }
-        if !patterns.isEmpty {
-            originWhitelist = patterns
-        }
+        guard let data = json.data(using: .utf8),
+              let patterns = try? JSONSerialization.jsonObject(with: data) as? [String]
+        else { return }
+        originWhitelist = patterns
     }
 
     // MARK: - Imperative method targets (called by WebViewModule's Function closures)
+
+    private func loadInlineContent() {
+        webView?.loadHTMLString(cachedHtml, baseURL: nil)
+    }
 
     public func reloadPage() {
         webView?.reload()
