@@ -1309,6 +1309,10 @@ fn logical_borders_resolve_to_physical_edges_and_corners() {
 fn logical_and_physical_border_declarations_share_final_write_order() {
     let resolved = crate::resolve_style(
         &SpecifiedStyle::new()
+            .push(
+                StyleProperty::BorderLeftStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Solid),
+            )
             .push(StyleProperty::BorderInlineStartWidth, px(2.0))
             .push(StyleProperty::BorderLeftWidth, px(4.0))
             .push(
@@ -1331,6 +1335,10 @@ fn logical_and_physical_border_declarations_share_final_write_order() {
 
     let resolved = crate::resolve_style(
         &SpecifiedStyle::new()
+            .push(
+                StyleProperty::BorderLeftStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Solid),
+            )
             .push(StyleProperty::BorderLeftWidth, px(4.0))
             .push(StyleProperty::BorderInlineStartWidth, px(6.0))
             .push(
