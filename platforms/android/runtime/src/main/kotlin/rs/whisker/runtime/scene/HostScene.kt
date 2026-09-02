@@ -12,6 +12,7 @@ import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerScrollContainerView
 import rs.whisker.runtime.WhiskerView
 import rs.whisker.runtime.WhiskerElementRegistry
+import rs.whisker.runtime.accepts
 import rs.whisker.runtime.WhiskerTextContent
 import rs.whisker.runtime.WhiskerFontStyle
 import rs.whisker.runtime.WhiskerFontFeature
@@ -197,8 +198,13 @@ internal class HostScene(
                 operation.node !in existing || operation.numbers?.size ?: 0 < 53 ||
                 operation.names?.size ?: 0 < 5
             ) return false
-            OP_CLIP, OP_Z_ORDER, OP_CLEAR_PROPERTY, OP_EVENT_MASK ->
+            OP_CLIP, OP_Z_ORDER, OP_EVENT_MASK ->
                 if (operation.node !in existing) return false
+            OP_CLEAR_PROPERTY -> {
+                val registration = elementTypes[operation.node]
+                    ?.let(WhiskerElementRegistry::registration) ?: return false
+                if (registration.propertyOrNull(operation.member) == null) return false
+            }
             OP_HIT_TEST -> if (operation.node !in existing || operation.integer !in 0..3) return false
             OP_CURSOR -> if (operation.node !in existing || operation.integer !in 0..34) return false
             OP_CAPTURE, OP_RELEASE_CAPTURE -> if (
@@ -222,29 +228,65 @@ internal class HostScene(
             OP_VISIBILITY -> if (operation.node !in existing || operation.integer !in 0..1) return false
             OP_TEXT, OP_TEXT_STYLE -> {
                 val values = operation.numbers ?: return false
+                val names = operation.names ?: return false
                 val registration = elementTypes[operation.node]
                     ?.let(WhiskerElementRegistry::registration) ?: return false
                 if (
                     operation.node !in existing || operation.text == null ||
-                    values.size < 37 || operation.names?.size ?: 0 < 3 ||
-                    !values.all { it.isFinite() } || values[17].toInt() !in 0..2 ||
-                    values[17] != values[17].toInt().toFloat() ||
-                    values[18].toInt() !in 0..4 ||
-                    values[18] != values[18].toInt().toFloat() ||
-                    values[24].toInt() !in 0..4 ||
-                    values[24] != values[24].toInt().toFloat() ||
-                    values[36].toInt() !in 0..2 ||
-                    values[36] != values[36].toInt().toFloat()
+                    !validTextPayload(values, names)
                 ) return false
                 if (operation.tag == OP_TEXT && registration.childPolicy != WhiskerChildPolicy.PlainText) return false
                 if (operation.tag == OP_TEXT_STYLE && !registration.textStyle) return false
             }
-            OP_PROPERTY, OP_COMMAND, OP_ACCESSIBILITY ->
-                if (operation.node !in existing || operation.value == null) return false
+            OP_PROPERTY -> {
+                val value = operation.value ?: return false
+                val registration = elementTypes[operation.node]
+                    ?.let(WhiskerElementRegistry::registration) ?: return false
+                val property = registration.propertyOrNull(operation.member) ?: return false
+                if (!property.value.accepts(value)) return false
+            }
+            OP_COMMAND -> {
+                val value = operation.value ?: return false
+                val registration = elementTypes[operation.node]
+                    ?.let(WhiskerElementRegistry::registration) ?: return false
+                val command = registration.commandOrNull(operation.member) ?: return false
+                if (!command.arguments.accepts(value)) return false
+            }
+            OP_ACCESSIBILITY -> if (
+                operation.node !in existing || operation.value !is rs.whisker.runtime.WhiskerValue.Map
+            ) return false
             OP_BACKGROUND_LAYERS -> if (!validBackgroundLayers(operation, existing, rasterResources)) return false
             else -> return false
         }
         return true
+    }
+
+    private fun validTextPayload(values: FloatArray, names: Array<String>): Boolean {
+        if (values.size < 37 || names.size < 3 || !values.all { it.isFinite() }) return false
+        val integralIn = { index: Int, range: IntRange ->
+            val integer = values[index].toInt()
+            integer in range && values[index] == integer.toFloat()
+        }
+        if (
+            values[0] <= 0f || !integralIn(1, 1..1_000) || !integralIn(2, 0..2) ||
+            !integralIn(17, 0..2) || !integralIn(18, 0..4) || !integralIn(24, 0..4) ||
+            (values[27] != 0f && values[27] != 1f) || !integralIn(28, 0..2) ||
+            values[29] < 0f || values[29] != values[29].toInt().toFloat() ||
+            (values[30] != 0f && values[30] != 1f) ||
+            (values[31] != 0f && values[31] != 1f) || !integralIn(36, 0..2) ||
+            values[34] < 0f
+        ) return false
+        val featureCount = values[32].toInt()
+        val familyCount = values[33].toInt()
+        if (
+            featureCount < 0 || values[32] != featureCount.toFloat() || familyCount <= 0 ||
+            values[33] != familyCount.toFloat() || names.size < 3 + familyCount + featureCount
+        ) return false
+        if (names.slice(3 until 3 + familyCount).any(String::isEmpty)) return false
+        return names.drop(3 + familyCount).all { setting ->
+            val separator = setting.indexOf('=')
+            separator == 4 && setting.substring(separator + 1).toDoubleOrNull()?.isFinite() == true
+        }
     }
 
     private fun applyOperation(operation: HostSceneOperation) {

@@ -20,11 +20,50 @@ private final class EventLifecycleTestModule: Module {
     }
 }
 
+private enum ExpectedElementFailure: Error {
+    case property
+}
+
+private final class FailingElementModule: Module {
+    override func definition() -> ModuleDefinition {
+        ModuleDefinition {
+            Name("FailingElement")
+            View(WhiskerElementFactory(name: "whisker.test/Failing") {
+                UIView(frame: .zero)
+            }) {
+                Prop("checked") { (_: UIView, _: WhiskerValue) throws in
+                    throw ExpectedElementFailure.property
+                }
+            }
+        }
+    }
+}
+
 @MainActor
 final class HostConformanceTests: XCTestCase {
     override class func setUp() {
         super.setUp()
         WhiskerModuleKernel.install(BuiltInElementModule())
+    }
+
+    func testThrowingModulePropertyDisablesOnlyTheMountedElement() throws {
+        WhiskerModuleKernel.install(FailingElementModule())
+        let registration = WhiskerElementRegistration(
+            elementType: 20,
+            name: "whisker.test/Failing",
+            childPolicy: .none,
+            measurement: .none,
+            properties: [
+                WhiskerPropertyBinding(id: 1, name: "checked", value: .bool)
+            ]
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
+        let mounted = try XCTUnwrap(WhiskerElementRegistry.mount(20) { _, _ in })
+
+        mounted.setProperty(1, value: .bool(true))
+        mounted.setProperty(1, value: .bool(false))
+
+        XCTAssertFalse(mounted.view.isHidden)
     }
 
     func testPointerCaptureOperationsReachTheUIKitSurface() {

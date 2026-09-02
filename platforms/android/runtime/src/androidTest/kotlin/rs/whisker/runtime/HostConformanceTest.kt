@@ -50,6 +50,19 @@ private data class CapturedPointerInput(
     val y: Float,
 )
 
+private class FailingElementView(context: android.content.Context) : View(context)
+
+private class FailingElementModule : Module() {
+    override fun definition(): ModuleDefinition = ModuleDefinition {
+        Name("FailingElement")
+        View("whisker.test/Failing", FailingElementView::class.java) {
+            Prop("checked") { _: FailingElementView, _: WhiskerValue ->
+                error("module property failure")
+            }
+        }
+    }
+}
+
 @RunWith(AndroidJUnit4::class)
 class HostConformanceTest {
     companion object {
@@ -58,6 +71,58 @@ class HostConformanceTest {
         fun registerBuiltIns() {
             WhiskerModuleKernel.install(BuiltInElementModule())
         }
+    }
+
+    @Test
+    fun pooledBuiltInVisibilityIsResetBeforeReuse() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val registration = WhiskerElementRegistration(
+                    elementType = 1,
+                    name = WhiskerBuiltInElements.TEXT,
+                    childPolicy = WhiskerChildPolicy.PlainText,
+                    measurement = WhiskerMeasurement.Text,
+                )
+                assertTrue(WhiskerElementRegistry.bind(listOf(registration)))
+                val mounted = checkNotNull(
+                    WhiskerElementRegistry.mount(1, context) { _, _ -> },
+                )
+                mounted.view.visibility = View.INVISIBLE
+
+                mounted.prepareForReuse { _, _ -> }
+
+                assertEquals(View.VISIBLE, mounted.view.visibility)
+            }
+    }
+
+    @Test
+    fun throwingModulePropertyDisablesOnlyTheMountedElement() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                WhiskerModuleKernel.install(FailingElementModule())
+                val registration = WhiskerElementRegistration(
+                    elementType = 20,
+                    name = "whisker.test/Failing",
+                    childPolicy = WhiskerChildPolicy.None,
+                    measurement = WhiskerMeasurement.None,
+                    properties = listOf(
+                        WhiskerPropertyBinding(1, "checked", WhiskerValueKind.Bool),
+                    ),
+                )
+                assertTrue(WhiskerElementRegistry.bind(listOf(registration)))
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val mounted = checkNotNull(
+                    WhiskerElementRegistry.mount(20, context) { _, _ -> },
+                )
+
+                mounted.setProperty(1, WhiskerValue.Bool(true))
+                mounted.setProperty(1, WhiskerValue.Bool(false))
+
+                assertEquals(View.VISIBLE, mounted.view.visibility)
+            }
     }
 
     @Test
