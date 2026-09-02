@@ -33,7 +33,7 @@ pub(crate) struct DomFrameSink {
     box_paints: HashMap<NodeId, whisker_protocol::BoxPaint>,
     resources: WebResourceStore,
     text_nodes: HashMap<NodeId, web_sys::Element>,
-    native_nodes: HashMap<NodeId, Box<dyn WebNativeElement>>,
+    native_nodes: HashMap<NodeId, WebNativeNode>,
     presentation_pool: HashMap<ElementTypeId, Vec<PooledWebPresentation>>,
     event_masks: HashMap<NodeId, Rc<Cell<u64>>>,
     scroll_listeners: HashMap<NodeId, Vec<ScrollListener>>,
@@ -44,6 +44,11 @@ pub(crate) struct DomFrameSink {
 struct PooledWebPresentation {
     element: web_sys::Element,
     native: Option<Box<dyn WebNativeElement>>,
+}
+
+enum WebNativeNode {
+    Active(Box<dyn WebNativeElement>),
+    Failed,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -267,6 +272,7 @@ impl DomFrameSink {
                     .presentation_pool
                     .get_mut(element_type)
                     .and_then(Vec::pop);
+                let mut native_failed = false;
                 let (element, native) = if let Some(pooled) = pooled {
                     reset_pooled_element(&pooled.element)?;
                     (pooled.element, pooled.native)
@@ -279,11 +285,23 @@ impl DomFrameSink {
                             None,
                         ),
                         WebElementFactoryKind::Native(create) => {
-                            let native =
-                                create(&self.document, emitter.clone()).map_err(|error| {
-                                    js_error("create native Whisker DOM node", error)
-                                })?;
-                            (native.element(), Some(native))
+                            match create(&self.document, emitter.clone()) {
+                                Ok(native) => (native.element(), Some(native)),
+                                Err(error) => {
+                                    Self::log_native_failure(
+                                        &binding.registration.name,
+                                        "create element",
+                                        &error,
+                                    );
+                                    native_failed = true;
+                                    (
+                                        self.document.create_element("div").map_err(|error| {
+                                            js_error("create failed-element placeholder", error)
+                                        })?,
+                                        None,
+                                    )
+                                }
+                            }
                         }
                         WebElementFactoryKind::Declared(_) => {
                             unreachable!("DOM declared factory was not bound at bootstrap")
@@ -360,7 +378,10 @@ impl DomFrameSink {
                 self.node_types.insert(*node, *element_type);
                 self.event_masks.insert(*node, event_mask);
                 if let Some(native) = native {
-                    self.native_nodes.insert(*node, native);
+                    self.native_nodes
+                        .insert(*node, WebNativeNode::Active(native));
+                } else if native_failed {
+                    self.native_nodes.insert(*node, WebNativeNode::Failed);
                 }
             }
             Operation::DeleteNode { node } => self.delete_subtree(*node),
@@ -474,11 +495,16 @@ impl DomFrameSink {
                         node.get()
                     )));
                 }
-                self.native_nodes
-                    .get_mut(node)
-                    .ok_or_else(|| WebError(format!("DOM node {} is not native", node.get())))?
-                    .set_text_style(style)
-                    .map_err(|error| js_error("set native DOM text style", error))?;
+                let result = match self.native_nodes.get_mut(node) {
+                    Some(WebNativeNode::Active(native)) => native.set_text_style(style),
+                    Some(WebNativeNode::Failed) => return Ok(()),
+                    None => {
+                        return Err(WebError(format!("DOM node {} is not native", node.get())));
+                    }
+                };
+                if let Err(error) = result {
+                    self.disable_native_node(*node, element_type, "set text style", error);
+                }
             }
             Operation::SetAccessibility {
                 node,
@@ -525,11 +551,16 @@ impl DomFrameSink {
                         schema.name, schema.value
                     )));
                 }
-                self.native_nodes
-                    .get_mut(node)
-                    .ok_or_else(|| WebError(format!("DOM node {} is not native", node.get())))?
-                    .set_property(*property, value)
-                    .map_err(|error| js_error("set native DOM property", error))?;
+                let result = match self.native_nodes.get_mut(node) {
+                    Some(WebNativeNode::Active(native)) => native.set_property(*property, value),
+                    Some(WebNativeNode::Failed) => return Ok(()),
+                    None => {
+                        return Err(WebError(format!("DOM node {} is not native", node.get())));
+                    }
+                };
+                if let Err(error) = result {
+                    self.disable_native_node(*node, element_type, "set property", error);
+                }
             }
             Operation::ClearProperty { node, property } => {
                 let element_type = *self.node_types.get(node).ok_or_else(|| {
@@ -543,11 +574,16 @@ impl DomFrameSink {
                         property.get()
                     ))
                 })?;
-                self.native_nodes
-                    .get_mut(node)
-                    .ok_or_else(|| WebError(format!("DOM node {} is not native", node.get())))?
-                    .clear_property(*property)
-                    .map_err(|error| js_error("clear native DOM property", error))?;
+                let result = match self.native_nodes.get_mut(node) {
+                    Some(WebNativeNode::Active(native)) => native.clear_property(*property),
+                    Some(WebNativeNode::Failed) => return Ok(()),
+                    None => {
+                        return Err(WebError(format!("DOM node {} is not native", node.get())));
+                    }
+                };
+                if let Err(error) = result {
+                    self.disable_native_node(*node, element_type, "clear property", error);
+                }
             }
             Operation::SetEventMask { node, event_mask } => {
                 self.event_masks
@@ -580,11 +616,18 @@ impl DomFrameSink {
                         schema.name, schema.arguments
                     )));
                 }
-                self.native_nodes
-                    .get_mut(node)
-                    .ok_or_else(|| WebError(format!("DOM node {} is not native", node.get())))?
-                    .invoke_command(*command, arguments)
-                    .map_err(|error| js_error("invoke native DOM command", error))?;
+                let result = match self.native_nodes.get_mut(node) {
+                    Some(WebNativeNode::Active(native)) => {
+                        native.invoke_command(*command, arguments)
+                    }
+                    Some(WebNativeNode::Failed) => return Ok(()),
+                    None => {
+                        return Err(WebError(format!("DOM node {} is not native", node.get())));
+                    }
+                };
+                if let Err(error) = result {
+                    self.disable_native_node(*node, element_type, "invoke command", error);
+                }
             }
             Operation::SetPointerCapture { node, pointer } => {
                 let element = self.node(*node)?;
@@ -614,6 +657,31 @@ impl DomFrameSink {
             .get(&node)
             .cloned()
             .ok_or_else(|| WebError(format!("DOM projection is missing node {}", node.get())))
+    }
+
+    fn disable_native_node(
+        &mut self,
+        node: NodeId,
+        element_type: ElementTypeId,
+        action: &str,
+        error: wasm_bindgen::JsValue,
+    ) {
+        let element_name = self
+            .elements
+            .binding(element_type)
+            .map_or("unknown", |binding| binding.registration.name.as_str());
+        Self::log_native_failure(element_name, action, &error);
+        self.native_nodes.insert(node, WebNativeNode::Failed);
+    }
+
+    fn log_native_failure(element_name: &str, action: &str, error: &wasm_bindgen::JsValue) {
+        web_sys::console::error_2(
+            &format!(
+                "Disabled `{element_name}` after it failed to {action}; common presentation remains active"
+            )
+            .into(),
+            error,
+        );
     }
 
     fn sync_layout(&self, node: NodeId) -> Result<(), WebError> {
@@ -754,7 +822,13 @@ impl DomFrameSink {
             self.layouts.remove(&node);
             self.box_paints.remove(&node);
             self.text_nodes.remove(&node);
-            let native = self.native_nodes.remove(&node);
+            let native = self
+                .native_nodes
+                .remove(&node)
+                .and_then(|native| match native {
+                    WebNativeNode::Active(native) => Some(native),
+                    WebNativeNode::Failed => None,
+                });
             self.event_masks.remove(&node);
             self.scroll_listeners.remove(&node);
             if let (Some(element), Some(element_type)) = (element, element_type)

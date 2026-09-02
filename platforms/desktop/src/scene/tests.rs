@@ -262,6 +262,124 @@ fn toggle_scene() -> (DesktopScene, ElementTypeId) {
     toggle_scene_with_wake(RuntimeWakeHandle::new(|| {}))
 }
 
+#[derive(Debug)]
+struct FailingNative;
+
+impl DesktopNativeElement for FailingNative {
+    fn set_property(&mut self, _property: PropertyId, _value: &WhiskerValue) {
+        panic!("module property failure")
+    }
+
+    fn clear_property(&mut self, _property: PropertyId) {
+        panic!("module property clear failure")
+    }
+
+    fn invoke_command(&mut self, _command: CommandId, _arguments: &WhiskerValue) {
+        panic!("module command failure")
+    }
+}
+
+fn failing_scene(factory_panics: bool) -> (DesktopScene, ElementTypeId) {
+    let element_type = ElementTypeId::new(22).unwrap();
+    let mut registrations = standard_element_registrations();
+    registrations.push(ElementRegistration {
+        element_type,
+        name: "whisker.test/Failing".into(),
+        child_policy: whisker_protocol::ChildPolicy::None,
+        measurement: ElementMeasurement::None,
+        text_style: false,
+        properties: vec![ElementPropertySchema {
+            property: CHECKED,
+            name: "checked".into(),
+            value: ElementValueKind::Bool,
+        }],
+        events: vec![],
+        commands: vec![ElementCommandSchema {
+            command: TOGGLE,
+            name: "fail".into(),
+            arguments: ElementValueKind::Null,
+        }],
+    });
+    let mut factories = built_in_element_factories();
+    factories.push(DesktopElementFactory::native(
+        "whisker.test/Failing",
+        move |_| {
+            assert!(!factory_panics, "module factory failure");
+            Box::new(FailingNative)
+        },
+    ));
+    (
+        DesktopScene::new(
+            SurfaceId::new(1).unwrap(),
+            DesktopElementRegistry::bind(&registrations, &factories).unwrap(),
+        ),
+        element_type,
+    )
+}
+
+#[test]
+fn native_element_failure_is_isolated_from_common_presentation() {
+    let node = id(1);
+    let (mut scene, element_type) = failing_scene(false);
+    let result = scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode { node, element_type },
+                Operation::SetProperty {
+                    node,
+                    property: CHECKED,
+                    value: WhiskerValue::Bool(true),
+                },
+                Operation::SetLayout {
+                    node,
+                    geometry: geometry(4.0, 5.0, 80.0, 30.0),
+                },
+                Operation::InvokeCommand {
+                    node,
+                    command: TOGGLE,
+                    arguments: WhiskerValue::Null,
+                },
+            ],
+        ))
+        .unwrap();
+
+    assert!(matches!(result, ApplyResult::Accepted { revision: 1 }));
+    let state = &scene.nodes[&node];
+    assert!(matches!(state.content, DesktopElementContent::Failed));
+    assert_eq!(state.presentation.layout.border_box.x, 4.0);
+    assert_eq!(state.presentation.layout.border_box.y, 5.0);
+}
+
+#[test]
+fn native_factory_failure_keeps_an_inert_common_node() {
+    let node = id(1);
+    let (mut scene, element_type) = failing_scene(true);
+    let result = scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode { node, element_type },
+                Operation::SetLayout {
+                    node,
+                    geometry: geometry(7.0, 9.0, 40.0, 20.0),
+                },
+            ],
+        ))
+        .unwrap();
+
+    assert!(matches!(result, ApplyResult::Accepted { revision: 1 }));
+    assert!(matches!(
+        scene.nodes[&node].content,
+        DesktopElementContent::Failed
+    ));
+    assert_eq!(scene.nodes[&node].presentation.layout.border_box.x, 7.0);
+}
+
 #[derive(Debug, Default)]
 struct TextInputProbe {
     focused: bool,

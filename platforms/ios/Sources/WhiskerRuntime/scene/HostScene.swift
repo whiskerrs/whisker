@@ -130,10 +130,32 @@ final class HostScene {
                 stagedParents.removeValue(forKey: operation.child)
             case UInt32(WHISKER_OP_MOVE):
                 guard stagedParents[operation.child] == operation.parent else { return false }
-            case UInt32(WHISKER_OP_LAYOUT), UInt32(WHISKER_OP_PAINT),
-                 UInt32(WHISKER_OP_PROPERTY), UInt32(WHISKER_OP_COMMAND),
-                 UInt32(WHISKER_OP_ACCESSIBILITY):
+            case UInt32(WHISKER_OP_LAYOUT), UInt32(WHISKER_OP_PAINT):
                 guard existing.contains(operation.node), operation.payload != nil else { return false }
+            case UInt32(WHISKER_OP_PROPERTY):
+                guard existing.contains(operation.node),
+                      let registration = elementTypes[operation.node]
+                        .flatMap({ WhiskerElementRegistry.registration($0) }),
+                      let property = registration.property(Int(operation.member)),
+                      let payload = operation.payload?
+                        .assumingMemoryBound(to: WhiskerValueRaw.self).pointee,
+                      property.value.accepts(WhiskerValue.from(raw: payload))
+                else { return false }
+            case UInt32(WHISKER_OP_COMMAND):
+                guard existing.contains(operation.node),
+                      let registration = elementTypes[operation.node]
+                        .flatMap({ WhiskerElementRegistry.registration($0) }),
+                      let command = registration.command(Int(operation.member)),
+                      let payload = operation.payload?
+                        .assumingMemoryBound(to: WhiskerValueRaw.self).pointee,
+                      command.arguments.accepts(WhiskerValue.from(raw: payload))
+                else { return false }
+            case UInt32(WHISKER_OP_ACCESSIBILITY):
+                guard existing.contains(operation.node),
+                      let payload = operation.payload?
+                        .assumingMemoryBound(to: WhiskerValueRaw.self).pointee,
+                      case .map = WhiskerValue.from(raw: payload)
+                else { return false }
             case UInt32(WHISKER_OP_TEXT), UInt32(WHISKER_OP_TEXT_STYLE):
                 guard existing.contains(operation.node),
                       let registration = elementTypes[operation.node]
@@ -244,8 +266,14 @@ final class HostScene {
             case UInt32(WHISKER_OP_VISIBILITY):
                 guard existing.contains(operation.node),
                       operation.integer == 0 || operation.integer == 1 else { return false }
+            case UInt32(WHISKER_OP_CLEAR_PROPERTY):
+                guard existing.contains(operation.node),
+                      let registration = elementTypes[operation.node]
+                        .flatMap({ WhiskerElementRegistry.registration($0) }),
+                      registration.property(Int(operation.member)) != nil
+                else { return false }
             case UInt32(WHISKER_OP_CLIP), UInt32(WHISKER_OP_Z_ORDER),
-                 UInt32(WHISKER_OP_CLEAR_PROPERTY), UInt32(WHISKER_OP_EVENT_MASK):
+                 UInt32(WHISKER_OP_EVENT_MASK):
                 guard existing.contains(operation.node) else { return false }
             default:
                 return false

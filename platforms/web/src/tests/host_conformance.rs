@@ -26,16 +26,18 @@ use whisker_host_conformance::{
 use whisker_protocol::{
     Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, AvailableSpace,
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
-    BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat,
-    LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily, MeasureFontStyle,
-    MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak,
-    MeasureTextWrap, MeasurementKey, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
-    MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
-    PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
-    PathCommand, PointerKind, ProtocolVersion, RadialGradientExtent, RadialGradientShape,
-    ResourceCommand, ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest,
-    ResourceSource, SurfaceId, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint,
-    TextShadow, Transform, Visibility, WhiskerValue,
+    BoxPaint, ClipShape, ElementMeasurement, ElementPropertySchema, ElementRegistration,
+    ElementTypeId, ElementValueKind, FillRule, FrameHeader, FrameMode, FramePacket, GradientStop,
+    ImageRepeat, LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily,
+    MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
+    MeasureTextWordBreak, MeasureTextWrap, MeasurementKey, MeasurementMetrics, MeasurementPayload,
+    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
+    PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
+    PaintLengthPercentage, PaintPosition, PathCommand, PointerKind, ProtocolVersion,
+    RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent,
+    ResourceId, ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent,
+    TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform, Visibility,
+    WhiskerValue,
 };
 use whisker_style::StyleEnvironment;
 
@@ -45,7 +47,9 @@ use crate::input::{
 use crate::measure::text::DomMeasurementProvider;
 use crate::module_api::built_in_element_factories;
 use crate::scene::frame_sink::DomFrameSink;
-use crate::{WebResourceService, WebResourceState, WebResourceStore};
+use crate::{
+    WebElementFactory, WebNativeElement, WebResourceService, WebResourceState, WebResourceStore,
+};
 
 const MANIFEST: &str = include_str!("../../../../tests/host-conformance/manifest.json");
 const RASTER_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAF0lEQVR4nAXBAQEAAACCIKb33EBkQpUOQdYIeRyCeLsAAAAASUVORK5CYII=";
@@ -64,6 +68,135 @@ fn browser_pointer_metadata_maps_to_protocol_values() {
     assert_ne!(stable_pointer_id(-1), 0);
     assert_ne!(stable_pointer_id(0), stable_pointer_id(-1));
     assert_eq!(stable_pointer_id(-1), stable_pointer_id(-1));
+}
+
+#[derive(Debug)]
+struct FailingWebElement(web_sys::Element);
+
+impl WebNativeElement for FailingWebElement {
+    fn element(&self) -> web_sys::Element {
+        self.0.clone()
+    }
+
+    fn set_property(
+        &mut self,
+        _property: whisker_protocol::PropertyId,
+        _value: &WhiskerValue,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        Err(wasm_bindgen::JsValue::from_str("module property failure"))
+    }
+
+    fn clear_property(
+        &mut self,
+        _property: whisker_protocol::PropertyId,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        Err(wasm_bindgen::JsValue::from_str("module clear failure"))
+    }
+
+    fn invoke_command(
+        &mut self,
+        _command: whisker_protocol::CommandId,
+        _arguments: &WhiskerValue,
+    ) -> Result<(), wasm_bindgen::JsValue> {
+        Err(wasm_bindgen::JsValue::from_str("module command failure"))
+    }
+}
+
+#[wasm_bindgen_test]
+fn native_failure_does_not_abort_common_dom_presentation() {
+    let document = web_sys::window().unwrap().document().unwrap();
+    let root = document.create_element("div").unwrap();
+    document.body().unwrap().append_child(&root).unwrap();
+    let element_type = ElementTypeId::new(20).unwrap();
+    let property = whisker_protocol::PropertyId::new(1).unwrap();
+    let mut registrations = ElementRegistry::standard().registrations().to_vec();
+    registrations.push(ElementRegistration {
+        element_type,
+        name: "whisker.test/Failing".into(),
+        child_policy: whisker_protocol::ChildPolicy::None,
+        measurement: ElementMeasurement::None,
+        text_style: false,
+        properties: vec![ElementPropertySchema {
+            property,
+            name: "checked".into(),
+            value: ElementValueKind::Bool,
+        }],
+        events: vec![],
+        commands: vec![],
+    });
+    let mut factories = built_in_element_factories();
+    factories.push(WebElementFactory::native(
+        "whisker.test/Failing",
+        |document, _| {
+            Ok(Box::new(FailingWebElement(
+                document.create_element("button")?,
+            )))
+        },
+    ));
+    let mut sink = DomFrameSink::new_with_resources(
+        document,
+        root.clone(),
+        SurfaceId::new(1).unwrap(),
+        &registrations,
+        &factories,
+        WebResourceStore::new(),
+        crate::capabilities::detect_host_capabilities(),
+    )
+    .unwrap();
+    let node = NodeId::new(1).unwrap();
+    let result = sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![
+                Operation::CreateNode { node, element_type },
+                Operation::SetProperty {
+                    node,
+                    property,
+                    value: WhiskerValue::Bool(true),
+                },
+                Operation::SetLayout {
+                    node,
+                    geometry: LayoutGeometry {
+                        border_box: LayoutRect {
+                            x: 12.0,
+                            y: 8.0,
+                            width: 40.0,
+                            height: 20.0,
+                        },
+                        content_box: LayoutRect::default(),
+                    },
+                },
+            ],
+        })
+        .unwrap();
+
+    assert!(matches!(
+        result,
+        whisker_protocol::ApplyResult::Accepted { revision: 1 }
+    ));
+    let element = root
+        .query_selector("[data-whisker-node='1']")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        element
+            .dyn_ref::<web_sys::HtmlElement>()
+            .unwrap()
+            .style()
+            .get_property_value("left")
+            .unwrap(),
+        "12px"
+    );
+    root.remove();
 }
 
 #[wasm_bindgen_test]
