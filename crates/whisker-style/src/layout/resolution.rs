@@ -274,13 +274,13 @@ pub(super) fn resolve_non_negative_length_percentage(
 }
 
 pub(super) fn resolve_insets(
-    specified: &SpecifiedStyle,
+    declarations: &[&crate::StyleDeclaration],
     direction: DirectionValue,
     font_size: f32,
     environment: StyleEnvironment,
 ) -> Result<Edges<ComputedLengthPercentageAuto>, StyleResolutionError> {
     let mut inset = Edges::all(ComputedLengthPercentageAuto::Auto);
-    for declaration in specified.resolved() {
+    for declaration in declarations {
         let (edge, property) = match declaration.property() {
             StyleProperty::Top => (&mut inset.top, StyleProperty::Top),
             StyleProperty::Right => (&mut inset.right, StyleProperty::Right),
@@ -312,14 +312,88 @@ pub(super) fn resolve_insets(
     Ok(inset)
 }
 
+pub(super) fn resolve_margins(
+    declarations: &[&crate::StyleDeclaration],
+    direction: DirectionValue,
+    font_size: f32,
+    environment: StyleEnvironment,
+) -> Result<Edges<ComputedLengthPercentageAuto>, StyleResolutionError> {
+    let mut margin = Edges::all(ComputedLengthPercentageAuto::Value(
+        ComputedLengthPercentage::ZERO,
+    ));
+    for declaration in declarations {
+        let (edge, property) = match declaration.property() {
+            StyleProperty::MarginTop => (&mut margin.top, StyleProperty::MarginTop),
+            StyleProperty::MarginRight => (&mut margin.right, StyleProperty::MarginRight),
+            StyleProperty::MarginBottom => (&mut margin.bottom, StyleProperty::MarginBottom),
+            StyleProperty::MarginLeft => (&mut margin.left, StyleProperty::MarginLeft),
+            StyleProperty::MarginInlineStart if direction == DirectionValue::Ltr => {
+                (&mut margin.left, StyleProperty::MarginInlineStart)
+            }
+            StyleProperty::MarginInlineStart => {
+                (&mut margin.right, StyleProperty::MarginInlineStart)
+            }
+            StyleProperty::MarginInlineEnd if direction == DirectionValue::Ltr => {
+                (&mut margin.right, StyleProperty::MarginInlineEnd)
+            }
+            StyleProperty::MarginInlineEnd => (&mut margin.left, StyleProperty::MarginInlineEnd),
+            _ => continue,
+        };
+        *edge = resolve_optional_auto(
+            Some(declaration.value()),
+            *edge,
+            font_size,
+            environment,
+            property,
+        )?;
+    }
+    Ok(margin)
+}
+
+pub(super) fn resolve_paddings(
+    declarations: &[&crate::StyleDeclaration],
+    direction: DirectionValue,
+    font_size: f32,
+    environment: StyleEnvironment,
+) -> Result<Edges<ComputedLengthPercentage>, StyleResolutionError> {
+    let mut padding = Edges::all(ComputedLengthPercentage::ZERO);
+    for declaration in declarations {
+        let (edge, property) = match declaration.property() {
+            StyleProperty::PaddingTop => (&mut padding.top, StyleProperty::PaddingTop),
+            StyleProperty::PaddingRight => (&mut padding.right, StyleProperty::PaddingRight),
+            StyleProperty::PaddingBottom => (&mut padding.bottom, StyleProperty::PaddingBottom),
+            StyleProperty::PaddingLeft => (&mut padding.left, StyleProperty::PaddingLeft),
+            StyleProperty::PaddingInlineStart if direction == DirectionValue::Ltr => {
+                (&mut padding.left, StyleProperty::PaddingInlineStart)
+            }
+            StyleProperty::PaddingInlineStart => {
+                (&mut padding.right, StyleProperty::PaddingInlineStart)
+            }
+            StyleProperty::PaddingInlineEnd if direction == DirectionValue::Ltr => {
+                (&mut padding.right, StyleProperty::PaddingInlineEnd)
+            }
+            StyleProperty::PaddingInlineEnd => (&mut padding.left, StyleProperty::PaddingInlineEnd),
+            _ => continue,
+        };
+        *edge = resolve_optional_length_percentage(
+            Some(declaration.value()),
+            *edge,
+            font_size,
+            environment,
+            property,
+        )?;
+    }
+    Ok(padding)
+}
+
 pub(super) fn resolve_borders(
-    specified: &SpecifiedStyle,
+    declarations: &[&crate::StyleDeclaration],
     direction: DirectionValue,
     font_size: f32,
     environment: StyleEnvironment,
 ) -> Result<Edges<ComputedLengthPercentage>, StyleResolutionError> {
     let mut border = Edges::all(ComputedLengthPercentage::ZERO);
-    for declaration in specified.resolved() {
+    for declaration in declarations {
         let (edge, property) = match declaration.property() {
             StyleProperty::BorderTopWidth => (&mut border.top, StyleProperty::BorderTopWidth),
             StyleProperty::BorderRightWidth => (&mut border.right, StyleProperty::BorderRightWidth),
@@ -569,14 +643,6 @@ pub(super) struct LayoutDeclarations<'a> {
     pub(super) min_height: Option<&'a StyleValue>,
     pub(super) max_width: Option<&'a StyleValue>,
     pub(super) max_height: Option<&'a StyleValue>,
-    pub(super) margin_top: Option<&'a StyleValue>,
-    pub(super) margin_right: Option<&'a StyleValue>,
-    pub(super) margin_bottom: Option<&'a StyleValue>,
-    pub(super) margin_left: Option<&'a StyleValue>,
-    pub(super) padding_top: Option<&'a StyleValue>,
-    pub(super) padding_right: Option<&'a StyleValue>,
-    pub(super) padding_bottom: Option<&'a StyleValue>,
-    pub(super) padding_left: Option<&'a StyleValue>,
     pub(super) flex_direction: Option<&'a StyleValue>,
     pub(super) flex_wrap: Option<&'a StyleValue>,
     pub(super) flex_grow: Option<&'a StyleValue>,
@@ -605,9 +671,9 @@ pub(super) struct LayoutDeclarations<'a> {
 }
 
 impl<'a> LayoutDeclarations<'a> {
-    pub(super) fn from_specified(specified: &'a SpecifiedStyle) -> Self {
+    pub(super) fn from_resolved(declarations: &'a [&'a crate::StyleDeclaration]) -> Self {
         let mut values = Self::default();
-        for declaration in specified.resolved() {
+        for declaration in declarations {
             let slot = match declaration.property() {
                 StyleProperty::Display => &mut values.display,
                 StyleProperty::Float => &mut values.float,
@@ -623,14 +689,6 @@ impl<'a> LayoutDeclarations<'a> {
                 StyleProperty::MinHeight => &mut values.min_height,
                 StyleProperty::MaxWidth => &mut values.max_width,
                 StyleProperty::MaxHeight => &mut values.max_height,
-                StyleProperty::MarginTop => &mut values.margin_top,
-                StyleProperty::MarginRight => &mut values.margin_right,
-                StyleProperty::MarginBottom => &mut values.margin_bottom,
-                StyleProperty::MarginLeft => &mut values.margin_left,
-                StyleProperty::PaddingTop => &mut values.padding_top,
-                StyleProperty::PaddingRight => &mut values.padding_right,
-                StyleProperty::PaddingBottom => &mut values.padding_bottom,
-                StyleProperty::PaddingLeft => &mut values.padding_left,
                 StyleProperty::FlexDirection => &mut values.flex_direction,
                 StyleProperty::FlexWrap => &mut values.flex_wrap,
                 StyleProperty::FlexGrow => &mut values.flex_grow,
