@@ -887,8 +887,9 @@ resource channel once and are not embedded into every frame transaction.
 
 Structural operations must establish a node before later operations reference
 it. Deleting a subtree invalidates its Host handles, subscriptions, pending
-commands, and element-instance state. A `NodeId` is not reused within the same
-scene epoch.
+commands, and element-instance state. `CreateNode` identifiers strictly
+increase within one scene epoch, so a `NodeId` is never reused and receivers
+can validate retirement with a constant-space high-water mark.
 
 ### Incremental updates
 
