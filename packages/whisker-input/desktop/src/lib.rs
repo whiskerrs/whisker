@@ -1015,6 +1015,26 @@ mod tests {
     }
 
     #[test]
+    fn ime_caret_rect_tracks_a_selection_inside_the_line() {
+        let mut input = InputDesktopView::new(DesktopEventEmitter::default());
+        input.set_focus(true);
+        input.set_value("candidate");
+        let end = input.text_input_caret_rect([240.0, 40.0], 2.0);
+
+        input.move_caret("cand".len(), false);
+        let middle = input.text_input_caret_rect([240.0, 40.0], 2.0);
+
+        assert!(
+            middle.x > 10.0,
+            "caret follows preceding glyphs: {middle:?}"
+        );
+        assert!(
+            middle.x < end.x,
+            "caret does not stay at line end: {middle:?}"
+        );
+    }
+
+    #[test]
     fn ime_caret_rect_tracks_the_current_multiline_row() {
         let mut input = InputDesktopView::new(DesktopEventEmitter::default());
         input.multiline = true;

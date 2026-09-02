@@ -322,7 +322,7 @@ where
         self
     }
 
-    /// Supplies the current caret rectangle in element-local logical pixels.
+    /// Supplies the current caret rectangle in content-local logical pixels.
     /// Desktop uses this to anchor IME candidate UI to the edited text.
     pub fn text_input_caret_rect(
         mut self,

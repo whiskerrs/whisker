@@ -143,7 +143,7 @@ impl DesktopScene {
             .nodes
             .iter()
             .find_map(|(node, state)| state.content.text_input_focused().then_some(*node))?;
-        let bounds = self.absolute_border_box(node)?;
+        let bounds = self.absolute_content_box(node)?;
         let local = self
             .nodes
             .get(&node)?
@@ -185,6 +185,17 @@ impl DesktopScene {
             y: parent_rect.y + local.y - scroll[1],
             width: local.width,
             height: local.height,
+        })
+    }
+
+    fn absolute_content_box(&self, node: NodeId) -> Option<LayoutRect> {
+        let border = self.absolute_border_box(node)?;
+        let content = self.nodes.get(&node)?.presentation.layout.content_box;
+        Some(LayoutRect {
+            x: border.x + content.x,
+            y: border.y + content.y,
+            width: content.width,
+            height: content.height,
         })
     }
 

@@ -440,10 +440,10 @@ pub trait DesktopNativeElement: fmt::Debug + 'static {
         None
     }
 
-    /// Returns the current caret rectangle in element-local logical pixels.
+    /// Returns the current caret rectangle in content-local logical pixels.
     ///
     /// The Host translates this into surface coordinates for the platform IME.
-    /// `None` falls back to the complete element bounds.
+    /// `None` falls back to the complete content bounds.
     fn text_input_caret_rect(&self, _logical_size: [f32; 2], _scale: f32) -> Option<LayoutRect> {
         None
     }

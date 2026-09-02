@@ -266,6 +266,7 @@ fn toggle_scene() -> (DesktopScene, ElementTypeId) {
 struct TextInputProbe {
     focused: bool,
     value: String,
+    caret_request: Option<([f32; 2], f32)>,
 }
 
 #[derive(Debug)]
@@ -308,7 +309,8 @@ impl DesktopNativeElement for TextInputNative {
         Some(self.probe.lock().unwrap().value.clone())
     }
 
-    fn text_input_caret_rect(&self, _logical_size: [f32; 2], _scale: f32) -> Option<LayoutRect> {
+    fn text_input_caret_rect(&self, logical_size: [f32; 2], scale: f32) -> Option<LayoutRect> {
+        self.probe.lock().unwrap().caret_request = Some((logical_size, scale));
         Some(LayoutRect {
             x: 32.0,
             y: 4.0,
@@ -375,11 +377,15 @@ fn text_input_focus_and_edits_are_routed_to_the_hit_native_element() {
     assert_eq!(
         scene.focused_text_input_caret_rect(2.0),
         Some(LayoutRect {
-            x: 42.0,
-            y: 24.0,
+            x: 43.0,
+            y: 26.0,
             width: 1.0,
             height: 18.0,
         })
+    );
+    assert_eq!(
+        probe.lock().unwrap().caret_request,
+        Some(([118.0, 40.0], 2.0))
     );
     assert!(scene.dispatch_text_input(&DesktopTextInputEvent::Commit("hi".into())));
     assert_eq!(scene.selected_text().as_deref(), Some("hi"));
