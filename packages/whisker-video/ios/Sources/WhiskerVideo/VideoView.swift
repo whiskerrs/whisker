@@ -22,10 +22,8 @@ public final class VideoView: WhiskerUI<UIView> {
     }
 
     /// Keep the AVPlayerLayer sized to the host UIView's bounds.
-    /// The Host fires this after applying the element's computed frame —
-    /// `self.view().bounds` is authoritative here.
-    @objc public override func frameDidChange() {
-        super.frameDidChange()
+    public override func layoutSubviews() {
+        super.layoutSubviews()
         playerLayer?.frame = self.view().bounds
     }
 
@@ -48,7 +46,7 @@ public final class VideoView: WhiskerUI<UIView> {
         // setSrc can fire before the Host assigns the view its computed
         // frame — the first dispatch happens during initial-mount prop
         // application — so the layer needs a placeholder rect until
-        // `frameDidChange` resizes it.
+        // `layoutSubviews` resizes it.
         layer.frame = hostView.bounds.isEmpty
             ? CGRect(x: 0, y: 0, width: 400, height: 200)
             : hostView.bounds

@@ -38,7 +38,7 @@ open class VideoView(context: WhiskerContext) : WhiskerUI<View>(context) {
         playerView?.player = null
         if (value.isEmpty()) return
 
-        val ctx = view?.context ?: return
+        val ctx = view().context
         val p = ExoPlayer.Builder(ctx).build()
         playerView?.player = p
         p.setMediaItem(MediaItem.fromUri(value))
