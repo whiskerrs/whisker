@@ -4986,6 +4986,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-host-link-test"
+version = "0.0.0"
+dependencies = [
+ "whisker",
+ "whisker-audio",
+ "whisker-haptics",
+ "whisker-image",
+ "whisker-input",
+ "whisker-keyboard",
+ "whisker-local-store",
+ "whisker-router",
+ "whisker-svg",
+ "whisker-video",
+ "whisker-web-browser",
+]
+
+[[package]]
 name = "rustc-demangle"
 version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"

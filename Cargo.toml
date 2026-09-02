@@ -48,6 +48,7 @@ members = [
     "examples/list-benchmark",
     "examples/carousel",
     "tests/mobile-link-test",
+    "tests/rust-host-link-test",
     "packages/whisker-haptics",
     "packages/whisker-haptics/web",
     "packages/whisker-icons",
