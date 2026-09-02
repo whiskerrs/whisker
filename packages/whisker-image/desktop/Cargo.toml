@@ -1,0 +1,16 @@
+[package]
+name = "whisker-image-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Desktop Host implementation for whisker-image."
+
+[dependencies]
+base64 = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+lru = "0.18.2"
+serde_json = { workspace = true }
+ureq = "2.12"
+whisker-desktop = { workspace = true }
