@@ -388,13 +388,7 @@ impl InputDesktopView {
         if self.focused {
             let cursor = self.display_offset(self.selection.1);
             let cursor = text_cursor(&display, cursor.min(display.len()));
-            let mut caret = None;
-            for run in buffer.layout_runs() {
-                if let Some((x, _)) = run.highlight(cursor, cursor) {
-                    caret = Some((x, run.line_top, run.line_height));
-                }
-            }
-            let (x, y, h) = caret.unwrap_or((0.0, 0.0, line_height));
+            let (x, y, h) = caret_geometry(&buffer, cursor, line_height);
             fill_rect(
                 &mut pixels,
                 width,
@@ -653,6 +647,24 @@ fn text_cursor(text: &str, offset: usize) -> Cursor {
     Cursor::new(line, offset.saturating_sub(line_start))
 }
 
+fn caret_geometry(buffer: &Buffer, cursor: Cursor, line_height: f32) -> (f32, f32, f32) {
+    let mut cursor_line = None;
+    let mut content_bottom = 0.0_f32;
+    for run in buffer.layout_runs() {
+        content_bottom = content_bottom.max(run.line_top + run.line_height);
+        if run.line_i == cursor.line {
+            // An empty line has no glyph boundary for `highlight` to return.
+            // Keeping the latest run also puts a wrapped line's end on its
+            // final visual row if glyph lookup cannot resolve the cursor.
+            cursor_line = Some((run.line_w, run.line_top, run.line_height));
+        }
+        if let Some((x, _)) = run.highlight(cursor, cursor) {
+            return (x, run.line_top, run.line_height);
+        }
+    }
+    cursor_line.unwrap_or((0.0, content_bottom, line_height))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn fill_rect(
     pixels: &mut [u8],
@@ -768,5 +780,56 @@ mod tests {
         assert_eq!(input.value, "é日");
         assert_eq!(input.selection, (0, 0));
         assert_eq!(input.composition, Some((0, "é日".len())));
+    }
+
+    #[test]
+    fn multiline_accepts_text_after_a_trailing_newline() {
+        let mut input = InputDesktopView::new(DesktopEventEmitter::default());
+        input.multiline = true;
+        input.set_value("test");
+
+        input.handle_input(&DesktopTextInputEvent::Key {
+            key: DesktopTextInputKey::Enter,
+            shift: false,
+        });
+        assert_eq!(input.value, "test\n");
+        assert_eq!(input.selection, (5, 5));
+
+        input.handle_input(&DesktopTextInputEvent::Preedit {
+            text: "に".into(),
+            cursor: Some((0, "に".len())),
+        });
+        assert_eq!(input.value, "test\nに");
+        assert_eq!(input.selection, (8, 8));
+
+        input.handle_input(&DesktopTextInputEvent::Commit("next".into()));
+        assert_eq!(input.value, "test\nnext");
+        assert_eq!(input.selection, (9, 9));
+    }
+
+    #[test]
+    fn multiline_draws_the_caret_on_a_trailing_empty_line() {
+        let mut input = InputDesktopView::new(DesktopEventEmitter::default());
+        input.multiline = true;
+        input.set_focus(true);
+        input.set_value("test\n");
+
+        let raster = input.rasterize(200, 100, 1.0).expect("input raster");
+        let caret = [0, 122, 255, 255];
+        let caret_rows = raster
+            .pixels()
+            .chunks_exact(4)
+            .enumerate()
+            .filter_map(|(index, pixel)| (pixel == caret).then_some(index / 200))
+            .collect::<Vec<_>>();
+
+        assert!(!caret_rows.is_empty(), "focused input draws its caret");
+        let first_caret_row = caret_rows.iter().copied().min().unwrap();
+        let first_line_height =
+            (whisker_protocol::TextMeasureStyle::default().font_size * 1.2).floor() as usize;
+        assert!(
+            first_caret_row >= first_line_height,
+            "the trailing-line caret must be below the first line; got row {first_caret_row}"
+        );
     }
 }
