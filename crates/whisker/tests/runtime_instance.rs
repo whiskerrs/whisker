@@ -785,6 +785,39 @@ fn background_gradients_lower_without_host_resources() {
     assert_eq!(radius_x.length, 40.0);
     assert_eq!(radius_y.fraction, 0.25);
 
+    let radial_circle = render_gradient(
+        50,
+        Gradient::Radial {
+            shape: RadialShape::Circle,
+            stops: stops(),
+        },
+    );
+    let PaintImage::RadialGradient {
+        shape,
+        extent,
+        radii: Some((radius_x, radius_y)),
+        stops: circle_stops,
+        ..
+    } = radial_circle
+    else {
+        panic!("expected canonical radial circle")
+    };
+    assert_eq!(
+        shape,
+        whisker_engine::whisker_protocol::RadialGradientShape::Ellipse
+    );
+    assert_eq!(
+        extent,
+        whisker_engine::whisker_protocol::RadialGradientExtent::Explicit
+    );
+    assert!((radius_x.length - 50.0_f32.hypot(50.0)).abs() < 0.001);
+    assert_eq!(radius_x, radius_y);
+    assert!(
+        circle_stops
+            .iter()
+            .all(|stop| stop.position.is_some_and(|position| position.length == 0.0))
+    );
+
     let conic = render_gradient(
         49,
         Gradient::Conic {
