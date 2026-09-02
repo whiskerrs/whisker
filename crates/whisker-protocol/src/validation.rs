@@ -225,19 +225,24 @@ impl SceneProjection {
             });
         }
 
-        let mut next = if packet.header.mode == FrameMode::Snapshot {
-            Self::new(self.surface)
+        if packet.header.mode == FrameMode::Snapshot {
+            let mut next = Self::new(self.surface);
+            next.scene_epoch = Some(packet.header.scene_epoch);
+            for operation in &packet.operations {
+                next.apply_operation(operation)?;
+            }
+            next.revision = packet.header.target_revision;
+            *self = next;
         } else {
-            self.clone()
-        };
-        next.scene_epoch = Some(packet.header.scene_epoch);
-
-        for operation in &packet.operations {
-            next.apply_operation(operation)?;
+            let mut transaction = ProjectionTransaction::new(self);
+            for operation in &packet.operations {
+                if let Err(error) = transaction.apply_operation(operation) {
+                    transaction.rollback();
+                    return Err(error);
+                }
+            }
+            transaction.commit(packet.header.scene_epoch, packet.header.target_revision);
         }
-
-        next.revision = packet.header.target_revision;
-        *self = next;
         Ok(ApplyResult::Accepted {
             revision: self.revision,
         })
@@ -515,6 +520,93 @@ impl SceneProjection {
     }
 }
 
+struct ProjectionTransaction<'a> {
+    projection: &'a mut SceneProjection,
+    original_nodes: HashMap<NodeId, Option<NodeProjection>>,
+    newly_allocated: Vec<NodeId>,
+}
+
+impl<'a> ProjectionTransaction<'a> {
+    fn new(projection: &'a mut SceneProjection) -> Self {
+        Self {
+            projection,
+            original_nodes: HashMap::new(),
+            newly_allocated: Vec::new(),
+        }
+    }
+
+    fn apply_operation(&mut self, operation: &Operation) -> Result<(), ValidationError> {
+        match operation {
+            Operation::CreateNode { node, .. } => {
+                if self.projection.allocated_nodes.contains(node) {
+                    return Err(ValidationError::DuplicateNode { node: *node });
+                }
+                self.remember(*node);
+                self.projection.apply_operation(operation)?;
+                self.newly_allocated.push(*node);
+            }
+            Operation::DeleteNode { node } => {
+                self.remember_subtree(*node)?;
+                self.projection.apply_operation(operation)?;
+            }
+            Operation::InsertChild { parent, child, .. }
+            | Operation::RemoveChild { parent, child } => {
+                self.remember(*parent);
+                self.remember(*child);
+                self.projection.apply_operation(operation)?;
+            }
+            Operation::MoveChild { parent, .. } => {
+                self.remember(*parent);
+                self.projection.apply_operation(operation)?;
+            }
+            _ => self.projection.apply_operation(operation)?,
+        }
+        Ok(())
+    }
+
+    fn remember(&mut self, node: NodeId) {
+        self.original_nodes
+            .entry(node)
+            .or_insert_with(|| self.projection.nodes.get(&node).cloned());
+    }
+
+    fn remember_subtree(&mut self, node: NodeId) -> Result<(), ValidationError> {
+        let state = self.projection.require_node(node)?;
+        let parent = state.parent;
+        let mut pending = vec![node];
+        if let Some(parent) = parent {
+            self.remember(parent);
+        }
+        while let Some(current) = pending.pop() {
+            let children = self.projection.require_node(current)?.children.clone();
+            self.remember(current);
+            pending.extend(children);
+        }
+        Ok(())
+    }
+
+    fn rollback(self) {
+        for (node, original) in self.original_nodes {
+            match original {
+                Some(state) => {
+                    self.projection.nodes.insert(node, state);
+                }
+                None => {
+                    self.projection.nodes.remove(&node);
+                }
+            }
+        }
+        for node in self.newly_allocated {
+            self.projection.allocated_nodes.remove(&node);
+        }
+    }
+
+    fn commit(self, scene_epoch: u32, revision: u64) {
+        self.projection.scene_epoch = Some(scene_epoch);
+        self.projection.revision = revision;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,6 +799,24 @@ mod tests {
     }
 
     #[test]
+    fn non_structural_delta_does_not_rebuild_retained_structure() {
+        let (mut scene, root, _) = initial_tree();
+        let before = scene.node(root).expect("root") as *const NodeProjection;
+
+        apply_next(
+            &mut scene,
+            vec![Operation::SetOpacity {
+                node: root,
+                opacity: 0.5,
+            }],
+        )
+        .expect("valid non-structural delta");
+
+        let after = scene.node(root).expect("root") as *const NodeProjection;
+        assert_eq!(before, after);
+    }
+
+    #[test]
     fn malformed_operation_rolls_back_the_complete_packet() {
         let (mut scene, root, child) = initial_tree();
         let new_child = node(3);
@@ -744,6 +854,16 @@ mod tests {
         assert_eq!(scene.node_count(), 2);
         assert_eq!(scene.node(root).expect("root").children(), &[child]);
         assert_eq!(scene.node(new_child), None);
+
+        apply_next(
+            &mut scene,
+            vec![Operation::CreateNode {
+                node: new_child,
+                element_type: element_type(),
+            }],
+        )
+        .expect("a rejected transaction must not retire newly allocated IDs");
+        assert!(scene.node(new_child).is_some());
     }
 
     #[test]
