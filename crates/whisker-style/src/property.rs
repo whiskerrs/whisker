@@ -131,6 +131,9 @@ macro_rules! define_style_properties {
                         | Self::Direction
                         | Self::Color
                         | Self::TextAlign
+                        | Self::FontFeatureSettings
+                        | Self::FontOpticalSizing
+                        | Self::FontVariationSettings
                         | Self::TextDecoration
                         | Self::TextShadow
                 );
@@ -585,6 +588,9 @@ mod tests {
                 StyleProperty::LineHeight,
                 StyleProperty::PointerEvents,
                 StyleProperty::TextAlign,
+                StyleProperty::FontFeatureSettings,
+                StyleProperty::FontOpticalSizing,
+                StyleProperty::FontVariationSettings,
                 StyleProperty::TextDecoration,
                 StyleProperty::TextShadow,
             ]

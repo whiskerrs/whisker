@@ -252,23 +252,38 @@ property storage, generated tables, bitsets, interning, and copy-on-write
 values where useful rather than literal public structs with one field per
 property.
 
-### Limited text inheritance
+### Limited inheritance
 
 Only the following properties inherit in version 1:
 
+- `cursor`;
+- `pointer_events`;
+- `direction`;
 - `font_family`;
+- `font_feature_settings`;
+- `font_variation_settings`;
+- `font_optical_sizing`;
 - `font_size`;
 - `font_weight`;
 - `font_style`;
 - `line_height`;
 - `letter_spacing`;
-- `color`.
+- `color`;
+- `text_align`;
+- `text_decoration`;
+- `text_shadow`.
 
-The initial inherited context is platform system font, `14px`, weight `400`,
-`normal` font style, platform-normal line height, zero letter spacing, and
-opaque black. A surface may provide a different root font size through its
-`StyleEnvironment`; `rem` and an otherwise unspecified root `font_size` use
-that value.
+Registered custom properties also inherit by name. They are not entries in the
+closed `StyleProperty` registry and therefore are not counted in the sixteen
+built-in properties above.
+
+The initial inherited context uses the automatic cursor and pointer behavior,
+left-to-right direction, platform system font, `14px`, weight `400`, `normal`
+font style, platform-normal line height, zero letter spacing, opaque black,
+start text alignment, and no decoration or shadow. Extended font settings use
+their engine initial values. A surface may provide a different root font size
+through its `StyleEnvironment`; `rem` and an otherwise unspecified root
+`font_size` use that value.
 
 For each property, resolution is:
 
@@ -278,20 +293,23 @@ explicit value on this node
     ?? engine initial value
 ```
 
-The resulting seven computed values form the `InheritedStyle` passed to all
-children, whether the current node itself draws text or is only a container.
-This makes a parent's `font_size` or `color` the default for descendant text
-without treating arbitrary properties as inherited.
+The resulting sixteen computed values and registered custom properties form
+the `InheritedStyle` passed to all children, whether the current node itself
+draws text or is only a container. This makes a parent's text, direction, and
+input defaults available to descendants without treating arbitrary properties
+as inherited.
 
 Layout, box, background, border, opacity, transform, filter, clip, overflow,
-pointer, and semantics properties do not inherit. Parent opacity and transform
-still affect descendants through scene composition; that is geometric or
-compositing ancestry, not inheritance.
+and semantics properties do not inherit. Pointer hit-test participation is the
+explicit exception through `pointer_events`; `cursor` likewise follows the
+nearest ancestor when omitted. Parent opacity and transform still affect
+descendants through scene composition; that is geometric or compositing
+ancestry, not inheritance.
 
 Version 1 has no public `inherit`, `initial`, `unset`, or `revert` keywords.
-Omitting a text property selects the inherited value. Explicitly specifying a
-value overrides it. New inherited properties require a protocol-compatible
-RFC change because they can invalidate entire subtrees.
+Omitting an inherited property selects the inherited value. Explicitly
+specifying a value overrides it. New inherited properties require a
+protocol-compatible RFC change because they can invalidate entire subtrees.
 
 ### Element defaults and applicability
 
@@ -311,9 +329,9 @@ text-style-consumer categories as defined by RFC 0004. Its public module DSL
 does not expose a Rust `Trait` list, and it does not repeat every common style
 property. Invalid property/element combinations should be compile-time errors
 when statically known and deterministic runtime diagnostics otherwise.
-The seven inherited text properties are valid on containers because they also
-define the inherited context for descendants, even when that container does
-not paint text itself.
+The inherited properties are valid on containers because they also define the
+inherited context for descendants, even when that container does not paint
+text or directly handle input itself.
 
 Element-specific behavior stays in the canonical element schema. For example,
 `Video` uses common width, border, opacity, transform, and clip styles, while
@@ -970,7 +988,8 @@ typed replacements for properties used by maintained Whisker packages.
 3. No public selector, stylesheet, specificity, `!important`, or global
    cascade participates in rendering.
 4. Explicit style fragments compose in order with last declaration winning.
-5. Only the seven listed text properties inherit in version 1.
+5. Only the sixteen listed built-in properties and registered custom
+   properties inherit in version 1.
 6. Taffy is authoritative for interactive layout on every target.
 7. The Host owns shaping and painting, but not style or layout semantics.
 8. Signal and motion updates target the same typed property slots.
