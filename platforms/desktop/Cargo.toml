@@ -31,6 +31,7 @@ whisker-dev-runtime = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 accesskit = "0.25.0"
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 base64 = { workspace = true }
 bytemuck = { version = "1", features = ["derive"] }
 csscolorparser = "0.7.2"

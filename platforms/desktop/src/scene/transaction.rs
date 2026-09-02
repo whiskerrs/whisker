@@ -86,6 +86,119 @@ impl DesktopScene {
             .find_map(|(node, _)| self.hit_test_node(node, point, [0.0, 0.0]))
     }
 
+    pub(crate) fn focus_text_input_at(&mut self, point: [f32; 2]) -> bool {
+        let mut target = self.hit_test(point);
+        while let Some(node) = target {
+            let state = self
+                .nodes
+                .get(&node)
+                .expect("hit-tested Desktop node remains live");
+            if state.content.accepts_text_input() {
+                break;
+            }
+            target = state.presentation.parent;
+        }
+        let mut changed = false;
+        for (node, state) in &mut self.nodes {
+            if !state.content.accepts_text_input() {
+                continue;
+            }
+            let focused = Some(*node) == target;
+            if state.content.text_input_focused() != focused {
+                state.content.set_text_input_focus(focused);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    pub(crate) fn dispatch_text_input(&mut self, event: &DesktopTextInputEvent) -> bool {
+        let Some(node) = self
+            .nodes
+            .iter()
+            .find_map(|(node, state)| state.content.text_input_focused().then_some(*node))
+        else {
+            return false;
+        };
+        self.nodes
+            .get_mut(&node)
+            .expect("focused Desktop editor remains live")
+            .content
+            .handle_text_input(event);
+        true
+    }
+
+    pub(crate) fn selected_text(&self) -> Option<String> {
+        self.nodes.values().find_map(|state| {
+            state
+                .content
+                .text_input_focused()
+                .then(|| state.content.selected_text())
+                .flatten()
+        })
+    }
+
+    pub(crate) fn focused_text_input_caret_rect(&self, scale: f32) -> Option<LayoutRect> {
+        let node = self
+            .nodes
+            .iter()
+            .find_map(|(node, state)| state.content.text_input_focused().then_some(*node))?;
+        let bounds = self.absolute_content_box(node)?;
+        let local = self
+            .nodes
+            .get(&node)?
+            .content
+            .text_input_caret_rect([bounds.width, bounds.height], scale);
+        let Some(local) = local.filter(|rect| {
+            rect.x.is_finite()
+                && rect.y.is_finite()
+                && rect.width.is_finite()
+                && rect.height.is_finite()
+                && rect.width > 0.0
+                && rect.height > 0.0
+        }) else {
+            return Some(bounds);
+        };
+        Some(LayoutRect {
+            x: bounds.x + local.x.clamp(0.0, bounds.width),
+            y: bounds.y + local.y.clamp(0.0, bounds.height),
+            width: local.width,
+            height: local.height,
+        })
+    }
+
+    fn absolute_border_box(&self, node: NodeId) -> Option<LayoutRect> {
+        let state = self.nodes.get(&node)?;
+        let local = state.presentation.layout.border_box;
+        let Some(parent) = state.presentation.parent else {
+            return Some(local);
+        };
+        let parent_state = self.nodes.get(&parent)?;
+        let parent_rect = self.absolute_border_box(parent)?;
+        let scroll = if parent_state.content.is_scroll_container() {
+            parent_state.scroll_offset
+        } else {
+            [0.0, 0.0]
+        };
+        Some(LayoutRect {
+            x: parent_rect.x + local.x - scroll[0],
+            y: parent_rect.y + local.y - scroll[1],
+            width: local.width,
+            height: local.height,
+        })
+    }
+
+    fn absolute_content_box(&self, node: NodeId) -> Option<LayoutRect> {
+        let border = self.absolute_border_box(node)?;
+        let content = self.nodes.get(&node)?.presentation.layout.content_box;
+        Some(LayoutRect {
+            x: border.x + content.x,
+            y: border.y + content.y,
+            width: content.width,
+            height: content.height,
+        })
+    }
+
     fn hit_test_node(
         &self,
         node: NodeId,
@@ -1008,6 +1121,21 @@ impl DesktopScene {
                     ..
                 } => {
                     if !self.apply_scroll_command(*node, *command, arguments) {
+                        let is_focus = self
+                            .nodes
+                            .get(node)
+                            .and_then(|state| {
+                                self.elements.command_name(state.element_type, *command)
+                            })
+                            .as_deref()
+                            == Some("focus");
+                        if is_focus {
+                            for (candidate, state) in &mut self.nodes {
+                                if candidate != node && state.content.text_input_focused() {
+                                    state.content.set_text_input_focus(false);
+                                }
+                            }
+                        }
                         let state = self.nodes.get_mut(node).expect("validated node");
                         state
                             .content

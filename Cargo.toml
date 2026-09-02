@@ -57,6 +57,8 @@ members = [
     "packages/whisker-image/web",
     "packages/whisker-image/example",
     "packages/whisker-input",
+    "packages/whisker-input/desktop",
+    "packages/whisker-input/web",
     "packages/whisker-input/example",
     "packages/whisker-keyboard",
     "packages/whisker-keyboard/web",

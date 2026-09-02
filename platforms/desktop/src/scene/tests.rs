@@ -262,6 +262,140 @@ fn toggle_scene() -> (DesktopScene, ElementTypeId) {
     toggle_scene_with_wake(RuntimeWakeHandle::new(|| {}))
 }
 
+#[derive(Debug, Default)]
+struct TextInputProbe {
+    focused: bool,
+    value: String,
+    caret_request: Option<([f32; 2], f32)>,
+}
+
+#[derive(Debug)]
+struct TextInputNative {
+    probe: Arc<Mutex<TextInputProbe>>,
+}
+
+impl DesktopNativeElement for TextInputNative {
+    fn set_property(&mut self, _property: PropertyId, _value: &WhiskerValue) {
+        unreachable!("test input has no properties")
+    }
+
+    fn clear_property(&mut self, _property: PropertyId) {
+        unreachable!("test input has no properties")
+    }
+
+    fn invoke_command(&mut self, _command: CommandId, _arguments: &WhiskerValue) {
+        unreachable!("test input has no commands")
+    }
+
+    fn accepts_text_input(&self) -> bool {
+        true
+    }
+
+    fn text_input_focused(&self) -> bool {
+        self.probe.lock().unwrap().focused
+    }
+
+    fn set_text_input_focus(&mut self, focused: bool) {
+        self.probe.lock().unwrap().focused = focused;
+    }
+
+    fn handle_text_input(&mut self, event: &DesktopTextInputEvent) {
+        if let DesktopTextInputEvent::Commit(text) = event {
+            self.probe.lock().unwrap().value.push_str(text);
+        }
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        Some(self.probe.lock().unwrap().value.clone())
+    }
+
+    fn text_input_caret_rect(&self, logical_size: [f32; 2], scale: f32) -> Option<LayoutRect> {
+        self.probe.lock().unwrap().caret_request = Some((logical_size, scale));
+        Some(LayoutRect {
+            x: 32.0,
+            y: 4.0,
+            width: 1.0,
+            height: 18.0,
+        })
+    }
+}
+
+fn text_input_scene() -> (DesktopScene, ElementTypeId, Arc<Mutex<TextInputProbe>>) {
+    let element_type = ElementTypeId::new(21).unwrap();
+    let mut registrations = standard_element_registrations();
+    registrations.push(ElementRegistration {
+        element_type,
+        name: "whisker.test/Input".into(),
+        child_policy: whisker_protocol::ChildPolicy::None,
+        measurement: ElementMeasurement::None,
+        text_style: false,
+        properties: vec![],
+        events: vec![],
+        commands: vec![],
+    });
+    let probe = Arc::new(Mutex::new(TextInputProbe::default()));
+    let input_probe = Arc::clone(&probe);
+    let mut factories = built_in_element_factories();
+    factories.push(DesktopElementFactory::native(
+        "whisker.test/Input",
+        move |_| {
+            Box::new(TextInputNative {
+                probe: Arc::clone(&input_probe),
+            })
+        },
+    ));
+    (
+        DesktopScene::new(
+            SurfaceId::new(1).unwrap(),
+            DesktopElementRegistry::bind(&registrations, &factories).unwrap(),
+        ),
+        element_type,
+        probe,
+    )
+}
+
+#[test]
+fn text_input_focus_and_edits_are_routed_to_the_hit_native_element() {
+    let node = id(1);
+    let (mut scene, element_type, probe) = text_input_scene();
+    scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode { node, element_type },
+                Operation::SetLayout {
+                    node,
+                    geometry: geometry(10.0, 20.0, 120.0, 44.0),
+                },
+            ],
+        ))
+        .unwrap();
+
+    assert!(scene.focus_text_input_at([20.0, 30.0]));
+    assert_eq!(
+        scene.focused_text_input_caret_rect(2.0),
+        Some(LayoutRect {
+            x: 43.0,
+            y: 26.0,
+            width: 1.0,
+            height: 18.0,
+        })
+    );
+    assert_eq!(
+        probe.lock().unwrap().caret_request,
+        Some(([118.0, 40.0], 2.0))
+    );
+    assert!(scene.dispatch_text_input(&DesktopTextInputEvent::Commit("hi".into())));
+    assert_eq!(scene.selected_text().as_deref(), Some("hi"));
+    assert_eq!(probe.lock().unwrap().value, "hi");
+
+    assert!(scene.focus_text_input_at([500.0, 500.0]));
+    assert!(!probe.lock().unwrap().focused);
+    assert!(!scene.dispatch_text_input(&DesktopTextInputEvent::Commit("!".into())));
+}
+
 #[test]
 fn accessibility_semantics_are_retained_with_the_common_presentation() {
     let node = id(1);

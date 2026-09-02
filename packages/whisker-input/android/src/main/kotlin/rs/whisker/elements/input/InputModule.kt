@@ -35,22 +35,22 @@ class InputModule : Module() {
             // ---- behaviour props -------------------------------------------
 
             Prop("multiline") { view: WhiskerInputView, value ->
-                view.setMultiline(value.asString() ?: "false")
+                view.setMultiline(value.asBool() ?: false)
             }
             Prop("lines") { view: WhiskerInputView, value ->
-                view.setLines(value.asString() ?: "0")
+                view.setLines(value.asInt() ?: 0)
             }
             Prop("secure") { view: WhiskerInputView, value ->
-                view.setSecure(value.asString() ?: "false")
+                view.setSecure(value.asBool() ?: false)
             }
             Prop("editable") { view: WhiskerInputView, value ->
-                view.setEditable(value.asString() ?: "true")
+                view.setEditable(value.asBool() ?: true)
             }
             Prop("auto-focus") { view: WhiskerInputView, value ->
-                view.setAutoFocus(value.asString() ?: "false")
+                view.setAutoFocus(value.asBool() ?: false)
             }
             Prop("max-length") { view: WhiskerInputView, value ->
-                view.setMaxLength(value.asString() ?: "0")
+                view.setMaxLength(value.asInt() ?: 0)
             }
             Prop("keyboard-type") { view: WhiskerInputView, value ->
                 view.setKeyboardType(value.asString() ?: "default")
@@ -62,10 +62,10 @@ class InputModule : Module() {
                 view.setAutoCapitalize(value.asString() ?: "sentences")
             }
             Prop("autocorrect") { view: WhiskerInputView, value ->
-                view.setAutocorrect(value.asString() ?: "true")
+                view.setAutocorrect(value.asBool() ?: true)
             }
             Prop("spell-check") { view: WhiskerInputView, value ->
-                view.setSpellCheck(value.asString() ?: "true")
+                view.setSpellCheck(value.asBool() ?: true)
             }
 
             // Declaration-only metadata (parity with the iOS module);

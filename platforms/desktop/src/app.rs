@@ -6,17 +6,23 @@ use std::time::{Duration, Instant};
 use crate::accessibility::{DesktopAccessibilityAction, DesktopAccessibilityBridge};
 use crate::{
     BuiltInElementModule, DesktopElementFactory, DesktopFrameContext, DesktopModuleDefinition,
-    DesktopMouseButton, DesktopPointerAdapter, DesktopPointerPhase, DesktopRuntime, WhiskerModule,
+    DesktopMouseButton, DesktopPointerAdapter, DesktopPointerPhase, DesktopRuntime,
+    DesktopTextInputEvent, DesktopTextInputKey, WhiskerModule,
 };
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::runtime::module::RustModuleDefinition;
 use whisker::{Element, ElementModuleDefinition, ElementRegistry, RuntimeInstance, SurfaceRuntime};
-use whisker_protocol::{CursorKeyword, InputEvent, InputEventKind, SurfaceId, WhiskerValue};
+use whisker_protocol::{
+    CursorKeyword, InputEvent, InputEventKind, LayoutRect, SurfaceId, WhiskerValue,
+};
 use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
+use winit::event::{
+    ElementState, Ime, Modifiers, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent,
+};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorIcon, Window, WindowAttributes, WindowId};
 
 #[cfg(target_os = "macos")]
@@ -240,6 +246,8 @@ struct DesktopApplication {
     frame_failed: bool,
     pointer: DesktopPointerAdapter,
     pending_scroll_settle: Option<(Instant, [f32; 2])>,
+    modifiers: Modifiers,
+    clipboard: Option<arboard::Clipboard>,
 }
 
 impl DesktopApplication {
@@ -269,6 +277,8 @@ impl DesktopApplication {
             frame_failed: false,
             pointer: DesktopPointerAdapter::new(SurfaceId::new(1).unwrap()),
             pending_scroll_settle: None,
+            modifiers: Modifiers::default(),
+            clipboard: arboard::Clipboard::new().ok(),
         }
     }
 
@@ -394,6 +404,7 @@ impl DesktopApplication {
         }
         if !self.frame_failed {
             self.update_accessibility(false);
+            self.sync_text_input();
         }
     }
 
@@ -425,6 +436,93 @@ impl DesktopApplication {
             eprintln!("dispatch {TARGET_NAME} input failed: {error}");
         } else {
             self.request_frame();
+        }
+    }
+
+    fn sync_text_input(&self) {
+        let (Some(window), Some(host)) = (&self.window, &self.host) else {
+            return;
+        };
+        let rect = host.focused_text_input_caret_rect(window.scale_factor() as f32);
+        window.set_ime_allowed(rect.is_some());
+        if let Some(rect) = rect {
+            let (position, size) = ime_cursor_area(rect);
+            window.set_ime_cursor_area(position, size);
+        }
+    }
+
+    fn dispatch_text_input(&mut self, event: DesktopTextInputEvent) {
+        if self
+            .host
+            .as_mut()
+            .is_some_and(|host| host.dispatch_text_input(&event))
+        {
+            self.request_frame();
+            self.sync_text_input();
+        }
+    }
+
+    fn handle_keyboard(&mut self, event: winit::event::KeyEvent) {
+        if event.state != ElementState::Pressed {
+            return;
+        }
+        let shift = self.modifiers.state().shift_key();
+        let command = if cfg!(target_os = "macos") {
+            self.modifiers.state().super_key()
+        } else {
+            self.modifiers.state().control_key()
+        };
+        if command {
+            if let Key::Character(character) = &event.logical_key {
+                match character.to_lowercase().as_str() {
+                    "a" => self.dispatch_text_input(DesktopTextInputEvent::SelectAll),
+                    "c" => {
+                        if let Some(text) =
+                            self.host.as_ref().and_then(DesktopRuntime::selected_text)
+                        {
+                            if let Some(clipboard) = &mut self.clipboard {
+                                let _ = clipboard.set_text(text);
+                            }
+                        }
+                    }
+                    "x" => {
+                        if let Some(text) =
+                            self.host.as_ref().and_then(DesktopRuntime::selected_text)
+                        {
+                            if let Some(clipboard) = &mut self.clipboard {
+                                let _ = clipboard.set_text(text);
+                            }
+                            self.dispatch_text_input(DesktopTextInputEvent::Cut);
+                        }
+                    }
+                    "v" => {
+                        if let Some(clipboard) = &mut self.clipboard
+                            && let Ok(text) = clipboard.get_text()
+                        {
+                            self.dispatch_text_input(DesktopTextInputEvent::Paste(text));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
+        let key = match event.logical_key {
+            Key::Named(NamedKey::Backspace) => Some(DesktopTextInputKey::Backspace),
+            Key::Named(NamedKey::Delete) => Some(DesktopTextInputKey::Delete),
+            Key::Named(NamedKey::ArrowLeft) => Some(DesktopTextInputKey::ArrowLeft),
+            Key::Named(NamedKey::ArrowRight) => Some(DesktopTextInputKey::ArrowRight),
+            Key::Named(NamedKey::Home) => Some(DesktopTextInputKey::Home),
+            Key::Named(NamedKey::End) => Some(DesktopTextInputKey::End),
+            Key::Named(NamedKey::Enter) => Some(DesktopTextInputKey::Enter),
+            _ => None,
+        };
+        if let Some(key) = key {
+            self.dispatch_text_input(DesktopTextInputEvent::Key { key, shift });
+            return;
+        }
+        if let Some(text) = printable_key_text(event.text.as_deref()) {
+            self.dispatch_text_input(DesktopTextInputEvent::Commit(text.to_owned()));
         }
     }
 
@@ -548,6 +646,17 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
                 }
             }
             WindowEvent::RedrawRequested => self.drive_frame(),
+            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers,
+            WindowEvent::KeyboardInput { event, .. } => self.handle_keyboard(event),
+            WindowEvent::Ime(Ime::Commit(text)) => {
+                if !text.is_empty() {
+                    self.dispatch_text_input(DesktopTextInputEvent::Commit(text));
+                }
+            }
+            WindowEvent::Ime(Ime::Preedit(text, cursor)) => {
+                self.dispatch_text_input(DesktopTextInputEvent::Preedit { text, cursor });
+            }
+            WindowEvent::Ime(Ime::Enabled | Ime::Disabled) => {}
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some(window) = &self.window {
                     let logical = position.to_logical::<f32>(window.scale_factor());
@@ -574,6 +683,15 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
                     state == ElementState::Pressed,
                 ) {
                     self.dispatch_input(input);
+                }
+                if button == MouseButton::Left
+                    && state == ElementState::Pressed
+                    && let (Some(position), Some(host)) =
+                        (self.pointer.mouse_position(), self.host.as_mut())
+                    && host.focus_text_input_at([position.x, position.y])
+                {
+                    self.request_frame();
+                    self.sync_text_input();
                 }
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {
@@ -639,9 +757,21 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
     }
 }
 
+fn printable_key_text(text: Option<&str>) -> Option<&str> {
+    text.filter(|text| !text.is_empty() && text.chars().all(|character| !character.is_control()))
+}
+
+fn ime_cursor_area(rect: LayoutRect) -> (winit::dpi::LogicalPosition<f64>, LogicalSize<f64>) {
+    (
+        winit::dpi::LogicalPosition::new(rect.x as f64, rect.y as f64),
+        LogicalSize::new(rect.width.max(1.0) as f64, rect.height.max(1.0) as f64),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::DesktopAppConfig;
+    use super::{DesktopAppConfig, ime_cursor_area, printable_key_text};
+    use whisker_protocol::LayoutRect;
 
     #[test]
     fn default_config_preserves_the_standalone_window_contract() {
@@ -660,5 +790,27 @@ mod tests {
     fn generated_host_can_set_static_background() {
         let config = DesktopAppConfig::new("Whisker").with_background_rgb(16, 16, 24);
         assert_eq!(config.background_rgb, [16, 16, 24]);
+    }
+
+    #[test]
+    fn printable_keyboard_text_is_forwarded_to_the_focused_editor() {
+        assert_eq!(printable_key_text(Some("hello")), Some("hello"));
+        assert_eq!(printable_key_text(Some("\r")), None);
+        assert_eq!(printable_key_text(None), None);
+    }
+
+    #[test]
+    fn ime_cursor_area_uses_the_focused_caret_bounds() {
+        let (position, size) = ime_cursor_area(LayoutRect {
+            x: 10.0,
+            y: 20.0,
+            width: 120.0,
+            height: 44.0,
+        });
+
+        assert_eq!(position.x, 10.0);
+        assert_eq!(position.y, 20.0);
+        assert_eq!(size.width, 120.0);
+        assert_eq!(size.height, 44.0);
     }
 }

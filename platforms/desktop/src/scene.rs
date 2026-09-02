@@ -14,6 +14,7 @@ use whisker_protocol::{
     ValidationError, Visibility, VisualEffects, WhiskerValue,
 };
 
+use crate::DesktopTextInputEvent;
 use crate::element::{
     DesktopElementContent, DesktopElementError, DesktopElementRegistry, DesktopEventEmitter,
 };

@@ -344,7 +344,7 @@ impl GpuRenderer {
                 } => {
                     let width = (rect.width * scale).ceil().max(1.0) as u32;
                     let height = (rect.height * scale).ceil().max(1.0) as u32;
-                    let Some(raster) = rasterizer.rasterize(width, height) else {
+                    let Some(raster) = rasterizer.rasterize_scaled(width, height, scale) else {
                         self.native_rasters.remove(node);
                         continue;
                     };

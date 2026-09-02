@@ -22,7 +22,7 @@ import PackageDescription
 // so this module builds for an app created outside the whisker repo.
 let package = Package(
     name: "whisker-input",
-    platforms: [.iOS(.v13), .macOS(.v13)],
+    platforms: [.iOS(.v13)],
     products: [
         .library(name: "WhiskerInput", targets: ["WhiskerInput"]),
     ],
