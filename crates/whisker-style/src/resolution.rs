@@ -4,11 +4,12 @@ use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    CalcExpression, ColorValue, ComponentValue, ComputedLayoutStyle, ComputedMotionStyle,
-    ComputedPaintStyle, CursorValue, CustomPropertyName, CustomPropertyReference, DirectionValue,
-    FontFamilyValue, FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue,
-    FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
-    PointerEventsValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
+    BorderStyleValue, CalcExpression, ColorValue, ComponentValue, ComputedLayoutStyle,
+    ComputedLengthPercentage, ComputedMotionStyle, ComputedPaintStyle, CursorValue,
+    CustomPropertyName, CustomPropertyReference, DirectionValue, FontFamilyValue, FontFeatureValue,
+    FontOpticalSizingValue, FontStyleValue, FontVariationValue, FontWeightValue,
+    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, PointerEventsValue,
+    SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
     TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
     TextShadowValue, WhiteSpaceValue, WordBreakValue,
 };
@@ -916,7 +917,7 @@ fn resolve_style_once(
         None => TextOverflowValue::default(),
     };
 
-    let layout = crate::layout::resolve_layout_style(
+    let mut layout = crate::layout::resolve_layout_style(
         specified,
         font_size.get(),
         base.direction,
@@ -947,6 +948,30 @@ fn resolve_style_once(
         layout.direction,
         environment,
     )?;
+    if matches!(
+        paint.border_styles.top,
+        BorderStyleValue::None | BorderStyleValue::Hidden
+    ) {
+        layout.border.top = ComputedLengthPercentage::ZERO;
+    }
+    if matches!(
+        paint.border_styles.right,
+        BorderStyleValue::None | BorderStyleValue::Hidden
+    ) {
+        layout.border.right = ComputedLengthPercentage::ZERO;
+    }
+    if matches!(
+        paint.border_styles.bottom,
+        BorderStyleValue::None | BorderStyleValue::Hidden
+    ) {
+        layout.border.bottom = ComputedLengthPercentage::ZERO;
+    }
+    if matches!(
+        paint.border_styles.left,
+        BorderStyleValue::None | BorderStyleValue::Hidden
+    ) {
+        layout.border.left = ComputedLengthPercentage::ZERO;
+    }
     let motion = crate::motion::resolve_motion_style(specified)?;
 
     Ok(ResolvedNodeStyle {

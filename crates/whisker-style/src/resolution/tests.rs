@@ -1350,6 +1350,49 @@ fn direct_invalid_values_remain_resolution_errors() {
 }
 
 #[test]
+fn none_and_hidden_border_styles_zero_the_corresponding_layout_widths() {
+    let border_width =
+        |value| StyleValue::LengthPercentage(LengthPercentageValue::Length(px(value)));
+    let resolved = resolve_style(
+        &SpecifiedStyle::new()
+            .push(StyleProperty::BorderTopWidth, border_width(1.0))
+            .push(StyleProperty::BorderRightWidth, border_width(2.0))
+            .push(StyleProperty::BorderBottomWidth, border_width(3.0))
+            .push(StyleProperty::BorderLeftWidth, border_width(4.0))
+            .push(
+                StyleProperty::BorderTopStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Solid),
+            )
+            .push(
+                StyleProperty::BorderRightStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Hidden),
+            )
+            .push(
+                StyleProperty::BorderBottomStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Dashed),
+            ),
+        None,
+        StyleEnvironment::default(),
+    )
+    .unwrap();
+
+    let border = &resolved.computed().layout().border;
+    assert_eq!(border.top.length(), 1.0);
+    assert_eq!(border.right, ComputedLengthPercentage::ZERO);
+    assert_eq!(border.bottom.length(), 3.0);
+    assert_eq!(border.left, ComputedLengthPercentage::ZERO);
+    assert_eq!(
+        resolved.computed().paint().border_styles,
+        crate::Edges {
+            top: BorderStyleValue::Solid,
+            right: BorderStyleValue::Hidden,
+            bottom: BorderStyleValue::Dashed,
+            left: BorderStyleValue::None,
+        }
+    );
+}
+
+#[test]
 fn custom_properties_support_forward_references() {
     let a = CustomPropertyName::new("--a").unwrap();
     let b = CustomPropertyName::new("--b").unwrap();
