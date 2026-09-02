@@ -257,22 +257,6 @@ pub(super) fn resolve_optional_length_percentage(
     }
 }
 
-pub(super) fn resolve_non_negative_length_percentage(
-    value: Option<&StyleValue>,
-    initial: ComputedLengthPercentage,
-    font_size: f32,
-    environment: StyleEnvironment,
-    property: StyleProperty,
-) -> Result<ComputedLengthPercentage, StyleResolutionError> {
-    let resolved =
-        resolve_optional_length_percentage(value, initial, font_size, environment, property)?;
-    if resolved.length() < 0.0 || resolved.fraction() < 0.0 {
-        Err(invalid(property))
-    } else {
-        Ok(resolved)
-    }
-}
-
 pub(super) fn resolve_insets(
     specified: &SpecifiedStyle,
     direction: DirectionValue,
@@ -341,15 +325,45 @@ pub(super) fn resolve_borders(
             }
             _ => continue,
         };
-        *edge = resolve_non_negative_length_percentage(
-            Some(declaration.value()),
-            *edge,
-            font_size,
-            environment,
-            property,
-        )?;
+        let resolved = match declaration.value() {
+            StyleValue::Length(value) => resolve_affine(
+                &LengthPercentageValue::Length(*value),
+                font_size,
+                environment,
+                property,
+            )?,
+            StyleValue::LengthPercentage(value) if is_length_only(value) => {
+                resolve_affine(value, font_size, environment, property)?
+            }
+            _ => return Err(invalid(property)),
+        };
+        if resolved.length() < 0.0 {
+            return Err(invalid(property));
+        }
+        *edge = resolved;
     }
     Ok(border)
+}
+
+fn is_length_only(value: &LengthPercentageValue) -> bool {
+    match value {
+        LengthPercentageValue::Length(_) => true,
+        LengthPercentageValue::Percentage(_) => false,
+        LengthPercentageValue::Calc(expression) => calc_is_length_only(expression),
+    }
+}
+
+fn calc_is_length_only(expression: &CalcExpression) -> bool {
+    match expression {
+        CalcExpression::Value(value) => is_length_only(value),
+        CalcExpression::Number(_) | CalcExpression::Variable(_) => true,
+        CalcExpression::Add(left, right)
+        | CalcExpression::Sub(left, right)
+        | CalcExpression::Mul(left, right)
+        | CalcExpression::Div(left, right) => {
+            calc_is_length_only(left) && calc_is_length_only(right)
+        }
+    }
 }
 
 pub(super) fn resolve_non_negative_number(
