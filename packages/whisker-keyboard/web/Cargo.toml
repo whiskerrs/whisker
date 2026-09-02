@@ -1,0 +1,17 @@
+[package]
+name = "whisker-keyboard-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Web Host implementation for whisker-keyboard."
+
+[dependencies]
+whisker-web = { workspace = true }
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Element",
+    "HtmlElement",
+    "Window",
+] }
