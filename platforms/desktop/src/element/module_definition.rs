@@ -117,12 +117,14 @@ type DesktopInputFocused<T> = Arc<dyn Fn(&T) -> bool + Send + Sync>;
 type DesktopSetInputFocus<T> = Arc<dyn Fn(&mut T, bool) + Send + Sync>;
 type DesktopInputHandler<T> = Arc<dyn Fn(&mut T, &DesktopTextInputEvent) + Send + Sync>;
 type DesktopSelectedText<T> = Arc<dyn Fn(&T) -> Option<String> + Send + Sync>;
+type DesktopInputCaretRect<T> = Arc<dyn Fn(&T, [f32; 2], f32) -> LayoutRect + Send + Sync>;
 
 struct DesktopTextInputBinding<T> {
     focused: DesktopInputFocused<T>,
     set_focus: DesktopSetInputFocus<T>,
     input: DesktopInputHandler<T>,
     selected_text: DesktopSelectedText<T>,
+    caret_rect: Option<DesktopInputCaretRect<T>>,
 }
 
 impl<T> Clone for DesktopTextInputBinding<T> {
@@ -132,6 +134,7 @@ impl<T> Clone for DesktopTextInputBinding<T> {
             set_focus: Arc::clone(&self.set_focus),
             input: Arc::clone(&self.input),
             selected_text: Arc::clone(&self.selected_text),
+            caret_rect: self.caret_rect.clone(),
         }
     }
 }
@@ -314,7 +317,26 @@ where
             set_focus: Arc::new(set_focus),
             input: Arc::new(input),
             selected_text: Arc::new(selected_text),
+            caret_rect: None,
         });
+        self
+    }
+
+    /// Supplies the current caret rectangle in element-local logical pixels.
+    /// Desktop uses this to anchor IME candidate UI to the edited text.
+    pub fn text_input_caret_rect(
+        mut self,
+        resolve: impl Fn(&T, [f32; 2], f32) -> LayoutRect + Send + Sync + 'static,
+    ) -> Self {
+        let binding = self
+            .text_input
+            .as_mut()
+            .expect("Desktop caret geometry requires a text-input binding");
+        assert!(
+            binding.caret_rect.replace(Arc::new(resolve)).is_none(),
+            "duplicate Desktop text-input caret binding for {}",
+            self.name
+        );
         self
     }
 
@@ -572,6 +594,14 @@ where
             .text_input
             .as_ref()
             .and_then(|binding| (binding.selected_text)(&self.state))
+    }
+
+    fn text_input_caret_rect(&self, logical_size: [f32; 2], scale: f32) -> Option<LayoutRect> {
+        self.definition
+            .text_input
+            .as_ref()
+            .and_then(|binding| binding.caret_rect.as_ref())
+            .map(|resolve| resolve(&self.state, logical_size, scale))
     }
 
     fn is_scroll_container(&self) -> bool {

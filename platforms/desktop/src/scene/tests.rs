@@ -307,6 +307,15 @@ impl DesktopNativeElement for TextInputNative {
     fn selected_text(&self) -> Option<String> {
         Some(self.probe.lock().unwrap().value.clone())
     }
+
+    fn text_input_caret_rect(&self, _logical_size: [f32; 2], _scale: f32) -> Option<LayoutRect> {
+        Some(LayoutRect {
+            x: 32.0,
+            y: 4.0,
+            width: 1.0,
+            height: 18.0,
+        })
+    }
 }
 
 fn text_input_scene() -> (DesktopScene, ElementTypeId, Arc<Mutex<TextInputProbe>>) {
@@ -364,12 +373,12 @@ fn text_input_focus_and_edits_are_routed_to_the_hit_native_element() {
 
     assert!(scene.focus_text_input_at([20.0, 30.0]));
     assert_eq!(
-        scene.focused_text_input_rect(),
+        scene.focused_text_input_caret_rect(2.0),
         Some(LayoutRect {
-            x: 10.0,
-            y: 20.0,
-            width: 120.0,
-            height: 44.0,
+            x: 42.0,
+            y: 24.0,
+            width: 1.0,
+            height: 18.0,
         })
     );
     assert!(scene.dispatch_text_input(&DesktopTextInputEvent::Commit("hi".into())));

@@ -138,12 +138,33 @@ impl DesktopScene {
         })
     }
 
-    pub(crate) fn focused_text_input_rect(&self) -> Option<LayoutRect> {
+    pub(crate) fn focused_text_input_caret_rect(&self, scale: f32) -> Option<LayoutRect> {
         let node = self
             .nodes
             .iter()
             .find_map(|(node, state)| state.content.text_input_focused().then_some(*node))?;
-        self.absolute_border_box(node)
+        let bounds = self.absolute_border_box(node)?;
+        let local = self
+            .nodes
+            .get(&node)?
+            .content
+            .text_input_caret_rect([bounds.width, bounds.height], scale);
+        let Some(local) = local.filter(|rect| {
+            rect.x.is_finite()
+                && rect.y.is_finite()
+                && rect.width.is_finite()
+                && rect.height.is_finite()
+                && rect.width > 0.0
+                && rect.height > 0.0
+        }) else {
+            return Some(bounds);
+        };
+        Some(LayoutRect {
+            x: bounds.x + local.x.clamp(0.0, bounds.width),
+            y: bounds.y + local.y.clamp(0.0, bounds.height),
+            width: local.width,
+            height: local.height,
+        })
     }
 
     fn absolute_border_box(&self, node: NodeId) -> Option<LayoutRect> {

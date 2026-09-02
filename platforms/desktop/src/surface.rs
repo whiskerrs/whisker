@@ -94,8 +94,11 @@ impl DesktopSurface {
         self.scene.selected_text()
     }
 
-    pub(crate) fn focused_text_input_rect(&self) -> Option<whisker_protocol::LayoutRect> {
-        self.scene.focused_text_input_rect()
+    pub(crate) fn focused_text_input_caret_rect(
+        &self,
+        scale: f32,
+    ) -> Option<whisker_protocol::LayoutRect> {
+        self.scene.focused_text_input_caret_rect(scale)
     }
 
     pub(crate) fn advance_scroll_animations(&mut self, delta_ms: f32) -> bool {

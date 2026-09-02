@@ -30,12 +30,27 @@ struct TextRasterizer {
     swash_cache: SwashCache,
 }
 
+struct InputTextLayout {
+    buffer: Buffer,
+    display: String,
+    placeholder: bool,
+    line_height: f32,
+}
+
+#[derive(Clone, Copy)]
+struct CaretGeometry {
+    x: f32,
+    y: f32,
+    height: f32,
+}
+
 struct CachedRaster {
     generation: u64,
     width: u32,
     height: u32,
     scale_bits: u32,
     raster: DesktopRaster,
+    caret_rect: whisker_protocol::LayoutRect,
 }
 
 struct InputDesktopView {
@@ -277,7 +292,7 @@ impl InputDesktopView {
         let mut text = text_rasterizer()
             .lock()
             .expect("Desktop text rasterizer lock poisoned");
-        let pixels = self.draw_pixels(&mut text, width, height, scale);
+        let (pixels, caret_rect) = self.draw_pixels(&mut text, width, height, scale);
         let raster = DesktopRaster::new(self.generation, width, height, pixels).ok()?;
         state.cached = Some(CachedRaster {
             generation: self.generation,
@@ -285,6 +300,7 @@ impl InputDesktopView {
             height,
             scale_bits: scale.to_bits(),
             raster: raster.clone(),
+            caret_rect,
         });
         Some(raster)
     }
@@ -295,59 +311,16 @@ impl InputDesktopView {
         width: u32,
         height: u32,
         scale: f32,
-    ) -> Vec<u8> {
+    ) -> (Vec<u8>, whisker_protocol::LayoutRect) {
         let mut pixels = vec![0; width as usize * height as usize * 4];
-        let default_style = whisker_protocol::TextMeasureStyle::default();
-        let style = self
-            .text_style
-            .as_ref()
-            .map_or(&default_style, |style| &style.style);
-        let font_size = style.font_size * scale;
-        let line_height = match style.line_height {
-            MeasureLineHeight::Normal => font_size * 1.2,
-            MeasureLineHeight::LogicalPixels(value) => value * scale,
-        };
-        let mut buffer = Buffer::new(&mut state.font_system, Metrics::new(font_size, line_height));
-        buffer.set_size(
-            &mut state.font_system,
-            Some(width as f32),
-            Some(height as f32),
-        );
-        buffer.set_wrap(
-            &mut state.font_system,
-            if self.multiline {
-                Wrap::Word
-            } else {
-                Wrap::None
-            },
-        );
-        let family = style
-            .font_families
-            .iter()
-            .map(|family| match family {
-                MeasureFontFamily::System => Family::SansSerif,
-                MeasureFontFamily::Named(name) => Family::Name(name),
-            })
-            .next()
-            .unwrap_or(Family::SansSerif);
-        let attrs = Attrs::new()
-            .family(family)
-            .weight(Weight(style.font_weight))
-            .style(match style.font_style {
-                MeasureFontStyle::Normal => Style::Normal,
-                MeasureFontStyle::Italic => Style::Italic,
-                MeasureFontStyle::Oblique => Style::Oblique,
-            });
-        let placeholder = self.value.is_empty() && !self.placeholder.is_empty();
-        let display = if placeholder {
-            self.placeholder.clone()
-        } else if self.secure {
-            "•".repeat(self.value.chars().count())
-        } else {
-            self.value.clone()
-        };
-        buffer.set_text(&mut state.font_system, &display, &attrs, Shaping::Advanced);
-        buffer.shape_until_scroll(&mut state.font_system, false);
+        let InputTextLayout {
+            buffer,
+            display,
+            placeholder,
+            line_height,
+        } = self.layout_text(state, width, height, scale);
+
+        let caret = self.caret_geometry(&buffer, &display, placeholder, line_height);
 
         if self.focused && !placeholder {
             let (start, end) = ordered(self.selection);
@@ -409,25 +382,149 @@ impl InputDesktopView {
         }
 
         if self.focused {
-            let (x, y, h) = if placeholder {
-                (0.0, 0.0, line_height)
-            } else {
-                let cursor = self.display_offset(self.selection.1);
-                let cursor = text_cursor(&display, cursor.min(display.len()));
-                caret_geometry(&buffer, cursor, line_height)
-            };
             fill_rect(
                 &mut pixels,
                 width,
                 height,
-                x.floor() as i32,
-                y.floor() as i32,
+                caret.x.floor() as i32,
+                caret.y.floor() as i32,
                 scale.ceil().max(1.0) as u32,
-                h.ceil() as u32,
+                caret.height.ceil() as u32,
                 parse_css_color(&self.caret_color, [0, 122, 255, 255]),
             );
         }
-        pixels
+        (
+            pixels,
+            whisker_protocol::LayoutRect {
+                x: caret.x / scale,
+                y: caret.y / scale,
+                width: 1.0,
+                height: caret.height / scale,
+            },
+        )
+    }
+
+    fn layout_text(
+        &self,
+        state: &mut TextRasterizer,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> InputTextLayout {
+        let default_style = whisker_protocol::TextMeasureStyle::default();
+        let style = self
+            .text_style
+            .as_ref()
+            .map_or(&default_style, |style| &style.style);
+        let font_size = style.font_size * scale;
+        let line_height = match style.line_height {
+            MeasureLineHeight::Normal => font_size * 1.2,
+            MeasureLineHeight::LogicalPixels(value) => value * scale,
+        };
+        let mut buffer = Buffer::new(&mut state.font_system, Metrics::new(font_size, line_height));
+        buffer.set_size(
+            &mut state.font_system,
+            Some(width as f32),
+            Some(height as f32),
+        );
+        buffer.set_wrap(
+            &mut state.font_system,
+            if self.multiline {
+                Wrap::Word
+            } else {
+                Wrap::None
+            },
+        );
+        let family = style
+            .font_families
+            .iter()
+            .map(|family| match family {
+                MeasureFontFamily::System => Family::SansSerif,
+                MeasureFontFamily::Named(name) => Family::Name(name),
+            })
+            .next()
+            .unwrap_or(Family::SansSerif);
+        let attrs = Attrs::new()
+            .family(family)
+            .weight(Weight(style.font_weight))
+            .style(match style.font_style {
+                MeasureFontStyle::Normal => Style::Normal,
+                MeasureFontStyle::Italic => Style::Italic,
+                MeasureFontStyle::Oblique => Style::Oblique,
+            });
+        let placeholder = self.value.is_empty() && !self.placeholder.is_empty();
+        let display = if placeholder {
+            self.placeholder.clone()
+        } else if self.secure {
+            "•".repeat(self.value.chars().count())
+        } else {
+            self.value.clone()
+        };
+        buffer.set_text(&mut state.font_system, &display, &attrs, Shaping::Advanced);
+        buffer.shape_until_scroll(&mut state.font_system, false);
+        InputTextLayout {
+            buffer,
+            display,
+            placeholder,
+            line_height,
+        }
+    }
+
+    fn caret_geometry(
+        &self,
+        buffer: &Buffer,
+        display: &str,
+        placeholder: bool,
+        line_height: f32,
+    ) -> CaretGeometry {
+        let (x, y, height) = if placeholder {
+            (0.0, 0.0, line_height)
+        } else {
+            let cursor = self.display_offset(self.selection.1);
+            let cursor = text_cursor(display, cursor.min(display.len()));
+            caret_geometry(buffer, cursor, line_height)
+        };
+        CaretGeometry { x, y, height }
+    }
+
+    fn text_input_caret_rect(
+        &self,
+        logical_size: [f32; 2],
+        scale: f32,
+    ) -> whisker_protocol::LayoutRect {
+        let width = (logical_size[0] * scale).ceil().max(1.0) as u32;
+        let height = (logical_size[1] * scale).ceil().max(1.0) as u32;
+        if let Some(cached) = self
+            .raster
+            .lock()
+            .expect("Input raster lock poisoned")
+            .cached
+            .as_ref()
+            .filter(|cached| {
+                cached.generation == self.generation
+                    && cached.width == width
+                    && cached.height == height
+                    && cached.scale_bits == scale.to_bits()
+            })
+        {
+            return cached.caret_rect;
+        }
+        let mut state = text_rasterizer()
+            .lock()
+            .expect("Desktop text rasterizer lock poisoned");
+        let layout = self.layout_text(&mut state, width, height, scale);
+        let caret = self.caret_geometry(
+            &layout.buffer,
+            &layout.display,
+            layout.placeholder,
+            layout.line_height,
+        );
+        whisker_protocol::LayoutRect {
+            x: caret.x / scale,
+            y: caret.y / scale,
+            width: 1.0,
+            height: caret.height / scale,
+        }
     }
 
     fn display_offset(&self, value_offset: usize) -> usize {
@@ -590,6 +687,7 @@ impl WhiskerModule for InputModule {
                     InputDesktopView::handle_input,
                     InputDesktopView::selected_text,
                 )
+                .text_input_caret_rect(InputDesktopView::text_input_caret_rect)
                 .raster_scaled(InputDesktopView::rasterize),
         )
     }
@@ -900,5 +998,32 @@ mod tests {
             opaque_pixels >= 8,
             "IME composition draws a visible underline; got {opaque_pixels} opaque pixels"
         );
+    }
+
+    #[test]
+    fn ime_caret_rect_tracks_the_text_end_in_logical_pixels() {
+        let mut input = InputDesktopView::new(DesktopEventEmitter::default());
+        input.set_focus(true);
+        input.set_value("candidate");
+
+        let rect = input.text_input_caret_rect([240.0, 40.0], 2.0);
+
+        assert!(rect.x > 40.0, "caret follows the shaped text: {rect:?}");
+        assert_eq!(rect.y, 0.0);
+        assert_eq!(rect.width, 1.0);
+        assert!(rect.height > 10.0 && rect.height < 30.0);
+    }
+
+    #[test]
+    fn ime_caret_rect_tracks_the_current_multiline_row() {
+        let mut input = InputDesktopView::new(DesktopEventEmitter::default());
+        input.multiline = true;
+        input.set_focus(true);
+        input.set_value("first\nsecond");
+
+        let rect = input.text_input_caret_rect([240.0, 100.0], 2.0);
+
+        assert!(rect.x > 30.0, "caret follows second-line text: {rect:?}");
+        assert!(rect.y > 10.0, "caret follows the second row: {rect:?}");
     }
 }

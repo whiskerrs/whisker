@@ -443,7 +443,7 @@ impl DesktopApplication {
         let (Some(window), Some(host)) = (&self.window, &self.host) else {
             return;
         };
-        let rect = host.focused_text_input_rect();
+        let rect = host.focused_text_input_caret_rect(window.scale_factor() as f32);
         window.set_ime_allowed(rect.is_some());
         if let Some(rect) = rect {
             let (position, size) = ime_cursor_area(rect);
@@ -800,7 +800,7 @@ mod tests {
     }
 
     #[test]
-    fn ime_cursor_area_uses_the_focused_editor_bounds_once() {
+    fn ime_cursor_area_uses_the_focused_caret_bounds() {
         let (position, size) = ime_cursor_area(LayoutRect {
             x: 10.0,
             y: 20.0,

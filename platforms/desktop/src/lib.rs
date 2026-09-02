@@ -252,9 +252,12 @@ impl DesktopRuntime {
         self.surface.selected_text()
     }
 
-    /// Returns the focused editor bounds in logical surface coordinates.
-    pub fn focused_text_input_rect(&self) -> Option<whisker_protocol::LayoutRect> {
-        self.surface.focused_text_input_rect()
+    /// Returns the focused editor's caret bounds in logical surface coordinates.
+    pub fn focused_text_input_caret_rect(
+        &self,
+        scale: f32,
+    ) -> Option<whisker_protocol::LayoutRect> {
+        self.surface.focused_text_input_caret_rect(scale)
     }
 
     /// Registers one already-decoded RGBA8 raster for later `ResourceId`

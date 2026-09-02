@@ -10,8 +10,9 @@ use whisker::WhiskerModule;
 use whisker::runtime::module::{ModuleEventEmitter, ModulePromise, RustModuleDefinition};
 use whisker_protocol::{
     ChildPolicy, CommandId, ElementMeasurement, ElementRegistration, ElementRegistrationError,
-    ElementTypeId, EventId, MeasurementMetrics, MeasurementRequest, MeasurementResponse, NodeId,
-    PropertyId, TextContent, UnsupportedMeasurementReason, WhiskerValue,
+    ElementTypeId, EventId, LayoutRect, MeasurementMetrics, MeasurementRequest,
+    MeasurementResponse, NodeId, PropertyId, TextContent, UnsupportedMeasurementReason,
+    WhiskerValue,
 };
 
 use crate::{WhiskerMeasureRequest, WhiskerMeasuredSize, WhiskerTextStyle};
@@ -439,6 +440,14 @@ pub trait DesktopNativeElement: fmt::Debug + 'static {
         None
     }
 
+    /// Returns the current caret rectangle in element-local logical pixels.
+    ///
+    /// The Host translates this into surface coordinates for the platform IME.
+    /// `None` falls back to the complete element bounds.
+    fn text_input_caret_rect(&self, _logical_size: [f32; 2], _scale: f32) -> Option<LayoutRect> {
+        None
+    }
+
     /// Whether this element owns transient vertical scroll state.
     fn is_scroll_container(&self) -> bool {
         false
@@ -662,6 +671,19 @@ impl DesktopElementContent {
     pub(crate) fn selected_text(&self) -> Option<String> {
         match self {
             Self::Native { implementation, .. } => implementation.selected_text(),
+            Self::Empty | Self::Text(_) | Self::ScrollContainer => None,
+        }
+    }
+
+    pub(crate) fn text_input_caret_rect(
+        &self,
+        logical_size: [f32; 2],
+        scale: f32,
+    ) -> Option<LayoutRect> {
+        match self {
+            Self::Native { implementation, .. } => {
+                implementation.text_input_caret_rect(logical_size, scale)
+            }
             Self::Empty | Self::Text(_) | Self::ScrollContainer => None,
         }
     }
