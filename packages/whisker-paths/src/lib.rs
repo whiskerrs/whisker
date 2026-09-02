@@ -25,6 +25,12 @@
 //! | [`support_dir`]  | persistent, non-user, backed up   | `NSApplicationSupportDirectory` | `filesDir/support` |
 //! | [`temp_dir`]     | cleared aggressively by the OS    | `NSTemporaryDirectory()` | `cacheDir/tmp` |
 //!
+//! Web and Desktop are intentionally not declared as supported yet. Web has
+//! no `std::fs` filesystem matching this API, while a correct Desktop result
+//! needs the generated application's identity rather than a package-global
+//! directory. The existing temporary-directory fallback remains available for
+//! defensive compatibility, but it is not advertised as persistent storage.
+//!
 //! Pick [`cache_dir`] for regenerable data (downloaded thumbnails,
 //! HTTP response caches), [`document_dir`] for data the user would be
 //! upset to lose, [`support_dir`] for app-managed persistent state that
