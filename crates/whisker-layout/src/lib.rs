@@ -6,7 +6,11 @@
 
 #![warn(missing_docs)]
 
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use taffy::{
     AlignContent, AlignItems, AvailableSpace as TaffyAvailableSpace, BoxSizing,
@@ -507,7 +511,7 @@ impl LayoutTree {
                 .expect("retained surface and application roots");
             self.surface_child = Some(root);
         }
-        let mut invalid_measurement = None;
+        let mut invalid_measurements = BTreeSet::new();
         self.backend
             .compute_layout_with_measure(
                 self.surface_root,
@@ -530,7 +534,7 @@ impl LayoutTree {
                         },
                     );
                     if !measured.is_valid() {
-                        invalid_measurement.get_or_insert(node);
+                        invalid_measurements.insert(node);
                         Size::ZERO
                     } else {
                         Size {
@@ -541,10 +545,17 @@ impl LayoutTree {
                 },
             )
             .expect("retained backend root");
-        if let Some(node) = invalid_measurement {
-            self.backend
-                .mark_dirty(backend_root)
-                .expect("retained backend root");
+        if let Some(node) = invalid_measurements.first().copied() {
+            for invalid in invalid_measurements {
+                let backend = self
+                    .nodes
+                    .get(&invalid)
+                    .expect("measurement context belongs to a retained node")
+                    .backend;
+                self.backend
+                    .mark_dirty(backend)
+                    .expect("retained backend node");
+            }
             return Err(LayoutError::InvalidMeasurement(node));
         }
         let mut snapshot = LayoutSnapshot::default();
@@ -1627,6 +1638,43 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot.get(root).unwrap().border_box.width, 100.0);
         assert_eq!(snapshot.get(root).unwrap().border_box.height, 0.0);
+    }
+
+    #[test]
+    fn invalid_nested_measurement_is_retried_on_the_measured_leaf() {
+        use std::cell::Cell;
+
+        let root = id(1);
+        let child = id(2);
+        let mut tree = LayoutTree::default();
+        tree.create_node(root, ComputedLayoutStyle::default())
+            .unwrap();
+        tree.create_node(child, ComputedLayoutStyle::default())
+            .unwrap();
+        tree.set_measurable(child, true).unwrap();
+        tree.set_children(root, &[child]).unwrap();
+
+        let invalid_calls = Cell::new(0);
+        assert_eq!(
+            tree.compute(root, LayoutSize::new(100.0, 100.0), &mut |node, _| {
+                assert_eq!(node, child);
+                invalid_calls.set(invalid_calls.get() + 1);
+                LayoutSize::new(f32::NAN, 1.0)
+            }),
+            Err(LayoutError::InvalidMeasurement(child))
+        );
+        assert!(invalid_calls.get() > 0);
+
+        let retry_calls = Cell::new(0);
+        let snapshot = tree
+            .compute(root, LayoutSize::new(100.0, 100.0), &mut |node, _| {
+                assert_eq!(node, child);
+                retry_calls.set(retry_calls.get() + 1);
+                LayoutSize::new(12.0, 8.0)
+            })
+            .unwrap();
+        assert!(retry_calls.get() > 0);
+        assert_eq!(snapshot.get(child).unwrap().border_box.height, 8.0);
     }
 
     #[test]
