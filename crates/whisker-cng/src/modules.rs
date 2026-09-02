@@ -1,13 +1,11 @@
 //! Whisker module-system — discovery + manifest parsing.
 //!
-//! When `whisker run` builds an app crate for
-//! iOS or Android, every cargo dependency may optionally contribute
-//! native code (Swift / Obj-C++ on iOS, Kotlin / JNI on Android) to
-//! the final host binary. A crate opts in by declaring a
-//! `[package.metadata.whisker]` table in its `Cargo.toml`. The
-//! Whisker CLI walks the consuming app's dep graph via `cargo
-//! metadata`, picks out every dependency carrying that table, and
-//! feeds each platform contribution through to its build system.
+//! A dependency becomes a Whisker module by declaring its supported
+//! platforms under `[package.metadata.whisker.module.platforms]`.
+//! Each platform is either implemented entirely by the common Rust
+//! crate (`kind = "common"`) or points at one explicit Host manifest.
+//! CNG resolves those declarations from Cargo's dependency graph and
+//! feeds each Host contribution to the corresponding build system.
 //!
 //! This module is platform-neutral — it just produces the
 //! `ResolvedModule` list. CNG renderers turn the list into complete
@@ -17,15 +15,11 @@
 //! ## Schema
 //!
 //! ```toml
-//! # packages/whisker-video/Cargo.toml
-//! [package.metadata.whisker]
-//! # The bare table is the marker — its presence identifies this
-//! # crate as a Whisker module. Platform code + build manifests live
-//! # at the package root in `android/` and `ios/` (Expo-style):
-//! #   android/build.gradle.kts   — AGP library
-//! #   ios/Package.swift          — SwiftPM library
-//! # CNG discovers those per-platform manifests directly,
-//! # so no source-file list is needed for DSL modules.
+//! [package.metadata.whisker.module.platforms]
+//! android = { manifest = "build.gradle.kts" }
+//! ios = { manifest = "Package.swift" }
+//! web = { manifest = "web/Cargo.toml" }
+//! desktop = { kind = "common" }
 //! ```
 //!
 //! All paths are resolved relative to the directory containing the
@@ -37,87 +31,16 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use cargo_metadata::{Metadata, MetadataCommand};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-/// Top-level shape of the `[package.metadata.whisker]` table.
-///
-/// Every section is optional so a module can declare just the
-/// platform(s) it supports — the bare table (no sub-sections) is a
-/// valid marker for a pure-DSL module that ships only Swift /
-/// Kotlin via its `ios/` / `android/` dirs. Unknown sections /
-/// fields are rejected to catch typos early (we don't want a
-/// typoed `iOS` section to silently produce a no-op build).
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ManifestRaw {
-    #[serde(default)]
-    pub ios: Option<IosSectionRaw>,
-    #[serde(default)]
-    pub android: Option<AndroidSectionRaw>,
-    /// Rust Desktop Host crate published beside the common module crate.
-    #[serde(default)]
-    pub desktop: Option<RustHostSectionRaw>,
-    /// Rust Web Host crate published beside the common module crate.
-    #[serde(default)]
-    pub web: Option<RustHostSectionRaw>,
-    /// `[package.metadata.whisker.plugins.<name>]` entries —
-    /// consumed by `whisker_cng::discovery`, not by the module
-    /// system. Captured here as raw JSON so its presence doesn't
-    /// trip the `deny_unknown_fields` check on this struct.
-    /// Validation of the plugin entry's shape lives in
-    /// `whisker_cng::discovery::PluginEntryRaw`.
-    #[serde(default)]
-    pub plugins: Option<serde_json::Value>,
-}
+mod platforms;
 
-/// Published package identity for a Rust Host contribution.
-///
-/// A local checkout still discovers the nested manifest by convention. This
-/// declaration survives crates.io packaging, which deliberately excludes
-/// nested Cargo packages from the outer crate archive.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RustHostSectionRaw {
-    /// Cargo package name of the separately published Host library.
-    pub package: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct IosSectionRaw {
-    /// Paths to Swift source files that get staged into the
-    /// consuming app's gen tree under
-    /// `gen/ios/Sources/WhiskerModules/<crate-name>/` and compiled
-    /// into the host app target alongside its own Swift sources.
-    /// Mirror of `[android].kotlin_sources` for symmetry.
-    ///
-    /// Existence-checked but otherwise inert: iOS staging keys off a
-    /// module's `ios/Package.swift`, not this list.
-    #[serde(default)]
-    pub swift_sources: Vec<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AndroidSectionRaw {
-    /// Paths to Kotlin / Java source files (`*.kt`, `*.java`) that
-    /// should be compiled into the host app's APK alongside the
-    /// runtime's own Kotlin sources. Paths are relative to the
-    /// manifest's directory.
-    ///
-    /// Most modules use these to declare a `WhiskerUI` subclass that
-    /// their generated Host registration points at.
-    #[serde(default)]
-    pub kotlin_sources: Vec<String>,
-    /// Paths to JNI C / C++ source files (`*.c`, `*.cc`, `*.cpp`)
-    /// — for modules that need to drop into native code on Android
-    /// (cross-language calls, raw NDK APIs, etc.). Less common than
-    /// kotlin_sources; most native_element modules can stay in
-    /// Kotlin.
-    #[serde(default)]
-    pub jni_sources: Vec<String>,
-}
+use platforms::{ManifestRaw, resolve_legacy_platforms, resolve_platforms};
+pub use platforms::{
+    ModulePlatform, NativeManifestKind, ResolvedModulePlatforms, ResolvedNativeManifest,
+    ResolvedPlatformImplementation, ResolvedRustHostSource, ResolvedRustModuleContribution,
+};
 
 /// A single discovered module after its metadata has been resolved
 /// against the cargo dep tree. `package` carries the cargo crate
@@ -138,34 +61,57 @@ pub struct ResolvedModule {
     /// for the Android build. Empty by default — most native_element
     /// modules use Kotlin, not JNI.
     pub android_jni_sources: Vec<PathBuf>,
-    /// Rust-native Desktop module contribution.
-    pub desktop: Option<ResolvedRustModuleContribution>,
-    /// Browser DOM module contribution.
-    pub web: Option<ResolvedRustModuleContribution>,
+    /// Explicit support and implementation selected for each Host.
+    pub platforms: ResolvedModulePlatforms,
 }
 
-/// One existence-checked Rust Host library shipped inside a module package.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ResolvedRustModuleContribution {
-    /// Cargo package name declared by the Host library.
-    pub package: String,
-    /// How the generated Host should depend on this library.
-    pub source: ResolvedRustHostSource,
-}
+impl ResolvedModule {
+    pub fn rust_host(&self, platform: ModulePlatform) -> Option<&ResolvedRustModuleContribution> {
+        let implementation = match platform {
+            ModulePlatform::Macos => self
+                .platforms
+                .macos
+                .as_ref()
+                .or(self.platforms.desktop.as_ref()),
+            ModulePlatform::Windows => self
+                .platforms
+                .windows
+                .as_ref()
+                .or(self.platforms.desktop.as_ref()),
+            ModulePlatform::Linux => self
+                .platforms
+                .linux
+                .as_ref()
+                .or(self.platforms.desktop.as_ref()),
+            ModulePlatform::Android => self.platforms.android.as_ref(),
+            ModulePlatform::Ios => self.platforms.ios.as_ref(),
+            ModulePlatform::Web => self.platforms.web.as_ref(),
+            ModulePlatform::Desktop => self.platforms.desktop.as_ref(),
+        }?;
+        match implementation {
+            ResolvedPlatformImplementation::RustHost(host) => Some(host),
+            ResolvedPlatformImplementation::Common
+            | ResolvedPlatformImplementation::NativeManifest(_) => None,
+        }
+    }
 
-/// Location of one Rust Host library after module discovery.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub enum ResolvedRustHostSource {
-    /// A nested crate present in a path or git checkout.
-    Path(PathBuf),
-    /// A separately published crate used when Cargo unpacked the outer module
-    /// without its nested packages.
-    Registry { version: String },
+    pub fn native_manifest(&self, platform: ModulePlatform) -> Option<&ResolvedNativeManifest> {
+        let implementation = match platform {
+            ModulePlatform::Android => self.platforms.android.as_ref(),
+            ModulePlatform::Ios => self.platforms.ios.as_ref(),
+            _ => None,
+        }?;
+        match implementation {
+            ResolvedPlatformImplementation::NativeManifest(manifest) => Some(manifest),
+            ResolvedPlatformImplementation::Common
+            | ResolvedPlatformImplementation::RustHost(_) => None,
+        }
+    }
 }
 
 /// Walk the cargo dep graph of `app_package` (resolved at
 /// `manifest_path`) and return every dependency that declares a
-/// `[package.metadata.whisker]` table in its `Cargo.toml`.
+/// `[package.metadata.whisker.module.platforms]` table in its `Cargo.toml`.
 ///
 /// Ordering: `cargo metadata`'s topological order, deduplicated by
 /// package id (a diamond dep landed twice gets resolved once).
@@ -178,9 +124,8 @@ pub enum ResolvedRustHostSource {
 /// - Metadata parse failure (`[package.metadata.whisker]` exists
 ///   but has unknown sections / fields) propagates with the
 ///   offending crate name attached.
-/// - Native-source path referenced in the table but not present on disk, or
-///   an invalid conventional `desktop/Cargo.toml` / `web/Cargo.toml`, errors
-///   eagerly rather than silently dropping a Host implementation.
+/// - A declared manifest that is absent or has the wrong kind/package name
+///   errors eagerly rather than silently dropping a Host implementation.
 pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedModule>> {
     let metadata = MetadataCommand::new()
         .manifest_path(manifest_path)
@@ -238,7 +183,7 @@ pub(crate) fn discover_from_metadata(
             }
         }
         // The root app declares native sources directly, never through
-        // a `[package.metadata.whisker]` table.
+        // module metadata.
         if pkg_id != &root_id {
             module_pkg_ids.push(pkg_id.clone());
         }
@@ -262,8 +207,9 @@ pub(crate) fn discover_from_metadata(
                     pkg.manifest_path,
                 )
             })?;
-        // A `[package.metadata.whisker]` table is the opt-in marker;
-        // deps without one are not modules.
+        // `module` is the current opt-in. During the package-by-package
+        // migration, an old platform field or a conventional native manifest
+        // also identifies a legacy module. `plugins` alone never does.
         let Some(whisker_meta) = pkg.metadata.get("whisker") else {
             continue;
         };
@@ -272,20 +218,35 @@ pub(crate) fn discover_from_metadata(
                 format!("parse [package.metadata.whisker] in {}", pkg.manifest_path,)
             })?;
         let package_version = pkg.version.to_string();
-        let desktop = resolve_rust_host_crate(
-            &pkg.name,
-            &package_version,
-            "desktop",
-            &manifest_dir,
-            manifest.desktop.as_ref(),
-        )?;
-        let web = resolve_rust_host_crate(
-            &pkg.name,
-            &package_version,
-            "web",
-            &manifest_dir,
-            manifest.web.as_ref(),
-        )?;
+        let has_legacy_fields = manifest.ios.is_some()
+            || manifest.android.is_some()
+            || manifest.desktop.is_some()
+            || manifest.web.is_some();
+        let has_conventional_native_manifest = manifest_dir.join("build.gradle.kts").is_file()
+            || manifest_dir.join("Package.swift").is_file();
+        if manifest.module.is_none() && !has_legacy_fields && !has_conventional_native_manifest {
+            continue;
+        }
+        if manifest.module.is_some() && has_legacy_fields {
+            return Err(anyhow!(
+                "module `{}` mixes [package.metadata.whisker.module.platforms] with legacy metadata.whisker platform tables",
+                pkg.name,
+            ));
+        }
+
+        let platforms = if let Some(module) = manifest.module.as_ref() {
+            resolve_platforms(
+                &pkg.name,
+                &package_version,
+                pkg.source
+                    .as_ref()
+                    .is_some_and(|source| source.repr.starts_with("registry+")),
+                &manifest_dir,
+                &module.platforms,
+            )?
+        } else {
+            resolve_legacy_platforms(&pkg.name, &package_version, &manifest_dir, &manifest)?
+        };
         let mut ios_swift: Vec<PathBuf> = Vec::new();
         if let Some(ios) = manifest.ios {
             for raw_path in ios.swift_sources {
@@ -335,8 +296,7 @@ pub(crate) fn discover_from_metadata(
             ios_swift_sources: ios_swift,
             android_kotlin_sources: android_kotlin,
             android_jni_sources: android_jni,
-            desktop,
-            web,
+            platforms,
         });
     }
 
@@ -344,63 +304,6 @@ pub(crate) fn discover_from_metadata(
     // gradle / cargo don't re-run downstream tasks on a permutation.
     resolved.sort_by(|a, b| a.package.cmp(&b.package));
     Ok(resolved)
-}
-
-fn resolve_rust_host_crate(
-    package: &str,
-    package_version: &str,
-    target: &str,
-    manifest_dir: &Path,
-    published: Option<&RustHostSectionRaw>,
-) -> Result<Option<ResolvedRustModuleContribution>> {
-    if let Some(published) = published
-        && published.package.trim().is_empty()
-    {
-        return Err(anyhow!(
-            "module `{package}` metadata.whisker.{target}.package must not be empty"
-        ));
-    }
-    let cargo_toml = manifest_dir.join(target).join("Cargo.toml");
-    if !cargo_toml.is_file() {
-        return Ok(published.map(|published| ResolvedRustModuleContribution {
-            package: published.package.clone(),
-            source: ResolvedRustHostSource::Registry {
-                version: package_version.to_string(),
-            },
-        }));
-    }
-    let source = std::fs::read_to_string(&cargo_toml)
-        .with_context(|| format!("read {} Host manifest {}", target, cargo_toml.display()))?;
-    let manifest: toml::Value = toml::from_str(&source)
-        .with_context(|| format!("parse {} Host manifest {}", target, cargo_toml.display()))?;
-    let host_package = manifest
-        .get("package")
-        .and_then(|value| value.get("name"))
-        .and_then(toml::Value::as_str)
-        .filter(|name| !name.trim().is_empty())
-        .ok_or_else(|| {
-            anyhow!(
-                "module `{package}` {target}/Cargo.toml must declare a non-empty [package].name"
-            )
-        })?;
-    if let Some(published) = published
-        && published.package != host_package
-    {
-        return Err(anyhow!(
-            "module `{package}` metadata.whisker.{target}.package is {:?}, but {target}/Cargo.toml declares package {:?}",
-            published.package,
-            host_package,
-        ));
-    }
-    let host_root = cargo_toml
-        .parent()
-        .expect("Cargo.toml has a parent")
-        .canonicalize()
-        .with_context(|| format!("canonicalize {} Host crate", cargo_toml.display()))?;
-    Ok(Some(ResolvedRustModuleContribution {
-        package: host_package.to_string(),
-        source: ResolvedRustHostSource::Path(host_root),
-    }))
 }
 
 /// Flatten every discovered module's Android Kotlin sources into a
@@ -448,11 +351,9 @@ pub struct ModulesReportModule {
     /// Absolute path to the directory containing the module's
     /// `Cargo.toml`.
     pub manifest_dir: PathBuf,
-    /// Android-side surface. `None` when the module has no `android/`
-    /// directory at the package root.
+    /// Android-side surface. `None` when Android is unsupported or common-only.
     pub android: Option<AndroidModuleReport>,
-    /// iOS-side surface. `None` when the module declares neither
-    /// `ios_swift_sources` nor an `ios/Package.swift`.
+    /// iOS-side surface. `None` when iOS is unsupported or common-only.
     pub ios: Option<IosModuleReport>,
 }
 
@@ -460,9 +361,7 @@ pub struct ModulesReportModule {
 pub struct AndroidModuleReport {
     /// Absolute path the Gradle Settings Plugin uses for
     /// `settings.project(":<crate>").projectDir = file(this)`.
-    /// This is the package root (manifest_dir) — the Expo-style
-    /// layout keeps `build.gradle.kts` at the root and points its
-    /// Kotlin source set at the `android/` subdirectory.
+    /// This is the directory containing the declared `build.gradle.kts`.
     pub subproject_dir: PathBuf,
     /// `<PascalCase(crate_name)>Behaviors` — the KSP-emitted object
     /// name. Lives in package `rs.whisker.runtime.generated`, same as
@@ -545,14 +444,9 @@ pub fn write_gradle_module_cache(
 /// [`discover`], `Cargo.lock` hashing, and per-platform availability
 /// classification.
 ///
-/// Detection rules — both follow the Expo-style "manifest at the
-/// package root, source under a per-platform subdir":
-///   * Android: `<manifest_dir>/build.gradle.kts` exists. The
-///     `subproject_dir` reported is `manifest_dir` (the AGP library
-///     module is rooted at the package root; its Kotlin source set
-///     points at `android/` internally).
-///   * iOS: `<manifest_dir>/Package.swift` exists, OR
-///     `ios_swift_sources` is non-empty.
+/// Platform availability comes from the resolved module declaration, never
+/// from directory guessing. Legacy source lists remain reportable during the
+/// package migration.
 pub fn build_modules_report(workspace_root: &Path, user_package: &str) -> Result<ModulesReport> {
     let manifest_path = workspace_root.join("Cargo.toml");
     let resolved = discover(&manifest_path, user_package)
@@ -574,19 +468,23 @@ fn build_modules_report_from_resolved(
         .iter()
         .cloned()
         .map(|m| {
-            let android = if m.manifest_dir.join("build.gradle.kts").is_file() {
-                Some(AndroidModuleReport {
-                    subproject_dir: m.manifest_dir.clone(),
+            let android = m
+                .native_manifest(ModulePlatform::Android)
+                .filter(|manifest| manifest.kind == NativeManifestKind::Gradle)
+                .map(|manifest| AndroidModuleReport {
+                    subproject_dir: manifest
+                        .path
+                        .parent()
+                        .expect("native manifest has a parent")
+                        .to_path_buf(),
                     behaviors_class: crate_to_behaviors_class(&m.package),
-                })
-            } else {
-                None
-            };
-            let swift_pkg = m.manifest_dir.join("Package.swift");
-            let has_ios = !m.ios_swift_sources.is_empty() || swift_pkg.is_file();
-            let ios = if has_ios {
+                });
+            let swift_manifest = m
+                .native_manifest(ModulePlatform::Ios)
+                .filter(|manifest| manifest.kind == NativeManifestKind::SwiftPm);
+            let ios = if swift_manifest.is_some() || !m.ios_swift_sources.is_empty() {
                 Some(IosModuleReport {
-                    swift_module: if swift_pkg.is_file() {
+                    swift_module: if swift_manifest.is_some() {
                         Some(crate_to_swift_module(&m.package))
                     } else {
                         None
@@ -665,6 +563,72 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn tempdir() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "whisker-module-discovery-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn plugin_only_dependency_is_not_a_module() {
+        let root = tempdir();
+        std::fs::create_dir_all(root.join("app/src")).unwrap();
+        std::fs::create_dir_all(root.join("plugin/src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"app\", \"plugin\"]\nresolver = \"2\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("app/Cargo.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dependencies]\nplugin = { path = \"../plugin\" }\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("app/src/lib.rs"), "pub fn app() {}\n").unwrap();
+        std::fs::write(
+            root.join("plugin/Cargo.toml"),
+            "[package]\nname = \"plugin\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[package.metadata.whisker.plugins.example]\nbin = \"example-plugin\"\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("plugin/src/lib.rs"), "pub fn plugin() {}\n").unwrap();
+
+        let modules = discover(&root.join("Cargo.toml"), "app").unwrap();
+        assert!(modules.is_empty());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn desktop_is_the_fallback_for_os_specific_hosts() {
+        let module = ResolvedModule {
+            package: "whisker-map".into(),
+            manifest_dir: PathBuf::from("/module"),
+            ios_swift_sources: Vec::new(),
+            android_kotlin_sources: Vec::new(),
+            android_jni_sources: Vec::new(),
+            platforms: ResolvedModulePlatforms {
+                desktop: Some(ResolvedPlatformImplementation::RustHost(
+                    ResolvedRustModuleContribution {
+                        package: "whisker-map-desktop".into(),
+                        source: ResolvedRustHostSource::Registry {
+                            version: "1.2.3".into(),
+                        },
+                    },
+                )),
+                ..Default::default()
+            },
+        };
+        assert_eq!(
+            module.rust_host(ModulePlatform::Macos).unwrap().package,
+            "whisker-map-desktop"
+        );
+    }
 
     #[test]
     fn discovers_rfc0004_rust_host_crates_by_convention() {
@@ -678,13 +642,13 @@ mod tests {
             .iter()
             .find(|module| module.package == "whisker-toggle")
             .unwrap();
-        let desktop = toggle.desktop.as_ref().unwrap();
+        let desktop = toggle.rust_host(ModulePlatform::Desktop).unwrap();
         assert_eq!(desktop.package, "whisker-toggle-desktop-host");
         assert!(matches!(
             &desktop.source,
             ResolvedRustHostSource::Path(path) if path.ends_with("whisker-toggle/desktop")
         ));
-        let web = toggle.web.as_ref().unwrap();
+        let web = toggle.rust_host(ModulePlatform::Web).unwrap();
         assert_eq!(web.package, "whisker-toggle-web-host");
         assert!(matches!(
             &web.source,
@@ -704,33 +668,11 @@ mod tests {
             .iter()
             .find(|module| module.package == "whisker-router")
             .unwrap();
-        let web = router.web.as_ref().unwrap();
+        let web = router.rust_host(ModulePlatform::Web).unwrap();
         assert_eq!(web.package, "whisker-router-web-host");
         assert!(matches!(
             &web.source,
             ResolvedRustHostSource::Path(path) if path.ends_with("whisker-router/web")
         ));
-    }
-
-    #[test]
-    fn published_rust_host_falls_back_to_the_outer_package_version() {
-        let contribution = resolve_rust_host_crate(
-            "whisker-toggle",
-            "1.2.3",
-            "desktop",
-            Path::new("/definitely/not/a/module/package"),
-            Some(&RustHostSectionRaw {
-                package: "whisker-toggle-desktop-host".into(),
-            }),
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(contribution.package, "whisker-toggle-desktop-host");
-        assert_eq!(
-            contribution.source,
-            ResolvedRustHostSource::Registry {
-                version: "1.2.3".into()
-            }
-        );
     }
 }

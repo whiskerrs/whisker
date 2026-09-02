@@ -8,7 +8,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::modules::ResolvedModule;
+use crate::modules::{ModulePlatform, NativeManifestKind, ResolvedModule};
 
 /// Canonical remote Swift package containing Whisker's iOS Host SDK.
 pub const WHISKER_IOS_SPM_URL: &str = "https://github.com/whiskerrs/whisker.git";
@@ -68,11 +68,14 @@ pub fn stage_module_swift_sources(
     std::fs::create_dir_all(&sources_root)
         .with_context(|| format!("mkdir -p {}", sources_root.display()))?;
 
-    // A `Package.swift` next to the crate's `Cargo.toml` is the
-    // discovery signal, which skips Android-only modules for free.
+    // The module manifest is authoritative; unsupported and common-only iOS
+    // implementations do not enter SwiftPM's graph.
     let ios_modules: Vec<&ResolvedModule> = modules
         .iter()
-        .filter(|m| m.manifest_dir.join("Package.swift").is_file())
+        .filter(|m| {
+            m.native_manifest(ModulePlatform::Ios)
+                .is_some_and(|manifest| manifest.kind == NativeManifestKind::SwiftPm)
+        })
         .collect();
 
     // A Whisker source checkout contains the root Swift package that owns
@@ -149,7 +152,8 @@ pub fn parse_ios_platform_major(manifest: &str) -> Option<u32> {
 fn ios_platform_major(modules: &[&ResolvedModule]) -> u32 {
     modules
         .iter()
-        .filter_map(|m| std::fs::read_to_string(m.manifest_dir.join("Package.swift")).ok())
+        .filter_map(|m| m.native_manifest(ModulePlatform::Ios))
+        .filter_map(|manifest| std::fs::read_to_string(&manifest.path).ok())
         .filter_map(|manifest| parse_ios_platform_major(&manifest))
         .chain(std::iter::once(DEFAULT_IOS_PLATFORM_MAJOR))
         .max()
@@ -212,7 +216,12 @@ pub fn render_modules_package_swift(
         // directory (Package.swift lives there, identity = the
         // crate's dir name — unique). Its target sources live under
         // the package's `ios/` subdir (Expo-style layout).
-        let path = m.manifest_dir.display().to_string();
+        let path = m
+            .native_manifest(ModulePlatform::Ios)
+            .and_then(|manifest| manifest.path.parent())
+            .expect("iOS modules were filtered to SwiftPM manifests")
+            .display()
+            .to_string();
         out.push_str(&format!(
             "        .package(name: {pkg:?}, path: {path:?}),\n",
             pkg = m.package

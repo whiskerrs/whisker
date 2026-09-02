@@ -181,7 +181,9 @@ fn sync_macos(
         .iter()
         .cloned()
         .filter_map(|module| {
-            let contribution = module.desktop?;
+            let contribution = module
+                .rust_host(whisker_build::modules::ModulePlatform::Macos)?
+                .clone();
             let host_dependency = match contribution.source {
                 whisker_build::modules::ResolvedRustHostSource::Path(path) => {
                     whisker_cng::RustHostDependency::Path(path)
@@ -232,7 +234,9 @@ fn sync_web(
         .iter()
         .cloned()
         .filter_map(|module| {
-            let contribution = module.web?;
+            let contribution = module
+                .rust_host(whisker_build::modules::ModulePlatform::Web)?
+                .clone();
             let host_dependency = match contribution.source {
                 whisker_build::modules::ResolvedRustHostSource::Path(path) => {
                     whisker_cng::RustHostDependency::Path(path)

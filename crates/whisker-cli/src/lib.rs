@@ -81,7 +81,7 @@ enum Command {
     /// + subsecond hot patches over WebSocket.
     Run(run::Args),
     /// Scaffold a new Whisker module crate — Cargo.toml (with the
-    /// `[package.metadata.whisker]` marker), Package.swift,
+    /// `[package.metadata.whisker.module.platforms]` support map), Package.swift,
     /// build.gradle.kts, and skeleton Rust / Swift / Kotlin sources.
     /// See `docs/module-author-guide.md`.
     NewModule(new_module::NewModuleArgs),
