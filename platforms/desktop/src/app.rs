@@ -243,7 +243,7 @@ struct DesktopApplication {
     viewport_epoch: u32,
     environment_epoch: u64,
     started_at: Instant,
-    frame_failed: bool,
+    retrying_failed_frame: bool,
     pointer: DesktopPointerAdapter,
     pending_scroll_settle: Option<(Instant, [f32; 2])>,
     modifiers: Modifiers,
@@ -274,7 +274,7 @@ impl DesktopApplication {
             viewport_epoch: 1,
             environment_epoch: 1,
             started_at: Instant::now(),
-            frame_failed: false,
+            retrying_failed_frame: false,
             pointer: DesktopPointerAdapter::new(SurfaceId::new(1).unwrap()),
             pending_scroll_settle: None,
             modifiers: Modifiers::default(),
@@ -350,22 +350,18 @@ impl DesktopApplication {
             .as_ref()
             .expect("mounted Desktop window")
             .set_visible(true);
-        if !self.frame_failed {
-            self.request_frame();
-        }
+        self.request_frame();
         Ok(())
     }
 
     fn request_frame(&self) {
-        if !self.frame_failed
-            && let Some(window) = &self.window
-        {
+        if let Some(window) = &self.window {
             window.request_redraw();
         }
     }
 
     fn drive_frame(&mut self) {
-        if self.frame_failed || self.viewport.width == 0 || self.viewport.height == 0 {
+        if self.viewport.width == 0 || self.viewport.height == 0 {
             return;
         }
         let (Some(window), Some(runtime), Some(host)) =
@@ -393,16 +389,20 @@ impl DesktopApplication {
         );
         match frame_result {
             Ok(result) => {
+                self.retrying_failed_frame = false;
                 if result.needs_frame {
                     window.request_redraw();
                 }
             }
             Err(error) => {
-                self.frame_failed = true;
                 eprintln!("whisker {TARGET_NAME} frame failed: {error}");
+                if !self.retrying_failed_frame {
+                    self.retrying_failed_frame = true;
+                    window.request_redraw();
+                }
             }
         }
-        if !self.frame_failed {
+        if !self.retrying_failed_frame {
             self.update_accessibility(false);
             self.sync_text_input();
         }
@@ -415,7 +415,7 @@ impl DesktopApplication {
         }
         self.viewport_epoch = self.viewport_epoch.wrapping_add(1).max(1);
         self.environment_epoch = self.environment_epoch.wrapping_add(1).max(1);
-        self.frame_failed = false;
+        self.retrying_failed_frame = false;
         self.request_frame();
     }
 
@@ -432,11 +432,12 @@ impl DesktopApplication {
             .expect("mounted Desktop runtime has a Host")
             .with_modules(|| runtime.dispatch_input(&event))
         {
-            self.frame_failed = true;
             eprintln!("dispatch {TARGET_NAME} input failed: {error}");
-        } else {
-            self.request_frame();
         }
+        // A failed transaction may still have committed independent valid
+        // mutations. Rendering also gives a transient binding failure its
+        // one-shot recovery boundary.
+        self.request_frame();
     }
 
     fn sync_text_input(&self) {

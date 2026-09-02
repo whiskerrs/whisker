@@ -9,7 +9,7 @@ impl SurfaceRuntime {
             return Err(RuntimeBindingError::InvalidMotionTimestamp);
         }
         let mut state = self.state.borrow_mut();
-        state.ensure_valid()?;
+        state.take_binding_error()?;
         let mut motion_events = state
             .elements
             .values_mut()

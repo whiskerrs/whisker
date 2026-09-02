@@ -88,13 +88,16 @@ pub enum DeferredMeasurementApply {
     },
     /// The request, key, or environment generation was no longer current.
     IgnoredStale,
+    /// A re-entrant Host callback was accepted for ordered delivery at the
+    /// next safe runtime boundary.
+    Queued,
 }
 
 impl DeferredMeasurementApply {
     pub(crate) fn invalidated_nodes(&self) -> &[NodeId] {
         match self {
             Self::Applied { invalidated_nodes } => invalidated_nodes,
-            Self::IgnoredStale => &[],
+            Self::IgnoredStale | Self::Queued => &[],
         }
     }
 }

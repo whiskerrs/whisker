@@ -26,6 +26,7 @@ use crate::{
 thread_local! {
     static APPLICATION: RefCell<Option<WebApplication>> = const { RefCell::new(None) };
     static FRAME_SCHEDULED: Cell<bool> = const { Cell::new(false) };
+    static RETRYING_FAILED_FRAME: Cell<bool> = const { Cell::new(false) };
     static URGENT_FRAME_SCHEDULED: Cell<bool> = const { Cell::new(false) };
     #[cfg(feature = "hot-reload")]
     static MOUNTED_APPLICATION_HASH: Cell<u64> = const { Cell::new(0) };
@@ -46,6 +47,7 @@ pub fn run_with_application_hash(
     application: fn() -> Element,
     _application_hash: fn() -> u64,
 ) -> Result<(), WebError> {
+    RETRYING_FAILED_FRAME.set(false);
     #[cfg(feature = "hot-reload")]
     MOUNTED_APPLICATION_HASH.set(_application_hash());
     APPLICATION.with(|slot| {
@@ -461,9 +463,7 @@ pub(crate) fn request_frame() {
                     .ok_or_else(|| WebError("Web application is not mounted".into()))?
                     .drive_frame(timestamp_ms)
             });
-            if let Err(error) = result {
-                web_sys::console::error_1(&error.to_string().into());
-            }
+            finish_frame(result);
         });
         match web_sys::window().and_then(|window| {
             window
@@ -502,11 +502,23 @@ pub(crate) fn request_urgent_frame() {
                     None => Ok(()),
                 }
             });
-            if let Err(error) = result {
-                web_sys::console::error_1(&error.to_string().into());
-            }
+            finish_frame(result);
         });
     });
+}
+
+fn finish_frame(result: Result<(), WebError>) {
+    match result {
+        Ok(()) => RETRYING_FAILED_FRAME.set(false),
+        Err(error) => {
+            web_sys::console::error_1(&error.to_string().into());
+            RETRYING_FAILED_FRAME.with(|retrying| {
+                if !retrying.replace(true) {
+                    request_frame();
+                }
+            });
+        }
+    }
 }
 
 fn browser_window() -> Result<web_sys::Window, WebError> {
