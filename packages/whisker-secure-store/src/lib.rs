@@ -20,6 +20,12 @@
 //!     (Tink is Google's recommended replacement for the now-deprecated
 //!     `EncryptedSharedPreferences`.)
 //!
+//! Web and Desktop are not advertised as supported. Web storage cannot offer
+//! an OS-protected secret boundary against script running in the same origin.
+//! Desktop support requires explicit Keychain, Windows Credential Manager,
+//! and Linux Secret Service implementations; silently falling back to a JSON
+//! file would violate this crate's security contract.
+//!
 //! ## When to use this vs `whisker-local-store`
 //!
 //! Use **`whisker-secure-store`** for secrets: OAuth access / refresh
