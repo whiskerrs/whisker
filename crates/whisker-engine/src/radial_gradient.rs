@@ -230,3 +230,320 @@ pub(super) const fn absolute_length(length: f32) -> PaintLengthPercentage {
         fraction: 0.0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use whisker_protocol::{
+        BackgroundAttachment, BlendMode, GradientStop, LayoutRect, PaintColor, PaintEdges,
+        PaintPosition, ResourceId,
+    };
+
+    use super::*;
+
+    fn coordinate(length: f32, fraction: f32) -> PaintCoordinate {
+        PaintCoordinate { length, fraction }
+    }
+
+    fn length(length: f32, fraction: f32) -> PaintLengthPercentage {
+        PaintLengthPercentage { length, fraction }
+    }
+
+    fn radial(
+        shape: RadialGradientShape,
+        extent: RadialGradientExtent,
+        radii: Option<(PaintLengthPercentage, PaintLengthPercentage)>,
+        stop: PaintCoordinate,
+    ) -> BackgroundLayer {
+        radial_with_first_stop(shape, extent, radii, Some(coordinate(0.0, 0.0)), stop)
+    }
+
+    fn radial_with_first_stop(
+        shape: RadialGradientShape,
+        extent: RadialGradientExtent,
+        radii: Option<(PaintLengthPercentage, PaintLengthPercentage)>,
+        first_stop: Option<PaintCoordinate>,
+        stop: PaintCoordinate,
+    ) -> BackgroundLayer {
+        BackgroundLayer {
+            image: PaintImage::RadialGradient {
+                shape,
+                extent,
+                center: PaintPosition {
+                    x: coordinate(0.0, 0.25),
+                    y: coordinate(0.0, 0.75),
+                },
+                radii,
+                repeating: false,
+                stops: vec![
+                    GradientStop {
+                        color: PaintColor::default(),
+                        position: first_stop,
+                    },
+                    GradientStop {
+                        color: PaintColor::default(),
+                        position: Some(stop),
+                    },
+                ],
+            },
+            position: PaintPosition::default(),
+            size: BackgroundSize::Auto,
+            repeat_x: ImageRepeat::Repeat,
+            repeat_y: ImageRepeat::Repeat,
+            origin: PaintBox::Border,
+            clip: PaintBox::Border,
+            attachment: BackgroundAttachment::Scroll,
+            blend_mode: BlendMode::Normal,
+        }
+    }
+
+    fn resource() -> BackgroundLayer {
+        let mut layer = radial(
+            RadialGradientShape::Circle,
+            RadialGradientExtent::ClosestSide,
+            None,
+            coordinate(0.0, 1.0),
+        );
+        layer.image = PaintImage::Resource(ResourceId::new(1).expect("resource"));
+        layer
+    }
+
+    fn source(shape: RadialGradientShape, extent: RadialGradientExtent) -> RadialBackgroundSource {
+        RadialBackgroundSource {
+            layer: 0,
+            shape,
+            extent,
+            radii: None,
+            original_stop_positions: None,
+        }
+    }
+
+    #[test]
+    fn source_discovery_skips_non_radial_and_already_canonical_layers() {
+        let absolute = coordinate(0.0, 0.5);
+        let layers = vec![
+            resource(),
+            radial(
+                RadialGradientShape::Circle,
+                RadialGradientExtent::Explicit,
+                Some((absolute_length(1.0), absolute_length(1.0))),
+                absolute,
+            ),
+            radial(
+                RadialGradientShape::Ellipse,
+                RadialGradientExtent::ClosestSide,
+                Some((absolute_length(1.0), absolute_length(1.0))),
+                absolute,
+            ),
+            radial(
+                RadialGradientShape::Ellipse,
+                RadialGradientExtent::Explicit,
+                None,
+                absolute,
+            ),
+            radial(
+                RadialGradientShape::Ellipse,
+                RadialGradientExtent::Explicit,
+                Some((absolute_length(1.0), absolute_length(1.0))),
+                absolute,
+            ),
+            radial(
+                RadialGradientShape::Ellipse,
+                RadialGradientExtent::Explicit,
+                Some((absolute_length(1.0), absolute_length(1.0))),
+                coordinate(4.0, 0.5),
+            ),
+        ];
+        let found = sources(&layers);
+        assert_eq!(found.len(), 4);
+        assert_eq!(found[0].layer, 1);
+        assert_eq!(found[3].layer, 5);
+        assert!(found[3].original_stop_positions.is_some());
+    }
+
+    #[test]
+    fn canonicalization_tolerates_stale_sources_and_unresolved_explicit_radii() {
+        let geometry = LayoutGeometry::from(LayoutRect {
+            width: 100.0,
+            height: 80.0,
+            ..LayoutRect::default()
+        });
+        let stale = RadialBackgroundSource {
+            layer: 1,
+            ..source(
+                RadialGradientShape::Circle,
+                RadialGradientExtent::ClosestSide,
+            )
+        };
+        let mut no_layer = vec![resource()];
+        canonicalize(&mut no_layer, &[stale], geometry, None);
+
+        let wrong_kind = source(
+            RadialGradientShape::Circle,
+            RadialGradientExtent::ClosestSide,
+        );
+        canonicalize(&mut no_layer, &[wrong_kind], geometry, None);
+
+        let missing_radii = source(RadialGradientShape::Ellipse, RadialGradientExtent::Explicit);
+        let mut layers = vec![radial(
+            RadialGradientShape::Ellipse,
+            RadialGradientExtent::Explicit,
+            None,
+            coordinate(0.0, 0.5),
+        )];
+        let unchanged = layers.clone();
+        canonicalize(&mut layers, &[missing_radii], geometry, None);
+        assert_eq!(layers, unchanged);
+
+        let mut resolved = vec![radial_with_first_stop(
+            RadialGradientShape::Circle,
+            RadialGradientExtent::ClosestSide,
+            None,
+            None,
+            coordinate(0.0, 0.5),
+        )];
+        canonicalize(
+            &mut resolved,
+            &[source(
+                RadialGradientShape::Circle,
+                RadialGradientExtent::ClosestSide,
+            )],
+            geometry,
+            None,
+        );
+        let expected = radial_with_first_stop(
+            RadialGradientShape::Ellipse,
+            RadialGradientExtent::Explicit,
+            Some((absolute_length(20.0), absolute_length(20.0))),
+            None,
+            coordinate(0.0, 0.5),
+        );
+        assert_eq!(resolved[0].image, expected.image);
+    }
+
+    #[test]
+    fn positioning_and_tile_geometry_cover_every_supported_mode() {
+        let geometry = LayoutGeometry {
+            border_box: LayoutRect {
+                width: 100.0,
+                height: 80.0,
+                ..LayoutRect::default()
+            },
+            content_box: LayoutRect {
+                width: 70.0,
+                height: 50.0,
+                ..LayoutRect::default()
+            },
+        };
+        assert_eq!(
+            background_positioning_size(geometry, None, PaintBox::Content),
+            [70.0, 50.0]
+        );
+        assert_eq!(
+            background_positioning_size(geometry, None, PaintBox::Padding),
+            [100.0, 80.0]
+        );
+        assert_eq!(
+            background_positioning_size(geometry, None, PaintBox::Margin),
+            [100.0, 80.0]
+        );
+
+        let paint = BoxPaint {
+            border_widths: PaintEdges {
+                top: length(2.0, 0.1),
+                right: length(3.0, 0.1),
+                bottom: length(4.0, 0.1),
+                left: length(5.0, 0.1),
+            },
+            ..BoxPaint::default()
+        };
+        assert_eq!(
+            background_positioning_size(geometry, Some(&paint), PaintBox::Padding),
+            [72.0, 58.0]
+        );
+
+        let mut layer = resource();
+        for size in [
+            BackgroundSize::Auto,
+            BackgroundSize::Cover,
+            BackgroundSize::Contain,
+        ] {
+            layer.size = size;
+            assert_eq!(gradient_tile_size(100.0, 80.0, &layer), [100.0, 80.0]);
+        }
+        layer.size = BackgroundSize::Explicit {
+            width: Some(length(10.0, 0.5)),
+            height: None,
+        };
+        layer.repeat_x = ImageRepeat::Round;
+        layer.repeat_y = ImageRepeat::Round;
+        assert_eq!(gradient_tile_size(100.0, 80.0, &layer), [50.0, 80.0]);
+        layer.size = BackgroundSize::Explicit {
+            width: None,
+            height: Some(length(10.0, 0.5)),
+        };
+        assert_eq!(gradient_tile_size(-1.0, -2.0, &layer), [0.0, 9.0]);
+        assert_eq!(rounded_tile_size(0.0, 2.0), 2.0);
+        assert_eq!(rounded_tile_size(2.0, -1.0), 0.0);
+        assert!((rounded_tile_size(100.0, 40.0) - 100.0 / 3.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn radius_resolution_covers_all_circle_and_ellipse_extents() {
+        let expected = [
+            (RadialGradientExtent::ClosestSide, (20.0, 20.0)),
+            (RadialGradientExtent::FarthestSide, (75.0, 75.0)),
+            (
+                RadialGradientExtent::ClosestCorner,
+                (25.0_f32.hypot(20.0), 25.0_f32.hypot(20.0)),
+            ),
+            (
+                RadialGradientExtent::FarthestCorner,
+                (75.0_f32.hypot(60.0), 75.0_f32.hypot(60.0)),
+            ),
+        ];
+        for (extent, circle_expected) in expected {
+            assert_eq!(
+                resolved_radii(
+                    &source(RadialGradientShape::Circle, extent),
+                    100.0,
+                    80.0,
+                    25.0,
+                    20.0,
+                ),
+                Some(circle_expected)
+            );
+            assert!(
+                resolved_radii(
+                    &source(RadialGradientShape::Ellipse, extent),
+                    100.0,
+                    80.0,
+                    25.0,
+                    20.0,
+                )
+                .is_some()
+            );
+        }
+
+        let explicit_ellipse = RadialBackgroundSource {
+            radii: Some((length(10.0, 0.5), length(4.0, 0.25))),
+            ..source(RadialGradientShape::Ellipse, RadialGradientExtent::Explicit)
+        };
+        assert_eq!(
+            resolved_radii(&explicit_ellipse, 100.0, 80.0, 25.0, 20.0),
+            Some((60.0, 24.0))
+        );
+        let explicit_circle = RadialBackgroundSource {
+            radii: explicit_ellipse.radii,
+            ..source(RadialGradientShape::Circle, RadialGradientExtent::Explicit)
+        };
+        let circle = resolved_radii(&explicit_circle, 100.0, 80.0, 25.0, 20.0).unwrap();
+        assert_eq!(circle.0, circle.1);
+
+        let invalid = RadialBackgroundSource {
+            radii: Some((absolute_length(f32::NAN), absolute_length(1.0))),
+            ..explicit_ellipse
+        };
+        assert_eq!(resolved_radii(&invalid, 100.0, 80.0, 25.0, 20.0), None);
+        assert_eq!(ellipse_corner_scale(0.0, 0.0, 4.0, 3.0), 0.0);
+    }
+}
