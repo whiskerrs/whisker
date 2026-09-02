@@ -113,8 +113,7 @@ const BUFFER_CAPACITY: usize = 1024;
 /// `true` the first time, `false` on repeat calls.
 ///
 /// Failures inside the install (pipe / dup / dup2 / thread spawn) are
-/// logged through [`super::hot_reload::devlog`] but never panic. A
-/// failed install leaves the original fds intact.
+/// ignored. A failed install leaves the original fds intact.
 #[cfg(unix)]
 pub fn start_log_capture() -> bool {
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -129,12 +128,8 @@ pub fn start_log_capture() -> bool {
     });
     let _ = LOG_BUFFER.set(Arc::clone(&buffer));
 
-    if let Err(e) = install_pipe(libc::STDOUT_FILENO, Stream::Stdout, Arc::clone(&buffer)) {
-        super::hot_reload::devlog(&format!("stdout capture install failed: {e}"));
-    }
-    if let Err(e) = install_pipe(libc::STDERR_FILENO, Stream::Stderr, Arc::clone(&buffer)) {
-        super::hot_reload::devlog(&format!("stderr capture install failed: {e}"));
-    }
+    let _ = install_pipe(libc::STDOUT_FILENO, Stream::Stdout, Arc::clone(&buffer));
+    let _ = install_pipe(libc::STDERR_FILENO, Stream::Stderr, Arc::clone(&buffer));
     true
 }
 

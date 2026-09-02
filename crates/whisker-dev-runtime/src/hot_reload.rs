@@ -32,60 +32,6 @@ use subsecond::JumpTable;
 use whisker_runtime::view::Element;
 use whisker_runtime::{RuntimeInstance, RuntimeWakeHandle};
 
-/// Log a one-line message tagged `whisker-dev`. On Android this goes
-/// to logcat and on iOS to `syslog(3)` — plain `eprintln!` reaches
-/// neither platform's log surface. Elsewhere it is an `eprintln!`.
-///
-/// Public so whisker-driver's patch-apply path can log under the same
-/// tag.
-pub fn devlog(line: &str) {
-    #[cfg(target_os = "android")]
-    {
-        // Both tag and text must be NUL-terminated.
-        unsafe extern "C" {
-            fn __android_log_write(
-                prio: std::os::raw::c_int,
-                tag: *const std::os::raw::c_char,
-                text: *const std::os::raw::c_char,
-            ) -> std::os::raw::c_int;
-        }
-        const ANDROID_LOG_INFO: std::os::raw::c_int = 4;
-        let tag = b"whisker-dev\0";
-        let mut buf: Vec<u8> = Vec::with_capacity(line.len() + 1);
-        buf.extend_from_slice(line.as_bytes());
-        buf.push(0);
-        unsafe {
-            __android_log_write(
-                ANDROID_LOG_INFO,
-                tag.as_ptr() as *const _,
-                buf.as_ptr() as *const _,
-            );
-        }
-    }
-    #[cfg(target_os = "ios")]
-    {
-        unsafe extern "C" {
-            fn syslog(priority: std::os::raw::c_int, fmt: *const std::os::raw::c_char, ...);
-        }
-        // LOG_INFO surfaces in `log stream` without being filtered as
-        // debug noise.
-        const LOG_INFO: std::os::raw::c_int = 6;
-        let mut buf: Vec<u8> = Vec::with_capacity(line.len() + 16);
-        buf.extend_from_slice(b"[whisker-dev] ");
-        buf.extend_from_slice(line.as_bytes());
-        buf.push(0);
-        let fmt = b"%s\0";
-        unsafe {
-            syslog(LOG_INFO, fmt.as_ptr() as *const _, buf.as_ptr());
-        }
-    }
-
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        eprintln!("[whisker-dev] {line}");
-    }
-}
-
 const MAX_PATCH_HISTORY: usize = 64;
 
 #[derive(Clone)]
@@ -168,7 +114,6 @@ impl NativeHotReload {
         };
         let current_hash = (self.application_hash)();
         let mut remount_root = update.requires_root_remount || current_hash != self.mounted_hash;
-        let generation = update.generation;
         if !remount_root {
             let patched_functions = update
                 .patched_functions
@@ -179,18 +124,11 @@ impl NativeHotReload {
                 .remount_components(&patched_functions)
                 .map_err(|error| error.to_string())?;
             remount_root = stats.remounted == 0 || stats.layout_changed > 0;
-            devlog(&format!(
-                "patch generation {generation} reflected: {} component(s), {} layout mismatch(es)",
-                stats.remounted, stats.layout_changed,
-            ));
         }
         if remount_root {
             runtime
                 .remount_root(self.application)
                 .map_err(|error| error.to_string())?;
-            devlog(&format!(
-                "patch generation {generation} reflected with an application-root remount"
-            ));
         }
         self.mounted_hash = current_hash;
         Ok(true)
@@ -355,9 +293,6 @@ pub fn start_receiver() {
         .ok()
         .filter(|a| !a.is_empty())
         .unwrap_or_else(|| "127.0.0.1:9876".to_string());
-    devlog(&format!(
-        "hot-reload receiver targeting ws://{addr}/whisker-dev",
-    ));
     std::thread::Builder::new()
         .name("whisker-hot-reload".to_string())
         .spawn(move || {
@@ -366,10 +301,7 @@ pub fn start_receiver() {
                 .build()
             {
                 Ok(rt) => rt,
-                Err(e) => {
-                    devlog(&format!("couldn't build tokio runtime: {e}"));
-                    return;
-                }
+                Err(_) => return,
             };
             rt.block_on(client_loop(addr));
         })
@@ -388,14 +320,10 @@ async fn client_loop(addr: String) {
         ..Default::default()
     };
     loop {
-        match tokio_tungstenite::connect_async_with_config(&url, Some(ws_config), false).await {
-            Ok((ws, _)) => {
-                devlog(&format!("connected: {url}"));
-                if let Err(e) = handle_session(ws).await {
-                    devlog(&format!("session ended: {e}"));
-                }
-            }
-            Err(e) => devlog(&format!("connect {url} failed: {e}")),
+        if let Ok((ws, _)) =
+            tokio_tungstenite::connect_async_with_config(&url, Some(ws_config), false).await
+        {
+            let _ = handle_session(ws).await;
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
@@ -473,10 +401,6 @@ where
         "token": dev_token(),
     })
     .to_string();
-    devlog(&format!(
-        "sending hello with aslr_reference={:#x}",
-        device_aslr_reference()
-    ));
     ws.send(Message::Text(hello)).await?;
 
     loop {
@@ -511,31 +435,17 @@ where
 /// Decode one patch frame from the dev-server and park it in the process
 /// coordinator for a Host transaction to apply at its next safe point.
 fn handle_patch_frame(bytes: &[u8]) {
-    devlog(&format!("patch frame received ({} bytes)", bytes.len()));
     let (mut table, dylib_bytes) = match parse_patch_frame(bytes) {
         Ok(parsed) => parsed,
-        Err(e) => {
-            devlog(&format!("malformed patch frame: {e}"));
-            return;
-        }
+        Err(_) => return,
     };
-    devlog(&format!(
-        "frame parsed (map={} entries, dylib={} bytes)",
-        table.map.len(),
-        dylib_bytes.len(),
-    ));
     let local = match materialise_patch_dylib(dylib_bytes) {
         Ok(p) => p,
-        Err(e) => {
-            devlog(&format!("could not materialise patch dylib: {e}"));
-            return;
-        }
+        Err(_) => return,
     };
-    devlog(&format!("patch dylib materialised at {}", local.display()));
     table.lib = local;
     if let Ok(mut coordinator) = COORDINATOR.lock() {
         coordinator.pending = Some(table);
-        devlog("patch queued");
     }
     // Every retained surface must observe the new process generation. Its
     // wake endpoint posts onto the owning Host UI lane.
