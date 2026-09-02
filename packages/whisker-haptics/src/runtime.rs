@@ -6,7 +6,9 @@
 //! prepends this crate's name (→ `whisker-haptics:WhiskerHaptics`) so
 //! module names never collide across crates.
 
-use whisker::platform_module::{WhiskerModuleError, WhiskerValue};
+use whisker::platform_module::WhiskerModuleError;
+#[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
+use whisker::platform_module::WhiskerValue;
 
 use crate::plugin::WhiskerHaptics;
 
@@ -21,6 +23,7 @@ pub enum ImpactStyle {
     Heavy,
 }
 
+#[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
 impl ImpactStyle {
     fn as_str(self) -> &'static str {
         match self {
@@ -40,6 +43,7 @@ pub enum NotificationType {
     Error,
 }
 
+#[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
 impl NotificationType {
     fn as_str(self) -> &'static str {
         match self {
@@ -59,35 +63,68 @@ impl WhiskerHaptics {
     /// touchstart, since a touch that turns into a scroll/drag and
     /// never becomes a real tap shouldn't buzz.
     pub fn impact(style: ImpactStyle) -> Result<(), WhiskerModuleError> {
-        let result = whisker::module!("WhiskerHaptics").invoke(
-            "impact",
-            vec![WhiskerValue::String(style.as_str().to_string())],
-        );
-        match result {
-            WhiskerValue::Error(msg) => Err(WhiskerModuleError(msg)),
-            _ => Ok(()),
+        #[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
+        {
+            return invoke(
+                "impact",
+                vec![WhiskerValue::String(style.as_str().to_string())],
+            );
+        }
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+        {
+            let _ = style;
+            Ok(())
         }
     }
 
     /// Fire a light tick — for discrete value changes, e.g. a drag
     /// gesture starting.
     pub fn selection() -> Result<(), WhiskerModuleError> {
-        let result = whisker::module!("WhiskerHaptics").invoke("selection", vec![]);
-        match result {
-            WhiskerValue::Error(msg) => Err(WhiskerModuleError(msg)),
-            _ => Ok(()),
+        #[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
+        {
+            return invoke("selection", vec![]);
         }
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+        Ok(())
     }
 
     /// Fire a longer pattern communicating success/warning/error.
     pub fn notification(kind: NotificationType) -> Result<(), WhiskerModuleError> {
-        let result = whisker::module!("WhiskerHaptics").invoke(
-            "notification",
-            vec![WhiskerValue::String(kind.as_str().to_string())],
-        );
-        match result {
-            WhiskerValue::Error(msg) => Err(WhiskerModuleError(msg)),
-            _ => Ok(()),
+        #[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
+        {
+            return invoke(
+                "notification",
+                vec![WhiskerValue::String(kind.as_str().to_string())],
+            );
         }
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+        {
+            let _ = kind;
+            Ok(())
+        }
+    }
+}
+
+#[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
+fn invoke(function: &str, arguments: Vec<WhiskerValue>) -> Result<(), WhiskerModuleError> {
+    let result = whisker::module!("WhiskerHaptics").invoke(function, arguments);
+    match result {
+        WhiskerValue::Error(msg) => Err(WhiskerModuleError(msg)),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(all(
+    test,
+    not(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))
+))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_fallback_is_a_successful_no_op() {
+        assert!(WhiskerHaptics::impact(ImpactStyle::Heavy).is_ok());
+        assert!(WhiskerHaptics::selection().is_ok());
+        assert!(WhiskerHaptics::notification(NotificationType::Success).is_ok());
     }
 }

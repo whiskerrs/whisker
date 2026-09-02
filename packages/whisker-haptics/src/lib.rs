@@ -14,6 +14,9 @@
 //!
 //! Mirrors [`expo-haptics`](https://docs.expo.dev/versions/latest/sdk/haptics/)'s
 //! three functions exactly.
+//! Web maps these calls to the Vibration API when the browser permits it.
+//! Desktop currently exposes the same API as a successful no-op because
+//! desktop machines do not have a generally available haptic device.
 //!
 //! Deliberately **not async**: the native module DSL only supports
 //! synchronous `Function`s today (no `AsyncFunction` yet). Firing a
