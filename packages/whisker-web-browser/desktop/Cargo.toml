@@ -1,11 +1,12 @@
 [package]
-name = "whisker-toggle-web-host"
+name = "whisker-web-browser-desktop"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Web Host implementation for whisker-toggle."
+description = "Desktop Host implementation for whisker-web-browser."
 
 [dependencies]
-whisker-web = { workspace = true }
+open = "5"
+whisker-desktop = { workspace = true }

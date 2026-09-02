@@ -29,12 +29,11 @@ include = [
 [lib]
 crate-type = ["rlib"]
 
-# Module-system opt-in marker — same as whisker-image / whisker-video.
-[package.metadata.whisker.desktop]
-package = "whisker-svg-desktop-host"
-
-[package.metadata.whisker.web]
-package = "whisker-svg-web-host"
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { manifest = "Package.swift" }
+web = { manifest = "web/Cargo.toml" }
+desktop = { manifest = "desktop/Cargo.toml" }
 
 [dependencies]
 whisker = { workspace = true }

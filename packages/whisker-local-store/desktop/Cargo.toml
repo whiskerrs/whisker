@@ -1,11 +1,12 @@
 [package]
-name = "whisker-toggle-desktop-host"
+name = "whisker-local-store-desktop"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Desktop Host implementation for whisker-toggle."
+description = "Desktop Host implementation for whisker-local-store."
 
 [dependencies]
+serde_json = { workspace = true }
 whisker-desktop = { workspace = true }

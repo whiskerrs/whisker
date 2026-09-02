@@ -619,17 +619,17 @@ mod tests {
     #[test]
     fn published_legacy_host_falls_back_to_the_outer_package_version() {
         let contribution = resolve_legacy_rust_host(
-            "whisker-toggle",
+            "whisker-example",
             "1.2.3",
             "desktop",
             Path::new("/definitely/not/a/module/package"),
             Some(&RustHostSectionRaw {
-                package: "whisker-toggle-desktop-host".into(),
+                package: "whisker-example-desktop-host".into(),
             }),
         )
         .unwrap()
         .unwrap();
-        assert_eq!(contribution.package, "whisker-toggle-desktop-host");
+        assert_eq!(contribution.package, "whisker-example-desktop-host");
         assert_eq!(
             contribution.source,
             ResolvedRustHostSource::Registry {

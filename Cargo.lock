@@ -2454,7 +2454,7 @@ name = "host-smoke"
 version = "0.1.0"
 dependencies = [
  "whisker",
- "whisker-toggle",
+ "whisker-svg",
 ]
 
 [[package]]
@@ -2941,6 +2941,25 @@ name = "ipnet"
 version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a756c3fac73139e83f14c2d742155dd2b78d3ee56597b419a0579b7bdd6dd78"
+
+[[package]]
+name = "is-docker"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "928bae27f42bc99b60d9ac7334e3a21d10ad8f1835a4e12ec3ec0464765ed1b3"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
+name = "is-wsl"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "173609498df190136aa7dea1a91db051746d339e18476eed5ca40521f02d7aa5"
+dependencies = [
+ "is-docker",
+ "once_cell",
+]
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -3894,6 +3913,16 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
+name = "open"
+version = "5.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ade3be4664bc1ef537ce133015f04c176b737815c2ba9fd60edf212d6e90dd55"
+dependencies = [
+ "is-wsl",
+ "libc",
+]
 
 [[package]]
 name = "orbclient"
@@ -7046,6 +7075,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-haptics-web"
+version = "0.12.0"
+dependencies = [
+ "js-sys",
+ "web-sys",
+ "whisker-web",
+]
+
+[[package]]
 name = "whisker-host-conformance"
 version = "0.0.0"
 dependencies = [
@@ -7130,6 +7168,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-keyboard-web"
+version = "0.12.0"
+dependencies = [
+ "web-sys",
+ "whisker-web",
+]
+
+[[package]]
 name = "whisker-layout"
 version = "0.12.0"
 dependencies = [
@@ -7150,6 +7196,22 @@ name = "whisker-local-store"
 version = "0.12.0"
 dependencies = [
  "whisker",
+]
+
+[[package]]
+name = "whisker-local-store-desktop"
+version = "0.12.0"
+dependencies = [
+ "serde_json",
+ "whisker-desktop",
+]
+
+[[package]]
+name = "whisker-local-store-web"
+version = "0.12.0"
+dependencies = [
+ "web-sys",
+ "whisker-web",
 ]
 
 [[package]]
@@ -7235,7 +7297,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "whisker-router-web-host"
+name = "whisker-router-web"
 version = "0.12.0"
 dependencies = [
  "wasm-bindgen",
@@ -7332,7 +7394,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "whisker-svg-desktop-host"
+name = "whisker-svg-desktop"
 version = "0.12.0"
 dependencies = [
  "base64 0.22.1",
@@ -7351,32 +7413,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "whisker-svg-web-host"
+name = "whisker-svg-web"
 version = "0.12.0"
 dependencies = [
  "base64 0.22.1",
  "whisker-svg",
- "whisker-web",
-]
-
-[[package]]
-name = "whisker-toggle"
-version = "0.12.0"
-dependencies = [
- "whisker",
-]
-
-[[package]]
-name = "whisker-toggle-desktop-host"
-version = "0.12.0"
-dependencies = [
- "whisker-desktop",
-]
-
-[[package]]
-name = "whisker-toggle-web-host"
-version = "0.12.0"
-dependencies = [
  "whisker-web",
 ]
 
@@ -7423,6 +7464,23 @@ version = "0.12.0"
 dependencies = [
  "futures-channel",
  "whisker",
+]
+
+[[package]]
+name = "whisker-web-browser-desktop"
+version = "0.12.0"
+dependencies = [
+ "open",
+ "whisker-desktop",
+]
+
+[[package]]
+name = "whisker-web-browser-web"
+version = "0.12.0"
+dependencies = [
+ "web-sys",
+ "whisker",
+ "whisker-web",
 ]
 
 [[package]]

@@ -638,21 +638,21 @@ mod tests {
             .unwrap()
             .join("Cargo.toml");
         let modules = discover(&workspace, "host-smoke").unwrap();
-        let toggle = modules
+        let svg = modules
             .iter()
-            .find(|module| module.package == "whisker-toggle")
+            .find(|module| module.package == "whisker-svg")
             .unwrap();
-        let desktop = toggle.rust_host(ModulePlatform::Desktop).unwrap();
-        assert_eq!(desktop.package, "whisker-toggle-desktop-host");
+        let desktop = svg.rust_host(ModulePlatform::Desktop).unwrap();
+        assert_eq!(desktop.package, "whisker-svg-desktop-host");
         assert!(matches!(
             &desktop.source,
-            ResolvedRustHostSource::Path(path) if path.ends_with("whisker-toggle/desktop")
+            ResolvedRustHostSource::Path(path) if path.ends_with("whisker-svg/desktop")
         ));
-        let web = toggle.rust_host(ModulePlatform::Web).unwrap();
-        assert_eq!(web.package, "whisker-toggle-web-host");
+        let web = svg.rust_host(ModulePlatform::Web).unwrap();
+        assert_eq!(web.package, "whisker-svg-web-host");
         assert!(matches!(
             &web.source,
-            ResolvedRustHostSource::Path(path) if path.ends_with("whisker-toggle/web")
+            ResolvedRustHostSource::Path(path) if path.ends_with("whisker-svg/web")
         ));
     }
 
@@ -669,7 +669,7 @@ mod tests {
             .find(|module| module.package == "whisker-router")
             .unwrap();
         let web = router.rust_host(ModulePlatform::Web).unwrap();
-        assert_eq!(web.package, "whisker-router-web-host");
+        assert_eq!(web.package, "whisker-router-web");
         assert!(matches!(
             &web.source,
             ResolvedRustHostSource::Path(path) if path.ends_with("whisker-router/web")

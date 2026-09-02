@@ -1,13 +1,13 @@
 [package]
-name = "whisker-svg-web"
+name = "whisker-web-browser-web"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Web Host implementation for whisker-svg."
+description = "Web Host implementation for whisker-web-browser."
 
 [dependencies]
-base64 = { workspace = true }
-whisker-svg = { workspace = true }
+whisker = { workspace = true }
 whisker-web = { workspace = true }
+web-sys = { version = "0.3", features = ["Location", "Window"] }

@@ -30,13 +30,11 @@ include = [
 [lib]
 crate-type = ["rlib"]
 
-# Module-system opt-in marker. The Whisker build pipeline scans dep
-# trees for this table to discover module crates and stage their
-# `ios/` + `android/` directories into the platform builds.
-[package.metadata.whisker]
-
-[package.metadata.whisker.web]
-package = "whisker-router-web-host"
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { kind = "common" }
+web = { manifest = "web/Cargo.toml" }
+desktop = { kind = "common" }
 
 # Plugin registration — Whisker walks the consuming app's dep tree, picks
 # this up, builds the `whisker-router-plugin` binary below, and runs it on
