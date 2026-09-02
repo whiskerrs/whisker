@@ -27,8 +27,8 @@ pub enum RenderCapability {
     /// One resolved, non-repeating linear-gradient background image using the
     /// initial layer geometry and explicit color-stop positions.
     LinearGradients = 8,
-    /// One resolved, non-repeating explicit radial-gradient background image
-    /// using the initial layer geometry and explicit color-stop positions.
+    /// One resolved, non-repeating elliptical radial-gradient background image
+    /// with explicit radii and explicit fractional color-stop positions.
     RadialGradients = 9,
     /// One resolved, non-repeating conic-gradient background image using the
     /// initial layer geometry and explicit fractional color-stop positions.
