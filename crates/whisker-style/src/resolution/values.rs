@@ -193,17 +193,13 @@ pub(super) fn evaluate_calc(
             let left = evaluate_calc(left, percentage_basis, em_basis, environment, property)?;
             let right = evaluate_calc(right, percentage_basis, em_basis, environment, property)?;
             match (left, right) {
-                (_, Quantity::Number(0.0)) | (_, Quantity::Length(0.0)) => Err(invalid()),
+                (_, Quantity::Number(0.0)) | (_, Quantity::Length(_)) => Err(invalid()),
                 (Quantity::Number(left), Quantity::Number(right)) => {
                     Ok(Quantity::Number(left / right))
                 }
                 (Quantity::Length(left), Quantity::Number(right)) => {
                     Ok(Quantity::Length(left / right))
                 }
-                (Quantity::Length(left), Quantity::Length(right)) => {
-                    Ok(Quantity::Number(left / right))
-                }
-                (Quantity::Number(_), Quantity::Length(_)) => Err(invalid()),
             }
         }
     }

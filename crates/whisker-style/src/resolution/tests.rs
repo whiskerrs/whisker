@@ -416,7 +416,6 @@ fn calc_evaluates_scalar_branches_and_rejects_invalid_dimensions() {
         CalcExpression::Sub(Box::new(scalar(3.0)), Box::new(scalar(1.0))),
         CalcExpression::Mul(Box::new(scalar(2.0)), Box::new(scalar(3.0))),
         CalcExpression::Div(Box::new(scalar(6.0)), Box::new(scalar(2.0))),
-        CalcExpression::Div(Box::new(length()), Box::new(length())),
     ] {
         evaluate_calc(
             &expression,
@@ -431,6 +430,7 @@ fn calc_evaluates_scalar_branches_and_rejects_invalid_dimensions() {
         CalcExpression::Add(Box::new(scalar(1.0)), Box::new(length())),
         CalcExpression::Sub(Box::new(length()), Box::new(scalar(1.0))),
         CalcExpression::Mul(Box::new(length()), Box::new(length())),
+        CalcExpression::Div(Box::new(length()), Box::new(length())),
         CalcExpression::Div(Box::new(scalar(1.0)), Box::new(length())),
         CalcExpression::Div(Box::new(length()), Box::new(scalar(0.0))),
         CalcExpression::Div(
@@ -586,7 +586,7 @@ fn direction_resolves_and_inherits_into_layout_and_text_context() {
 }
 
 #[test]
-fn text_indent_resolves_length_and_percentage_without_inheriting() {
+fn text_indent_resolves_length_percentage_and_calc_without_inheriting() {
     let environment = StyleEnvironment::default();
     let length = resolve_text_style(
         &declaration(
@@ -618,6 +618,31 @@ fn text_indent_resolves_length_and_percentage_without_inheriting() {
         percentage.computed().text_indent(),
         ComputedTextIndent::Percentage(number(-15.0))
     );
+    let calculated = resolve_text_style(
+        &declaration(
+            StyleProperty::TextIndent,
+            StyleValue::LengthPercentage(LengthPercentageValue::Calc(Box::new(
+                CalcExpression::Add(
+                    Box::new(CalcExpression::Value(Box::new(
+                        LengthPercentageValue::Length(px(4.0)),
+                    ))),
+                    Box::new(CalcExpression::Value(Box::new(
+                        LengthPercentageValue::Percentage(number(10.0)),
+                    ))),
+                ),
+            ))),
+        ),
+        Some(length.inherited_for_children()),
+        environment,
+    )
+    .unwrap();
+    assert_eq!(
+        calculated.computed().text_indent(),
+        ComputedTextIndent::LengthPercentage {
+            logical_pixels: number(4.0),
+            percentage: number(10.0),
+        }
+    );
     let child = resolve_text_style(
         &SpecifiedStyle::new(),
         Some(length.inherited_for_children()),
@@ -635,7 +660,6 @@ fn text_indent_resolves_length_and_percentage_without_inheriting() {
             unit: LengthUnit::Em,
         }),
         LengthPercentageValue::Percentage(number(f32::NAN)),
-        LengthPercentageValue::Calc(Box::new(CalcExpression::Number(number(1.0)))),
     ] {
         assert_eq!(
             resolve_text_style(
@@ -650,6 +674,20 @@ fn text_indent_resolves_length_and_percentage_without_inheriting() {
             StyleResolutionError::InvalidPropertyValue(StyleProperty::TextIndent)
         );
     }
+    assert_eq!(
+        resolve_text_style(
+            &declaration(
+                StyleProperty::TextIndent,
+                StyleValue::LengthPercentage(LengthPercentageValue::Calc(Box::new(
+                    CalcExpression::Number(number(1.0)),
+                ))),
+            ),
+            None,
+            environment,
+        )
+        .unwrap_err(),
+        StyleResolutionError::InvalidCalculation(StyleProperty::TextIndent)
+    );
 }
 
 #[test]
