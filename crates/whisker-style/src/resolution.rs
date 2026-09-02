@@ -107,6 +107,13 @@ pub enum ComputedTextIndent {
     LogicalPixels(StyleNumber),
     /// Percentage number before the `%` suffix.
     Percentage(StyleNumber),
+    /// Mixed fixed and percentage components produced by `calc()`.
+    LengthPercentage {
+        /// Fixed logical-pixel component.
+        logical_pixels: StyleNumber,
+        /// Percentage number before the `%` suffix.
+        percentage: StyleNumber,
+    },
 }
 
 impl Default for ComputedTextIndent {
@@ -887,9 +894,27 @@ fn resolve_style_once(
                 StyleProperty::TextIndent,
             )?))
         }
-        Some(StyleValue::LengthPercentage(LengthPercentageValue::Calc(_))) | Some(_) => {
-            return Err(wrong_type(StyleProperty::TextIndent));
+        Some(StyleValue::LengthPercentage(value @ LengthPercentageValue::Calc(_))) => {
+            let value = crate::layout::resolve_affine(
+                value,
+                font_size.get(),
+                environment,
+                StyleProperty::TextIndent,
+            )?;
+            let logical_pixels = value.length();
+            let percentage = value.fraction() * 100.0;
+            if percentage == 0.0 {
+                ComputedTextIndent::LogicalPixels(StyleNumber::new(logical_pixels))
+            } else if logical_pixels == 0.0 {
+                ComputedTextIndent::Percentage(StyleNumber::new(percentage))
+            } else {
+                ComputedTextIndent::LengthPercentage {
+                    logical_pixels: StyleNumber::new(logical_pixels),
+                    percentage: StyleNumber::new(percentage),
+                }
+            }
         }
+        Some(_) => return Err(wrong_type(StyleProperty::TextIndent)),
         None => ComputedTextIndent::default(),
     };
     let local_text_value = |property| {
