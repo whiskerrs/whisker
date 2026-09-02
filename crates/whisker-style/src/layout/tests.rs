@@ -759,6 +759,106 @@ fn logical_insets_resolve_in_final_write_order_for_both_directions() {
 }
 
 #[test]
+fn logical_margin_and_padding_resolve_in_final_write_order_for_both_directions() {
+    let ltr = SpecifiedStyle::new()
+        .push(
+            StyleProperty::MarginLeft,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(1.0))),
+        )
+        .push(
+            StyleProperty::MarginInlineStart,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(2.0))),
+        )
+        .push(
+            StyleProperty::MarginRight,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(3.0))),
+        )
+        .push(
+            StyleProperty::MarginInlineEnd,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::Auto),
+        )
+        .push(
+            StyleProperty::PaddingLeft,
+            StyleValue::LengthPercentage(px(5.0)),
+        )
+        .push(
+            StyleProperty::PaddingInlineStart,
+            StyleValue::LengthPercentage(px(6.0)),
+        )
+        .push(
+            StyleProperty::PaddingRight,
+            StyleValue::LengthPercentage(px(7.0)),
+        )
+        .push(
+            StyleProperty::PaddingInlineEnd,
+            StyleValue::LengthPercentage(px(8.0)),
+        );
+    let style = resolve(&ltr).unwrap();
+    assert_eq!(
+        style.margin.left,
+        ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(2.0, 0.0))
+    );
+    assert_eq!(style.margin.right, ComputedLengthPercentageAuto::Auto);
+    assert_eq!(style.padding.left, ComputedLengthPercentage::new(6.0, 0.0));
+    assert_eq!(style.padding.right, ComputedLengthPercentage::new(8.0, 0.0));
+
+    let rtl = SpecifiedStyle::new()
+        .push(
+            StyleProperty::Direction,
+            StyleValue::Direction(DirectionValue::Rtl),
+        )
+        .push(
+            StyleProperty::MarginInlineStart,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(9.0))),
+        )
+        .push(
+            StyleProperty::MarginRight,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(10.0))),
+        )
+        .push(
+            StyleProperty::MarginInlineEnd,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(11.0))),
+        )
+        .push(
+            StyleProperty::PaddingInlineStart,
+            StyleValue::LengthPercentage(px(12.0)),
+        )
+        .push(
+            StyleProperty::PaddingInlineEnd,
+            StyleValue::LengthPercentage(px(13.0)),
+        );
+    let style = resolve(&rtl).unwrap();
+    assert_eq!(
+        style.margin.right,
+        ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(10.0, 0.0))
+    );
+    assert_eq!(
+        style.margin.left,
+        ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(11.0, 0.0))
+    );
+    assert_eq!(
+        style.padding.right,
+        ComputedLengthPercentage::new(12.0, 0.0)
+    );
+    assert_eq!(style.padding.left, ComputedLengthPercentage::new(13.0, 0.0));
+
+    for property in [
+        StyleProperty::MarginInlineStart,
+        StyleProperty::MarginInlineEnd,
+        StyleProperty::PaddingInlineStart,
+        StyleProperty::PaddingInlineEnd,
+    ] {
+        assert_eq!(
+            resolve(&declaration(
+                property,
+                StyleValue::Color(crate::ColorValue::Named("red".into())),
+            )),
+            Err(StyleResolutionError::InvalidPropertyValue(property))
+        );
+    }
+}
+
+#[test]
 fn relative_units_become_logical_pixel_components() {
     let environment = StyleEnvironment::new(750.0, 400.0, 2.0, 10.0);
     let cases = [

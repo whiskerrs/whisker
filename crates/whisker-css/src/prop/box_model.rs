@@ -94,6 +94,16 @@ impl Css {
         self.push_typed(crate::StyleProperty::PaddingLeft, v.into())
     }
 
+    /// Sets `padding-inline-start` on the logical start edge.
+    pub fn padding_inline_start(self, v: impl Into<LengthPercentage>) -> Self {
+        self.push_typed(crate::StyleProperty::PaddingInlineStart, v.into())
+    }
+
+    /// Sets `padding-inline-end` on the logical end edge.
+    pub fn padding_inline_end(self, v: impl Into<LengthPercentage>) -> Self {
+        self.push_typed(crate::StyleProperty::PaddingInlineEnd, v.into())
+    }
+
     // ---------- Margin longhand ----------
 
     /// Sets `margin-top`. Lynx allows negative values and `auto`.
@@ -118,6 +128,16 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/margin-left>
     pub fn margin_left(self, v: impl Into<MarginValue>) -> Self {
         self.push_typed(crate::StyleProperty::MarginLeft, v.into())
+    }
+
+    /// Sets `margin-inline-start` on the logical start edge.
+    pub fn margin_inline_start(self, v: impl Into<MarginValue>) -> Self {
+        self.push_typed(crate::StyleProperty::MarginInlineStart, v.into())
+    }
+
+    /// Sets `margin-inline-end` on the logical end edge.
+    pub fn margin_inline_end(self, v: impl Into<MarginValue>) -> Self {
+        self.push_typed(crate::StyleProperty::MarginInlineEnd, v.into())
     }
 
     // ---------- Gap ----------
@@ -145,11 +165,11 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
-    use crate::Css;
     use crate::data_type::{FitContent, MaxContent};
     use crate::ext::*;
     use crate::keyword::BoxSizing;
     use crate::value::Size;
+    use crate::{Css, MarginValue};
 
     #[test]
     fn width_height_basic() {
@@ -218,6 +238,19 @@ mod tests {
         assert_eq!(
             s.to_string(),
             "margin-top: -4px; margin-right: 0%; margin-bottom: 8px; margin-left: -50%;"
+        );
+    }
+
+    #[test]
+    fn logical_margin_and_padding_builders_remain_typed() {
+        let style = Css::new()
+            .margin_inline_start(px(-4))
+            .margin_inline_end(MarginValue::Auto)
+            .padding_inline_start(px(6))
+            .padding_inline_end(percent(8));
+        assert_eq!(
+            style.to_string(),
+            "margin-inline-start: -4px; margin-inline-end: auto; padding-inline-start: 6px; padding-inline-end: 8%;"
         );
     }
 
