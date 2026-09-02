@@ -108,11 +108,33 @@ type DesktopCommandHandler<T> = Arc<dyn Fn(&mut T, &WhiskerValue) + Send + Sync>
 type DesktopTextStyleUpdater<T> = Arc<dyn Fn(&mut T, &WhiskerTextStyle) + Send + Sync>;
 pub(super) type DesktopMeasurementHandler =
     Arc<dyn Fn(&WhiskerMeasureRequest) -> Option<WhiskerMeasuredSize> + Send + Sync>;
-type DesktopRasterizer<T> = Arc<dyn Fn(&T, u32, u32) -> Option<DesktopRaster> + Send + Sync>;
+type DesktopRasterizer<T> = Arc<dyn Fn(&T, u32, u32, f32) -> Option<DesktopRaster> + Send + Sync>;
 type DesktopScrollAxis<T> = Arc<dyn Fn(&T) -> bool + Send + Sync>;
 type DesktopItemSnap<T> = Arc<dyn Fn(&T) -> Option<(f64, f64)> + Send + Sync>;
 type DesktopSnapStop<T> = Arc<dyn Fn(&T) -> bool + Send + Sync>;
 type DesktopScrollEnabled<T> = Arc<dyn Fn(&T) -> bool + Send + Sync>;
+type DesktopInputFocused<T> = Arc<dyn Fn(&T) -> bool + Send + Sync>;
+type DesktopSetInputFocus<T> = Arc<dyn Fn(&mut T, bool) + Send + Sync>;
+type DesktopInputHandler<T> = Arc<dyn Fn(&mut T, &DesktopTextInputEvent) + Send + Sync>;
+type DesktopSelectedText<T> = Arc<dyn Fn(&T) -> Option<String> + Send + Sync>;
+
+struct DesktopTextInputBinding<T> {
+    focused: DesktopInputFocused<T>,
+    set_focus: DesktopSetInputFocus<T>,
+    input: DesktopInputHandler<T>,
+    selected_text: DesktopSelectedText<T>,
+}
+
+impl<T> Clone for DesktopTextInputBinding<T> {
+    fn clone(&self) -> Self {
+        Self {
+            focused: Arc::clone(&self.focused),
+            set_focus: Arc::clone(&self.set_focus),
+            input: Arc::clone(&self.input),
+            selected_text: Arc::clone(&self.selected_text),
+        }
+    }
+}
 
 struct DesktopPropBinding<T> {
     set: DesktopPropSetter<T>,
@@ -144,6 +166,7 @@ pub struct DesktopViewDefinition<T> {
     item_snap: DesktopItemSnap<T>,
     snap_stop_always: DesktopSnapStop<T>,
     scroll_enabled: DesktopScrollEnabled<T>,
+    text_input: Option<DesktopTextInputBinding<T>>,
 }
 
 impl<T> DesktopViewDefinition<T>
@@ -170,6 +193,7 @@ where
             item_snap: Arc::new(|_| None),
             snap_stop_always: Arc::new(|_| false),
             scroll_enabled: Arc::new(|_| true),
+            text_input: None,
         }
     }
 
@@ -270,6 +294,30 @@ where
         self
     }
 
+    /// Declares a module-owned editable-text object. The package retains the
+    /// value, selection, and composition model; the shared Desktop Host only
+    /// routes OS focus, keyboard, clipboard, and IME messages.
+    pub fn text_input(
+        mut self,
+        focused: impl Fn(&T) -> bool + Send + Sync + 'static,
+        set_focus: impl Fn(&mut T, bool) + Send + Sync + 'static,
+        input: impl Fn(&mut T, &DesktopTextInputEvent) + Send + Sync + 'static,
+        selected_text: impl Fn(&T) -> Option<String> + Send + Sync + 'static,
+    ) -> Self {
+        assert!(
+            self.text_input.is_none(),
+            "duplicate Desktop text-input binding for {}",
+            self.name
+        );
+        self.text_input = Some(DesktopTextInputBinding {
+            focused: Arc::new(focused),
+            set_focus: Arc::new(set_focus),
+            input: Arc::new(input),
+            selected_text: Arc::new(selected_text),
+        });
+        self
+    }
+
     /// Supplies synchronous Host intrinsic measurement for Custom or
     /// ReplacedContent schemas. `None` means unsupported for this request.
     pub fn measurement(
@@ -289,6 +337,23 @@ where
     pub fn raster(
         mut self,
         rasterize: impl Fn(&T, u32, u32) -> Option<DesktopRaster> + Send + Sync + 'static,
+    ) -> Self {
+        assert!(
+            self.rasterizer
+                .replace(Arc::new(move |state, width, height, _scale| {
+                    rasterize(state, width, height)
+                }))
+                .is_none(),
+            "duplicate Desktop raster binding for {}",
+            self.name,
+        );
+        self
+    }
+
+    /// Declares scale-aware module-owned raster content.
+    pub fn raster_scaled(
+        mut self,
+        rasterize: impl Fn(&T, u32, u32, f32) -> Option<DesktopRaster> + Send + Sync + 'static,
     ) -> Self {
         assert!(
             self.rasterizer.replace(Arc::new(rasterize)).is_none(),
@@ -380,6 +445,7 @@ where
             item_snap: Arc::clone(&self.item_snap),
             snap_stop_always: Arc::clone(&self.snap_stop_always),
             scroll_enabled: Arc::clone(&self.scroll_enabled),
+            text_input: self.text_input.clone(),
         });
         Ok(Arc::new(move |events| {
             Box::new(DeclaredDesktopElement {
@@ -412,6 +478,7 @@ struct BoundDesktopViewDefinition<T> {
     item_snap: DesktopItemSnap<T>,
     snap_stop_always: DesktopSnapStop<T>,
     scroll_enabled: DesktopScrollEnabled<T>,
+    text_input: Option<DesktopTextInputBinding<T>>,
 }
 
 struct DeclaredDesktopElement<T> {
@@ -463,14 +530,48 @@ where
     }
 
     fn rasterize(&self, width: u32, height: u32) -> Option<DesktopRaster> {
+        self.rasterize_scaled(width, height, 1.0)
+    }
+
+    fn rasterize_scaled(&self, width: u32, height: u32, scale: f32) -> Option<DesktopRaster> {
         self.definition
             .rasterizer
             .as_ref()
-            .and_then(|rasterize| rasterize(&self.state, width, height))
+            .and_then(|rasterize| rasterize(&self.state, width, height, scale))
     }
 
     fn has_raster_content(&self) -> bool {
         self.definition.rasterizer.is_some()
+    }
+
+    fn accepts_text_input(&self) -> bool {
+        self.definition.text_input.is_some()
+    }
+
+    fn text_input_focused(&self) -> bool {
+        self.definition
+            .text_input
+            .as_ref()
+            .is_some_and(|binding| (binding.focused)(&self.state))
+    }
+
+    fn set_text_input_focus(&mut self, focused: bool) {
+        if let Some(binding) = &self.definition.text_input {
+            (binding.set_focus)(&mut self.state, focused);
+        }
+    }
+
+    fn handle_text_input(&mut self, event: &DesktopTextInputEvent) {
+        if let Some(binding) = &self.definition.text_input {
+            (binding.input)(&mut self.state, event);
+        }
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        self.definition
+            .text_input
+            .as_ref()
+            .and_then(|binding| (binding.selected_text)(&self.state))
     }
 
     fn is_scroll_container(&self) -> bool {

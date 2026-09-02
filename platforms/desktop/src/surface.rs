@@ -82,6 +82,22 @@ impl DesktopSurface {
         self.scene.settle_scroll_at(logical_position)
     }
 
+    pub(crate) fn focus_text_input_at(&mut self, logical_position: [f32; 2]) -> bool {
+        self.scene.focus_text_input_at(logical_position)
+    }
+
+    pub(crate) fn dispatch_text_input(&mut self, event: &crate::DesktopTextInputEvent) -> bool {
+        self.scene.dispatch_text_input(event)
+    }
+
+    pub(crate) fn selected_text(&self) -> Option<String> {
+        self.scene.selected_text()
+    }
+
+    pub(crate) fn focused_text_input_rect(&self) -> Option<whisker_protocol::LayoutRect> {
+        self.scene.focused_text_input_rect()
+    }
+
     pub(crate) fn advance_scroll_animations(&mut self, delta_ms: f32) -> bool {
         self.scene.advance_scroll_animations(delta_ms)
     }

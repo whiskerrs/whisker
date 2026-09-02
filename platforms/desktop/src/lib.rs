@@ -53,7 +53,7 @@ use element::DesktopElementRegistry;
 pub use element::{
     BuiltInElementModule, DesktopElementFactory, DesktopEventEmitter, DesktopModuleDefinition,
     DesktopNativeElement, DesktopNativeEvent, DesktopRaster, DesktopRasterError,
-    DesktopViewDefinition, DesktopViewImplementation,
+    DesktopTextInputEvent, DesktopTextInputKey, DesktopViewDefinition, DesktopViewImplementation,
 };
 pub use input::{
     DesktopMouseButton, DesktopPointerAdapter, DesktopPointerEvent, DesktopPointerPhase,
@@ -234,6 +234,27 @@ impl DesktopRuntime {
     /// Settles the nearest snapping ScrollView after wheel/trackpad input ends.
     pub fn settle_scroll_at(&mut self, logical_position: [f32; 2]) -> bool {
         self.surface.settle_scroll_at(logical_position)
+    }
+
+    /// Focuses the editable native element under a pointer, blurring any
+    /// previous editor. Clicking outside an editor clears text focus.
+    pub fn focus_text_input_at(&mut self, logical_position: [f32; 2]) -> bool {
+        self.surface.focus_text_input_at(logical_position)
+    }
+
+    /// Routes one normalized OS edit to the focused native element.
+    pub fn dispatch_text_input(&mut self, event: &DesktopTextInputEvent) -> bool {
+        self.surface.dispatch_text_input(event)
+    }
+
+    /// Returns the focused element's selected text for clipboard integration.
+    pub fn selected_text(&self) -> Option<String> {
+        self.surface.selected_text()
+    }
+
+    /// Returns the focused editor bounds in logical surface coordinates.
+    pub fn focused_text_input_rect(&self) -> Option<whisker_protocol::LayoutRect> {
+        self.surface.focused_text_input_rect()
     }
 
     /// Registers one already-decoded RGBA8 raster for later `ResourceId`

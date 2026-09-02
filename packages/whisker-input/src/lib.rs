@@ -1,8 +1,9 @@
-//! `whisker-input` — native text-input component.
+//! `whisker-input` — cross-platform text-input component.
 //!
 //! **API shape — 2 (Component + ref-bound handle).** A native UI
-//! element ([`Input`]) backed by `UITextField` / `UITextView` on iOS
-//! and `EditText` on Android, with a Leptos-style **two-way binding**
+//! element ([`Input`]) backed by native controls on iOS, Android, and Web,
+//! plus Whisker's GPU-rendered editable-text implementation on Desktop,
+//! with a Leptos-style **two-way binding**
 //! as the headline API plus a typed imperative handle ([`InputRef`])
 //! bound on mount via `element_ref:` for `focus` / `blur` / `clear` /
 //! `setValue`.
@@ -144,12 +145,14 @@
 //!   (view: `InputView.swift`)
 //! - Android: `packages/whisker-input/android/src/main/kotlin/rs/whisker/elements/input/InputModule.kt`
 //!   (view: `WhiskerInputView.kt`)
-
-use std::rc::Rc;
+//! - Web: `packages/whisker-input/web/src/lib.rs`
+//! - Desktop: `packages/whisker-input/desktop/src/lib.rs` (shared by macOS,
+//!   Windows, and Linux; OS keyboard/IME events enter through
+//!   `platforms/desktop`)
 
 use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
-use whisker::{ElementRef, Signal, Style};
+use whisker::{Callback, ElementRef, Signal, Style};
 
 /// Payload of an input event (`input` / `change` / `submit`).
 ///
@@ -184,49 +187,6 @@ impl InputEvent {
     /// Take ownership of the field's current text.
     pub fn into_value(self) -> String {
         self.detail.value
-    }
-}
-
-/// A cloneable user callback for an [`Input`] event prop.
-///
-/// Wraps `Rc<dyn Fn(A)>` so it's `Clone` (required: `#[component]`
-/// re-clones every prop for the hot-reload remount path) and so a
-/// bare closure coerces into it via `Into` at the call site
-/// (`on_input: move |s| …`). `A` is `String` for value-carrying
-/// events (`on_input` / `on_change` / `on_submit`) and `()` for the
-/// bare focus / blur events.
-#[derive(Clone)]
-pub struct InputCallback<A>(Rc<dyn Fn(A) + 'static>);
-
-impl<A> InputCallback<A> {
-    /// Invoke the wrapped callback.
-    pub fn call(&self, arg: A) {
-        (self.0)(arg)
-    }
-}
-
-impl<A, F: Fn(A) + 'static> From<F> for InputCallback<A> {
-    fn from(f: F) -> Self {
-        InputCallback(Rc::new(f))
-    }
-}
-
-/// A cloneable no-argument user callback for an [`Input`] event prop
-/// (`on_focus` / `on_blur`). Same rationale as [`InputCallback`] — a
-/// `Clone`, `Into`-from-closure wrapper around `Rc<dyn Fn()>`.
-#[derive(Clone)]
-pub struct InputAction(Rc<dyn Fn() + 'static>);
-
-impl InputAction {
-    /// Invoke the wrapped callback.
-    pub fn call(&self) {
-        (self.0)()
-    }
-}
-
-impl<F: Fn() + 'static> From<F> for InputAction {
-    fn from(f: F) -> Self {
-        InputAction(Rc::new(f))
     }
 }
 
@@ -353,7 +313,7 @@ impl AutoCapitalize {
 ///
 /// `Clone` produces a shared handle (same backing arena slot), so the
 /// same handle can drive multiple event closures.
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct InputRef {
     r: ElementRef,
 }
@@ -417,15 +377,11 @@ impl Default for InputRef {
     }
 }
 
-// Bool / number / enum props reach the native side pre-stringified ("true" /
-// "false", a decimal string, the enum's `as_attr`), so it reads one stable
-// string form per attr. Attr names are the kebab-cased field names
-// (`placeholder-color`, `caret-color`, `selection-color`).
-
 #[doc(hidden)]
 #[whisker::module_element(
     name = "whisker-input:Input",
     measurement = None,
+    text_style = true,
     commands = [
         ("focus", Null),
         ("blur", Null),
@@ -439,17 +395,17 @@ pub fn native_input(
     placeholder_color: Signal<String>,
     caret_color: Signal<String>,
     selection_color: Signal<String>,
-    multiline: Signal<String>,
-    lines: Signal<String>,
-    secure: Signal<String>,
-    editable: Signal<String>,
-    auto_focus: Signal<String>,
-    max_length: Signal<String>,
+    multiline: Signal<bool>,
+    lines: Signal<i32>,
+    secure: Signal<bool>,
+    editable: Signal<bool>,
+    auto_focus: Signal<bool>,
+    max_length: Signal<i32>,
     keyboard_type: Signal<String>,
     return_key: Signal<String>,
     auto_capitalize: Signal<String>,
-    autocorrect: Signal<String>,
-    spell_check: Signal<String>,
+    autocorrect: Signal<bool>,
+    spell_check: Signal<bool>,
     style: Style,
     on_input: InputEvent,
     on_change: InputEvent,
@@ -457,6 +413,15 @@ pub fn native_input(
     on_blur: InputEvent,
     on_submit: InputEvent,
 ) {
+}
+
+/// Element schema exported for generated Host bootstrap.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        [native_input_schema::element_provider()],
+    )
 }
 
 /// `whisker-input:Input` — a native text field with Leptos-style
@@ -472,15 +437,15 @@ pub fn input(
     /// Controlled read (escape hatch). Ignored when `text` is set.
     value: Option<Signal<String>>,
     /// Fires every keystroke with the new full text.
-    on_input: Option<InputCallback<String>>,
+    on_input: Option<Callback<String>>,
     /// Fires when editing ends / the value is committed.
-    on_change: Option<InputCallback<String>>,
+    on_change: Option<Callback<String>>,
     /// Field gained focus.
-    on_focus: Option<InputAction>,
+    on_focus: Option<Callback<()>>,
     /// Field lost focus.
-    on_blur: Option<InputAction>,
+    on_blur: Option<Callback<()>>,
     /// Return / done key pressed; carries the current text.
-    on_submit: Option<InputCallback<String>>,
+    on_submit: Option<Callback<String>>,
     /// Placeholder text shown when the field is empty.
     placeholder: Option<Signal<String>>,
     /// Multiline area vs single-line field.
@@ -534,9 +499,7 @@ pub fn input(
     placeholder_color: Option<Signal<String>>,
     /// Selection-highlight color (CSS color string).
     selection_color: Option<Signal<String>>,
-    /// Standard Whisker style. Accepts a `Css` builder, a raw string,
-    /// or a reactive signal of either — same as a built-in element's
-    /// `style:`.
+    /// Standard structured Whisker style.
     style: Option<Style>,
     /// Imperative handle ([`InputRef`]).
     input_ref: Option<InputRef>,
@@ -560,22 +523,20 @@ pub fn input(
     // Update the bound `text` signal BEFORE calling the user's `on_input`, so
     // reads inside that callback already see the new value.
     let on_input_cb = {
-        let on_input = on_input.clone();
         move |ev: InputEvent| {
             let new = ev.into_value();
             if let Some(t) = text {
                 t.set(new.clone());
             }
-            if let Some(cb) = &on_input {
-                cb.call(new);
+            if let Some(cb) = on_input {
+                cb.run(new);
             }
         }
     };
     let on_change_cb = {
-        let on_change = on_change.clone();
         move |ev: InputEvent| {
-            if let Some(cb) = &on_change {
-                cb.call(ev.into_value());
+            if let Some(cb) = on_change {
+                cb.run(ev.into_value());
             }
         }
     };
@@ -587,30 +548,27 @@ pub fn input(
         .unwrap_or_else(ElementRef::new);
 
     let on_focus_cb = {
-        let on_focus = on_focus.clone();
         move |_ev: InputEvent| {
             // `whisker-router` reads this registry to blur/restore this exact
             // input across a navigation.
             whisker::focus::note_focused(element_ref);
-            if let Some(cb) = &on_focus {
+            if let Some(cb) = on_focus {
                 cb.call();
             }
         }
     };
     let on_blur_cb = {
-        let on_blur = on_blur.clone();
         move |_ev: InputEvent| {
             whisker::focus::note_blurred(element_ref);
-            if let Some(cb) = &on_blur {
+            if let Some(cb) = on_blur {
                 cb.call();
             }
         }
     };
     let on_submit_cb = {
-        let on_submit = on_submit.clone();
         move |ev: InputEvent| {
-            if let Some(cb) = &on_submit {
-                cb.call(ev.into_value());
+            if let Some(cb) = on_submit {
+                cb.run(ev.into_value());
             }
         }
     };
@@ -621,36 +579,29 @@ pub fn input(
     let selection_color_prop: Signal<String> = selection_color.unwrap_or_default();
     let style_prop: Style = style.clone().unwrap_or_default();
 
-    let multiline_attr = bool_attr(multiline);
-    let secure_attr = bool_attr(secure);
-    let editable_attr = bool_attr(editable);
-    let auto_focus_attr = bool_attr(auto_focus);
     // `0` is the "unset" sentinel for `lines` / `max_length`.
-    let lines_attr = lines.unwrap_or(0).to_string();
-    let max_length_attr = max_length.unwrap_or(0).to_string();
+    let lines_attr = i32::try_from(lines.unwrap_or(0)).unwrap_or(i32::MAX);
+    let max_length_attr = i32::try_from(max_length.unwrap_or(0)).unwrap_or(i32::MAX);
     let keyboard_type_attr = keyboard_type.as_attr().to_string();
     let return_key_attr = return_key.as_attr().to_string();
     let auto_capitalize_attr = auto_capitalize.as_attr().to_string();
-    let autocorrect_attr = bool_attr(autocorrect);
-    let spell_check_attr = bool_attr(spell_check);
-
     let mut builder = NativeInput::builder()
         .value(value_prop)
         .placeholder(placeholder_prop)
         .placeholder_color(placeholder_color_prop)
         .caret_color(caret_color_prop)
         .selection_color(selection_color_prop)
-        .multiline(multiline_attr)
+        .multiline(multiline)
         .lines(lines_attr)
-        .secure(secure_attr)
-        .editable(editable_attr)
-        .auto_focus(auto_focus_attr)
+        .secure(secure)
+        .editable(editable)
+        .auto_focus(auto_focus)
         .max_length(max_length_attr)
         .keyboard_type(keyboard_type_attr)
         .return_key(return_key_attr)
         .auto_capitalize(auto_capitalize_attr)
-        .autocorrect(autocorrect_attr)
-        .spell_check(spell_check_attr)
+        .autocorrect(autocorrect)
+        .spell_check(spell_check)
         .style(style_prop)
         .on_input(on_input_cb)
         .on_change(on_change_cb)
@@ -661,11 +612,6 @@ pub fn input(
     builder = builder.element_ref(element_ref);
 
     builder.build()
-}
-
-/// `true` / `false` wire string for a bool attr.
-fn bool_attr(b: bool) -> String {
-    if b { "true" } else { "false" }.to_string()
 }
 
 #[cfg(test)]
@@ -719,12 +665,6 @@ mod tests {
         assert_eq!(KeyboardType::default(), KeyboardType::Default);
         assert_eq!(ReturnKey::default(), ReturnKey::Default);
         assert_eq!(AutoCapitalize::default(), AutoCapitalize::Sentences);
-    }
-
-    #[test]
-    fn bool_attr_strings() {
-        assert_eq!(bool_attr(true), "true");
-        assert_eq!(bool_attr(false), "false");
     }
 
     #[test]

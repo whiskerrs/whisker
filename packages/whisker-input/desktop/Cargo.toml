@@ -1,0 +1,15 @@
+[package]
+name = "whisker-input-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native Desktop Host implementation for whisker-input."
+
+[dependencies]
+csscolorparser = "0.7.2"
+glyphon = "0.9.0"
+unicode-segmentation = "1"
+whisker-desktop = { workspace = true }
+whisker-protocol = { workspace = true }

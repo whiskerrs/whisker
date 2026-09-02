@@ -311,33 +311,32 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
 
     // ---- Layout mode ---------------------------------------------------
 
-    public func setMultiline(_ s: String) {
-        let want = (s == "true")
-        ensureControl(multiline: want)
+    public func setMultiline(_ multiline: Bool) {
+        ensureControl(multiline: multiline)
     }
 
-    public func setLines(_ s: String) {
+    public func setLines(_ lines: Int64) {
         // Deliberately inert: `UITextView` has no visible-line-count API,
         // and CSS `height` / `min-height` is the authoritative sizing.
-        _ = Int(s) ?? 0
+        _ = lines
     }
 
     // ---- Input behaviour -----------------------------------------------
 
-    public func setSecure(_ s: String) {
-        cachedSecure = (s == "true")
+    public func setSecure(_ secure: Bool) {
+        cachedSecure = secure
         textField?.isSecureTextEntry = cachedSecure
         // UITextView doesn't support secure entry.
     }
 
-    public func setEditable(_ s: String) {
-        cachedEditable = (s != "false")
+    public func setEditable(_ editable: Bool) {
+        cachedEditable = editable
         textField?.isEnabled = cachedEditable
         textView?.isEditable = cachedEditable
     }
 
-    public func setAutoFocus(_ s: String) {
-        cachedAutoFocus = (s == "true")
+    public func setAutoFocus(_ autoFocus: Bool) {
+        cachedAutoFocus = autoFocus
         if cachedAutoFocus && controlBuilt {
             DispatchQueue.main.async { [weak self] in
                 self?.textField?.becomeFirstResponder()
@@ -346,8 +345,8 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         }
     }
 
-    public func setMaxLength(_ s: String) {
-        cachedMaxLength = Int(s) ?? 0   // enforced in delegate callbacks
+    public func setMaxLength(_ count: Int64) {
+        cachedMaxLength = max(0, Int(clamping: count)) // enforced in delegate callbacks
     }
 
     // ---- Keyboard / return key -----------------------------------------
@@ -374,16 +373,16 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         if textView?.isFirstResponder == true { textView?.reloadInputViews() }
     }
 
-    public func setAutocorrect(_ s: String) {
-        cachedAutocorrect = (s == "false") ? .no : .default
+    public func setAutocorrect(_ enabled: Bool) {
+        cachedAutocorrect = enabled ? .default : .no
         textField?.autocorrectionType = cachedAutocorrect
         textView?.autocorrectionType = cachedAutocorrect
         if textField?.isFirstResponder == true { textField?.reloadInputViews() }
         if textView?.isFirstResponder == true { textView?.reloadInputViews() }
     }
 
-    public func setSpellCheck(_ s: String) {
-        cachedSpellCheck = (s == "false") ? .no : .default
+    public func setSpellCheck(_ enabled: Bool) {
+        cachedSpellCheck = enabled ? .default : .no
         textField?.spellCheckingType = cachedSpellCheck
         textView?.spellCheckingType = cachedSpellCheck
         if textField?.isFirstResponder == true { textField?.reloadInputViews() }

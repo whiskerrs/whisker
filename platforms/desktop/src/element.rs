@@ -318,6 +318,52 @@ pub enum DesktopRasterError {
     },
 }
 
+/// Editing keys normalized by the shared Desktop window shell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DesktopTextInputKey {
+    /// Delete the previous grapheme or selection.
+    Backspace,
+    /// Delete the next grapheme or selection.
+    Delete,
+    /// Move the caret one logical character left.
+    ArrowLeft,
+    /// Move the caret one logical character right.
+    ArrowRight,
+    /// Move the caret to the start of the value.
+    Home,
+    /// Move the caret to the end of the value.
+    End,
+    /// Insert a newline or submit a single-line field.
+    Enter,
+}
+
+/// OS text-service input delivered only to the focused Desktop native element.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DesktopTextInputEvent {
+    /// Replace the current selection or marked range with committed text.
+    Commit(String),
+    /// Update the current IME marked text. An empty string cancels composition.
+    Preedit {
+        /// Current marked text.
+        text: String,
+        /// Cursor range inside `text`, expressed as UTF-8 byte offsets.
+        cursor: Option<(usize, usize)>,
+    },
+    /// A non-text editing key.
+    Key {
+        /// Semantic key.
+        key: DesktopTextInputKey,
+        /// Whether movement extends the current selection.
+        shift: bool,
+    },
+    /// Select the complete value.
+    SelectAll,
+    /// Delete the selection after the Host copied it to the clipboard.
+    Cut,
+    /// Insert clipboard text at the current selection.
+    Paste(String),
+}
+
 impl fmt::Display for DesktopRasterError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -360,9 +406,37 @@ pub trait DesktopNativeElement: fmt::Debug + 'static {
         None
     }
 
+    /// Produces element-owned pixels with the current logical-to-physical
+    /// scale. Existing image-like elements can keep implementing
+    /// [`Self::rasterize`]; text controls use this hook for crisp glyphs.
+    fn rasterize_scaled(&self, width: u32, height: u32, _scale: f32) -> Option<DesktopRaster> {
+        self.rasterize(width, height)
+    }
+
     /// Whether this element contributes raster content at all.
     fn has_raster_content(&self) -> bool {
         false
+    }
+
+    /// Whether this native element participates in Desktop text editing.
+    fn accepts_text_input(&self) -> bool {
+        false
+    }
+
+    /// Whether this element currently owns keyboard and IME focus.
+    fn text_input_focused(&self) -> bool {
+        false
+    }
+
+    /// Changes keyboard and IME focus for this element.
+    fn set_text_input_focus(&mut self, _focused: bool) {}
+
+    /// Applies one normalized keyboard, clipboard, or IME edit.
+    fn handle_text_input(&mut self, _event: &DesktopTextInputEvent) {}
+
+    /// Returns selected text for the Host clipboard bridge.
+    fn selected_text(&self) -> Option<String> {
+        None
     }
 
     /// Whether this element owns transient vertical scroll state.
@@ -561,6 +635,33 @@ impl DesktopElementContent {
                 Some(implementation.as_ref())
             }
             Self::Native { .. } => None,
+            Self::Empty | Self::Text(_) | Self::ScrollContainer => None,
+        }
+    }
+
+    pub(crate) fn accepts_text_input(&self) -> bool {
+        matches!(self, Self::Native { implementation, .. } if implementation.accepts_text_input())
+    }
+
+    pub(crate) fn text_input_focused(&self) -> bool {
+        matches!(self, Self::Native { implementation, .. } if implementation.text_input_focused())
+    }
+
+    pub(crate) fn set_text_input_focus(&mut self, focused: bool) {
+        if let Self::Native { implementation, .. } = self {
+            implementation.set_text_input_focus(focused);
+        }
+    }
+
+    pub(crate) fn handle_text_input(&mut self, event: &DesktopTextInputEvent) {
+        if let Self::Native { implementation, .. } = self {
+            implementation.handle_text_input(event);
+        }
+    }
+
+    pub(crate) fn selected_text(&self) -> Option<String> {
+        match self {
+            Self::Native { implementation, .. } => implementation.selected_text(),
             Self::Empty | Self::Text(_) | Self::ScrollContainer => None,
         }
     }
@@ -836,6 +937,18 @@ impl DesktopElementRegistry {
             });
         }
         Ok(())
+    }
+
+    pub(crate) fn command_name(
+        &self,
+        element_type: ElementTypeId,
+        command: CommandId,
+    ) -> Option<String> {
+        self.binding(element_type)
+            .ok()?
+            .registration
+            .command(command)
+            .map(|schema| schema.name.clone())
     }
 
     pub(crate) fn event(

@@ -18,7 +18,6 @@ package rs.whisker.elements.input
 
 import android.content.Context
 import android.graphics.Color
-import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.os.Build
 import android.text.Editable
@@ -286,7 +285,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         val et = view()
         val parsed = parseColor(color) ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            et.textCursorDrawable?.setColorFilter(parsed, PorterDuff.Mode.SRC_IN)
+            et.textCursorDrawable?.setTint(parsed)
         }
         // Pre-API-29 the caret keeps the theme color: there is no typed
         // cursor-tint API, and the `mCursorDrawableRes` reflection hack is
@@ -299,10 +298,9 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         et.highlightColor = parsed
     }
 
-    fun setMultiline(flag: String) {
+    fun setMultiline(multiline: Boolean) {
         val et = view()
-        val multi = flag == "true"
-        if (multi) {
+        if (multiline) {
             et.isSingleLine = false
             et.inputType = et.inputType or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             // Top-align, matching iOS.
@@ -316,18 +314,18 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         applyTextFlags()
     }
 
-    fun setLines(countStr: String) {
+    fun setLines(count: Long) {
         val et = view()
-        val n = countStr.toIntOrNull() ?: 0
+        val n = count.coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
         if (n > 0) {
             // CSS is the authoritative height; this is best-effort.
             et.setLines(n)
         }
     }
 
-    fun setSecure(flag: String) {
+    fun setSecure(secure: Boolean) {
         val et = view()
-        if (flag == "true") {
+        if (secure) {
             // Preserve the current class (text vs number), replace variation.
             val base = et.inputType and InputType.TYPE_MASK_CLASS
             et.inputType = base or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -339,16 +337,18 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         applyTextFlags()
     }
 
-    fun setEditable(flag: String) {
+    fun setEditable(editable: Boolean) {
         val et = view()
-        val enabled = flag != "false"
-        et.isEnabled = enabled
-        et.isFocusable = enabled
-        et.isFocusableInTouchMode = enabled
+        et.isEnabled = editable
+        et.isFocusable = editable
+        et.isFocusableInTouchMode = editable
     }
 
-    fun setAutoFocus(flag: String) {
-        if (flag != "true") return
+    fun setAutoFocus(autoFocus: Boolean) {
+        if (!autoFocus) {
+            pendingAutoFocus = false
+            return
+        }
         val et = view()
         if (et.isAttachedToWindow) {
             focusField()
@@ -357,9 +357,9 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         }
     }
 
-    fun setMaxLength(countStr: String) {
+    fun setMaxLength(count: Long) {
         val et = view()
-        val n = countStr.toIntOrNull() ?: 0
+        val n = count.coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
         if (n > 0) {
             et.filters = arrayOf(InputFilter.LengthFilter(n))
         } else {
@@ -409,14 +409,14 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         applyTextFlags()
     }
 
-    fun setAutocorrect(flag: String) {
-        autoCorrectFlag = if (flag == "false") 0 else InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
+    fun setAutocorrect(enabled: Boolean) {
+        autoCorrectFlag = if (enabled) InputType.TYPE_TEXT_FLAG_AUTO_CORRECT else 0
         applyTextFlags()
     }
 
-    fun setSpellCheck(flag: String) {
+    fun setSpellCheck(enabled: Boolean) {
         // `spell_check` is the inverse of the `NO_SUGGESTIONS` flag.
-        noSuggestionsFlag = if (flag == "false") InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS else 0
+        noSuggestionsFlag = if (enabled) 0 else InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         applyTextFlags()
     }
 
