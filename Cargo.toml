@@ -81,6 +81,7 @@ members = [
     "packages/whisker-svg/web",
     "packages/whisker-svg/example",
     "packages/whisker-video",
+    "packages/whisker-video/web",
     "packages/whisker-audio",
     "packages/whisker-audio/example",
     "packages/whisker-webview",

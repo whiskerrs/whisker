@@ -1,0 +1,19 @@
+[package]
+name = "whisker-video-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Web Host implementation for whisker-video."
+
+[dependencies]
+wasm-bindgen-futures = "0.4"
+whisker-web = { workspace = true }
+web-sys = { version = "0.3", features = [
+    "CssStyleDeclaration",
+    "Element",
+    "HtmlElement",
+    "HtmlMediaElement",
+    "HtmlVideoElement",
+] }

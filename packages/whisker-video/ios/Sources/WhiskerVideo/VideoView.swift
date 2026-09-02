@@ -31,10 +31,13 @@ public final class VideoView: WhiskerUI<UIView> {
 
     /// Backing of the `src` prop.
     public func setSrc(_ value: String) {
-        guard let url = URL(string: value) else { return }
         // Tear down any prior player + layer so a `src=` change
         // rebuilds cleanly.
+        player?.pause()
         playerLayer?.removeFromSuperlayer()
+        playerLayer = nil
+        player = nil
+        guard !value.isEmpty, let url = URL(string: value) else { return }
 
         let p = AVPlayer(url: url)
         let layer = AVPlayerLayer(player: p)
@@ -61,7 +64,12 @@ public final class VideoView: WhiskerUI<UIView> {
     public func play()  { player?.play()  }
     public func pause() { player?.pause() }
     public func seek(_ seconds: Double) {
-        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+        let time = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
         player?.seek(to: time)
+    }
+
+    deinit {
+        player?.pause()
+        playerLayer?.removeFromSuperlayer()
     }
 }

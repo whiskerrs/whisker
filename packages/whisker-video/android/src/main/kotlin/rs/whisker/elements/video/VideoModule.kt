@@ -22,9 +22,10 @@ class VideoModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Video")
         View("whisker-video:Video", VideoView::class.java) {
-            Prop("src") { view: VideoView, value ->
-                view.setSrc(value.asString() ?: "")
-            }
+            Prop(
+                "src",
+                clear = { view: VideoView -> view.setSrc("") },
+            ) { view: VideoView, value -> view.setSrc(value.asString() ?: "") }
             Command("play") { view: VideoView, _ -> view.play() }
             Command("pause") { view: VideoView, _ -> view.pause() }
             Command("seek") { view: VideoView, parameters ->
