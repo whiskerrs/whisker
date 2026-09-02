@@ -1,6 +1,6 @@
 //! Transactional reference validation for semantic frame packets.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
@@ -88,10 +88,12 @@ pub enum ValidationError {
         /// Reused scene epoch.
         epoch: u32,
     },
-    /// Node identifier was created more than once in one epoch.
-    DuplicateNode {
-        /// Duplicate identifier.
-        node: NodeId,
+    /// A created node identifier did not strictly advance within its epoch.
+    NodeIdDidNotAdvance {
+        /// Highest identifier accepted in this epoch.
+        previous: NodeId,
+        /// Non-advancing identifier received next.
+        received: NodeId,
     },
     /// An operation referenced a node that does not exist at that point.
     UnknownNode {
@@ -173,7 +175,7 @@ pub struct SceneProjection {
     scene_epoch: Option<u32>,
     revision: u64,
     nodes: HashMap<NodeId, NodeProjection>,
-    allocated_nodes: HashSet<NodeId>,
+    last_allocated_node: Option<NodeId>,
 }
 
 impl SceneProjection {
@@ -184,7 +186,7 @@ impl SceneProjection {
             scene_epoch: None,
             revision: 0,
             nodes: HashMap::new(),
-            allocated_nodes: HashSet::new(),
+            last_allocated_node: None,
         }
     }
 
@@ -215,7 +217,7 @@ impl SceneProjection {
 
     #[cfg(test)]
     fn allocation_tracking_entries(&self) -> usize {
-        self.allocated_nodes.len()
+        usize::from(self.last_allocated_node.is_some())
     }
 
     /// Validates and atomically applies a packet.
@@ -301,9 +303,15 @@ impl SceneProjection {
     fn apply_operation(&mut self, operation: &Operation) -> Result<(), ValidationError> {
         match operation {
             Operation::CreateNode { node, element_type } => {
-                if !self.allocated_nodes.insert(*node) {
-                    return Err(ValidationError::DuplicateNode { node: *node });
+                if let Some(previous) = self.last_allocated_node
+                    && *node <= previous
+                {
+                    return Err(ValidationError::NodeIdDidNotAdvance {
+                        previous,
+                        received: *node,
+                    });
                 }
+                self.last_allocated_node = Some(*node);
                 self.nodes.insert(
                     *node,
                     NodeProjection {
@@ -549,15 +557,16 @@ impl SceneProjection {
 struct ProjectionTransaction<'a> {
     projection: &'a mut SceneProjection,
     original_nodes: HashMap<NodeId, Option<NodeProjection>>,
-    newly_allocated: Vec<NodeId>,
+    initial_last_allocated_node: Option<NodeId>,
 }
 
 impl<'a> ProjectionTransaction<'a> {
     fn new(projection: &'a mut SceneProjection) -> Self {
+        let initial_last_allocated_node = projection.last_allocated_node;
         Self {
             projection,
             original_nodes: HashMap::new(),
-            newly_allocated: Vec::new(),
+            initial_last_allocated_node,
         }
     }
 
@@ -566,7 +575,6 @@ impl<'a> ProjectionTransaction<'a> {
             Operation::CreateNode { node, .. } => {
                 self.remember(*node);
                 self.projection.apply_operation(operation)?;
-                self.newly_allocated.push(*node);
             }
             Operation::DeleteNode { node } => {
                 self.remember_subtree(*node)?;
@@ -631,9 +639,7 @@ impl<'a> ProjectionTransaction<'a> {
                 }
             }
         }
-        for node in self.newly_allocated {
-            self.projection.allocated_nodes.remove(&node);
-        }
+        self.projection.last_allocated_node = self.initial_last_allocated_node;
     }
 
     fn commit(self, scene_epoch: u32, revision: u64) {
@@ -1008,7 +1014,13 @@ mod tests {
                 }],
             ))
             .expect_err("retired ID must remain unavailable");
-        assert_eq!(error, ValidationError::DuplicateNode { node: child });
+        assert_eq!(
+            error,
+            ValidationError::NodeIdDidNotAdvance {
+                previous: child,
+                received: child,
+            }
+        );
         assert_eq!(scene.revision(), 2);
         assert!(scene.node(child).is_none());
     }
@@ -1077,6 +1089,39 @@ mod tests {
 
         assert_eq!(scene.node_count(), 2);
         assert_eq!(scene.allocation_tracking_entries(), 1);
+    }
+
+    #[test]
+    fn node_allocations_must_strictly_increase_within_an_epoch() {
+        let mut scene = SceneProjection::new(surface());
+        let error = scene
+            .apply(&packet(
+                FrameMode::Snapshot,
+                1,
+                0,
+                1,
+                vec![
+                    Operation::CreateNode {
+                        node: node(2),
+                        element_type: element_type(),
+                    },
+                    Operation::CreateNode {
+                        node: node(1),
+                        element_type: element_type(),
+                    },
+                ],
+            ))
+            .expect_err("out-of-order node IDs must be rejected");
+
+        assert_eq!(
+            error,
+            ValidationError::NodeIdDidNotAdvance {
+                previous: node(2),
+                received: node(1),
+            }
+        );
+        assert_eq!(scene.revision(), 0);
+        assert_eq!(scene.node_count(), 0);
     }
 
     #[test]

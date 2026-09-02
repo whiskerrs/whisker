@@ -28,7 +28,7 @@ define_id!(
 define_id!(
     NodeId,
     u64,
-    "Identifies one scene node within a scene epoch"
+    "Identifies one scene node; allocations strictly increase within a scene epoch"
 );
 define_id!(
     ElementTypeId,
