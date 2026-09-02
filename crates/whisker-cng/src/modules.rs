@@ -669,7 +669,7 @@ mod tests {
             .find(|module| module.package == "whisker-router")
             .unwrap();
         let web = router.rust_host(ModulePlatform::Web).unwrap();
-        assert_eq!(web.package, "whisker-router-web-host");
+        assert_eq!(web.package, "whisker-router-web");
         assert!(matches!(
             &web.source,
             ResolvedRustHostSource::Path(path) if path.ends_with("whisker-router/web")
