@@ -522,6 +522,10 @@ impl DesktopApplication {
         };
         if let Some(key) = key {
             self.dispatch_text_input(DesktopTextInputEvent::Key { key, shift });
+            return;
+        }
+        if let Some(text) = printable_key_text(event.text.as_deref()) {
+            self.dispatch_text_input(DesktopTextInputEvent::Commit(text.to_owned()));
         }
     }
 
@@ -756,9 +760,13 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
     }
 }
 
+fn printable_key_text(text: Option<&str>) -> Option<&str> {
+    text.filter(|text| !text.is_empty() && text.chars().all(|character| !character.is_control()))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::DesktopAppConfig;
+    use super::{DesktopAppConfig, printable_key_text};
 
     #[test]
     fn default_config_preserves_the_standalone_window_contract() {
@@ -777,5 +785,12 @@ mod tests {
     fn generated_host_can_set_static_background() {
         let config = DesktopAppConfig::new("Whisker").with_background_rgb(16, 16, 24);
         assert_eq!(config.background_rgb, [16, 16, 24]);
+    }
+
+    #[test]
+    fn printable_keyboard_text_is_forwarded_to_the_focused_editor() {
+        assert_eq!(printable_key_text(Some("hello")), Some("hello"));
+        assert_eq!(printable_key_text(Some("\r")), None);
+        assert_eq!(printable_key_text(None), None);
     }
 }

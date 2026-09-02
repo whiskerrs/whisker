@@ -409,8 +409,8 @@ pub fn native_input(
     style: Style,
     on_input: InputEvent,
     on_change: InputEvent,
-    on_focus: InputEvent,
-    on_blur: InputEvent,
+    on_focus: (),
+    on_blur: (),
     on_submit: InputEvent,
 ) {
 }
@@ -548,7 +548,7 @@ pub fn input(
         .unwrap_or_else(ElementRef::new);
 
     let on_focus_cb = {
-        move |_ev: InputEvent| {
+        move || {
             // `whisker-router` reads this registry to blur/restore this exact
             // input across a navigation.
             whisker::focus::note_focused(element_ref);
@@ -558,7 +558,7 @@ pub fn input(
         }
     };
     let on_blur_cb = {
-        move |_ev: InputEvent| {
+        move || {
             whisker::focus::note_blurred(element_ref);
             if let Some(cb) = on_blur {
                 cb.call();
