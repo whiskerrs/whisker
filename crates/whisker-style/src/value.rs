@@ -1120,7 +1120,7 @@ fn is_custom_property_ident_character(character: char) -> bool {
     character == '_'
         || character == '-'
         || character.is_ascii_alphanumeric()
-        || !character.is_ascii()
+        || (!character.is_ascii() && !character.is_whitespace() && !character.is_control())
 }
 
 /// A whole-value `var()` reference retained until computed-style resolution.
@@ -1242,8 +1242,12 @@ mod tests {
         assert!(CustomPropertyName::new("accent").is_none());
         assert!(CustomPropertyName::new("--").is_none());
         assert!(CustomPropertyName::new("--bad name").is_none());
+        assert!(CustomPropertyName::new("--bad\u{00a0}name").is_none());
+        assert!(CustomPropertyName::new("--bad\u{2028}name").is_none());
+        assert!(CustomPropertyName::new("--bad\u{0085}name").is_none());
         assert!(CustomPropertyName::new("--1bad").is_some());
         assert!(CustomPropertyName::new("--bad:value").is_none());
+        assert!(CustomPropertyName::new("--🎨").is_some());
 
         let unresolved = ComponentValue::<ColorValue>::Variable(CustomPropertyReference::new(
             CustomPropertyName::new("--accent").unwrap(),
