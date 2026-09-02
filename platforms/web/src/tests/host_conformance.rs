@@ -274,6 +274,14 @@ async fn scroll_view_emits_geometry_and_honors_scroll_behavior() {
     assert_eq!(detail.get("scrollTop"), Some(&WhiskerValue::Int(120)));
     assert_eq!(detail.get("viewportHeight"), Some(&WhiskerValue::Int(80)));
     assert_eq!(detail.get("scrollHeight"), Some(&WhiskerValue::Int(300)));
+    assert_eq!(
+        driver.sink.take_presentation_updates(),
+        vec![whisker_protocol::HostPresentationUpdate::ScrollOffset {
+            node: scroll,
+            offset: whisker_protocol::InputPoint { x: 0.0, y: 120.0 },
+        }]
+    );
+    assert!(driver.sink.take_presentation_updates().is_empty());
 
     driver
         .sink
@@ -1139,8 +1147,13 @@ impl Driver {
         let local_position = input.client_position;
         input.client_position.x += root_origin.x;
         input.client_position.y += root_origin.y;
-        let event = dispatch_pointer(self.input_runtime.as_ref().unwrap(), root_origin, input)
-            .expect("fixture pointer dispatch succeeds through the production Web path");
+        let event = dispatch_pointer(
+            self.input_runtime.as_ref().unwrap(),
+            root_origin,
+            input,
+            &[],
+        )
+        .expect("fixture pointer dispatch succeeds through the production Web path");
         let pointer = event.pointer.expect("pointer fixture has pointer payload");
         assert_eq!(event.timestamp_ms, input.timestamp_ms);
         assert_eq!(pointer.position, local_position);

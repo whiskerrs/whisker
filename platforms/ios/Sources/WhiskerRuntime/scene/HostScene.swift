@@ -7,6 +7,8 @@ final class HostScene {
     private let resources: HostResourceStore
     private let logicalBounds: () -> CGRect
     private let emitElementEvent: (UInt64, String, WhiskerValue) -> Void
+    private let updateScrollOffset: (UInt64, CGPoint) -> Void
+    private let removeScrollOffset: (UInt64) -> Void
     private var nodes: [UInt64: WhiskerNodeView] = [:]
     private var nodeOrder: [UInt64] = []
     private var parents: [UInt64: UInt64] = [:]
@@ -22,12 +24,16 @@ final class HostScene {
         root: UIView,
         resources: HostResourceStore,
         logicalBounds: @escaping () -> CGRect,
-        emitElementEvent: @escaping (UInt64, String, WhiskerValue) -> Void
+        emitElementEvent: @escaping (UInt64, String, WhiskerValue) -> Void,
+        updateScrollOffset: @escaping (UInt64, CGPoint) -> Void,
+        removeScrollOffset: @escaping (UInt64) -> Void
     ) {
         self.root = root
         self.resources = resources
         self.logicalBounds = logicalBounds
         self.emitElementEvent = emitElementEvent
+        self.updateScrollOffset = updateScrollOffset
+        self.removeScrollOffset = removeScrollOffset
     }
 
     func applyFrame(
@@ -86,6 +92,7 @@ final class HostScene {
     }
 
     func clear() {
+        nodes.keys.forEach(removeScrollOffset)
         nodes.values.forEach(releasePresentation)
         nodes.values.forEach { $0.removeFromSuperview() }
         nodes.removeAll()
@@ -280,6 +287,9 @@ final class HostScene {
             }
             let node = WhiskerNodeView(element: registration.name)
             node.mountedElement = mounted
+            (mounted.view as? WhiskerScrollContainerView)?.installWhiskerPresentationSink {
+                [weak self] offset in self?.updateScrollOffset(id, offset)
+            }
             mounted.view.frame = node.bounds
             mounted.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             node.addSubview(mounted.view)
@@ -503,6 +513,7 @@ final class HostScene {
         guard let node = nodes.removeValue(forKey: id) else { return }
         let descendants = nodes.keys.filter { isDescendant($0, of: id) }
         descendants.forEach {
+            removeScrollOffset($0)
             if let removed = nodes.removeValue(forKey: $0) {
                 releasePresentation(removed)
             }
@@ -513,6 +524,7 @@ final class HostScene {
         nodeOrder.removeAll { removed.contains($0) }
         removed.forEach { zOrders.removeValue(forKey: $0) }
         parents.removeValue(forKey: id)
+        removeScrollOffset(id)
         releasePresentation(node)
         node.removeFromSuperview()
     }

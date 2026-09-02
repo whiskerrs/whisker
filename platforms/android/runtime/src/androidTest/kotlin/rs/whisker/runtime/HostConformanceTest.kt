@@ -112,6 +112,12 @@ class HostConformanceTest {
                     (300 * density).roundToInt(),
                 )
                 var detail: WhiskerValue? = null
+                var presentedX = Float.NaN
+                var presentedY = Float.NaN
+                scrollView.installWhiskerPresentationSink { x, y ->
+                    presentedX = x
+                    presentedY = y
+                }
                 scrollView.installWhiskerEventSink { name, value ->
                     if (name == "scroll") detail = value
                 }
@@ -122,6 +128,8 @@ class HostConformanceTest {
                 assertEquals(120.0, (values.getValue("scrollTop") as WhiskerValue.Float).value, 0.001)
                 assertEquals(80.0, (values.getValue("viewportHeight") as WhiskerValue.Float).value, 0.001)
                 assertEquals(300.0, (values.getValue("scrollHeight") as WhiskerValue.Float).value, 0.001)
+                assertEquals(0f, presentedX, 0.001f)
+                assertEquals(120f, presentedY, 0.001f)
             }
     }
 

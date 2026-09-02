@@ -1,5 +1,31 @@
 use super::*;
 
+fn inverse_map_around(transform: Transform, point: [f32; 2], origin: [f32; 2]) -> Option<[f32; 2]> {
+    if transform == Transform::IDENTITY {
+        return Some(point);
+    }
+    let [x, y] = [point[0] - origin[0], point[1] - origin[1]];
+    let matrix = transform.0;
+    let [a, c, tx] = [matrix[0], matrix[4], matrix[12]];
+    let [b, d, ty] = [matrix[1], matrix[5], matrix[13]];
+    let [p, q, r] = [matrix[3], matrix[7], matrix[15]];
+    let determinant = a * (d * r - ty * q) - c * (b * r - ty * p) + tx * (b * q - d * p);
+    if determinant.abs() <= f32::EPSILON {
+        return None;
+    }
+    let inverse_x = (d * r - ty * q) * x + (tx * q - c * r) * y + (c * ty - tx * d);
+    let inverse_y = (ty * p - b * r) * x + (a * r - tx * p) * y + (tx * b - a * ty);
+    let inverse_w = (b * q - d * p) * x + (c * p - a * q) * y + (a * d - c * b);
+    if inverse_w.abs() <= f32::EPSILON {
+        return None;
+    }
+    let mapped = [
+        origin[0] + inverse_x / inverse_w,
+        origin[1] + inverse_y / inverse_w,
+    ];
+    mapped.into_iter().all(f32::is_finite).then_some(mapped)
+}
+
 impl DesktopScene {
     #[cfg(test)]
     pub(crate) fn new(surface: SurfaceId, elements: DesktopElementRegistry) -> Self {
@@ -17,6 +43,7 @@ impl DesktopScene {
             nodes: HashMap::new(),
             smooth_scrolls: HashMap::new(),
             pointer_captures: HashMap::new(),
+            dirty_scroll_offsets: HashSet::new(),
             presentation_pool: HashMap::new(),
             pending_events: Arc::new(Mutex::new(Vec::new())),
             event_wake,
@@ -50,6 +77,24 @@ impl DesktopScene {
                     target: event.target,
                     name,
                     detail: event.detail,
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn take_presentation_updates(
+        &mut self,
+    ) -> Vec<whisker_protocol::HostPresentationUpdate> {
+        self.dirty_scroll_offsets
+            .drain()
+            .filter_map(|node| {
+                let offset = self.nodes.get(&node)?.scroll_offset;
+                Some(whisker_protocol::HostPresentationUpdate::ScrollOffset {
+                    node,
+                    offset: whisker_protocol::InputPoint {
+                        x: offset[0],
+                        y: offset[1],
+                    },
                 })
             })
             .collect()
@@ -213,6 +258,7 @@ impl DesktopScene {
         let visible = presentation.visibility == Visibility::Visible;
         let rect = presentation.layout.border_box;
         let origin = [parent_origin[0] + rect.x, parent_origin[1] + rect.y];
+        let point = inverse_map_around(presentation.transform, point, origin)?;
         let contains_x = point[0] >= origin[0] && point[0] <= origin[0] + rect.width;
         let contains_y = point[1] >= origin[1] && point[1] <= origin[1] + rect.height;
         let clipped = (presentation.clip.horizontal == OverflowClip::Hidden && !contains_x)
@@ -226,23 +272,43 @@ impl DesktopScene {
             } else {
                 origin
             };
-            let mut children = presentation
-                .children
-                .iter()
-                .enumerate()
-                .map(|(index, child)| {
-                    (
-                        *child,
-                        self.nodes
-                            .get(child)
-                            .map_or(0, |child| child.presentation.z_order),
-                        index,
-                    )
-                })
-                .collect::<Vec<_>>();
-            children.sort_by_key(|(_, z_order, index)| (*z_order, *index));
-            for (child, _, _) in children.into_iter().rev() {
-                if let Some(target) = self.hit_test_node(child, point, child_origin) {
+            let first_z = presentation.children.first().map_or(0, |child| {
+                self.nodes
+                    .get(child)
+                    .map_or(0, |child| child.presentation.z_order)
+            });
+            let uniform_z = presentation.children.iter().all(|child| {
+                self.nodes
+                    .get(child)
+                    .map_or(0, |child| child.presentation.z_order)
+                    == first_z
+            });
+            if uniform_z {
+                if let Some(target) = presentation
+                    .children
+                    .iter()
+                    .rev()
+                    .find_map(|child| self.hit_test_node(*child, point, child_origin))
+                {
+                    return Some(target);
+                }
+            } else {
+                let mut best = None;
+                for (index, child) in presentation.children.iter().copied().enumerate() {
+                    let Some(target) = self.hit_test_node(child, point, child_origin) else {
+                        continue;
+                    };
+                    let z = self
+                        .nodes
+                        .get(&child)
+                        .map_or(0, |child| child.presentation.z_order);
+                    if best
+                        .is_none_or(|((best_z, best_index), _)| (z, index) > (best_z, best_index))
+                    {
+                        best = Some(((z, index), target));
+                    }
+                }
+                if let Some((_, target)) = best {
                     return Some(target);
                 }
             }
@@ -499,7 +565,8 @@ impl DesktopScene {
         None
     }
 
-    fn emit_scroll(&self, node: NodeId, offset: [f32; 2], max: [f32; 2]) {
+    fn emit_scroll(&mut self, node: NodeId, offset: [f32; 2], max: [f32; 2]) {
+        self.dirty_scroll_offsets.insert(node);
         let viewport = self.nodes[&node].presentation.layout.content_box;
         self.pending_events
             .lock()
@@ -917,6 +984,7 @@ impl DesktopScene {
             }
             self.pending_events.lock().unwrap().clear();
             self.pointer_captures.clear();
+            self.dirty_scroll_offsets.clear();
         }
         for operation in &packet.operations {
             match operation {
@@ -1172,6 +1240,7 @@ impl DesktopScene {
 
     fn delete_subtree(&mut self, node: NodeId) {
         self.smooth_scrolls.remove(&node);
+        self.dirty_scroll_offsets.remove(&node);
         let Some(removed) = self.nodes.remove(&node) else {
             return;
         };

@@ -35,6 +35,8 @@ import rs.whisker.runtime.scene.HostSceneOperation
 private const val HOST_APPLY_ACCEPTED = MobileAbi.APPLY_ACCEPTED
 private const val HOST_APPLY_REJECTED = MobileAbi.APPLY_REJECTED
 
+private class ScrollOffsetBatch(val nodes: LongArray, val offsets: FloatArray)
+
 /** The single Android View that owns a Whisker runtime and its native scene. */
 class WhiskerView(context: Context) :
     WhiskerContainerView(context),
@@ -51,7 +53,17 @@ class WhiskerView(context: Context) :
     private val measurements = HostMeasurementProvider(context)
     private val bootstrap = HostElementBootstrap()
     private val rasterResources = HostRasterResourceStore()
-    private val scene = HostScene(this, context, ::dispatchElementEvent, rasterResources)
+    private val dirtyScrollOffsets = LinkedHashMap<Long, FloatArray>()
+    private val emptyScrollNodes = LongArray(0)
+    private val emptyScrollOffsets = FloatArray(0)
+    private val scene = HostScene(
+        this,
+        context,
+        ::dispatchElementEvent,
+        ::recordScrollOffset,
+        { node -> dirtyScrollOffsets.remove(node) },
+        rasterResources,
+    )
     private val resourceService = HostResourceService(
         rasterResources,
         ::handleResourceEvent,
@@ -219,6 +231,7 @@ class WhiskerView(context: Context) :
         pointers.forEach { pointer ->
             val handle = nativeHandle
             if (handle != 0L) {
+                val scrollBatch = takeScrollOffsets()
                 nativeDispatchPointer(
                     handle,
                     pointer.timestampMs,
@@ -229,6 +242,8 @@ class WhiskerView(context: Context) :
                     pointer.y,
                     pointer.buttons,
                     pointer.changedButton,
+                    scrollBatch?.nodes ?: emptyScrollNodes,
+                    scrollBatch?.offsets ?: emptyScrollOffsets,
                 )
             }
         }
@@ -237,6 +252,28 @@ class WhiskerView(context: Context) :
         // an Android ownership decision, so receiving a normalized sample is
         // enough to claim it while the runtime is mounted.
         return nativeHandle != 0L && pointers.isNotEmpty()
+    }
+
+    private fun recordScrollOffset(node: Long, x: Float, y: Float) {
+        val offset = dirtyScrollOffsets[node]
+        if (offset == null) dirtyScrollOffsets[node] = floatArrayOf(x, y)
+        else {
+            offset[0] = x
+            offset[1] = y
+        }
+    }
+
+    private fun takeScrollOffsets(): ScrollOffsetBatch? {
+        if (dirtyScrollOffsets.isEmpty()) return null
+        val nodes = LongArray(dirtyScrollOffsets.size)
+        val offsets = FloatArray(dirtyScrollOffsets.size * 2)
+        dirtyScrollOffsets.entries.forEachIndexed { index, entry ->
+            nodes[index] = entry.key
+            offsets[index * 2] = entry.value[0]
+            offsets[index * 2 + 1] = entry.value[1]
+        }
+        dirtyScrollOffsets.clear()
+        return ScrollOffsetBatch(nodes, offsets)
     }
 
     /** Called from Rust through JNI. Safe even when the wake originates off-main. */
@@ -608,6 +645,8 @@ class WhiskerView(context: Context) :
         y: Float,
         buttons: Int,
         changedButton: Int,
+        scrollNodes: LongArray,
+        scrollOffsets: FloatArray,
     ): Boolean
     private external fun nativeResolveModule(
         callbackPtr: Long,

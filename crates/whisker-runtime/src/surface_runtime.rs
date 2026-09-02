@@ -21,8 +21,8 @@ use crate::view::{BindType, DynRenderer, Element, with_installed_renderer};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     Accessibility, BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior,
-    InputEvent, InputEventError, LayoutGeometry, MeasurementReady, NodeId, PaintColor,
-    ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
+    HostPresentationUpdate, InputEvent, InputEventError, LayoutGeometry, MeasurementReady, NodeId,
+    PaintColor, ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
 };
 #[cfg(test)]
 use whisker_engine::whisker_style::ComputedTransformFunction;
@@ -171,6 +171,8 @@ pub enum RuntimeInputError {
     },
     /// Host timing or pointer geometry was invalid.
     InvalidInput(InputEventError),
+    /// Coalesced Host presentation state contained invalid numeric data.
+    InvalidPresentation,
     /// The Host named a node that is no longer live.
     UnknownTarget {
         /// Stale or invalid target.
@@ -480,6 +482,15 @@ impl SurfaceRuntime {
 
     /// Hit-tests and routes one Host-normalized event through Rust listeners.
     pub fn dispatch_input(&self, event: &InputEvent) -> Result<InputDispatch, RuntimeInputError> {
+        self.dispatch_input_with_presentation(event, &[])
+    }
+
+    /// Applies coalesced Host presentation state, then hit-tests and routes one event.
+    pub fn dispatch_input_with_presentation(
+        &self,
+        event: &InputEvent,
+        presentation: &[HostPresentationUpdate],
+    ) -> Result<InputDispatch, RuntimeInputError> {
         let (target, firings, body) = {
             let mut state = self.state.borrow_mut();
             state
@@ -492,6 +503,28 @@ impl SurfaceRuntime {
                 });
             }
             event.validate().map_err(RuntimeInputError::InvalidInput)?;
+            for update in presentation {
+                if !update.is_valid() {
+                    return Err(RuntimeInputError::InvalidPresentation);
+                }
+                match *update {
+                    HostPresentationUpdate::ScrollOffset { node, .. }
+                        if state.surface.node(node).is_none() =>
+                    {
+                        return Err(RuntimeInputError::UnknownTarget { node });
+                    }
+                    HostPresentationUpdate::ScrollOffset { .. } => {}
+                }
+            }
+            for update in presentation {
+                match *update {
+                    HostPresentationUpdate::ScrollOffset { node, offset } => state
+                        .surface
+                        .update_host_scroll_offset(node, [offset.x, offset.y])
+                        .map_err(RuntimeBindingError::from)
+                        .map_err(RuntimeInputError::Binding)?,
+                }
+            }
             let root = state.root.ok_or(RuntimeInputError::MissingRoot)?;
             let captured = event
                 .pointer

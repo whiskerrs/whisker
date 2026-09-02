@@ -638,6 +638,14 @@ fn scroll_container_offsets_paint_and_hit_testing_inside_its_viewport() {
     assert!(scene.scroll_at([10.0, 60.0], [0.0, 120.0]));
     assert_eq!(scene.nodes[&scroll].scroll_offset, [0.0, 120.0]);
     assert_eq!(
+        scene.take_presentation_updates(),
+        vec![whisker_protocol::HostPresentationUpdate::ScrollOffset {
+            node: scroll,
+            offset: whisker_protocol::InputPoint { x: 0.0, y: 120.0 },
+        }]
+    );
+    assert!(scene.take_presentation_updates().is_empty());
+    assert_eq!(
         scene.take_events(),
         vec![DesktopProviderEvent {
             target: scroll,
@@ -989,6 +997,73 @@ fn cursor_hit_testing_respects_pointer_events_and_child_z_order() {
         Some(whisker_protocol::CursorKeyword::Grab)
     );
     assert_eq!(scene.cursor_at([200.0, 20.0]), None);
+}
+
+#[test]
+fn cursor_and_native_scroll_hit_testing_follow_transforms() {
+    let root = id(1);
+    let child = id(2);
+    let element_type = element_type(whisker::VIEW_ELEMENT_NAME);
+    let mut transform = Transform::IDENTITY;
+    transform.0[12] = 100.0;
+    let mut scene = scene(SurfaceId::new(1).unwrap());
+    scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode {
+                    node: root,
+                    element_type,
+                },
+                Operation::CreateNode {
+                    node: child,
+                    element_type,
+                },
+                Operation::InsertChild {
+                    parent: root,
+                    child,
+                    index: 0,
+                },
+                Operation::SetLayout {
+                    node: root,
+                    geometry: geometry(0.0, 0.0, 300.0, 100.0),
+                },
+                Operation::SetLayout {
+                    node: child,
+                    geometry: geometry(0.0, 0.0, 50.0, 50.0),
+                },
+                Operation::SetTransform {
+                    node: child,
+                    transform,
+                },
+                Operation::SetCursor {
+                    node: root,
+                    cursor: Cursor {
+                        resources: Vec::new(),
+                        fallback: whisker_protocol::CursorKeyword::Pointer,
+                    },
+                },
+                Operation::SetCursor {
+                    node: child,
+                    cursor: Cursor {
+                        resources: Vec::new(),
+                        fallback: whisker_protocol::CursorKeyword::Grab,
+                    },
+                },
+            ],
+        ))
+        .unwrap();
+
+    assert_eq!(
+        scene.cursor_at([110.0, 10.0]),
+        Some(whisker_protocol::CursorKeyword::Grab)
+    );
+    assert_eq!(
+        scene.cursor_at([10.0, 10.0]),
+        Some(whisker_protocol::CursorKeyword::Pointer)
+    );
 }
 
 #[test]

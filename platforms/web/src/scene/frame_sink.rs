@@ -39,6 +39,7 @@ pub(crate) struct DomFrameSink {
     scroll_listeners: HashMap<NodeId, Vec<ScrollListener>>,
     pointer_captures: HashMap<PointerId, NodeId>,
     pending_events: Rc<RefCell<VecDeque<WebProviderEvent>>>,
+    dirty_scroll_offsets: Rc<RefCell<HashMap<NodeId, whisker_protocol::InputPoint>>>,
 }
 
 struct PooledWebPresentation {
@@ -123,11 +124,27 @@ impl DomFrameSink {
             scroll_listeners: HashMap::new(),
             pointer_captures: HashMap::new(),
             pending_events: Rc::new(RefCell::new(VecDeque::new())),
+            dirty_scroll_offsets: Rc::new(RefCell::new(HashMap::new())),
         })
     }
 
     pub(crate) fn take_events(&self) -> Vec<WebProviderEvent> {
         self.pending_events.borrow_mut().drain(..).collect()
+    }
+
+    pub(crate) fn take_presentation_updates(
+        &self,
+    ) -> Vec<whisker_protocol::HostPresentationUpdate> {
+        self.dirty_scroll_offsets
+            .borrow_mut()
+            .drain()
+            .map(
+                |(node, offset)| whisker_protocol::HostPresentationUpdate::ScrollOffset {
+                    node,
+                    offset,
+                },
+            )
+            .collect()
     }
 
     pub(crate) fn register_resource_url(
@@ -207,6 +224,7 @@ impl DomFrameSink {
             self.scroll_listeners.clear();
             self.pointer_captures.clear();
             self.pending_events.borrow_mut().clear();
+            self.dirty_scroll_offsets.borrow_mut().clear();
         }
         for operation in &packet.operations {
             self.apply_operation(operation)?;
@@ -303,10 +321,19 @@ impl DomFrameSink {
                     set_style(&element, "overflow-y", "auto")?;
                     let emitter = emitter.clone();
                     let scroll_element = element.clone();
+                    let dirty_scroll_offsets = Rc::clone(&self.dirty_scroll_offsets);
+                    let scroll_node = *node;
                     let listener = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
                         let Some(html) = scroll_element.dyn_ref::<web_sys::HtmlElement>() else {
                             return;
                         };
+                        dirty_scroll_offsets.borrow_mut().insert(
+                            scroll_node,
+                            whisker_protocol::InputPoint {
+                                x: html.scroll_left() as f32,
+                                y: html.scroll_top() as f32,
+                            },
+                        );
                         emitter.emit_urgent(WebNativeEvent {
                             event: "scroll".to_owned(),
                             detail: WhiskerValue::map([
@@ -757,6 +784,7 @@ impl DomFrameSink {
             let native = self.native_nodes.remove(&node);
             self.event_masks.remove(&node);
             self.scroll_listeners.remove(&node);
+            self.dirty_scroll_offsets.borrow_mut().remove(&node);
             if let (Some(element), Some(element_type)) = (element, element_type)
                 && self.elements.binding(element_type).is_ok_and(|binding| {
                     matches!(

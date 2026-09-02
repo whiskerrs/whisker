@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import java.util.ArrayDeque
 import rs.whisker.runtime.WhiskerChildPolicy
 import rs.whisker.runtime.WhiskerContainerView
+import rs.whisker.runtime.WhiskerScrollContainerView
 import rs.whisker.runtime.WhiskerView
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerTextContent
@@ -77,6 +78,8 @@ internal class HostScene(
     private val root: WhiskerContainerView,
     private val context: Context,
     private val emitElementEvent: (Long, String, WhiskerValue) -> Unit,
+    private val updateScrollOffset: (Long, Float, Float) -> Unit,
+    private val removeScrollOffset: (Long) -> Unit,
     private val rasterResources: HostRasterResourceStore,
 ) {
     private val nodes = LinkedHashMap<Long, HostNode>()
@@ -145,6 +148,7 @@ internal class HostScene(
     }
 
     fun clear() {
+        nodes.keys.forEach(removeScrollOffset)
         nodes.values.toList().forEach(::releasePresentation)
         nodes.clear()
         parents.clear()
@@ -260,6 +264,8 @@ internal class HostScene(
                 )
                 val node = HostNode(context, registration.name, root as? WhiskerView)
                 node.mountedElement = mounted
+                (mounted.view as? WhiskerScrollContainerView)
+                    ?.installWhiskerPresentationSink { x, y -> updateScrollOffset(id, x, y) }
                 node.addView(
                     mounted.view,
                     ViewGroup.LayoutParams(
@@ -403,10 +409,12 @@ internal class HostScene(
         pointerCaptures.entries.removeAll { it.value in removedNodes }
         if (pointerCaptures.isEmpty()) root.parent?.requestDisallowInterceptTouchEvent(false)
         descendants.forEach { child ->
+            removeScrollOffset(child)
             nodes.remove(child)?.let(::releasePresentation)
             parents.remove(child)
         }
         parents.remove(id)
+        removeScrollOffset(id)
         (node.parent as? ViewGroup)?.removeView(node)
         releasePresentation(node)
     }

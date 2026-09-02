@@ -299,6 +299,8 @@ final class HostConformanceTests: XCTestCase {
         )
         scrollView.layoutIfNeeded()
         var detail: WhiskerValue?
+        var presentedOffset: CGPoint?
+        scrollView.installWhiskerPresentationSink { presentedOffset = $0 }
         scrollView.installWhiskerEventSink { name, value in
             if name == "scroll" { detail = value }
         }
@@ -311,6 +313,7 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(values["scrollTop"], .float(120))
         XCTAssertEqual(values["viewportHeight"], .float(80))
         XCTAssertEqual(values["scrollHeight"], .float(300))
+        XCTAssertEqual(presentedOffset, CGPoint(x: 0, y: 120))
     }
 
     func testHorizontalScrollViewSettlesOnNearestCarouselItem() {
