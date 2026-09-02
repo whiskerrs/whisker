@@ -12,7 +12,9 @@ use crate::{
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::runtime::module::RustModuleDefinition;
 use whisker::{Element, ElementModuleDefinition, ElementRegistry, RuntimeInstance, SurfaceRuntime};
-use whisker_protocol::{CursorKeyword, InputEvent, InputEventKind, SurfaceId, WhiskerValue};
+use whisker_protocol::{
+    CursorKeyword, InputEvent, InputEventKind, LayoutRect, SurfaceId, WhiskerValue,
+};
 use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -444,13 +446,8 @@ impl DesktopApplication {
         let rect = host.focused_text_input_rect();
         window.set_ime_allowed(rect.is_some());
         if let Some(rect) = rect {
-            window.set_ime_cursor_area(
-                winit::dpi::LogicalPosition::new(rect.x as f64, (rect.y + rect.height) as f64),
-                winit::dpi::LogicalSize::new(
-                    rect.width.max(1.0) as f64,
-                    rect.height.max(1.0) as f64,
-                ),
-            );
+            let (position, size) = ime_cursor_area(rect);
+            window.set_ime_cursor_area(position, size);
         }
     }
 
@@ -764,9 +761,17 @@ fn printable_key_text(text: Option<&str>) -> Option<&str> {
     text.filter(|text| !text.is_empty() && text.chars().all(|character| !character.is_control()))
 }
 
+fn ime_cursor_area(rect: LayoutRect) -> (winit::dpi::LogicalPosition<f64>, LogicalSize<f64>) {
+    (
+        winit::dpi::LogicalPosition::new(rect.x as f64, rect.y as f64),
+        LogicalSize::new(rect.width.max(1.0) as f64, rect.height.max(1.0) as f64),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{DesktopAppConfig, printable_key_text};
+    use super::{DesktopAppConfig, ime_cursor_area, printable_key_text};
+    use whisker_protocol::LayoutRect;
 
     #[test]
     fn default_config_preserves_the_standalone_window_contract() {
@@ -792,5 +797,20 @@ mod tests {
         assert_eq!(printable_key_text(Some("hello")), Some("hello"));
         assert_eq!(printable_key_text(Some("\r")), None);
         assert_eq!(printable_key_text(None), None);
+    }
+
+    #[test]
+    fn ime_cursor_area_uses_the_focused_editor_bounds_once() {
+        let (position, size) = ime_cursor_area(LayoutRect {
+            x: 10.0,
+            y: 20.0,
+            width: 120.0,
+            height: 44.0,
+        });
+
+        assert_eq!(position.x, 10.0);
+        assert_eq!(position.y, 20.0);
+        assert_eq!(size.width, 120.0);
+        assert_eq!(size.height, 44.0);
     }
 }

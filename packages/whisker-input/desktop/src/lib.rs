@@ -385,10 +385,37 @@ impl InputDesktopView {
             },
         );
 
+        if self.focused
+            && !placeholder
+            && let Some((start, end)) = self.composition.map(ordered)
+        {
+            let start = text_cursor(&display, self.display_offset(start));
+            let end = text_cursor(&display, self.display_offset(end));
+            let thickness = scale.ceil().max(1.0);
+            for run in buffer.layout_runs() {
+                if let Some((x, highlight_width)) = run.highlight(start, end) {
+                    fill_rect(
+                        &mut pixels,
+                        width,
+                        height,
+                        x.floor() as i32,
+                        (run.line_top + run.line_height - thickness).floor() as i32,
+                        highlight_width.ceil().max(1.0) as u32,
+                        thickness as u32,
+                        foreground,
+                    );
+                }
+            }
+        }
+
         if self.focused {
-            let cursor = self.display_offset(self.selection.1);
-            let cursor = text_cursor(&display, cursor.min(display.len()));
-            let (x, y, h) = caret_geometry(&buffer, cursor, line_height);
+            let (x, y, h) = if placeholder {
+                (0.0, 0.0, line_height)
+            } else {
+                let cursor = self.display_offset(self.selection.1);
+                let cursor = text_cursor(&display, cursor.min(display.len()));
+                caret_geometry(&buffer, cursor, line_height)
+            };
             fill_rect(
                 &mut pixels,
                 width,
@@ -830,6 +857,48 @@ mod tests {
         assert!(
             first_caret_row >= first_line_height,
             "the trailing-line caret must be below the first line; got row {first_caret_row}"
+        );
+    }
+
+    #[test]
+    fn placeholder_keeps_the_empty_value_caret_at_the_start() {
+        let mut input = InputDesktopView::new(DesktopEventEmitter::default());
+        input.placeholder = "Type something...".into();
+        input.set_focus(true);
+
+        let raster = input.rasterize(240, 40, 1.0).expect("input raster");
+        let caret = [0, 122, 255, 255];
+        let caret_columns = raster
+            .pixels()
+            .chunks_exact(4)
+            .enumerate()
+            .filter_map(|(index, pixel)| (pixel == caret).then_some(index % 240))
+            .collect::<Vec<_>>();
+
+        assert!(!caret_columns.is_empty(), "focused input draws its caret");
+        assert_eq!(caret_columns.iter().copied().min(), Some(0));
+    }
+
+    #[test]
+    fn preedit_raster_underlines_the_composition_range() {
+        let mut input = InputDesktopView::new(DesktopEventEmitter::default());
+        input.set_focus(true);
+        input.preedit("IME", Some((0, 3)));
+
+        let raster = input.rasterize(200, 40, 1.0).expect("input raster");
+        let underline_row =
+            (whisker_protocol::TextMeasureStyle::default().font_size * 1.2).floor() as usize - 1;
+        let opaque_pixels = raster
+            .pixels()
+            .chunks_exact(4)
+            .skip(underline_row * 200)
+            .take(200)
+            .filter(|pixel| pixel[3] == 255)
+            .count();
+
+        assert!(
+            opaque_pixels >= 8,
+            "IME composition draws a visible underline; got {opaque_pixels} opaque pixels"
         );
     }
 }
