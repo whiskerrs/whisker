@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn host_smoke_dependency_wires_toggle_into_generated_rust_hosts() {
+    fn host_smoke_dependency_wires_svg_into_generated_rust_hosts() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
@@ -389,16 +389,14 @@ mod tests {
         let macos =
             sync_for_target(Target::Macos, &config, &crate_dir, workspace, "host-smoke").unwrap();
         let macos_source = std::fs::read_to_string(macos.gen_dir.join("src/main.rs")).unwrap();
-        assert!(macos_source.contains("whisker_toggle::__whisker_element_module_definition()"));
-        assert!(
-            macos_source.contains("whisker_toggle_desktop_host::__whisker_module_definition()")
-        );
+        assert!(macos_source.contains("whisker_svg::__whisker_element_module_definition()"));
+        assert!(macos_source.contains("whisker_svg_desktop_host::__whisker_module_definition()"));
 
         let web =
             sync_for_target(Target::Web, &config, &crate_dir, workspace, "host-smoke").unwrap();
         let web_source = std::fs::read_to_string(web.gen_dir.join("src/lib.rs")).unwrap();
-        assert!(web_source.contains("whisker_toggle::__whisker_element_module_definition()"));
-        assert!(web_source.contains("whisker_toggle_web_host::__whisker_module_definition()"));
+        assert!(web_source.contains("whisker_svg::__whisker_element_module_definition()"));
+        assert!(web_source.contains("whisker_svg_web_host::__whisker_module_definition()"));
 
         let ios = sync_for_target(
             Target::IosSimulator,
@@ -415,8 +413,8 @@ mod tests {
                 .join("whisker_modules/Sources/WhiskerModules/RegisterAll.swift"),
         )
         .unwrap();
-        assert!(package.contains("WhiskerToggle"));
-        assert!(registrar.contains("_whiskerRegisterModules_WhiskerToggle()"));
+        assert!(package.contains("WhiskerSvg"));
+        assert!(registrar.contains("_whiskerRegisterModules_WhiskerSvg()"));
         std::fs::remove_dir_all(crate_dir).ok();
     }
 }
