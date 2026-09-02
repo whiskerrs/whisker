@@ -4,7 +4,7 @@
 //! `whisker::module!("WhiskerStatusBar").invoke(method, args)`, and
 //! lifts the returned `WhiskerValue` into a typed result.
 //!
-//! **Android-only.** On iOS the methods are a no-op: the only status-bar
+//! **Android-only.** On iOS, Web, and Desktop the methods are a no-op. The only status-bar
 //! API reachable from a view-less module is the deprecated app-level
 //! `UIApplication.setStatusBarHidden`, and that call corrupts
 //! `whisker-router`'s transform-based transition animations whenever it
@@ -75,5 +75,16 @@ impl WhiskerStatusBar {
         #[cfg(not(target_os = "android"))]
         let _ = style;
         Ok(())
+    }
+}
+
+#[cfg(all(test, not(target_os = "android")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_platform_operations_are_successful_no_ops() {
+        assert_eq!(WhiskerStatusBar::set_hidden(true), Ok(()));
+        assert_eq!(WhiskerStatusBar::set_style(StatusBarStyle::Light), Ok(()));
     }
 }

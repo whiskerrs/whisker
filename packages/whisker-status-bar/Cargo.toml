@@ -9,25 +9,28 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Whisker platform module — status-bar hide/show + content style, mirroring expo-status-bar. Android-only for now (iOS is a no-op TODO)."
+description = "Whisker platform module — Android status-bar hide/show + content style, with no-op fallbacks on other platforms."
 
 # Explicit `include` list — mirrors `whisker-safe-area` / `whisker-image`.
 include = [
     "Cargo.toml",
-    "Package.swift",
     "build.gradle.kts",
     "bin/**/*.rs",
     "src/**/*.rs",
     "android/**/*.kt",
-    "ios/**/*.swift",
     "README.md",
 ]
 
 [lib]
 crate-type = ["rlib"]
 
-# Module-system opt-in marker.
-[package.metadata.whisker]
+# Android owns the only native implementation. iOS, Web, and Desktop keep
+# source-compatible no-op behaviour entirely in this Rust crate.
+[package.metadata.whisker.module.platforms]
+android = { manifest = "build.gradle.kts" }
+ios = { kind = "common" }
+web = { kind = "common" }
+desktop = { kind = "common" }
 
 # Plugin registration — no-op today (Android needs no config; iOS is a
 # TODO). Kept registered so `app.plugin::<WhiskerStatusBar>(|c| c)` stays
