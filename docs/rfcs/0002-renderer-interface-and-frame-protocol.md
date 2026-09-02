@@ -377,6 +377,9 @@ Host container attached/resumed
 Host container hidden/paused
   -> pause Surface and idle its frame source
 
+Host container temporarily detached
+  -> pause Surface and retain RuntimeInstance, scene, and module state
+
 WhiskerView.unmount()
   -> stop Application and scoped modules in reverse order
   -> delete Host nodes and release pending commands/resources
@@ -384,7 +387,14 @@ WhiskerView.unmount()
 ```
 
 The exact Kotlin, Swift, JavaScript, and Desktop wrapper method names are not
-fixed by this RFC.
+fixed by this RFC. A temporary window-hierarchy detach is not an unmount: this
+is required by ordinary Host operations such as presenting a full-screen iOS
+controller or temporarily reparenting an Android view. On iOS the default
+wrapper unmounts when `WhiskerView` is deinitialized. On Android it unmounts
+when the enclosing `LifecycleOwner` is destroyed. A custom embedding without a
+view-tree lifecycle owner falls back to unmounting on detach to avoid retaining
+the JNI Host reference indefinitely; it can also use the wrapper's explicit
+destroy operation for permanent teardown while still attached.
 
 Multiple Host `WhiskerView`s may mount the same application descriptor. By
 default each creates an isolated `RuntimeInstance`:
@@ -926,7 +936,7 @@ property/event/command members:
 
 ```rust,ignore
 #[whisker::module_element(
-    name = "example.controls/Toggle",
+    name = "example-controls:Toggle",
     measurement = None,
 )]
 pub fn toggle(checked: Signal<bool>, on_change: ChangeEvent) {}
@@ -1015,7 +1025,7 @@ whisker-video package
 |- Rust declarative component API
 |- Rust typed ElementHandle, props, events, and commands
 |- runtime module providing an ElementProvider
-|- canonical whisker.video/Video element schema
+|- canonical whisker-video:Video element schema
 |- Android Host element factory
 |- iOS Host element factory
 |- JavaScript Host element factory
@@ -1094,7 +1104,7 @@ An illustrative generated schema is:
 
 ```rust,ignore
 ElementSchema {
-    key: "whisker.video/Video",
+    key: "whisker-video:Video",
     presentation: Presentation::Box,
     children: ChildrenPolicy::None,
     content: Content::Native,
@@ -1185,7 +1195,7 @@ later factory through `PreparedContentId`.
 The same element key can map to different concrete objects:
 
 ```text
-whisker.video/Video
+whisker-video:Video
   Android -> PlayerView / Media3 player
   iOS     -> AVPlayerLayer-backed UIView
   Web     -> HTMLVideoElement
@@ -1202,7 +1212,7 @@ and generated registration to be included in Project IR. At runtime:
 
 ```text
 Video module
-  -> provides ElementSchema("whisker.video/Video")
+  -> provides ElementSchema("whisker-video:Video")
 
 Whisker Core
   -> collects and normalizes the schema
@@ -1269,7 +1279,7 @@ composition fails. It must not silently emit an empty view or ignore commands:
 
 ```text
 cannot compose target `web`:
-  whisker.video/Video is selected
+  whisker-video:Video is selected
   available Host providers: android, ios
   missing Host provider: web
 ```

@@ -475,12 +475,12 @@ fn resolve_legacy_rust_host(
     manifest_dir: &Path,
     published: Option<&RustHostSectionRaw>,
 ) -> Result<Option<ResolvedRustModuleContribution>> {
-    if let Some(published) = published
-        && published.package.trim().is_empty()
-    {
-        return Err(anyhow!(
-            "module `{package}` metadata.whisker.{target}.package must not be empty"
-        ));
+    if let Some(published) = published {
+        if published.package.trim().is_empty() {
+            return Err(anyhow!(
+                "module `{package}` metadata.whisker.{target}.package must not be empty"
+            ));
+        }
     }
     let cargo_toml = manifest_dir.join(target).join("Cargo.toml");
     if !cargo_toml.is_file() {
@@ -505,14 +505,14 @@ fn resolve_legacy_rust_host(
                 "module `{package}` {target}/Cargo.toml must declare a non-empty [package].name"
             )
         })?;
-    if let Some(published) = published
-        && published.package != host_package
-    {
-        return Err(anyhow!(
-            "module `{package}` metadata.whisker.{target}.package is {:?}, but {target}/Cargo.toml declares package {:?}",
-            published.package,
-            host_package,
-        ));
+    if let Some(published) = published {
+        if published.package != host_package {
+            return Err(anyhow!(
+                "module `{package}` metadata.whisker.{target}.package is {:?}, but {target}/Cargo.toml declares package {:?}",
+                published.package,
+                host_package,
+            ));
+        }
     }
     let host_root = cargo_toml
         .parent()

@@ -357,13 +357,13 @@ impl LayoutTree {
             if child == parent || self.is_ancestor(child, parent) {
                 return Err(LayoutError::TreeCycle { parent, child });
             }
-            if let Some(attached) = retained.parent
-                && attached != parent
-            {
-                return Err(LayoutError::ChildAlreadyAttached {
-                    child,
-                    parent: attached,
-                });
+            if let Some(attached) = retained.parent {
+                if attached != parent {
+                    return Err(LayoutError::ChildAlreadyAttached {
+                        child,
+                        parent: attached,
+                    });
+                }
             }
         }
         if old_children == children {
@@ -488,14 +488,14 @@ impl LayoutTree {
             self.surface_viewport = Some(viewport);
         }
         if self.surface_child != Some(root) {
-            if let Some(previous) = self.surface_child
-                && let Some(retained) = self.nodes.get(&previous)
-            {
-                let restored = convert_retained_style(&retained.style, retained.measurable)
-                    .expect("a retained style was validated when it entered layout");
-                self.backend
-                    .set_style(retained.backend, restored)
-                    .expect("previous surface child remains retained");
+            if let Some(previous) = self.surface_child {
+                if let Some(retained) = self.nodes.get(&previous) {
+                    let restored = convert_retained_style(&retained.style, retained.measurable)
+                        .expect("a retained style was validated when it entered layout");
+                    self.backend
+                        .set_style(retained.backend, restored)
+                        .expect("previous surface child remains retained");
+                }
             }
             let constrained = convert_surface_child_style(&retained.style, retained.measurable)
                 .expect("a retained style was validated when it entered layout");

@@ -369,10 +369,10 @@ impl DesktopApplication {
         else {
             return;
         };
-        if let Some(hot_reload) = &mut self.hot_reload
-            && let Err(error) = host.with_modules(|| hot_reload.apply(runtime))
-        {
-            eprintln!("whisker {TARGET_NAME} hot reload failed: {error}");
+        if let Some(hot_reload) = &mut self.hot_reload {
+            if let Err(error) = host.with_modules(|| hot_reload.apply(runtime)) {
+                eprintln!("whisker {TARGET_NAME} hot reload failed: {error}");
+            }
         }
         let scale = window.scale_factor();
         let logical = self.viewport.to_logical::<f32>(scale);
@@ -497,10 +497,10 @@ impl DesktopApplication {
                         }
                     }
                     "v" => {
-                        if let Some(clipboard) = &mut self.clipboard
-                            && let Ok(text) = clipboard.get_text()
-                        {
-                            self.dispatch_text_input(DesktopTextInputEvent::Paste(text));
+                        if let Some(clipboard) = &mut self.clipboard {
+                            if let Ok(text) = clipboard.get_text() {
+                                self.dispatch_text_input(DesktopTextInputEvent::Paste(text));
+                            }
                         }
                     }
                     _ => {}
@@ -685,14 +685,15 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
                 ) {
                     self.dispatch_input(input);
                 }
-                if button == MouseButton::Left
-                    && state == ElementState::Pressed
-                    && let (Some(position), Some(host)) =
+                if button == MouseButton::Left && state == ElementState::Pressed {
+                    if let (Some(position), Some(host)) =
                         (self.pointer.mouse_position(), self.host.as_mut())
-                    && host.focus_text_input_at([position.x, position.y])
-                {
-                    self.request_frame();
-                    self.sync_text_input();
+                    {
+                        if host.focus_text_input_at([position.x, position.y]) {
+                            self.request_frame();
+                            self.sync_text_input();
+                        }
+                    }
                 }
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {

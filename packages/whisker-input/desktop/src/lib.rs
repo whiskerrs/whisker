@@ -281,13 +281,14 @@ impl InputDesktopView {
             return None;
         }
         let mut state = self.raster.lock().expect("Input raster lock poisoned");
-        if let Some(cache) = &state.cached
-            && cache.generation == self.generation
-            && cache.width == width
-            && cache.height == height
-            && cache.scale_bits == scale.to_bits()
-        {
-            return Some(cache.raster.clone());
+        if let Some(cache) = &state.cached {
+            if cache.generation == self.generation
+                && cache.width == width
+                && cache.height == height
+                && cache.scale_bits == scale.to_bits()
+            {
+                return Some(cache.raster.clone());
+            }
         }
         let mut text = text_rasterizer()
             .lock()
@@ -358,25 +359,24 @@ impl InputDesktopView {
             },
         );
 
-        if self.focused
-            && !placeholder
-            && let Some((start, end)) = self.composition.map(ordered)
-        {
-            let start = text_cursor(&display, self.display_offset(start));
-            let end = text_cursor(&display, self.display_offset(end));
-            let thickness = scale.ceil().max(1.0);
-            for run in buffer.layout_runs() {
-                if let Some((x, highlight_width)) = run.highlight(start, end) {
-                    fill_rect(
-                        &mut pixels,
-                        width,
-                        height,
-                        x.floor() as i32,
-                        (run.line_top + run.line_height - thickness).floor() as i32,
-                        highlight_width.ceil().max(1.0) as u32,
-                        thickness as u32,
-                        foreground,
-                    );
+        if self.focused && !placeholder {
+            if let Some((start, end)) = self.composition.map(ordered) {
+                let start = text_cursor(&display, self.display_offset(start));
+                let end = text_cursor(&display, self.display_offset(end));
+                let thickness = scale.ceil().max(1.0);
+                for run in buffer.layout_runs() {
+                    if let Some((x, highlight_width)) = run.highlight(start, end) {
+                        fill_rect(
+                            &mut pixels,
+                            width,
+                            height,
+                            x.floor() as i32,
+                            (run.line_top + run.line_height - thickness).floor() as i32,
+                            highlight_width.ceil().max(1.0) as u32,
+                            thickness as u32,
+                            foreground,
+                        );
+                    }
                 }
             }
         }

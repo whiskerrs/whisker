@@ -105,14 +105,14 @@ impl DesktopResourceService {
         if request.kind != ResourceKind::RasterImage {
             return Err(DesktopResourceError::UnsupportedKind(request.kind));
         }
-        if let Some(current) = self.current.get(&request.resource).copied()
-            && request.generation <= current
-        {
-            return Err(DesktopResourceError::NonMonotonicGeneration {
-                resource: request.resource,
-                current,
-                received: request.generation,
-            });
+        if let Some(current) = self.current.get(&request.resource).copied() {
+            if request.generation <= current {
+                return Err(DesktopResourceError::NonMonotonicGeneration {
+                    resource: request.resource,
+                    current,
+                    received: request.generation,
+                });
+            }
         }
         self.current.insert(request.resource, request.generation);
         self.states.insert(

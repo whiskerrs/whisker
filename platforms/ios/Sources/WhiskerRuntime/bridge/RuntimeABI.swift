@@ -42,6 +42,14 @@ func whiskerViewTick(
     whisker_view_tick(handle, timestampMs, width, height, scale)
 }
 
+func whiskerViewPause(_ handle: UnsafeMutableRawPointer?) -> Bool {
+    whisker_view_pause(handle)
+}
+
+func whiskerViewResume(_ handle: UnsafeMutableRawPointer?) -> Bool {
+    whisker_view_resume(handle)
+}
+
 func whiskerViewDestroy(_ handle: UnsafeMutableRawPointer?) {
     whisker_view_destroy(handle)
 }

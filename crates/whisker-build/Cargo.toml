@@ -36,4 +36,4 @@ libc = { workspace = true }
 # events. Stays a single shared crate so the three orchestration
 # layers all hit the same look + feel.
 indicatif = "0.17"
-wasm-bindgen-cli-support = "=0.2.127"
+wasm-bindgen-cli-support = "=0.2.117"

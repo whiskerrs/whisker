@@ -186,35 +186,36 @@ impl NativeTextHost {
             Cow::Borrowed(payload.text.as_str())
         };
         let mut buffer = self.shape_text(payload, &display_text, width, height, line_height);
-        if payload.overflow == MeasureTextOverflow::Ellipsis
-            && let Some(width) = width
-            && !buffer_fits(&buffer, width, payload.max_lines)
-        {
-            let characters = payload.text.chars().collect::<Vec<_>>();
-            let mut lower = 0;
-            let mut upper = characters.len();
-            let mut best = String::from("…");
-            while lower <= upper {
-                let middle = lower + (upper - lower) / 2;
-                let mut candidate = characters[..middle].iter().collect::<String>();
-                candidate.push('…');
-                let candidate = if payload.word_break == MeasureTextWordBreak::KeepAll {
-                    protect_cjk_breaks(&candidate)
-                } else {
-                    candidate
-                };
-                let candidate_buffer =
-                    self.shape_text(payload, &candidate, Some(width), height, line_height);
-                if buffer_fits(&candidate_buffer, width, payload.max_lines) {
-                    best = candidate;
-                    lower = middle + 1;
-                } else if middle == 0 {
-                    break;
-                } else {
-                    upper = middle - 1;
+        if payload.overflow == MeasureTextOverflow::Ellipsis {
+            if let Some(width) = width {
+                if !buffer_fits(&buffer, width, payload.max_lines) {
+                    let characters = payload.text.chars().collect::<Vec<_>>();
+                    let mut lower = 0;
+                    let mut upper = characters.len();
+                    let mut best = String::from("…");
+                    while lower <= upper {
+                        let middle = lower + (upper - lower) / 2;
+                        let mut candidate = characters[..middle].iter().collect::<String>();
+                        candidate.push('…');
+                        let candidate = if payload.word_break == MeasureTextWordBreak::KeepAll {
+                            protect_cjk_breaks(&candidate)
+                        } else {
+                            candidate
+                        };
+                        let candidate_buffer =
+                            self.shape_text(payload, &candidate, Some(width), height, line_height);
+                        if buffer_fits(&candidate_buffer, width, payload.max_lines) {
+                            best = candidate;
+                            lower = middle + 1;
+                        } else if middle == 0 {
+                            break;
+                        } else {
+                            upper = middle - 1;
+                        }
+                    }
+                    buffer = self.shape_text(payload, &best, Some(width), height, line_height);
                 }
             }
-            buffer = self.shape_text(payload, &best, Some(width), height, line_height);
         }
 
         let mut measured_width = 0.0_f32;

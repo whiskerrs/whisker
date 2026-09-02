@@ -399,10 +399,10 @@ pub fn create_element_by_schema(schema: &ElementSchema) -> Element {
     );
     if handle.id() != u32::MAX {
         crate::reactive::with_runtime(|runtime| {
-            if let Some(owner_id) = runtime.current_owner()
-                && let Some(owner) = runtime.owners.get_mut(owner_id)
-            {
-                owner.elements.push(handle);
+            if let Some(owner_id) = runtime.current_owner() {
+                if let Some(owner) = runtime.owners.get_mut(owner_id) {
+                    owner.elements.push(handle);
+                }
             }
         });
     }

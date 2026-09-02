@@ -291,43 +291,44 @@ impl GpuRenderer {
                     ..
                 } => {
                     let decoration = &content.paint.decoration;
-                    if (decoration.lines.underline || decoration.lines.line_through)
-                        && let Some(prepared) = content
+                    if decoration.lines.underline || decoration.lines.line_through {
+                        if let Some(prepared) = content
                             .prepared_content
                             .and_then(|id| text.prepared.get(&id))
-                    {
-                        let thickness = (content.payload.style.font_size / 16.0).max(1.0);
-                        for run in prepared.buffer.layout_runs() {
-                            let Some(line_x) =
-                                run.glyphs.iter().map(|glyph| glyph.x).reduce(f32::min)
-                            else {
-                                continue;
-                            };
-                            let baseline = rect.y + run.line_y;
-                            let y = if decoration.lines.underline {
-                                baseline + thickness * 1.5
-                            } else {
-                                baseline - content.payload.style.font_size * 0.3
-                            };
-                            for line in text_decoration_rects(
-                                rect.x + line_x,
-                                run.line_w,
-                                y,
-                                thickness,
-                                decoration.style,
-                            ) {
-                                push_quad_draw(
-                                    &mut vertices,
-                                    &mut draws,
-                                    solid_rect_primitive(
-                                        line,
-                                        gpu_color(&decoration.color, *opacity),
-                                    ),
-                                    *transform,
-                                    *clip,
-                                    shape_clips,
-                                    (None, None, false),
-                                );
+                        {
+                            let thickness = (content.payload.style.font_size / 16.0).max(1.0);
+                            for run in prepared.buffer.layout_runs() {
+                                let Some(line_x) =
+                                    run.glyphs.iter().map(|glyph| glyph.x).reduce(f32::min)
+                                else {
+                                    continue;
+                                };
+                                let baseline = rect.y + run.line_y;
+                                let y = if decoration.lines.underline {
+                                    baseline + thickness * 1.5
+                                } else {
+                                    baseline - content.payload.style.font_size * 0.3
+                                };
+                                for line in text_decoration_rects(
+                                    rect.x + line_x,
+                                    run.line_w,
+                                    y,
+                                    thickness,
+                                    decoration.style,
+                                ) {
+                                    push_quad_draw(
+                                        &mut vertices,
+                                        &mut draws,
+                                        solid_rect_primitive(
+                                            line,
+                                            gpu_color(&decoration.color, *opacity),
+                                        ),
+                                        *transform,
+                                        *clip,
+                                        shape_clips,
+                                        (None, None, false),
+                                    );
+                                }
                             }
                         }
                     }

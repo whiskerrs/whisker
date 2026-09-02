@@ -641,18 +641,20 @@ impl DesktopScene {
             });
             node_clip_bounds = transform_rect_aabb(clip_rect, transform);
         }
-        if visible
-            && let Some(radius) = presentation
+        if visible {
+            if let Some(radius) = presentation
                 .visual_effects
                 .backdrop_blur
                 .filter(|value| *value > 0.0)
-            && let Some(rect) = transform_rect_aabb(border, transform)
-        {
-            commands.push(PaintCommand::BackdropBlur {
-                rect,
-                radius,
-                clip: context.clip,
-            });
+            {
+                if let Some(rect) = transform_rect_aabb(border, transform) {
+                    commands.push(PaintCommand::BackdropBlur {
+                        rect,
+                        radius,
+                        clip: context.clip,
+                    });
+                }
+            }
         }
         if visible
             && (presentation.paint.is_some()
@@ -714,33 +716,37 @@ impl DesktopScene {
                 );
             }
         }
-        if visible && let Some(content) = node.content.text() {
-            let content_rect = LayoutRect {
-                x: border.x + presentation.layout.content_box.x,
-                y: border.y + presentation.layout.content_box.y,
-                width: presentation.layout.content_box.width,
-                height: presentation.layout.content_box.height,
-            };
-            commands.push(PaintCommand::Text {
-                node: id,
-                rect: content_rect,
-                content,
-                clip: descendant_clip.intersect(content_rect, true, true),
-                shape_clips: descendant_shape_clips.clone(),
-                transform,
-                opacity,
-            });
+        if visible {
+            if let Some(content) = node.content.text() {
+                let content_rect = LayoutRect {
+                    x: border.x + presentation.layout.content_box.x,
+                    y: border.y + presentation.layout.content_box.y,
+                    width: presentation.layout.content_box.width,
+                    height: presentation.layout.content_box.height,
+                };
+                commands.push(PaintCommand::Text {
+                    node: id,
+                    rect: content_rect,
+                    content,
+                    clip: descendant_clip.intersect(content_rect, true, true),
+                    shape_clips: descendant_shape_clips.clone(),
+                    transform,
+                    opacity,
+                });
+            }
         }
-        if visible && let Some(rasterizer) = node.content.rasterizer() {
-            commands.push(PaintCommand::Raster {
-                node: id,
-                rect: content,
-                rasterizer,
-                clip: descendant_clip.intersect(content, true, true),
-                shape_clips: descendant_shape_clips.clone(),
-                transform,
-                opacity,
-            });
+        if visible {
+            if let Some(rasterizer) = node.content.rasterizer() {
+                commands.push(PaintCommand::Raster {
+                    node: id,
+                    rect: content,
+                    rasterizer,
+                    clip: descendant_clip.intersect(content, true, true),
+                    shape_clips: descendant_shape_clips.clone(),
+                    transform,
+                    opacity,
+                });
+            }
         }
 
         let mut children = node
@@ -801,12 +807,13 @@ impl DesktopScene {
                     types.insert(*node, *element_type);
                 }
                 Operation::InsertChild { parent, .. } => {
-                    if let Some(element_type) = types.get(parent).copied()
-                        && !self.elements.child_policy(element_type)?.accepts_elements()
-                    {
-                        return Err(
-                            DesktopElementError::ChildrenNotAllowed { parent: *parent }.into()
-                        );
+                    if let Some(element_type) = types.get(parent).copied() {
+                        if !self.elements.child_policy(element_type)?.accepts_elements() {
+                            return Err(DesktopElementError::ChildrenNotAllowed {
+                                parent: *parent,
+                            }
+                            .into());
+                        }
                     }
                 }
                 Operation::SetText { node, content } => {
@@ -1176,13 +1183,13 @@ impl DesktopScene {
             return;
         };
         self.pointer_captures.retain(|_, target| *target != node);
-        if let Some(parent) = removed.presentation.parent
-            && let Some(parent) = self.nodes.get_mut(&parent)
-        {
-            parent
-                .presentation
-                .children
-                .retain(|candidate| *candidate != node);
+        if let Some(parent) = removed.presentation.parent {
+            if let Some(parent) = self.nodes.get_mut(&parent) {
+                parent
+                    .presentation
+                    .children
+                    .retain(|candidate| *candidate != node);
+            }
         }
         let children = removed.presentation.children.clone();
         for child in children {

@@ -145,12 +145,12 @@ impl KeyframesBuilder {
         frames.sort_by(|left, right| left.offset.get().total_cmp(&right.offset.get()));
         let mut merged = Vec::<KeyframeDefinition>::with_capacity(frames.len());
         for frame in frames {
-            if let Some(previous) = merged.last_mut()
-                && previous.offset == frame.offset
-            {
-                previous.style = previous.style.clone().merge(frame.style);
-                previous.easing = frame.easing;
-                continue;
+            if let Some(previous) = merged.last_mut() {
+                if previous.offset == frame.offset {
+                    previous.style = previous.style.clone().merge(frame.style);
+                    previous.easing = frame.easing;
+                    continue;
+                }
             }
             merged.push(frame);
         }

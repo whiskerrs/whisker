@@ -213,12 +213,12 @@ impl DesktopRuntime {
 
     /// Resolves the Host-visible target after applying transient scroll state.
     pub fn target_input(&self, event: &mut InputEvent) {
-        if event.target.is_none()
-            && let Some(pointer) = event.pointer
-        {
-            event.target = self
-                .surface
-                .hit_test([pointer.position.x, pointer.position.y]);
+        if event.target.is_none() {
+            if let Some(pointer) = event.pointer {
+                event.target = self
+                    .surface
+                    .hit_test([pointer.position.x, pointer.position.y]);
+            }
         }
     }
 

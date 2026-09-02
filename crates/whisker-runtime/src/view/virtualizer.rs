@@ -478,36 +478,41 @@ pub fn virtualize<T, K>(
                         let corrected_offset = anchor.and_then(|(key, within_item)| {
                             layout.anchored_offset(&key, within_item)
                         });
-                        if changed && let Some(list_ref) = &list_ref {
-                            let (starts, ends) = layout.item_offsets();
-                            list_ref.update_layout(
-                                &layout.keys,
-                                &starts,
-                                &ends,
-                                layout.total_extent(),
-                            );
+                        if changed {
+                            if let Some(list_ref) = &list_ref {
+                                let (starts, ends) = layout.item_offsets();
+                                list_ref.update_layout(
+                                    &layout.keys,
+                                    &starts,
+                                    &ends,
+                                    layout.total_extent(),
+                                );
+                            }
                         }
                         (changed, corrected_offset)
                     };
-                    if changed
-                        && let Some(offset) = corrected_offset
-                        && (offset - current_geometry.offset).abs() >= 0.5
-                    {
-                        geometry.borrow_mut().offset = offset;
-                        if let Some(list_ref) = &list_ref {
-                            list_ref.update_geometry(offset, current_geometry.viewport);
+                    if changed {
+                        if let Some(offset) = corrected_offset {
+                            if (offset - current_geometry.offset).abs() >= 0.5 {
+                                geometry.borrow_mut().offset = offset;
+                                if let Some(list_ref) = &list_ref {
+                                    list_ref.update_geometry(offset, current_geometry.viewport);
+                                }
+                                let _ = try_invoke_element_command(
+                                    scroll_view,
+                                    "scrollTo",
+                                    WhiskerValue::map([
+                                        ("offset", WhiskerValue::Float(f64::from(offset))),
+                                        ("smooth", WhiskerValue::Bool(false)),
+                                    ]),
+                                );
+                            }
                         }
-                        let _ = try_invoke_element_command(
-                            scroll_view,
-                            "scrollTo",
-                            WhiskerValue::map([
-                                ("offset", WhiskerValue::Float(f64::from(offset))),
-                                ("smooth", WhiskerValue::Bool(false)),
-                            ]),
-                        );
                     }
-                    if changed && let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
-                        reconcile();
+                    if changed {
+                        if let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
+                            reconcile();
+                        }
                     }
                 }),
             );
@@ -554,36 +559,41 @@ pub fn virtualize<T, K>(
                         let corrected_offset = anchor.and_then(|(key, within_item)| {
                             layout.anchored_offset(&key, within_item)
                         });
-                        if changed && let Some(list_ref) = &list_ref {
-                            let (starts, ends) = layout.item_offsets();
-                            list_ref.update_layout(
-                                &layout.keys,
-                                &starts,
-                                &ends,
-                                layout.total_extent(),
-                            );
+                        if changed {
+                            if let Some(list_ref) = &list_ref {
+                                let (starts, ends) = layout.item_offsets();
+                                list_ref.update_layout(
+                                    &layout.keys,
+                                    &starts,
+                                    &ends,
+                                    layout.total_extent(),
+                                );
+                            }
                         }
                         (changed, corrected_offset)
                     };
-                    if changed
-                        && let Some(offset) = corrected_offset
-                        && (offset - current_geometry.offset).abs() >= 0.5
-                    {
-                        geometry.borrow_mut().offset = offset;
-                        if let Some(list_ref) = &list_ref {
-                            list_ref.update_geometry(offset, current_geometry.viewport);
+                    if changed {
+                        if let Some(offset) = corrected_offset {
+                            if (offset - current_geometry.offset).abs() >= 0.5 {
+                                geometry.borrow_mut().offset = offset;
+                                if let Some(list_ref) = &list_ref {
+                                    list_ref.update_geometry(offset, current_geometry.viewport);
+                                }
+                                let _ = try_invoke_element_command(
+                                    scroll_view,
+                                    "scrollTo",
+                                    WhiskerValue::map([
+                                        ("offset", WhiskerValue::Float(f64::from(offset))),
+                                        ("smooth", WhiskerValue::Bool(false)),
+                                    ]),
+                                );
+                            }
                         }
-                        let _ = try_invoke_element_command(
-                            scroll_view,
-                            "scrollTo",
-                            WhiskerValue::map([
-                                ("offset", WhiskerValue::Float(f64::from(offset))),
-                                ("smooth", WhiskerValue::Bool(false)),
-                            ]),
-                        );
                     }
-                    if changed && let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
-                        reconcile();
+                    if changed {
+                        if let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
+                            reconcile();
+                        }
                     }
                 }),
             );
@@ -620,36 +630,41 @@ pub fn virtualize<T, K>(
                         let corrected_offset = anchor.and_then(|(key, within_item)| {
                             layout.anchored_offset(&key, within_item)
                         });
-                        if changed && let Some(list_ref) = &list_ref {
-                            let (starts, ends) = layout.item_offsets();
-                            list_ref.update_layout(
-                                &layout.keys,
-                                &starts,
-                                &ends,
-                                layout.total_extent(),
-                            );
+                        if changed {
+                            if let Some(list_ref) = &list_ref {
+                                let (starts, ends) = layout.item_offsets();
+                                list_ref.update_layout(
+                                    &layout.keys,
+                                    &starts,
+                                    &ends,
+                                    layout.total_extent(),
+                                );
+                            }
                         }
                         (changed, corrected_offset)
                     };
-                    if changed
-                        && let Some(offset) = corrected_offset
-                        && (offset - current_geometry.offset).abs() >= 0.5
-                    {
-                        geometry.borrow_mut().offset = offset;
-                        if let Some(list_ref) = &list_ref {
-                            list_ref.update_geometry(offset, current_geometry.viewport);
+                    if changed {
+                        if let Some(offset) = corrected_offset {
+                            if (offset - current_geometry.offset).abs() >= 0.5 {
+                                geometry.borrow_mut().offset = offset;
+                                if let Some(list_ref) = &list_ref {
+                                    list_ref.update_geometry(offset, current_geometry.viewport);
+                                }
+                                let _ = try_invoke_element_command(
+                                    scroll_view,
+                                    "scrollTo",
+                                    WhiskerValue::map([
+                                        ("offset", WhiskerValue::Float(f64::from(offset))),
+                                        ("smooth", WhiskerValue::Bool(false)),
+                                    ]),
+                                );
+                            }
                         }
-                        let _ = try_invoke_element_command(
-                            scroll_view,
-                            "scrollTo",
-                            WhiskerValue::map([
-                                ("offset", WhiskerValue::Float(f64::from(offset))),
-                                ("smooth", WhiskerValue::Bool(false)),
-                            ]),
-                        );
                     }
-                    if changed && let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
-                        reconcile();
+                    if changed {
+                        if let Some(reconcile) = reconcile_slot.borrow().as_ref().cloned() {
+                            reconcile();
+                        }
                     }
                 }),
             );
@@ -854,18 +869,18 @@ pub fn virtualize<T, K>(
                     anchor.and_then(|(key, within_item)| layout.anchored_offset(&key, within_item))
                 })
             };
-            if let Some(offset) = corrected_offset
-                && (offset - current_geometry.offset).abs() >= 0.5
-            {
-                geometry.borrow_mut().offset = offset;
-                let _ = try_invoke_element_command(
-                    scroll_view,
-                    "scrollTo",
-                    WhiskerValue::map([
-                        ("offset", WhiskerValue::Float(f64::from(offset))),
-                        ("smooth", WhiskerValue::Bool(false)),
-                    ]),
-                );
+            if let Some(offset) = corrected_offset {
+                if (offset - current_geometry.offset).abs() >= 0.5 {
+                    geometry.borrow_mut().offset = offset;
+                    let _ = try_invoke_element_command(
+                        scroll_view,
+                        "scrollTo",
+                        WhiskerValue::map([
+                            ("offset", WhiskerValue::Float(f64::from(offset))),
+                            ("smooth", WhiskerValue::Bool(false)),
+                        ]),
+                    );
+                }
             }
             if let Some(list_ref) = &list_ref {
                 let layout = layout.borrow();
@@ -904,17 +919,15 @@ pub fn virtualize<T, K>(
                         content_extent - (next.offset + next.viewport) <= end_reached_threshold;
                     let was_at_start = inside_start_threshold.replace(at_start);
                     let was_at_end = inside_end_threshold.replace(at_end);
-                    if at_start
-                        && !was_at_start
-                        && let Some(callback) = &on_start_reached
-                    {
-                        callback();
+                    if at_start && !was_at_start {
+                        if let Some(callback) = &on_start_reached {
+                            callback();
+                        }
                     }
-                    if at_end
-                        && !was_at_end
-                        && let Some(callback) = &on_end_reached
-                    {
-                        callback();
+                    if at_end && !was_at_end {
+                        if let Some(callback) = &on_end_reached {
+                            callback();
+                        }
                     }
                 }
             }),
@@ -925,10 +938,10 @@ pub fn virtualize<T, K>(
         reconcile_slot.borrow_mut().take();
         for (_, track) in mounted_tracks.borrow_mut().drain() {
             for key in &track.keys {
-                if let Some(entry) = mounted.borrow().get(key)
-                    && children_of(track.handle).contains(&entry.mount_handle)
-                {
-                    remove_child(track.handle, entry.mount_handle);
+                if let Some(entry) = mounted.borrow().get(key) {
+                    if children_of(track.handle).contains(&entry.mount_handle) {
+                        remove_child(track.handle, entry.mount_handle);
+                    }
                 }
             }
             if children_of(content).contains(&track.handle) {
@@ -949,20 +962,20 @@ pub fn virtualize<T, K>(
         if attached.contains(&trailing_spacer) {
             remove_child(content, trailing_spacer);
         }
-        if let Some(header) = header
-            && children_of(content).contains(&header)
-        {
-            remove_child(content, header);
+        if let Some(header) = header {
+            if children_of(content).contains(&header) {
+                remove_child(content, header);
+            }
         }
-        if let Some(footer) = footer
-            && children_of(content).contains(&footer)
-        {
-            remove_child(content, footer);
+        if let Some(footer) = footer {
+            if children_of(content).contains(&footer) {
+                remove_child(content, footer);
+            }
         }
-        if let Some(empty) = empty
-            && children_of(content).contains(&empty)
-        {
-            remove_child(content, empty);
+        if let Some(empty) = empty {
+            if children_of(content).contains(&empty) {
+                remove_child(content, empty);
+            }
         }
         remove_child(scroll_view, content);
         if let Some(list_ref) = &list_ref {
@@ -1089,10 +1102,10 @@ fn reconcile_grid_window<T, K>(
     if layout.items.is_empty() {
         for (_, track) in mounted_tracks.drain() {
             for key in &track.keys {
-                if let Some(entry) = mounted.get(key)
-                    && children_of(track.handle).contains(&entry.mount_handle)
-                {
-                    remove_child(track.handle, entry.mount_handle);
+                if let Some(entry) = mounted.get(key) {
+                    if children_of(track.handle).contains(&entry.mount_handle) {
+                        remove_child(track.handle, entry.mount_handle);
+                    }
                 }
             }
             if children_of(content).contains(&track.handle) {
@@ -1140,10 +1153,10 @@ fn reconcile_grid_window<T, K>(
             .remove(&track_index)
             .expect("stale Grid track remains mounted");
         for key in &track.keys {
-            if let Some(entry) = mounted.get(key)
-                && children_of(track.handle).contains(&entry.mount_handle)
-            {
-                remove_child(track.handle, entry.mount_handle);
+            if let Some(entry) = mounted.get(key) {
+                if children_of(track.handle).contains(&entry.mount_handle) {
+                    remove_child(track.handle, entry.mount_handle);
+                }
             }
         }
         if children_of(content).contains(&track.handle) {

@@ -10,6 +10,11 @@ coverage-text = "llvm-cov --workspace"
 # `cargo coverage-lcov` → LCOV for CI consumption.
 coverage-lcov = "llvm-cov --workspace --lcov --output-path lcov.info"
 
+[resolver]
+# Keep lockfile refreshes on releases compatible with the workspace MSRV.
+# The dedicated 1.85 CI job still verifies source-level compatibility.
+incompatible-rust-versions = "fallback"
+
 [target.aarch64-linux-android]
 # Keep the target at its default Armv8.0 baseline. Current Rust emits
 # classic `ldxr`/`stxr` loops for atomics on `aarch64-linux-android`,

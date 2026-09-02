@@ -10,6 +10,10 @@ import android.util.Log
 import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.findViewTreeLifecycleOwner
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.bridge.AndroidFrameBatch
 import rs.whisker.runtime.bridge.AndroidHostCapabilities
@@ -45,6 +49,14 @@ class WhiskerView(context: Context) :
 
     private val choreographer = Choreographer.getInstance()
     private var nativeHandle = 0L
+    private var runtimePaused = false
+    private var permanentlyDestroyed = false
+    private var lifecycleOwner: LifecycleOwner? = null
+    private val lifecycleObserver = LifecycleEventObserver { owner, event ->
+        if (event == Lifecycle.Event.ON_DESTROY && owner === lifecycleOwner) {
+            destroyRuntime(permanent = true)
+        }
+    }
     private var frameScheduled = false
     private var windowVisible = true
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -130,8 +142,10 @@ class WhiskerView(context: Context) :
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        bindLifecycleOwner()
         WhiskerAppContext.pushRuntimeOwner(this)
         mountWhenSized()
+        resumeRuntime()
     }
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
@@ -141,7 +155,10 @@ class WhiskerView(context: Context) :
     }
 
     private fun mountWhenSized() {
-        if (nativeHandle == 0L && isAttachedToWindow && width > 0 && height > 0) {
+        if (
+            !permanentlyDestroyed && nativeHandle == 0L &&
+            isAttachedToWindow && width > 0 && height > 0
+        ) {
             moduleEventSinkEpoch += 1
             val sinkEpoch = moduleEventSinkEpoch
             WhiskerModuleEventCenter.installEventSink(this) { module, event, payload ->
@@ -160,6 +177,7 @@ class WhiskerView(context: Context) :
                 AndroidHostCapabilities.current().wireValues(),
             )
             if (nativeHandle != 0L) {
+                runtimePaused = false
                 requestFrameFromNative()
             } else {
                 moduleEventSinkEpoch += 1
@@ -170,10 +188,59 @@ class WhiskerView(context: Context) :
     }
 
     override fun onDetachedFromWindow() {
+        pauseRuntime()
+        frameScheduled = false
+        continuousEventFlushPending = false
+        choreographer.removeFrameCallback(this)
+        mainHandler.removeCallbacks(continuousEventFlush)
+        mainHandler.removeCallbacks(moduleEventFlush)
+        pendingContinuousEvents.clear()
+        WhiskerAppContext.popRuntimeOwner(this)
+        if (lifecycleOwner == null) destroyRuntime()
+        super.onDetachedFromWindow()
+    }
+
+    /** Permanently releases this View's Rust runtime and retained Host scene. */
+    fun destroy() {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "WhiskerView.destroy() must run on the main thread"
+        }
+        destroyRuntime(permanent = true)
+    }
+
+    private fun bindLifecycleOwner() {
+        val next = findViewTreeLifecycleOwner()
+        if (next === lifecycleOwner) return
+        lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
+        lifecycleOwner = next
+        next?.lifecycle?.addObserver(lifecycleObserver)
+    }
+
+    private fun pauseRuntime() {
+        val handle = nativeHandle
+        if (handle != 0L && !runtimePaused && nativePause(handle)) {
+            runtimePaused = true
+        }
+    }
+
+    private fun resumeRuntime() {
+        val handle = nativeHandle
+        if (handle != 0L && runtimePaused && nativeResume(handle)) {
+            runtimePaused = false
+            requestFrameFromNative()
+        }
+    }
+
+    private fun destroyRuntime(permanent: Boolean = false) {
+        permanentlyDestroyed = permanentlyDestroyed || permanent
+        lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
+        lifecycleOwner = null
         moduleEventSinkEpoch += 1
         WhiskerModuleEventCenter.installEventSink(this, null)
-        if (nativeHandle != 0L) nativeDestroy(nativeHandle)
+        val handle = nativeHandle
         nativeHandle = 0L
+        runtimePaused = false
+        if (handle != 0L) nativeDestroy(handle)
         frameScheduled = false
         continuousEventFlushPending = false
         choreographer.removeFrameCallback(this)
@@ -183,7 +250,6 @@ class WhiskerView(context: Context) :
         pendingContinuousEvents.clear()
         pendingModuleEvents.clear()
         WhiskerAppContext.popRuntimeOwner(this)
-        super.onDetachedFromWindow()
     }
 
     override fun onWindowVisibilityChanged(visibility: Int) {
@@ -590,6 +656,8 @@ class WhiskerView(context: Context) :
         height: Float,
         scale: Float,
     ): Boolean
+    private external fun nativePause(handle: Long): Boolean
+    private external fun nativeResume(handle: Long): Boolean
     private external fun nativeDestroy(handle: Long)
     private external fun nativeDispatchEvent(
         handle: Long,

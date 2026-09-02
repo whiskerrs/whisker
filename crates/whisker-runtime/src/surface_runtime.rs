@@ -958,10 +958,8 @@ impl BindingState {
             // changes.
             .filter(|snapshot| self.elements.contains_key(&snapshot.element))
             .collect::<Vec<_>>();
-        if !snapshots.is_empty()
-            && let Err(error) = self.configure_style_motion(snapshots)
-        {
-            return Err(error);
+        if !snapshots.is_empty() {
+            self.configure_style_motion(snapshots)?;
         }
         recorded_error.map_or(Ok(()), Err)
     }
@@ -1045,14 +1043,14 @@ impl BindingState {
         }
         match &command {
             ResourceCommand::Load(request) => {
-                if let Some(current) = self.resource_generations.get(&request.resource).copied()
-                    && request.generation <= current
-                {
-                    return Err(RuntimeResourceError::NonMonotonicGeneration {
-                        resource: request.resource,
-                        current,
-                        received: request.generation,
-                    });
+                if let Some(current) = self.resource_generations.get(&request.resource).copied() {
+                    if request.generation <= current {
+                        return Err(RuntimeResourceError::NonMonotonicGeneration {
+                            resource: request.resource,
+                            current,
+                            received: request.generation,
+                        });
+                    }
                 }
                 self.resource_generations
                     .insert(request.resource, request.generation);

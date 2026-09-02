@@ -6,6 +6,7 @@ public final class WhiskerView: UIView {
     private var displayLink: CADisplayLink?
     private var hostToken: UnsafeMutableRawPointer?
     private var runtimeHandle: UnsafeMutableRawPointer?
+    private var runtimePaused = false
     private var isApplicationActive = true
     private var moduleEventSinkEpoch: UInt64 = 0
     private let pendingModuleEvents = PendingModuleEvents()
@@ -106,8 +107,10 @@ public final class WhiskerView: UIView {
         if window != nil {
             WhiskerInsetsDispatcher.attach(self)
             mountWhenSized()
+            resumeRuntime()
+            flushModuleEventsOnMain()
         } else {
-            unmount()
+            pauseRuntime()
             WhiskerInsetsDispatcher.detach(self)
         }
     }
@@ -154,6 +157,7 @@ public final class WhiskerView: UIView {
             whiskerIOSInvokeModule, whiskerIOSObserveModule, token
         )
         if runtimeHandle != nil {
+            runtimePaused = false
             driveRuntimeFrame(timestampMs: ProcessInfo.processInfo.systemUptime * 1_000)
             requestFrame()
         } else {
@@ -247,6 +251,7 @@ public final class WhiskerView: UIView {
         let handle = runtimeHandle
         let ownedRuntime = handle != nil || hostToken != nil
         runtimeHandle = nil
+        runtimePaused = false
         displayLink?.invalidate()
         displayLink = nil
         if let handle { whiskerViewDestroy(handle) }
@@ -263,7 +268,7 @@ public final class WhiskerView: UIView {
     }
 
     func requestFrame() {
-        guard runtimeHandle != nil, isApplicationActive, window != nil else { return }
+        guard runtimeHandle != nil, !runtimePaused, isApplicationActive, window != nil else { return }
         if displayLink == nil {
             displayLink = CADisplayLink(target: self, selector: #selector(driveFrame(_:)))
             displayLink?.add(to: .main, forMode: .common)
@@ -272,7 +277,10 @@ public final class WhiskerView: UIView {
     }
 
     @objc private func driveFrame(_ link: CADisplayLink) {
-        guard runtimeHandle != nil, isApplicationActive else { link.isPaused = true; return }
+        guard runtimeHandle != nil, !runtimePaused, isApplicationActive else {
+            link.isPaused = true
+            return
+        }
         let idle = driveRuntimeFrame(timestampMs: link.timestamp * 1_000)
         link.isPaused = idle
     }
@@ -290,12 +298,26 @@ public final class WhiskerView: UIView {
     @objc private func applicationDidBecomeActive() {
         isApplicationActive = true
         mountWhenSized()
+        resumeRuntime()
         requestFrame()
     }
 
     @objc private func applicationWillResignActive() {
         isApplicationActive = false
-        displayLink?.isPaused = true
+        pauseRuntime()
+    }
+
+    private func pauseRuntime() {
+        displayLink?.invalidate()
+        displayLink = nil
+        guard let handle = runtimeHandle, !runtimePaused else { return }
+        if whiskerViewPause(handle) { runtimePaused = true }
+    }
+
+    private func resumeRuntime() {
+        guard isApplicationActive, window != nil,
+              let handle = runtimeHandle, runtimePaused else { return }
+        if whiskerViewResume(handle) { runtimePaused = false }
     }
 
     func bootstrap(_ raw: WhiskerMobileBootstrap) -> Bool {

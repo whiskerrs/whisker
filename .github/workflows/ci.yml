@@ -125,6 +125,10 @@ jobs:
   msrv:
     name: MSRV (rust 1.85)
     runs-on: ubuntu-latest
+    env:
+      # A checked-in rust-toolchain.toml outranks rustup's default toolchain.
+      # Pin the environment so this job actually exercises the advertised MSRV.
+      RUSTUP_TOOLCHAIN: 1.85.0
     steps:
       - uses: actions/checkout@v4
       # The version here must match `rust-version` in the root

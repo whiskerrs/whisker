@@ -196,10 +196,10 @@ impl BackgroundResourceManager {
             self.node_layer_styles.remove(node);
             self.dirty_nodes.remove(node);
             for key in resource_keys(&previous) {
-                if let Some(resource) = self.resources_by_key.get(&key).copied()
-                    && let Some(entry) = self.entries.get_mut(&resource)
-                {
-                    entry.projected_users.remove(node);
+                if let Some(resource) = self.resources_by_key.get(&key).copied() {
+                    if let Some(entry) = self.entries.get_mut(&resource) {
+                        entry.projected_users.remove(node);
+                    }
                 }
                 commands.extend(self.drop_user(*node, &key));
             }

@@ -780,6 +780,10 @@ extern bool whisker_view_tick(void *handle,
                               float height,
                               float scale);
 
+extern bool whisker_view_pause(void *handle);
+
+extern bool whisker_view_resume(void *handle);
+
 extern void whisker_view_destroy(void *handle);
 
 extern bool whisker_view_dispatch_event(void *handle,

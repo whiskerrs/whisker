@@ -66,12 +66,13 @@ impl SvgDesktopView {
             return None;
         }
         let mut cache = self.cache.lock().expect("SVG raster cache lock poisoned");
-        if let Some(cached) = cache.as_ref()
-            && cached.generation == self.generation
-            && cached.width == width
-            && cached.height == height
-        {
-            return Some(cached.raster.clone());
+        if let Some(cached) = cache.as_ref() {
+            if cached.generation == self.generation
+                && cached.width == width
+                && cached.height == height
+            {
+                return Some(cached.raster.clone());
+            }
         }
         let raster = render_raster(
             &self.display_list,

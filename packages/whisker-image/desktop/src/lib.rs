@@ -153,12 +153,13 @@ impl ImageDesktopView {
             return None;
         }
         let mut state = self.state.lock().expect("Image state lock poisoned");
-        if let Some(cache) = state.cache.as_ref()
-            && cache.generation == state.generation
-            && cache.width == width
-            && cache.height == height
-        {
-            return Some(cache.raster.clone());
+        if let Some(cache) = state.cache.as_ref() {
+            if cache.generation == state.generation
+                && cache.width == width
+                && cache.height == height
+            {
+                return Some(cache.raster.clone());
+            }
         }
         let decoded = state.decoded.as_ref()?;
         let pixels = fit_image(decoded, state.mode, width, height);

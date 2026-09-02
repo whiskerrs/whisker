@@ -740,11 +740,12 @@ impl DomFrameSink {
                 .filter_map(|(pointer, target)| (*target == node).then_some(*pointer))
                 .collect::<Vec<_>>();
             for pointer in captures {
-                if let Some(element) = self.nodes.get(&node)
-                    && let Ok(pointer_id) = browser_pointer_id(pointer)
-                    && element.has_pointer_capture(pointer_id)
-                {
-                    let _ = element.release_pointer_capture(pointer_id);
+                if let Some(element) = self.nodes.get(&node) {
+                    if let Ok(pointer_id) = browser_pointer_id(pointer) {
+                        if element.has_pointer_capture(pointer_id) {
+                            let _ = element.release_pointer_capture(pointer_id);
+                        }
+                    }
                 }
                 self.pointer_captures.remove(&pointer);
             }
@@ -757,17 +758,17 @@ impl DomFrameSink {
             let native = self.native_nodes.remove(&node);
             self.event_masks.remove(&node);
             self.scroll_listeners.remove(&node);
-            if let (Some(element), Some(element_type)) = (element, element_type)
-                && self.elements.binding(element_type).is_ok_and(|binding| {
+            if let (Some(element), Some(element_type)) = (element, element_type) {
+                if self.elements.binding(element_type).is_ok_and(|binding| {
                     matches!(
                         binding.registration.name.as_str(),
                         "whisker.ui/View" | "whisker.ui/Text"
                     )
-                })
-            {
-                let pool = self.presentation_pool.entry(element_type).or_default();
-                if pool.len() < 256 {
-                    pool.push(PooledWebPresentation { element, native });
+                }) {
+                    let pool = self.presentation_pool.entry(element_type).or_default();
+                    if pool.len() < 256 {
+                        pool.push(PooledWebPresentation { element, native });
+                    }
                 }
             }
         }

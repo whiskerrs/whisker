@@ -449,10 +449,10 @@ impl ActiveKeyframeAnimation {
     }
 
     pub(super) fn sample(&mut self, timestamp_ms: f64) -> Vec<&'static str> {
-        if let Some(previous_timestamp_ms) = self.last_timestamp_ms
-            && self.declaration.play_state == MotionPlayState::Running
-        {
-            self.current_time_ms += (timestamp_ms - previous_timestamp_ms).max(0.0);
+        if self.declaration.play_state == MotionPlayState::Running {
+            if let Some(previous_timestamp_ms) = self.last_timestamp_ms {
+                self.current_time_ms += (timestamp_ms - previous_timestamp_ms).max(0.0);
+            }
         }
         self.last_timestamp_ms = Some(timestamp_ms);
         self.sample_current_time();

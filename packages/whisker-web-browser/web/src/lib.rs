@@ -108,18 +108,19 @@ fn open_popup(url: &str, kind: SessionKind, emitter: &ModuleEventEmitter) -> Whi
             clear_later();
             return;
         }
-        if let SessionKind::Auth { redirect_url } = &kind
-            && let Ok(location) = polled_popup.location().href()
-            && location.starts_with(redirect_url)
-        {
-            emit_result(
-                &event_emitter,
-                "authSessionCompleted",
-                "success",
-                Some(location),
-            );
-            let _ = polled_popup.close();
-            clear_later();
+        if let SessionKind::Auth { redirect_url } = &kind {
+            if let Ok(location) = polled_popup.location().href() {
+                if location.starts_with(redirect_url) {
+                    emit_result(
+                        &event_emitter,
+                        "authSessionCompleted",
+                        "success",
+                        Some(location),
+                    );
+                    let _ = polled_popup.close();
+                    clear_later();
+                }
+            }
         }
     });
     let interval = match window

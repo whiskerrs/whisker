@@ -16,7 +16,7 @@
 //!
 //! ```ignore
 //! #[whisker::module_element(
-//!     name = "example.forms/Input",
+//!     name = "example-forms:Input",
 //!     measurement = None,
 //! )]
 //! pub fn input(

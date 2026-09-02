@@ -251,6 +251,22 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #[cfg(any(target_os = "android", target_os = "ios"))]
         #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn whisker_view_pause(
+            handle: *mut ::std::ffi::c_void,
+        ) -> bool {
+            unsafe { ::whisker::__driver_runtime::pause(handle) }
+        }
+
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn whisker_view_resume(
+            handle: *mut ::std::ffi::c_void,
+        ) -> bool {
+            unsafe { ::whisker::__driver_runtime::resume(handle) }
+        }
+
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_destroy(
             handle: *mut ::std::ffi::c_void,
         ) {
@@ -488,7 +504,7 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// ```ignore
 /// #[whisker::module_element(
-///     name = "example.ui/Hello",
+///     name = "example-ui:Hello",
 ///     measurement = None,
 /// )]
 /// pub fn hello(style: whisker::Style) {}
@@ -504,8 +520,10 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// effect-wraps the attribute write.
 ///
 /// `name` is the stable, versionless identity shared by Rust authoring and
-/// independently compiled platform `WhiskerModule` declarations. Bootstrap
-/// validates the strings and binds them to Rust-assigned compact IDs.
+/// independently compiled platform `WhiskerModule` declarations. Public
+/// modules conventionally use `<cargo-crate>:<Name>`, which is also the
+/// macro's implicit form. Bootstrap validates the strings and binds them to
+/// Rust-assigned compact IDs.
 /// Properties and events receive generated numeric IDs from the function
 /// signature. `Children` selects ordinary element children and
 /// `TextChildren` selects normalized plain-text content.

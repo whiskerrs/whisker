@@ -52,10 +52,10 @@ impl DynRenderer for SurfaceRuntime {
             let Some(entry) = state.elements.remove(&handle) else {
                 return Ok(());
             };
-            if let Some(parent) = entry.parent
-                && let Some(parent_entry) = state.elements.get_mut(&parent)
-            {
-                parent_entry.children.retain(|child| *child != handle);
+            if let Some(parent) = entry.parent {
+                if let Some(parent_entry) = state.elements.get_mut(&parent) {
+                    parent_entry.children.retain(|child| *child != handle);
+                }
             }
             if let Some(node) = entry.node {
                 state.node_elements.remove(&node);

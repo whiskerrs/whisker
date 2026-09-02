@@ -32,7 +32,7 @@ serde_json = { workspace = true, optional = true }
 subsecond = { workspace = true, optional = true }
 subsecond-types = { workspace = true, optional = true }
 js-sys = "0.3"
-wasm-bindgen = "0.2"
+wasm-bindgen = "=0.2.117"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
     "Blob",

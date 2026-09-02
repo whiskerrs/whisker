@@ -174,15 +174,16 @@ impl ResourceEvent {
         if generation == 0 {
             return Err(ResourceMessageError::ZeroGeneration);
         }
-        if let Some(dimensions) = dimensions
-            && (!dimensions.width.is_finite()
+        if let Some(dimensions) = dimensions {
+            if !dimensions.width.is_finite()
                 || dimensions.width < 0.0
                 || !dimensions.height.is_finite()
                 || dimensions.height < 0.0
                 || !dimensions.scale.is_finite()
-                || dimensions.scale <= 0.0)
-        {
-            return Err(ResourceMessageError::InvalidDimensions);
+                || dimensions.scale <= 0.0
+            {
+                return Err(ResourceMessageError::InvalidDimensions);
+            }
         }
         Ok(())
     }

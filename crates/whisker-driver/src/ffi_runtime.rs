@@ -327,6 +327,40 @@ pub unsafe fn tick(
     }
 }
 
+/// Suspends one mounted runtime while retaining its application and scene.
+///
+/// # Safety
+/// `handle` must be a live pointer returned by [`create`] on this UI thread.
+pub unsafe fn pause(handle: *mut c_void) -> bool {
+    let Some(mobile) = (unsafe { handle.cast::<MobileRuntime>().as_mut() }) else {
+        return false;
+    };
+    let modules = std::rc::Rc::clone(&mobile.modules);
+    with_module_host(&modules, || mobile.runtime.pause())
+        .map(|()| true)
+        .unwrap_or_else(|error| {
+            mobile_error(format_args!("Whisker mobile pause failed: {error}"));
+            false
+        })
+}
+
+/// Resumes one retained runtime and schedules its deferred work.
+///
+/// # Safety
+/// `handle` must be a live pointer returned by [`create`] on this UI thread.
+pub unsafe fn resume(handle: *mut c_void) -> bool {
+    let Some(mobile) = (unsafe { handle.cast::<MobileRuntime>().as_mut() }) else {
+        return false;
+    };
+    let modules = std::rc::Rc::clone(&mobile.modules);
+    with_module_host(&modules, || mobile.runtime.resume())
+        .map(|()| true)
+        .unwrap_or_else(|error| {
+            mobile_error(format_args!("Whisker mobile resume failed: {error}"));
+            false
+        })
+}
+
 /// # Safety
 /// `handle` must be live and must not be used after this call.
 pub unsafe fn destroy(handle: *mut c_void) {

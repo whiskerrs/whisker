@@ -300,9 +300,10 @@ impl MeasurementCoordinator {
             pending_policy: PendingMeasurePolicy::Placeholder(size),
             ..
         }) = &spec
-            && !size.is_valid()
         {
-            return Err(MeasurementError::InvalidPlaceholder { node });
+            if !size.is_valid() {
+                return Err(MeasurementError::InvalidPlaceholder { node });
+            }
         }
         if self
             .specs

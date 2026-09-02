@@ -43,6 +43,13 @@ pub(super) type BskyAgent = Agent<OAuthSess>;
 /// restore from the secure store.
 const ACTIVE_DID_KEY: &str = "bsky.active_did";
 
+fn stored_active_did() -> Option<Did> {
+    WhiskerLocalStore::load(ACTIVE_DID_KEY.to_string())
+        .ok()
+        .flatten()
+        .and_then(|did| Did::new(did).ok())
+}
+
 /// Secure-store key for a given account's serialized OAuth `Session`
 /// (DPoP key + token set). Namespaced per-DID so multiple accounts
 /// wouldn't collide.
@@ -109,9 +116,7 @@ impl Store<Did, Session> for SecureSessionStore {
     async fn clear(&self) -> Result<(), Self::Error> {
         // No key enumeration in the secure store; we only track the one
         // active account, so clear that entry (best-effort).
-        if let Ok(Some(did)) = WhiskerLocalStore::load(ACTIVE_DID_KEY.to_string())
-            && let Ok(did) = Did::new(did)
-        {
+        if let Some(did) = stored_active_did() {
             let _ = WhiskerSecureStore::remove(session_key(&did));
         }
         let _ = WhiskerLocalStore::remove(ACTIVE_DID_KEY.to_string());
@@ -237,9 +242,7 @@ pub async fn restore_session() -> bool {
 /// Forget the current session: drop the in-memory agent and erase the
 /// persisted session + active-DID pointer from the secure / local stores.
 pub async fn logout() {
-    if let Ok(Some(did_str)) = WhiskerLocalStore::load(ACTIVE_DID_KEY.to_string())
-        && let Ok(did) = Did::new(did_str)
-    {
+    if let Some(did) = stored_active_did() {
         let _ = client().revoke(&did).await;
         let _ = WhiskerSecureStore::remove(session_key(&did));
     }
