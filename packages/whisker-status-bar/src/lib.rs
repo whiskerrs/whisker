@@ -11,7 +11,7 @@
 //!   ([`StatusBarStyle::Light`] = light icons for a dark background,
 //!   [`StatusBarStyle::Dark`] = dark icons for a light background).
 //!
-//! **Android-only** — both methods no-op on iOS. The only status-bar API
+//! **Android-only** — both methods no-op on iOS, Web, and Desktop. The only status-bar API
 //! a view-less module can reach there is the deprecated app-level
 //! `UIApplication.setStatusBarHidden`, which corrupts `whisker-router`'s
 //! transform-based transition animations; iOS support needs
@@ -33,7 +33,6 @@
 //!
 //! ## Native source
 //!
-//! - iOS: `packages/whisker-status-bar/ios/Sources/WhiskerStatusBar/StatusBarModule.swift`
 //! - Android: `packages/whisker-status-bar/android/src/main/kotlin/rs/whisker/modules/status_bar/StatusBarModule.kt`
 
 /// Plugin (iOS `Info.plist` injection). Always compiles — independent

@@ -334,21 +334,21 @@ mod tests {
         let out = root.join("gen/macos");
         let mut inputs = sample();
         inputs.element_modules.push(crate::RustElementModuleInput {
-            package: "whisker-toggle".into(),
-            crate_path: PathBuf::from("/modules/whisker-toggle"),
-            host_package: "whisker-toggle-desktop-host".into(),
+            package: "whisker-example".into(),
+            crate_path: PathBuf::from("/modules/whisker-example"),
+            host_package: "whisker-example-desktop".into(),
             host_dependency: crate::RustHostDependency::Path(PathBuf::from(
-                "/modules/whisker-toggle/desktop",
+                "/modules/whisker-example/desktop",
             )),
         });
         sync(&out, &inputs).unwrap();
         let manifest = std::fs::read_to_string(out.join("Cargo.toml")).unwrap();
-        assert!(manifest.contains("whisker-toggle = { package = \"whisker-toggle\""));
+        assert!(manifest.contains("whisker-example = { package = \"whisker-example\""));
         let main = std::fs::read_to_string(out.join("src/main.rs")).unwrap();
-        assert!(manifest.contains("whisker-toggle-desktop-host ="));
+        assert!(manifest.contains("whisker-example-desktop ="));
         assert!(!main.contains("#[path ="));
         assert!(main.contains(".with_module("));
-        assert!(main.contains("whisker_toggle_desktop_host::__whisker_module_definition()"));
+        assert!(main.contains("whisker_example_desktop::__whisker_module_definition()"));
         std::fs::remove_dir_all(root).ok();
     }
 }

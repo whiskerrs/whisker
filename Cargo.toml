@@ -139,7 +139,6 @@ whisker-windows = { path = "platforms/windows", version = "0.12.0" }
 whisker-linux = { path = "platforms/linux", version = "0.12.0" }
 whisker-web = { path = "platforms/web", version = "0.12.0" }
 whisker-router = { path = "packages/whisker-router", version = "0.12.0" }
-whisker-toggle = { path = "packages/whisker-toggle", version = "0.12.0" }
 whisker-svg = { path = "packages/whisker-svg", version = "0.12.0" }
 
 anyhow = "1"

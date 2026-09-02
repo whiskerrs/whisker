@@ -3,85 +3,25 @@
 use whisker::css::BorderStyle;
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-#[cfg(any(target_os = "android", target_os = "ios", test))]
-use whisker_toggle::MODULE_NAME as TOGGLE_MODULE_NAME;
-use whisker_toggle::Toggle;
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-async fn verify_mobile_module_bridge(
-    status: RwSignal<String>,
-    subscription_slot: StoredValue<Option<whisker::runtime::module::ModuleSubscription>>,
-) {
-    use whisker::platform_module::WhiskerValue;
-
-    let module = whisker::PlatformModule::named(TOGGLE_MODULE_NAME);
-    let result = module.invoke("echo", vec![WhiskerValue::String("module-ready".into())]);
-    let async_result = module
-        .invoke_async("echoAsync", vec![WhiskerValue::String("async".into())])
-        .await;
-    let (value, async_value) = match (result, async_result) {
-        (WhiskerValue::String(value), WhiskerValue::String(async_value)) => (value, async_value),
-        error => {
-            status.set(format!("module-error: {error:?}"));
-            return;
-        }
-    };
-
-    status.set(format!("{value} + {async_value} + waiting-event"));
-    let subscription = module.on_event("ready", move |payload| {
-        eprintln!("Whisker mobile module event: {payload:?}");
-        if matches!(payload, WhiskerValue::String(ref event) if event.ends_with("-ready")) {
-            status.set(format!("{value} + {async_value} + event"));
-        } else {
-            status.set(format!("module-error: invalid ready event {payload:?}"));
-        }
-    });
-    if let Some(error) = subscription.error() {
-        status.set(format!("module-error: {error}"));
-    } else {
-        subscription_slot.set(Some(subscription));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn platform_module_uses_the_toggle_service_name() {
-        assert_eq!(TOGGLE_MODULE_NAME, "whisker-toggle:WhiskerToggle");
-    }
-}
+use whisker_svg::Svg;
 
 #[component]
-fn external_toggle() -> Element {
+fn external_module() -> Element {
     render! {
-        Toggle(
-            checked: false,
-            disabled: false,
+        Svg(
+            content: r#"<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/></svg>"#,
+            color: "#0EA5E9",
             style: css!(
                 width: px(48),
-                height: px(32),
+                height: px(48),
                 margin_top: px(16),
-                border_radius: px(16),
-                background_color: Color::hex(0x0EA5E9),
             ),
-            on_change: |_event| {},
         )
     }
 }
 
 #[whisker::main]
 pub fn app() -> Element {
-    let module_status = RwSignal::new("module-ready".to_string());
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let status = module_status;
-        let subscription_slot = StoredValue::new(None);
-        spawn_local(async move {
-            verify_mobile_module_bridge(status, subscription_slot).await;
-        });
-    }
     render! {
         View(style: css!(
             flex_grow: 1.0,
@@ -102,9 +42,9 @@ pub fn app() -> Element {
                     font_size: px(12),
                     margin_top: px(4),
                 ),
-                value: module_status,
+                value: "External SVG module linked",
             )
-            ExternalToggle()
+            ExternalModule()
             View(style: css!(
                 width: percent(100),
                 height: px(88),

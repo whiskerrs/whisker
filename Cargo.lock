@@ -2436,7 +2436,7 @@ name = "host-smoke"
 version = "0.1.0"
 dependencies = [
  "whisker",
- "whisker-toggle",
+ "whisker-svg",
 ]
 
 [[package]]
@@ -7290,27 +7290,6 @@ version = "0.12.0"
 dependencies = [
  "base64 0.22.1",
  "whisker-svg",
- "whisker-web",
-]
-
-[[package]]
-name = "whisker-toggle"
-version = "0.12.0"
-dependencies = [
- "whisker",
-]
-
-[[package]]
-name = "whisker-toggle-desktop-host"
-version = "0.12.0"
-dependencies = [
- "whisker-desktop",
-]
-
-[[package]]
-name = "whisker-toggle-web-host"
-version = "0.12.0"
-dependencies = [
  "whisker-web",
 ]
 

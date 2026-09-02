@@ -55,7 +55,7 @@ mod tests {
             graph
                 .modules
                 .iter()
-                .any(|module| module.package == "whisker-toggle")
+                .any(|module| module.package == "whisker-svg")
         );
         assert_eq!(graph.cng_plugins.len(), 0);
     }

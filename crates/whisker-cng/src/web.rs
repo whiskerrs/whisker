@@ -245,21 +245,21 @@ mod tests {
         let out = root.join("gen/web");
         let mut inputs = sample();
         inputs.element_modules.push(crate::RustElementModuleInput {
-            package: "whisker-toggle".into(),
-            crate_path: PathBuf::from("/modules/whisker-toggle"),
-            host_package: "whisker-toggle-web-host".into(),
+            package: "whisker-example".into(),
+            crate_path: PathBuf::from("/modules/whisker-example"),
+            host_package: "whisker-example-web".into(),
             host_dependency: crate::RustHostDependency::Path(PathBuf::from(
-                "/modules/whisker-toggle/web",
+                "/modules/whisker-example/web",
             )),
         });
         sync(&out, &inputs).unwrap();
         let manifest = std::fs::read_to_string(out.join("Cargo.toml")).unwrap();
-        assert!(manifest.contains("whisker-toggle = { package = \"whisker-toggle\""));
+        assert!(manifest.contains("whisker-example = { package = \"whisker-example\""));
         let source = std::fs::read_to_string(out.join("src/lib.rs")).unwrap();
-        assert!(manifest.contains("whisker-toggle-web-host ="));
+        assert!(manifest.contains("whisker-example-web ="));
         assert!(!source.contains("#[path ="));
         assert!(source.contains(".with_module("));
-        assert!(source.contains("whisker_toggle_web_host::__whisker_module_definition()"));
+        assert!(source.contains("whisker_example_web::__whisker_module_definition()"));
         std::fs::remove_dir_all(root).ok();
     }
 }
