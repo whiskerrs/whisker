@@ -1,5 +1,5 @@
 [package]
-name = "whisker-svg-web-host"
+name = "whisker-svg-web"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

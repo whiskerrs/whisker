@@ -7291,7 +7291,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "whisker-svg-desktop-host"
+name = "whisker-svg-desktop"
 version = "0.12.0"
 dependencies = [
  "base64 0.22.1",
@@ -7310,7 +7310,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "whisker-svg-web-host"
+name = "whisker-svg-web"
 version = "0.12.0"
 dependencies = [
  "base64 0.22.1",
