@@ -17,7 +17,7 @@ public final class VideoModule: Module {
         ModuleDefinition {
             Name("Video")
             View("whisker-video:Video", VideoView.self) {
-                Prop("src") { (view: VideoView, value: WhiskerValue) in
+                Prop("src", clear: { (view: VideoView) in view.setSrc("") }) { (view: VideoView, value: WhiskerValue) in
                     view.setSrc(value.asString ?? "")
                 }
                 Command("play")  { (view: VideoView, _: WhiskerValue) in view.play() }

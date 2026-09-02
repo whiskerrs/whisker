@@ -22,19 +22,20 @@ public final class VideoView: WhiskerUI<UIView> {
     }
 
     /// Keep the AVPlayerLayer sized to the host UIView's bounds.
-    /// The Host fires this after applying the element's computed frame —
-    /// `self.view().bounds` is authoritative here.
-    @objc public override func frameDidChange() {
-        super.frameDidChange()
+    public override func layoutSubviews() {
+        super.layoutSubviews()
         playerLayer?.frame = self.view().bounds
     }
 
     /// Backing of the `src` prop.
     public func setSrc(_ value: String) {
-        guard let url = URL(string: value) else { return }
         // Tear down any prior player + layer so a `src=` change
         // rebuilds cleanly.
+        player?.pause()
         playerLayer?.removeFromSuperlayer()
+        playerLayer = nil
+        player = nil
+        guard !value.isEmpty, let url = URL(string: value) else { return }
 
         let p = AVPlayer(url: url)
         let layer = AVPlayerLayer(player: p)
@@ -45,7 +46,7 @@ public final class VideoView: WhiskerUI<UIView> {
         // setSrc can fire before the Host assigns the view its computed
         // frame — the first dispatch happens during initial-mount prop
         // application — so the layer needs a placeholder rect until
-        // `frameDidChange` resizes it.
+        // `layoutSubviews` resizes it.
         layer.frame = hostView.bounds.isEmpty
             ? CGRect(x: 0, y: 0, width: 400, height: 200)
             : hostView.bounds
@@ -61,7 +62,12 @@ public final class VideoView: WhiskerUI<UIView> {
     public func play()  { player?.play()  }
     public func pause() { player?.pause() }
     public func seek(_ seconds: Double) {
-        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+        let time = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
         player?.seek(to: time)
+    }
+
+    deinit {
+        player?.pause()
+        playerLayer?.removeFromSuperlayer()
     }
 }

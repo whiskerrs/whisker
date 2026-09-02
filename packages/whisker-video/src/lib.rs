@@ -4,8 +4,8 @@
 //! [`docs/module-api-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/module-api-design.md)
 //! §"Shape 2". A native UI element ([`Video`]) plus a typed handle
 //! ([`VideoHandle`]) bound on mount via `element_ref:`; methods dispatch
-//! through the element handle. Backed by AVPlayer (iOS) and Media3
-//! ExoPlayer (Android).
+//! through the element handle. Backed by AVPlayer (iOS), Media3
+//! ExoPlayer (Android), and `HTMLVideoElement` (Web).
 //!
 //! ## Usage
 //!
@@ -52,6 +52,7 @@
 //!   (view: `VideoView.swift`)
 //! - Android: `packages/whisker-video/android/src/main/kotlin/rs/whisker/elements/video/VideoModule.kt`
 //!   (view: `VideoView.kt`)
+//! - Web: `packages/whisker-video/web/src/lib.rs`
 
 use whisker::platform_module::WhiskerValue;
 use whisker::{ElementRef, Signal};
