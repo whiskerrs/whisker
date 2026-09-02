@@ -8,7 +8,8 @@
 //! reactive [`PlaybackStatus`] signal driven by native playback
 //! callbacks. The native player releases when the last clone drops.
 //!
-//! Backed by AVPlayer (iOS) and AndroidX Media3 ExoPlayer (Android).
+//! Backed by AVPlayer (iOS), AndroidX Media3 ExoPlayer (Android), and
+//! `HTMLAudioElement` (Web).
 //! The surface mirrors the imperative half of
 //! [Expo's `expo-audio`](https://docs.expo.dev/versions/latest/sdk/audio/):
 //! a player object you call `play` / `pause` / `seek_to` on, plus a
@@ -56,11 +57,10 @@
 //! - Methods (`play`, `pause`, `stop`, `seek_to`, `set_source`,
 //!   `set_volume`, `set_loop`) dispatch through
 //!   `whisker::module!("WhiskerAudio").invoke(method, args)`.
-//! - The native module emits a per-player `statusChanged` event
-//!   every time playback state changes (and at a ~200 ms cadence
-//!   while playing); [`Player::status`] lazily installs the
-//!   dispatch table on first call and routes events to the matching
-//!   handle's signal.
+//! - The Host module emits a per-player `statusChanged` event every
+//!   time playback state changes (and at a ~200 ms cadence while
+//!   playing). Each Whisker runtime owns its subscription and status
+//!   table, so multiple runtime instances remain isolated.
 //!
 //! ## Native source
 //!
@@ -68,6 +68,7 @@
 //!
 //! - iOS: `packages/whisker-audio/ios/Sources/WhiskerAudio/AudioModule.swift`
 //! - Android: `packages/whisker-audio/android/src/main/kotlin/rs/whisker/modules/audio/AudioModule.kt`
+//! - Web: `packages/whisker-audio/web/src/lib.rs`
 
 /// Whisker plugin — adds `Info.plist` / `AndroidManifest.xml`
 /// entries when the consuming app declares

@@ -1,0 +1,19 @@
+[package]
+name = "whisker-audio-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Web Host implementation for whisker-audio."
+
+[dependencies]
+whisker = { workspace = true }
+whisker-web = { workspace = true }
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "Event",
+    "EventTarget",
+    "HtmlAudioElement",
+    "HtmlMediaElement",
+] }
