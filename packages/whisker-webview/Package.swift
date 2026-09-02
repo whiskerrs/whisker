@@ -8,18 +8,15 @@
 // `Module`-subclass registration lands in `<Target>+Generated.swift` at
 // build time.
 //
-// `whisker-build` injects the absolute location of Whisker's iOS runtime +
-// macros packages via env vars, so this module resolves them no matter where
-// the crate lives — in the monorepo, in a user's whisker project, or
-// unpacked from the cargo registry. No relative fallback: a Whisker module
-// is only ever built through `whisker run` / `whisker build`, never
-// standalone `swift build`.
+// The generated Xcode project links this package directly. Its checked-in
+// manifest and sources remain ordinary SwiftPM inputs; Whisker CNG only
+// assembles the app's package dependency graph.
 
 import PackageDescription
 
 let package = Package(
     name: "whisker-webview",
-    platforms: [.iOS(.v13), .macOS(.v13)],
+    platforms: [.iOS(.v13)],
     products: [
         .library(name: "WhiskerWebview", targets: ["WhiskerWebview"]),
     ],

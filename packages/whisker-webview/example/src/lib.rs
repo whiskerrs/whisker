@@ -70,7 +70,7 @@ fn url_demo() -> Element {
 
             WebView(
                 url: url,
-                webview_ref: webview.clone(),
+                webview_ref: webview,
                 on_message: {
                     move |msg: String| last_message.set(msg)
                 },
@@ -80,19 +80,19 @@ fn url_demo() -> Element {
 
             View(style: Css::new().display_flex().flex_direction(FlexDirection::Row).margin_top(px(10))) {
                 Text(style: button_style(), value: "Reload", on_tap: {
-                    let w = webview.clone();
+                    let w = webview;
                     move |_| w.reload()
                 })
                 Text(style: button_style(), value: "Back", on_tap: {
-                    let w = webview.clone();
+                    let w = webview;
                     move |_| w.go_back()
                 })
                 Text(style: button_style(), value: "Forward", on_tap: {
-                    let w = webview.clone();
+                    let w = webview;
                     move |_| w.go_forward()
                 })
                 Text(style: button_style(), value: "Ping JS", on_tap: {
-                    let w = webview.clone();
+                    let w = webview;
                     move |_| {
                         w.post_message("ping from rust");
                         w.evaluate_javascript(

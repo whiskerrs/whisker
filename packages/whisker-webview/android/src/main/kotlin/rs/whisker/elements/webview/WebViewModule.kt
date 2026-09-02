@@ -27,35 +27,41 @@ class WebViewModule : Module() {
 
             // ---- content props -------------------------------------------
 
-            Prop("url") { view: WhiskerWebView, value ->
-                view.setUrl(value.asString() ?: "")
+            Prop("url", clear = { view: WhiskerWebView -> view.setUrl("") }) {
+                    view: WhiskerWebView, value -> view.setUrl(value.asString() ?: "")
             }
 
             // Inline HTML, used only when `url` is empty.
-            Prop("html") { view: WhiskerWebView, value ->
-                view.setHtml(value.asString() ?: "")
+            Prop("html", clear = { view: WhiskerWebView -> view.setHtml("") }) {
+                    view: WhiskerWebView, value -> view.setHtml(value.asString() ?: "")
             }
 
             // ---- behaviour props -----------------------------------------
 
             // Must be set before any load to take effect.
-            Prop("user-agent") { view: WhiskerWebView, value ->
-                view.setUserAgent(value.asString() ?: "")
+            Prop("user-agent", clear = { view: WhiskerWebView -> view.setUserAgent("") }) {
+                    view: WhiskerWebView, value -> view.setUserAgent(value.asString() ?: "")
             }
 
-            // Defaults to false on Android, unlike iOS.
-            Prop("javascript-enabled") { view: WhiskerWebView, value ->
-                view.setJavascriptEnabled(value.asString() ?: "false")
+            Prop(
+                "javascript-enabled",
+                clear = { view: WhiskerWebView -> view.setJavascriptEnabled(true) },
+            ) { view: WhiskerWebView, value ->
+                view.setJavascriptEnabled(value.asBool() ?: true)
             }
 
-            Prop("scroll-enabled") { view: WhiskerWebView, value ->
-                view.setScrollEnabled(value.asString() ?: "true")
+            Prop(
+                "scroll-enabled",
+                clear = { view: WhiskerWebView -> view.setScrollEnabled(true) },
+            ) { view: WhiskerWebView, value ->
+                view.setScrollEnabled(value.asBool() ?: true)
             }
 
             // JSON array string, e.g. `["https://*"]`.
-            Prop("origin-whitelist") { view: WhiskerWebView, value ->
-                view.setOriginWhitelist(value.asString() ?: "")
-            }
+            Prop(
+                "origin-whitelist",
+                clear = { view: WhiskerWebView -> view.setOriginWhitelist("") },
+            ) { view: WhiskerWebView, value -> view.setOriginWhitelist(value.asString() ?: "") }
 
             // `style` is handled by the WhiskerUI base.
 
