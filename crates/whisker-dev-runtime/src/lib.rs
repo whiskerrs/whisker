@@ -12,8 +12,8 @@ pub mod log_capture;
 
 #[cfg(feature = "hot-reload")]
 pub use hot_reload::{
-    NativeCodeUpdate, NativeHotReload, NativeHotReloadRegistration, devlog,
-    register_native_runtime, start_receiver,
+    NativeCodeUpdate, NativeHotReload, NativeHotReloadRegistration, register_native_runtime,
+    start_receiver,
 };
 
 #[cfg(feature = "hot-reload")]
