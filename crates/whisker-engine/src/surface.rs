@@ -1587,6 +1587,17 @@ mod tests {
                 node: missing
             }))
         );
+        assert_eq!(surface.update_host_scroll_offset(root, [1.0, 2.0]), Ok(()));
+        assert_eq!(
+            surface.update_host_scroll_offset(root, [f32::NAN, 0.0]),
+            Err(SurfaceError::Scene(SceneError::NonFiniteNumber))
+        );
+        assert_eq!(
+            surface.update_host_scroll_offset(missing, [0.0, 0.0]),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
 
         surface.set_event_mask(root, 5).unwrap();
         assert_eq!(surface.node(root).unwrap().event_mask(), Some(5));
