@@ -840,9 +840,9 @@ impl SurfaceEngine {
 
     /// Presents the next transaction and applies the Host acknowledgement.
     ///
-    /// `NeedSnapshot` rotates the scene epoch and leaves a complete snapshot
-    /// ready for the next call. A sink error discards only the prepared packet;
-    /// retained semantic changes remain dirty and can be retried.
+    /// `NeedSnapshot`, a sink error, or an invalid acknowledgement rotates the
+    /// scene epoch and leaves a complete snapshot ready for the next call.
+    /// This repairs Hosts that may have applied part of a rejected packet.
     pub fn present<Sink: FrameSink>(
         &mut self,
         viewport_epoch: u32,
@@ -858,15 +858,24 @@ impl SurfaceEngine {
         let result = match sink.present(&packet) {
             Ok(result) => result,
             Err(error) => {
-                self.discard_pending()
-                    .expect("a sink error always follows successful frame preparation");
+                self.require_snapshot()
+                    .expect("a prepared frame can always be replaced by a snapshot");
                 return Err(SurfacePresentError::Sink(error));
             }
         };
         match result {
-            ApplyResult::Accepted { revision } => self
-                .accept_pending(revision)
-                .map_err(SurfacePresentError::Surface)?,
+            ApplyResult::Accepted { revision } => {
+                if let Err(error) = self.accept_pending(revision) {
+                    // An acknowledgement that does not match the prepared
+                    // frame means sender and receiver no longer agree on the
+                    // retained revision. Do not leave the rejected packet
+                    // pending: the next frame must repair the receiver from a
+                    // complete snapshot.
+                    self.require_snapshot()
+                        .expect("a prepared frame can always be replaced by a snapshot");
+                    return Err(SurfacePresentError::Surface(error));
+                }
+            }
             ApplyResult::NeedSnapshot { .. } => self
                 .require_snapshot()
                 .map_err(SurfacePresentError::Surface)?,
@@ -2572,6 +2581,10 @@ mod tests {
             surface.present(1, &mut sink),
             Ok(Some(ApplyResult::Accepted { revision: 3 }))
         );
+        assert_eq!(
+            sink.renderer.frames().last().unwrap().packet.header.mode,
+            FrameMode::Snapshot
+        );
         assert_eq!(surface.present(1, &mut sink), Ok(None));
 
         surface.scene.set_opacity(root, 0.4).unwrap();
@@ -2585,7 +2598,16 @@ mod tests {
                 }
             )))
         );
-        surface.discard_pending().unwrap();
+        assert!(surface.has_pending_work());
+        sink.behavior = SinkBehavior::Record;
+        assert_eq!(
+            surface.present(1, &mut sink),
+            Ok(Some(ApplyResult::Accepted { revision: 4 }))
+        );
+        assert_eq!(
+            sink.renderer.frames().last().unwrap().packet.header.mode,
+            FrameMode::Snapshot
+        );
 
         surface.scene.set_scene_epoch_for_tests(u32::MAX);
         surface.scene.set_opacity(root, 0.6).unwrap();

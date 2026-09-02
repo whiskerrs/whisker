@@ -17,7 +17,7 @@ use whisker::runtime::view::{
 };
 use whisker::{
     ElementModuleDefinition, ElementProviderMetadata, ElementRegistry, ElementTag,
-    RuntimeBindingError, SurfaceRuntime,
+    RuntimeBindingError, RuntimeFrameError, RuntimeLayoutError, SurfaceRuntime,
 };
 use whisker_engine::RecordingRenderer;
 use whisker_engine::whisker_layout::LayoutSize;
@@ -1472,6 +1472,54 @@ fn surface_registry_rejects_a_schema_introduced_after_bootstrap() {
         })
     );
     assert_eq!(surface.element_registrations(), bootstrap_registrations);
+    with_installed_renderer(surface.renderer(), || owner.dispose());
+}
+
+#[test]
+fn rejected_binding_is_reported_once_without_poisoning_the_surface() {
+    __reset_for_tests();
+    let owner = Owner::new(None);
+    let surface = SurfaceRuntime::new(
+        SurfaceId::new(18).unwrap(),
+        StyleEnvironment::new(100.0, 100.0, 1.0, 14.0),
+    );
+    with_installed_renderer(surface.renderer(), || {
+        let root = owner.with(|| {
+            let root = whisker_runtime::view::create_element(whisker::ElementTag::View);
+            let _ = whisker_runtime::view::create_element_by_name("missing:Element");
+            root
+        });
+        set_root(root);
+    });
+
+    let mut host = TextHost::default();
+    let mut renderer = RecordingRenderer::new(surface.surface());
+    assert!(matches!(
+        surface.render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        ),
+        Err(RuntimeFrameError::Layout(RuntimeLayoutError::Binding(
+            RuntimeBindingError::UnsupportedCustomElement { .. }
+        )))
+    ));
+    assert_eq!(surface.binding_error(), None);
+
+    surface
+        .render_frame(
+            LayoutSize::new(100.0, 100.0),
+            1,
+            1,
+            &mut host,
+            &mut renderer,
+            LayoutOptions::default(),
+        )
+        .expect("a rejected element must not poison later valid frames");
+    assert_eq!(renderer.frames().len(), 1);
     with_installed_renderer(surface.renderer(), || owner.dispose());
 }
 

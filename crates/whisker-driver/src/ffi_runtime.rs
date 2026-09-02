@@ -74,6 +74,7 @@ struct MobileRuntime {
     environment_epoch: u64,
     viewport_epoch: u32,
     viewport: Viewport,
+    retrying_failed_frame: bool,
 }
 
 #[cfg(feature = "hot-reload")]
@@ -265,12 +266,9 @@ pub unsafe fn create(
         environment_epoch: 1,
         viewport_epoch: 1,
         viewport,
+        retrying_failed_frame: false,
     });
-    if !mobile.drain_resource_commands() {
-        let modules = std::rc::Rc::clone(&mobile.modules);
-        let _ = with_module_host(&modules, || mobile.runtime.unmount());
-        return std::ptr::null_mut();
-    }
+    mobile.drain_resource_commands();
     request_frame(request_data);
     Box::into_raw(mobile).cast()
 }
@@ -311,15 +309,20 @@ pub unsafe fn tick(
             LayoutOptions::default(),
         )
     });
-    if !mobile.drain_resource_commands() {
-        mobile_error("Whisker mobile Host rejected a resource command");
-        return true;
-    }
+    mobile.drain_resource_commands();
     match frame_result {
-        Ok(drive) => !drive.needs_frame,
+        Ok(drive) => {
+            mobile.retrying_failed_frame = false;
+            !drive.needs_frame
+        }
         Err(error) => {
             mobile_error(format_args!("Whisker mobile frame failed: {error}"));
-            true
+            if mobile.retrying_failed_frame {
+                true
+            } else {
+                mobile.retrying_failed_frame = true;
+                false
+            }
         }
     }
 }
@@ -518,12 +521,27 @@ pub unsafe fn dispatch_resource_event(
 }
 
 impl MobileRuntime {
-    fn drain_resource_commands(&mut self) -> bool {
-        self.runtime
-            .surface()
-            .take_resource_commands()
-            .iter()
-            .all(|command| self.resources.send(command))
+    fn drain_resource_commands(&mut self) {
+        for command in self.runtime.surface().take_resource_commands() {
+            if self.resources.send(&command) {
+                continue;
+            }
+            let ResourceCommand::Load(request) = command else {
+                mobile_error("Whisker mobile Host rejected a resource release");
+                continue;
+            };
+            let event = ResourceEvent::Failed {
+                resource: request.resource,
+                generation: request.generation,
+                code: ResourceFailureCode::Unsupported,
+                diagnostic: Some("Host rejected the resource command".to_owned()),
+            };
+            if let Err(error) = self.runtime.dispatch_resource_event(&event) {
+                mobile_error(format_args!(
+                    "Whisker mobile resource rejection could not be applied: {error}"
+                ));
+            }
+        }
     }
 }
 

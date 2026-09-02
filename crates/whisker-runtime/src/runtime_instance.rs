@@ -51,7 +51,10 @@ mod tests {
         BindType, append_child, create_element, remove_child, set_attribute, set_event_listener,
         set_specified_style,
     };
-    use whisker_engine::whisker_protocol::{InputEventKind, SurfaceId};
+    use whisker_engine::whisker_protocol::{
+        InputEventKind, MeasuredSize, MeasurementKey, MeasurementMetrics, MeasurementRequestId,
+        ResourceFailureCode, ResourceId, SurfaceId,
+    };
     use whisker_style::{SpecifiedStyle, StyleEnvironment, StyleNumber, StyleProperty, StyleValue};
 
     #[test]
@@ -101,6 +104,36 @@ mod tests {
                 pointer: None,
                 target: surface.root(),
                 detail: WhiskerValue::Null,
+            })
+            .unwrap();
+
+        assert_eq!(surface.surface_snapshot_count(), 1);
+    }
+
+    #[test]
+    fn mounting_many_styled_elements_takes_one_surface_snapshot() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(83).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        surface.reset_surface_snapshot_count();
+        let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+        runtime
+            .mount(|| {
+                let root = create_element(ElementTag::View);
+                for index in 0..256 {
+                    let child = create_element(ElementTag::View);
+                    set_specified_style(
+                        child,
+                        &SpecifiedStyle::new().push(
+                            StyleProperty::Opacity,
+                            StyleValue::Number(StyleNumber::new(index as f32 / 256.0)),
+                        ),
+                    );
+                    append_child(root, child);
+                }
+                root
             })
             .unwrap();
 
@@ -237,6 +270,149 @@ mod tests {
     }
 
     #[test]
+    fn reentrant_host_events_are_queued_and_drained_in_fifo_order() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(80).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let wake_count = Arc::clone(&wakes);
+        let mut runtime = RuntimeInstance::new(
+            surface.clone(),
+            RuntimeWakeHandle::new(move || {
+                wake_count.fetch_add(1, Ordering::Relaxed);
+            }),
+        );
+        let modules = ModuleHost::new(|_, _, _, _, _| false, |_, _, _| {});
+        let order = Rc::new(RefCell::new(Vec::new()));
+        let subscription = Rc::new(RefCell::new(None::<ModuleSubscription>));
+        with_module_host(&modules, || {
+            runtime
+                .mount({
+                    let order = Rc::clone(&order);
+                    let subscription = Rc::clone(&subscription);
+                    move || {
+                        let root = create_element(ElementTag::View);
+                        let input_order = Rc::clone(&order);
+                        set_event_listener(
+                            root,
+                            "queued-input",
+                            BindType::Bind,
+                            Box::new(move |_| input_order.borrow_mut().push("input")),
+                        );
+                        let module_order = Rc::clone(&order);
+                        *subscription.borrow_mut() = Some(PlatformModule::named("demo").on_event(
+                            "queued-module",
+                            move |_| {
+                                module_order.borrow_mut().push("module");
+                            },
+                        ));
+                        root
+                    }
+                })
+                .unwrap();
+        });
+
+        let queued_input = InputEvent {
+            surface: surface.surface(),
+            timestamp_ms: 1.0,
+            kind: InputEventKind::Named("queued-input".to_owned()),
+            pointer: None,
+            target: surface.root(),
+            detail: WhiskerValue::Null,
+        };
+        runtime.context.enter(|| {
+            assert!(runtime.dispatch_input(&queued_input).unwrap().queued);
+            assert!(
+                runtime
+                    .dispatch_module_event(&modules, "demo", "queued-module", WhiskerValue::Null,)
+                    .unwrap()
+            );
+            assert!(order.borrow().is_empty());
+            assert_eq!(runtime.pending_host_events.borrow().len(), 2);
+        });
+
+        runtime
+            .dispatch_input(&InputEvent {
+                kind: InputEventKind::Named("drain".to_owned()),
+                timestamp_ms: 2.0,
+                ..queued_input
+            })
+            .unwrap();
+        assert_eq!(*order.borrow(), ["input", "module"]);
+        assert!(runtime.pending_host_events.borrow().is_empty());
+        assert!(wakes.load(Ordering::Relaxed) >= 3);
+
+        runtime.context.enter(|| subscription.borrow_mut().take());
+    }
+
+    #[test]
+    fn reentrant_measurement_and_resource_completions_report_queued() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(81).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let mut runtime = RuntimeInstance::new(surface, RuntimeWakeHandle::new(|| {}));
+        runtime.mount(|| create_element(ElementTag::View)).unwrap();
+        let ready = MeasurementReady {
+            key: MeasurementKey::new(1).unwrap(),
+            request_id: MeasurementRequestId::new(1).unwrap(),
+            environment_epoch: 1,
+            metrics: MeasurementMetrics {
+                size: MeasuredSize::new(10.0, 10.0),
+                first_baseline: None,
+                last_baseline: None,
+                overflow: None,
+                prepared_content: None,
+            },
+        };
+        let resource = ResourceEvent::Failed {
+            resource: ResourceId::new(1).unwrap(),
+            generation: 1,
+            code: ResourceFailureCode::Decode,
+            diagnostic: Some("failed".to_owned()),
+        };
+
+        runtime.context.enter(|| {
+            assert_eq!(
+                runtime.measurement_ready(&ready).unwrap(),
+                DeferredMeasurementApply::Queued
+            );
+            assert_eq!(
+                runtime.dispatch_resource_event(&resource).unwrap(),
+                ResourceEventApply::Queued
+            );
+            assert_eq!(runtime.pending_host_events.borrow().len(), 2);
+        });
+        runtime.pending_host_events.borrow_mut().clear();
+    }
+
+    #[test]
+    fn stale_explicit_input_target_is_an_unhandled_event() {
+        __reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(82).unwrap(),
+            StyleEnvironment::new(320.0, 100.0, 1.0, 14.0),
+        );
+        let mut runtime = RuntimeInstance::new(surface.clone(), RuntimeWakeHandle::new(|| {}));
+        runtime.mount(|| create_element(ElementTag::View)).unwrap();
+
+        let dispatch = runtime
+            .dispatch_input(&InputEvent {
+                surface: surface.surface(),
+                timestamp_ms: 1.0,
+                kind: InputEventKind::Click,
+                pointer: None,
+                target: Some(NodeId::new(u64::MAX).unwrap()),
+                detail: WhiskerValue::Null,
+            })
+            .unwrap();
+        assert_eq!(dispatch, InputDispatch::default());
+    }
+
+    #[test]
     fn root_remount_replaces_only_the_instance_application_tree() {
         __reset_for_tests();
         let surface = SurfaceRuntime::new(
@@ -293,6 +469,12 @@ pub enum RuntimeEventError {
     Input(RuntimeInputError),
     /// Resource completion validation or generation matching failed.
     Resource(RuntimeResourceError),
+    /// Re-entrant Host callbacks exceeded the bounded per-instance queue.
+    HostEventQueueFull {
+        /// Maximum number of callbacks retained until the current runtime
+        /// turn reaches a safe drain point.
+        limit: usize,
+    },
 }
 
 impl fmt::Display for RuntimeEventError {
@@ -319,12 +501,14 @@ pub enum RuntimeDriveError<MeasurementError, SinkError> {
     Lifecycle(RuntimeLifecycleError),
     /// Measurement, layout, or presentation failed.
     Frame(RuntimeFrameError<MeasurementError, SinkError>),
-    /// A queued Host event failed validation or routing.
-    Input(RuntimeInputError),
+    /// An ordered Host callback failed while being drained at a safe point.
+    HostEvent(RuntimeEventError),
     /// Host viewport values could not be applied to the retained style environment.
     Environment(crate::RuntimeBindingError),
     /// Rust-owned transition sampling could not update the retained scene.
     Motion(crate::RuntimeBindingError),
+    /// Reactive rendering could not commit its retained-scene transaction.
+    Binding(crate::RuntimeBindingError),
 }
 
 impl<MeasurementError: fmt::Debug, SinkError: fmt::Debug> fmt::Display
@@ -354,10 +538,24 @@ pub struct RuntimeInstance {
     wake: RuntimeWakeHandle,
     owner: Option<Owner>,
     lifecycle: RuntimeLifecycle,
-    pending_input: RefCell<VecDeque<InputEvent>>,
+    pending_host_events: RefCell<VecDeque<PendingHostEvent>>,
     activations: RefCell<ActivationRecognizer>,
     wake_enabled: Arc<AtomicBool>,
 }
+
+enum PendingHostEvent {
+    Input(InputEvent),
+    Module {
+        modules: Rc<ModuleHost>,
+        module: String,
+        event: String,
+        payload: WhiskerValue,
+    },
+    Measurement(MeasurementReady),
+    Resource(ResourceEvent),
+}
+
+const HOST_EVENT_QUEUE_CAP: usize = 4096;
 
 #[derive(Clone, Copy, Debug)]
 struct ActivationCandidate {
@@ -471,7 +669,7 @@ impl RuntimeInstance {
             wake,
             owner: None,
             lifecycle: RuntimeLifecycle::Created,
-            pending_input: RefCell::new(VecDeque::new()),
+            pending_host_events: RefCell::new(VecDeque::new()),
             activations: RefCell::new(ActivationRecognizer::default()),
             wake_enabled,
         }
@@ -496,12 +694,16 @@ impl RuntimeInstance {
         let surface = self.surface.clone();
         let (owner, root) = self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
+                surface.begin_mutation_batch();
                 crate::drain_runtime_dispatches();
                 let owner = Owner::new(None);
                 let root = owner.with(application);
                 view::set_root(root);
                 reactive::flush();
                 reactive::flush_mounts();
+                if let Err(error) = surface.finish_mutation_batch() {
+                    surface.defer_binding_error(error);
+                }
                 (owner, root)
             })
         });
@@ -517,6 +719,7 @@ impl RuntimeInstance {
         self.require(RuntimeLifecycle::Running, "pause")?;
         self.wake_enabled.store(false, Ordering::Release);
         self.activations.borrow_mut().clear();
+        self.pending_host_events.borrow_mut().clear();
         let owner = self.owner.expect("a running runtime has a root owner");
         let surface = self.surface.clone();
         self.context.enter(|| {
@@ -560,7 +763,7 @@ impl RuntimeInstance {
         self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || owner.dispose());
         });
-        self.pending_input.borrow_mut().clear();
+        self.pending_host_events.borrow_mut().clear();
         self.activations.borrow_mut().clear();
         self.context.shutdown();
         self.lifecycle = RuntimeLifecycle::Unmounted;
@@ -664,14 +867,7 @@ impl RuntimeInstance {
                 .validate()
                 .map_err(RuntimeInputError::InvalidInput)
                 .map_err(RuntimeEventError::Input)?;
-            const INPUT_CAP: usize = 4096;
-            let mut pending = self.pending_input.borrow_mut();
-            if pending.len() >= INPUT_CAP {
-                return Err(RuntimeEventError::Input(
-                    RuntimeInputError::InputQueueFull { limit: INPUT_CAP },
-                ));
-            }
-            pending.push_back(event.clone());
+            self.enqueue_host_event(PendingHostEvent::Input(event.clone()))?;
             return Ok(InputDispatch {
                 queued: true,
                 ..InputDispatch::default()
@@ -684,8 +880,7 @@ impl RuntimeInstance {
                 let dispatch = self
                     .dispatch_input_active(event)
                     .map_err(RuntimeEventError::Input)?;
-                self.drain_pending_input()
-                    .map_err(RuntimeEventError::Input)?;
+                self.drain_pending_host_events()?;
                 Ok(dispatch)
             })
         })
@@ -713,23 +908,25 @@ impl RuntimeInstance {
                 operation: "dispatch a module event",
             }));
         }
+        if self.context.is_entered() {
+            self.enqueue_host_event(PendingHostEvent::Module {
+                modules: Rc::clone(modules),
+                module: module.to_owned(),
+                event: event.to_owned(),
+                payload,
+            })?;
+            return Ok(true);
+        }
         let surface = self.surface.clone();
         self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
-                with_module_host(modules, || {
-                    if self.lifecycle == RuntimeLifecycle::Running {
-                        crate::drain_runtime_dispatches();
-                    }
-                    surface.begin_mutation_batch();
-                    let dispatched = modules.dispatch_event(module, event, payload);
-                    reactive::flush();
-                    reactive::flush_mounts();
-                    surface
-                        .finish_mutation_batch()
-                        .map_err(RuntimeInputError::Binding)
-                        .map_err(RuntimeEventError::Input)?;
-                    Ok(dispatched)
-                })
+                if self.lifecycle == RuntimeLifecycle::Running {
+                    crate::drain_runtime_dispatches();
+                }
+                let dispatched =
+                    self.dispatch_module_event_active(modules, module, event, payload)?;
+                self.drain_pending_host_events()?;
+                Ok(dispatched)
             })
         })
     }
@@ -751,16 +948,19 @@ impl RuntimeInstance {
                 operation: "apply deferred measurement",
             }));
         }
+        if self.context.is_entered() {
+            self.enqueue_host_event(PendingHostEvent::Measurement(ready.clone()))?;
+            return Ok(DeferredMeasurementApply::Queued);
+        }
         let surface = self.surface.clone();
         let apply = self.context.enter(|| {
             view::with_installed_renderer(surface.renderer(), || {
                 if self.lifecycle == RuntimeLifecycle::Running {
                     crate::drain_runtime_dispatches();
                 }
-                surface
-                    .apply_measurement_ready(ready)
-                    .map_err(RuntimeInputError::Binding)
-                    .map_err(RuntimeEventError::Input)
+                let apply = self.measurement_ready_active(ready)?;
+                self.drain_pending_host_events()?;
+                Ok(apply)
             })
         })?;
         if self.lifecycle == RuntimeLifecycle::Running
@@ -789,10 +989,22 @@ impl RuntimeInstance {
                 operation: "apply resource completion",
             }));
         }
-        let apply = self
-            .surface
-            .apply_resource_event(event)
+        event
+            .validate()
+            .map_err(RuntimeResourceError::InvalidMessage)
             .map_err(RuntimeEventError::Resource)?;
+        if self.context.is_entered() {
+            self.enqueue_host_event(PendingHostEvent::Resource(event.clone()))?;
+            return Ok(ResourceEventApply::Queued);
+        }
+        let surface = self.surface.clone();
+        let apply = self.context.enter(|| {
+            view::with_installed_renderer(surface.renderer(), || {
+                let apply = self.resource_event_active(event)?;
+                self.drain_pending_host_events()?;
+                Ok(apply)
+            })
+        })?;
         if self.lifecycle == RuntimeLifecycle::Running && apply == ResourceEventApply::Applied {
             self.wake.wake();
         }
@@ -825,13 +1037,17 @@ impl RuntimeInstance {
                     .update_environment(environment)
                     .map_err(RuntimeDriveError::Environment)?;
                 crate::drain_runtime_dispatches();
-                self.drain_pending_input()
-                    .map_err(RuntimeDriveError::Input)?;
+                self.drain_pending_host_events()
+                    .map_err(RuntimeDriveError::HostEvent)?;
+                surface.begin_mutation_batch();
                 crate::anim_hook::step(timestamp_ms);
                 reactive::flush();
                 crate::tasks::run_until_stalled();
                 reactive::flush();
                 reactive::flush_mounts();
+                surface
+                    .finish_mutation_batch()
+                    .map_err(RuntimeDriveError::Binding)?;
                 surface
                     .step_motion(timestamp_ms)
                     .map_err(RuntimeDriveError::Motion)?;
@@ -850,14 +1066,16 @@ impl RuntimeInstance {
                     )
                     .map_err(RuntimeDriveError::Frame)?;
                 let recovery = matches!(frame.presentation, Some(ApplyResult::NeedSnapshot { .. }));
-                self.drain_pending_input()
-                    .map_err(RuntimeDriveError::Input)?;
+                let drained_events = self
+                    .drain_pending_host_events()
+                    .map_err(RuntimeDriveError::HostEvent)?;
                 Ok(RuntimeDrive {
                     frame,
                     needs_frame: recovery
+                        || drained_events > 0
                         || reactive::has_pending_work()
                         || surface.has_active_motion()
-                        || !self.pending_input.borrow().is_empty(),
+                        || !self.pending_host_events.borrow().is_empty(),
                 })
             })
         })
@@ -910,16 +1128,110 @@ impl RuntimeInstance {
         }
     }
 
-    fn drain_pending_input(&self) -> Result<(), RuntimeInputError> {
-        const INPUT_CAP: usize = 4096;
-        for _ in 0..INPUT_CAP {
-            let Some(event) = self.pending_input.borrow_mut().pop_front() else {
-                return Ok(());
-            };
-            self.dispatch_input_active(&event)?;
+    fn dispatch_module_event_active(
+        &self,
+        modules: &Rc<ModuleHost>,
+        module: &str,
+        event: &str,
+        payload: WhiskerValue,
+    ) -> Result<bool, RuntimeEventError> {
+        with_module_host(modules, || {
+            self.surface.begin_mutation_batch();
+            let dispatched = modules.dispatch_event(module, event, payload);
+            reactive::flush();
+            reactive::flush_mounts();
+            self.surface
+                .finish_mutation_batch()
+                .map_err(RuntimeInputError::Binding)
+                .map_err(RuntimeEventError::Input)?;
+            Ok(dispatched)
+        })
+    }
+
+    fn measurement_ready_active(
+        &self,
+        ready: &MeasurementReady,
+    ) -> Result<DeferredMeasurementApply, RuntimeEventError> {
+        self.surface
+            .apply_measurement_ready(ready)
+            .map_err(RuntimeInputError::Binding)
+            .map_err(RuntimeEventError::Input)
+    }
+
+    fn resource_event_active(
+        &self,
+        event: &ResourceEvent,
+    ) -> Result<ResourceEventApply, RuntimeEventError> {
+        self.surface
+            .apply_resource_event(event)
+            .map_err(RuntimeEventError::Resource)
+    }
+
+    fn enqueue_host_event(&self, event: PendingHostEvent) -> Result<(), RuntimeEventError> {
+        let mut pending = self.pending_host_events.borrow_mut();
+        if pending.len() >= HOST_EVENT_QUEUE_CAP {
+            return Err(RuntimeEventError::HostEventQueueFull {
+                limit: HOST_EVENT_QUEUE_CAP,
+            });
         }
-        crate::runtime_wake::wake_runtime();
+        pending.push_back(event);
+        drop(pending);
+        self.wake.wake();
         Ok(())
+    }
+
+    fn drain_pending_host_events(&self) -> Result<usize, RuntimeEventError> {
+        if self.pending_host_events.borrow().is_empty() {
+            return Ok(0);
+        }
+        // One re-entrant burst is one retained-scene transaction. Individual
+        // handlers nest into this batch, avoiding one speculative Surface
+        // snapshot per queued callback.
+        self.surface.begin_mutation_batch();
+        let mut drained = 0;
+        let result = (|| {
+            while drained < HOST_EVENT_QUEUE_CAP {
+                let Some(event) = self.pending_host_events.borrow_mut().pop_front() else {
+                    return Ok(());
+                };
+                match event {
+                    PendingHostEvent::Input(event) => self
+                        .dispatch_input_active(&event)
+                        .map_err(RuntimeEventError::Input)
+                        .map(|_| ())?,
+                    PendingHostEvent::Module {
+                        modules,
+                        module,
+                        event,
+                        payload,
+                    } => self
+                        .dispatch_module_event_active(&modules, &module, &event, payload)
+                        .map(|_| ())?,
+                    PendingHostEvent::Measurement(ready) => {
+                        self.measurement_ready_active(&ready).map(|_| ())?
+                    }
+                    PendingHostEvent::Resource(event) => {
+                        self.resource_event_active(&event).map(|_| ())?
+                    }
+                }
+                drained += 1;
+            }
+            self.wake.wake();
+            Ok(())
+        })();
+        let finish = self
+            .surface
+            .finish_mutation_batch()
+            .map_err(RuntimeInputError::Binding)
+            .map_err(RuntimeEventError::Input);
+        match result {
+            Ok(()) => finish?,
+            Err(error) => {
+                let _ = finish;
+                return Err(error);
+            }
+        }
+        Ok(drained)
     }
 
     fn require(

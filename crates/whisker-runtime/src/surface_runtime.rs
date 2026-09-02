@@ -183,11 +183,6 @@ pub enum RuntimeInputError {
         /// Current mounted root.
         root: NodeId,
     },
-    /// Re-entrant Host delivery exceeded the bounded event queue.
-    InputQueueFull {
-        /// Maximum number of retained events.
-        limit: usize,
-    },
     /// No root has been mounted.
     MissingRoot,
     /// Retained scene hit testing failed.
@@ -259,6 +254,9 @@ pub enum ResourceEventApply {
     Applied,
     /// A replacement or release made the completion stale before it arrived.
     Stale,
+    /// A re-entrant Host callback was accepted for ordered delivery at the
+    /// next safe runtime boundary.
+    Queued,
 }
 
 /// Failure while driving layout for a surface populated through `render!`.
@@ -434,7 +432,8 @@ impl SurfaceRuntime {
         self.state.borrow().root
     }
 
-    /// Returns the first rejected runtime mutation without clearing it.
+    /// Returns the first rejected runtime mutation that has not yet been
+    /// reported at a runtime boundary.
     pub fn binding_error(&self) -> Option<RuntimeBindingError> {
         self.state.borrow().error.clone()
     }
@@ -462,6 +461,10 @@ impl SurfaceRuntime {
         self.state.borrow_mut().finish_mutation_batch()
     }
 
+    pub(crate) fn defer_binding_error(&self, error: RuntimeBindingError) {
+        self.state.borrow_mut().defer_binding_error(error);
+    }
+
     /// Re-resolves every retained style against current Host viewport metrics.
     ///
     /// The update is prepared against a cloned surface and committed only after
@@ -478,8 +481,10 @@ impl SurfaceRuntime {
     /// Hit-tests and routes one Host-normalized event through Rust listeners.
     pub fn dispatch_input(&self, event: &InputEvent) -> Result<InputDispatch, RuntimeInputError> {
         let (target, firings, body) = {
-            let state = self.state.borrow();
-            state.ensure_valid().map_err(RuntimeInputError::Binding)?;
+            let mut state = self.state.borrow_mut();
+            state
+                .take_binding_error()
+                .map_err(RuntimeInputError::Binding)?;
             if event.surface != state.surface.surface() {
                 return Err(RuntimeInputError::SurfaceMismatch {
                     expected: state.surface.surface(),
@@ -495,7 +500,10 @@ impl SurfaceRuntime {
                 Some(captured)
             } else if let Some(target) = event.target {
                 if state.surface.node(target).is_none() {
-                    return Err(RuntimeInputError::UnknownTarget { node: target });
+                    // A Host may have queued this event while the preceding
+                    // frame removed its target. Treat that normal race as an
+                    // unhandled event rather than poisoning the surface.
+                    return Ok(InputDispatch::default());
                 }
                 Some(target)
             } else if let Some(pointer) = event.pointer {
@@ -541,7 +549,7 @@ impl SurfaceRuntime {
         ready: &MeasurementReady,
     ) -> Result<DeferredMeasurementApply, RuntimeBindingError> {
         let mut state = self.state.borrow_mut();
-        state.ensure_valid()?;
+        state.take_binding_error()?;
         state
             .surface
             .apply_measurement_ready(ready)
@@ -637,9 +645,9 @@ impl SurfaceRuntime {
     ) -> Result<LayoutProgress, RuntimeLayoutError<Provider::Error>> {
         let (layout, notifications) = {
             let mut state = self.state.borrow_mut();
-            if let Some(error) = state.error.clone() {
-                return Err(RuntimeLayoutError::Binding(error));
-            }
+            state
+                .take_binding_error()
+                .map_err(RuntimeLayoutError::Binding)?;
             state
                 .flush_background_projections()
                 .map_err(RuntimeLayoutError::Binding)?;
@@ -693,7 +701,9 @@ impl SurfaceRuntime {
         RuntimePresentError<Sink::Error>,
     > {
         let mut state = self.state.borrow_mut();
-        state.ensure_valid().map_err(RuntimePresentError::Binding)?;
+        state
+            .take_binding_error()
+            .map_err(RuntimePresentError::Binding)?;
         state
             .flush_background_projections()
             .map_err(RuntimePresentError::Binding)?;
@@ -928,14 +938,10 @@ impl BindingState {
             .mutation_batch
             .take()
             .expect("the outermost mutation batch remains installed");
+        let recorded_error = self.error.take();
         let roots = self.minimal_dirty_roots(batch.dirty_elements);
         if let Err(error) = self.apply_subtrees_now(&roots) {
-            for (element, change) in batch.style_changes {
-                if let Some(entry) = self.elements.get_mut(&element) {
-                    entry.specified = change.previous;
-                }
-            }
-            self.record(Err(error.clone()));
+            Self::restore_style_changes(&mut self.elements, batch.style_changes);
             return Err(error);
         }
         let snapshots = batch
@@ -955,10 +961,20 @@ impl BindingState {
         if !snapshots.is_empty()
             && let Err(error) = self.configure_style_motion(snapshots)
         {
-            self.record(Err(error.clone()));
             return Err(error);
         }
-        Ok(())
+        recorded_error.map_or(Ok(()), Err)
+    }
+
+    fn restore_style_changes(
+        elements: &mut HashMap<Element, BoundElement>,
+        changes: Vec<(Element, PendingStyleChange)>,
+    ) {
+        for (element, change) in changes {
+            if let Some(entry) = elements.get_mut(&element) {
+                entry.specified = change.previous;
+            }
+        }
     }
 
     fn mark_subtree_dirty(&mut self, element: Element) {
@@ -991,9 +1007,9 @@ impl BindingState {
             .collect()
     }
 
-    fn ensure_valid(&self) -> Result<(), RuntimeBindingError> {
-        match &self.error {
-            Some(error) => Err(error.clone()),
+    fn take_binding_error(&mut self) -> Result<(), RuntimeBindingError> {
+        match self.error.take() {
+            Some(error) => Err(error),
             None => Ok(()),
         }
     }
@@ -1003,6 +1019,12 @@ impl BindingState {
             Ok(()) => crate::runtime_wake::wake_runtime(),
             Err(error) if self.error.is_none() => self.error = Some(error),
             Err(_) => {}
+        }
+    }
+
+    fn defer_binding_error(&mut self, error: RuntimeBindingError) {
+        if self.error.is_none() {
+            self.error = Some(error);
         }
     }
 
@@ -1093,7 +1115,7 @@ impl BindingState {
         &mut self,
         environment: StyleEnvironment,
     ) -> Result<bool, RuntimeBindingError> {
-        self.ensure_valid()?;
+        self.take_binding_error()?;
         // Validate even an empty surface before accepting Host-owned metrics.
         resolve_style(&SpecifiedStyle::new(), None, environment)?;
         if environment == self.environment {
