@@ -208,6 +208,11 @@ impl SceneProjection {
         self.nodes.get(&node)
     }
 
+    #[cfg(test)]
+    fn allocation_tracking_entries(&self) -> usize {
+        self.allocated_nodes.len()
+    }
+
     /// Validates and atomically applies a packet.
     ///
     /// Revision or epoch drift on a delta returns [`ApplyResult::NeedSnapshot`]
@@ -924,6 +929,24 @@ mod tests {
         assert_eq!(error, ValidationError::DuplicateNode { node: child });
         assert_eq!(scene.revision(), 2);
         assert!(scene.node(child).is_none());
+    }
+
+    #[test]
+    fn retired_node_tracking_is_constant_space() {
+        let (mut scene, _, _) = initial_tree();
+        let mut operations = Vec::new();
+        for raw in 3..259 {
+            let retired = node(raw);
+            operations.push(Operation::CreateNode {
+                node: retired,
+                element_type: element_type(),
+            });
+            operations.push(Operation::DeleteNode { node: retired });
+        }
+        apply_next(&mut scene, operations).expect("monotonic allocation sequence");
+
+        assert_eq!(scene.node_count(), 2);
+        assert_eq!(scene.allocation_tracking_entries(), 1);
     }
 
     #[test]
