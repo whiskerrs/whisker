@@ -5,8 +5,8 @@
 // `PlayerInner::drop` removes it.
 //
 // Playback state flows back through a single `statusChanged` event whose
-// payload carries `playerId`, so the Rust side's global dispatch table
-// can route it to the matching handle.
+// payload carries `playerId`, so the owning Rust runtime can route it
+// to the matching handle.
 
 package rs.whisker.modules.audio
 

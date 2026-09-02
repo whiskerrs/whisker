@@ -643,13 +643,13 @@ mod tests {
             .find(|module| module.package == "whisker-svg")
             .unwrap();
         let desktop = svg.rust_host(ModulePlatform::Desktop).unwrap();
-        assert_eq!(desktop.package, "whisker-svg-desktop-host");
+        assert_eq!(desktop.package, "whisker-svg-desktop");
         assert!(matches!(
             &desktop.source,
             ResolvedRustHostSource::Path(path) if path.ends_with("whisker-svg/desktop")
         ));
         let web = svg.rust_host(ModulePlatform::Web).unwrap();
-        assert_eq!(web.package, "whisker-svg-web-host");
+        assert_eq!(web.package, "whisker-svg-web");
         assert!(matches!(
             &web.source,
             ResolvedRustHostSource::Path(path) if path.ends_with("whisker-svg/web")
