@@ -166,15 +166,27 @@ impl<F: Fn(ImageEvent) + 'static> From<F> for ImageCallback {
 // outer `image` component mounts it, because a `module_element`'s
 // event props are all required and these two must not be.
 #[doc(hidden)]
-#[whisker::module_element("Image")]
+#[whisker::module_element(
+    name = "whisker-image:Image",
+    measurement = None,
+)]
 pub fn native_image(
     src: Signal<String>,
-    mode: Signal<ImageMode>,
+    mode: Signal<String>,
     headers: Signal<String>,
     style: whisker::Style,
     on_load: ImageEvent,
     on_error: ImageEvent,
 ) {
+}
+
+/// Element schema exported for generated Host bootstrap.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        [native_image_schema::element_provider()],
+    )
 }
 
 /// `whisker-image:Image` — a networked image.
@@ -226,11 +238,12 @@ pub fn image(
     on_error: Option<ImageCallback>,
 ) -> Element {
     let style_prop: whisker::Style = style.clone().unwrap_or_default();
+    let mode_prop = computed(move || mode.get().as_str().to_owned());
     let load = on_load.clone();
     let error = on_error.clone();
     NativeImage::builder()
         .src(src)
-        .mode(mode)
+        .mode(mode_prop)
         .headers(headers)
         .style(style_prop)
         .on_load(move |event: ImageEvent| {
@@ -275,6 +288,15 @@ pub fn prefetch(urls: &[String], headers: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exports_the_native_image_element_schema() {
+        let definition = __whisker_element_module_definition();
+
+        assert_eq!(definition.module_name, "whisker-image");
+        assert_eq!(definition.elements.len(), 1);
+        assert_eq!(definition.elements[0].schema.name, "whisker-image:Image");
+    }
 
     #[test]
     fn an_image_needs_only_a_src() {

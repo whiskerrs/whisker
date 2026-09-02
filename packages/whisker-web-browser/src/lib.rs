@@ -39,6 +39,15 @@ use std::sync::{Arc, Mutex};
 use whisker::WhiskerValue;
 use whisker::module;
 
+/// Empty visual schema paired with the service-only Web/Desktop browser module.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        std::iter::empty::<whisker::ElementProviderMetadata>(),
+    )
+}
+
 /// Outcome of [`open_auth_session_async`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum AuthSessionResult {

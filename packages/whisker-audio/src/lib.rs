@@ -89,3 +89,13 @@ pub use plugin::*;
 mod runtime;
 #[cfg(feature = "runtime")]
 pub use runtime::*;
+
+/// Empty visual schema paired with the service-only Web audio Host module.
+#[cfg(feature = "runtime")]
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        std::iter::empty::<whisker::ElementProviderMetadata>(),
+    )
+}

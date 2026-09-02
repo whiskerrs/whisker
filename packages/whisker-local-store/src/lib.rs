@@ -76,6 +76,15 @@
 
 use whisker::platform_module::{WhiskerModuleError, WhiskerValue};
 
+/// Empty visual schema paired with the service-only Web/Desktop store module.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        std::iter::empty::<whisker::ElementProviderMetadata>(),
+    )
+}
+
 /// Typed Rust API for the `WhiskerLocalStore` platform module.
 ///
 /// Hand-written wrapper over the framework primitive: each method

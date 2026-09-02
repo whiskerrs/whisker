@@ -170,6 +170,15 @@ fn decode_payload(value: WhiskerValue) -> Option<f64> {
 
 static SLOT: OnceLock<Slot> = OnceLock::new();
 
+/// Empty visual schema paired with the service-only Web keyboard Host module.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        std::iter::empty::<whisker::ElementProviderMetadata>(),
+    )
+}
+
 /// Locally-scoped wrapper asserting main-thread-only access to
 /// `inner`. Same pattern (and safety contract) as
 /// `whisker-safe-area`'s `MainThreadOnly`: every access path runs on

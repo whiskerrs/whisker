@@ -68,6 +68,15 @@ use whisker::{ElementRef, Signal};
 )]
 pub fn video(src: Signal<String>, style: whisker::Style) {}
 
+/// Element schema exported for generated Web Host bootstrap.
+#[doc(hidden)]
+pub fn __whisker_element_module_definition() -> whisker::ElementModuleDefinition {
+    whisker::ElementModuleDefinition::new(
+        env!("CARGO_PKG_NAME"),
+        [video_schema::element_provider()],
+    )
+}
+
 /// Typed imperative handle for a mounted `Video` element.
 ///
 /// Wraps the `ElementRef` (element-id handle) bound on mount when

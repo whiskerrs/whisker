@@ -171,6 +171,16 @@ jobs:
         with:
           tool: wasm-pack
       - run: cargo xtask host-conformance web
+      - run: cargo xtask rust-host-link-test web
+
+  rust-host-link-test-desktop:
+    name: Rust Host module link (Desktop)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask rust-host-link-test desktop
 
   host-conformance-android:
     name: Host conformance (Android)
