@@ -1326,11 +1326,27 @@ mod tests {
             .unwrap();
         assert_eq!(coordinator.cache.len(), 1);
 
+        coordinator
+            .set_spec(
+                node(3),
+                element(),
+                Some(spec(MeasurementKind::Text, PendingMeasurePolicy::Block)),
+            )
+            .unwrap();
+        coordinator.begin_pass();
+        assert_eq!(
+            coordinator.measure(node(3), constraints(10.0)),
+            LayoutSize::new(5.0, 4.0)
+        );
+        assert!(coordinator.finish_pass().unwrap().requests.is_empty());
+
         coordinator.remove_node(node(1));
         assert_eq!(coordinator.cache.len(), 1);
         assert!(!coordinator.consumer_keys.contains_key(&node(1)));
 
         coordinator.remove_node(node(2));
+        assert_eq!(coordinator.cache.len(), 1);
+        coordinator.remove_node(node(3));
         assert!(coordinator.cache.is_empty());
         assert!(coordinator.consumer_keys.is_empty());
     }
