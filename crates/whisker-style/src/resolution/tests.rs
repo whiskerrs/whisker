@@ -1317,10 +1317,21 @@ fn missing_composite_variables_invalidate_custom_and_registered_declarations() {
             color: component_variable(&missing),
         })
     };
+    let box_shadow = || {
+        StyleValue::BoxShadows(vec![crate::BoxShadowValue {
+            offset_x: LengthValue::Zero.into(),
+            offset_y: LengthValue::Zero.into(),
+            blur_radius: LengthValue::Zero.into(),
+            spread_radius: LengthValue::Zero.into(),
+            color: component_variable(&missing),
+            inset: false,
+        }])
+    };
     let resolved = resolve_style(
         &SpecifiedStyle::new()
             .push_custom(nested.clone(), shadow())
-            .push(StyleProperty::TextShadow, shadow()),
+            .push(StyleProperty::TextShadow, shadow())
+            .push(StyleProperty::BoxShadow, box_shadow()),
         None,
         StyleEnvironment::default(),
     )
@@ -1333,6 +1344,7 @@ fn missing_composite_variables_invalidate_custom_and_registered_declarations() {
             .is_none()
     );
     assert!(resolved.inherited_for_children().text_shadow().is_none());
+    assert!(resolved.computed().paint().box_shadows.is_empty());
 }
 
 #[test]
@@ -1508,6 +1520,103 @@ fn typed_calc_variable_resolution_covers_arithmetic_and_operand_types() {
         resolved.computed().layout().size.width,
         crate::ComputedSizeValue::Auto
     );
+}
+
+#[test]
+fn invalid_calc_after_custom_property_substitution_drops_only_that_declaration() {
+    let scalar = CustomPropertyName::new("--scalar").unwrap();
+    let invalid_width = LengthPercentageValue::Calc(Box::new(CalcExpression::Add(
+        Box::new(CalcExpression::Value(Box::new(
+            LengthPercentageValue::Length(px(10.0)),
+        ))),
+        Box::new(CalcExpression::Variable(CustomPropertyReference::new(
+            scalar.clone(),
+        ))),
+    )));
+    let resolved = resolve_style(
+        &SpecifiedStyle::new()
+            .push_custom(scalar, StyleValue::Number(number(2.0)))
+            .push(
+                StyleProperty::Width,
+                StyleValue::Size(crate::SizeValue::LengthPercentage(invalid_width)),
+            )
+            .push(
+                StyleProperty::Height,
+                StyleValue::Size(crate::SizeValue::LengthPercentage(
+                    LengthPercentageValue::Length(px(24.0)),
+                )),
+            ),
+        None,
+        StyleEnvironment::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolved.computed().layout().size.width,
+        crate::ComputedSizeValue::Auto
+    );
+    assert_eq!(
+        resolved.computed().layout().size.height,
+        crate::ComputedSizeValue::Value(crate::ComputedLengthPercentage::new(24.0, 0.0))
+    );
+}
+
+#[test]
+fn custom_properties_materialize_inside_box_shadow_and_clip_path() {
+    let length = CustomPropertyName::new("--length").unwrap();
+    let color = CustomPropertyName::new("--color").unwrap();
+    let clip_coordinate = || {
+        LengthPercentageValue::Calc(Box::new(CalcExpression::Variable(
+            CustomPropertyReference::new(length.clone()),
+        )))
+    };
+    let resolved = resolve_style(
+        &SpecifiedStyle::new()
+            .push_custom(length.clone(), StyleValue::Length(px(6.0)))
+            .push_custom(
+                color.clone(),
+                StyleValue::Color(ColorValue::Named("red".into())),
+            )
+            .push(
+                StyleProperty::BoxShadow,
+                StyleValue::BoxShadows(vec![crate::BoxShadowValue {
+                    offset_x: component_variable(&length),
+                    offset_y: component_variable(&length),
+                    blur_radius: component_variable(&length),
+                    spread_radius: component_variable(&length),
+                    color: component_variable(&color),
+                    inset: false,
+                }]),
+            )
+            .push(
+                StyleProperty::ClipPath,
+                StyleValue::ClipPath(crate::ClipPathValue::Shape {
+                    reference_box: crate::ClipBoxValue::Border,
+                    shape: crate::ClipShapeValue::Circle {
+                        radius: clip_coordinate(),
+                        center_x: clip_coordinate(),
+                        center_y: clip_coordinate(),
+                    },
+                }),
+            ),
+        None,
+        StyleEnvironment::default(),
+    )
+    .unwrap();
+
+    let shadow = &resolved.computed().paint().box_shadows[0];
+    assert_eq!(shadow.offset_x.get(), 6.0);
+    assert_eq!(shadow.offset_y.get(), 6.0);
+    assert_eq!(shadow.blur_radius.get(), 6.0);
+    assert_eq!(shadow.spread_radius.get(), 6.0);
+    assert_eq!(shadow.color, ColorValue::Named("red".into()));
+    assert!(matches!(
+        resolved.computed().paint().clip_path.as_ref().map(|clip| &clip.shape),
+        Some(crate::ComputedClipShape::Circle { radius, center })
+            if *radius == crate::ComputedLengthPercentage::new(6.0, 0.0)
+                && center.x == crate::ComputedLengthPercentage::new(6.0, 0.0)
+                && center.y == crate::ComputedLengthPercentage::new(6.0, 0.0)
+    ));
 }
 
 #[test]

@@ -647,9 +647,10 @@ pub fn resolve_style(
     let mut effective = specified.clone();
     loop {
         match resolve_style_once(&effective, parent, environment) {
-            Err(StyleResolutionError::InvalidPropertyValue(property))
-                if variable_properties.remove(&property) =>
-            {
+            Err(
+                StyleResolutionError::InvalidPropertyValue(property)
+                | StyleResolutionError::InvalidCalculation(property),
+            ) if variable_properties.remove(&property) => {
                 effective = without_registered_property(&effective, property);
             }
             result => return result,

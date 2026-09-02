@@ -1,8 +1,9 @@
 //! Internal traversal of typed values that contain length-percentage leaves.
 
 use crate::{
-    BackgroundImageValue, BackgroundSizeValue, ColorValue, ComponentValue, CustomPropertyReference,
-    GradientValue, GridMaxTrackSizingValue, GridMinTrackSizingValue, GridTemplateComponentValue,
+    BackgroundImageValue, BackgroundSizeValue, ClipPathCommandValue, ClipPathValue, ClipPointValue,
+    ClipShapeValue, ColorValue, ComponentValue, CustomPropertyReference, GradientValue,
+    GridMaxTrackSizingValue, GridMinTrackSizingValue, GridTemplateComponentValue,
     LengthPercentageAutoValue, LengthPercentageValue, LengthValue, OffsetPathValue,
     RadialGradientValue, SizeValue, StyleNumber, StyleValue, TextDecorationValue, TextShadowValue,
     TransformFunctionValue,
@@ -36,6 +37,15 @@ pub(crate) fn visit_component_variables<'a>(
         }
         StyleValue::BackdropFilter(crate::BackdropFilterValue::Blur(radius)) => {
             visit_component(radius, visit);
+        }
+        StyleValue::BoxShadows(shadows) => {
+            for shadow in shadows {
+                visit_component(&shadow.offset_x, visit);
+                visit_component(&shadow.offset_y, visit);
+                visit_component(&shadow.blur_radius, visit);
+                visit_component(&shadow.spread_radius, visit);
+                visit_component(&shadow.color, visit);
+            }
         }
         StyleValue::Transform(transform) => {
             for function in &transform.0 {
@@ -80,6 +90,15 @@ pub(crate) fn try_map_component_variables(
         }
         StyleValue::BackdropFilter(crate::BackdropFilterValue::Blur(radius)) => {
             map_length_component(radius, resolve)?;
+        }
+        StyleValue::BoxShadows(shadows) => {
+            for shadow in shadows {
+                map_length_component(&mut shadow.offset_x, resolve)?;
+                map_length_component(&mut shadow.offset_y, resolve)?;
+                map_length_component(&mut shadow.blur_radius, resolve)?;
+                map_length_component(&mut shadow.spread_radius, resolve)?;
+                map_color_component(&mut shadow.color, resolve)?;
+            }
         }
         StyleValue::Transform(transform) => {
             for function in &mut transform.0 {
@@ -358,6 +377,7 @@ pub(crate) fn visit_length_percentages<'a>(
             visit(&origin.horizontal);
             visit(&origin.vertical);
         }
+        StyleValue::ClipPath(path) => visit_clip_path(path, visit),
         StyleValue::OffsetPath(path) => visit_offset_path(path, visit),
         StyleValue::GridTemplate(template) => {
             for component in &template.components {
@@ -500,6 +520,83 @@ fn visit_offset_path<'a>(
     }
 }
 
+fn visit_clip_path<'a>(path: &'a ClipPathValue, visit: &mut dyn FnMut(&'a LengthPercentageValue)) {
+    let ClipPathValue::Shape { shape, .. } = path else {
+        return;
+    };
+    match shape {
+        ClipShapeValue::Inset { offsets, radii } => {
+            for offset in offsets {
+                visit(offset);
+            }
+            if let Some(radii) = radii {
+                for radius in radii {
+                    visit(&radius.horizontal);
+                    visit(&radius.vertical);
+                }
+            }
+        }
+        ClipShapeValue::Circle {
+            radius,
+            center_x,
+            center_y,
+        } => {
+            visit(radius);
+            visit(center_x);
+            visit(center_y);
+        }
+        ClipShapeValue::Ellipse {
+            radius_x,
+            radius_y,
+            center_x,
+            center_y,
+        } => {
+            visit(radius_x);
+            visit(radius_y);
+            visit(center_x);
+            visit(center_y);
+        }
+        ClipShapeValue::Path { commands, .. } => {
+            for command in commands {
+                visit_clip_path_command(command, visit);
+            }
+        }
+    }
+}
+
+fn visit_clip_path_command<'a>(
+    command: &'a ClipPathCommandValue,
+    visit: &mut dyn FnMut(&'a LengthPercentageValue),
+) {
+    match command {
+        ClipPathCommandValue::MoveTo(point) | ClipPathCommandValue::LineTo(point) => {
+            visit_clip_point(point, visit);
+        }
+        ClipPathCommandValue::QuadraticTo { control, end } => {
+            visit_clip_point(control, visit);
+            visit_clip_point(end, visit);
+        }
+        ClipPathCommandValue::CubicTo {
+            control_1,
+            control_2,
+            end,
+        } => {
+            visit_clip_point(control_1, visit);
+            visit_clip_point(control_2, visit);
+            visit_clip_point(end, visit);
+        }
+        ClipPathCommandValue::Close => {}
+    }
+}
+
+fn visit_clip_point<'a>(
+    point: &'a ClipPointValue,
+    visit: &mut dyn FnMut(&'a LengthPercentageValue),
+) {
+    visit(&point.x);
+    visit(&point.y);
+}
+
 fn visit_grid_track<'a>(
     track: &'a crate::GridTrackSizingValue,
     visit: &mut dyn FnMut(&'a LengthPercentageValue),
@@ -559,6 +656,7 @@ fn try_visit_length_percentages_mut(
             map_one(&mut origin.horizontal, map)?;
             map_one(&mut origin.vertical, map)?;
         }
+        StyleValue::ClipPath(path) => map_clip_path(path, map)?,
         StyleValue::OffsetPath(path) => map_offset_path(path, map)?,
         StyleValue::GridTemplate(template) => {
             for component in &mut template.components {
@@ -705,6 +803,88 @@ fn map_offset_path(
     Some(())
 }
 
+fn map_clip_path(
+    path: &mut ClipPathValue,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+) -> Option<()> {
+    let ClipPathValue::Shape { shape, .. } = path else {
+        return Some(());
+    };
+    match shape {
+        ClipShapeValue::Inset { offsets, radii } => {
+            for offset in offsets {
+                map_one(offset, map)?;
+            }
+            if let Some(radii) = radii {
+                for radius in radii {
+                    map_one(&mut radius.horizontal, map)?;
+                    map_one(&mut radius.vertical, map)?;
+                }
+            }
+        }
+        ClipShapeValue::Circle {
+            radius,
+            center_x,
+            center_y,
+        } => {
+            map_one(radius, map)?;
+            map_one(center_x, map)?;
+            map_one(center_y, map)?;
+        }
+        ClipShapeValue::Ellipse {
+            radius_x,
+            radius_y,
+            center_x,
+            center_y,
+        } => {
+            map_one(radius_x, map)?;
+            map_one(radius_y, map)?;
+            map_one(center_x, map)?;
+            map_one(center_y, map)?;
+        }
+        ClipShapeValue::Path { commands, .. } => {
+            for command in commands {
+                map_clip_path_command(command, map)?;
+            }
+        }
+    }
+    Some(())
+}
+
+fn map_clip_path_command(
+    command: &mut ClipPathCommandValue,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+) -> Option<()> {
+    match command {
+        ClipPathCommandValue::MoveTo(point) | ClipPathCommandValue::LineTo(point) => {
+            map_clip_point(point, map)?;
+        }
+        ClipPathCommandValue::QuadraticTo { control, end } => {
+            map_clip_point(control, map)?;
+            map_clip_point(end, map)?;
+        }
+        ClipPathCommandValue::CubicTo {
+            control_1,
+            control_2,
+            end,
+        } => {
+            map_clip_point(control_1, map)?;
+            map_clip_point(control_2, map)?;
+            map_clip_point(end, map)?;
+        }
+        ClipPathCommandValue::Close => {}
+    }
+    Some(())
+}
+
+fn map_clip_point(
+    point: &mut ClipPointValue,
+    map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
+) -> Option<()> {
+    map_one(&mut point.x, map)?;
+    map_one(&mut point.y, map)
+}
+
 fn map_grid_track(
     track: &mut crate::GridTrackSizingValue,
     map: &mut dyn FnMut(&LengthPercentageValue) -> Option<LengthPercentageValue>,
@@ -727,9 +907,10 @@ mod tests {
     use crate::{
         BackgroundAttachmentValue, BackgroundBoxValue, BackgroundLayerValue,
         BackgroundPositionValue, BackgroundRepeatModeValue, BackgroundRepeatValue, BackgroundValue,
-        BorderRadiusValue, ColorValue, CustomPropertyName, GradientStopValue,
-        GridRepetitionCountValue, GridTemplateRepetitionValue, GridTemplateValue,
-        GridTrackSizingValue, InsetPathValue, StyleNumber, TransformOriginValue, TransformValue,
+        BorderRadiusValue, BoxShadowValue, ClipBoxValue, ClipFillRuleValue, ColorValue,
+        CustomPropertyName, GradientStopValue, GridRepetitionCountValue,
+        GridTemplateRepetitionValue, GridTemplateValue, GridTrackSizingValue, InsetPathValue,
+        StyleNumber, TransformOriginValue, TransformValue,
     };
 
     fn lp(value: f32) -> LengthPercentageValue {
@@ -873,6 +1054,17 @@ mod tests {
                 &name,
             ))),
             1,
+        );
+        assert_maps_every_component(
+            StyleValue::BoxShadows(vec![BoxShadowValue {
+                offset_x: component_reference(&name),
+                offset_y: component_reference(&name),
+                blur_radius: component_reference(&name),
+                spread_radius: component_reference(&name),
+                color: component_reference(&name),
+                inset: false,
+            }]),
+            5,
         );
         assert_maps_every_component(
             StyleValue::Transform(TransformValue(vec![
@@ -1137,6 +1329,82 @@ mod tests {
             }))),
             12,
         );
+    }
+
+    #[test]
+    fn clip_path_walk_covers_every_shape_and_command_coordinate() {
+        let point = || ClipPointValue {
+            x: lp(1.0),
+            y: lp(1.0),
+        };
+        let clip = |shape| {
+            StyleValue::ClipPath(ClipPathValue::Shape {
+                reference_box: ClipBoxValue::Border,
+                shape,
+            })
+        };
+        assert_maps_every_leaf(
+            clip(ClipShapeValue::Inset {
+                offsets: [lp(1.0), lp(1.0), lp(1.0), lp(1.0)],
+                radii: Some([
+                    BorderRadiusValue {
+                        horizontal: lp(1.0),
+                        vertical: lp(1.0),
+                    },
+                    BorderRadiusValue {
+                        horizontal: lp(1.0),
+                        vertical: lp(1.0),
+                    },
+                    BorderRadiusValue {
+                        horizontal: lp(1.0),
+                        vertical: lp(1.0),
+                    },
+                    BorderRadiusValue {
+                        horizontal: lp(1.0),
+                        vertical: lp(1.0),
+                    },
+                ]),
+            }),
+            12,
+        );
+        assert_maps_every_leaf(
+            clip(ClipShapeValue::Circle {
+                radius: lp(1.0),
+                center_x: lp(1.0),
+                center_y: lp(1.0),
+            }),
+            3,
+        );
+        assert_maps_every_leaf(
+            clip(ClipShapeValue::Ellipse {
+                radius_x: lp(1.0),
+                radius_y: lp(1.0),
+                center_x: lp(1.0),
+                center_y: lp(1.0),
+            }),
+            4,
+        );
+        assert_maps_every_leaf(
+            clip(ClipShapeValue::Path {
+                fill_rule: ClipFillRuleValue::NonZero,
+                commands: vec![
+                    ClipPathCommandValue::MoveTo(point()),
+                    ClipPathCommandValue::LineTo(point()),
+                    ClipPathCommandValue::QuadraticTo {
+                        control: point(),
+                        end: point(),
+                    },
+                    ClipPathCommandValue::CubicTo {
+                        control_1: point(),
+                        control_2: point(),
+                        end: point(),
+                    },
+                    ClipPathCommandValue::Close,
+                ],
+            }),
+            14,
+        );
+        assert_maps_every_leaf(StyleValue::ClipPath(ClipPathValue::None), 0);
     }
 
     #[test]
