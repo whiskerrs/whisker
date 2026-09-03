@@ -427,6 +427,7 @@ fn install_pointer_listeners(root: &web_sys::Element) -> Result<(), WebError> {
                     application
                         .modules
                         .with_host(|| {
+                            let presentation = application.frames.take_presentation_updates();
                             dispatch_pointer(
                                 &application.runtime,
                                 InputPoint {
@@ -434,6 +435,7 @@ fn install_pointer_listeners(root: &web_sys::Element) -> Result<(), WebError> {
                                     y: bounds.top() as f32,
                                 },
                                 input,
+                                &presentation,
                             )
                         })
                         .map(|_| ())

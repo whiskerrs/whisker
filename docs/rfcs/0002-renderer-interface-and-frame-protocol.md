@@ -120,8 +120,8 @@ Removing Lynx requires a boundary that:
 - applying geometry, paint, clipping, transforms, content, and accessibility
   changes to those objects;
 - native text shaping, line breaking, glyph metrics, and intrinsic measurement;
-- platform input collection, hit-test results, focus, IME, and accessibility
-  actions;
+- platform input collection, native-origin targets, focus, IME, and
+  accessibility actions;
 - viewport, scale, safe-area, font-environment, and lifecycle notifications;
 - platform resource decoding where selected by the element/resource contract;
 - the VSync or `requestAnimationFrame` callback;
@@ -671,8 +671,10 @@ wake the Host. The closure runs only when the Host next enters that instance on
 the UI thread. Neither mechanism gives a worker direct access to the retained
 scene or UI-thread reactive arena.
 
-Pause closes the wake gate without destroying state: completions stay queued
-and cannot spin the Host until resume explicitly schedules a drive. Permanent
+Pause closes the wake gate without destroying state. Typed Host completions may
+still update retained runtime state, but they do not wake the Host and reactive
+effects remain deferred under the paused owner. Closures posted through the
+dispatcher remain queued until resume explicitly schedules a drive. Permanent
 unmount disposes the owner, local futures, queued input, and reactive/view
 state, then closes the dispatcher so handles retained by workers reject new
 posts instead of retaining callbacks after teardown. Host callbacks that occur

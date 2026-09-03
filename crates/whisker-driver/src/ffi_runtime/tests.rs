@@ -7,6 +7,28 @@ use whisker_engine::whisker_protocol::{
 };
 
 #[test]
+fn empty_snapshot_uses_a_null_operation_pointer() {
+    let packet = FramePacket {
+        header: FrameHeader {
+            version: ProtocolVersion::CURRENT,
+            surface: SurfaceId::new(1).unwrap(),
+            scene_epoch: 1,
+            frame_id: 1,
+            base_revision: 0,
+            target_revision: 1,
+            viewport_epoch: 1,
+            mode: FrameMode::Snapshot,
+        },
+        operations: Vec::new(),
+    };
+
+    let frame = MobileFrameOwned::new(&packet).unwrap();
+
+    assert_eq!(frame.value.operation_count, 0);
+    assert!(frame.value.operations.is_null());
+}
+
+#[test]
 fn mobile_pointer_input_decodes_without_host_specific_types() {
     let event = mobile_pointer_event(42.5, 0, 7, 1, 24.0, 16.0, 1, -1).unwrap();
     assert_eq!(event.kind, InputEventKind::PointerDown);

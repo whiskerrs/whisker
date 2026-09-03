@@ -42,6 +42,14 @@ func whiskerViewTick(
     whisker_view_tick(handle, timestampMs, width, height, scale)
 }
 
+func whiskerViewPause(_ handle: UnsafeMutableRawPointer?) -> Bool {
+    whisker_view_pause(handle)
+}
+
+func whiskerViewResume(_ handle: UnsafeMutableRawPointer?) -> Bool {
+    whisker_view_resume(handle)
+}
+
 func whiskerViewDestroy(_ handle: UnsafeMutableRawPointer?) {
     whisker_view_destroy(handle)
 }
@@ -63,11 +71,14 @@ func whiskerViewDispatchPointer(
     _ x: Float,
     _ y: Float,
     _ buttons: UInt32,
-    _ changedButton: Int16
+    _ changedButton: Int16,
+    _ scrollNodes: UnsafePointer<UInt64>?,
+    _ scrollOffsets: UnsafePointer<Float>?,
+    _ scrollCount: Int
 ) -> Bool {
     whisker_view_dispatch_pointer(
         handle, timestampMs, event, pointerID, pointerKind,
-        x, y, buttons, changedButton
+        x, y, buttons, changedButton, scrollNodes, scrollOffsets, scrollCount
     )
 }
 
@@ -106,19 +117,35 @@ func makeWhiskerPointerDispatch(
 @discardableResult
 func dispatchWhiskerPointer(
     handle: UnsafeMutableRawPointer,
-    input: WhiskerPointerDispatch
+    input: WhiskerPointerDispatch,
+    scrollOffsets: [UInt64: CGPoint]
 ) -> Bool {
-    return whiskerViewDispatchPointer(
-        handle,
-        input.timestampMs,
-        input.event,
-        input.pointerID,
-        input.pointerKind,
-        input.x,
-        input.y,
-        input.buttons,
-        input.changedButton
-    )
+    let nodes = Array(scrollOffsets.keys)
+    var values = [Float]()
+    values.reserveCapacity(nodes.count * 2)
+    for node in nodes {
+        let offset = scrollOffsets[node] ?? .zero
+        values.append(Float(offset.x))
+        values.append(Float(offset.y))
+    }
+    return nodes.withUnsafeBufferPointer { nodeBuffer in
+        values.withUnsafeBufferPointer { valueBuffer in
+            whiskerViewDispatchPointer(
+                handle,
+                input.timestampMs,
+                input.event,
+                input.pointerID,
+                input.pointerKind,
+                input.x,
+                input.y,
+                input.buttons,
+                input.changedButton,
+                nodeBuffer.baseAddress,
+                valueBuffer.baseAddress,
+                nodes.count
+            )
+        }
+    }
 }
 
 func whiskerViewDispatchModuleEvent(
