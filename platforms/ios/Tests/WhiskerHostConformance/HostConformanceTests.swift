@@ -296,6 +296,35 @@ final class HostConformanceTests: XCTestCase {
         )
         XCTAssertTrue(childNode.superview === rootNode.sceneChildrenHost())
 
+        var invalidInsertIndex = [
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 4, member: 1),
+            operation(tag: UInt32(WHISKER_OP_INSERT), parent: 1, child: 4, index: 2),
+        ]
+        XCTAssertEqual(
+            present(
+                &invalidInsertIndex,
+                mode: UInt8(WHISKER_FRAME_DELTA),
+                baseRevision: 1,
+                targetRevision: 2
+            ),
+            UInt8(WHISKER_APPLY_REJECTED)
+        )
+        XCTAssertTrue(childNode.superview === rootNode.sceneChildrenHost())
+
+        var invalidMoveIndex = [
+            operation(tag: UInt32(WHISKER_OP_MOVE), parent: 1, child: 2, index: 1)
+        ]
+        XCTAssertEqual(
+            present(
+                &invalidMoveIndex,
+                mode: UInt8(WHISKER_FRAME_DELTA),
+                baseRevision: 1,
+                targetRevision: 2
+            ),
+            UInt8(WHISKER_APPLY_REJECTED)
+        )
+        XCTAssertTrue(childNode.superview === rootNode.sceneChildrenHost())
+
         var invalidLayout = WhiskerMobileLayoutGeometry()
         invalidLayout.border.width = .nan
         withUnsafePointer(to: &invalidLayout) { payload in
@@ -315,6 +344,31 @@ final class HostConformanceTests: XCTestCase {
                 UInt8(WHISKER_APPLY_REJECTED)
             )
         }
+    }
+
+    func testEmptySnapshotAcceptsNullOperationPointer() {
+        let root = UIView()
+        let scene = HostScene(
+            root: root,
+            resources: HostResourceStore(),
+            logicalBounds: { .zero },
+            emitElementEvent: { _, _, _ in },
+            updateScrollOffset: { _, _ in },
+            removeScrollOffset: { _ in }
+        )
+        var frame = WhiskerMobileFrame()
+        frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+        frame.protocol_major = 1
+        frame.mode = UInt8(WHISKER_FRAME_SNAPSHOT)
+        frame.scene_epoch = 1
+        frame.target_revision = 1
+        frame.operations = nil
+        frame.operation_count = 0
+        var response = WhiskerMobileApplyResponse()
+
+        XCTAssertTrue(scene.applyFrame(frame, response: &response))
+        XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
+        XCTAssertEqual(response.revision, 1)
     }
 
     func testRuntimeOwnedPointerCaptureOperationsAreAcceptedByUIKit() {

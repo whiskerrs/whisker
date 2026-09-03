@@ -42,7 +42,7 @@ final class HostScene {
     ) -> Bool {
         guard frame.abi_major == UInt16(WHISKER_MOBILE_ABI_MAJOR),
               frame.protocol_major == 1,
-              let operations = frame.operations else {
+              frame.operation_count == 0 || frame.operations != nil else {
             response.status = UInt8(WHISKER_APPLY_REJECTED)
             response.revision = revision
             return true
@@ -59,7 +59,10 @@ final class HostScene {
             return true
         }
 
-        let values = Array(UnsafeBufferPointer(start: operations, count: frame.operation_count))
+        let values = Array(UnsafeBufferPointer(
+            start: frame.operations,
+            count: frame.operation_count
+        ))
         guard validate(values, snapshot: frame.mode == UInt8(WHISKER_FRAME_SNAPSHOT)) else {
             response.status = UInt8(WHISKER_APPLY_REJECTED)
             response.revision = revision
@@ -106,6 +109,12 @@ final class HostScene {
     private func validate(_ operations: [WhiskerMobileOperation], snapshot: Bool) -> Bool {
         var existing = snapshot ? Set<UInt64>() : Set(nodes.keys)
         var stagedParents = snapshot ? [:] : parents
+        var stagedChildCounts: [UInt64: Int] = [:]
+        if !snapshot {
+            for parent in stagedParents.values {
+                stagedChildCounts[parent, default: 0] += 1
+            }
+        }
         var elementTypes: [UInt64: Int] = snapshot ? [:] : Dictionary(
             uniqueKeysWithValues: nodes.compactMap { id, node in
                 node.mountedElement.map { (id, $0.registration.elementType) }
@@ -130,13 +139,19 @@ final class HostScene {
                 }
                 existing.subtract(removed)
                 removed.forEach { elementTypes.removeValue(forKey: $0) }
+                if let parent = stagedParents[operation.node] {
+                    stagedChildCounts[parent, default: 1] -= 1
+                }
+                removed.forEach { stagedChildCounts.removeValue(forKey: $0) }
                 let removedSet = Set(removed)
                 stagedParents = stagedParents.filter {
                     !removedSet.contains($0.key) && !removedSet.contains($0.value)
                 }
             case UInt32(WHISKER_OP_INSERT):
+                let childCount = stagedChildCounts[operation.parent, default: 0]
                 guard existing.contains(operation.parent), existing.contains(operation.child),
                       stagedParents[operation.child] == nil,
+                      Int(operation.index) <= childCount,
                       !isStagedDescendant(
                           operation.parent,
                           of: operation.child,
@@ -147,11 +162,16 @@ final class HostScene {
                         .childPolicy.acceptsElements == true
                 else { return false }
                 stagedParents[operation.child] = operation.parent
+                stagedChildCounts[operation.parent] = childCount + 1
             case UInt32(WHISKER_OP_REMOVE):
                 guard stagedParents[operation.child] == operation.parent else { return false }
                 stagedParents.removeValue(forKey: operation.child)
+                guard stagedChildCounts[operation.parent, default: 0] > 0 else { return false }
+                stagedChildCounts[operation.parent, default: 0] -= 1
             case UInt32(WHISKER_OP_MOVE):
-                guard stagedParents[operation.child] == operation.parent else { return false }
+                guard stagedParents[operation.child] == operation.parent,
+                      Int(operation.index) < stagedChildCounts[operation.parent, default: 0]
+                else { return false }
             case UInt32(WHISKER_OP_LAYOUT):
                 guard existing.contains(operation.node),
                       let geometry = operation.payload?
@@ -565,7 +585,7 @@ final class HostScene {
         child.removeFromSuperview()
         parents[childID] = parentID
         let childrenHost = parent.sceneChildrenHost()
-        childrenHost.insertSubview(child, at: min(max(index, 0), childrenHost.subviews.count))
+        childrenHost.insertSubview(child, at: index)
     }
 
     private func detachChild(parent parentID: UInt64, child childID: UInt64) {

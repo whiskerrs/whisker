@@ -1041,6 +1041,14 @@ impl Scene {
     /// delta is discarded, while retained state and queued commands remain.
     pub fn require_snapshot(&mut self) -> Result<(), SceneError> {
         self.pending = None;
+        // A snapshot rebuilds the Host presentation from protocol state. Scroll
+        // offsets are Host-owned transient state and are deliberately absent
+        // from snapshot operations, so the rebuilt native views start at zero.
+        // Reset the Rust mirror at the same recovery boundary to keep hit
+        // testing aligned with the pixels the Host presents.
+        for node in self.nodes.values_mut() {
+            node.host_scroll_offset = [0.0; 2];
+        }
         if !self.needs_snapshot {
             self.scene_epoch = self
                 .scene_epoch
@@ -1828,6 +1836,9 @@ mod tests {
     #[test]
     fn need_snapshot_rotates_epoch_and_rebuilds_current_state() {
         let (mut scene, _, root, child) = initialized_scene();
+        scene
+            .update_host_scroll_offset(root, [0.0, 42.0])
+            .expect("Host scroll state");
         scene.set_opacity(root, 0.5).expect("delta");
         let delta = prepared(&mut scene);
         let mut empty_renderer = RecordingRenderer::new(surface());
@@ -1839,6 +1850,7 @@ mod tests {
         );
 
         scene.require_snapshot().expect("recovery snapshot");
+        assert_eq!(scene.node(root).unwrap().host_scroll_offset(), [0.0; 2]);
         assert_eq!(scene.scene_epoch(), 2);
         scene.require_snapshot().expect("already snapshot mode");
         assert_eq!(scene.scene_epoch(), 2);
