@@ -87,7 +87,7 @@ pub fn run(args: NewModuleArgs) -> Result<()> {
         .to_string();
     let module_class = format!("{tag}Module");
     let view_class = format!("{tag}View");
-    let element_name = format!("{}/{}", args.name.replace('-', "."), tag);
+    let element_name = format!("{}:{tag}", args.name);
 
     let v = Vars {
         crate_name: &args.name,
@@ -493,7 +493,9 @@ impl WhiskerModule for {tag}Module {{
     type Definition = ModuleDefinition;
 
     fn definition() -> Self::Definition {{
-        ModuleDefinition::new().view(DesktopViewDefinition::new("{element_name}", || ()))
+        ModuleDefinition::new()
+            .name("{element_name}")
+            .view(DesktopViewDefinition::new("{element_name}", || ()))
     }}
 }}
 "#,
@@ -533,11 +535,13 @@ impl WhiskerModule for {tag}Module {{
     type Definition = ModuleDefinition;
 
     fn definition() -> Self::Definition {{
-        ModuleDefinition::new().view(WebViewDefinition::new(
-            "{element_name}",
-            |document, _| document.create_element("div"),
-            Clone::clone,
-        ))
+        ModuleDefinition::new()
+            .name("{element_name}")
+            .view(WebViewDefinition::new(
+                "{element_name}",
+                |document, _| document.create_element("div"),
+                Clone::clone,
+            ))
     }}
 }}
 "#,
@@ -596,6 +600,7 @@ import WhiskerModule    // Module, ModuleDefinition, DSL
 public final class {module_class}: Module {{
     public override func definition() -> ModuleDefinition {{
         ModuleDefinition {{
+            Name("{tag}")
             View("{element_name}", {view_class}.self) {{
                 // Declare Prop / Command entries here, e.g.:
                 //   Prop("title") {{ (view: {view_class}, value: WhiskerValue) in
@@ -610,6 +615,7 @@ public final class {module_class}: Module {{
 }}
 "#,
         element_name = v.element_name,
+        tag = v.tag,
         module_class = v.module_class,
         view_class = v.view_class,
     )
@@ -662,6 +668,7 @@ import rs.whisker.runtime.WhiskerValue
 @WhiskerModule
 class {module_class} : Module() {{
     override fun definition() = ModuleDefinition {{
+        Name("{tag}")
         View("{element_name}", {view_class}::class.java) {{
             // Declare Prop / Command entries here, e.g.:
             //   Prop("title") {{ view: {view_class}, value: WhiskerValue ->
@@ -675,6 +682,7 @@ class {module_class} : Module() {{
 }}
 "#,
         element_name = v.element_name,
+        tag = v.tag,
         ns = v.ns,
         module_class = v.module_class,
         view_class = v.view_class,
@@ -908,7 +916,7 @@ mod tests {
             assert!(module.join(path).is_file(), "missing {path}");
         }
         let common = std::fs::read_to_string(module.join("src/lib.rs")).unwrap();
-        assert!(common.contains("whisker.switch/Switch"));
+        assert!(common.contains("whisker-switch:Switch"));
         assert!(!common.contains("whisker_desktop"));
         assert!(!common.contains("whisker_web"));
         let manifest = std::fs::read_to_string(module.join("Cargo.toml")).unwrap();
@@ -917,8 +925,26 @@ mod tests {
         assert!(manifest.contains("desktop = { manifest = \"desktop/Cargo.toml\" }"));
         let desktop = std::fs::read_to_string(module.join("desktop/Cargo.toml")).unwrap();
         assert!(desktop.contains("name = \"whisker-switch-desktop\""));
+        let desktop_source = std::fs::read_to_string(module.join("desktop/src/lib.rs")).unwrap();
+        assert!(desktop_source.contains("whisker-switch:Switch"));
+        assert!(desktop_source.contains(".name(\"whisker-switch:Switch\")"));
         let web = std::fs::read_to_string(module.join("web/Cargo.toml")).unwrap();
         assert!(web.contains("name = \"whisker-switch-web\""));
+        let web_source = std::fs::read_to_string(module.join("web/src/lib.rs")).unwrap();
+        assert!(web_source.contains("whisker-switch:Switch"));
+        assert!(web_source.contains(".name(\"whisker-switch:Switch\")"));
+        let android = std::fs::read_to_string(
+            module
+                .join("android/src/main/kotlin/rs/whisker/modules/whisker_switch/SwitchModule.kt"),
+        )
+        .unwrap();
+        assert!(android.contains("Name(\"Switch\")"));
+        assert!(android.contains("View(\"whisker-switch:Switch\""));
+        let ios =
+            std::fs::read_to_string(module.join("ios/Sources/WhiskerSwitch/SwitchModule.swift"))
+                .unwrap();
+        assert!(ios.contains("Name(\"Switch\")"));
+        assert!(ios.contains("View(\"whisker-switch:Switch\""));
         std::fs::remove_dir_all(root).ok();
     }
 }

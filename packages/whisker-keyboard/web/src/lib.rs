@@ -3,7 +3,7 @@
 use whisker_web::wasm_bindgen::JsCast;
 use whisker_web::{ModuleDefinition, WhiskerModule, WhiskerValue};
 
-const MODULE_NAME: &str = "Keyboard";
+const MODULE_NAME: &str = "whisker-keyboard:Keyboard";
 const CHANGED_EVENT: &str = "keyboardChanged";
 
 struct KeyboardModule;

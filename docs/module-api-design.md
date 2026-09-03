@@ -92,7 +92,7 @@ In words:
 
 Every shape below uses one of two Rust-side macros:
 
-- `#[whisker::module_element(name = "package/Name", ...)]` — declares a
+- `#[whisker::module_element(name = "package:Name", ...)]` — declares a
   **Host view** element and its portable schema for `render!`. The element
   name is explicit, stable, and versionless. Shapes 1 and 2 use it.
 - `whisker::module!("Name")` — resolves a **function module** handle
@@ -139,7 +139,7 @@ public final class LocalStoreModule: Module {
 
 ```rust
 #[whisker::module_element(
-    name = "whisker.image/Image",
+    name = "whisker-image:Image",
     measurement = ReplacedContent,
 )]
 pub fn image(src: Signal<String>, mode: Signal<ImageMode>, style: whisker::Style) {}
@@ -177,7 +177,7 @@ there's nothing to observe.
 
 ```rust
 #[whisker::module_element(
-    name = "whisker.video/Video",
+    name = "whisker-video:Video",
     measurement = None,
     commands = [("play", Null), ("pause", Null), ("seek", Float)],
 )]

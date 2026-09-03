@@ -510,7 +510,7 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// ```ignore
 /// #[whisker::module_element(
-///     name = "example.ui/Hello",
+///     name = "example-ui:Hello",
 ///     measurement = None,
 /// )]
 /// pub fn hello(style: whisker::Style) {}

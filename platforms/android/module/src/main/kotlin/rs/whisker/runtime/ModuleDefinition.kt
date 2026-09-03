@@ -66,7 +66,7 @@ public data class WhiskerNameComponent(public val value: String) :
     WhiskerDefinitionComponent
 
 /**
- * `View("package/Element", Foo::class.java) { ... }` — registers a native View class
+ * `View("<crate>:Element", Foo::class.java) { ... }` — registers a native View class
  * + its explicit Rust element identity and inner DSL block (Prop / Command / Events). The class is
  * type-erased to `Class<*>` so the parent struct isn't generic;
  * the concrete class is typically a [WhiskerUI] subclass.

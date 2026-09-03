@@ -22,7 +22,7 @@ internal enum ModuleDefinitionSamples {
         ModuleDefinition {
             Name("Video")
 
-            View("sample/Video", FakeVideoView.self) {
+            View("sample-module:Video", FakeVideoView.self) {
                 Prop("src") { (view: FakeVideoView, value: WhiskerValue) in
                     view.setSrc(value.asString ?? "")
                 }

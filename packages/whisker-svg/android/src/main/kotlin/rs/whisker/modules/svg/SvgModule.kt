@@ -19,7 +19,7 @@ import rs.whisker.runtime.ModuleDefinition
 class SvgModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Svg")
-        View("whisker.svg/Svg", WhiskerSvgView::class.java) {
+        View("whisker-svg:Svg", WhiskerSvgView::class.java) {
             Prop("display-list") { view: WhiskerSvgView, value ->
                 view.setDisplayList(value.asString() ?: "")
             }
