@@ -54,6 +54,7 @@ import rs.whisker.runtime.paint.parseNamedColor
 import rs.whisker.runtime.paint.rgba
 import rs.whisker.runtime.paint.resolveClipPath
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 internal data class HostSceneOperation(
     val tag: Int,
@@ -452,15 +453,15 @@ internal class HostScene(
         node.x = (node.geometry.x - if (customHost) parentNode!!.geometry.contentX else 0f) * density
         node.y = (node.geometry.y - if (customHost) parentNode!!.geometry.contentY else 0f) * density
         node.layoutParams = (node.layoutParams ?: ViewGroup.LayoutParams(0, 0)).apply {
-            width = (node.geometry.width * density).toInt().coerceAtLeast(0)
-            height = (node.geometry.height * density).toInt().coerceAtLeast(0)
+            width = (node.geometry.width * density).roundToInt().coerceAtLeast(0)
+            height = (node.geometry.height * density).roundToInt().coerceAtLeast(0)
         }
         node.mountedElement?.view?.let { content ->
             content.x = node.geometry.contentX * density
             content.y = node.geometry.contentY * density
             content.layoutParams = (content.layoutParams ?: ViewGroup.LayoutParams(0, 0)).apply {
-                width = (node.geometry.contentWidth * density).toInt().coerceAtLeast(0)
-                height = (node.geometry.contentHeight * density).toInt().coerceAtLeast(0)
+                width = (node.geometry.contentWidth * density).roundToInt().coerceAtLeast(0)
+                height = (node.geometry.contentHeight * density).roundToInt().coerceAtLeast(0)
             }
         }
         node.paint?.let { applyPaint(node, it) }
