@@ -153,24 +153,18 @@ let whiskerIOSBootstrap: WhiskerBootstrapHost = { data, bootstrap in
 
 let whiskerIOSPresentFrame: WhiskerPresentFrame = { data, frame, response in
     guard let data, let frame, let response else { return false }
+    precondition(Thread.isMainThread, "Whisker frame presentation must run on the UI thread")
     let view = Unmanaged<WhiskerView>.fromOpaque(data).takeUnretainedValue()
-    if Thread.isMainThread {
-        return view.applyFrame(frame.pointee, response: &response.pointee)
-    }
-    return DispatchQueue.main.sync {
-        view.applyFrame(frame.pointee, response: &response.pointee)
-    }
+    return view.applyFrame(frame.pointee, response: &response.pointee)
 }
 
 let whiskerIOSResourceCommand: WhiskerResourceCommandHost = { data, command in
     guard let data, let command, let decoded = hostResourceCommand(command.pointee) else {
         return false
     }
+    precondition(Thread.isMainThread, "Whisker resource commands must run on the UI thread")
     let view = Unmanaged<WhiskerView>.fromOpaque(data).takeUnretainedValue()
-    if Thread.isMainThread {
-        return view.applyResourceCommand(decoded)
-    }
-    return DispatchQueue.main.sync { view.applyResourceCommand(decoded) }
+    return view.applyResourceCommand(decoded)
 }
 
 let whiskerIOSInvokeModule: WhiskerInvokeModule = {
