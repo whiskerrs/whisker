@@ -141,9 +141,7 @@ func whiskerTextParagraphStyle(
     case 3: .right
     default: .center
     }
-    paragraph.lineBreakMode = request.overflow != 0
-        ? .byTruncatingTail
-        : (request.word_break == 1 ? .byCharWrapping : .byWordWrapping)
+    paragraph.lineBreakMode = request.word_break == 1 ? .byCharWrapping : .byWordWrapping
     if request.line_height > 0 {
         paragraph.minimumLineHeight = CGFloat(request.line_height)
         paragraph.maximumLineHeight = CGFloat(request.line_height)

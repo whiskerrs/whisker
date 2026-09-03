@@ -39,11 +39,140 @@ private final class FailingElementModule: Module {
     }
 }
 
+private final class ZOrderCountingView: UIView {
+    var reorderCount = 0
+
+    override func bringSubviewToFront(_ view: UIView) {
+        reorderCount += 1
+        super.bringSubviewToFront(view)
+    }
+}
+
 @MainActor
 final class HostConformanceTests: XCTestCase {
     override class func setUp() {
         super.setUp()
         WhiskerModuleKernel.install(BuiltInElementModule())
+    }
+
+    func testBootstrapRejectsUnknownEnumDiscriminants() {
+        func withStringRef<T>(_ value: String, _ body: (WhiskerStringRef) -> T) -> T {
+            let bytes = Array(value.utf8CString)
+            return bytes.withUnsafeBufferPointer { buffer in
+                body(WhiskerStringRef(
+                    ptr: UnsafePointer(buffer.baseAddress!),
+                    len: bytes.count - 1
+                ))
+            }
+        }
+
+        func bind(childPolicy: UInt8, measurement: UInt8) -> Bool {
+            withStringRef("test:View") { name in
+                var registration = WhiskerMobileElementRegistration()
+                registration.element_type = 1
+                registration.child_policy = childPolicy
+                registration.measurement = measurement
+                registration.name = name
+                return withUnsafePointer(to: &registration) { registrations in
+                    var bootstrap = WhiskerMobileBootstrap()
+                    bootstrap.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                    bootstrap.protocol_major = 1
+                    bootstrap.registrations = registrations
+                    bootstrap.registration_count = 1
+                    return HostElementBootstrap.bind(bootstrap)
+                }
+            }
+        }
+
+        XCTAssertFalse(bind(childPolicy: .max, measurement: 0))
+        XCTAssertFalse(bind(childPolicy: 0, measurement: .max))
+
+        withStringRef("test:View") { registrationName in
+            withStringRef("value") { memberName in
+                var member = WhiskerMobileMemberRegistration()
+                member.id = 1
+                member.value_kind = .max
+                member.name = memberName
+                withUnsafePointer(to: &member) { properties in
+                    var registration = WhiskerMobileElementRegistration()
+                    registration.element_type = 1
+                    registration.name = registrationName
+                    registration.properties = properties
+                    registration.property_count = 1
+                    withUnsafePointer(to: &registration) { registrations in
+                        var bootstrap = WhiskerMobileBootstrap()
+                        bootstrap.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                        bootstrap.protocol_major = 1
+                        bootstrap.registrations = registrations
+                        bootstrap.registration_count = 1
+                        XCTAssertFalse(HostElementBootstrap.bind(bootstrap))
+                    }
+                }
+            }
+        }
+    }
+
+    func testPaintOnlyFrameDoesNotReprojectRootZOrder() {
+        let root = ZOrderCountingView()
+        let scene = HostScene(
+            root: root,
+            resources: HostResourceStore(),
+            logicalBounds: { CGRect(x: 0, y: 0, width: 100, height: 100) },
+            emitElementEvent: { _, _, _ in },
+            updateScrollOffset: { _, _ in },
+            removeScrollOffset: { _ in }
+        )
+        let registration = WhiskerElementRegistration(
+            elementType: 1,
+            name: WhiskerBuiltInElements.viewName,
+            childPolicy: .elements,
+            measurement: .none
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
+
+        func present(
+            _ operations: inout [WhiskerMobileOperation],
+            mode: UInt8,
+            baseRevision: UInt64,
+            targetRevision: UInt64
+        ) {
+            operations.withUnsafeMutableBufferPointer { buffer in
+                var frame = WhiskerMobileFrame()
+                frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                frame.protocol_major = 1
+                frame.mode = mode
+                frame.scene_epoch = 1
+                frame.base_revision = baseRevision
+                frame.target_revision = targetRevision
+                frame.operations = UnsafePointer(buffer.baseAddress!)
+                frame.operation_count = buffer.count
+                var response = WhiskerMobileApplyResponse()
+                XCTAssertTrue(scene.applyFrame(frame, response: &response))
+                XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
+            }
+        }
+
+        var snapshot = [
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 1, member: 1),
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 2, member: 1),
+        ]
+        present(
+            &snapshot,
+            mode: UInt8(WHISKER_FRAME_SNAPSHOT),
+            baseRevision: 0,
+            targetRevision: 1
+        )
+        root.reorderCount = 0
+
+        var delta = [operation(tag: UInt32(WHISKER_OP_OPACITY), node: 1, scalar: 0.5)]
+        present(
+            &delta,
+            mode: UInt8(WHISKER_FRAME_DELTA),
+            baseRevision: 1,
+            targetRevision: 2
+        )
+
+        XCTAssertEqual(root.reorderCount, 0)
     }
 
     func testThrowingModulePropertyDisablesOnlyTheMountedElement() throws {
@@ -242,7 +371,7 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(response.revision, 1)
     }
 
-    func testPointerCaptureOperationsReachTheUIKitSurface() {
+    func testRuntimeOwnedPointerCaptureOperationsAreAcceptedByUIKit() {
         let view = WhiskerView(frame: .zero)
         let registration = WhiskerElementRegistration(
             elementType: 1,
@@ -273,6 +402,16 @@ final class HostConformanceTests: XCTestCase {
             XCTAssertTrue(view.applyFrame(frame, response: &response))
             XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
         }
+    }
+
+    func testEllipsisMeasurementKeepsMultilineWrapping() {
+        var request = WhiskerMobileMeasureRequest()
+        request.overflow = 1
+        request.word_break = 0
+
+        let paragraph = whiskerTextParagraphStyle(request, widthBasis: 80)
+
+        XCTAssertEqual(paragraph.lineBreakMode, .byWordWrapping)
     }
 
     func testModuleEventsReachOnlyObservingSurfacesAndLifecycleIsAggregated() {
@@ -531,6 +670,42 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(presentedOffset, CGPoint(x: 0, y: 120))
     }
 
+    func testHiddenScrollViewSuppressesOnlyItsNativeIndicators() throws {
+        let registration = WhiskerElementRegistration(
+            elementType: 3,
+            name: WhiskerBuiltInElements.scrollViewName,
+            childPolicy: .elements,
+            measurement: .none,
+            properties: [
+                WhiskerPropertyBinding(id: 1, name: "scroll-orientation", value: .string),
+                WhiskerPropertyBinding(id: 2, name: "item-snap", value: .map),
+                WhiskerPropertyBinding(id: 3, name: "scroll-snap-stop", value: .string),
+                WhiskerPropertyBinding(id: 4, name: "enable-scroll", value: .bool),
+            ],
+            events: [WhiskerEventBinding(id: 1, name: "scroll", detail: .map)],
+            commands: [
+                WhiskerCommandBinding(id: 1, name: "scrollTo", arguments: .map),
+                WhiskerCommandBinding(id: 2, name: "scrollBy", arguments: .map),
+            ]
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
+        let mounted = try XCTUnwrap(WhiskerElementRegistry.mount(3) { _, _ in })
+        let scrollView = try XCTUnwrap(mounted.view as? WhiskerScrollContainerView)
+        let node = WhiskerNodeView(element: registration.name)
+        node.mountedElement = mounted
+
+        node.setWhiskerVisibility(false)
+
+        XCTAssertFalse(scrollView.isHidden)
+        XCTAssertFalse(scrollView.showsHorizontalScrollIndicator)
+        XCTAssertFalse(scrollView.showsVerticalScrollIndicator)
+
+        scrollView.setScrollOrientation("horizontal")
+        node.setWhiskerVisibility(true)
+        XCTAssertTrue(scrollView.showsHorizontalScrollIndicator)
+        XCTAssertFalse(scrollView.showsVerticalScrollIndicator)
+    }
+
     func testHorizontalScrollViewSettlesOnNearestCarouselItem() {
         let scrollView = WhiskerScrollContainerView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 180)
@@ -601,6 +776,24 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertTrue(scrollView.layer.mask != nil)
         XCTAssertNil(scrollView.contentView.layer.mask)
         XCTAssertEqual(scrollView.layer.mask?.frame.minY, scrollView.bounds.minY)
+    }
+
+    func testOneAxisOverflowClipTracksAncestorScrollOffset() throws {
+        let root = UIView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let scrollView = UIScrollView(frame: root.bounds)
+        scrollView.contentSize = CGSize(width: 100, height: 400)
+        root.addSubview(scrollView)
+
+        let node = WhiskerNodeView(element: WhiskerBuiltInElements.viewName)
+        scrollView.addSubview(node)
+        node.setLayoutFrame(CGRect(x: 0, y: 150, width: 80, height: 40))
+        node.setOverflowClip(horizontal: true, vertical: false)
+        let mask = try XCTUnwrap(node.sceneChildrenHost().layer.mask)
+        let initialY = mask.frame.minY
+
+        scrollView.contentOffset = CGPoint(x: 0, y: 60)
+
+        XCTAssertEqual(mask.frame.minY, initialY + 60, accuracy: 0.001)
     }
 
     func testUIKitTouchTypesMapToProtocolPointerKinds() {
@@ -898,6 +1091,21 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(
             try awaitResourceState(in: service, id: 8, generation: 1),
             .failed
+        )
+    }
+
+    func testResourceServiceDecodesJPEGDataURLs() throws {
+        let png = try fixturePNGData()
+        let image = try XCTUnwrap(UIImage(data: png))
+        let jpeg = try XCTUnwrap(image.jpegData(compressionQuality: 0.8))
+        let url = "data:image/jpeg;charset=binary;BASE64,\(jpeg.base64EncodedString())"
+        let service = HostResourceService(store: HostResourceStore())
+
+        XCTAssertTrue(service.load(id: 9, generation: 1, source: .url(url)))
+
+        XCTAssertEqual(
+            try awaitResourceState(in: service, id: 9, generation: 1),
+            .ready(width: 2, height: 2)
         )
     }
 
