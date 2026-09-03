@@ -10,7 +10,8 @@ use whisker_protocol::{
     ElementMeasurement, ElementPropertySchema, ElementRegistration, ElementValueKind, EventId,
     FrameHeader, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
     MeasureTextOverflow, MeasureTextWrap, PaintCorners, PaintEdges, PaintLengthPercentage,
-    PropertyId, ProtocolVersion, TextMeasurePayload, TextMeasureStyle, TextPaint,
+    PreparedContentId, PropertyId, ProtocolVersion, TextMeasurePayload, TextMeasureStyle,
+    TextPaint,
 };
 
 fn element_type(name: &str) -> ElementTypeId {
@@ -108,6 +109,13 @@ fn text() -> TextContent {
         },
         paint: TextPaint::default(),
         prepared_content: None,
+    }
+}
+
+fn prepared_text(id: u64) -> TextContent {
+    TextContent {
+        prepared_content: PreparedContentId::new(id),
+        ..text()
     }
 }
 
@@ -1246,6 +1254,82 @@ fn text_content_operation_is_dispatched_by_registered_element_type() {
         scene.paint_commands().as_slice(),
         [PaintCommand::Box { .. }, PaintCommand::Text { node, .. }] if *node == root
     ));
+}
+
+#[test]
+fn prepared_text_references_follow_committed_scene_content() {
+    let node = id(1);
+    let first = PreparedContentId::new(11).unwrap();
+    let second = PreparedContentId::new(12).unwrap();
+    let rejected = PreparedContentId::new(13).unwrap();
+    let mut scene = scene(SurfaceId::new(1).unwrap());
+
+    scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode {
+                    node,
+                    element_type: element_type(whisker::TEXT_ELEMENT_NAME),
+                },
+                Operation::SetText {
+                    node,
+                    content: prepared_text(first.get()),
+                },
+            ],
+        ))
+        .unwrap();
+    let first_revision = scene.prepared_content_revision();
+    assert!(scene.references_prepared_content(first));
+
+    scene
+        .present(&packet(
+            FrameMode::Delta,
+            1,
+            2,
+            vec![Operation::SetText {
+                node,
+                content: prepared_text(second.get()),
+            }],
+        ))
+        .unwrap();
+    assert!(scene.prepared_content_revision() > first_revision);
+    assert!(!scene.references_prepared_content(first));
+    assert!(scene.references_prepared_content(second));
+
+    assert!(
+        scene
+            .present(&packet(
+                FrameMode::Delta,
+                2,
+                3,
+                vec![
+                    Operation::SetText {
+                        node,
+                        content: prepared_text(rejected.get()),
+                    },
+                    Operation::SetOpacity {
+                        node,
+                        opacity: f32::NAN,
+                    },
+                ],
+            ))
+            .is_err()
+    );
+    assert!(!scene.references_prepared_content(rejected));
+    assert!(scene.references_prepared_content(second));
+
+    scene
+        .present(&packet(
+            FrameMode::Delta,
+            2,
+            3,
+            vec![Operation::DeleteNode { node }],
+        ))
+        .unwrap();
+    assert!(!scene.references_prepared_content(second));
 }
 
 #[test]

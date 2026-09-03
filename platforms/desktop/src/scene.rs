@@ -10,8 +10,8 @@ use whisker_protocol::{
     BoxClip, BoxPaint, ClipShape, Cursor, ElementTypeId, FillRule, FrameMode, FramePacket,
     HitTestBehavior, ImageRepeat, LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip,
     PaintBox, PaintColor, PaintCoordinate, PaintImage, PaintPosition, PathCommand, PointerId,
-    RadialGradientExtent, ResourceId, SceneProjection, SurfaceId, TextContent, Transform,
-    ValidationError, Visibility, VisualEffects, WhiskerValue,
+    PreparedContentId, RadialGradientExtent, ResourceId, SceneProjection, SurfaceId, TextContent,
+    Transform, ValidationError, Visibility, VisualEffects, WhiskerValue,
 };
 
 use crate::DesktopTextInputEvent;
@@ -343,6 +343,8 @@ pub(crate) struct DesktopScene {
     pending_events: Arc<Mutex<Vec<DesktopProviderEvent>>>,
     event_wake: RuntimeWakeHandle,
     raster_resources: HashSet<ResourceId>,
+    prepared_content_references: HashMap<PreparedContentId, usize>,
+    prepared_content_revision: u64,
 }
 
 impl fmt::Display for DesktopPresentError {
