@@ -10,7 +10,7 @@ import java.util.ArrayDeque
 import rs.whisker.runtime.WhiskerChildPolicy
 import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerView
-import rs.whisker.runtime.WhiskerElementRegistry
+import rs.whisker.runtime.WhiskerElementBindings
 import rs.whisker.runtime.WhiskerTextContent
 import rs.whisker.runtime.WhiskerFontStyle
 import rs.whisker.runtime.WhiskerFontFeature
@@ -79,6 +79,7 @@ internal class HostScene(
     private val context: Context,
     private val emitElementEvent: (Long, String, WhiskerValue) -> Unit,
     private val rasterResources: HostRasterResourceStore,
+    private val elements: WhiskerElementBindings,
 ) {
     private val nodes = LinkedHashMap<Long, HostNode>()
     private val parents = HashMap<Long, Long>()
@@ -176,7 +177,7 @@ internal class HostScene(
             OP_CREATE -> {
                 if (
                     operation.node == 0L || !existing.add(operation.node) ||
-                    WhiskerElementRegistry.registration(operation.member) == null
+                    elements.registration(operation.member) == null
                 ) return false
                 elementTypes[operation.node] = operation.member
             }
@@ -189,7 +190,7 @@ internal class HostScene(
             }
             OP_INSERT -> {
                 val policy = elementTypes[operation.parent]
-                    ?.let(WhiskerElementRegistry::registration)?.childPolicy
+                    ?.let(elements::registration)?.childPolicy
                 if (
                     operation.parent !in existing || operation.child !in existing ||
                     stagedParents.containsKey(operation.child) ||
@@ -230,7 +231,7 @@ internal class HostScene(
             OP_TEXT, OP_TEXT_STYLE -> {
                 val values = operation.numbers ?: return false
                 val registration = elementTypes[operation.node]
-                    ?.let(WhiskerElementRegistry::registration) ?: return false
+                    ?.let(elements::registration) ?: return false
                 if (
                     operation.node !in existing || operation.text == null ||
                     values.size < 37 || operation.names?.size ?: 0 < 3 ||
@@ -248,21 +249,21 @@ internal class HostScene(
             }
             OP_PROPERTY -> if (
                 operation.node !in existing || operation.value == null ||
-                !WhiskerElementRegistry.hasProperty(
+                !elements.hasProperty(
                     elementTypes[operation.node] ?: return false,
                     operation.member,
                 )
             ) return false
             OP_CLEAR_PROPERTY -> if (
                 operation.node !in existing ||
-                !WhiskerElementRegistry.hasProperty(
+                !elements.hasProperty(
                     elementTypes[operation.node] ?: return false,
                     operation.member,
                 )
             ) return false
             OP_COMMAND -> if (
                 operation.node !in existing || operation.value == null ||
-                !WhiskerElementRegistry.hasCommand(
+                !elements.hasCommand(
                     elementTypes[operation.node] ?: return false,
                     operation.member,
                 )
@@ -280,7 +281,7 @@ internal class HostScene(
         when (operation.tag) {
             OP_CREATE -> {
                 val registration = requireNotNull(
-                    WhiskerElementRegistry.registration(operation.member),
+                    elements.registration(operation.member),
                 )
                 val eventSink: rs.whisker.runtime.WhiskerElementEventSink = { event, detail ->
                     emitElementEvent(id, event.name, detail)
@@ -288,7 +289,7 @@ internal class HostScene(
                 val mounted = presentationPool[operation.member]?.pollFirst()?.also {
                     it.prepareForReuse(eventSink)
                 } ?: requireNotNull(
-                    WhiskerElementRegistry.mount(operation.member, context, eventSink),
+                    elements.mount(operation.member, context, eventSink),
                 )
                 val node = HostNode(context, registration.name, root as? WhiskerView)
                 node.mountedElement = mounted

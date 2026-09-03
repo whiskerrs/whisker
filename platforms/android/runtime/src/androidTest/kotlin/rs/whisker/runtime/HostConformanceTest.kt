@@ -180,8 +180,20 @@ class HostConformanceTest {
             .getInstrumentation()
             .runOnMainSync {
                 val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-                // Bind the built-in declarations used by the direct production HostScene below.
-                Driver(context, "pointer-capture-parent")
+                val elements = WhiskerElementRegistry.newBindings()
+                check(
+                    WhiskerElementRegistry.bind(
+                        elements,
+                        listOf(
+                            WhiskerElementRegistration(
+                                1,
+                                WhiskerBuiltInElements.VIEW,
+                                WhiskerChildPolicy.Elements,
+                                WhiskerMeasurement.None,
+                            ),
+                        ),
+                    ),
+                )
                 val root = object : WhiskerContainerView(context) {
                     var interceptionDisallowed = false
 
@@ -190,7 +202,13 @@ class HostConformanceTest {
                         super.requestDisallowInterceptTouchEvent(disallowIntercept)
                     }
                 }
-                val scene = HostScene(root, context, { _, _, _ -> }, HostRasterResourceStore())
+                val scene = HostScene(
+                    root,
+                    context,
+                    { _, _, _ -> },
+                    HostRasterResourceStore(),
+                    elements,
+                )
                 fun operation(tag: Int, wide: Long = 0L) = HostSceneOperation(
                     tag = tag,
                     flags = 0,

@@ -3,6 +3,7 @@ package rs.whisker.runtime.scene
 import rs.whisker.runtime.WhiskerChildPolicy
 import rs.whisker.runtime.WhiskerCommandBinding
 import rs.whisker.runtime.WhiskerElementRegistration
+import rs.whisker.runtime.WhiskerElementBindings
 import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerEventBinding
 import rs.whisker.runtime.WhiskerMeasurement
@@ -10,7 +11,7 @@ import rs.whisker.runtime.WhiskerPropertyBinding
 import rs.whisker.runtime.WhiskerValueKind
 
 /** Builds and atomically binds the Rust-provided element schema table. */
-internal class HostElementBootstrap {
+internal class HostElementBootstrap(private val bindings: WhiskerElementBindings) {
     private val registrations = ArrayList<WhiskerElementRegistration>()
 
     fun begin() {
@@ -57,5 +58,5 @@ internal class HostElementBootstrap {
         )
     }
 
-    fun finish(): Boolean = WhiskerElementRegistry.bind(registrations)
+    fun finish(): Boolean = WhiskerElementRegistry.bind(bindings, registrations)
 }
