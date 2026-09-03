@@ -17,6 +17,7 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
     public let contentView = WhiskerContainerView(frame: .zero)
     private var eventSink: ((String, WhiskerValue) -> Void)?
     private var horizontal = false
+    private var chromeVisible = true
     private var snapFactor: CGFloat?
     private var snapOffset: CGFloat = 0
     private var snapStopAlways = false
@@ -43,8 +44,17 @@ public final class WhiskerScrollContainerView: UIScrollView, UIScrollViewDelegat
 
     public func setScrollOrientation(_ value: String) {
         horizontal = value == "horizontal"
-        showsHorizontalScrollIndicator = horizontal
-        showsVerticalScrollIndicator = !horizontal
+        updateIndicatorVisibility()
+    }
+
+    public func setWhiskerChromeVisible(_ visible: Bool) {
+        chromeVisible = visible
+        updateIndicatorVisibility()
+    }
+
+    private func updateIndicatorVisibility() {
+        showsHorizontalScrollIndicator = chromeVisible && horizontal
+        showsVerticalScrollIndicator = chromeVisible && !horizontal
     }
 
     public func setItemSnap(factor: Double, offset: Double) {

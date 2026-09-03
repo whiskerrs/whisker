@@ -269,6 +269,8 @@ final class WhiskerNodeView: UIView {
         paintView.isHidden = !visible
         boxShadowLayers.forEach { $0.isHidden = !visible }
         backdropBlurView?.isHidden = !visible
+        (mountedElement?.view as? WhiskerScrollContainerView)?
+            .setWhiskerChromeVisible(visible)
         if let mountedElement, mountedElement.childrenHost() == nil {
             mountedElement.view.isHidden = !visible
         }

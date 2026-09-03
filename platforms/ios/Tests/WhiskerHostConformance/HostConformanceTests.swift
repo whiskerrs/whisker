@@ -313,6 +313,42 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(values["scrollHeight"], .float(300))
     }
 
+    func testHiddenScrollViewSuppressesOnlyItsNativeIndicators() throws {
+        let registration = WhiskerElementRegistration(
+            elementType: 3,
+            name: WhiskerBuiltInElements.scrollViewName,
+            childPolicy: .elements,
+            measurement: .none,
+            properties: [
+                WhiskerPropertyBinding(id: 1, name: "scroll-orientation", value: .string),
+                WhiskerPropertyBinding(id: 2, name: "item-snap", value: .map),
+                WhiskerPropertyBinding(id: 3, name: "scroll-snap-stop", value: .string),
+                WhiskerPropertyBinding(id: 4, name: "enable-scroll", value: .bool),
+            ],
+            events: [WhiskerEventBinding(id: 1, name: "scroll", detail: .map)],
+            commands: [
+                WhiskerCommandBinding(id: 1, name: "scrollTo", arguments: .map),
+                WhiskerCommandBinding(id: 2, name: "scrollBy", arguments: .map),
+            ]
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
+        let mounted = try XCTUnwrap(WhiskerElementRegistry.mount(3) { _, _ in })
+        let scrollView = try XCTUnwrap(mounted.view as? WhiskerScrollContainerView)
+        let node = WhiskerNodeView(element: registration.name)
+        node.mountedElement = mounted
+
+        node.setWhiskerVisibility(false)
+
+        XCTAssertFalse(scrollView.isHidden)
+        XCTAssertFalse(scrollView.showsHorizontalScrollIndicator)
+        XCTAssertFalse(scrollView.showsVerticalScrollIndicator)
+
+        scrollView.setScrollOrientation("horizontal")
+        node.setWhiskerVisibility(true)
+        XCTAssertTrue(scrollView.showsHorizontalScrollIndicator)
+        XCTAssertFalse(scrollView.showsVerticalScrollIndicator)
+    }
+
     func testHorizontalScrollViewSettlesOnNearestCarouselItem() {
         let scrollView = WhiskerScrollContainerView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 180)
