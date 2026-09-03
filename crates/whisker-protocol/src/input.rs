@@ -219,4 +219,28 @@ mod tests {
         event.detail = WhiskerValue::Error("provider failed".into());
         assert_eq!(event.validate(), Err(InputEventError::InvalidDetail));
     }
+
+    #[test]
+    fn host_presentation_updates_require_finite_offsets() {
+        let update = |offset| HostPresentationUpdate::ScrollOffset {
+            node: NodeId::new(1).unwrap(),
+            offset,
+        };
+
+        assert!(update(InputPoint { x: 1.0, y: 2.0 }).is_valid());
+        assert!(
+            !update(InputPoint {
+                x: f32::NAN,
+                y: 2.0
+            })
+            .is_valid()
+        );
+        assert!(
+            !update(InputPoint {
+                x: 1.0,
+                y: f32::INFINITY
+            })
+            .is_valid()
+        );
+    }
 }
