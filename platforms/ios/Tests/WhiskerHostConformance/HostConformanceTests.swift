@@ -81,6 +81,111 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(events, ["first", "second"])
     }
 
+    func testInvalidStructureAndLayoutAreRejectedBeforeUIKitMutation() throws {
+        let root = UIView()
+        let scene = HostScene(
+            root: root,
+            resources: HostResourceStore(),
+            logicalBounds: { CGRect(x: 0, y: 0, width: 100, height: 100) },
+            emitElementEvent: { _, _, _ in }
+        )
+        let registration = WhiskerElementRegistration(
+            elementType: 1,
+            name: WhiskerBuiltInElements.viewName,
+            childPolicy: .elements,
+            measurement: .none
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
+
+        func present(
+            _ operations: inout [WhiskerMobileOperation],
+            mode: UInt8,
+            baseRevision: UInt64,
+            targetRevision: UInt64
+        ) -> UInt8 {
+            operations.withUnsafeMutableBufferPointer { buffer in
+                var frame = WhiskerMobileFrame()
+                frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                frame.protocol_major = 1
+                frame.mode = mode
+                frame.scene_epoch = 1
+                frame.base_revision = baseRevision
+                frame.target_revision = targetRevision
+                frame.operations = UnsafePointer(buffer.baseAddress!)
+                frame.operation_count = buffer.count
+                var response = WhiskerMobileApplyResponse()
+                XCTAssertTrue(scene.applyFrame(frame, response: &response))
+                return response.status
+            }
+        }
+
+        var snapshot = [
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 1, member: 1),
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 2, member: 1),
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 3, member: 1),
+            operation(tag: UInt32(WHISKER_OP_INSERT), parent: 1, child: 2),
+            operation(tag: UInt32(WHISKER_OP_INSERT), parent: 2, child: 3),
+        ]
+        XCTAssertEqual(
+            present(
+                &snapshot,
+                mode: UInt8(WHISKER_FRAME_SNAPSHOT),
+                baseRevision: 0,
+                targetRevision: 1
+            ),
+            UInt8(WHISKER_APPLY_ACCEPTED)
+        )
+        let rootNode = try XCTUnwrap(root.subviews.first as? WhiskerNodeView)
+        let childNode = try XCTUnwrap(rootNode.sceneChildrenHost().subviews.first)
+
+        var cycle = [operation(tag: UInt32(WHISKER_OP_INSERT), parent: 3, child: 1)]
+        XCTAssertEqual(
+            present(
+                &cycle,
+                mode: UInt8(WHISKER_FRAME_DELTA),
+                baseRevision: 1,
+                targetRevision: 2
+            ),
+            UInt8(WHISKER_APPLY_REJECTED)
+        )
+        XCTAssertTrue(childNode.superview === rootNode.sceneChildrenHost())
+
+        var deletedDescendantUse = [
+            operation(tag: UInt32(WHISKER_OP_DELETE), node: 2),
+            operation(tag: UInt32(WHISKER_OP_BACKGROUND_LAYERS), node: 3),
+        ]
+        XCTAssertEqual(
+            present(
+                &deletedDescendantUse,
+                mode: UInt8(WHISKER_FRAME_DELTA),
+                baseRevision: 1,
+                targetRevision: 2
+            ),
+            UInt8(WHISKER_APPLY_REJECTED)
+        )
+        XCTAssertTrue(childNode.superview === rootNode.sceneChildrenHost())
+
+        var invalidLayout = WhiskerMobileLayoutGeometry()
+        invalidLayout.border.width = .nan
+        withUnsafePointer(to: &invalidLayout) { payload in
+            var operations = [operation(
+                tag: UInt32(WHISKER_OP_LAYOUT),
+                node: 1,
+                payload: UnsafeRawPointer(payload),
+                count: 1
+            )]
+            XCTAssertEqual(
+                present(
+                    &operations,
+                    mode: UInt8(WHISKER_FRAME_DELTA),
+                    baseRevision: 1,
+                    targetRevision: 2
+                ),
+                UInt8(WHISKER_APPLY_REJECTED)
+            )
+        }
+    }
+
     func testPointerCaptureOperationsReachTheUIKitSurface() {
         let view = WhiskerView(frame: .zero)
         let registration = WhiskerElementRegistration(

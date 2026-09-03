@@ -117,14 +117,28 @@ final class HostScene {
                 existing.insert(operation.node)
                 elementTypes[operation.node] = Int(operation.member)
             case UInt32(WHISKER_OP_DELETE):
-                guard existing.remove(operation.node) != nil else { return false }
-                elementTypes.removeValue(forKey: operation.node)
+                guard existing.contains(operation.node) else { return false }
+                let removed = existing.filter {
+                    $0 == operation.node || isStagedDescendant(
+                        $0,
+                        of: operation.node,
+                        parents: stagedParents
+                    )
+                }
+                existing.subtract(removed)
+                removed.forEach { elementTypes.removeValue(forKey: $0) }
+                let removedSet = Set(removed)
                 stagedParents = stagedParents.filter {
-                    $0.key != operation.node && $0.value != operation.node
+                    !removedSet.contains($0.key) && !removedSet.contains($0.value)
                 }
             case UInt32(WHISKER_OP_INSERT):
                 guard existing.contains(operation.parent), existing.contains(operation.child),
                       stagedParents[operation.child] == nil,
+                      !isStagedDescendant(
+                          operation.parent,
+                          of: operation.child,
+                          parents: stagedParents
+                      ),
                       elementTypes[operation.parent]
                         .flatMap({ WhiskerElementRegistry.registration($0) })?
                         .childPolicy.acceptsElements == true
@@ -135,7 +149,12 @@ final class HostScene {
                 stagedParents.removeValue(forKey: operation.child)
             case UInt32(WHISKER_OP_MOVE):
                 guard stagedParents[operation.child] == operation.parent else { return false }
-            case UInt32(WHISKER_OP_LAYOUT), UInt32(WHISKER_OP_PAINT):
+            case UInt32(WHISKER_OP_LAYOUT):
+                guard existing.contains(operation.node),
+                      let geometry = operation.payload?
+                        .assumingMemoryBound(to: WhiskerMobileLayoutGeometry.self).pointee,
+                      validLayoutGeometry(geometry) else { return false }
+            case UInt32(WHISKER_OP_PAINT):
                 guard existing.contains(operation.node), operation.payload != nil else { return false }
             case UInt32(WHISKER_OP_PROPERTY):
                 guard existing.contains(operation.node),
@@ -285,6 +304,28 @@ final class HostScene {
             }
         }
         return true
+    }
+
+    private func isStagedDescendant(
+        _ candidate: UInt64,
+        of ancestor: UInt64,
+        parents: [UInt64: UInt64]
+    ) -> Bool {
+        var current: UInt64? = candidate
+        while let node = current {
+            if node == ancestor { return true }
+            current = parents[node]
+        }
+        return false
+    }
+
+    private func validLayoutGeometry(_ geometry: WhiskerMobileLayoutGeometry) -> Bool {
+        validLayoutRect(geometry.border) && validLayoutRect(geometry.content)
+    }
+
+    private func validLayoutRect(_ rect: WhiskerMobileRect) -> Bool {
+        rect.x.isFinite && rect.y.isFinite && rect.width.isFinite && rect.height.isFinite
+            && rect.width >= 0 && rect.height >= 0
     }
 
     private func apply(_ operation: WhiskerMobileOperation) -> Bool {
