@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use whisker::WhiskerModule;
@@ -145,11 +146,36 @@ impl DesktopElementFactory {
             DesktopElementFactoryKind::Presentation => DesktopElementContent::Empty,
             DesktopElementFactoryKind::Text => DesktopElementContent::Text(None),
             DesktopElementFactoryKind::ScrollContainer => DesktopElementContent::ScrollContainer,
-            DesktopElementFactoryKind::Native(create) => DesktopElementContent::Native {
-                implementation: create(events),
-                text: None,
-                plain_text: self.plain_text,
-            },
+            DesktopElementFactoryKind::Native(create) => {
+                let isolates_failures = !matches!(
+                    self.name.as_str(),
+                    "whisker.ui/View" | "whisker.ui/Text" | "whisker.ui/ScrollView"
+                );
+                if isolates_failures {
+                    match catch_unwind(AssertUnwindSafe(|| create(events))) {
+                        Ok(implementation) => DesktopElementContent::Native {
+                            implementation,
+                            text: None,
+                            plain_text: self.plain_text,
+                            isolates_failures,
+                        },
+                        Err(_) => {
+                            eprintln!(
+                                "[whisker] disabled `{}` after its Desktop factory panicked; common presentation remains active",
+                                self.name
+                            );
+                            DesktopElementContent::Failed
+                        }
+                    }
+                } else {
+                    DesktopElementContent::Native {
+                        implementation: create(events),
+                        text: None,
+                        plain_text: self.plain_text,
+                        isolates_failures,
+                    }
+                }
+            }
             DesktopElementFactoryKind::Declared(_) => {
                 unreachable!("Desktop declared factory was not bound at bootstrap")
             }
@@ -581,10 +607,12 @@ pub(crate) enum DesktopElementContent {
     Empty,
     Text(Option<TextContent>),
     ScrollContainer,
+    Failed,
     Native {
         implementation: Box<dyn DesktopNativeElement>,
         text: Option<TextContent>,
         plain_text: bool,
+        isolates_failures: bool,
     },
 }
 
@@ -597,7 +625,7 @@ impl DesktopElementContent {
         match self {
             Self::Text(text) => *text = None,
             Self::Native { text, .. } => *text = None,
-            Self::Empty | Self::ScrollContainer => {}
+            Self::Empty | Self::ScrollContainer | Self::Failed => {}
         }
     }
 
@@ -605,28 +633,28 @@ impl DesktopElementContent {
         match self {
             Self::ScrollContainer => true,
             Self::Native { implementation, .. } => implementation.is_scroll_container(),
-            Self::Empty | Self::Text(_) => false,
+            Self::Empty | Self::Text(_) | Self::Failed => false,
         }
     }
 
     pub(crate) fn scroll_horizontal(&self) -> bool {
         match self {
             Self::Native { implementation, .. } => implementation.scroll_horizontal(),
-            Self::Empty | Self::Text(_) | Self::ScrollContainer => false,
+            Self::Empty | Self::Text(_) | Self::ScrollContainer | Self::Failed => false,
         }
     }
 
     pub(crate) fn item_snap(&self) -> Option<(f64, f64)> {
         match self {
             Self::Native { implementation, .. } => implementation.item_snap(),
-            Self::Empty | Self::Text(_) | Self::ScrollContainer => None,
+            Self::Empty | Self::Text(_) | Self::ScrollContainer | Self::Failed => None,
         }
     }
 
     pub(crate) fn snap_stop_always(&self) -> bool {
         match self {
             Self::Native { implementation, .. } => implementation.snap_stop_always(),
-            Self::Empty | Self::Text(_) | Self::ScrollContainer => false,
+            Self::Empty | Self::Text(_) | Self::ScrollContainer | Self::Failed => false,
         }
     }
 
@@ -634,7 +662,7 @@ impl DesktopElementContent {
         match self {
             Self::Native { implementation, .. } => implementation.scroll_enabled(),
             Self::ScrollContainer => true,
-            Self::Empty | Self::Text(_) => false,
+            Self::Empty | Self::Text(_) | Self::Failed => false,
         }
     }
 
@@ -642,7 +670,7 @@ impl DesktopElementContent {
         match self {
             Self::Text(content) => content.as_ref(),
             Self::Native { text, .. } => text.as_ref(),
-            Self::Empty | Self::ScrollContainer => None,
+            Self::Empty | Self::ScrollContainer | Self::Failed => None,
         }
     }
 
@@ -652,7 +680,7 @@ impl DesktopElementContent {
                 Some(implementation.as_ref())
             }
             Self::Native { .. } => None,
-            Self::Empty | Self::Text(_) | Self::ScrollContainer => None,
+            Self::Empty | Self::Text(_) | Self::ScrollContainer | Self::Failed => None,
         }
     }
 
@@ -679,7 +707,7 @@ impl DesktopElementContent {
     pub(crate) fn selected_text(&self) -> Option<String> {
         match self {
             Self::Native { implementation, .. } => implementation.selected_text(),
-            Self::Empty | Self::Text(_) | Self::ScrollContainer => None,
+            Self::Empty | Self::Text(_) | Self::ScrollContainer | Self::Failed => None,
         }
     }
 
@@ -692,7 +720,7 @@ impl DesktopElementContent {
             Self::Native { implementation, .. } => {
                 implementation.text_input_caret_rect(logical_size, scale)
             }
-            Self::Empty | Self::Text(_) | Self::ScrollContainer => None,
+            Self::Empty | Self::Text(_) | Self::ScrollContainer | Self::Failed => None,
         }
     }
 
@@ -714,6 +742,7 @@ impl DesktopElementContent {
                 *text = Some(content);
                 Ok(())
             }
+            Self::Failed => Ok(()),
             Self::Empty | Self::ScrollContainer | Self::Native { .. } => {
                 Err(DesktopElementError::UnexpectedText { node })
             }
@@ -726,10 +755,25 @@ impl DesktopElementContent {
         style: &WhiskerTextStyle,
     ) -> Result<(), DesktopElementError> {
         match self {
-            Self::Native { implementation, .. } => {
-                implementation.set_text_style(style);
+            Self::Native {
+                implementation,
+                isolates_failures,
+                ..
+            } => {
+                if !*isolates_failures {
+                    implementation.set_text_style(style);
+                } else if catch_unwind(AssertUnwindSafe(|| implementation.set_text_style(style)))
+                    .is_err()
+                {
+                    eprintln!(
+                        "[whisker] disabled Desktop element at node {} after set_text_style panicked; common presentation remains active",
+                        node.get()
+                    );
+                    *self = Self::Failed;
+                }
                 Ok(())
             }
+            Self::Failed => Ok(()),
             Self::Empty | Self::Text(_) | Self::ScrollContainer => {
                 Err(DesktopElementError::UnexpectedText { node })
             }
@@ -743,10 +787,28 @@ impl DesktopElementContent {
         value: &WhiskerValue,
     ) -> Result<(), DesktopElementError> {
         match self {
-            Self::Native { implementation, .. } => {
-                implementation.set_property(property, value);
+            Self::Native {
+                implementation,
+                isolates_failures,
+                ..
+            } => {
+                if !*isolates_failures {
+                    implementation.set_property(property, value);
+                } else if catch_unwind(AssertUnwindSafe(|| {
+                    implementation.set_property(property, value)
+                }))
+                .is_err()
+                {
+                    eprintln!(
+                        "[whisker] disabled Desktop element at node {} after property {} panicked; common presentation remains active",
+                        node.get(),
+                        property.get()
+                    );
+                    *self = Self::Failed;
+                }
                 Ok(())
             }
+            Self::Failed => Ok(()),
             Self::Empty | Self::Text(_) | Self::ScrollContainer => {
                 Err(DesktopElementError::UnsupportedProperty { node, property })
             }
@@ -759,10 +821,26 @@ impl DesktopElementContent {
         property: PropertyId,
     ) -> Result<(), DesktopElementError> {
         match self {
-            Self::Native { implementation, .. } => {
-                implementation.clear_property(property);
+            Self::Native {
+                implementation,
+                isolates_failures,
+                ..
+            } => {
+                if !*isolates_failures {
+                    implementation.clear_property(property);
+                } else if catch_unwind(AssertUnwindSafe(|| implementation.clear_property(property)))
+                    .is_err()
+                {
+                    eprintln!(
+                        "[whisker] disabled Desktop element at node {} after clearing property {} panicked; common presentation remains active",
+                        node.get(),
+                        property.get()
+                    );
+                    *self = Self::Failed;
+                }
                 Ok(())
             }
+            Self::Failed => Ok(()),
             Self::Empty | Self::Text(_) | Self::ScrollContainer => {
                 Err(DesktopElementError::UnsupportedProperty { node, property })
             }
@@ -776,10 +854,28 @@ impl DesktopElementContent {
         arguments: &WhiskerValue,
     ) -> Result<(), DesktopElementError> {
         match self {
-            Self::Native { implementation, .. } => {
-                implementation.invoke_command(command, arguments);
+            Self::Native {
+                implementation,
+                isolates_failures,
+                ..
+            } => {
+                if !*isolates_failures {
+                    implementation.invoke_command(command, arguments);
+                } else if catch_unwind(AssertUnwindSafe(|| {
+                    implementation.invoke_command(command, arguments)
+                }))
+                .is_err()
+                {
+                    eprintln!(
+                        "[whisker] disabled Desktop element at node {} after command {} panicked; common presentation remains active",
+                        node.get(),
+                        command.get()
+                    );
+                    *self = Self::Failed;
+                }
                 Ok(())
             }
+            Self::Failed => Ok(()),
             Self::Empty | Self::Text(_) | Self::ScrollContainer => {
                 Err(DesktopElementError::UnsupportedCommand { node, command })
             }

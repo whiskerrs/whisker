@@ -220,6 +220,12 @@ impl DesktopRuntime {
         self.modules.with_host(work)
     }
 
+    pub(crate) fn take_presentation_updates(
+        &mut self,
+    ) -> Vec<whisker_protocol::HostPresentationUpdate> {
+        self.surface.take_presentation_updates()
+    }
+
     /// Reconfigures the GPU surface after an OS resize notification.
     pub fn resize(&mut self, physical_size: [u32; 2]) {
         self.surface.resize(physical_size);
@@ -229,17 +235,6 @@ impl DesktopRuntime {
     /// logical window position.
     pub fn cursor_at(&self, logical_position: [f32; 2]) -> Option<whisker_protocol::CursorKeyword> {
         self.surface.cursor_at(logical_position)
-    }
-
-    /// Resolves the Host-visible target after applying transient scroll state.
-    pub fn target_input(&self, event: &mut InputEvent) {
-        if event.target.is_none()
-            && let Some(pointer) = event.pointer
-        {
-            event.target = self
-                .surface
-                .hit_test([pointer.position.x, pointer.position.y]);
-        }
     }
 
     pub(crate) fn accessibility_snapshot(&self) -> DesktopAccessibilitySnapshot {

@@ -422,18 +422,17 @@ impl DesktopApplication {
         self.request_frame();
     }
 
-    fn dispatch_input(&mut self, mut event: InputEvent) {
-        if let Some(host) = &self.host {
-            host.target_input(&mut event);
-        }
+    fn dispatch_input(&mut self, event: InputEvent) {
         let Some(runtime) = &self.runtime else {
             return;
         };
-        let should_request_frame = match self
+        let host = self
             .host
-            .as_ref()
-            .expect("mounted Desktop runtime has a Host")
-            .with_modules(|| runtime.dispatch_input(&event))
+            .as_mut()
+            .expect("mounted Desktop runtime has a Host");
+        let presentation = host.take_presentation_updates();
+        let should_request_frame = match host
+            .with_modules(|| runtime.dispatch_input_with_presentation(&event, &presentation))
         {
             Ok(dispatch) => input_dispatch_needs_frame(dispatch),
             Err(error) => {

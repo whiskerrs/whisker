@@ -338,6 +338,7 @@ pub(crate) struct DesktopScene {
     elements: DesktopElementRegistry,
     nodes: HashMap<NodeId, RenderNode>,
     smooth_scrolls: HashMap<NodeId, SmoothScroll>,
+    dirty_scroll_offsets: HashSet<NodeId>,
     presentation_pool: HashMap<ElementTypeId, Vec<DesktopElementContent>>,
     pending_events: Arc<Mutex<Vec<DesktopProviderEvent>>>,
     event_wake: RuntimeWakeHandle,

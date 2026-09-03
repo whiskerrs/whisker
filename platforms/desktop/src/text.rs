@@ -181,6 +181,7 @@ impl NativeTextHost {
         };
         let available_width = match request.constraints.available_space[0] {
             AvailableSpace::Definite(value) => Some(value.max(0.0)),
+            AvailableSpace::MinContent if payload.wrap == MeasureTextWrap::Wrap => Some(0.0),
             AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
         };
         let width = request.constraints.known_dimensions[0].or(available_width);

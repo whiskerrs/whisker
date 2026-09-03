@@ -76,15 +76,17 @@ impl DesktopSurface {
         self.scene.take_events()
     }
 
+    pub(crate) fn take_presentation_updates(
+        &mut self,
+    ) -> Vec<whisker_protocol::HostPresentationUpdate> {
+        self.scene.take_presentation_updates()
+    }
+
     pub(crate) fn cursor_at(
         &self,
         logical_position: [f32; 2],
     ) -> Option<whisker_protocol::CursorKeyword> {
         self.scene.cursor_at(logical_position)
-    }
-
-    pub(crate) fn hit_test(&self, logical_position: [f32; 2]) -> Option<whisker_protocol::NodeId> {
-        self.scene.hit_test(logical_position)
     }
 
     pub(crate) fn scroll_at(&mut self, logical_position: [f32; 2], delta: [f32; 2]) -> bool {
