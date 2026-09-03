@@ -3,7 +3,8 @@ use glyphon::Color as TextColor;
 use whisker_protocol::{
     BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxPaint,
     ImageRepeat, LayoutRect, PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius,
-    PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition, ResourceId,
+    PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
+    RadialGradientExtent, RadialGradientShape, ResourceId,
 };
 
 use crate::paint::box_paint::{ResolvedRadii, resolve_box_geometry, resolve_radii};
@@ -51,6 +52,69 @@ fn paint(background_color: PaintColor) -> BoxPaint {
             bottom_left: PaintCornerRadius::default(),
         },
     }
+}
+
+#[test]
+fn radial_gradient_keyword_extents_resolve_against_the_image_box() {
+    let bounds = LayoutRect {
+        x: 10.0,
+        y: 20.0,
+        width: 200.0,
+        height: 100.0,
+    };
+    let center = PaintPosition {
+        x: PaintCoordinate {
+            length: 0.0,
+            fraction: 0.5,
+        },
+        y: PaintCoordinate {
+            length: 0.0,
+            fraction: 0.5,
+        },
+    };
+
+    let circle = radial_gradient_radii(
+        bounds,
+        center,
+        RadialGradientShape::Circle,
+        RadialGradientExtent::FarthestCorner,
+        None,
+    );
+    assert!((circle[0] - 111.8034).abs() < 0.001);
+    assert_eq!(circle[0], circle[1]);
+
+    let ellipse = radial_gradient_radii(
+        bounds,
+        center,
+        RadialGradientShape::Ellipse,
+        RadialGradientExtent::FarthestCorner,
+        None,
+    );
+    assert!((ellipse[0] - 141.42136).abs() < 0.001);
+    assert!((ellipse[1] - 70.71068).abs() < 0.001);
+}
+
+#[test]
+fn explicit_circle_uses_one_radius_on_both_axes() {
+    let radius = PaintLengthPercentage {
+        length: 40.0,
+        fraction: 0.0,
+    };
+    assert_eq!(
+        radial_gradient_radii(
+            LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 100.0,
+            },
+            PaintPosition::default(),
+            RadialGradientShape::Circle,
+            RadialGradientExtent::Explicit,
+            Some((radius, radius)),
+        ),
+        [40.0, 40.0]
+    );
 }
 
 fn resource_layer(size: BackgroundSize) -> BackgroundLayer {

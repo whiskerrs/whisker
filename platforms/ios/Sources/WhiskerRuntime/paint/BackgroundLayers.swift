@@ -18,11 +18,45 @@ struct HostLinearGradient {
 }
 
 struct HostRadialGradient {
+    let shape: HostRadialShape
+    let extent: HostRadialExtent
     let centerX: WhiskerMobileLengthPercentage
     let centerY: WhiskerMobileLengthPercentage
     let radiusX: WhiskerMobileLengthPercentage
     let radiusY: WhiskerMobileLengthPercentage
     let stops: [HostLinearGradientStop]
+}
+
+enum HostRadialShape {
+    case circle
+    case ellipse
+
+    init?(wireValue: UInt32) {
+        switch wireValue {
+        case UInt32(WHISKER_RADIAL_SHAPE_CIRCLE): self = .circle
+        case UInt32(WHISKER_RADIAL_SHAPE_ELLIPSE): self = .ellipse
+        default: return nil
+        }
+    }
+}
+
+enum HostRadialExtent {
+    case closestSide
+    case farthestSide
+    case closestCorner
+    case farthestCorner
+    case explicit
+
+    init?(wireValue: UInt32) {
+        switch wireValue {
+        case UInt32(WHISKER_RADIAL_EXTENT_CLOSEST_SIDE): self = .closestSide
+        case UInt32(WHISKER_RADIAL_EXTENT_FARTHEST_SIDE): self = .farthestSide
+        case UInt32(WHISKER_RADIAL_EXTENT_CLOSEST_CORNER): self = .closestCorner
+        case UInt32(WHISKER_RADIAL_EXTENT_FARTHEST_CORNER): self = .farthestCorner
+        case UInt32(WHISKER_RADIAL_EXTENT_EXPLICIT): self = .explicit
+        default: return nil
+        }
+    }
 }
 
 struct HostConicGradient {
@@ -412,8 +446,9 @@ final class HostBackgroundPainter {
             x: resolve(radialGradient.centerX, extent: bounds.width) + bounds.minX,
             y: resolve(radialGradient.centerY, extent: bounds.height) + bounds.minY
         )
-        let radiusX = resolve(radialGradient.radiusX, extent: bounds.width)
-        let radiusY = resolve(radialGradient.radiusY, extent: bounds.height)
+        let radii = resolveRadialRadii(radialGradient, in: bounds)
+        let radiusX = radii.width
+        let radiusY = radii.height
         guard radiusX > 0, radiusY > 0 else { return }
         let resolved = resolveStops(radialGradient.stops, lineLength: radiusX)
         guard let gradient = makeGradient(resolved) else { return }
@@ -431,6 +466,40 @@ final class HostBackgroundPainter {
             options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
         )
         context.restoreGState()
+    }
+
+    func resolveRadialRadii(_ gradient: HostRadialGradient, in bounds: CGRect) -> CGSize {
+        let centerX = resolve(gradient.centerX, extent: bounds.width)
+        let centerY = resolve(gradient.centerY, extent: bounds.height)
+        if gradient.extent == .explicit {
+            let radiusX = resolve(gradient.radiusX, extent: bounds.width)
+            let radiusY = gradient.shape == .circle
+                ? radiusX
+                : resolve(gradient.radiusY, extent: bounds.height)
+            return CGSize(width: radiusX, height: radiusY)
+        }
+
+        let nearX = max(0, min(centerX, bounds.width - centerX))
+        let farX = max(0, max(centerX, bounds.width - centerX))
+        let nearY = max(0, min(centerY, bounds.height - centerY))
+        let farY = max(0, max(centerY, bounds.height - centerY))
+        let closest = gradient.extent == .closestSide || gradient.extent == .closestCorner
+        let corner = gradient.extent == .closestCorner || gradient.extent == .farthestCorner
+        let x = closest ? nearX : farX
+        let y = closest ? nearY : farY
+        if gradient.shape == .circle {
+            let radius: CGFloat
+            if corner {
+                radius = hypot(x, y)
+            } else if closest {
+                radius = min(x, y)
+            } else {
+                radius = max(x, y)
+            }
+            return CGSize(width: radius, height: radius)
+        }
+        let scale = corner ? sqrt(2) : 1
+        return CGSize(width: x * scale, height: y * scale)
     }
 
     private func drawConic(

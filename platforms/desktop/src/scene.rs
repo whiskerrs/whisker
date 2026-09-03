@@ -10,8 +10,8 @@ use whisker_protocol::{
     BoxClip, BoxPaint, ClipShape, Cursor, ElementTypeId, FillRule, FrameMode, FramePacket,
     HitTestBehavior, ImageRepeat, LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip,
     PaintBox, PaintColor, PaintCoordinate, PaintImage, PaintPosition, PathCommand, PointerId,
-    RadialGradientExtent, ResourceId, SceneProjection, SurfaceId, TextContent, Transform,
-    ValidationError, Visibility, VisualEffects, WhiskerValue,
+    ResourceId, SceneProjection, SurfaceId, TextContent, Transform, ValidationError, Visibility,
+    VisualEffects, WhiskerValue,
 };
 
 use crate::DesktopTextInputEvent;

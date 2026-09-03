@@ -12,9 +12,6 @@ pub(super) fn supports_basic_background_layer(layer: &BackgroundLayer) -> bool {
     ) || matches!(
         &layer.image,
         PaintImage::RadialGradient {
-            shape: whisker_protocol::RadialGradientShape::Ellipse,
-            extent: RadialGradientExtent::Explicit,
-            radii: Some(_),
             repeating: false,
             stops,
             ..

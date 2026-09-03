@@ -149,6 +149,10 @@ fn mobile_capability_constants_match_the_semantic_protocol() {
             CAPABILITY_BACKGROUND_IMAGE_RESOURCES,
         ),
         (RenderCapability::BackdropBlur, CAPABILITY_BACKDROP_BLUR),
+        (
+            RenderCapability::RadialGradientVariants,
+            CAPABILITY_RADIAL_GRADIENT_VARIANTS,
+        ),
     ];
 
     assert_eq!(expected.len(), RenderCapability::ALL.len());
@@ -667,6 +671,48 @@ fn mobile_frame_exposes_background_layers_as_one_contiguous_slice() {
         unsafe { *layers[2].image.payload.cast::<u64>() },
         resource.get()
     );
+}
+
+#[test]
+fn mobile_frame_preserves_radial_shape_and_keyword_extent() {
+    let node = NodeId::new(1).unwrap();
+    let mut layer = linear_background("red");
+    layer.image = PaintImage::RadialGradient {
+        shape: RadialGradientShape::Circle,
+        extent: RadialGradientExtent::FarthestCorner,
+        center: PaintPosition::default(),
+        radii: None,
+        repeating: false,
+        stops: match linear_background("red").image {
+            PaintImage::LinearGradient { stops, .. } => stops,
+            _ => unreachable!(),
+        },
+    };
+    let packet = FramePacket {
+        header: FrameHeader {
+            version: ProtocolVersion::CURRENT,
+            surface: SurfaceId::new(1).unwrap(),
+            scene_epoch: 1,
+            frame_id: 1,
+            base_revision: 0,
+            target_revision: 1,
+            viewport_epoch: 1,
+            mode: FrameMode::Snapshot,
+        },
+        operations: vec![Operation::SetBackgroundLayers {
+            node,
+            layers: vec![layer],
+        }],
+    };
+
+    let frame = MobileFrameOwned::new(&packet).unwrap();
+    let operation = &frame._operations[0];
+    let layer = unsafe { &*operation.payload.cast::<MobileBackgroundLayer>() };
+    let radial = unsafe { &*layer.image.payload.cast::<MobileRadialGradient>() };
+    assert_eq!(radial.shape, RADIAL_SHAPE_CIRCLE);
+    assert_eq!(radial.extent, RADIAL_EXTENT_FARTHEST_CORNER);
+    assert_eq!(radial.radius_x.length, 0.0);
+    assert_eq!(radial.radius_y.length, 0.0);
 }
 
 #[test]

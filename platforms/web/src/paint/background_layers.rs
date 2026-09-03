@@ -21,9 +21,6 @@ fn supports_layer(layer: &BackgroundLayer) -> bool {
             ..
         } => stops.iter().all(|stop| stop.position.is_some()),
         PaintImage::RadialGradient {
-            shape: RadialGradientShape::Ellipse,
-            extent: RadialGradientExtent::Explicit,
-            radii: Some(_),
             repeating: false,
             stops,
             ..
@@ -129,13 +126,13 @@ fn background_image(
             stops,
         } => linear_gradient(*angle_degrees, stops),
         PaintImage::RadialGradient {
-            shape: RadialGradientShape::Ellipse,
-            extent: RadialGradientExtent::Explicit,
+            shape,
+            extent,
             center,
-            radii: Some(radii),
+            radii,
             repeating: false,
             stops,
-        } => radial_gradient(*center, *radii, stops),
+        } => radial_gradient(*shape, *extent, *center, *radii, stops),
         PaintImage::ConicGradient {
             from_degrees,
             center,
@@ -163,8 +160,10 @@ fn linear_gradient(angle_degrees: f32, stops: &[GradientStop]) -> Result<String,
 }
 
 fn radial_gradient(
+    shape: RadialGradientShape,
+    extent: RadialGradientExtent,
     center: PaintPosition,
-    radii: (PaintLengthPercentage, PaintLengthPercentage),
+    radii: Option<(PaintLengthPercentage, PaintLengthPercentage)>,
     stops: &[GradientStop],
 ) -> Result<String, WebError> {
     let stops = stops
@@ -172,13 +171,40 @@ fn radial_gradient(
         .map(gradient_stop)
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
+    let sizing = match (shape, extent, radii) {
+        (RadialGradientShape::Circle, RadialGradientExtent::Explicit, Some((radius, _))) => {
+            format!("circle {}", length_percentage(radius))
+        }
+        (RadialGradientShape::Ellipse, RadialGradientExtent::Explicit, Some((x, y))) => {
+            format!("ellipse {} {}", length_percentage(x), length_percentage(y))
+        }
+        (shape, extent, None) if extent != RadialGradientExtent::Explicit => {
+            format!("{} {}", radial_shape(shape), radial_extent(extent))
+        }
+        _ => return Err(WebError("invalid DOM radial gradient".into())),
+    };
     Ok(format!(
-        "radial-gradient(ellipse {} {} at {} {}, {stops})",
-        length_percentage(radii.0),
-        length_percentage(radii.1),
+        "radial-gradient({sizing} at {} {}, {stops})",
         coordinate(center.x),
         coordinate(center.y),
     ))
+}
+
+fn radial_shape(shape: RadialGradientShape) -> &'static str {
+    match shape {
+        RadialGradientShape::Circle => "circle",
+        RadialGradientShape::Ellipse => "ellipse",
+    }
+}
+
+fn radial_extent(extent: RadialGradientExtent) -> &'static str {
+    match extent {
+        RadialGradientExtent::ClosestSide => "closest-side",
+        RadialGradientExtent::FarthestSide => "farthest-side",
+        RadialGradientExtent::ClosestCorner => "closest-corner",
+        RadialGradientExtent::FarthestCorner => "farthest-corner",
+        RadialGradientExtent::Explicit => unreachable!(),
+    }
 }
 
 fn conic_gradient(
@@ -293,5 +319,63 @@ fn background_box(value: PaintBox) -> &'static str {
         PaintBox::Content => "content-box",
         PaintBox::BorderArea => "border-area",
         _ => unreachable!("unsupported background box passed preflight"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whisker_protocol::PaintColor;
+
+    fn stops() -> Vec<GradientStop> {
+        [0.0, 1.0]
+            .into_iter()
+            .map(|fraction| GradientStop {
+                color: PaintColor::Srgba {
+                    red: (fraction * 255.0) as u8,
+                    green: 0,
+                    blue: 0,
+                    alpha: 1.0,
+                },
+                position: Some(PaintCoordinate {
+                    length: 0.0,
+                    fraction,
+                }),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn radial_gradient_preserves_keyword_shape_and_extent() {
+        assert_eq!(
+            radial_gradient(
+                RadialGradientShape::Circle,
+                RadialGradientExtent::FarthestCorner,
+                PaintPosition::default(),
+                None,
+                &stops(),
+            )
+            .unwrap(),
+            "radial-gradient(circle farthest-corner at 0% 0%, rgba(0, 0, 0, 1) 0%, rgba(255, 0, 0, 1) 100%)"
+        );
+    }
+
+    #[test]
+    fn radial_gradient_preserves_explicit_circle_radius() {
+        let radius = PaintLengthPercentage {
+            length: 24.0,
+            fraction: 0.0,
+        };
+        assert!(
+            radial_gradient(
+                RadialGradientShape::Circle,
+                RadialGradientExtent::Explicit,
+                PaintPosition::default(),
+                Some((radius, radius)),
+                &stops(),
+            )
+            .unwrap()
+            .starts_with("radial-gradient(circle 24px at")
+        );
     }
 }

@@ -27,8 +27,8 @@ pub enum RenderCapability {
     /// One resolved, non-repeating linear-gradient background image using the
     /// initial layer geometry and explicit color-stop positions.
     LinearGradients = 8,
-    /// One resolved, non-repeating explicit radial-gradient background image
-    /// using the initial layer geometry and explicit color-stop positions.
+    /// One resolved, non-repeating radial-gradient background image using the
+    /// initial layer geometry and explicit color-stop positions.
     RadialGradients = 9,
     /// One resolved, non-repeating conic-gradient background image using the
     /// initial layer geometry and explicit fractional color-stop positions.
@@ -42,11 +42,13 @@ pub enum RenderCapability {
     BackgroundImageResources = 13,
     /// Blur applied to pixels already painted behind a node.
     BackdropBlur = 14,
+    /// Circle shapes and keyword extents for otherwise supported radial gradients.
+    RadialGradientVariants = 15,
 }
 
 impl RenderCapability {
     /// Every optional capability in stable declaration order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::EllipticalBorderRadius,
         Self::BackgroundLayers,
         Self::VisualEffects,
@@ -61,6 +63,7 @@ impl RenderCapability {
         Self::BackgroundLayerStacking,
         Self::BackgroundImageResources,
         Self::BackdropBlur,
+        Self::RadialGradientVariants,
     ];
 
     /// Stable diagnostic spelling shared by Host errors and checklists.
@@ -80,6 +83,7 @@ impl RenderCapability {
             Self::BackgroundLayerStacking => "background-layer-stacking",
             Self::BackgroundImageResources => "background-image-resources",
             Self::BackdropBlur => "backdrop-blur",
+            Self::RadialGradientVariants => "radial-gradient-variants",
         }
     }
 
@@ -348,7 +352,7 @@ impl FramePacket {
     }
 }
 
-fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6] {
+fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 7] {
     if let Operation::SetBackgroundLayers { layers, .. } = operation {
         return background_capabilities(layers);
     }
@@ -386,10 +390,10 @@ fn operation_capabilities(operation: &Operation) -> [Option<RenderCapability>; 6
         }
         _ => None,
     };
-    [first, second, None, None, None, None]
+    [first, second, None, None, None, None, None]
 }
 
-fn visual_effect_capabilities(effects: &crate::VisualEffects) -> [Option<RenderCapability>; 6] {
+fn visual_effect_capabilities(effects: &crate::VisualEffects) -> [Option<RenderCapability>; 7] {
     let backdrop = effects.backdrop_blur.is_some_and(|radius| radius > 0.0);
     let mut remainder = effects.clone();
     remainder.backdrop_blur = None;
@@ -400,18 +404,20 @@ fn visual_effect_capabilities(effects: &crate::VisualEffects) -> [Option<RenderC
         None,
         None,
         None,
+        None,
     ]
 }
 
-fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderCapability>; 6] {
+fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderCapability>; 7] {
     if layers.is_empty() {
-        return [None; 6];
+        return [None; 7];
     }
     let mut linear = false;
     let mut radial = false;
     let mut conic = false;
     let mut resource = false;
     let mut geometry = false;
+    let mut radial_variants = false;
     for layer in layers {
         match background_image_capability(layer) {
             Some(RenderCapability::LinearGradients) => linear = true,
@@ -426,13 +432,28 @@ fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderC
                     None,
                     None,
                     None,
+                    None,
                 ];
             }
         }
+        radial_variants |= matches!(
+            layer.image,
+            crate::PaintImage::RadialGradient {
+                shape: crate::RadialGradientShape::Circle,
+                ..
+            } | crate::PaintImage::RadialGradient {
+                extent: crate::RadialGradientExtent::ClosestSide
+                    | crate::RadialGradientExtent::FarthestSide
+                    | crate::RadialGradientExtent::ClosestCorner
+                    | crate::RadialGradientExtent::FarthestCorner,
+                ..
+            }
+        );
         if !has_initial_background_geometry(layer) {
             if !has_explicit_background_geometry(layer) {
                 return [
                     Some(RenderCapability::BackgroundLayers),
+                    None,
                     None,
                     None,
                     None,
@@ -450,6 +471,7 @@ fn background_capabilities(layers: &[crate::BackgroundLayer]) -> [Option<RenderC
         resource.then_some(RenderCapability::BackgroundImageResources),
         geometry.then_some(RenderCapability::BackgroundGeometry),
         (layers.len() > 1).then_some(RenderCapability::BackgroundLayerStacking),
+        radial_variants.then_some(RenderCapability::RadialGradientVariants),
     ]
 }
 
@@ -470,15 +492,10 @@ fn background_image_capability(layer: &crate::BackgroundLayer) -> Option<RenderC
     if matches!(
         &layer.image,
         crate::PaintImage::RadialGradient {
-            shape: crate::RadialGradientShape::Ellipse,
-            extent: crate::RadialGradientExtent::Explicit,
-            radii: Some(_),
             repeating: false,
             stops,
             ..
-        } if stops.iter().all(|stop| {
-            stop.position.is_some_and(|position| position.length == 0.0)
-        })
+        } if stops.iter().all(|stop| stop.position.is_some())
     ) {
         return Some(RenderCapability::RadialGradients);
     }
@@ -633,6 +650,53 @@ mod tests {
             repeating: false,
             stops: basic_gradient_stops(),
         })
+    }
+
+    #[test]
+    fn radial_gradient_capability_covers_shapes_and_keyword_extents() {
+        for (shape, extent, radii) in [
+            (
+                crate::RadialGradientShape::Circle,
+                crate::RadialGradientExtent::FarthestCorner,
+                None,
+            ),
+            (
+                crate::RadialGradientShape::Ellipse,
+                crate::RadialGradientExtent::ClosestSide,
+                None,
+            ),
+            (
+                crate::RadialGradientShape::Circle,
+                crate::RadialGradientExtent::Explicit,
+                Some((
+                    PaintLengthPercentage {
+                        length: 10.0,
+                        fraction: 0.0,
+                    },
+                    PaintLengthPercentage {
+                        length: 10.0,
+                        fraction: 0.0,
+                    },
+                )),
+            ),
+        ] {
+            let mut layer = basic_radial_layer();
+            layer.image = crate::PaintImage::RadialGradient {
+                shape,
+                extent,
+                center: PaintPosition::default(),
+                radii,
+                repeating: false,
+                stops: basic_gradient_stops(),
+            };
+            let required = packet(vec![Operation::SetBackgroundLayers {
+                node: NodeId::new(1).unwrap(),
+                layers: vec![layer],
+            }])
+            .required_capabilities();
+            assert!(required.contains(&RenderCapability::RadialGradients));
+            assert!(required.contains(&RenderCapability::RadialGradientVariants));
+        }
     }
 
     fn conic_layer(repeating: bool, first_stop_length: f32) -> BackgroundLayer {
@@ -1125,6 +1189,7 @@ mod tests {
                 "background-layer-stacking",
                 "background-image-resources",
                 "backdrop-blur",
+                "radial-gradient-variants",
             ]
         );
 

@@ -32,7 +32,7 @@
 
 #define WHISKER_MOBILE_ABI_MAJOR 2
 
-#define WHISKER_MOBILE_ABI_MINOR 29
+#define WHISKER_MOBILE_ABI_MINOR 30
 
 #define WHISKER_FRAME_PROTOCOL_MAJOR 1
 
@@ -65,6 +65,8 @@
 #define WHISKER_CAPABILITY_BACKGROUND_IMAGE_RESOURCES 8192
 
 #define WHISKER_CAPABILITY_BACKDROP_BLUR 16384
+
+#define WHISKER_CAPABILITY_RADIAL_GRADIENT_VARIANTS 32768
 
 #define WHISKER_POINTER_DOWN 0
 
@@ -161,6 +163,20 @@
 #define WHISKER_BACKGROUND_CONIC 2
 
 #define WHISKER_BACKGROUND_RESOURCE 3
+
+#define WHISKER_RADIAL_SHAPE_CIRCLE 0
+
+#define WHISKER_RADIAL_SHAPE_ELLIPSE 1
+
+#define WHISKER_RADIAL_EXTENT_CLOSEST_SIDE 0
+
+#define WHISKER_RADIAL_EXTENT_FARTHEST_SIDE 1
+
+#define WHISKER_RADIAL_EXTENT_CLOSEST_CORNER 2
+
+#define WHISKER_RADIAL_EXTENT_FARTHEST_CORNER 3
+
+#define WHISKER_RADIAL_EXTENT_EXPLICIT 4
 
 #define WHISKER_BACKGROUND_SIZE_AUTO 0
 
@@ -667,9 +683,11 @@ typedef struct WhiskerMobileGradientStop {
 } WhiskerMobileGradientStop;
 
 /**
- * One explicit, non-repeating elliptical radial gradient.
+ * One resolved, non-repeating radial gradient.
  */
 typedef struct WhiskerMobileRadialGradient {
+  uint32_t shape;
+  uint32_t extent;
   struct WhiskerMobileLengthPercentage center_x;
   struct WhiskerMobileLengthPercentage center_y;
   struct WhiskerMobileLengthPercentage radius_x;

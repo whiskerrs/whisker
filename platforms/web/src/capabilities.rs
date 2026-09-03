@@ -22,6 +22,7 @@ pub(crate) fn host_capabilities(backdrop_blur: bool) -> RenderCapabilities {
         RenderCapability::BackgroundGeometry,
         RenderCapability::BackgroundLayerStacking,
         RenderCapability::BackgroundImageResources,
+        RenderCapability::RadialGradientVariants,
     ];
     if backdrop_blur {
         entries.push(RenderCapability::BackdropBlur);

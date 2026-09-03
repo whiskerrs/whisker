@@ -259,7 +259,11 @@ func hostBackgroundLayer(
         guard let radial = layer.image.payload?.assumingMemoryBound(
             to: WhiskerMobileRadialGradient.self
         ).pointee, let stopPointer = radial.stops else { return nil }
+        guard let shape = HostRadialShape(wireValue: radial.shape),
+              let extent = HostRadialExtent(wireValue: radial.extent) else { return nil }
         image = .radial(HostRadialGradient(
+            shape: shape,
+            extent: extent,
             centerX: radial.center_x,
             centerY: radial.center_y,
             radiusX: radial.radius_x,

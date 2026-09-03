@@ -943,22 +943,22 @@ pub(crate) fn linear_gradient_draw(
 
 pub(crate) fn radial_gradient_draw(
     positioning_rect: LayoutRect,
+    shape: whisker_protocol::RadialGradientShape,
+    extent: whisker_protocol::RadialGradientExtent,
     center: whisker_protocol::PaintPosition,
-    radii: (
+    explicit_radii: Option<(
         whisker_protocol::PaintLengthPercentage,
         whisker_protocol::PaintLengthPercentage,
-    ),
+    )>,
     stops: &[GradientStop],
     opacity: f32,
 ) -> LinearGradientDraw {
+    let radii = radial_gradient_radii(positioning_rect, center, shape, extent, explicit_radii);
     let center = [
         positioning_rect.x + center.x.length + center.x.fraction * positioning_rect.width,
         positioning_rect.y + center.y.length + center.y.fraction * positioning_rect.height,
     ];
-    let radii = [
-        radii.0.length + radii.0.fraction * positioning_rect.width,
-        radii.1.length + radii.1.fraction * positioning_rect.height,
-    ];
+    let line_length = radii[0].max(0.0001);
     LinearGradientDraw {
         start_end: [center[0], center[1], radii[0], radii[1]],
         tile_rect: [
@@ -977,13 +977,70 @@ pub(crate) fn radial_gradient_draw(
         stops: stops
             .iter()
             .map(|stop| LinearGradientStopGpu {
-                position: stop.position.map_or(0.0, |position| position.fraction),
+                position: stop.position.map_or(0.0, |position| {
+                    position.fraction + position.length / line_length
+                }),
                 padding: [0.0; 3],
                 color: gpu_color(&stop.color, opacity),
             })
             .collect(),
         kind: 2,
         geometry_flags: 0,
+    }
+}
+
+fn radial_gradient_radii(
+    bounds: LayoutRect,
+    center: whisker_protocol::PaintPosition,
+    shape: whisker_protocol::RadialGradientShape,
+    extent: whisker_protocol::RadialGradientExtent,
+    explicit: Option<(
+        whisker_protocol::PaintLengthPercentage,
+        whisker_protocol::PaintLengthPercentage,
+    )>,
+) -> [f32; 2] {
+    use whisker_protocol::{RadialGradientExtent, RadialGradientShape};
+
+    let center_x = center.x.length + center.x.fraction * bounds.width;
+    let center_y = center.y.length + center.y.fraction * bounds.height;
+    if extent == RadialGradientExtent::Explicit {
+        let (x, y) = explicit.expect("validated explicit radial gradient has radii");
+        let radius_x = x.length + x.fraction * bounds.width;
+        let radius_y = if shape == RadialGradientShape::Circle {
+            radius_x
+        } else {
+            y.length + y.fraction * bounds.height
+        };
+        return [radius_x, radius_y];
+    }
+
+    let near_x = center_x.min(bounds.width - center_x).max(0.0);
+    let far_x = center_x.max(bounds.width - center_x).max(0.0);
+    let near_y = center_y.min(bounds.height - center_y).max(0.0);
+    let far_y = center_y.max(bounds.height - center_y).max(0.0);
+    let (x, y, corner) = match extent {
+        RadialGradientExtent::ClosestSide => (near_x, near_y, false),
+        RadialGradientExtent::FarthestSide => (far_x, far_y, false),
+        RadialGradientExtent::ClosestCorner => (near_x, near_y, true),
+        RadialGradientExtent::FarthestCorner => (far_x, far_y, true),
+        RadialGradientExtent::Explicit => unreachable!(),
+    };
+    if shape == RadialGradientShape::Circle {
+        let radius = if corner {
+            x.hypot(y)
+        } else if extent == RadialGradientExtent::ClosestSide {
+            x.min(y)
+        } else {
+            x.max(y)
+        };
+        [radius, radius]
+    } else {
+        let scale = if corner {
+            std::f32::consts::SQRT_2
+        } else {
+            1.0
+        };
+        [x * scale, y * scale]
     }
 }
 

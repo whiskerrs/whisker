@@ -370,21 +370,43 @@ impl MobileFrameOwned {
                                     }
                                 }
                                 PaintImage::RadialGradient {
-                                    shape: RadialGradientShape::Ellipse,
-                                    extent: RadialGradientExtent::Explicit,
+                                    shape,
+                                    extent,
                                     center,
-                                    radii: Some((radius_x, radius_y)),
+                                    radii,
                                     repeating: false,
                                     stops,
                                 } => {
                                     let stops = mobile_gradient_stops(stops, &mut strings)?;
                                     gradient_stops.push(stops);
                                     let stops = gradient_stops.last().unwrap();
+                                    let (radius_x, radius_y) = radii.unwrap_or_default();
                                     radial_gradients.push(Box::new(MobileRadialGradient {
+                                        shape: match shape {
+                                            RadialGradientShape::Circle => RADIAL_SHAPE_CIRCLE,
+                                            RadialGradientShape::Ellipse => RADIAL_SHAPE_ELLIPSE,
+                                        },
+                                        extent: match extent {
+                                            RadialGradientExtent::ClosestSide => {
+                                                RADIAL_EXTENT_CLOSEST_SIDE
+                                            }
+                                            RadialGradientExtent::FarthestSide => {
+                                                RADIAL_EXTENT_FARTHEST_SIDE
+                                            }
+                                            RadialGradientExtent::ClosestCorner => {
+                                                RADIAL_EXTENT_CLOSEST_CORNER
+                                            }
+                                            RadialGradientExtent::FarthestCorner => {
+                                                RADIAL_EXTENT_FARTHEST_CORNER
+                                            }
+                                            RadialGradientExtent::Explicit => {
+                                                RADIAL_EXTENT_EXPLICIT
+                                            }
+                                        },
                                         center_x: mobile_coordinate(center.x),
                                         center_y: mobile_coordinate(center.y),
-                                        radius_x: mobile_length(*radius_x),
-                                        radius_y: mobile_length(*radius_y),
+                                        radius_x: mobile_length(radius_x),
+                                        radius_y: mobile_length(radius_y),
                                         stops: stops.as_ptr(),
                                         stop_count: stops.len(),
                                     }));

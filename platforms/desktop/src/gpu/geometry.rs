@@ -193,11 +193,13 @@ pub(crate) fn background_gradient_draw(
             stops,
         } => linear_gradient_draw(tile.rect, *angle_degrees, *repeating, stops, opacity),
         PaintImage::RadialGradient {
+            shape,
+            extent,
             center,
-            radii: Some(radii),
+            radii,
             stops,
-            ..
-        } => radial_gradient_draw(tile.rect, *center, *radii, stops, opacity),
+            repeating: false,
+        } => radial_gradient_draw(tile.rect, *shape, *extent, *center, *radii, stops, opacity),
         PaintImage::ConicGradient {
             from_degrees,
             center,

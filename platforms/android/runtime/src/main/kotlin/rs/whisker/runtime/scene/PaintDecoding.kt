@@ -48,6 +48,8 @@ import rs.whisker.runtime.paint.HostPathCommand
 import rs.whisker.runtime.paint.HostLinearGradient
 import rs.whisker.runtime.paint.HostPaintCoordinate
 import rs.whisker.runtime.paint.HostRadialGradient
+import rs.whisker.runtime.paint.HostRadialExtent
+import rs.whisker.runtime.paint.HostRadialShape
 import rs.whisker.runtime.paint.HostRasterResourceStore
 import rs.whisker.runtime.paint.applyBoxPaint
 import rs.whisker.runtime.paint.parseNamedColor
@@ -122,7 +124,7 @@ internal fun decodeBackgroundLayer(
     val names = requireNotNull(operation.names)
     val imageOffset = BACKGROUND_GEOMETRY_PACKED_SIZE
     val stopOffset = imageOffset + when (operation.flags) {
-        BACKGROUND_RADIAL -> 8
+        BACKGROUND_RADIAL -> RADIAL_GRADIENT_PACKED_SIZE
         BACKGROUND_CONIC -> 4
         BACKGROUND_RESOURCE -> BACKGROUND_RESOURCE_ID_WORDS
         else -> 0
@@ -175,10 +177,12 @@ internal fun decodeBackgroundLayer(
         HostBackgroundLayer(
             linearGradient = null,
             radialGradient = HostRadialGradient(
-                centerX = coordinate(imageOffset),
-                centerY = coordinate(imageOffset + 2),
-                radiusX = coordinate(imageOffset + 4),
-                radiusY = coordinate(imageOffset + 6),
+                shape = requireNotNull(HostRadialShape.fromWire(numbers[imageOffset].toInt())),
+                extent = requireNotNull(HostRadialExtent.fromWire(numbers[imageOffset + 1].toInt())),
+                centerX = coordinate(imageOffset + 2),
+                centerY = coordinate(imageOffset + 4),
+                radiusX = coordinate(imageOffset + 6),
+                radiusY = coordinate(imageOffset + 8),
                 stops = stops,
             ),
             geometry = geometry,
@@ -224,7 +228,7 @@ internal fun projectedBackgroundLayerOperations(
         val values = packed.copyOfRange(cursor, cursor + valueCount)
         cursor += valueCount
         val imagePrefix = when (kind) {
-            BACKGROUND_RADIAL -> 8
+            BACKGROUND_RADIAL -> RADIAL_GRADIENT_PACKED_SIZE
             BACKGROUND_CONIC -> 4
             BACKGROUND_RESOURCE -> BACKGROUND_RESOURCE_ID_WORDS
             else -> 0
@@ -340,7 +344,7 @@ internal fun validBackgroundLayer(
         return false
     }
     val stopOffset = BACKGROUND_GEOMETRY_PACKED_SIZE + when (operation.flags) {
-        BACKGROUND_RADIAL -> 8
+        BACKGROUND_RADIAL -> RADIAL_GRADIENT_PACKED_SIZE
         BACKGROUND_CONIC -> 4
         BACKGROUND_RESOURCE -> BACKGROUND_RESOURCE_ID_WORDS
         else -> 0
@@ -427,6 +431,7 @@ internal const val OP_RELEASE_CAPTURE = MobileAbi.OP_RELEASE_CAPTURE
 internal const val OP_TEXT_STYLE = MobileAbi.OP_TEXT_STYLE
 internal const val OP_ACCESSIBILITY = MobileAbi.OP_ACCESSIBILITY
 internal const val BACKGROUND_GEOMETRY_PACKED_SIZE = 15
+internal const val RADIAL_GRADIENT_PACKED_SIZE = 10
 internal const val BOX_SHADOW_PACKED_SIZE = 10
 internal const val CLIP_PATH_INSET_PACKED_SIZE = 26
 internal const val CLIP_PATH_CIRCLE_PACKED_SIZE = 8

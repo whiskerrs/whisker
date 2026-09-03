@@ -1743,6 +1743,8 @@ private final class Driver {
                                 gradientBuffer.baseAddress!.advanced(by: offset)
                             )
                             if case let .radial(radial) = layer.image {
+                                radialPayloads[index].shape = UInt32(WHISKER_RADIAL_SHAPE_ELLIPSE)
+                                radialPayloads[index].extent = UInt32(WHISKER_RADIAL_EXTENT_EXPLICIT)
                                 radialPayloads[index].center_x = WhiskerMobileLengthPercentage(
                                     length: radial.center[0], fraction: 0
                                 )

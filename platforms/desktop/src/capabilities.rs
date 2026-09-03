@@ -19,6 +19,7 @@ pub(crate) fn host_capabilities() -> RenderCapabilities {
             RenderCapability::BackgroundLayerStacking,
             RenderCapability::BackgroundImageResources,
             RenderCapability::BackdropBlur,
+            RenderCapability::RadialGradientVariants,
         ]
         .map(|capability| CapabilityEntry {
             capability,

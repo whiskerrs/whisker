@@ -40,6 +40,7 @@ enum IOSHostCapabilities {
             WHISKER_CAPABILITY_BACKGROUND_GEOMETRY,
             WHISKER_CAPABILITY_BACKGROUND_LAYER_STACKING,
             WHISKER_CAPABILITY_BACKGROUND_IMAGE_RESOURCES,
+            WHISKER_CAPABILITY_RADIAL_GRADIENT_VARIANTS,
         ].reduce(0) { $0 | UInt64($1) },
         // UIKit exposes material intensity, not an exact CSS blur radius.
         emulated: UInt64(WHISKER_CAPABILITY_BACKDROP_BLUR)

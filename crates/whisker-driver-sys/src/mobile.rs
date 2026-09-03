@@ -8,7 +8,7 @@ use std::ffi::c_void;
 use crate::{WhiskerBytesRef, WhiskerStringRef, WhiskerValueRaw};
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 29;
+pub const MOBILE_ABI_MINOR: u16 = 30;
 pub const FRAME_PROTOCOL_MAJOR: u16 = 1;
 pub const FRAME_PROTOCOL_MINOR: u16 = 4;
 
@@ -26,6 +26,7 @@ pub const CAPABILITY_BACKGROUND_GEOMETRY: u64 = 0x0800;
 pub const CAPABILITY_BACKGROUND_LAYER_STACKING: u64 = 0x1000;
 pub const CAPABILITY_BACKGROUND_IMAGE_RESOURCES: u64 = 0x2000;
 pub const CAPABILITY_BACKDROP_BLUR: u64 = 0x4000;
+pub const CAPABILITY_RADIAL_GRADIENT_VARIANTS: u64 = 0x8000;
 
 pub const POINTER_DOWN: u32 = 0;
 pub const POINTER_MOVE: u32 = 1;
@@ -80,6 +81,14 @@ pub const BACKGROUND_LINEAR: u32 = 0;
 pub const BACKGROUND_RADIAL: u32 = 1;
 pub const BACKGROUND_CONIC: u32 = 2;
 pub const BACKGROUND_RESOURCE: u32 = 3;
+
+pub const RADIAL_SHAPE_CIRCLE: u32 = 0;
+pub const RADIAL_SHAPE_ELLIPSE: u32 = 1;
+pub const RADIAL_EXTENT_CLOSEST_SIDE: u32 = 0;
+pub const RADIAL_EXTENT_FARTHEST_SIDE: u32 = 1;
+pub const RADIAL_EXTENT_CLOSEST_CORNER: u32 = 2;
+pub const RADIAL_EXTENT_FARTHEST_CORNER: u32 = 3;
+pub const RADIAL_EXTENT_EXPLICIT: u32 = 4;
 
 pub const BACKGROUND_SIZE_AUTO: u32 = 0;
 pub const BACKGROUND_SIZE_EXPLICIT: u32 = 1;
@@ -281,10 +290,12 @@ pub struct MobileGradientStop {
     pub position: MobileLengthPercentage,
 }
 
-/// One explicit, non-repeating elliptical radial gradient.
+/// One resolved, non-repeating radial gradient.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MobileRadialGradient {
+    pub shape: u32,
+    pub extent: u32,
     pub center_x: MobileLengthPercentage,
     pub center_y: MobileLengthPercentage,
     pub radius_x: MobileLengthPercentage,
@@ -674,7 +685,7 @@ mod tests {
             assert_eq!(std::mem::size_of::<MobileClipPathCommands>(), 24);
             assert_eq!(std::mem::size_of::<MobileClipPath>(), 24);
             assert_eq!(std::mem::size_of::<MobileGradientStop>(), 40);
-            assert_eq!(std::mem::size_of::<MobileRadialGradient>(), 48);
+            assert_eq!(std::mem::size_of::<MobileRadialGradient>(), 56);
             assert_eq!(std::mem::size_of::<MobileConicGradient>(), 32);
             assert_eq!(std::mem::size_of::<MobileBackgroundImage>(), 24);
             assert_eq!(std::mem::size_of::<MobileBackgroundLayer>(), 88);

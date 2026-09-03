@@ -12,7 +12,7 @@ internal object MobileAbi {
     const val VALUE_MAP: Int = 7
     const val VALUE_ERROR: Int = 8
     const val MOBILE_ABI_MAJOR: Int = 2
-    const val MOBILE_ABI_MINOR: Int = 29
+    const val MOBILE_ABI_MINOR: Int = 30
     const val FRAME_PROTOCOL_MAJOR: Int = 1
     const val FRAME_PROTOCOL_MINOR: Int = 4
     const val CAPABILITY_ELLIPTICAL_BORDER_RADIUS: Long = 0x0001
@@ -29,6 +29,7 @@ internal object MobileAbi {
     const val CAPABILITY_BACKGROUND_LAYER_STACKING: Long = 0x1000
     const val CAPABILITY_BACKGROUND_IMAGE_RESOURCES: Long = 0x2000
     const val CAPABILITY_BACKDROP_BLUR: Long = 0x4000
+    const val CAPABILITY_RADIAL_GRADIENT_VARIANTS: Long = 0x8000
     const val POINTER_DOWN: Int = 0
     const val POINTER_MOVE: Int = 1
     const val POINTER_UP: Int = 2
@@ -77,6 +78,13 @@ internal object MobileAbi {
     const val BACKGROUND_RADIAL: Int = 1
     const val BACKGROUND_CONIC: Int = 2
     const val BACKGROUND_RESOURCE: Int = 3
+    const val RADIAL_SHAPE_CIRCLE: Int = 0
+    const val RADIAL_SHAPE_ELLIPSE: Int = 1
+    const val RADIAL_EXTENT_CLOSEST_SIDE: Int = 0
+    const val RADIAL_EXTENT_FARTHEST_SIDE: Int = 1
+    const val RADIAL_EXTENT_CLOSEST_CORNER: Int = 2
+    const val RADIAL_EXTENT_FARTHEST_CORNER: Int = 3
+    const val RADIAL_EXTENT_EXPLICIT: Int = 4
     const val BACKGROUND_SIZE_AUTO: Int = 0
     const val BACKGROUND_SIZE_EXPLICIT: Int = 1
     const val BACKGROUND_SIZE_COVER: Int = 2

@@ -11,9 +11,12 @@ import android.graphics.RectF
 import android.graphics.RadialGradient
 import android.graphics.Shader
 import android.graphics.SweepGradient
+import rs.whisker.runtime.bridge.MobileAbi
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 internal data class HostGradientStop(
     val color: Int,
@@ -34,12 +37,39 @@ internal data class HostPaintCoordinate(
 }
 
 internal data class HostRadialGradient(
+    val shape: HostRadialShape,
+    val extent: HostRadialExtent,
     val centerX: HostPaintCoordinate,
     val centerY: HostPaintCoordinate,
     val radiusX: HostPaintCoordinate,
     val radiusY: HostPaintCoordinate,
     val stops: List<HostGradientStop>,
 )
+
+internal enum class HostRadialShape(val wireValue: Int) {
+    Circle(MobileAbi.RADIAL_SHAPE_CIRCLE),
+    Ellipse(MobileAbi.RADIAL_SHAPE_ELLIPSE);
+
+    companion object {
+        fun fromWire(value: Int): HostRadialShape? = entries.firstOrNull {
+            it.wireValue == value
+        }
+    }
+}
+
+internal enum class HostRadialExtent(val wireValue: Int) {
+    ClosestSide(MobileAbi.RADIAL_EXTENT_CLOSEST_SIDE),
+    FarthestSide(MobileAbi.RADIAL_EXTENT_FARTHEST_SIDE),
+    ClosestCorner(MobileAbi.RADIAL_EXTENT_CLOSEST_CORNER),
+    FarthestCorner(MobileAbi.RADIAL_EXTENT_FARTHEST_CORNER),
+    Explicit(MobileAbi.RADIAL_EXTENT_EXPLICIT);
+
+    companion object {
+        fun fromWire(value: Int): HostRadialExtent? = entries.firstOrNull {
+            it.wireValue == value
+        }
+    }
+}
 
 internal data class HostConicGradient(
     val fromDegrees: Float,
@@ -214,8 +244,9 @@ private fun drawRadialGradient(
     if (gradient.stops.size < 2) return
     val centerX = box.left + gradient.centerX.resolve(box.width())
     val centerY = box.top + gradient.centerY.resolve(box.height())
-    val radiusX = gradient.radiusX.resolve(box.width())
-    val radiusY = gradient.radiusY.resolve(box.height())
+    val radii = resolveRadialRadii(box.width(), box.height(), gradient)
+    val radiusX = radii.x
+    val radiusY = radii.y
     if (radiusX <= 0f || radiusY <= 0f) return
     var previousPosition = 0f
     val positions = gradient.stops.mapIndexed { index, stop ->
@@ -239,6 +270,61 @@ private fun drawRadialGradient(
     }
     canvas.drawPath(clip, paint)
     paint.shader = null
+}
+
+@JvmInline
+internal value class HostRadialRadii private constructor(private val packed: Long) {
+    val x: Float get() = Float.fromBits((packed ushr 32).toInt())
+    val y: Float get() = Float.fromBits(packed.toInt())
+
+    companion object {
+        fun of(x: Float, y: Float): HostRadialRadii = HostRadialRadii(
+            (x.toRawBits().toLong() shl 32) or (y.toRawBits().toLong() and 0xffff_ffffL),
+        )
+    }
+}
+
+internal fun resolveRadialRadii(
+    width: Float,
+    height: Float,
+    gradient: HostRadialGradient,
+): HostRadialRadii {
+    val centerX = gradient.centerX.resolve(width)
+    val centerY = gradient.centerY.resolve(height)
+    if (gradient.extent == HostRadialExtent.Explicit) {
+        val radiusX = gradient.radiusX.resolve(width)
+        val radiusY = if (gradient.shape == HostRadialShape.Circle) {
+            radiusX
+        } else {
+            gradient.radiusY.resolve(height)
+        }
+        return HostRadialRadii.of(radiusX, radiusY)
+    }
+
+    val nearX = minOf(centerX, width - centerX).coerceAtLeast(0f)
+    val farX = maxOf(centerX, width - centerX).coerceAtLeast(0f)
+    val nearY = minOf(centerY, height - centerY).coerceAtLeast(0f)
+    val farY = maxOf(centerY, height - centerY).coerceAtLeast(0f)
+    val x = if (
+        gradient.extent == HostRadialExtent.ClosestSide ||
+        gradient.extent == HostRadialExtent.ClosestCorner
+    ) nearX else farX
+    val y = if (
+        gradient.extent == HostRadialExtent.ClosestSide ||
+        gradient.extent == HostRadialExtent.ClosestCorner
+    ) nearY else farY
+    val corner = gradient.extent == HostRadialExtent.ClosestCorner ||
+        gradient.extent == HostRadialExtent.FarthestCorner
+    if (gradient.shape == HostRadialShape.Circle) {
+        val radius = when {
+            corner -> hypot(x.toDouble(), y.toDouble()).toFloat()
+            gradient.extent == HostRadialExtent.ClosestSide -> minOf(x, y)
+            else -> maxOf(x, y)
+        }
+        return HostRadialRadii.of(radius, radius)
+    }
+    val scale = if (corner) sqrt(2f) else 1f
+    return HostRadialRadii.of(x * scale, y * scale)
 }
 
 private fun drawConicGradient(

@@ -34,7 +34,8 @@ internal object AndroidHostCapabilities {
             MobileAbi.CAPABILITY_CONIC_GRADIENTS or
             MobileAbi.CAPABILITY_BACKGROUND_GEOMETRY or
             MobileAbi.CAPABILITY_BACKGROUND_LAYER_STACKING or
-            MobileAbi.CAPABILITY_BACKGROUND_IMAGE_RESOURCES
+            MobileAbi.CAPABILITY_BACKGROUND_IMAGE_RESOURCES or
+            MobileAbi.CAPABILITY_RADIAL_GRADIENT_VARIANTS
 
     fun current(): HostRenderProfile = forApiLevel(Build.VERSION.SDK_INT)
 

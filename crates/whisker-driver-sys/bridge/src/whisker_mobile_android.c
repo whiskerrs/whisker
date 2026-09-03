@@ -451,9 +451,13 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                             ok = false; break;
                         }
                         const WhiskerMobileRadialGradient* radial = layer->image.payload;
+                        if (radial->shape > WHISKER_RADIAL_SHAPE_ELLIPSE ||
+                            radial->extent > WHISKER_RADIAL_EXTENT_EXPLICIT) {
+                            ok = false; break;
+                        }
                         stops = radial->stops;
                         stop_count = radial->stop_count;
-                        image_prefix_count = 8;
+                        image_prefix_count = 10;
                     } else if (layer->image.kind == WHISKER_BACKGROUND_CONIC) {
                         if (layer->image.payload == NULL || layer->image.payload_count != 1) {
                             ok = false; break;
@@ -509,7 +513,7 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                         radial = layer->image.payload;
                         stops = radial->stops;
                         stop_count = radial->stop_count;
-                        image_prefix_count = 8;
+                        image_prefix_count = 10;
                     } else if (layer->image.kind == WHISKER_BACKGROUND_CONIC) {
                         conic = layer->image.payload;
                         stops = conic->stops;
@@ -541,6 +545,8 @@ static bool present_frame(void* data, const WhiskerMobileFrame* frame, WhiskerMo
                     values[cursor++] = (float)layer->attachment;
                     values[cursor++] = (float)layer->blend_mode;
                     if (radial != NULL) {
+                        values[cursor++] = (float)radial->shape;
+                        values[cursor++] = (float)radial->extent;
                         const WhiskerMobileLengthPercentage* coordinates[] = {
                             &radial->center_x, &radial->center_y,
                             &radial->radius_x, &radial->radius_y
