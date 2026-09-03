@@ -1199,6 +1199,7 @@ impl Driver {
                     alignment,
                     indent,
                     available_width,
+                    available_width_kind,
                 } => self.measure_text(
                     *key,
                     text,
@@ -1219,6 +1220,7 @@ impl Driver {
                     *alignment,
                     *indent,
                     *available_width,
+                    *available_width_kind,
                 ),
                 Command::CheckpointMeasurement {
                     key,
@@ -1339,6 +1341,7 @@ impl Driver {
         alignment: whisker_host_conformance::TextAlignmentFixture,
         indent: whisker_host_conformance::TextIndentFixture,
         available_width: f32,
+        available_width_kind: whisker_host_conformance::AvailableWidthFixture,
     ) {
         let key_id = MeasurementKey::new(key).expect("fixture measurement key is non-zero");
         let element_type = ElementRegistry::standard()
@@ -1353,7 +1356,17 @@ impl Driver {
             constraints: MeasureConstraints {
                 known_dimensions: [None, None],
                 available_space: [
-                    AvailableSpace::Definite(available_width),
+                    match available_width_kind {
+                        whisker_host_conformance::AvailableWidthFixture::Definite => {
+                            AvailableSpace::Definite(available_width)
+                        }
+                        whisker_host_conformance::AvailableWidthFixture::MinContent => {
+                            AvailableSpace::MinContent
+                        }
+                        whisker_host_conformance::AvailableWidthFixture::MaxContent => {
+                            AvailableSpace::MaxContent
+                        }
+                    },
                     AvailableSpace::MaxContent,
                 ],
             },

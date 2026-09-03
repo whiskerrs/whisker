@@ -264,6 +264,9 @@ pub enum Command {
         indent: TextIndentFixture,
         /// Definite available width.
         available_width: f32,
+        /// Available-space mode forwarded to the Host measurer.
+        #[serde(default)]
+        available_width_kind: AvailableWidthFixture,
     },
     /// Checks one previously produced text measurement.
     CheckpointMeasurement {
@@ -814,6 +817,19 @@ pub enum WhiteSpaceFixture {
     Normal,
     /// Collapse whitespace and suppress wrapping.
     NoWrap,
+}
+
+/// Width availability supplied to intrinsic text measurement.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AvailableWidthFixture {
+    /// A finite constraint using `available_width`.
+    #[default]
+    Definite,
+    /// The smallest width allowed by text wrapping opportunities.
+    MinContent,
+    /// The unwrapped intrinsic width.
+    MaxContent,
 }
 
 /// Lynx-supported `word-break` values.

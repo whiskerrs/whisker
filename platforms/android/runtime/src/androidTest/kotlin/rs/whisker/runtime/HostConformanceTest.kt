@@ -1018,7 +1018,14 @@ private class Driver(
         val requestInts = IntArray(HostMeasureBatchAbi.REQUEST_INT_STRIDE).apply {
             this[HostMeasureBatchAbi.ELEMENT_TYPE] = 2
             this[HostMeasureBatchAbi.KIND] = 1
-            this[HostMeasureBatchAbi.AVAILABLE_WIDTH_KIND] = 0
+            this[HostMeasureBatchAbi.AVAILABLE_WIDTH_KIND] = when (
+                command.optString("available_width_kind", "definite")
+            ) {
+                "definite" -> 0
+                "min_content" -> 1
+                "max_content" -> 2
+                else -> error("unsupported available_width_kind: $command")
+            }
             this[HostMeasureBatchAbi.AVAILABLE_HEIGHT_KIND] = 2
             this[HostMeasureBatchAbi.FONT_WEIGHT] = command.optInt("font_weight", 400)
             this[HostMeasureBatchAbi.FONT_STYLE] = when (command.optString("font_style", "normal")) {
