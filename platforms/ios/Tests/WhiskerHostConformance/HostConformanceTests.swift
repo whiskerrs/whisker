@@ -60,6 +60,16 @@ final class HostConformanceTests: XCTestCase {
         }
     }
 
+    func testEllipsisMeasurementKeepsMultilineWrapping() {
+        var request = WhiskerMobileMeasureRequest()
+        request.overflow = 1
+        request.word_break = 0
+
+        let paragraph = whiskerTextParagraphStyle(request, widthBasis: 80)
+
+        XCTAssertEqual(paragraph.lineBreakMode, .byWordWrapping)
+    }
+
     func testModuleEventsReachOnlyObservingSurfacesAndLifecycleIsAggregated() {
         let module = EventLifecycleTestModule()
         module.qualifiedName = "event-test:Clock"
