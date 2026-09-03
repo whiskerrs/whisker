@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-plugin-v0.12.0...whisker-plugin-v0.13.0) - 2026-09-03
+
+### Other
+
+- refresh architecture and Rust API guidance
+- split large modules by responsibility
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-plugin-v0.10.12...whisker-plugin-v0.11.0) - 2026-08-11
 
 ### Other

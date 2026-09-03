@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-dev-server-v0.12.0...whisker-dev-server-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(cli)* unify run and build progress UI
+- *(web)* replace Trunk with Whisker dev server
+- connect native hosts to hot reload
+- *(host)* unify retained module runtime across platforms
+
+### Fixed
+
+- *(router)* complete cross-platform navigation
+- *(ios)* keep Xcode builds on the active CLI
+- *(ios)* complete Aurora Wallet host integration
+- *(android)* complete Aurora Wallet host integration
+
+### Other
+
+- refresh architecture and Rust API guidance
+- *(cng)* centralize project dependency resolution
+- remove legacy Lynx runtime dependencies
+- split large modules by responsibility
+- Add cross-platform Host bootstraps ([#419](https://github.com/whiskerrs/whisker/pull/419))
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-dev-server-v0.10.12...whisker-dev-server-v0.11.0) - 2026-08-11
 
 ### Other

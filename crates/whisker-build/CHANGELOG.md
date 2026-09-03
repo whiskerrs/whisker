@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.12.0...whisker-build-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(cli)* unify run and build progress UI
+- *(web)* replace Trunk with Whisker dev server
+- connect native hosts to hot reload
+- *(host)* normalize pointer input across hosts
+- *(runtime)* add typed resource channel ABI
+- *(host)* package mobile runtimes as platform SDKs
+- *(host)* unify retained module runtime across platforms
+
+### Fixed
+
+- *(android)* keep Gradle on the active CLI
+- *(ios)* complete Aurora Wallet host integration
+
+### Other
+
+- Merge pull request #656 from whiskerrs/codex/review-rollup-tooling-ci
+- make clippy checks reproducible
+- refresh architecture and Rust API guidance
+- *(module)* unify host installation kernels
+- *(cng)* centralize project dependency resolution
+- remove legacy Lynx runtime dependencies
+- split large modules by responsibility
+- *(android)* keep virtual scrolling responsive
+- Add cross-platform Host bootstraps ([#419](https://github.com/whiskerrs/whisker/pull/419))
+
 ## [0.11.1](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.11.0...whisker-build-v0.11.1) - 2026-08-12
 
 ### Other

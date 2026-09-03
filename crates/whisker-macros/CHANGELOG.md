@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-macros-v0.12.0...whisker-macros-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(router)* define navigation semantics
+- *(macros)* unify composition around public builders
+- connect native hosts to hot reload
+- negotiate host rendering capabilities
+- *(list)* finalize virtualization grid and scrolling
+- *(list)* add Rust-owned virtualized list foundation
+- align module APIs across hosts
+- *(host)* normalize pointer input across hosts
+- *(runtime)* add typed resource channel ABI
+- *(host)* unify retained module runtime across platforms
+
+### Fixed
+
+- *(modules)* align host registration names
+- *(macros)* satisfy current clippy at MSRV
+- *(ci)* restore module parity quality gates
+
+### Other
+
+- Merge pull request #656 from whiskerrs/codex/review-rollup-tooling-ci
+- refresh architecture and Rust API guidance
+- Merge remote-tracking branch 'origin/next-architecture' into codex/mobile-element-schema-freeze
+- remove legacy Lynx runtime dependencies
+- *(abi)* establish mobile source of truth
+- *(ui)* align builtin public contracts
+- *(css)* require structured style values
+- *(list)* recycle compatible presentation slots
+- make component commands one-way
+- rebuild driver as mobile FFI adapter
+- Add cross-platform Host bootstraps ([#419](https://github.com/whiskerrs/whisker/pull/419))
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-macros-v0.10.12...whisker-macros-v0.11.0) - 2026-08-11
 
 ### Other

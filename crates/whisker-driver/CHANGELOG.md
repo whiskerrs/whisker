@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-v0.12.0...whisker-driver-v0.13.0) - 2026-09-03
+
+### Added
+
+- connect native hosts to hot reload
+- negotiate host rendering capabilities
+- align module APIs across hosts
+- *(host)* preserve text direction through measurement
+- *(host)* normalize pointer input across hosts
+- *(host)* align text measurement typography
+- *(host)* preserve basic text styling across hosts
+- *(interaction)* implement cursor and pointer events
+- *(text)* implement extended font settings
+- *(text)* implement Lynx wrapping and overflow
+- *(text)* implement Lynx text indentation
+- *(text)* implement Lynx text alignment
+- *(paint)* implement Lynx text decoration
+- *(paint)* implement single text shadow
+- *(paint)* implement image rendering sampling
+- *(paint)* render backdrop blur across hosts
+- *(clip)* render path commands across hosts
+- *(clip)* render circle and ellipse paths across hosts
+- *(clip)* render rounded inset paths across hosts
+- *(shadow)* render hard outer box shadows
+- *(background)* implement border-area clipping
+- *(runtime)* lower intrinsic background size modes
+- *(runtime)* add typed resource channel ABI
+- *(mobile)* transfer background resource ids
+- *(mobile)* transfer background layer arrays
+- *(protocol)* negotiate rounded background geometry
+- *(protocol)* negotiate spaced background geometry
+- *(host)* size non-repeating background images
+- *(host)* render resolved conic gradients
+- *(host)* render explicit radial gradients
+- *(host)* render resolved linear gradients
+- *(host)* preserve elliptical border radii
+- *(host)* unify retained module runtime across platforms
+- *(elements)* implement RFC0004 module registry
+
+### Fixed
+
+- *(mobile)* retain runtimes across temporary detaches
+- *(driver)* null empty ABI slices
+- *(driver)* preserve length-prefixed string bytes
+- *(input)* make Rust authoritative for hit testing
+- *(runtime)* recover from host transaction failures
+- *(ci)* restore module parity quality gates
+
+### Other
+
+- *(driver)* match measurement responses positionally
+- *(protocol)* close host operation reachability gaps
+- Merge remote-tracking branch 'origin/next-architecture' into codex/mobile-element-schema-freeze
+- Isolate runtime state and module events per surface
+- split large modules by responsibility
+- *(abi)* establish mobile source of truth
+- *(ui)* align builtin public contracts
+- rebuild driver as mobile FFI adapter
+
 ## [0.11.1](https://github.com/whiskerrs/whisker/compare/whisker-driver-v0.11.0...whisker-driver-v0.11.1) - 2026-08-12
 
 ### Other

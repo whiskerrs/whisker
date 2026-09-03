@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-haptics-v0.12.0...whisker-haptics-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(haptics)* add web vibration support
+- *(host)* package mobile runtimes as platform SDKs
+- *(host)* unify retained module runtime across platforms
+
+### Fixed
+
+- *(android)* unblock SDK publication
+
+### Other
+
+- *(modules)* link every Rust host module
+- refresh architecture and Rust API guidance
+- remove legacy Lynx runtime dependencies
+
 ## [0.11.1](https://github.com/whiskerrs/whisker/compare/whisker-haptics-v0.11.0...whisker-haptics-v0.11.1) - 2026-08-12
 
 ### Other

@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.12.0...whisker-driver-sys-v0.13.0) - 2026-09-03
+
+### Added
+
+- negotiate host rendering capabilities
+- align module APIs across hosts
+- *(host)* preserve text direction through measurement
+- *(host)* normalize pointer input across hosts
+- *(host)* align text measurement typography
+- *(host)* preserve basic text styling across hosts
+- *(interaction)* implement cursor and pointer events
+- *(text)* implement extended font settings
+- *(text)* implement Lynx wrapping and overflow
+- *(text)* implement Lynx text indentation
+- *(text)* implement Lynx text alignment
+- *(paint)* implement Lynx text decoration
+- *(paint)* implement single text shadow
+- *(paint)* implement image rendering sampling
+- *(paint)* render backdrop blur across hosts
+- *(clip)* render path commands across hosts
+- *(clip)* render circle and ellipse paths across hosts
+- *(clip)* render rounded inset paths across hosts
+- *(shadow)* render hard outer box shadows
+- *(background)* implement border-area clipping
+- *(android)* connect typed resource channel
+- *(runtime)* add typed resource channel ABI
+- *(android)* paint raster background resources
+- *(mobile)* transfer background resource ids
+- *(mobile)* transfer background layer arrays
+- *(android)* stack multiple background layers
+- *(protocol)* negotiate rounded background geometry
+- *(protocol)* negotiate spaced background geometry
+- *(host)* size non-repeating background images
+- *(host)* render resolved conic gradients
+- *(host)* render explicit radial gradients
+- *(host)* render resolved linear gradients
+- *(host)* preserve elliptical border radii
+- *(host)* package mobile runtimes as platform SDKs
+- *(host)* unify retained module runtime across platforms
+
+### Fixed
+
+- *(mobile)* retain runtimes across temporary detaches
+- *(driver)* reject partial Android bootstrap
+- *(input)* make Rust authoritative for hit testing
+- *(abi)* regenerate mobile headers
+
+### Other
+
+- *(protocol)* close host operation reachability gaps
+- *(abi)* establish mobile source of truth
+- *(ui)* align builtin public contracts
+- *(android)* batch intrinsic measurement JNI calls
+- *(android)* batch frame presentation over JNI
+- rebuild driver as mobile FFI adapter
+- *(host)* cover advanced text measurement
+- Add cross-platform Host bootstraps ([#419](https://github.com/whiskerrs/whisker/pull/419))
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.10.12...whisker-driver-sys-v0.11.0) - 2026-08-11
 
 ### Other

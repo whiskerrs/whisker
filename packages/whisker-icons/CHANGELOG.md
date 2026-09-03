@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-icons-v0.12.0...whisker-icons-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(macros)* unify composition around public builders
+- *(list)* finalize virtualization grid and scrolling
+
+### Fixed
+
+- *(android)* complete Aurora Wallet host integration
+
+### Other
+
+- remove legacy Lynx runtime dependencies
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-icons-v0.10.12...whisker-icons-v0.11.0) - 2026-08-11
 
 ### Other

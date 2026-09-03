@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.12.0...whisker-fmt-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(fmt)* propagate multiline arguments outward
+- *(macros)* unify composition around public builders
+- *(host)* unify retained module runtime across platforms
+
+### Fixed
+
+- *(router)* complete cross-platform navigation
+- *(ci)* restore host conformance fixture identifiers
+
+### Other
+
+- make clippy checks reproducible
+- refresh architecture and Rust API guidance
+- split large modules by responsibility
+
 ## [0.12.0](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.11.2...whisker-fmt-v0.12.0) - 2026-08-14
 
 ### Other

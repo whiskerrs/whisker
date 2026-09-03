@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-input-v0.12.0...whisker-input-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(input)* support web and desktop hosts
+- *(macros)* unify composition around public builders
+- align module APIs across hosts
+- *(host)* package mobile runtimes as platform SDKs
+- *(host)* unify retained module runtime across platforms
+
+### Fixed
+
+- *(android)* unblock SDK publication
+- *(input)* include content padding in IME anchor
+- *(input)* anchor desktop IME to the caret
+- *(input)* align desktop IME presentation
+- *(input)* keep multiline caret on trailing line
+- *(input)* forward desktop printable key text
+
+### Other
+
+- remove legacy Lynx runtime dependencies
+- *(css)* require structured style values
+- make component commands one-way
+
 ## [0.11.1](https://github.com/whiskerrs/whisker/compare/whisker-input-v0.11.0...whisker-input-v0.11.1) - 2026-08-12
 
 ### Other

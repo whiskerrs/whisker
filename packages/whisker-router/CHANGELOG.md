@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.12.0...whisker-router-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(router)* define navigation semantics
+- *(macros)* unify composition around public builders
+- *(host)* unify retained module runtime across platforms
+
+### Fixed
+
+- *(android)* unblock SDK publication
+- *(router)* complete cross-platform navigation
+- *(router)* restore Android host navigation
+
+### Other
+
+- *(router)* adopt explicit platform manifest
+- refresh architecture and Rust API guidance
+- remove legacy Lynx runtime dependencies
+- *(css)* require structured style values
+- make component commands one-way
+
 ### Added
 
 - Add distinct `navigate` and `push` semantics, group-qualified destinations,
