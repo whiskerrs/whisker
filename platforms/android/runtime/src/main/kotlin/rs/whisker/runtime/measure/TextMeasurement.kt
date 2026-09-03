@@ -17,13 +17,17 @@ import java.text.Bidi
 import java.util.Locale
 import kotlin.math.ceil
 import rs.whisker.runtime.WhiskerAvailableSpace
-import rs.whisker.runtime.WhiskerElementRegistry
+import rs.whisker.runtime.WhiskerElementBindings
 import rs.whisker.runtime.WhiskerMeasureRequest
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.resolveWhiskerTypeface
+import rs.whisker.runtime.internal.CenteredLineHeightSpan
 
 /** Intrinsic measurement implementation shared by all Android Host frames. */
-internal class HostMeasurementProvider(private val context: Context) {
+internal class HostMeasurementProvider(
+    private val context: Context,
+    private val elements: WhiskerElementBindings,
+) {
     @Suppress("LongParameterList")
     fun measure(
         elementType: Int, kind: Int,
@@ -55,7 +59,7 @@ internal class HostMeasurementProvider(private val context: Context) {
                 if (knownMask and HEIGHT != 0) knownHeight else intrinsicHeight,
             )
         }
-        val custom = WhiskerElementRegistry.measure(
+        val custom = elements.measure(
             elementType,
             WhiskerMeasureRequest(
                 if (availableWidthKind == DEFINITE) availableWidth else null,
@@ -131,16 +135,28 @@ internal class HostMeasurementProvider(private val context: Context) {
             indentLogicalPixels,
             indentPercentage,
         )
-        val layoutText: CharSequence = if (displayText.isEmpty() || semantics.indentPixels == 0f) {
+        val layoutText: CharSequence = if (
+            displayText.isEmpty() || (semantics.indentPixels == 0f && lineHeight <= 0f)
+        ) {
             displayText
         } else {
             SpannableString(displayText).apply {
-                setSpan(
-                    LeadingMarginSpan.Standard(semantics.indentPixels.toInt(), 0),
-                    0,
-                    length,
-                    Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
-                )
+                if (semantics.indentPixels != 0f) {
+                    setSpan(
+                        LeadingMarginSpan.Standard(semantics.indentPixels.toInt(), 0),
+                        0,
+                        length,
+                        Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
+                    )
+                }
+                if (lineHeight > 0f) {
+                    setSpan(
+                        CenteredLineHeightSpan(lineHeight * density),
+                        0,
+                        length,
+                        Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
+                    )
+                }
             }
         }
         val maxWidthPx = when {
@@ -163,17 +179,18 @@ internal class HostMeasurementProvider(private val context: Context) {
         if (overflow == TEXT_OVERFLOW_ELLIPSIS) {
             builder.setEllipsize(TextUtils.TruncateAt.END).setEllipsizedWidth(maxWidthPx)
         }
-        if (lineHeight > 0f) {
-            val fontHeight = paint.fontMetrics.run { descent - ascent }
-            builder.setLineSpacing((lineHeight * density - fontHeight).coerceAtLeast(0f), 1f)
-        }
         val layout = builder.build()
-        val width = when {
-            knownMask and WIDTH != 0 -> knownWidth
-            availableWidthKind == DEFINITE && wrap != 0 ->
-                (layout.width / density).coerceAtMost(availableWidth)
-            else -> layout.width / density
-        }
+        val usedLineWidthPixels = (0 until layout.lineCount)
+            .maxOfOrNull(layout::getLineWidth) ?: 0f
+        val width = measuredTextWidth(
+            knownWidth = knownWidth,
+            hasKnownWidth = knownMask and WIDTH != 0,
+            availableWidth = availableWidth,
+            hasDefiniteAvailableWidth = availableWidthKind == DEFINITE,
+            wraps = wrap != 0,
+            usedLineWidthPixels = usedLineWidthPixels,
+            density = density,
+        )
         val height = if (knownMask and HEIGHT != 0) knownHeight else layout.height / density
         val first = if (layout.lineCount > 0) layout.getLineBaseline(0) / density else 0f
         val last = if (layout.lineCount > 0) {
@@ -186,6 +203,21 @@ internal class HostMeasurementProvider(private val context: Context) {
 
     private fun ready(width: Float, height: Float): FloatArray =
         floatArrayOf(READY, 0f, width, height, 0f, 0f, 0f)
+}
+
+internal fun measuredTextWidth(
+    knownWidth: Float,
+    hasKnownWidth: Boolean,
+    availableWidth: Float,
+    hasDefiniteAvailableWidth: Boolean,
+    wraps: Boolean,
+    usedLineWidthPixels: Float,
+    density: Float,
+): Float = when {
+    hasKnownWidth -> knownWidth
+    hasDefiniteAvailableWidth && wraps ->
+        (ceil(usedLineWidthPixels.toDouble()).toFloat() / density).coerceAtMost(availableWidth)
+    else -> ceil(usedLineWidthPixels.toDouble()).toFloat() / density
 }
 
 internal data class TextLayoutSemantics(

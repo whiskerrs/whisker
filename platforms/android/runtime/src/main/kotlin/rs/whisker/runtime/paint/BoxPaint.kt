@@ -129,10 +129,10 @@ private class WhiskerBoxDrawable(
         if (box.isEmpty) return
         val radii = normalizeRadii(cornerRadii, box.width(), box.height())
         val outer = roundedPath(box, radii)
-        val top = borderWidths[0].coerceIn(0f, box.height())
-        val right = borderWidths[1].coerceIn(0f, box.width())
-        val bottom = borderWidths[2].coerceIn(0f, box.height())
-        val left = borderWidths[3].coerceIn(0f, box.width())
+        val top = resolvedBorderWidth(borderWidths[0], backgroundBoxHeight, box.height())
+        val right = resolvedBorderWidth(borderWidths[1], backgroundBoxWidth, box.width())
+        val bottom = resolvedBorderWidth(borderWidths[2], backgroundBoxHeight, box.height())
+        val left = resolvedBorderWidth(borderWidths[3], backgroundBoxWidth, box.width())
         val paddingBox = RectF(
             box.left + left,
             box.top + top,
@@ -294,6 +294,14 @@ private class WhiskerBoxDrawable(
             canvas.restoreToCount(save)
         }
     }
+
+    /**
+     * Layout dimensions are rounded to physical pixels when Android sizes the View. A border that
+     * consumes the complete logical axis must consume that rounded View axis as well; otherwise a
+     * fractional-density device leaves a sub-pixel transparent seam at the opposite edge.
+     */
+    private fun resolvedBorderWidth(width: Float, logicalAxis: Float, viewAxis: Float): Float =
+        if (width >= logicalAxis) viewAxis else width.coerceIn(0f, viewAxis)
 
     private fun drawRectangularEdges(
         canvas: Canvas,

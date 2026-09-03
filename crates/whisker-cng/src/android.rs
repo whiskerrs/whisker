@@ -802,7 +802,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 35,
+            template_version: 36,
         }
     }
 
@@ -817,6 +817,11 @@ mod tests {
                 .contains("window.setBackgroundDrawableResource(R.color.whisker_background)")
         );
         assert!(MAIN_ACTIVITY_KT.contains("setContentView(WhiskerView(this))"));
+        assert!(MAIN_ACTIVITY_KT.contains("override fun onNewIntent(intent: Intent)"));
+        assert!(
+            MAIN_ACTIVITY_KT
+                .contains("intent.dataString?.let(WhiskerAppContext::dispatchDeepLink)")
+        );
         assert!(APP_BUILD_GRADLE_KTS.contains("androidx.activity:activity:1.8.2"));
     }
 

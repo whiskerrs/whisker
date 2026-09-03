@@ -1,7 +1,9 @@
 package {{android_application_id}}
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import rs.whisker.runtime.WhiskerAppContext
 import rs.whisker.runtime.WhiskerView{{main_activity_imports}}
 import rs.whisker.runtime.WhiskerWindow
 import rs.whisker.runtime.generated.WhiskerModuleBehaviors
@@ -18,5 +20,16 @@ class MainActivity : ComponentActivity() {
         System.loadLibrary("{{rust_lib_name}}")
         WhiskerModuleBehaviors.registerAll()
         setContentView(WhiskerView(this))
+        dispatchDeepLink(intent)
 {{main_activity_post_super}}    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        dispatchDeepLink(intent)
+    }
+
+    private fun dispatchDeepLink(intent: Intent) {
+        intent.dataString?.let(WhiskerAppContext::dispatchDeepLink)
+    }
 }

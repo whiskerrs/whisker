@@ -11,7 +11,7 @@ import rs.whisker.runtime.WhiskerChildPolicy
 import rs.whisker.runtime.WhiskerContainerView
 import rs.whisker.runtime.WhiskerScrollContainerView
 import rs.whisker.runtime.WhiskerView
-import rs.whisker.runtime.WhiskerElementRegistry
+import rs.whisker.runtime.WhiskerElementBindings
 import rs.whisker.runtime.accepts
 import rs.whisker.runtime.WhiskerTextContent
 import rs.whisker.runtime.WhiskerFontStyle
@@ -56,6 +56,7 @@ import rs.whisker.runtime.paint.parseNamedColor
 import rs.whisker.runtime.paint.rgba
 import rs.whisker.runtime.paint.resolveClipPath
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 internal data class HostSceneOperation(
     val tag: Int,
@@ -82,6 +83,7 @@ internal class HostScene(
     private val updateScrollOffset: (Long, Float, Float) -> Unit,
     private val removeScrollOffset: (Long) -> Unit,
     private val rasterResources: HostRasterResourceStore,
+    private val elements: WhiskerElementBindings,
 ) {
     private val nodes = LinkedHashMap<Long, HostNode>()
     private val parents = HashMap<Long, Long>()
@@ -123,11 +125,19 @@ internal class HostScene(
         }
         return try {
             eventGate.beginFrame()
+            val zOrderParents = if (stagedSnapshot) {
+                null
+            } else {
+                affectedZOrderParents()
+            }
             if (stagedSnapshot) clear()
             stagedOperations.forEach(::applyOperation)
             attachRoots()
-            if (stagedOperations.any { it.tag in OP_CREATE..OP_MOVE || it.tag == OP_Z_ORDER }) {
-                refreshZOrderProjection()
+            reapplyNativePointerInterception()
+            if (zOrderParents == null) {
+                refreshAllZOrderProjections()
+            } else if (zOrderParents.isNotEmpty()) {
+                zOrderParents.forEach(::refreshZOrderProjection)
             }
             sceneEpoch = stagedSceneEpoch
             revision = stagedTargetRevision
@@ -146,6 +156,9 @@ internal class HostScene(
 
     fun clear() {
         nodes.keys.forEach(removeScrollOffset)
+        pointerCaptures.values.forEach { nodeId ->
+            nodes[nodeId]?.parent?.requestDisallowInterceptTouchEvent(false)
+        }
         nodes.values.toList().forEach(::releasePresentation)
         nodes.clear()
         parents.clear()
@@ -172,7 +185,7 @@ internal class HostScene(
             OP_CREATE -> {
                 if (
                     operation.node == 0L || !existing.add(operation.node) ||
-                    WhiskerElementRegistry.registration(operation.member) == null
+                    elements.registration(operation.member) == null
                 ) return false
                 elementTypes[operation.node] = operation.member
             }
@@ -194,7 +207,7 @@ internal class HostScene(
             OP_INSERT -> {
                 val childCount = stagedChildCounts.getOrDefault(operation.parent, 0)
                 val policy = elementTypes[operation.parent]
-                    ?.let(WhiskerElementRegistry::registration)?.childPolicy
+                    ?.let(elements::registration)?.childPolicy
                 if (
                     operation.parent !in existing || operation.child !in existing ||
                     stagedParents.containsKey(operation.child) ||
@@ -233,9 +246,8 @@ internal class HostScene(
             OP_CLIP, OP_Z_ORDER, OP_EVENT_MASK ->
                 if (operation.node !in existing) return false
             OP_CLEAR_PROPERTY -> {
-                val registration = elementTypes[operation.node]
-                    ?.let(WhiskerElementRegistry::registration) ?: return false
-                if (registration.propertyOrNull(operation.member) == null) return false
+                val elementType = elementTypes[operation.node] ?: return false
+                if (!elements.hasProperty(elementType, operation.member)) return false
             }
             OP_HIT_TEST -> if (operation.node !in existing || operation.integer !in 0..3) return false
             OP_CURSOR -> if (operation.node !in existing || operation.integer !in 0..34) return false
@@ -262,7 +274,7 @@ internal class HostScene(
                 val values = operation.numbers ?: return false
                 val names = operation.names ?: return false
                 val registration = elementTypes[operation.node]
-                    ?.let(WhiskerElementRegistry::registration) ?: return false
+                    ?.let(elements::registration) ?: return false
                 if (
                     operation.node !in existing || operation.text == null ||
                     !validTextPayload(values, names)
@@ -272,15 +284,15 @@ internal class HostScene(
             }
             OP_PROPERTY -> {
                 val value = operation.value ?: return false
-                val registration = elementTypes[operation.node]
-                    ?.let(WhiskerElementRegistry::registration) ?: return false
+                val elementType = elementTypes[operation.node] ?: return false
+                val registration = elements.registration(elementType) ?: return false
                 val property = registration.propertyOrNull(operation.member) ?: return false
                 if (!property.value.accepts(value)) return false
             }
             OP_COMMAND -> {
                 val value = operation.value ?: return false
-                val registration = elementTypes[operation.node]
-                    ?.let(WhiskerElementRegistry::registration) ?: return false
+                val elementType = elementTypes[operation.node] ?: return false
+                val registration = elements.registration(elementType) ?: return false
                 val command = registration.commandOrNull(operation.member) ?: return false
                 if (!command.arguments.accepts(value)) return false
             }
@@ -348,7 +360,7 @@ internal class HostScene(
         when (operation.tag) {
             OP_CREATE -> {
                 val registration = requireNotNull(
-                    WhiskerElementRegistry.registration(operation.member),
+                    elements.registration(operation.member),
                 )
                 val eventSink: rs.whisker.runtime.WhiskerElementEventSink = { event, detail ->
                     emitElementEvent(id, event.name, detail)
@@ -356,7 +368,7 @@ internal class HostScene(
                 val mounted = presentationPool[operation.member]?.pollFirst()?.also {
                     it.prepareForReuse(eventSink)
                 } ?: requireNotNull(
-                    WhiskerElementRegistry.mount(operation.member, context, eventSink),
+                    elements.mount(operation.member, context, eventSink),
                 )
                 val node = HostNode(context, registration.name, root as? WhiskerView)
                 node.mountedElement = mounted
@@ -423,15 +435,16 @@ internal class HostScene(
             }
             OP_CURSOR -> (nodes[id] ?: return).setCursorKeyword(operation.integer)
             OP_CAPTURE -> {
-                pointerCaptures[operation.wide] = id
-                root.parent?.requestDisallowInterceptTouchEvent(true)
+                pointerCaptures.put(operation.wide, id)?.let { previousNode ->
+                    nodes[previousNode]?.parent?.requestDisallowInterceptTouchEvent(false)
+                }
+                reapplyNativePointerInterception()
             }
             OP_RELEASE_CAPTURE -> {
                 if (pointerCaptures[operation.wide] == id) {
                     pointerCaptures.remove(operation.wide)
-                    if (pointerCaptures.isEmpty()) {
-                        root.parent?.requestDisallowInterceptTouchEvent(false)
-                    }
+                    nodes[id]?.parent?.requestDisallowInterceptTouchEvent(false)
+                    reapplyNativePointerInterception()
                 }
             }
         }
@@ -465,13 +478,63 @@ internal class HostScene(
         }
     }
 
-    /** Preserves exact signed i32 ordering while projecting onto Android's Float Z axis. */
-    private fun refreshZOrderProjection() {
-        nodes.entries.groupBy { parents[it.key] }.values.forEach { siblings ->
-            val ranks = siblings.map { it.value.zOrder }.distinct().sorted()
-                .withIndex().associate { (rank, value) -> value to rank.toFloat() }
-            siblings.forEach { (_, node) -> node.translationZ = requireNotNull(ranks[node.zOrder]) }
+    private fun affectedZOrderParents(): Set<Long?> {
+        val affected = HashSet<Long?>()
+        stagedOperations.forEach { operation ->
+            when (operation.tag) {
+                OP_CREATE -> affected += null
+                OP_DELETE -> affected += parents[operation.node]
+                OP_INSERT -> {
+                    affected += null
+                    affected += operation.parent
+                }
+                OP_REMOVE -> {
+                    affected += operation.parent
+                    affected += null
+                }
+                OP_MOVE -> affected += operation.parent
+                OP_Z_ORDER -> affected += parents[operation.node]
+            }
         }
+        return affected
+    }
+
+    private fun refreshAllZOrderProjections() {
+        val parentIds = HashSet<Long?>()
+        parentIds += null
+        parents.values.forEach(parentIds::add)
+        parentIds.forEach(::refreshZOrderProjection)
+    }
+
+    /**
+     * Projects CSS z-order into sibling order without using Android elevation.
+     *
+     * Kotlin's stable sort preserves the structural order established by insert/move for equal
+     * z-order values. Reordering the actual children avoids the shadows Android draws for Views
+     * with positive translationZ.
+     */
+    private fun refreshZOrderProjection(parentId: Long?) {
+        val host = if (parentId == null) {
+            root
+        } else {
+            val parent = nodes[parentId] ?: return
+            parent.mountedElement?.childrenHost() ?: parent
+        }
+        val structuralOrder = buildList {
+            repeat(host.childCount) { index ->
+                (host.getChildAt(index) as? HostNode)?.let(::add)
+            }
+        }
+        if (structuralOrder.isEmpty()) return
+
+        // Clear state written by older Hosts and keep z-order independent from Android elevation.
+        structuralOrder.forEach { it.translationZ = 0f }
+
+        val desiredOrder = structuralOrder.sortedBy { it.zOrder }
+        if (structuralOrder == desiredOrder) return
+
+        desiredOrder.forEach(host::bringChildToFront)
+        host.invalidate()
     }
 
     private fun insertChild(parentId: Long, childId: Long, requestedIndex: Int) {
@@ -499,11 +562,16 @@ internal class HostScene(
     }
 
     private fun deleteNode(id: Long) {
-        val node = nodes.remove(id) ?: return
+        val node = nodes[id] ?: return
         val descendants = nodes.keys.filter { candidate -> isDescendant(candidate, id) }
         val removedNodes = descendants.toSet() + id
-        pointerCaptures.entries.removeAll { it.value in removedNodes }
-        if (pointerCaptures.isEmpty()) root.parent?.requestDisallowInterceptTouchEvent(false)
+        pointerCaptures.entries.removeAll { (_, capturedNode) ->
+            if (capturedNode !in removedNodes) return@removeAll false
+            nodes[capturedNode]?.parent?.requestDisallowInterceptTouchEvent(false)
+            true
+        }
+        reapplyNativePointerInterception()
+        nodes.remove(id)
         descendants.forEach { child ->
             removeScrollOffset(child)
             nodes.remove(child)?.let(::releasePresentation)
@@ -513,6 +581,17 @@ internal class HostScene(
         removeScrollOffset(id)
         (node.parent as? ViewGroup)?.removeView(node)
         releasePresentation(node)
+    }
+
+    /** Propagates capture from its actual node through nested native scrollers to the window. */
+    private fun reapplyNativePointerInterception() {
+        if (pointerCaptures.isEmpty()) {
+            root.parent?.requestDisallowInterceptTouchEvent(false)
+            return
+        }
+        pointerCaptures.values.forEach { nodeId ->
+            (nodes[nodeId]?.parent ?: root.parent)?.requestDisallowInterceptTouchEvent(true)
+        }
     }
 
     private fun releasePresentation(node: HostNode) {
@@ -553,18 +632,20 @@ internal class HostScene(
         }
         val parentNode = parents[id]?.let(nodes::get)
         val customHost = parentNode?.mountedElement?.childrenHost() != null
-        node.x = (node.geometry.x - if (customHost) parentNode!!.geometry.contentX else 0f) * density
-        node.y = (node.geometry.y - if (customHost) parentNode!!.geometry.contentY else 0f) * density
+        node.setLayoutPosition(
+            (node.geometry.x - if (customHost) parentNode!!.geometry.contentX else 0f) * density,
+            (node.geometry.y - if (customHost) parentNode!!.geometry.contentY else 0f) * density,
+        )
         node.layoutParams = (node.layoutParams ?: ViewGroup.LayoutParams(0, 0)).apply {
-            width = (node.geometry.width * density).toInt().coerceAtLeast(0)
-            height = (node.geometry.height * density).toInt().coerceAtLeast(0)
+            width = (node.geometry.width * density).roundToInt().coerceAtLeast(0)
+            height = (node.geometry.height * density).roundToInt().coerceAtLeast(0)
         }
         node.mountedElement?.view?.let { content ->
             content.x = node.geometry.contentX * density
             content.y = node.geometry.contentY * density
             content.layoutParams = (content.layoutParams ?: ViewGroup.LayoutParams(0, 0)).apply {
-                width = (node.geometry.contentWidth * density).toInt().coerceAtLeast(0)
-                height = (node.geometry.contentHeight * density).toInt().coerceAtLeast(0)
+                width = (node.geometry.contentWidth * density).roundToInt().coerceAtLeast(0)
+                height = (node.geometry.contentHeight * density).roundToInt().coerceAtLeast(0)
             }
         }
         node.paint?.let { applyPaint(node, it) }

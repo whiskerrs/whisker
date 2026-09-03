@@ -34,6 +34,10 @@ import rs.whisker.runtime.input.normalizePointerInput
 import rs.whisker.runtime.bridge.MobileAbi
 import rs.whisker.runtime.measure.HostMeasureBatchAbi
 import rs.whisker.runtime.measure.resolveTextLayoutSemantics
+import rs.whisker.runtime.paint.HostBoxShadow
+import rs.whisker.runtime.paint.ResolvedBoxGeometry
+import rs.whisker.runtime.paint.drawOuterBoxShadows
+import rs.whisker.runtime.paint.HostRasterResourceStore
 import rs.whisker.runtime.scene.HostAccessibility
 import rs.whisker.runtime.scene.HostNode
 import rs.whisker.runtime.scene.HostScene
@@ -44,9 +48,108 @@ import rs.whisker.runtime.scene.OP_DELETE
 import rs.whisker.runtime.scene.OP_INSERT
 import rs.whisker.runtime.scene.OP_LAYOUT
 import rs.whisker.runtime.scene.OP_MOVE
-import rs.whisker.runtime.paint.HostRasterResourceStore
 
 private const val BACKGROUND_PACKED_LAYERS = 256
+
+private fun WhiskerView.beginFrameForTesting(
+    mode: Int,
+    epoch: Int,
+    baseRevision: Long,
+    targetRevision: Long,
+): Int = beginFrame(mode, epoch, baseRevision, targetRevision)
+
+private fun WhiskerView.registerRasterResourceForTesting(
+    resourceId: Long,
+    bitmap: Bitmap,
+): Boolean = registerRasterResource(resourceId, bitmap)
+
+private fun WhiskerView.loadRasterResourceBytesForTesting(
+    resourceId: Long,
+    generation: Long,
+    mediaType: String,
+    data: ByteArray,
+): Boolean = loadRasterResourceBytes(resourceId, generation, mediaType, data)
+
+private fun WhiskerView.loadRasterResourceUrlForTesting(
+    resourceId: Long,
+    generation: Long,
+    url: String,
+): Boolean = loadRasterResourceUrl(resourceId, generation, url)
+
+private fun WhiskerView.releaseRasterResourceForTesting(
+    resourceId: Long,
+    generation: Long,
+): Boolean = releaseRasterResource(resourceId, generation)
+
+private fun WhiskerView.awaitRasterResourceForTesting(
+    resourceId: Long,
+    generation: Long,
+    timeoutMillis: Long,
+): HostResourceSnapshot? = awaitRasterResource(resourceId, generation, timeoutMillis)
+
+private fun WhiskerView.observeRasterResourceEventsForTesting(
+    observer: ((HostResourceSnapshot) -> Unit)?,
+) = observeRasterResourceEvents(observer)
+
+@Suppress("LongParameterList")
+private fun WhiskerView.stageOperationForTesting(
+    tag: Int,
+    flags: Int,
+    node: Long,
+    parent: Long,
+    child: Long,
+    index: Int,
+    member: Int,
+    integer: Int,
+    scalar: Float,
+    wide: Long,
+    numbers: FloatArray?,
+    text: String?,
+    names: Array<String>?,
+    value: WhiskerValue?,
+): Boolean = stageOperation(
+    tag,
+    flags,
+    node,
+    parent,
+    child,
+    index,
+    member,
+    integer,
+    scalar,
+    wide,
+    numbers,
+    text,
+    names,
+    value,
+)
+
+private fun WhiskerView.commitFrameForTesting(): Boolean = commitFrame()
+
+private fun bootstrapBuiltIns(view: WhiskerView) {
+    view.beginBootstrapFromNative()
+    view.registerElementFromNative(
+        1,
+        WhiskerBuiltInElements.VIEW,
+        WhiskerChildPolicy.Elements.ordinal,
+        WhiskerMeasurement.None.ordinal,
+        0,
+        intArrayOf(), intArrayOf(), emptyArray(),
+        intArrayOf(), intArrayOf(), emptyArray(),
+        intArrayOf(), intArrayOf(), emptyArray(),
+    )
+    view.registerElementFromNative(
+        2,
+        WhiskerBuiltInElements.TEXT,
+        WhiskerChildPolicy.PlainText.ordinal,
+        WhiskerMeasurement.Text.ordinal,
+        0,
+        intArrayOf(), intArrayOf(), emptyArray(),
+        intArrayOf(), intArrayOf(), emptyArray(),
+        intArrayOf(), intArrayOf(), emptyArray(),
+    )
+    check(view.finishBootstrapFromNative())
+}
 
 private data class CapturedPointerInput(
     val event: Int,
@@ -94,9 +197,10 @@ class HostConformanceTest {
                     childPolicy = WhiskerChildPolicy.PlainText,
                     measurement = WhiskerMeasurement.Text,
                 )
-                assertTrue(WhiskerElementRegistry.bind(listOf(registration)))
+                val elements = WhiskerElementRegistry.newBindings()
+                assertTrue(WhiskerElementRegistry.bind(elements, listOf(registration)))
                 val mounted = checkNotNull(
-                    WhiskerElementRegistry.mount(1, context) { _, _ -> },
+                    elements.mount(1, context) { _, _ -> },
                 )
                 mounted.view.visibility = View.INVISIBLE
 
@@ -121,10 +225,11 @@ class HostConformanceTest {
                         WhiskerPropertyBinding(1, "checked", WhiskerValueKind.Bool),
                     ),
                 )
-                assertTrue(WhiskerElementRegistry.bind(listOf(registration)))
+                val elements = WhiskerElementRegistry.newBindings()
+                assertTrue(WhiskerElementRegistry.bind(elements, listOf(registration)))
                 val context = ApplicationProvider.getApplicationContext<android.content.Context>()
                 val mounted = checkNotNull(
-                    WhiskerElementRegistry.mount(20, context) { _, _ -> },
+                    elements.mount(20, context) { _, _ -> },
                 )
 
                 mounted.setProperty(1, WhiskerValue.Bool(true))
@@ -141,16 +246,10 @@ class HostConformanceTest {
             .runOnMainSync {
                 val context = ApplicationProvider.getApplicationContext<android.content.Context>()
                 val root = WhiskerContainerView(context)
-                val scene = HostScene(
-                    root,
-                    context,
-                    { _, _, _ -> },
-                    { _, _, _ -> },
-                    { _ -> },
-                    HostRasterResourceStore(),
-                )
+                val elements = WhiskerElementRegistry.newBindings()
                 assertTrue(
                     WhiskerElementRegistry.bind(
+                        elements,
                         listOf(
                             WhiskerElementRegistration(
                                 1,
@@ -160,6 +259,15 @@ class HostConformanceTest {
                             ),
                         ),
                     ),
+                )
+                val scene = HostScene(
+                    root,
+                    context,
+                    { _, _, _ -> },
+                    { _, _, _ -> },
+                    { _ -> },
+                    HostRasterResourceStore(),
+                    elements,
                 )
 
                 assertEquals(0, scene.beginFrame(0, 1, 0, 1))
@@ -278,7 +386,11 @@ class HostConformanceTest {
                 val values = (detail as WhiskerValue.Map).value
                 assertEquals(120.0, (values.getValue("scrollTop") as WhiskerValue.Float).value, 0.001)
                 assertEquals(80.0, (values.getValue("viewportHeight") as WhiskerValue.Float).value, 0.001)
-                assertEquals(300.0, (values.getValue("scrollHeight") as WhiskerValue.Float).value, 0.001)
+                assertEquals(
+                    scrollView.contentView.height / density.toDouble(),
+                    (values.getValue("scrollHeight") as WhiskerValue.Float).value,
+                    0.001,
+                )
                 assertEquals(0f, presentedX, 0.001f)
                 assertEquals(120f, presentedY, 0.001f)
             }
@@ -305,6 +417,159 @@ class HostConformanceTest {
                 val context = ApplicationProvider.getApplicationContext<android.content.Context>()
                 assertTrue(Driver(context, "pointer-capture").acceptsPointerCapture())
             }
+    }
+
+    @Test
+    fun zOrderUsesPhysicalSiblingOrderWithoutAndroidElevation() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                assertTrue(Driver(context, "z-order").verifyPhysicalZOrder())
+            }
+    }
+
+    @Test
+    fun layoutSizesRoundToTheNearestPhysicalPixel() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                assertTrue(Driver(context, "layout-rounding").verifyLayoutRounding())
+            }
+    }
+
+    @Test
+    fun pointerCaptureDisallowsInterceptionFromTheCapturedNodesParent() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val elements = WhiskerElementRegistry.newBindings()
+                check(
+                    WhiskerElementRegistry.bind(
+                        elements,
+                        listOf(
+                            WhiskerElementRegistration(
+                                1,
+                                WhiskerBuiltInElements.VIEW,
+                                WhiskerChildPolicy.Elements,
+                                WhiskerMeasurement.None,
+                            ),
+                        ),
+                    ),
+                )
+                val root = object : WhiskerContainerView(context) {
+                    var interceptionDisallowed = false
+
+                    override fun requestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {
+                        interceptionDisallowed = disallowIntercept
+                        super.requestDisallowInterceptTouchEvent(disallowIntercept)
+                    }
+                }
+                val scene = HostScene(
+                    root,
+                    context,
+                    { _, _, _ -> },
+                    { _, _, _ -> },
+                    { _ -> },
+                    HostRasterResourceStore(),
+                    elements,
+                )
+                fun operation(tag: Int, wide: Long = 0L) = HostSceneOperation(
+                    tag = tag,
+                    flags = 0,
+                    node = 1L,
+                    parent = 0L,
+                    child = 0L,
+                    index = 0,
+                    member = if (tag == MobileAbi.OP_CREATE) 1 else 0,
+                    integer = 0,
+                    scalar = 0f,
+                    wide = wide,
+                    numbers = null,
+                    text = null,
+                    names = null,
+                    value = null,
+                )
+
+                check(scene.beginFrame(0, 1, 0, 1) == 0)
+                scene.stage(operation(MobileAbi.OP_CREATE))
+                scene.stage(operation(MobileAbi.OP_CAPTURE, 7L))
+                assertTrue(scene.commit())
+                assertTrue(root.interceptionDisallowed)
+
+                check(scene.beginFrame(1, 1, 1, 2) == 0)
+                scene.stage(operation(MobileAbi.OP_RELEASE_CAPTURE, 7L))
+                assertTrue(scene.commit())
+                assertEquals(false, root.interceptionDisallowed)
+            }
+    }
+
+    @Test
+    fun hiddenContainerDoesNotDispatchToNativeContent() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val node = HostNode(context, WhiskerBuiltInElements.VIEW, null)
+                node.addView(
+                    View(context).apply { isClickable = true },
+                    ViewGroup.LayoutParams(100, 100),
+                )
+                node.measure(
+                    View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY),
+                )
+                node.layout(0, 0, 100, 100)
+                node.setWhiskerVisibility(false)
+
+                val down = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 50f, 50f, 0)
+                try {
+                    assertEquals(false, node.dispatchTouchEvent(down))
+                } finally {
+                    down.recycle()
+                }
+            }
+    }
+
+    @Test
+    fun rejectsUnknownElementPropertyAndCommandIds() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                assertTrue(Driver(context, "unknown-members").rejectsUnknownMembers())
+            }
+    }
+
+    @Test
+    fun outerBoxShadowDoesNotPaintInsideTransparentBorderBox() {
+        val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.translate(20f, 20f)
+        drawOuterBoxShadows(
+            canvas,
+            ResolvedBoxGeometry(
+                width = 20f,
+                height = 20f,
+                borderWidths = FloatArray(4),
+                cornerRadii = FloatArray(8),
+            ),
+            listOf(
+                HostBoxShadow(
+                    offsetX = 0f,
+                    offsetY = 0f,
+                    blurRadius = 0f,
+                    spreadRadius = 5f,
+                    color = android.graphics.Color.RED,
+                    inset = false,
+                ),
+            ),
+        )
+
+        assertEquals(0, android.graphics.Color.alpha(bitmap.getPixel(30, 30)))
+        assertEquals(android.graphics.Color.RED, bitmap.getPixel(17, 30))
     }
 
     @Test
@@ -384,6 +649,25 @@ class HostConformanceTest {
     }
 
     @Test
+    fun genericMouseActionsKeepRustHoverStateSynchronized() {
+        listOf(
+            MotionEvent.ACTION_HOVER_ENTER,
+            MotionEvent.ACTION_HOVER_EXIT,
+            MotionEvent.ACTION_SCROLL,
+        ).forEach { action ->
+            val event = MotionEvent.obtain(0L, 0L, action, 10f, 20f, 0)
+            try {
+                val normalized = normalizePointerInput(event, density = 2f).single()
+                assertEquals(1, normalized.event)
+                assertEquals(5f, normalized.x, 0.001f)
+                assertEquals(10f, normalized.y, 0.001f)
+            } finally {
+                event.recycle()
+            }
+        }
+    }
+
+    @Test
     fun projectsAThreeDimensionalTransformOntoTheNodePlane() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
@@ -396,6 +680,41 @@ class HostConformanceTest {
                     0f, 0f, 0f, 1f,
                 )
                 assertTrue(Driver(context, "android.transform-3d-projection").commitTransform(matrix))
+            }
+    }
+
+    @Test
+    fun transformedNativeChildReceivesInputAtItsPresentedCoordinates() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val parent = WhiskerContainerView(context)
+                val node = HostNode(context, WhiskerBuiltInElements.VIEW, null)
+                val content = View(context).apply { isClickable = true }
+                node.addView(content, ViewGroup.LayoutParams(100, 100))
+                parent.addView(node, ViewGroup.LayoutParams(100, 100))
+                parent.measure(
+                    View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
+                )
+                parent.layout(0, 0, 400, 200)
+                node.setLocalTransform(
+                    floatArrayOf(
+                        1f, 0f, 0f, 0f,
+                        0f, 1f, 0f, 0f,
+                        0f, 0f, 1f, 0f,
+                        200f, 0f, 0f, 1f,
+                    ),
+                    density = 1f,
+                )
+
+                val down = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 250f, 50f, 0)
+                try {
+                    assertTrue(parent.dispatchTouchEvent(down))
+                } finally {
+                    down.recycle()
+                }
             }
     }
 
@@ -420,6 +739,7 @@ class HostConformanceTest {
             .runOnMainSync {
                 val context = ApplicationProvider.getApplicationContext<android.content.Context>()
                 val view = WhiskerView(context)
+                bootstrapBuiltIns(view)
                 val metadata = longArrayOf(
                     // create node 1 as the built-in View element
                     1, 0, 1, 0, 0, 0, 1, 0, 0, 0,
@@ -550,7 +870,7 @@ class HostConformanceTest {
         instrumentation.runOnMainSync {
             val context = ApplicationProvider.getApplicationContext<android.content.Context>()
             view = WhiskerView(context)
-            view.observeRasterResourceEvents { event ->
+            view.observeRasterResourceEventsForTesting { event ->
                 received.set(event)
                 ready.countDown()
             }
@@ -579,7 +899,7 @@ class HostConformanceTest {
 
         val failed = CountDownLatch(1)
         instrumentation.runOnMainSync {
-            view.observeRasterResourceEvents { unsupported ->
+            view.observeRasterResourceEventsForTesting { unsupported ->
                 received.set(unsupported)
                 failed.countDown()
             }
@@ -624,34 +944,7 @@ private class Driver(
     private var pointerInput: CapturedPointerInput? = null
 
     init {
-        view.beginBootstrapFromNative()
-        view.registerElementFromNative(
-            1,
-            WhiskerBuiltInElements.VIEW,
-            WhiskerChildPolicy.Elements.ordinal,
-            WhiskerMeasurement.None.ordinal,
-            0,
-            intArrayOf(),
-            intArrayOf(),
-            emptyArray(),
-            intArrayOf(),
-            intArrayOf(),
-            emptyArray(),
-            intArrayOf(),
-            intArrayOf(),
-            emptyArray(),
-        )
-        view.registerElementFromNative(
-            2,
-            WhiskerBuiltInElements.TEXT,
-            WhiskerChildPolicy.PlainText.ordinal,
-            WhiskerMeasurement.Text.ordinal,
-            0,
-            intArrayOf(), intArrayOf(), emptyArray(),
-            intArrayOf(), intArrayOf(), emptyArray(),
-            intArrayOf(), intArrayOf(), emptyArray(),
-        )
-        check(view.finishBootstrapFromNative())
+        bootstrapBuiltIns(view)
     }
 
     fun execute(side: JSONObject): Bitmap {
@@ -750,9 +1043,12 @@ private class Driver(
                             check(text.typeface.isBold)
                         }
                         check(abs(text.letterSpacing - 0.075f) < 0.0001f)
-                        val actualLineHeight =
-                            text.paint.fontMetrics.run { descent - ascent } + text.lineSpacingExtra
-                        check(abs(actualLineHeight / density - 28f) < 0.01f)
+                        val lineHeightSpans = (text.text as Spanned).getSpans(
+                            0,
+                            text.text.length,
+                            rs.whisker.runtime.internal.CenteredLineHeightSpan::class.java,
+                        )
+                        check(lineHeightSpans.size == 1)
                         check(text.lineSpacingMultiplier == 1f)
                     }
                     check(
@@ -1148,33 +1444,96 @@ private class Driver(
     }
 
     fun commitTransform(transform: FloatArray): Boolean {
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
         check(stage(tag = 9, numbers = transform))
-        return view.commitFrameFromNative()
+        return view.commitFrameForTesting()
     }
 
     fun acceptsBackdropBlur(radius: Float): Boolean {
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
         val accepted = stage(tag = 24, scalar = radius)
-        val committed = view.commitFrameFromNative()
+        val committed = view.commitFrameForTesting()
         return accepted && committed
     }
 
     fun acceptsPointerCapture(): Boolean {
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
         check(stage(tag = MobileAbi.OP_CAPTURE, wide = 7))
         check(stage(tag = MobileAbi.OP_RELEASE_CAPTURE, wide = 7))
-        return view.commitFrameFromNative()
+        return view.commitFrameForTesting()
+    }
+
+    fun verifyPhysicalZOrder(): Boolean {
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
+        repeat(3) { index ->
+            val node = (index + 1).toLong()
+            check(stage(tag = MobileAbi.OP_CREATE, node = node, member = 1))
+            check(
+                stage(
+                    tag = MobileAbi.OP_LAYOUT,
+                    node = node,
+                    numbers = floatArrayOf(node.toFloat(), 0f, 10f, 10f, 0f, 0f, 10f, 10f),
+                ),
+            )
+        }
+        check(stage(tag = MobileAbi.OP_Z_ORDER, node = 1, integer = 10))
+        check(stage(tag = MobileAbi.OP_Z_ORDER, node = 2, integer = -5))
+        check(stage(tag = MobileAbi.OP_Z_ORDER, node = 3, integer = 10))
+        check(view.commitFrameForTesting())
+
+        val orderedNodes = (0 until view.childCount).map { view.getChildAt(it) as HostNode }
+        return orderedNodes.map { it.geometry.x } == listOf(2f, 1f, 3f) &&
+            orderedNodes.all { it.translationZ == 0f }
+    }
+
+    fun rejectsUnknownMembers(): Boolean {
+        val cases = listOf(
+            Triple(MobileAbi.OP_PROPERTY, 999, WhiskerValue.Int(1)),
+            Triple(MobileAbi.OP_CLEAR_PROPERTY, 999, null),
+            Triple(MobileAbi.OP_COMMAND, 999, WhiskerValue.Null),
+        )
+        return cases.all { (tag, member, value) ->
+            check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
+            check(stage(tag = MobileAbi.OP_CREATE, member = 1))
+            check(stage(tag = tag, member = member, value = value))
+            !view.commitFrameForTesting()
+        }
+    }
+
+    fun verifyLayoutRounding(): Boolean {
+        val density = context.resources.displayMetrics.density
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
+        check(stage(tag = MobileAbi.OP_CREATE, member = 1))
+        check(
+            stage(
+                tag = MobileAbi.OP_LAYOUT,
+                numbers = floatArrayOf(
+                    0f,
+                    0f,
+                    10.75f / density,
+                    12.75f / density,
+                    0f,
+                    0f,
+                    6.75f / density,
+                    8.75f / density,
+                ),
+            ),
+        )
+        check(view.commitFrameForTesting())
+        val node = view.getChildAt(0) as HostNode
+        val content = checkNotNull(node.mountedElement).view
+        return node.layoutParams.width == 11 && node.layoutParams.height == 13 &&
+            content.layoutParams.width == 7 && content.layoutParams.height == 9
     }
 
     fun rejectOpacity(opacity: Float): Boolean {
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
         check(stage(tag = 10, scalar = opacity))
-        return !view.commitFrameFromNative()
+        return !view.commitFrameForTesting()
     }
 
     fun rejectUnregisteredRasterResource(resourceId: Long): Boolean {
@@ -1183,25 +1542,25 @@ private class Driver(
 
     fun acceptRasterResource(resourceId: Long): Boolean {
         val bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
-        check(view.registerRasterResourceFromNative(resourceId, bitmap))
+        check(view.registerRasterResourceForTesting(resourceId, bitmap))
         return commitRasterResource(resourceId)
     }
 
     fun reportsRasterDecodeFailure(): Boolean {
         check(
-            view.loadRasterResourceBytesFromNative(
+            view.loadRasterResourceBytesForTesting(
                 7L,
                 1L,
                 "image/png",
                 byteArrayOf(0, 1, 2, 3),
             ),
         )
-        return view.awaitRasterResourceFromNative(7L, 1L, 5_000)?.state ==
+        return view.awaitRasterResourceForTesting(7L, 1L, 5_000)?.state ==
             HostResourceState.Failed
     }
 
     private fun commitRasterResource(resourceId: Long): Boolean {
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
         val layer = backgroundGeometry(null).apply { appendResourceId(resourceId, this) }
         val packed = ArrayList<Float>().apply {
@@ -1219,7 +1578,7 @@ private class Driver(
                 names = emptyArray(),
             ),
         )
-        return view.commitFrameFromNative()
+        return view.commitFrameForTesting()
     }
 
     private fun registerRasterResource(command: JSONObject) {
@@ -1231,7 +1590,7 @@ private class Driver(
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
             setPixels(colors, 0, width, 0, 0, width, height)
         }
-        check(view.registerRasterResourceFromNative(command.getLong("id"), bitmap))
+        check(view.registerRasterResourceForTesting(command.getLong("id"), bitmap))
     }
 
     private fun loadRasterResource(command: JSONObject) {
@@ -1239,13 +1598,13 @@ private class Driver(
         val generation = command.getLong("generation")
         val source = command.getJSONObject("source")
         val accepted = when (source.getString("kind")) {
-            "bytes" -> view.loadRasterResourceBytesFromNative(
+            "bytes" -> view.loadRasterResourceBytesForTesting(
                 resourceId,
                 generation,
                 source.getString("media_type"),
                 Base64.decode(source.getString("base64"), Base64.DEFAULT),
             )
-            "url" -> view.loadRasterResourceUrlFromNative(
+            "url" -> view.loadRasterResourceUrlForTesting(
                 resourceId,
                 generation,
                 source.getString("value"),
@@ -1257,7 +1616,7 @@ private class Driver(
 
     private fun releaseRasterResource(command: JSONObject) {
         check(
-            view.releaseRasterResourceFromNative(
+            view.releaseRasterResourceForTesting(
                 command.getLong("id"),
                 command.getLong("generation"),
             ),
@@ -1266,7 +1625,7 @@ private class Driver(
 
     private fun checkpointRasterResource(command: JSONObject) {
         val snapshot = checkNotNull(
-            view.awaitRasterResourceFromNative(
+            view.awaitRasterResourceForTesting(
                 command.getLong("id"),
                 command.getLong("generation"),
                 5_000,
@@ -1287,19 +1646,19 @@ private class Driver(
 
     private fun present(command: JSONObject) {
         val revision = command.getLong("revision")
-        check(view.beginFrameFromNative(0, 1, 0, revision) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, revision) == 0)
         check(stage(tag = 1, member = 1))
         val rect = command.getJSONArray("rect").floats()
         check(stage(tag = 6, numbers = rect + floatArrayOf(0f, 0f, 0f, 0f)))
         val (numbers, names) = paint(command)
         check(stage(tag = 7, numbers = numbers, names = names))
-        check(view.commitFrameFromNative()) { "$id rejected present_box" }
+        check(view.commitFrameForTesting()) { "$id rejected present_box" }
     }
 
     private fun presentScene(command: JSONObject) {
         val revision = command.getLong("revision")
         val nodes = command.getJSONArray("nodes")
-        check(view.beginFrameFromNative(0, 1, 0, revision) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, revision) == 0)
         nodes.objects().forEach { node ->
             check(stage(tag = 1, node = node.getLong("id"), member = if (node.has("text")) 2 else 1))
         }
@@ -1660,7 +2019,7 @@ private class Driver(
                 ),
             )
         }
-        check(view.commitFrameFromNative()) { "$id: Host rejected the staged scene frame" }
+        check(view.commitFrameForTesting()) { "$id: Host rejected the staged scene frame" }
     }
 
     private fun stage(
@@ -1677,7 +2036,8 @@ private class Driver(
         numbers: FloatArray? = null,
         text: String? = null,
         names: Array<String>? = null,
-    ): Boolean = view.stageOperationFromNative(
+        value: WhiskerValue? = null,
+    ): Boolean = view.stageOperationForTesting(
         tag,
         flags,
         node,
@@ -1691,7 +2051,7 @@ private class Driver(
         numbers,
         text,
         names,
-        null,
+        value,
     )
 
     private fun paint(command: JSONObject): Pair<FloatArray, Array<String>> {
