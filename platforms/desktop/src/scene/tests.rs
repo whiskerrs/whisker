@@ -487,6 +487,51 @@ fn native_toggle_applies_properties_invokes_command_and_routes_change() {
 }
 
 #[test]
+fn module_content_named_like_a_builtin_is_not_added_to_the_presentation_pool() {
+    let element_type = ElementTypeId::new(20).unwrap();
+    let node = id(1);
+    let registration = ElementRegistration {
+        element_type,
+        name: whisker::VIEW_ELEMENT_NAME.into(),
+        child_policy: whisker_protocol::ChildPolicy::None,
+        measurement: ElementMeasurement::None,
+        text_style: false,
+        properties: vec![],
+        events: vec![],
+        commands: vec![],
+    };
+    let factory = DesktopElementFactory::native(whisker::VIEW_ELEMENT_NAME, |events| {
+        Box::new(ToggleNative {
+            checked: false,
+            disabled: false,
+            events,
+        })
+    });
+    let mut scene = DesktopScene::new(
+        SurfaceId::new(1).unwrap(),
+        DesktopElementRegistry::bind(&[registration], &[factory]).unwrap(),
+    );
+    scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![Operation::CreateNode { node, element_type }],
+        ))
+        .unwrap();
+    scene
+        .present(&packet(
+            FrameMode::Delta,
+            1,
+            2,
+            vec![Operation::DeleteNode { node }],
+        ))
+        .unwrap();
+
+    assert!(scene.presentation_pool.is_empty());
+}
+
+#[test]
 fn native_toggle_rejects_wrong_property_shape_before_commit() {
     let node = id(1);
     let (mut scene, element_type) = toggle_scene();

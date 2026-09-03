@@ -585,6 +585,10 @@ pub(crate) enum DesktopElementContent {
 }
 
 impl DesktopElementContent {
+    pub(crate) fn is_reusable_presentation(&self) -> bool {
+        matches!(self, Self::Empty | Self::Text(_))
+    }
+
     pub(crate) fn reset_for_presentation_reuse(&mut self) {
         match self {
             Self::Text(text) => *text = None,
@@ -862,15 +866,6 @@ impl DesktopElementRegistry {
         events: DesktopEventEmitter,
     ) -> Result<DesktopElementContent, DesktopElementError> {
         Ok(self.binding(element_type)?.factory.create(events))
-    }
-
-    pub(crate) fn is_builtin_presentation(&self, element_type: ElementTypeId) -> bool {
-        self.binding(element_type).is_ok_and(|binding| {
-            matches!(
-                binding.registration.name.as_str(),
-                "whisker.ui/View" | "whisker.ui/Text"
-            )
-        })
     }
 
     pub(crate) fn child_policy(
