@@ -203,7 +203,7 @@ internal class HostNode(
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        if (!whiskerVisible && hitTestBehavior == 2) return false
+        if (!whiskerVisible) return false
         return when (hitTestBehavior) {
             1 -> false
             2 -> onTouchEvent(event)
