@@ -167,12 +167,17 @@ internal class HostMeasurementProvider(private val context: Context) {
             builder.setLineSpacing((lineHeight * density - fontHeight).coerceAtLeast(0f), 1f)
         }
         val layout = builder.build()
-        val width = when {
-            knownMask and WIDTH != 0 -> knownWidth
-            availableWidthKind == DEFINITE && wrap != 0 ->
-                (layout.width / density).coerceAtMost(availableWidth)
-            else -> layout.width / density
-        }
+        val usedLineWidthPixels = (0 until layout.lineCount)
+            .maxOfOrNull(layout::getLineWidth) ?: 0f
+        val width = measuredTextWidth(
+            knownWidth = knownWidth,
+            hasKnownWidth = knownMask and WIDTH != 0,
+            availableWidth = availableWidth,
+            hasDefiniteAvailableWidth = availableWidthKind == DEFINITE,
+            wraps = wrap != 0,
+            usedLineWidthPixels = usedLineWidthPixels,
+            density = density,
+        )
         val height = if (knownMask and HEIGHT != 0) knownHeight else layout.height / density
         val first = if (layout.lineCount > 0) layout.getLineBaseline(0) / density else 0f
         val last = if (layout.lineCount > 0) {
@@ -185,6 +190,21 @@ internal class HostMeasurementProvider(private val context: Context) {
 
     private fun ready(width: Float, height: Float): FloatArray =
         floatArrayOf(READY, 0f, width, height, 0f, 0f, 0f)
+}
+
+internal fun measuredTextWidth(
+    knownWidth: Float,
+    hasKnownWidth: Boolean,
+    availableWidth: Float,
+    hasDefiniteAvailableWidth: Boolean,
+    wraps: Boolean,
+    usedLineWidthPixels: Float,
+    density: Float,
+): Float = when {
+    hasKnownWidth -> knownWidth
+    hasDefiniteAvailableWidth && wraps ->
+        (ceil(usedLineWidthPixels.toDouble()).toFloat() / density).coerceAtMost(availableWidth)
+    else -> ceil(usedLineWidthPixels.toDouble()).toFloat() / density
 }
 
 internal data class TextLayoutSemantics(
