@@ -16,7 +16,6 @@ impl DesktopScene {
             elements,
             nodes: HashMap::new(),
             smooth_scrolls: HashMap::new(),
-            pointer_captures: HashMap::new(),
             presentation_pool: HashMap::new(),
             pending_events: Arc::new(Mutex::new(Vec::new())),
             event_wake,
@@ -930,7 +929,6 @@ impl DesktopScene {
                 self.prepared_content_revision = self.prepared_content_revision.wrapping_add(1);
             }
             self.pending_events.lock().unwrap().clear();
-            self.pointer_captures.clear();
             self.smooth_scrolls.clear();
         }
         for operation in &packet.operations {
@@ -1179,14 +1177,9 @@ impl DesktopScene {
                         .presentation
                         .cursor = cursor.clone();
                 }
-                Operation::SetPointerCapture { node, pointer } => {
-                    self.pointer_captures.insert(*pointer, *node);
-                }
-                Operation::ReleasePointerCapture { node, pointer } => {
-                    if self.pointer_captures.get(pointer) == Some(node) {
-                        self.pointer_captures.remove(pointer);
-                    }
-                }
+                // Pointer capture routing is owned by SurfaceRuntime. Hosts accept
+                // these protocol operations but do not maintain a second target map.
+                Operation::SetPointerCapture { .. } | Operation::ReleasePointerCapture { .. } => {}
             }
         }
         self.clamp_scroll_offsets();
@@ -1197,7 +1190,6 @@ impl DesktopScene {
         let Some(removed) = self.nodes.remove(&node) else {
             return;
         };
-        self.pointer_captures.retain(|_, target| *target != node);
         if let Some(parent) = removed.presentation.parent
             && let Some(parent) = self.nodes.get_mut(&parent)
         {
