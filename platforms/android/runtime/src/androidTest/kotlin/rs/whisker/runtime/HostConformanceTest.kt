@@ -34,8 +34,11 @@ import rs.whisker.runtime.input.normalizePointerInput
 import rs.whisker.runtime.bridge.MobileAbi
 import rs.whisker.runtime.measure.HostMeasureBatchAbi
 import rs.whisker.runtime.measure.resolveTextLayoutSemantics
+import rs.whisker.runtime.paint.HostRasterResourceStore
 import rs.whisker.runtime.scene.HostAccessibility
 import rs.whisker.runtime.scene.HostNode
+import rs.whisker.runtime.scene.HostScene
+import rs.whisker.runtime.scene.HostSceneOperation
 
 private const val BACKGROUND_PACKED_LAYERS = 256
 
@@ -145,6 +148,53 @@ class HostConformanceTest {
             .runOnMainSync {
                 val context = ApplicationProvider.getApplicationContext<android.content.Context>()
                 assertTrue(Driver(context, "pointer-capture").acceptsPointerCapture())
+            }
+    }
+
+    @Test
+    fun pointerCaptureDisallowsInterceptionFromTheCapturedNodesParent() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                // Bind the built-in declarations used by the direct production HostScene below.
+                Driver(context, "pointer-capture-parent")
+                val root = object : WhiskerContainerView(context) {
+                    var interceptionDisallowed = false
+
+                    override fun requestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {
+                        interceptionDisallowed = disallowIntercept
+                        super.requestDisallowInterceptTouchEvent(disallowIntercept)
+                    }
+                }
+                val scene = HostScene(root, context, { _, _, _ -> }, HostRasterResourceStore())
+                fun operation(tag: Int, wide: Long = 0L) = HostSceneOperation(
+                    tag = tag,
+                    flags = 0,
+                    node = 1L,
+                    parent = 0L,
+                    child = 0L,
+                    index = 0,
+                    member = if (tag == MobileAbi.OP_CREATE) 1 else 0,
+                    integer = 0,
+                    scalar = 0f,
+                    wide = wide,
+                    numbers = null,
+                    text = null,
+                    names = null,
+                    value = null,
+                )
+
+                check(scene.beginFrame(0, 1, 0, 1) == 0)
+                scene.stage(operation(MobileAbi.OP_CREATE))
+                scene.stage(operation(MobileAbi.OP_CAPTURE, 7L))
+                assertTrue(scene.commit())
+                assertTrue(root.interceptionDisallowed)
+
+                check(scene.beginFrame(1, 1, 1, 2) == 0)
+                scene.stage(operation(MobileAbi.OP_RELEASE_CAPTURE, 7L))
+                assertTrue(scene.commit())
+                assertEquals(false, root.interceptionDisallowed)
             }
     }
 
