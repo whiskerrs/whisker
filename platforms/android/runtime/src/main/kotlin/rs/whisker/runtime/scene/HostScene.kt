@@ -169,6 +169,12 @@ internal class HostScene(
     private fun validateStagedFrame(): Boolean {
         val existing = if (stagedSnapshot) mutableSetOf() else nodes.keys.toMutableSet()
         val stagedParents = if (stagedSnapshot) HashMap() else HashMap(parents)
+        val stagedChildCounts = HashMap<Long, Int>()
+        if (!stagedSnapshot) {
+            stagedParents.values.forEach { parent ->
+                stagedChildCounts[parent] = stagedChildCounts.getOrDefault(parent, 0) + 1
+            }
+        }
         val elementTypes = if (stagedSnapshot) {
             HashMap()
         } else {
@@ -189,23 +195,41 @@ internal class HostScene(
                 }
                 existing.removeAll(removed)
                 elementTypes.keys.removeAll(removed)
+                stagedParents[operation.node]?.let { parent ->
+                    stagedChildCounts[parent] = stagedChildCounts.getOrDefault(parent, 1) - 1
+                }
+                removed.forEach(stagedChildCounts::remove)
                 stagedParents.entries.removeAll {
                     it.key in removed || it.value in removed
                 }
             }
             OP_INSERT -> {
+                val childCount = stagedChildCounts.getOrDefault(operation.parent, 0)
                 val policy = elementTypes[operation.parent]
                     ?.let(elements::registration)?.childPolicy
                 if (
                     operation.parent !in existing || operation.child !in existing ||
                     stagedParents.containsKey(operation.child) ||
+                    operation.index !in 0..childCount ||
                     isStagedDescendant(operation.parent, operation.child, stagedParents) ||
                     policy != WhiskerChildPolicy.Elements
                 ) return false
                 stagedParents[operation.child] = operation.parent
+                stagedChildCounts[operation.parent] = childCount + 1
             }
-            OP_REMOVE -> if (stagedParents.remove(operation.child) != operation.parent) return false
-            OP_MOVE -> if (stagedParents[operation.child] != operation.parent) return false
+            OP_REMOVE -> {
+                if (stagedParents.remove(operation.child) != operation.parent) return false
+                val childCount = stagedChildCounts.getOrDefault(operation.parent, 0)
+                if (childCount == 0) return false
+                stagedChildCounts[operation.parent] = childCount - 1
+            }
+            OP_MOVE -> {
+                val childCount = stagedChildCounts.getOrDefault(operation.parent, 0)
+                if (
+                    stagedParents[operation.child] != operation.parent ||
+                    operation.index !in 0 until childCount
+                ) return false
+            }
             OP_LAYOUT -> {
                 val values = operation.numbers
                 if (
@@ -523,9 +547,9 @@ internal class HostScene(
         parents[childId] = parentId
         val childHost = mounted.childrenHost()
         if (childHost != null) {
-            childHost.addView(child, min(requestedIndex, childHost.childCount))
+            childHost.addView(child, requestedIndex)
         } else {
-            parent.addView(child, min(requestedIndex + 1, parent.childCount))
+            parent.addView(child, requestedIndex + 1)
         }
     }
 

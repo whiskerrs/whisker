@@ -207,7 +207,6 @@ class WhiskerView(context: Context) :
         continuousEventFlushPending = false
         choreographer.removeFrameCallback(this)
         mainHandler.removeCallbacks(continuousEventFlush)
-        mainHandler.removeCallbacks(moduleEventFlush)
         pendingContinuousEvents.clear()
         WhiskerAppContext.popRuntimeOwner(this)
         super.onDetachedFromWindow()
