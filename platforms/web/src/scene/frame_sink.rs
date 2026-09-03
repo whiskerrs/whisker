@@ -666,12 +666,16 @@ impl DomFrameSink {
     }
 
     fn sync_child_layouts(&self, parent: NodeId) -> Result<(), WebError> {
-        let children = self
-            .parents
-            .iter()
-            .filter_map(|(child, candidate)| (*candidate == parent).then_some(*child))
-            .collect::<Vec<_>>();
-        for child in children {
+        let children = self.node(parent)?.children();
+        for index in 0..children.length() {
+            let Some(child) = children
+                .item(index)
+                .and_then(|element| element.get_attribute("data-whisker-node"))
+                .and_then(|value| value.parse().ok())
+                .and_then(NodeId::new)
+            else {
+                continue;
+            };
             self.sync_layout(child)?;
         }
         Ok(())
