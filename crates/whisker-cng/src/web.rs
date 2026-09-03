@@ -7,7 +7,7 @@ use whisker_config::Config;
 use crate::fingerprint;
 use crate::render::render;
 
-const CARGO_TOML: &str = include_str!("templates/web/Cargo.toml");
+const CARGO_TOML: &str = include_str!("templates/web/Cargo.toml.template");
 const LIB_RS: &str = include_str!("templates/web/src/lib.rs");
 const INDEX_HTML: &str = include_str!("templates/web/index.html");
 
