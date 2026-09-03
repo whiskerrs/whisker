@@ -90,7 +90,7 @@ impl MeasurementProvider for MobileMeasurementHost {
 }
 
 pub(super) struct MobileMeasureBatch {
-    _strings: Vec<CString>,
+    _strings: Vec<Box<[u8]>>,
     _bytes: Vec<Vec<u8>>,
     _font_families: Vec<Box<[WhiskerStringRef]>>,
     _font_features: Vec<Box<[MobileFontFeature]>>,

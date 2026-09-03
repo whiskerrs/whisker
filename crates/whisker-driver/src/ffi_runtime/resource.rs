@@ -142,7 +142,7 @@ pub(super) fn decode_resource_failure(value: u32) -> Option<ResourceFailureCode>
 
 pub(super) struct MobileBootstrapOwned {
     pub(super) value: MobileBootstrap,
-    _strings: Vec<CString>,
+    _strings: Vec<Box<[u8]>>,
     _members: Vec<Vec<MobileMemberRegistration>>,
     _registrations: Vec<MobileElementRegistration>,
 }
@@ -246,11 +246,14 @@ impl MobileBootstrapOwned {
     }
 }
 
-pub(super) fn push_string(strings: &mut Vec<CString>, value: &str) -> WhiskerStringRef {
-    let value = CString::new(value).unwrap_or_default();
+pub(super) fn push_string(strings: &mut Vec<Box<[u8]>>, value: &str) -> WhiskerStringRef {
+    if value.is_empty() {
+        return empty_string();
+    }
+    let value = value.as_bytes().to_vec().into_boxed_slice();
     let result = WhiskerStringRef {
-        ptr: value.as_ptr(),
-        len: value.as_bytes().len(),
+        ptr: value.as_ptr().cast(),
+        len: value.len(),
     };
     strings.push(value);
     result
@@ -268,7 +271,7 @@ pub(super) fn member_registration(
     name: &str,
     kind: ElementValueKind,
     optional: bool,
-    strings: &mut Vec<CString>,
+    strings: &mut Vec<Box<[u8]>>,
 ) -> MobileMemberRegistration {
     MobileMemberRegistration {
         id,

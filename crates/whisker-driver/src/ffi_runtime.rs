@@ -1,6 +1,8 @@
 //! Safe retained runtime behind the Android and iOS C entry points.
 
-use std::ffi::{CString, c_void};
+#[cfg(target_os = "android")]
+use std::ffi::CString;
+use std::ffi::c_void;
 
 use crate::abi::*;
 use crate::ffi_module::module_host;
