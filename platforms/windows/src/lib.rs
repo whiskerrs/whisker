@@ -12,4 +12,4 @@
 pub type WindowsAppConfig = whisker_desktop::DesktopAppConfig;
 /// Failure while creating or running the native Windows Host.
 pub type WindowsError = whisker_desktop::DesktopAppError;
-pub use whisker_desktop::run;
+pub use whisker_desktop::{run, run_with_application_hash};

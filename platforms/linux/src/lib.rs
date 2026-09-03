@@ -12,4 +12,4 @@
 pub type LinuxAppConfig = whisker_desktop::DesktopAppConfig;
 /// Failure while creating or running the native Linux Host.
 pub type LinuxError = whisker_desktop::DesktopAppError;
-pub use whisker_desktop::run;
+pub use whisker_desktop::{run, run_with_application_hash};

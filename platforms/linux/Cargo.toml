@@ -11,5 +11,8 @@ keywords.workspace = true
 categories.workspace = true
 description = "Native Linux application shell for Whisker."
 
+[features]
+hot-reload = ["whisker-desktop/hot-reload"]
+
 [target.'cfg(target_os = "linux")'.dependencies]
 whisker-desktop = { workspace = true }
