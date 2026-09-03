@@ -740,11 +740,15 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+        event_loop.set_control_flow(scroll_settle_control_flow(
+            self.pending_scroll_settle.map(|(deadline, _)| deadline),
+            now,
+        ));
         let Some((deadline, point)) = self.pending_scroll_settle else {
             return;
         };
-        if Instant::now() < deadline {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+        if now < deadline {
             return;
         }
         self.pending_scroll_settle = None;
@@ -755,6 +759,13 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
         {
             self.request_frame();
         }
+    }
+}
+
+fn scroll_settle_control_flow(deadline: Option<Instant>, now: Instant) -> ControlFlow {
+    match deadline {
+        Some(deadline) if now < deadline => ControlFlow::WaitUntil(deadline),
+        Some(_) | None => ControlFlow::Wait,
     }
 }
 
@@ -771,8 +782,28 @@ fn ime_cursor_area(rect: LayoutRect) -> (winit::dpi::LogicalPosition<f64>, Logic
 
 #[cfg(test)]
 mod tests {
-    use super::{DesktopAppConfig, ime_cursor_area, printable_key_text};
+    use std::time::{Duration, Instant};
+
+    use super::{
+        DesktopAppConfig, ime_cursor_area, printable_key_text, scroll_settle_control_flow,
+    };
     use whisker_protocol::LayoutRect;
+    use winit::event_loop::ControlFlow;
+
+    #[test]
+    fn scroll_settle_deadlines_restore_idle_waiting() {
+        let now = Instant::now();
+
+        assert_eq!(scroll_settle_control_flow(None, now), ControlFlow::Wait);
+        assert_eq!(
+            scroll_settle_control_flow(Some(now - Duration::from_millis(1)), now),
+            ControlFlow::Wait
+        );
+        assert_eq!(
+            scroll_settle_control_flow(Some(now + Duration::from_millis(1)), now),
+            ControlFlow::WaitUntil(now + Duration::from_millis(1))
+        );
+    }
 
     #[test]
     fn default_config_preserves_the_standalone_window_contract() {
