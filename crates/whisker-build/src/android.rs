@@ -79,10 +79,10 @@ pub fn resolve_toolchain(abi: &str, api: u32) -> Result<AndroidToolchain> {
 }
 
 fn android_home() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("ANDROID_HOME").map(PathBuf::from) {
-        if p.is_dir() {
-            return Ok(p);
-        }
+    if let Some(p) = std::env::var_os("ANDROID_HOME").map(PathBuf::from)
+        && p.is_dir()
+    {
+        return Ok(p);
     }
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
         let cand = home.join("Library/Android/sdk");
@@ -96,10 +96,10 @@ fn android_home() -> Result<PathBuf> {
 }
 
 fn ndk_home() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("ANDROID_NDK_HOME").map(PathBuf::from) {
-        if p.is_dir() {
-            return Ok(p);
-        }
+    if let Some(p) = std::env::var_os("ANDROID_NDK_HOME").map(PathBuf::from)
+        && p.is_dir()
+    {
+        return Ok(p);
     }
     let ndk_dir = android_home()?.join("ndk");
     for v in PREFERRED_NDKS {
@@ -655,10 +655,10 @@ fn ensure_release_artifact_signed(artifact: ReleaseArtifact, path: &Path) -> Res
 /// locate `keytool` (`<java_home>/bin/keytool`) for upload-keystore
 /// generation — same JDK the gradle build will run under.
 pub fn resolve_java_home() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("JAVA_HOME").map(PathBuf::from) {
-        if p.is_dir() {
-            return Ok(p);
-        }
+    if let Some(p) = std::env::var_os("JAVA_HOME").map(PathBuf::from)
+        && p.is_dir()
+    {
+        return Ok(p);
     }
     #[cfg(target_os = "macos")]
     {

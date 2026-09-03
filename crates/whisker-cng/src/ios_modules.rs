@@ -206,9 +206,7 @@ pub fn render_modules_package_swift(
         ));
     } else {
         out.push_str(&format!(
-            "        .package(url: {url:?}, exact: {version:?}),\n",
-            url = WHISKER_IOS_SPM_URL,
-            version = WHISKER_IOS_SPM_VERSION,
+            "        .package(url: {WHISKER_IOS_SPM_URL:?}, exact: {WHISKER_IOS_SPM_VERSION:?}),\n",
         ));
     }
     for m in modules {

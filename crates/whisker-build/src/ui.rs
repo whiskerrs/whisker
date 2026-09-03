@@ -151,10 +151,10 @@ pub struct ReporterGuard {
 
 impl Drop for ReporterGuard {
     fn drop(&mut self) {
-        if let Ok(mut slot) = REPORTER.lock() {
-            if slot.as_ref().map(|current| current.id) == Some(self.id) {
-                *slot = None;
-            }
+        if let Ok(mut slot) = REPORTER.lock()
+            && slot.as_ref().map(|current| current.id) == Some(self.id)
+        {
+            *slot = None;
         }
     }
 }
