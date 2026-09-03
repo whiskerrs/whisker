@@ -147,6 +147,11 @@ pub enum ValidationError {
         /// Stable invalid-input category.
         error: TextContentError,
     },
+    /// A property or command payload contained the reserved error variant.
+    InvalidDataValue {
+        /// Target node of the rejected operation.
+        node: NodeId,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -363,14 +368,18 @@ impl SceneProjection {
                     .validate()
                     .map_err(|error| ValidationError::InvalidText { error })?;
             }
-            Operation::InvokeCommand { node, .. } => {
+            Operation::InvokeCommand {
+                node, arguments, ..
+            } => {
                 self.require_node(*node)?;
+                if !arguments.is_data() {
+                    return Err(ValidationError::InvalidDataValue { node: *node });
+                }
             }
             Operation::SetClip { node, .. }
             | Operation::SetVisibility { node, .. }
             | Operation::SetZOrder { node, .. }
             | Operation::SetAccessibility { node, .. }
-            | Operation::SetProperty { node, .. }
             | Operation::ClearProperty { node, .. }
             | Operation::SetEventMask { node, .. }
             | Operation::SetHitTest { node, .. }
@@ -378,6 +387,12 @@ impl SceneProjection {
             | Operation::SetPointerCapture { node, .. }
             | Operation::ReleasePointerCapture { node, .. } => {
                 self.require_node(*node)?;
+            }
+            Operation::SetProperty { node, value, .. } => {
+                self.require_node(*node)?;
+                if !value.is_data() {
+                    return Err(ValidationError::InvalidDataValue { node: *node });
+                }
             }
         }
         Ok(())
@@ -863,6 +878,48 @@ mod tests {
         )
         .expect("a rejected transaction must not retire newly allocated IDs");
         assert!(scene.node(new_child).is_some());
+    }
+
+    #[test]
+    fn property_and_command_payloads_reject_error_values_recursively() {
+        let property = PropertyId::new(1).expect("test property");
+        let command = CommandId::new(1).expect("test command");
+        let invalid_values = [
+            WhiskerValue::Error("top-level failure".to_owned()),
+            WhiskerValue::Array(vec![WhiskerValue::Error("nested failure".to_owned())]),
+            WhiskerValue::map([("nested", WhiskerValue::Error("nested failure".to_owned()))]),
+        ];
+
+        for value in invalid_values {
+            let (mut scene, root, _) = initial_tree();
+            let property_error = apply_next(
+                &mut scene,
+                vec![Operation::SetProperty {
+                    node: root,
+                    property,
+                    value: value.clone(),
+                }],
+            );
+            assert_eq!(
+                property_error,
+                Err(ValidationError::InvalidDataValue { node: root })
+            );
+            assert_eq!(scene.revision(), 1);
+
+            let command_error = apply_next(
+                &mut scene,
+                vec![Operation::InvokeCommand {
+                    node: root,
+                    command,
+                    arguments: value,
+                }],
+            );
+            assert_eq!(
+                command_error,
+                Err(ValidationError::InvalidDataValue { node: root })
+            );
+            assert_eq!(scene.revision(), 1);
+        }
     }
 
     #[test]
