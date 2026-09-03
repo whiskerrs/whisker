@@ -43,6 +43,7 @@ import rs.whisker.runtime.scene.OP_CREATE
 import rs.whisker.runtime.scene.OP_DELETE
 import rs.whisker.runtime.scene.OP_INSERT
 import rs.whisker.runtime.scene.OP_LAYOUT
+import rs.whisker.runtime.scene.OP_MOVE
 import rs.whisker.runtime.paint.HostRasterResourceStore
 
 private const val BACKGROUND_PACKED_LAYERS = 256
@@ -178,6 +179,17 @@ class HostConformanceTest {
 
                 assertEquals(0, scene.beginFrame(1, 1, 1, 2))
                 scene.stage(hostOperation(OP_INSERT, parent = 3, child = 1))
+                assertTrue(!scene.commit())
+                assertTrue(childNode.parent === childParent)
+
+                assertEquals(0, scene.beginFrame(1, 1, 1, 2))
+                scene.stage(hostOperation(OP_CREATE, node = 4, member = 1))
+                scene.stage(hostOperation(OP_INSERT, parent = 1, child = 4, index = 2))
+                assertTrue(!scene.commit())
+                assertTrue(childNode.parent === childParent)
+
+                assertEquals(0, scene.beginFrame(1, 1, 1, 2))
+                scene.stage(hostOperation(OP_MOVE, parent = 1, child = 2, index = 1))
                 assertTrue(!scene.commit())
                 assertTrue(childNode.parent === childParent)
 
@@ -2021,6 +2033,7 @@ private fun hostOperation(
     node: Long = 0,
     parent: Long = 0,
     child: Long = 0,
+    index: Int = 0,
     member: Int = 0,
     numbers: FloatArray? = null,
 ): HostSceneOperation = HostSceneOperation(
@@ -2029,7 +2042,7 @@ private fun hostOperation(
     node = node,
     parent = parent,
     child = child,
-    index = 0,
+    index = index,
     member = member,
     integer = 0,
     scalar = 0f,
