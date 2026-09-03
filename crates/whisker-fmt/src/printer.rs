@@ -84,11 +84,11 @@ pub(crate) fn print_render(
     }
     p.ir_node(root, base_indent + 1, &mut out);
     // A trailing comment on the root node's own last line attaches inline.
-    if let Some((_, after)) = p.ir_node_extent(root) {
-        if let Some(idx) = p.pending_trailing_on_line(after) {
-            let before = p.comments[idx].start + 1;
-            p.flush(before, base_indent + 1, &mut out);
-        }
+    if let Some((_, after)) = p.ir_node_extent(root)
+        && let Some(idx) = p.pending_trailing_on_line(after)
+    {
+        let before = p.comments[idx].start + 1;
+        p.flush(before, base_indent + 1, &mut out);
     }
     let idx = p.next.get();
     if idx < comments.len() {
@@ -482,10 +482,10 @@ impl Printer<'_> {
     /// previously emitted item ([`Printer::prev_end`]) and the item
     /// starting at `next_start`.
     fn maybe_blank_line(&self, next_start: usize, out: &mut String) {
-        if let Some(prev) = self.prev_end.get() {
-            if self.map.has_blank_line_between(prev, next_start) {
-                out.push('\n');
-            }
+        if let Some(prev) = self.prev_end.get()
+            && self.map.has_blank_line_between(prev, next_start)
+        {
+            out.push('\n');
         }
     }
 

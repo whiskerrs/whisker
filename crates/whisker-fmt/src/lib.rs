@@ -145,17 +145,17 @@ pub fn unified_diff(before: &str, after: &str) -> String {
 /// Locate the rustfmt binary: `$RUSTFMT`, else `rustup which rustfmt`,
 /// else `rustfmt` on `PATH`.
 pub fn rustfmt_path() -> String {
-    if let Ok(p) = std::env::var("RUSTFMT") {
+    if let Ok(p) = std::env::var("RUSTFMT")
+        && !p.is_empty()
+    {
+        return p;
+    }
+    if let Ok(out) = Command::new("rustup").args(["which", "rustfmt"]).output()
+        && out.status.success()
+    {
+        let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if !p.is_empty() {
             return p;
-        }
-    }
-    if let Ok(out) = Command::new("rustup").args(["which", "rustfmt"]).output() {
-        if out.status.success() {
-            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !p.is_empty() {
-                return p;
-            }
         }
     }
     "rustfmt".to_string()
@@ -422,20 +422,19 @@ fn collect_macro_edits(
             if matches!(name.as_str(), "compose" | "render" | "css" | "routes")
                 && i + 2 < trees.len()
                 && matches!(&trees[i + 1], TokenTree::Punct(p) if p.as_char() == '!')
+                && let TokenTree::Group(group) = &trees[i + 2]
             {
-                if let TokenTree::Group(group) = &trees[i + 2] {
-                    if let Some(edit) =
-                        macro_body_edit(&name, group, file_map, rust_src, opts, exprfmt, verify)?
-                    {
-                        edits.push(edit);
-                    }
-                    // Never recurse into a macro body: nested
-                    // Nested composition macros are re-printed by the body's own
-                    // printer, so an inner edit would splice into byte
-                    // ranges the outer edit already owns.
-                    i += 3;
-                    continue;
+                if let Some(edit) =
+                    macro_body_edit(&name, group, file_map, rust_src, opts, exprfmt, verify)?
+                {
+                    edits.push(edit);
                 }
+                // Never recurse into a macro body: nested
+                // Nested composition macros are re-printed by the body's own
+                // printer, so an inner edit would splice into byte
+                // ranges the outer edit already owns.
+                i += 3;
+                continue;
             }
         }
         if let TokenTree::Group(group) = &trees[i] {

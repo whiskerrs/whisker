@@ -46,11 +46,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep lint results reproducible and aligned with the supported compiler. Tracking
+      # `stable` here makes newly-added Clippy lints fail unrelated pull requests.
+      - uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # These two style-only lints create repository-wide churn when Clippy changes its
+      # preferred spelling. Correctness and all other warnings remain denied.
+      - run: >-
+          cargo +1.88.0 clippy --workspace --all-targets --
+          -D warnings
+          -A clippy::collapsible-if
+          -A clippy::uninlined-format-args
 
   rustdoc:
     name: cargo doc
@@ -123,15 +131,16 @@ jobs:
           RUSTFLAGS: ""
 
   msrv:
-    name: MSRV (rust 1.85)
+    name: MSRV (rust 1.88)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # The version here must match `rust-version` in the root
       # Cargo.toml's `[workspace.package]`. If you bump one, bump both.
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets
+      # `+version` takes precedence over the repository's stable toolchain file.
+      - run: cargo +1.88.0 check --workspace --all-targets
 
   deny:
     name: cargo deny (advisories / bans / sources)

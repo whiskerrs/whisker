@@ -173,10 +173,10 @@ pub fn sync(out_dir: &Path, inputs: &AndroidInputs) -> Result<bool> {
             .as_slice(),
     );
     let fp_path = out_dir.join(".whisker-fingerprint");
-    if let Ok(existing) = std::fs::read_to_string(&fp_path) {
-        if existing.trim() == new_fp {
-            return Ok(false);
-        }
+    if let Ok(existing) = std::fs::read_to_string(&fp_path)
+        && existing.trim() == new_fp
+    {
+        return Ok(false);
     }
 
     write_files(out_dir, inputs).context("write Android project files")?;
@@ -556,10 +556,10 @@ fn clean_managed_tree(out_dir: &Path) -> Result<()> {
             .strip_prefix(out_dir)
             .map(|p| p.to_path_buf())
             .ok();
-        if let Some(rel) = rel {
-            if keep.iter().any(|k| rel == Path::new(k)) {
-                continue;
-            }
+        if let Some(rel) = rel
+            && keep.iter().any(|k| rel == Path::new(k))
+        {
+            continue;
         }
         // Only the files we own under `app/`; recurse one level.
         if entry.file_name() == "app" && entry.path().is_dir() {

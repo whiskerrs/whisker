@@ -107,10 +107,10 @@ pub fn sync(out_dir: &Path, inputs: &IosInputs) -> Result<bool> {
             .as_slice(),
     );
     let fp_path = out_dir.join(".whisker-fingerprint");
-    if let Ok(existing) = std::fs::read_to_string(&fp_path) {
-        if existing.trim() == new_fp {
-            return Ok(false);
-        }
+    if let Ok(existing) = std::fs::read_to_string(&fp_path)
+        && existing.trim() == new_fp
+    {
+        return Ok(false);
     }
 
     write_files(out_dir, inputs).context("write iOS project files")?;
@@ -417,10 +417,10 @@ fn render_extra_info_plist(entries: &BTreeMap<String, PlistValue>) -> String {
 fn push_plist_kv(out: &mut String, key: &str, value: &PlistValue, level: usize) {
     // Arrays/dicts we can't render (a mixed-type array) drop the whole
     // key rather than emit a dangling `<key>`.
-    if let PlistValue::Array(items) = value {
-        if !items.iter().all(|v| matches!(v, PlistValue::String(_))) {
-            return;
-        }
+    if let PlistValue::Array(items) = value
+        && !items.iter().all(|v| matches!(v, PlistValue::String(_)))
+    {
+        return;
     }
     let ind = "\t".repeat(level);
     out.push_str(&format!("{ind}<key>{}</key>\n", escape_xml(key)));

@@ -101,7 +101,7 @@ pub fn inputs_from(
         .unwrap_or_else(|| "0.1.0".to_string());
     let build_number = app_config.build_number.unwrap_or(1);
     let background = crate::background::AppBackground::resolve(app_config)?;
-    let generated_package = format!("{}-whisker-macos", user_package);
+    let generated_package = format!("{user_package}-whisker-macos");
     Ok(MacosInputs {
         app_name,
         background: background.hex().to_string(),

@@ -40,10 +40,10 @@ pub struct TrackGuard {
 
 impl Drop for TrackGuard {
     fn drop(&mut self) {
-        if let Ok(mut g) = TRACKED.lock() {
-            if let Some(i) = g.iter().position(|&p| p == self.pid) {
-                g.swap_remove(i);
-            }
+        if let Ok(mut g) = TRACKED.lock()
+            && let Some(i) = g.iter().position(|&p| p == self.pid)
+        {
+            g.swap_remove(i);
         }
     }
 }

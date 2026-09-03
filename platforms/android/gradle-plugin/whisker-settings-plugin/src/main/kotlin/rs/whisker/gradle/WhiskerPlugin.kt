@@ -6,6 +6,7 @@ import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.Properties
+import java.util.concurrent.FutureTask
 
 // Settings-scope entry point. Users declare this in
 // `settings.gradle.kts`:
@@ -137,19 +138,17 @@ class WhiskerPlugin : Plugin<Settings> {
             "--workspace=${workspace.absolutePath}",
             "--package=$userPackage",
         ).start()
-        val out = proc.inputStream.bufferedReader().readText()
-        val err = proc.errorStream.bufferedReader().readText()
-        val rc = proc.waitFor()
-        if (rc != 0) {
+        val result = captureProcess(proc)
+        if (result.exitCode != 0) {
             error(
-                "whisker modules failed (exit $rc).\n" +
-                    "stderr:\n$err\n" +
+                "whisker modules failed (exit ${result.exitCode}).\n" +
+                    "stderr:\n${result.stderr}\n" +
                     "Whisker CLI: $whiskerCli\n" +
                     "Hint: install with `cargo install whisker-cli` " +
                     "and make sure it's on the JVM's PATH.",
             )
         }
-        return out
+        return result.stdout
     }
 
     private fun writeConfigForProjectPlugin(
@@ -166,3 +165,34 @@ class WhiskerPlugin : Plugin<Settings> {
         cfg.outputStream().use { props.store(it, "rs.whisker Settings plugin output") }
     }
 }
+
+internal data class ProcessCapture(
+    val exitCode: Int,
+    val stdout: String,
+    val stderr: String,
+)
+
+/** Drains both child pipes concurrently so neither pipe can block process completion. */
+internal fun captureProcess(process: Process): ProcessCapture {
+    val stdout = FutureTask { process.inputStream.bufferedReader().use { it.readText() } }
+    val stderr = FutureTask {
+        process.errorStream.bufferedReader().use { reader ->
+            val tail = StringBuilder()
+            val buffer = CharArray(8 * 1024)
+            while (true) {
+                val count = reader.read(buffer)
+                if (count < 0) break
+                tail.append(buffer, 0, count)
+                val excess = tail.length - MAX_CAPTURED_STDERR_CHARS
+                if (excess > 0) tail.delete(0, excess)
+            }
+            tail.toString()
+        }
+    }
+    Thread(stdout, "whisker-modules-stdout").apply { isDaemon = true }.start()
+    Thread(stderr, "whisker-modules-stderr").apply { isDaemon = true }.start()
+    val exitCode = process.waitFor()
+    return ProcessCapture(exitCode, stdout.get(), stderr.get())
+}
+
+private const val MAX_CAPTURED_STDERR_CHARS = 64 * 1024

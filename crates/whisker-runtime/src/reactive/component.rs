@@ -367,10 +367,10 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
                     None => return false,
                 };
                 while let Some(parent) = rt.owners.get(cursor).and_then(|o| o.parent) {
-                    if let Some(mf) = rt.owners.get(parent).and_then(|o| o.mount_fn) {
-                        if patched_set.contains(&mf) {
-                            return false;
-                        }
+                    if let Some(mf) = rt.owners.get(parent).and_then(|o| o.mount_fn)
+                        && patched_set.contains(&mf)
+                    {
+                        return false;
                     }
                     cursor = parent;
                 }
@@ -494,13 +494,12 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
         // caller's `append_child`.
         PENDING_MOUNT.with(|cell| cell.set(None));
 
-        if let Some(list) = by_parent.get_mut(&info.parent) {
-            if let Some(entry) = list
+        if let Some(list) = by_parent.get_mut(&info.parent)
+            && let Some(entry) = list
                 .iter_mut()
                 .find(|(o, n)| *o == info.old_body_root && n.is_none())
-            {
-                entry.1 = Some(new_body_root);
-            }
+        {
+            entry.1 = Some(new_body_root);
         }
 
         results.push((

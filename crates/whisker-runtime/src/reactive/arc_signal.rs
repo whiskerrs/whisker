@@ -99,11 +99,11 @@ fn track<T: 'static>(inner: &Rc<ArcSignalInner<T>>) {
     let added = {
         let mut subs = inner.subscribers.borrow_mut();
         with_runtime(|rt| {
-            if let Some(tracker) = rt.current_tracker {
-                if !subs.contains(&tracker) {
-                    subs.push(tracker);
-                    return Some(tracker);
-                }
+            if let Some(tracker) = rt.current_tracker
+                && !subs.contains(&tracker)
+            {
+                subs.push(tracker);
+                return Some(tracker);
             }
             None
         })
