@@ -142,7 +142,7 @@ public class WhiskerAppContext internal constructor() {
         private val deepLinkListeners: CopyOnWriteArrayList<DeepLinkListener> =
             CopyOnWriteArrayList()
 
-        /** Called by [rs.whisker.runtime.WhiskerActivity.onNewIntent]. */
+        /** Called by the generated Activity for cold-start and `onNewIntent` deep links. */
         @JvmStatic
         public fun dispatchDeepLink(url: String) {
             for (l in deepLinkListeners) l.onDeepLink(url)
