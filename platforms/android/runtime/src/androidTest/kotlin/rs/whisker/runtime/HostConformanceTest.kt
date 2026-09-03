@@ -149,6 +149,16 @@ class HostConformanceTest {
     }
 
     @Test
+    fun zOrderUsesPhysicalSiblingOrderWithoutAndroidElevation() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                assertTrue(Driver(context, "z-order").verifyPhysicalZOrder())
+            }
+    }
+
+    @Test
     fun everySharedPaintScenarioUsesTheProductionAndroidView() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
@@ -1002,6 +1012,29 @@ private class Driver(
         check(stage(tag = MobileAbi.OP_CAPTURE, wide = 7))
         check(stage(tag = MobileAbi.OP_RELEASE_CAPTURE, wide = 7))
         return view.commitFrameFromNative()
+    }
+
+    fun verifyPhysicalZOrder(): Boolean {
+        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        repeat(3) { index ->
+            val node = (index + 1).toLong()
+            check(stage(tag = MobileAbi.OP_CREATE, node = node, member = 1))
+            check(
+                stage(
+                    tag = MobileAbi.OP_LAYOUT,
+                    node = node,
+                    numbers = floatArrayOf(node.toFloat(), 0f, 10f, 10f, 0f, 0f, 10f, 10f),
+                ),
+            )
+        }
+        check(stage(tag = MobileAbi.OP_Z_ORDER, node = 1, integer = 10))
+        check(stage(tag = MobileAbi.OP_Z_ORDER, node = 2, integer = -5))
+        check(stage(tag = MobileAbi.OP_Z_ORDER, node = 3, integer = 10))
+        check(view.commitFrameFromNative())
+
+        val orderedNodes = (0 until view.childCount).map { view.getChildAt(it) as HostNode }
+        return orderedNodes.map { it.geometry.x } == listOf(2f, 1f, 3f) &&
+            orderedNodes.all { it.translationZ == 0f }
     }
 
     fun rejectOpacity(opacity: Float): Boolean {

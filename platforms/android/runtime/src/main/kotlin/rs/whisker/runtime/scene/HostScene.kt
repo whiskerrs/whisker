@@ -120,11 +120,18 @@ internal class HostScene(
         }
         return try {
             applyingFrame = true
+            val zOrderParents = if (stagedSnapshot) {
+                null
+            } else {
+                affectedZOrderParents()
+            }
             if (stagedSnapshot) clear()
             stagedOperations.forEach(::applyOperation)
             attachRoots()
-            if (stagedOperations.any { it.tag in OP_CREATE..OP_MOVE || it.tag == OP_Z_ORDER }) {
-                refreshZOrderProjection()
+            if (zOrderParents == null) {
+                refreshAllZOrderProjections()
+            } else if (zOrderParents.isNotEmpty()) {
+                zOrderParents.forEach(::refreshZOrderProjection)
             }
             sceneEpoch = stagedSceneEpoch
             revision = stagedTargetRevision
@@ -363,13 +370,63 @@ internal class HostScene(
         }
     }
 
-    /** Preserves exact signed i32 ordering while projecting onto Android's Float Z axis. */
-    private fun refreshZOrderProjection() {
-        nodes.entries.groupBy { parents[it.key] }.values.forEach { siblings ->
-            val ranks = siblings.map { it.value.zOrder }.distinct().sorted()
-                .withIndex().associate { (rank, value) -> value to rank.toFloat() }
-            siblings.forEach { (_, node) -> node.translationZ = requireNotNull(ranks[node.zOrder]) }
+    private fun affectedZOrderParents(): Set<Long?> {
+        val affected = HashSet<Long?>()
+        stagedOperations.forEach { operation ->
+            when (operation.tag) {
+                OP_CREATE -> affected += null
+                OP_DELETE -> affected += parents[operation.node]
+                OP_INSERT -> {
+                    affected += null
+                    affected += operation.parent
+                }
+                OP_REMOVE -> {
+                    affected += operation.parent
+                    affected += null
+                }
+                OP_MOVE -> affected += operation.parent
+                OP_Z_ORDER -> affected += parents[operation.node]
+            }
         }
+        return affected
+    }
+
+    private fun refreshAllZOrderProjections() {
+        val parentIds = HashSet<Long?>()
+        parentIds += null
+        parents.values.forEach(parentIds::add)
+        parentIds.forEach(::refreshZOrderProjection)
+    }
+
+    /**
+     * Projects CSS z-order into sibling order without using Android elevation.
+     *
+     * Kotlin's stable sort preserves the structural order established by insert/move for equal
+     * z-order values. Reordering the actual children avoids the shadows Android draws for Views
+     * with positive translationZ.
+     */
+    private fun refreshZOrderProjection(parentId: Long?) {
+        val host = if (parentId == null) {
+            root
+        } else {
+            val parent = nodes[parentId] ?: return
+            parent.mountedElement?.childrenHost() ?: parent
+        }
+        val structuralOrder = buildList {
+            repeat(host.childCount) { index ->
+                (host.getChildAt(index) as? HostNode)?.let(::add)
+            }
+        }
+        if (structuralOrder.isEmpty()) return
+
+        // Clear state written by older Hosts and keep z-order independent from Android elevation.
+        structuralOrder.forEach { it.translationZ = 0f }
+
+        val desiredOrder = structuralOrder.sortedBy { it.zOrder }
+        if (structuralOrder == desiredOrder) return
+
+        desiredOrder.forEach(host::bringChildToFront)
+        host.invalidate()
     }
 
     private fun insertChild(parentId: Long, childId: Long, requestedIndex: Int) {
