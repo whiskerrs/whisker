@@ -11,9 +11,12 @@ use crate::{
 };
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::runtime::module::RustModuleDefinition;
-use whisker::{Element, ElementModuleDefinition, ElementRegistry, RuntimeInstance, SurfaceRuntime};
+use whisker::{
+    Element, ElementModuleDefinition, ElementRegistry, InputDispatch, RuntimeInstance,
+    SurfaceRuntime,
+};
 use whisker_protocol::{
-    CursorKeyword, InputEvent, InputEventKind, LayoutRect, SurfaceId, WhiskerValue,
+    CursorKeyword, InputEvent, InputEventKind, LayoutRect, NodeId, SurfaceId, WhiskerValue,
 };
 use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
@@ -245,7 +248,8 @@ struct DesktopApplication {
     started_at: Instant,
     retrying_failed_frame: bool,
     pointer: DesktopPointerAdapter,
-    pending_scroll_settle: Option<(Instant, [f32; 2])>,
+    pointer_target: Option<NodeId>,
+    pending_scroll_settle: Option<(Instant, NodeId)>,
     modifiers: Modifiers,
     clipboard: Option<arboard::Clipboard>,
 }
@@ -276,6 +280,7 @@ impl DesktopApplication {
             started_at: Instant::now(),
             retrying_failed_frame: false,
             pointer: DesktopPointerAdapter::new(SurfaceId::new(1).unwrap()),
+            pointer_target: None,
             pending_scroll_settle: None,
             modifiers: Modifiers::default(),
             clipboard: arboard::Clipboard::new().ok(),
@@ -419,24 +424,30 @@ impl DesktopApplication {
         self.request_frame();
     }
 
-    fn dispatch_input(&mut self, event: InputEvent) {
+    fn dispatch_input(&mut self, event: InputEvent) -> InputDispatch {
         let Some(runtime) = &self.runtime else {
-            return;
+            return InputDispatch::default();
         };
         let host = self
             .host
             .as_mut()
             .expect("mounted Desktop runtime has a Host");
         let presentation = host.take_presentation_updates();
-        if let Err(error) =
-            host.with_modules(|| runtime.dispatch_input_with_presentation(&event, &presentation))
+        let dispatch = match host
+            .with_modules(|| runtime.dispatch_input_with_presentation(&event, &presentation))
         {
-            eprintln!("dispatch {TARGET_NAME} input failed: {error}");
+            Ok(dispatch) => dispatch,
+            Err(error) => {
+                eprintln!("dispatch {TARGET_NAME} input failed: {error}");
+                // A failed transaction may still have committed independent
+                // valid mutations. Rendering gives it a recovery boundary.
+                InputDispatch::default()
+            }
+        };
+        if input_dispatch_needs_frame(dispatch) {
+            self.request_frame();
         }
-        // A failed transaction may still have committed independent valid
-        // mutations. Rendering also gives a transient binding failure its
-        // one-shot recovery boundary.
-        self.request_frame();
+        dispatch
     }
 
     fn sync_text_input(&self) {
@@ -664,10 +675,11 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
                         self.started_at.elapsed().as_secs_f64() * 1000.0,
                         [logical.x, logical.y],
                     );
-                    self.dispatch_input(input);
+                    let dispatch = self.dispatch_input(input);
+                    self.pointer_target = dispatch.target;
                     if let (Some(window), Some(host)) = (&self.window, &self.host) {
                         let cursor = host
-                            .cursor_at([logical.x, logical.y])
+                            .cursor_for_target(dispatch.target)
                             .unwrap_or(CursorKeyword::Default);
                         window.set_cursor_visible(cursor != CursorKeyword::None);
                         if cursor != CursorKeyword::None {
@@ -677,36 +689,37 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                if let Some(input) = self.pointer.mouse_button(
-                    self.started_at.elapsed().as_secs_f64() * 1000.0,
-                    mouse_button(button),
-                    state == ElementState::Pressed,
-                ) {
-                    self.dispatch_input(input);
-                }
+                let dispatch = self
+                    .pointer
+                    .mouse_button(
+                        self.started_at.elapsed().as_secs_f64() * 1000.0,
+                        mouse_button(button),
+                        state == ElementState::Pressed,
+                    )
+                    .map_or_else(InputDispatch::default, |input| self.dispatch_input(input));
+                self.pointer_target = dispatch.target.or(self.pointer_target);
                 if button == MouseButton::Left
                     && state == ElementState::Pressed
-                    && let (Some(position), Some(host)) =
-                        (self.pointer.mouse_position(), self.host.as_mut())
-                    && host.focus_text_input_at([position.x, position.y])
+                    && let Some(host) = self.host.as_mut()
+                    && host.focus_text_input_target(dispatch.target)
                 {
                     self.request_frame();
                     self.sync_text_input();
                 }
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {
-                if let (Some(window), Some(position), Some(host)) =
-                    (&self.window, self.pointer.mouse_position(), &mut self.host)
+                if let (Some(window), Some(target), Some(host)) =
+                    (&self.window, self.pointer_target, &mut self.host)
                 {
-                    let point = [position.x, position.y];
-                    let changed = host.scroll_at(point, scroll_delta(delta, window.scale_factor()));
+                    let changed = host
+                        .scroll_target(Some(target), scroll_delta(delta, window.scale_factor()));
                     let settled = if phase == TouchPhase::Ended {
                         self.pending_scroll_settle = None;
-                        host.settle_scroll_at(point)
+                        host.settle_scroll_target(Some(target))
                     } else {
                         if changed {
                             self.pending_scroll_settle =
-                                Some((Instant::now() + Duration::from_millis(100), point));
+                                Some((Instant::now() + Duration::from_millis(100), target));
                         }
                         false
                     };
@@ -729,6 +742,7 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
                 }
             }
             WindowEvent::CursorLeft { .. } => {
+                self.pointer_target = None;
                 if let Some(window) = &self.window {
                     window.set_cursor_visible(true);
                     window.set_cursor(CursorIcon::Default);
@@ -739,26 +753,40 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let Some((deadline, point)) = self.pending_scroll_settle else {
+        let now = Instant::now();
+        event_loop.set_control_flow(scroll_settle_control_flow(
+            self.pending_scroll_settle.map(|(deadline, _)| deadline),
+            now,
+        ));
+        let Some((deadline, target)) = self.pending_scroll_settle else {
             return;
         };
-        if Instant::now() < deadline {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+        if now < deadline {
             return;
         }
         self.pending_scroll_settle = None;
         if self
             .host
             .as_mut()
-            .is_some_and(|host| host.settle_scroll_at(point))
+            .is_some_and(|host| host.settle_scroll_target(Some(target)))
         {
             self.request_frame();
         }
     }
 }
 
+fn scroll_settle_control_flow(deadline: Option<Instant>, now: Instant) -> ControlFlow {
+    deadline
+        .filter(|deadline| *deadline > now)
+        .map_or(ControlFlow::Wait, ControlFlow::WaitUntil)
+}
+
 fn printable_key_text(text: Option<&str>) -> Option<&str> {
     text.filter(|text| !text.is_empty() && text.chars().all(|character| !character.is_control()))
+}
+
+fn input_dispatch_needs_frame(dispatch: InputDispatch) -> bool {
+    dispatch.consumed || dispatch.queued
 }
 
 fn ime_cursor_area(rect: LayoutRect) -> (winit::dpi::LogicalPosition<f64>, LogicalSize<f64>) {
@@ -770,8 +798,15 @@ fn ime_cursor_area(rect: LayoutRect) -> (winit::dpi::LogicalPosition<f64>, Logic
 
 #[cfg(test)]
 mod tests {
-    use super::{DesktopAppConfig, ime_cursor_area, printable_key_text};
+    use std::time::{Duration, Instant};
+
+    use super::{
+        DesktopAppConfig, ime_cursor_area, input_dispatch_needs_frame, printable_key_text,
+        scroll_settle_control_flow,
+    };
+    use whisker::InputDispatch;
     use whisker_protocol::LayoutRect;
+    use winit::event_loop::ControlFlow;
 
     #[test]
     fn default_config_preserves_the_standalone_window_contract() {
@@ -812,5 +847,32 @@ mod tests {
         assert_eq!(position.y, 20.0);
         assert_eq!(size.width, 120.0);
         assert_eq!(size.height, 44.0);
+    }
+
+    #[test]
+    fn scroll_settle_deadlines_return_to_blocking_wait() {
+        let now = Instant::now();
+        assert_eq!(scroll_settle_control_flow(None, now), ControlFlow::Wait);
+        assert_eq!(
+            scroll_settle_control_flow(Some(now - Duration::from_millis(1)), now),
+            ControlFlow::Wait
+        );
+        assert_eq!(
+            scroll_settle_control_flow(Some(now + Duration::from_millis(1)), now),
+            ControlFlow::WaitUntil(now + Duration::from_millis(1))
+        );
+    }
+
+    #[test]
+    fn unhandled_pointer_motion_does_not_request_a_gpu_frame() {
+        assert!(!input_dispatch_needs_frame(InputDispatch::default()));
+        assert!(input_dispatch_needs_frame(InputDispatch {
+            consumed: true,
+            ..InputDispatch::default()
+        }));
+        assert!(input_dispatch_needs_frame(InputDispatch {
+            queued: true,
+            ..InputDispatch::default()
+        }));
     }
 }

@@ -2,7 +2,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 use crate::element::{
-    DesktopElementFactory, DesktopNativeElement, DesktopNativeEvent, built_in_element_factories,
+    DesktopElementFactory, DesktopNativeElement, DesktopNativeEvent, DesktopViewDefinition,
+    DesktopViewImplementation, built_in_element_factories,
 };
 use whisker::standard_element_registrations;
 use whisker_protocol::{
@@ -10,7 +11,8 @@ use whisker_protocol::{
     ElementMeasurement, ElementPropertySchema, ElementRegistration, ElementValueKind, EventId,
     FrameHeader, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
     MeasureTextOverflow, MeasureTextWrap, PaintCorners, PaintEdges, PaintLengthPercentage,
-    PropertyId, ProtocolVersion, TextMeasurePayload, TextMeasureStyle, TextPaint,
+    PreparedContentId, PropertyId, ProtocolVersion, TextMeasurePayload, TextMeasureStyle,
+    TextPaint,
 };
 
 fn element_type(name: &str) -> ElementTypeId {
@@ -111,6 +113,13 @@ fn text() -> TextContent {
     }
 }
 
+fn prepared_text(id: u64) -> TextContent {
+    TextContent {
+        prepared_content: PreparedContentId::new(id),
+        ..text()
+    }
+}
+
 fn packet(mode: FrameMode, base: u64, target: u64, operations: Vec<Operation>) -> FramePacket {
     FramePacket {
         header: FrameHeader {
@@ -128,7 +137,7 @@ fn packet(mode: FrameMode, base: u64, target: u64, operations: Vec<Operation>) -
 }
 
 #[test]
-fn pointer_capture_is_retained_and_released_by_the_desktop_surface() {
+fn runtime_owned_pointer_capture_operations_are_accepted_by_the_desktop_surface() {
     let node = id(1);
     let pointer = whisker_protocol::PointerId::new(7).unwrap();
     let mut scene = scene(SurfaceId::new(1).unwrap());
@@ -147,7 +156,6 @@ fn pointer_capture_is_retained_and_released_by_the_desktop_surface() {
             ],
         ))
         .unwrap();
-    assert_eq!(scene.pointer_captures.get(&pointer), Some(&node));
 
     scene
         .present(&packet(
@@ -157,7 +165,6 @@ fn pointer_capture_is_retained_and_released_by_the_desktop_surface() {
             vec![Operation::ReleasePointerCapture { node, pointer }],
         ))
         .unwrap();
-    assert!(!scene.pointer_captures.contains_key(&pointer));
 }
 
 const CHECKED: PropertyId = PropertyId::new(1).unwrap();
@@ -605,6 +612,51 @@ fn native_toggle_applies_properties_invokes_command_and_routes_change() {
 }
 
 #[test]
+fn module_content_named_like_a_builtin_is_not_added_to_the_presentation_pool() {
+    let element_type = ElementTypeId::new(20).unwrap();
+    let node = id(1);
+    let registration = ElementRegistration {
+        element_type,
+        name: whisker::VIEW_ELEMENT_NAME.into(),
+        child_policy: whisker_protocol::ChildPolicy::None,
+        measurement: ElementMeasurement::None,
+        text_style: false,
+        properties: vec![],
+        events: vec![],
+        commands: vec![],
+    };
+    let factory = DesktopElementFactory::native(whisker::VIEW_ELEMENT_NAME, |events| {
+        Box::new(ToggleNative {
+            checked: false,
+            disabled: false,
+            events,
+        })
+    });
+    let mut scene = DesktopScene::new(
+        SurfaceId::new(1).unwrap(),
+        DesktopElementRegistry::bind(&[registration], &[factory]).unwrap(),
+    );
+    scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![Operation::CreateNode { node, element_type }],
+        ))
+        .unwrap();
+    scene
+        .present(&packet(
+            FrameMode::Delta,
+            1,
+            2,
+            vec![Operation::DeleteNode { node }],
+        ))
+        .unwrap();
+
+    assert!(scene.presentation_pool.is_empty());
+}
+
+#[test]
 fn native_toggle_rejects_wrong_property_shape_before_commit() {
     let node = id(1);
     let (mut scene, element_type) = toggle_scene();
@@ -847,6 +899,75 @@ fn smooth_scroll_command_advances_on_host_frames() {
     assert!(intermediate > 0.0 && intermediate < 240.0);
     assert!(!scene.advance_scroll_animations(1_000.0));
     assert_eq!(scene.nodes[&scroll].scroll_offset, [0.0, 240.0]);
+}
+
+#[test]
+fn snapshot_discards_scroll_animation_from_the_previous_scene_epoch() {
+    let scroll = id(1);
+    let content = id(2);
+    let mut scene = scene(SurfaceId::new(1).unwrap());
+    scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode {
+                    node: scroll,
+                    element_type: element_type(whisker::SCROLL_VIEW_ELEMENT_NAME),
+                },
+                Operation::CreateNode {
+                    node: content,
+                    element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+                },
+                Operation::InsertChild {
+                    parent: scroll,
+                    child: content,
+                    index: 0,
+                },
+                Operation::SetLayout {
+                    node: scroll,
+                    geometry: geometry(0.0, 0.0, 100.0, 100.0),
+                },
+                Operation::SetLayout {
+                    node: content,
+                    geometry: geometry(0.0, 0.0, 100.0, 500.0),
+                },
+            ],
+        ))
+        .unwrap();
+    scene
+        .present(&packet(
+            FrameMode::Delta,
+            1,
+            2,
+            vec![Operation::InvokeCommand {
+                node: scroll,
+                command: whisker::SCROLL_TO_COMMAND,
+                arguments: WhiskerValue::map([
+                    ("offset", WhiskerValue::Float(240.0)),
+                    ("smooth", WhiskerValue::Bool(true)),
+                ]),
+            }],
+        ))
+        .unwrap();
+    assert!(scene.has_active_scroll_animations());
+
+    let mut replacement = packet(
+        FrameMode::Snapshot,
+        0,
+        1,
+        vec![Operation::CreateNode {
+            node: scroll,
+            element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+        }],
+    );
+    replacement.header.scene_epoch = 2;
+    scene.present(&replacement).unwrap();
+
+    assert!(!scene.has_active_scroll_animations());
+    assert!(!scene.advance_scroll_animations(16.0));
+    assert_eq!(scene.nodes[&scroll].scroll_offset, [0.0, 0.0]);
 }
 
 #[test]
@@ -1439,6 +1560,130 @@ fn text_content_operation_is_dispatched_by_registered_element_type() {
         scene.paint_commands().as_slice(),
         [PaintCommand::Box { .. }, PaintCommand::Text { node, .. }] if *node == root
     ));
+}
+
+#[test]
+fn prepared_text_references_follow_committed_scene_content() {
+    let node = id(1);
+    let first = PreparedContentId::new(11).unwrap();
+    let second = PreparedContentId::new(12).unwrap();
+    let rejected = PreparedContentId::new(13).unwrap();
+    let mut scene = scene(SurfaceId::new(1).unwrap());
+
+    scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode {
+                    node,
+                    element_type: element_type(whisker::TEXT_ELEMENT_NAME),
+                },
+                Operation::SetText {
+                    node,
+                    content: prepared_text(first.get()),
+                },
+            ],
+        ))
+        .unwrap();
+    let first_revision = scene.prepared_content_revision();
+    assert!(scene.references_prepared_content(first));
+
+    scene
+        .present(&packet(
+            FrameMode::Delta,
+            1,
+            2,
+            vec![Operation::SetText {
+                node,
+                content: prepared_text(second.get()),
+            }],
+        ))
+        .unwrap();
+    assert!(scene.prepared_content_revision() > first_revision);
+    assert!(!scene.references_prepared_content(first));
+    assert!(scene.references_prepared_content(second));
+
+    assert!(
+        scene
+            .present(&packet(
+                FrameMode::Delta,
+                2,
+                3,
+                vec![
+                    Operation::SetText {
+                        node,
+                        content: prepared_text(rejected.get()),
+                    },
+                    Operation::SetOpacity {
+                        node,
+                        opacity: f32::NAN,
+                    },
+                ],
+            ))
+            .is_err()
+    );
+    assert!(!scene.references_prepared_content(rejected));
+    assert!(scene.references_prepared_content(second));
+
+    scene
+        .present(&packet(
+            FrameMode::Delta,
+            2,
+            3,
+            vec![Operation::DeleteNode { node }],
+        ))
+        .unwrap();
+    assert!(!scene.references_prepared_content(second));
+}
+
+#[test]
+fn validation_does_not_instantiate_module_elements() {
+    let element_type = ElementTypeId::new(22).unwrap();
+    let node = id(1);
+    let constructions = Arc::new(AtomicUsize::new(0));
+    let observed_constructions = Arc::clone(&constructions);
+    let mut registrations = standard_element_registrations();
+    registrations.push(ElementRegistration {
+        element_type,
+        name: "whisker.test/PlainText".into(),
+        child_policy: whisker_protocol::ChildPolicy::PlainText,
+        measurement: ElementMeasurement::None,
+        text_style: false,
+        properties: vec![],
+        events: vec![],
+        commands: vec![],
+    });
+    let mut factories = built_in_element_factories();
+    factories.push(
+        DesktopViewDefinition::new("whisker.test/PlainText", move |_| {
+            observed_constructions.fetch_add(1, Ordering::Relaxed);
+        })
+        .plain_text()
+        .into_desktop_factory(),
+    );
+    let mut scene = DesktopScene::new(
+        SurfaceId::new(1).unwrap(),
+        DesktopElementRegistry::bind(&registrations, &factories).unwrap(),
+    );
+
+    scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode { node, element_type },
+                Operation::SetText {
+                    node,
+                    content: text(),
+                },
+            ],
+        ))
+        .unwrap();
+
+    assert_eq!(constructions.load(Ordering::Relaxed), 1);
 }
 
 #[test]

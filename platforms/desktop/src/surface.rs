@@ -14,6 +14,8 @@ use crate::text::NativeTextHost;
 pub(crate) struct DesktopSurface {
     scene: DesktopScene,
     gpu: GpuRenderer,
+    last_preparation_generation: u64,
+    last_prepared_content_revision: u64,
 }
 
 impl DesktopSurface {
@@ -28,6 +30,8 @@ impl DesktopSurface {
         Ok(Self {
             scene: DesktopScene::new_with_wake(surface, elements, event_wake),
             gpu: GpuRenderer::new(target, physical_size, background_rgb).await?,
+            last_preparation_generation: 0,
+            last_prepared_content_revision: 0,
         })
     }
 
@@ -55,6 +59,15 @@ impl DesktopSurface {
         logical_size: [f32; 2],
         scale: f32,
     ) -> Result<(), GpuError> {
+        let preparation_generation = text.preparation_generation();
+        let prepared_content_revision = self.scene.prepared_content_revision();
+        if preparation_generation != self.last_preparation_generation
+            || prepared_content_revision != self.last_prepared_content_revision
+        {
+            text.retain_prepared(|id| self.scene.references_prepared_content(id));
+            self.last_preparation_generation = preparation_generation;
+            self.last_prepared_content_revision = prepared_content_revision;
+        }
         self.gpu
             .render(&self.scene.paint_commands(), text, logical_size, scale)
     }
@@ -76,16 +89,45 @@ impl DesktopSurface {
         self.scene.cursor_at(logical_position)
     }
 
+    pub(crate) fn cursor_for_target(
+        &self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> Option<whisker_protocol::CursorKeyword> {
+        self.scene.cursor_for_target(target)
+    }
+
     pub(crate) fn scroll_at(&mut self, logical_position: [f32; 2], delta: [f32; 2]) -> bool {
         self.scene.scroll_at(logical_position, delta)
+    }
+
+    pub(crate) fn scroll_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+        delta: [f32; 2],
+    ) -> bool {
+        self.scene.scroll_target(target, delta)
     }
 
     pub(crate) fn settle_scroll_at(&mut self, logical_position: [f32; 2]) -> bool {
         self.scene.settle_scroll_at(logical_position)
     }
 
+    pub(crate) fn settle_scroll_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> bool {
+        self.scene.settle_scroll_target(target)
+    }
+
     pub(crate) fn focus_text_input_at(&mut self, logical_position: [f32; 2]) -> bool {
         self.scene.focus_text_input_at(logical_position)
+    }
+
+    pub(crate) fn focus_text_input_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> bool {
+        self.scene.focus_text_input_target(target)
     }
 
     pub(crate) fn dispatch_text_input(&mut self, event: &crate::DesktopTextInputEvent) -> bool {

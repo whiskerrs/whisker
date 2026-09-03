@@ -5,6 +5,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
+use std::time::Duration;
 
 use base64::Engine;
 use whisker_protocol::{
@@ -13,6 +14,10 @@ use whisker_protocol::{
 };
 
 use crate::gpu::RasterResource;
+
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(30);
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DesktopResourceState {
@@ -67,6 +72,7 @@ pub(crate) struct DesktopResourceService {
     sender: mpsc::Sender<Completion>,
     receiver: Receiver<Completion>,
     wake: Arc<dyn Fn() + Send + Sync>,
+    http: ureq::Agent,
 }
 
 impl DesktopResourceService {
@@ -79,6 +85,10 @@ impl DesktopResourceService {
             sender,
             receiver,
             wake: Arc::new(wake),
+            http: ureq::AgentBuilder::new()
+                .timeout_connect(HTTP_CONNECT_TIMEOUT)
+                .timeout_read(HTTP_READ_TIMEOUT)
+                .build(),
         }
     }
 
@@ -122,13 +132,14 @@ impl DesktopResourceService {
         let sender = self.sender.clone();
         let wake = Arc::clone(&self.wake);
         let asset_root = self.asset_root.clone();
+        let http = self.http.clone();
         std::thread::Builder::new()
             .name("whisker-desktop-resource".into())
             .spawn(move || {
                 let completion = Completion {
                     resource: request.resource,
                     generation: request.generation,
-                    result: acquire_raster(request.source, asset_root),
+                    result: acquire_raster(request.source, asset_root, &http),
                 };
                 let _ = sender.send(completion);
                 wake();
@@ -211,6 +222,7 @@ impl DesktopResourceService {
 fn acquire_raster(
     source: ResourceSource,
     asset_root: PathBuf,
+    http: &ureq::Agent,
 ) -> Result<RasterResource, (ResourceFailureCode, String)> {
     let bytes = match source {
         ResourceSource::Bytes { data, .. } => data,
@@ -218,7 +230,9 @@ fn acquire_raster(
             .map_err(|error| (ResourceFailureCode::NotFound, error.to_string()))?,
         ResourceSource::Url(url) if url.starts_with("data:") => decode_data_url(&url)?,
         ResourceSource::Url(url) if url.starts_with("https://") || url.starts_with("http://") => {
-            let response = ureq::get(&url)
+            let response = http
+                .get(&url)
+                .timeout(HTTP_REQUEST_TIMEOUT)
                 .call()
                 .map_err(|error| (ResourceFailureCode::Network, error.to_string()))?;
             let mut bytes = Vec::new();

@@ -42,13 +42,22 @@ impl DesktopScene {
             elements,
             nodes: HashMap::new(),
             smooth_scrolls: HashMap::new(),
-            pointer_captures: HashMap::new(),
             dirty_scroll_offsets: HashSet::new(),
             presentation_pool: HashMap::new(),
             pending_events: Arc::new(Mutex::new(Vec::new())),
             event_wake,
             raster_resources: HashSet::new(),
+            prepared_content_references: HashMap::new(),
+            prepared_content_revision: 0,
         }
+    }
+
+    pub(crate) fn prepared_content_revision(&self) -> u64 {
+        self.prepared_content_revision
+    }
+
+    pub(crate) fn references_prepared_content(&self, id: PreparedContentId) -> bool {
+        self.prepared_content_references.contains_key(&id)
     }
 
     pub(crate) fn register_raster_resource(&mut self, resource: ResourceId) {
@@ -101,7 +110,14 @@ impl DesktopScene {
     }
 
     pub(crate) fn cursor_at(&self, point: [f32; 2]) -> Option<whisker_protocol::CursorKeyword> {
-        let node = self.hit_test(point)?;
+        self.cursor_for_target(self.hit_test(point))
+    }
+
+    pub(crate) fn cursor_for_target(
+        &self,
+        target: Option<NodeId>,
+    ) -> Option<whisker_protocol::CursorKeyword> {
+        let node = target?;
         Some(
             self.nodes
                 .get(&node)
@@ -132,7 +148,10 @@ impl DesktopScene {
     }
 
     pub(crate) fn focus_text_input_at(&mut self, point: [f32; 2]) -> bool {
-        let mut target = self.hit_test(point);
+        self.focus_text_input_target(self.hit_test(point))
+    }
+
+    pub(crate) fn focus_text_input_target(&mut self, mut target: Option<NodeId>) -> bool {
         while let Some(node) = target {
             let state = self
                 .nodes
@@ -321,7 +340,11 @@ impl DesktopScene {
     }
 
     pub(crate) fn scroll_at(&mut self, point: [f32; 2], delta: [f32; 2]) -> bool {
-        let Some(node) = self.scroll_node_at(point) else {
+        self.scroll_target(self.hit_test(point), delta)
+    }
+
+    pub(crate) fn scroll_target(&mut self, target: Option<NodeId>, delta: [f32; 2]) -> bool {
+        let Some(node) = self.scroll_node_from(target) else {
             return false;
         };
         if !self.nodes[&node].content.scroll_enabled() {
@@ -476,7 +499,11 @@ impl DesktopScene {
     }
 
     pub(crate) fn settle_scroll_at(&mut self, point: [f32; 2]) -> bool {
-        let Some(node) = self.scroll_node_at(point) else {
+        self.settle_scroll_target(self.hit_test(point))
+    }
+
+    pub(crate) fn settle_scroll_target(&mut self, target: Option<NodeId>) -> bool {
+        let Some(node) = self.scroll_node_from(target) else {
             return false;
         };
         self.smooth_scrolls.remove(&node);
@@ -553,8 +580,7 @@ impl DesktopScene {
         true
     }
 
-    fn scroll_node_at(&self, point: [f32; 2]) -> Option<NodeId> {
-        let mut current = self.hit_test(point);
+    fn scroll_node_from(&self, mut current: Option<NodeId>) -> Option<NodeId> {
         while let Some(node) = current {
             let state = self.nodes.get(&node)?;
             if state.content.is_scroll_container() {
@@ -863,7 +889,7 @@ impl DesktopScene {
         for operation in &packet.operations {
             match operation {
                 Operation::CreateNode { node, element_type } => {
-                    self.elements.child_policy(*element_type)?;
+                    self.elements.validate_element_type(*element_type)?;
                     types.insert(*node, *element_type);
                 }
                 Operation::InsertChild { parent, .. } => {
@@ -896,12 +922,11 @@ impl DesktopScene {
                         }
                     }
                 }
-                Operation::SetTextStyle { node, style } => {
+                Operation::SetTextStyle { node, .. } => {
                     if let Some(element_type) = types.get(node).copied() {
                         if !self.elements.receives_text_style(element_type)? {
                             return Err(DesktopPresentError::Unsupported("text-style"));
                         }
-                        let _ = style;
                     }
                 }
                 Operation::SetProperty {
@@ -983,9 +1008,13 @@ impl DesktopScene {
             for (_, node) in nodes {
                 self.recycle_presentation(node);
             }
+            if !self.prepared_content_references.is_empty() {
+                self.prepared_content_references.clear();
+                self.prepared_content_revision = self.prepared_content_revision.wrapping_add(1);
+            }
             self.pending_events.lock().unwrap().clear();
-            self.pointer_captures.clear();
             self.dirty_scroll_offsets.clear();
+            self.smooth_scrolls.clear();
         }
         for operation in &packet.operations {
             match operation {
@@ -1135,12 +1164,19 @@ impl DesktopScene {
                         .z_order = *z_order;
                 }
                 Operation::SetText { node, content } => {
+                    let previous = self
+                        .nodes
+                        .get(node)
+                        .and_then(|state| state.content.text())
+                        .and_then(|content| content.prepared_content);
+                    let next = content.prepared_content;
                     self.nodes
                         .get_mut(node)
                         .expect("validated node")
                         .content
                         .set_text(*node, content.clone())
                         .expect("element content operation was validated before commit");
+                    self.replace_prepared_content_reference(previous, next);
                 }
                 Operation::SetTextStyle { node, style } => {
                     self.nodes
@@ -1226,14 +1262,9 @@ impl DesktopScene {
                         .presentation
                         .cursor = cursor.clone();
                 }
-                Operation::SetPointerCapture { node, pointer } => {
-                    self.pointer_captures.insert(*pointer, *node);
-                }
-                Operation::ReleasePointerCapture { node, pointer } => {
-                    if self.pointer_captures.get(pointer) == Some(node) {
-                        self.pointer_captures.remove(pointer);
-                    }
-                }
+                // Pointer capture routing is owned by SurfaceRuntime. Hosts accept
+                // these protocol operations but do not maintain a second target map.
+                Operation::SetPointerCapture { .. } | Operation::ReleasePointerCapture { .. } => {}
             }
         }
         self.clamp_scroll_offsets();
@@ -1245,7 +1276,6 @@ impl DesktopScene {
         let Some(removed) = self.nodes.remove(&node) else {
             return;
         };
-        self.pointer_captures.retain(|_, target| *target != node);
         if let Some(parent) = removed.presentation.parent
             && let Some(parent) = self.nodes.get_mut(&parent)
         {
@@ -1258,11 +1288,43 @@ impl DesktopScene {
         for child in children {
             self.delete_subtree(child);
         }
+        self.replace_prepared_content_reference(
+            removed
+                .content
+                .text()
+                .and_then(|content| content.prepared_content),
+            None,
+        );
         self.recycle_presentation(removed);
     }
 
+    fn replace_prepared_content_reference(
+        &mut self,
+        previous: Option<PreparedContentId>,
+        next: Option<PreparedContentId>,
+    ) {
+        if previous == next {
+            return;
+        }
+        if let Some(previous) = previous {
+            let remove = if let Some(count) = self.prepared_content_references.get_mut(&previous) {
+                *count -= 1;
+                *count == 0
+            } else {
+                false
+            };
+            if remove {
+                self.prepared_content_references.remove(&previous);
+            }
+        }
+        if let Some(next) = next {
+            *self.prepared_content_references.entry(next).or_default() += 1;
+        }
+        self.prepared_content_revision = self.prepared_content_revision.wrapping_add(1);
+    }
+
     fn recycle_presentation(&mut self, mut node: RenderNode) {
-        if !self.elements.is_builtin_presentation(node.element_type) {
+        if !node.content.is_reusable_presentation() {
             return;
         }
         node.content.reset_for_presentation_reuse();

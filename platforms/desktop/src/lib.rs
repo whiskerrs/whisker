@@ -11,6 +11,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use whisker::RuntimeInstance;
 use whisker::runtime::RuntimeWakeHandle;
@@ -66,6 +67,25 @@ use gpu::RasterResource;
 use resource::{DesktopResourceService, DesktopResourceUpdate};
 use surface::DesktopSurface;
 use text::NativeTextHost;
+
+fn asset_root_for_executable(executable: &Path) -> PathBuf {
+    let Some(directory) = executable.parent() else {
+        return PathBuf::new();
+    };
+    if directory.file_name().is_some_and(|name| name == "MacOS")
+        && let Some(contents) = directory.parent()
+        && contents.file_name().is_some_and(|name| name == "Contents")
+    {
+        return contents.join("Resources");
+    }
+    directory.to_owned()
+}
+
+fn bundled_asset_root() -> PathBuf {
+    std::env::current_exe()
+        .map(|executable| asset_root_for_executable(&executable))
+        .unwrap_or_default()
+}
 
 /// Logical and physical metrics sampled by an OS adapter for one frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -186,7 +206,7 @@ impl DesktopRuntime {
         Ok(Self {
             measurements: NativeTextHost::new(elements),
             surface,
-            resources: DesktopResourceService::new(std::path::PathBuf::new(), move || {
+            resources: DesktopResourceService::new(bundled_asset_root(), move || {
                 resource_wake.wake();
             }),
             resource_events: Vec::new(),
@@ -217,6 +237,14 @@ impl DesktopRuntime {
         self.surface.cursor_at(logical_position)
     }
 
+    /// Resolves the cursor for the target selected by Rust-authoritative hit testing.
+    pub(crate) fn cursor_for_target(
+        &self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> Option<whisker_protocol::CursorKeyword> {
+        self.surface.cursor_for_target(target)
+    }
+
     pub(crate) fn accessibility_snapshot(&self) -> DesktopAccessibilitySnapshot {
         self.surface.accessibility_snapshot()
     }
@@ -226,15 +254,40 @@ impl DesktopRuntime {
         self.surface.scroll_at(logical_position, delta)
     }
 
+    /// Applies scrolling from a target selected by Rust-authoritative hit testing.
+    pub(crate) fn scroll_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+        delta: [f32; 2],
+    ) -> bool {
+        self.surface.scroll_target(target, delta)
+    }
+
     /// Settles the nearest snapping ScrollView after wheel/trackpad input ends.
     pub fn settle_scroll_at(&mut self, logical_position: [f32; 2]) -> bool {
         self.surface.settle_scroll_at(logical_position)
+    }
+
+    /// Settles scrolling from a target selected by Rust-authoritative hit testing.
+    pub(crate) fn settle_scroll_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> bool {
+        self.surface.settle_scroll_target(target)
     }
 
     /// Focuses the editable native element under a pointer, blurring any
     /// previous editor. Clicking outside an editor clears text focus.
     pub fn focus_text_input_at(&mut self, logical_position: [f32; 2]) -> bool {
         self.surface.focus_text_input_at(logical_position)
+    }
+
+    /// Focuses the nearest editor at a target selected by Rust hit testing.
+    pub(crate) fn focus_text_input_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> bool {
+        self.surface.focus_text_input_target(target)
     }
 
     /// Routes one normalized OS edit to the focused native element.
@@ -488,6 +541,24 @@ mod tests {
                 ..valid
             })
             .is_err()
+        );
+    }
+
+    #[test]
+    fn bundled_assets_resolve_beside_plain_desktop_executables() {
+        assert_eq!(
+            asset_root_for_executable(Path::new("/opt/example/bin/whisker-app")),
+            PathBuf::from("/opt/example/bin")
+        );
+    }
+
+    #[test]
+    fn bundled_assets_resolve_from_the_macos_bundle_resources_directory() {
+        assert_eq!(
+            asset_root_for_executable(Path::new(
+                "/Applications/Example.app/Contents/MacOS/example"
+            )),
+            PathBuf::from("/Applications/Example.app/Contents/Resources")
         );
     }
 

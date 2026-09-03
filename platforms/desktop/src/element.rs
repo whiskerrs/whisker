@@ -181,6 +181,10 @@ impl DesktopElementFactory {
             }
         }
     }
+
+    fn accepts_text_style(&self) -> bool {
+        matches!(&self.kind, DesktopElementFactoryKind::Native(_))
+    }
 }
 
 impl fmt::Debug for DesktopElementFactory {
@@ -613,6 +617,10 @@ pub(crate) enum DesktopElementContent {
 }
 
 impl DesktopElementContent {
+    pub(crate) fn is_reusable_presentation(&self) -> bool {
+        matches!(self, Self::Empty | Self::Text(_))
+    }
+
     pub(crate) fn reset_for_presentation_reuse(&mut self) {
         match self {
             Self::Text(text) => *text = None,
@@ -960,13 +968,11 @@ impl DesktopElementRegistry {
         Ok(self.binding(element_type)?.factory.create(events))
     }
 
-    pub(crate) fn is_builtin_presentation(&self, element_type: ElementTypeId) -> bool {
-        self.binding(element_type).is_ok_and(|binding| {
-            matches!(
-                binding.registration.name.as_str(),
-                "whisker.ui/View" | "whisker.ui/Text"
-            )
-        })
+    pub(crate) fn validate_element_type(
+        &self,
+        element_type: ElementTypeId,
+    ) -> Result<(), DesktopElementError> {
+        self.binding(element_type).map(|_| ())
     }
 
     pub(crate) fn child_policy(
@@ -1012,7 +1018,8 @@ impl DesktopElementRegistry {
         &self,
         element_type: ElementTypeId,
     ) -> Result<bool, DesktopElementError> {
-        Ok(self.binding(element_type)?.registration.text_style)
+        let binding = self.binding(element_type)?;
+        Ok(binding.registration.text_style && binding.factory.accepts_text_style())
     }
 
     pub(crate) fn validate_property(
@@ -1101,10 +1108,9 @@ impl DesktopElementRegistry {
     fn binding(
         &self,
         element_type: ElementTypeId,
-    ) -> Result<DesktopElementBinding, DesktopElementError> {
+    ) -> Result<&DesktopElementBinding, DesktopElementError> {
         self.bindings
             .get(&element_type)
-            .cloned()
             .ok_or(DesktopElementError::UnknownElementType { element_type })
     }
 }
