@@ -2231,6 +2231,9 @@ async fn every_shared_paint_fixture_reaches_the_production_dom_sink() {
 
 fn fixture(path: &str) -> &'static str {
     match path {
+        "core/text-measure-min-content.json" => {
+            include_str!("../../../../tests/host-conformance/core/text-measure-min-content.json")
+        }
         "core/resource-raster-lifecycle.json" => {
             include_str!("../../../../tests/host-conformance/core/resource-raster-lifecycle.json")
         }
