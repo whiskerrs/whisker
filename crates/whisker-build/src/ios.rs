@@ -457,6 +457,10 @@ pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
         // headless build can't answer, so skip validation (the plugin
         // ships from Whisker's own `whisker` SPM package).
         .arg("-skipPackagePluginValidation")
+        // `@WhiskerModule` is implemented by a Swift compiler macro.
+        // Xcode has a separate trust gate for compiler macros, so the
+        // package-plugin flag above is not sufficient on a clean host.
+        .arg("-skipMacroValidation")
         .args(["-quiet", "build"]);
     if let Some(p) = args.whisker_runtime_path {
         cmd.env("WHISKER_IOS_RUNTIME", p);
@@ -592,6 +596,7 @@ pub fn archive_and_export(inputs: &IosReleaseInputs<'_>) -> Result<PathBuf> {
         // SwiftPM build-tool plugins sit behind an interactive trust
         // prompt headless builds can't answer.
         .arg("-skipPackagePluginValidation")
+        .arg("-skipMacroValidation")
         .arg("-allowProvisioningUpdates")
         .arg("-authenticationKeyPath")
         .arg(signing.key_path)

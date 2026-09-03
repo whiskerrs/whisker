@@ -134,7 +134,7 @@ const ANDROID_BG_COLOR: &str = "whisker_splash_background";
 const ANDROID_ICON: &str = "whisker_splash_icon";
 /// The app's normal theme, restored after the splash (`postSplashScreenTheme`).
 /// Must match the manifest template's default.
-const ANDROID_POST_THEME: &str = "@style/Theme.AppCompat.NoActionBar";
+const ANDROID_POST_THEME: &str = "@style/Theme.Whisker";
 const ANDROID_SPLASHSCREEN_DEP: &str = "implementation(\"androidx.core:core-splashscreen:1.0.1\")";
 
 impl Plugin for WhiskerSplashScreen {

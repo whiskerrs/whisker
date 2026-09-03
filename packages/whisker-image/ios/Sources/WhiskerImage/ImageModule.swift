@@ -9,6 +9,7 @@
 // `ImageView.swift`. Same split on Android (`ImageModule.kt` +
 // `WhiskerImageView.kt`).
 
+import Foundation
 import WhiskerModule
 
 @WhiskerModule

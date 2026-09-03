@@ -13,7 +13,7 @@ use crate::modules::{ModulePlatform, NativeManifestKind, ResolvedModule};
 /// Canonical remote Swift package containing Whisker's iOS Host SDK.
 pub const WHISKER_IOS_SPM_URL: &str = "https://github.com/whiskerrs/whisker.git";
 /// Exact Swift package version used by generated consumer projects.
-pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.12";
+pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.13";
 
 /// Generate the iOS module-aggregator SwiftPM package under
 /// `gen/ios/whisker_modules/`. Module sources stay in their own
