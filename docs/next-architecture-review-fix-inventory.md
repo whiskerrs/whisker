@@ -126,6 +126,15 @@ Superseded commits must not be copied blindly.
 - `crates/whisker-protocol/src/validation.rs`: avoids cloning every retained
   node for small deltas while preserving atomic validation.
 
+### #586 — bounded retired-node tracking
+
+- `crates/whisker-protocol/src/validation.rs`: replaces the epoch-long set of
+  every allocated node ID with one high-water mark.
+- The original patch was incomplete: monotonic allocation does not imply that
+  a snapshot emitted from a `HashMap` is ordered. The Core rollup additionally
+  sorts snapshot `CreateNode` operations by ID and tests that producer-side
+  protocol invariant before enabling constant-space validation.
+
 ### #589 — background-position axis diagnostics
 
 - `crates/whisker-css/src/prop/background.rs`: rejects axis-incompatible or
@@ -561,6 +570,10 @@ alone and one external-review recommendation that does not match CSS syntax.
   include every non-ASCII code point, including characters that Rust classifies
   as Unicode whitespace or controls. The Core rollup keeps the existing
   non-ASCII behavior and adds explicit coverage for it.
+- Keep #586's constant-space retired-node validation only after making the
+  producer satisfy its stricter contract. Engine recovery snapshots now emit
+  `CreateNode` operations in ascending allocation order instead of arbitrary
+  `HashMap` order; protocol and Engine tests cover both sides of the invariant.
 - Keep built-in element failures fail-fast and isolate only package/custom
   elements. The Web rollup now preserves that distinction after declared
   factories are bound; the Android rollup preserves the same boundary while
