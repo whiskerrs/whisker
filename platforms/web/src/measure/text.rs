@@ -112,15 +112,17 @@ impl MeasurementProvider for DomMeasurementProvider {
             set_style(&probe, "top", "0")?;
             set_style(&probe, "box-sizing", "border-box")?;
             paint::text::apply_metrics_style(&probe, text)?;
-            match request.constraints.available_space[0] {
-                AvailableSpace::Definite(width) => {
-                    set_style(&probe, "width", &px(width.max(0.0)))?;
-                }
-                AvailableSpace::MinContent => set_style(&probe, "width", "min-content")?,
-                AvailableSpace::MaxContent => set_style(&probe, "width", "max-content")?,
-            }
             if let Some(width) = request.constraints.known_dimensions[0] {
                 set_style(&probe, "width", &px(width))?;
+            } else {
+                match request.constraints.available_space[0] {
+                    AvailableSpace::Definite(width) => {
+                        set_style(&probe, "width", "fit-content")?;
+                        set_style(&probe, "max-width", &px(width.max(0.0)))?;
+                    }
+                    AvailableSpace::MinContent => set_style(&probe, "width", "min-content")?,
+                    AvailableSpace::MaxContent => set_style(&probe, "width", "max-content")?,
+                }
             }
             if let Some(height) = request.constraints.known_dimensions[1] {
                 set_style(&probe, "height", &px(height))?;
