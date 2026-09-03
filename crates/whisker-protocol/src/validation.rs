@@ -507,7 +507,6 @@ impl SceneProjection {
                 .children;
             siblings.retain(|candidate| *candidate != node);
         }
-
         let mut pending = vec![node];
         while let Some(current) = pending.pop() {
             let state = self
