@@ -4,16 +4,22 @@ use std::{collections::HashMap, error::Error, fmt};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
-    Accessibility, ApplyResult, BoxPaint, CommandId, Cursor, CursorKeyword, ElementTypeId,
-    FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, MeasurementMetrics, MeasurementReady,
-    MeasurementResponse, MeasurementSpec, NodeId, PointerId, PropertyId, SurfaceId, TextContent,
-    WhiskerValue,
+    Accessibility, ApplyResult, BackgroundLayer, BoxPaint, CommandId, Cursor, CursorKeyword,
+    ElementTypeId, FramePacket, HitTestBehavior, InputPoint, LayoutGeometry, MeasurementMetrics,
+    MeasurementReady, MeasurementResponse, MeasurementSpec, NodeId, PointerId, PropertyId,
+    SurfaceId, TextContent, WhiskerValue,
 };
 use whisker_style::{
     ComputedLayoutStyle, ComputedStyle, ComputedTransformStyle, CursorValue, PointerEventsValue,
     PropertyImpactSet,
 };
 
+#[cfg(test)]
+use crate::radial_gradient::absolute_length;
+use crate::radial_gradient::{
+    RadialBackgroundSource, canonicalize as canonicalize_radial_backgrounds,
+    sources as radial_background_sources,
+};
 use crate::{
     DeferredMeasurementApply, FrameSink, LayoutProgress, MeasurementApply, MeasurementError,
     PlainTextInput, Scene, SceneError, SceneNode, lower_paint, lower_plain_text, lower_text_style,
@@ -204,6 +210,7 @@ pub struct SurfaceEngine {
     layout_dirty: bool,
     layout_provisional: bool,
     transforms: HashMap<NodeId, ComputedTransformStyle>,
+    radial_backgrounds: HashMap<NodeId, Vec<RadialBackgroundSource>>,
     measurements: MeasurementCoordinator,
 }
 
@@ -223,6 +230,7 @@ impl SurfaceEngine {
             layout_dirty: false,
             layout_provisional: false,
             transforms: HashMap::new(),
+            radial_backgrounds: HashMap::new(),
             measurements: MeasurementCoordinator::default(),
         }
     }
@@ -439,6 +447,7 @@ impl SurfaceEngine {
             .expect("scene and layout trees remain structurally synchronized");
         for removed in removed {
             self.transforms.remove(&removed);
+            self.radial_backgrounds.remove(&removed);
             self.measurements.remove_node(removed);
         }
         self.layout_dirty = true;
@@ -595,10 +604,25 @@ impl SurfaceEngine {
     pub fn set_background_layers(
         &mut self,
         node: NodeId,
-        layers: Vec<whisker_protocol::BackgroundLayer>,
+        mut layers: Vec<BackgroundLayer>,
     ) -> Result<(), SurfaceError> {
         self.ensure_mutable()?;
+        let sources = radial_background_sources(&layers);
+        if let Some(geometry) = self
+            .last_layout
+            .as_ref()
+            .and_then(|layout| layout.get(node))
+            .copied()
+        {
+            let paint = self.scene.node(node).and_then(SceneNode::box_paint);
+            canonicalize_radial_backgrounds(&mut layers, &sources, geometry, paint);
+        }
         self.scene.set_background_layers(node, layers)?;
+        if sources.is_empty() {
+            self.radial_backgrounds.remove(&node);
+        } else {
+            self.radial_backgrounds.insert(node, sources);
+        }
         Ok(())
     }
 
@@ -943,6 +967,29 @@ impl SurfaceEngine {
                     .map(Option::flatten)
             })
             .collect::<Result<Vec<_>, SurfaceError>>()?;
+        let radial_backgrounds = if self.radial_backgrounds.is_empty() {
+            Vec::new()
+        } else {
+            changed
+                .iter()
+                .filter_map(|(node, geometry)| {
+                    let sources = self.radial_backgrounds.get(node)?;
+                    let mut layers = self
+                        .scene
+                        .node(*node)
+                        .expect("radial background owners remain live")
+                        .background_layers()
+                        .to_vec();
+                    canonicalize_radial_backgrounds(
+                        &mut layers,
+                        sources,
+                        *geometry,
+                        self.scene.node(*node).and_then(SceneNode::box_paint),
+                    );
+                    Some((*node, layers))
+                })
+                .collect::<Vec<_>>()
+        };
         for ((node, rect), transform) in changed.iter().zip(transforms) {
             self.scene
                 .set_layout(*node, *rect)
@@ -952,6 +999,11 @@ impl SurfaceEngine {
                     .set_transform(*node, transform)
                     .expect("the transform was validated before layout projection");
             }
+        }
+        for (node, layers) in radial_backgrounds {
+            self.scene
+                .set_background_layers(node, layers)
+                .expect("canonical radial backgrounds preserve protocol validity");
         }
         self.last_layout = Some(snapshot);
         self.last_inputs = Some(inputs);
@@ -1047,7 +1099,8 @@ mod tests {
         MeasuredSize, MeasurementKey, MeasurementKind, MeasurementMetrics, MeasurementPayload,
         MeasurementReady, MeasurementRequestId, MeasurementResponse, MeasurementSpec,
         NativeControlMeasurePayload, NodeId, Operation, PaintBox, PaintCoordinate, PaintImage,
-        PaintPosition, PendingMeasurePolicy, PointerId, ReplacedContentMeasurePayload, ResourceId,
+        PaintLengthPercentage, PaintPosition, PendingMeasurePolicy, PointerId,
+        RadialGradientExtent, RadialGradientShape, ReplacedContentMeasurePayload, ResourceId,
         SurfaceId, TextMeasurePayload, TextMeasureStyle, UnsupportedMeasurementReason,
     };
     use whisker_style::{
@@ -1094,6 +1147,173 @@ mod tests {
             attachment: BackgroundAttachment::Scroll,
             blend_mode: BlendMode::Normal,
         }
+    }
+
+    fn radial_background(
+        shape: RadialGradientShape,
+        extent: RadialGradientExtent,
+        radii: Option<(PaintLengthPercentage, PaintLengthPercentage)>,
+    ) -> BackgroundLayer {
+        BackgroundLayer {
+            image: PaintImage::RadialGradient {
+                shape,
+                extent,
+                center: PaintPosition {
+                    x: PaintCoordinate {
+                        length: 0.0,
+                        fraction: 0.5,
+                    },
+                    y: PaintCoordinate {
+                        length: 0.0,
+                        fraction: 0.5,
+                    },
+                },
+                radii,
+                repeating: false,
+                stops: vec![
+                    whisker_protocol::GradientStop {
+                        color: Default::default(),
+                        position: Some(PaintCoordinate {
+                            length: 0.0,
+                            fraction: 0.0,
+                        }),
+                    },
+                    whisker_protocol::GradientStop {
+                        color: Default::default(),
+                        position: Some(PaintCoordinate {
+                            length: 25.0,
+                            fraction: 0.0,
+                        }),
+                    },
+                ],
+            },
+            position: PaintPosition::default(),
+            size: BackgroundSize::Auto,
+            repeat_x: ImageRepeat::Repeat,
+            repeat_y: ImageRepeat::Repeat,
+            origin: PaintBox::Border,
+            clip: PaintBox::Border,
+            attachment: BackgroundAttachment::Scroll,
+            blend_mode: BlendMode::Normal,
+        }
+    }
+
+    type RadialParts<'a> = (
+        RadialGradientShape,
+        RadialGradientExtent,
+        Option<(PaintLengthPercentage, PaintLengthPercentage)>,
+        &'a [whisker_protocol::GradientStop],
+    );
+
+    fn radial_parts(image: &PaintImage) -> Option<RadialParts<'_>> {
+        match image {
+            PaintImage::RadialGradient {
+                shape,
+                extent,
+                radii,
+                stops,
+                ..
+            } => Some((*shape, *extent, *radii, stops)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn layout_canonicalizes_radial_keyword_geometry_and_absolute_stops() {
+        assert!(radial_parts(&PaintImage::None).is_none());
+        let mut surface = SurfaceEngine::new(surface_id());
+        let root = surface
+            .create_node(element_type(), sized(200.0, 100.0))
+            .expect("root");
+        let plain_child = surface
+            .create_node(element_type(), sized(10.0, 10.0))
+            .expect("plain child");
+        surface.insert_child(root, plain_child, 0).expect("insert");
+        surface
+            .set_background_layers(
+                root,
+                vec![radial_background(
+                    RadialGradientShape::Circle,
+                    RadialGradientExtent::FarthestCorner,
+                    None,
+                )],
+            )
+            .expect("background");
+        surface
+            .compute_layout(root, LayoutSize::new(200.0, 100.0), &mut zero_measure)
+            .expect("layout");
+        surface
+            .set_background_layers(
+                root,
+                vec![radial_background(
+                    RadialGradientShape::Circle,
+                    RadialGradientExtent::FarthestCorner,
+                    None,
+                )],
+            )
+            .expect("post-layout background");
+
+        let (shape, extent, radii, stops) =
+            radial_parts(&surface.node(root).unwrap().background_layers()[0].image)
+                .expect("canonical radial gradient");
+        let (radius_x, radius_y) = radii.expect("canonical radii");
+        let expected_radius = 100.0_f32.hypot(50.0);
+        assert_eq!(shape, RadialGradientShape::Ellipse);
+        assert_eq!(extent, RadialGradientExtent::Explicit);
+        assert!((radius_x.length - expected_radius).abs() < 0.001);
+        assert_eq!(radius_x, radius_y);
+        assert_eq!(radius_x.fraction, 0.0);
+        assert_eq!(stops[1].position.unwrap().length, 0.0);
+        assert!((stops[1].position.unwrap().fraction - 25.0 / expected_radius).abs() < 0.0001);
+
+        surface
+            .update_layout_style(root, sized(100.0, 100.0))
+            .expect("resize style");
+        surface
+            .compute_layout(root, LayoutSize::new(100.0, 100.0), &mut zero_measure)
+            .expect("resized layout");
+        let (_, _, resized_radii, resized_stops) =
+            radial_parts(&surface.node(root).unwrap().background_layers()[0].image)
+                .expect("resized radial gradient");
+        let (resized_radius, _) = resized_radii.expect("resized radii");
+        let resized_expected = 50.0_f32.hypot(50.0);
+        assert!((resized_radius.length - resized_expected).abs() < 0.001);
+        assert!(
+            (resized_stops[1].position.unwrap().fraction - 25.0 / resized_expected).abs() < 0.0001
+        );
+    }
+
+    #[test]
+    fn radial_canonicalization_preserves_ellipse_aspect_ratio_and_circle_radius() {
+        let geometry = LayoutGeometry::from(LayoutRect {
+            width: 200.0,
+            height: 100.0,
+            ..LayoutRect::default()
+        });
+        let mut layers = vec![
+            radial_background(
+                RadialGradientShape::Ellipse,
+                RadialGradientExtent::FarthestCorner,
+                None,
+            ),
+            radial_background(
+                RadialGradientShape::Circle,
+                RadialGradientExtent::Explicit,
+                Some((absolute_length(20.0), absolute_length(20.0))),
+            ),
+        ];
+        let sources = radial_background_sources(&layers);
+        canonicalize_radial_backgrounds(&mut layers, &sources, geometry, None);
+
+        let (_, _, ellipse_radii, _) = radial_parts(&layers[0].image).expect("ellipse");
+        let (ellipse_x, ellipse_y) = ellipse_radii.expect("ellipse radii");
+        assert!((ellipse_x.length - 100.0 * 2.0_f32.sqrt()).abs() < 0.001);
+        assert!((ellipse_y.length - 50.0 * 2.0_f32.sqrt()).abs() < 0.001);
+        let (shape, _, circle_radii, _) = radial_parts(&layers[1].image).expect("circle");
+        let (circle_x, circle_y) = circle_radii.expect("circle radii");
+        assert_eq!(shape, RadialGradientShape::Ellipse);
+        assert_eq!(circle_x, absolute_length(20.0));
+        assert_eq!(circle_y, absolute_length(20.0));
     }
 
     fn zero_measure(_: NodeId, _: MeasureRequest) -> LayoutSize {

@@ -68,6 +68,70 @@ fn empty_style_uses_the_documented_layout_initials() {
 }
 
 #[test]
+fn optional_auto_preserves_the_supplied_initial_when_unspecified() {
+    let initial = ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(3.0, 0.25));
+    assert_eq!(
+        resolve_optional_auto(
+            None,
+            initial,
+            20.0,
+            StyleEnvironment::default(),
+            StyleProperty::MarginTop,
+        )
+        .unwrap(),
+        initial
+    );
+}
+
+#[test]
+fn border_width_accepts_length_values_and_classifies_calc_expression_shapes() {
+    let style = resolve(&declaration(
+        StyleProperty::BorderTopWidth,
+        StyleValue::Length(length(2.0, LengthUnit::Em)),
+    ))
+    .unwrap();
+    assert_eq!(style.border.top.length(), 40.0);
+    assert_eq!(
+        resolve(&declaration(
+            StyleProperty::BorderTopWidth,
+            StyleValue::Length(length(f32::INFINITY, LengthUnit::Em)),
+        ))
+        .unwrap_err(),
+        StyleResolutionError::InvalidPropertyValue(StyleProperty::BorderTopWidth)
+    );
+    assert_eq!(
+        resolve(&declaration(
+            StyleProperty::BorderTopWidth,
+            StyleValue::LengthPercentage(LengthPercentageValue::Calc(Box::new(
+                CalcExpression::Value(Box::new(LengthPercentageValue::Length(length(
+                    f32::INFINITY,
+                    LengthUnit::Em,
+                )))),
+            ))),
+        ))
+        .unwrap_err(),
+        StyleResolutionError::InvalidPropertyValue(StyleProperty::BorderTopWidth)
+    );
+
+    let scalar = || CalcExpression::Number(number(2.0));
+    let variable = || {
+        CalcExpression::Variable(crate::CustomPropertyReference::new(
+            crate::CustomPropertyName::new("--border-width").unwrap(),
+        ))
+    };
+    assert!(calc_is_length_only(&scalar()));
+    assert!(calc_is_length_only(&variable()));
+    for expression in [
+        CalcExpression::Add(Box::new(scalar()), Box::new(variable())),
+        CalcExpression::Sub(Box::new(scalar()), Box::new(variable())),
+        CalcExpression::Mul(Box::new(scalar()), Box::new(variable())),
+        CalcExpression::Div(Box::new(scalar()), Box::new(variable())),
+    ] {
+        assert!(calc_is_length_only(&expression));
+    }
+}
+
+#[test]
 fn grid_declarations_resolve_to_backend_independent_values() {
     let fixed = |value: LengthPercentageValue| GridTrackSizingValue {
         min: GridMinTrackSizingValue::Fixed(value.clone()),
@@ -579,7 +643,7 @@ fn complete_box_and_flex_style_resolves_without_backend_types() {
         )
         .push(
             StyleProperty::BorderBottomWidth,
-            StyleValue::LengthPercentage(percent(3.0)),
+            StyleValue::LengthPercentage(px(3.0)),
         )
         .push(
             StyleProperty::BorderLeftWidth,
@@ -649,7 +713,7 @@ fn complete_box_and_flex_style_resolves_without_backend_types() {
     assert_eq!(style.padding.bottom.fraction(), 0.07);
     assert_eq!(style.border.top.length(), 1.0);
     assert_eq!(style.border.right.length(), 2.0);
-    assert_eq!(style.border.bottom.fraction(), 0.03);
+    assert_eq!(style.border.bottom.length(), 3.0);
     assert_eq!(style.border.left.length(), 4.0);
     assert_eq!(style.flex_direction, FlexDirectionValue::Column);
     assert_eq!(style.flex_wrap, FlexWrapValue::Wrap);
@@ -756,6 +820,106 @@ fn logical_insets_resolve_in_final_write_order_for_both_directions() {
         style.inset.left,
         ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(8.0, 0.0))
     );
+}
+
+#[test]
+fn logical_margin_and_padding_resolve_in_final_write_order_for_both_directions() {
+    let ltr = SpecifiedStyle::new()
+        .push(
+            StyleProperty::MarginLeft,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(1.0))),
+        )
+        .push(
+            StyleProperty::MarginInlineStart,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(2.0))),
+        )
+        .push(
+            StyleProperty::MarginRight,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(3.0))),
+        )
+        .push(
+            StyleProperty::MarginInlineEnd,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::Auto),
+        )
+        .push(
+            StyleProperty::PaddingLeft,
+            StyleValue::LengthPercentage(px(5.0)),
+        )
+        .push(
+            StyleProperty::PaddingInlineStart,
+            StyleValue::LengthPercentage(px(6.0)),
+        )
+        .push(
+            StyleProperty::PaddingRight,
+            StyleValue::LengthPercentage(px(7.0)),
+        )
+        .push(
+            StyleProperty::PaddingInlineEnd,
+            StyleValue::LengthPercentage(px(8.0)),
+        );
+    let style = resolve(&ltr).unwrap();
+    assert_eq!(
+        style.margin.left,
+        ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(2.0, 0.0))
+    );
+    assert_eq!(style.margin.right, ComputedLengthPercentageAuto::Auto);
+    assert_eq!(style.padding.left, ComputedLengthPercentage::new(6.0, 0.0));
+    assert_eq!(style.padding.right, ComputedLengthPercentage::new(8.0, 0.0));
+
+    let rtl = SpecifiedStyle::new()
+        .push(
+            StyleProperty::Direction,
+            StyleValue::Direction(DirectionValue::Rtl),
+        )
+        .push(
+            StyleProperty::MarginInlineStart,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(9.0))),
+        )
+        .push(
+            StyleProperty::MarginRight,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(10.0))),
+        )
+        .push(
+            StyleProperty::MarginInlineEnd,
+            StyleValue::LengthPercentageAuto(LengthPercentageAutoValue::LengthPercentage(px(11.0))),
+        )
+        .push(
+            StyleProperty::PaddingInlineStart,
+            StyleValue::LengthPercentage(px(12.0)),
+        )
+        .push(
+            StyleProperty::PaddingInlineEnd,
+            StyleValue::LengthPercentage(px(13.0)),
+        );
+    let style = resolve(&rtl).unwrap();
+    assert_eq!(
+        style.margin.right,
+        ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(10.0, 0.0))
+    );
+    assert_eq!(
+        style.margin.left,
+        ComputedLengthPercentageAuto::Value(ComputedLengthPercentage::new(11.0, 0.0))
+    );
+    assert_eq!(
+        style.padding.right,
+        ComputedLengthPercentage::new(12.0, 0.0)
+    );
+    assert_eq!(style.padding.left, ComputedLengthPercentage::new(13.0, 0.0));
+
+    for property in [
+        StyleProperty::MarginInlineStart,
+        StyleProperty::MarginInlineEnd,
+        StyleProperty::PaddingInlineStart,
+        StyleProperty::PaddingInlineEnd,
+    ] {
+        assert_eq!(
+            resolve(&declaration(
+                property,
+                StyleValue::Color(crate::ColorValue::Named("red".into())),
+            )),
+            Err(StyleResolutionError::InvalidPropertyValue(property))
+        );
+    }
 }
 
 #[test]
@@ -972,6 +1136,43 @@ fn invalid_numbers_are_rejected_or_clamped_by_property_semantics() {
     }
     assert_eq!(AspectRatioValue::new(4.0, 3.0).width(), 4.0);
     assert_eq!(AspectRatioValue::new(4.0, 3.0).height(), 3.0);
+}
+
+#[test]
+fn border_width_accepts_lengths_and_rejects_percentage_components() {
+    let property = StyleProperty::BorderTopWidth;
+    let pure_length = LengthPercentageValue::Calc(Box::new(CalcExpression::Add(
+        Box::new(CalcExpression::Value(Box::new(px(2.0)))),
+        Box::new(CalcExpression::Value(Box::new(px(3.0)))),
+    )));
+    assert_eq!(
+        resolve(&declaration(
+            property,
+            StyleValue::LengthPercentage(pure_length),
+        ))
+        .unwrap()
+        .border
+        .top
+        .length(),
+        5.0
+    );
+
+    for value in [
+        percent(10.0),
+        LengthPercentageValue::Calc(Box::new(CalcExpression::Add(
+            Box::new(CalcExpression::Value(Box::new(px(2.0)))),
+            Box::new(CalcExpression::Value(Box::new(percent(10.0)))),
+        ))),
+        LengthPercentageValue::Calc(Box::new(CalcExpression::Sub(
+            Box::new(CalcExpression::Value(Box::new(percent(10.0)))),
+            Box::new(CalcExpression::Value(Box::new(percent(10.0)))),
+        ))),
+    ] {
+        assert_eq!(
+            resolve(&declaration(property, StyleValue::LengthPercentage(value),)),
+            Err(StyleResolutionError::InvalidPropertyValue(property))
+        );
+    }
 }
 
 #[test]

@@ -476,7 +476,8 @@ pub(crate) fn resolve_layout_style(
         direction: inherited_direction,
         ..ComputedLayoutStyle::default()
     };
-    let declarations = LayoutDeclarations::from_specified(specified);
+    let resolved_declarations = specified.resolved();
+    let declarations = LayoutDeclarations::from_resolved(&resolved_declarations);
 
     style.display = copied(
         declarations.display,
@@ -596,67 +597,32 @@ pub(crate) fn resolve_layout_style(
         StyleProperty::MaxHeight,
     )?;
 
-    style.margin.top = resolve_optional_auto(
-        declarations.margin_top,
-        style.margin.top,
+    style.margin = resolve_margins(
+        &resolved_declarations,
+        style.direction,
         font_size,
         environment,
-        StyleProperty::MarginTop,
     )?;
-    style.margin.right = resolve_optional_auto(
-        declarations.margin_right,
-        style.margin.right,
+    style.padding = resolve_paddings(
+        &resolved_declarations,
+        style.direction,
         font_size,
         environment,
-        StyleProperty::MarginRight,
-    )?;
-    style.margin.bottom = resolve_optional_auto(
-        declarations.margin_bottom,
-        style.margin.bottom,
-        font_size,
-        environment,
-        StyleProperty::MarginBottom,
-    )?;
-    style.margin.left = resolve_optional_auto(
-        declarations.margin_left,
-        style.margin.left,
-        font_size,
-        environment,
-        StyleProperty::MarginLeft,
     )?;
 
-    style.padding.top = resolve_optional_length_percentage(
-        declarations.padding_top,
-        style.padding.top,
+    style.border = resolve_borders(
+        &resolved_declarations,
+        style.direction,
         font_size,
         environment,
-        StyleProperty::PaddingTop,
-    )?;
-    style.padding.right = resolve_optional_length_percentage(
-        declarations.padding_right,
-        style.padding.right,
-        font_size,
-        environment,
-        StyleProperty::PaddingRight,
-    )?;
-    style.padding.bottom = resolve_optional_length_percentage(
-        declarations.padding_bottom,
-        style.padding.bottom,
-        font_size,
-        environment,
-        StyleProperty::PaddingBottom,
-    )?;
-    style.padding.left = resolve_optional_length_percentage(
-        declarations.padding_left,
-        style.padding.left,
-        font_size,
-        environment,
-        StyleProperty::PaddingLeft,
     )?;
 
-    style.border = resolve_borders(specified, style.direction, font_size, environment)?;
-
-    style.inset = resolve_insets(specified, style.direction, font_size, environment)?;
+    style.inset = resolve_insets(
+        &resolved_declarations,
+        style.direction,
+        font_size,
+        environment,
+    )?;
 
     style.flex_direction = copied(
         declarations.flex_direction,

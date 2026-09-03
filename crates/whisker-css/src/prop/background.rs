@@ -48,10 +48,11 @@ impl Css {
     pub fn background_position(self, v: Position) -> Self {
         let serialized_value = v.to_css_string();
         let value = background_position_value(v)
-            .expect("background-position combines one horizontal and one vertical component");
+            .map(whisker_style::StyleValue::BackgroundPosition)
+            .unwrap_or_else(|| whisker_style::StyleValue::Text(serialized_value.clone()));
         self.push_semantic(
             crate::StyleProperty::BackgroundPosition,
-            whisker_style::StyleValue::BackgroundPosition(value),
+            value,
             serialized_value,
         )
     }
@@ -453,6 +454,30 @@ mod tests {
                     ),
                 }
             )
+        );
+    }
+
+    #[test]
+    fn invalid_background_position_is_diagnostic_instead_of_panicking() {
+        let result = std::panic::catch_unwind(|| {
+            let specified = Css::new()
+                .background_position(Position::Keywords(
+                    PositionKeyword::Top,
+                    PositionKeyword::Bottom,
+                ))
+                .to_specified_style();
+            whisker_style::resolve_style(
+                &specified,
+                None,
+                whisker_style::StyleEnvironment::default(),
+            )
+        });
+
+        assert_eq!(
+            result.expect("public CSS builders must not panic"),
+            Err(whisker_style::StyleResolutionError::InvalidPropertyValue(
+                whisker_style::StyleProperty::BackgroundPosition,
+            ))
         );
     }
 

@@ -4,11 +4,12 @@ use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    CalcExpression, ColorValue, ComponentValue, ComputedLayoutStyle, ComputedMotionStyle,
-    ComputedPaintStyle, CursorValue, CustomPropertyName, CustomPropertyReference, DirectionValue,
-    FontFamilyValue, FontFeatureValue, FontOpticalSizingValue, FontStyleValue, FontVariationValue,
-    FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
-    PointerEventsValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
+    BorderStyleValue, CalcExpression, ColorValue, ComponentValue, ComputedLayoutStyle,
+    ComputedLengthPercentage, ComputedMotionStyle, ComputedPaintStyle, CursorValue,
+    CustomPropertyName, CustomPropertyReference, DirectionValue, FontFamilyValue, FontFeatureValue,
+    FontOpticalSizingValue, FontStyleValue, FontVariationValue, FontWeightValue,
+    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, PointerEventsValue,
+    SpecifiedStyle, StyleNumber, StyleProperty, StyleValue, TextAlignValue,
     TextDecorationLineValue, TextDecorationStyleValue, TextDecorationValue, TextOverflowValue,
     TextShadowValue, WhiteSpaceValue, WordBreakValue,
 };
@@ -107,6 +108,13 @@ pub enum ComputedTextIndent {
     LogicalPixels(StyleNumber),
     /// Percentage number before the `%` suffix.
     Percentage(StyleNumber),
+    /// Mixed fixed and percentage components produced by `calc()`.
+    LengthPercentage {
+        /// Fixed logical-pixel component.
+        logical_pixels: StyleNumber,
+        /// Percentage number before the `%` suffix.
+        percentage: StyleNumber,
+    },
 }
 
 impl Default for ComputedTextIndent {
@@ -647,9 +655,10 @@ pub fn resolve_style(
     let mut effective = specified.clone();
     loop {
         match resolve_style_once(&effective, parent, environment) {
-            Err(StyleResolutionError::InvalidPropertyValue(property))
-                if variable_properties.remove(&property) =>
-            {
+            Err(
+                StyleResolutionError::InvalidPropertyValue(property)
+                | StyleResolutionError::InvalidCalculation(property),
+            ) if variable_properties.remove(&property) => {
                 effective = without_registered_property(&effective, property);
             }
             result => return result,
@@ -818,7 +827,9 @@ fn resolve_style_once(
             style: *style,
             color: decoration_color
                 .as_ref()
-                .map(|color| normalize_color(resolved_component(color)))
+                .map(|color| {
+                    normalize_color_for(resolved_component(color), StyleProperty::TextDecoration)
+                })
                 .transpose()?
                 .unwrap_or_else(|| color.clone()),
         },
@@ -860,7 +871,7 @@ fn resolve_style_once(
                 offset_x: StyleNumber::new(offset_x),
                 offset_y: StyleNumber::new(offset_y),
                 blur_radius: StyleNumber::new(blur_radius),
-                color: normalize_color(resolved_component(color))?,
+                color: normalize_color_for(resolved_component(color), StyleProperty::TextShadow)?,
             })
         }
         Some(_) => return Err(wrong_type(StyleProperty::TextShadow)),
@@ -887,9 +898,27 @@ fn resolve_style_once(
                 StyleProperty::TextIndent,
             )?))
         }
-        Some(StyleValue::LengthPercentage(LengthPercentageValue::Calc(_))) | Some(_) => {
-            return Err(wrong_type(StyleProperty::TextIndent));
+        Some(StyleValue::LengthPercentage(value @ LengthPercentageValue::Calc(_))) => {
+            let value = crate::layout::resolve_affine(
+                value,
+                font_size.get(),
+                environment,
+                StyleProperty::TextIndent,
+            )?;
+            let logical_pixels = value.length();
+            let percentage = value.fraction() * 100.0;
+            if percentage == 0.0 {
+                ComputedTextIndent::LogicalPixels(StyleNumber::new(logical_pixels))
+            } else if logical_pixels == 0.0 {
+                ComputedTextIndent::Percentage(StyleNumber::new(percentage))
+            } else {
+                ComputedTextIndent::LengthPercentage {
+                    logical_pixels: StyleNumber::new(logical_pixels),
+                    percentage: StyleNumber::new(percentage),
+                }
+            }
         }
+        Some(_) => return Err(wrong_type(StyleProperty::TextIndent)),
         None => ComputedTextIndent::default(),
     };
     let local_text_value = |property| {
@@ -916,7 +945,7 @@ fn resolve_style_once(
         None => TextOverflowValue::default(),
     };
 
-    let layout = crate::layout::resolve_layout_style(
+    let mut layout = crate::layout::resolve_layout_style(
         specified,
         font_size.get(),
         base.direction,
@@ -947,6 +976,30 @@ fn resolve_style_once(
         layout.direction,
         environment,
     )?;
+    if matches!(
+        paint.border_styles.top,
+        BorderStyleValue::None | BorderStyleValue::Hidden
+    ) {
+        layout.border.top = ComputedLengthPercentage::ZERO;
+    }
+    if matches!(
+        paint.border_styles.right,
+        BorderStyleValue::None | BorderStyleValue::Hidden
+    ) {
+        layout.border.right = ComputedLengthPercentage::ZERO;
+    }
+    if matches!(
+        paint.border_styles.bottom,
+        BorderStyleValue::None | BorderStyleValue::Hidden
+    ) {
+        layout.border.bottom = ComputedLengthPercentage::ZERO;
+    }
+    if matches!(
+        paint.border_styles.left,
+        BorderStyleValue::None | BorderStyleValue::Hidden
+    ) {
+        layout.border.left = ComputedLengthPercentage::ZERO;
+    }
     let motion = crate::motion::resolve_motion_style(specified)?;
 
     Ok(ResolvedNodeStyle {

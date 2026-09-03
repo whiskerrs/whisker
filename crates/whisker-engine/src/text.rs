@@ -134,6 +134,13 @@ pub fn lower_plain_text(input: &PlainTextInput, style: &ComputedStyle) -> Lowere
                 logical_pixels: 0.0,
                 percentage: value.get(),
             },
+            ComputedTextIndent::LengthPercentage {
+                logical_pixels,
+                percentage,
+            } => MeasureTextIndent {
+                logical_pixels: logical_pixels.get(),
+                percentage: percentage.get(),
+            },
         },
         wrap: match style.white_space() {
             WhiteSpaceValue::Normal => MeasureTextWrap::Wrap,
@@ -250,10 +257,10 @@ mod tests {
     use super::*;
     use whisker_protocol::PaintColor;
     use whisker_style::{
-        ColorValue, FontFeatureValue, FontOpticalSizingValue, FontVariationValue, FontWeightValue,
-        LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, OpenTypeTagValue,
-        SpecifiedStyle, StyleDeclaration, StyleEnvironment, StyleNumber, StyleProperty, StyleValue,
-        TextDecorationValue, TextShadowValue, resolve_style,
+        CalcExpression, ColorValue, FontFeatureValue, FontOpticalSizingValue, FontVariationValue,
+        FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
+        OpenTypeTagValue, SpecifiedStyle, StyleDeclaration, StyleEnvironment, StyleNumber,
+        StyleProperty, StyleValue, TextDecorationValue, TextShadowValue, resolve_style,
     };
 
     fn resolved(declarations: Vec<StyleDeclaration>) -> whisker_style::ResolvedNodeStyle {
@@ -514,6 +521,26 @@ mod tests {
         let percentage = lower_plain_text(&input, percentage.computed());
         assert_eq!(percentage.content().payload.indent.logical_pixels, 0.0);
         assert_eq!(percentage.content().payload.indent.percentage, 15.0);
+
+        let calculated = resolved(vec![StyleDeclaration::new(
+            StyleProperty::TextIndent,
+            StyleValue::LengthPercentage(LengthPercentageValue::Calc(Box::new(
+                CalcExpression::Add(
+                    Box::new(CalcExpression::Value(Box::new(
+                        LengthPercentageValue::Length(LengthValue::Dimension {
+                            value: StyleNumber::new(4.0),
+                            unit: LengthUnit::Px,
+                        }),
+                    ))),
+                    Box::new(CalcExpression::Value(Box::new(
+                        LengthPercentageValue::Percentage(StyleNumber::new(10.0)),
+                    ))),
+                ),
+            ))),
+        )]);
+        let calculated = lower_plain_text(&input, calculated.computed());
+        assert_eq!(calculated.content().payload.indent.logical_pixels, 4.0);
+        assert_eq!(calculated.content().payload.indent.percentage, 10.0);
     }
 
     #[test]

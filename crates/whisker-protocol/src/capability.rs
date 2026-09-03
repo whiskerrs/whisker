@@ -27,8 +27,8 @@ pub enum RenderCapability {
     /// One resolved, non-repeating linear-gradient background image using the
     /// initial layer geometry and explicit color-stop positions.
     LinearGradients = 8,
-    /// One resolved, non-repeating explicit radial-gradient background image
-    /// using the initial layer geometry and explicit color-stop positions.
+    /// One resolved, non-repeating elliptical radial-gradient background image
+    /// with explicit radii and explicit fractional color-stop positions.
     RadialGradients = 9,
     /// One resolved, non-repeating conic-gradient background image using the
     /// initial layer geometry and explicit fractional color-stop positions.
@@ -306,9 +306,17 @@ impl RenderCapabilities {
     /// Returns how the Host implements a feature; omitted features are unsupported.
     pub fn support(&self, capability: RenderCapability) -> CapabilitySupport {
         let bit = capability.mask();
+        let background_subset = is_background_layer_subset(capability);
         if self.native & bit != 0 {
             CapabilitySupport::Native
         } else if self.emulated & bit != 0 {
+            CapabilitySupport::Emulated
+        } else if background_subset && self.native & RenderCapability::BackgroundLayers.mask() != 0
+        {
+            CapabilitySupport::Native
+        } else if background_subset
+            && self.emulated & RenderCapability::BackgroundLayers.mask() != 0
+        {
             CapabilitySupport::Emulated
         } else {
             CapabilitySupport::Unsupported
@@ -331,6 +339,18 @@ impl RenderCapabilities {
         }
         None
     }
+}
+
+const fn is_background_layer_subset(capability: RenderCapability) -> bool {
+    matches!(
+        capability,
+        RenderCapability::LinearGradients
+            | RenderCapability::RadialGradients
+            | RenderCapability::ConicGradients
+            | RenderCapability::BackgroundGeometry
+            | RenderCapability::BackgroundLayerStacking
+            | RenderCapability::BackgroundImageResources
+    )
 }
 
 impl FramePacket {
@@ -866,6 +886,65 @@ mod tests {
             }])
             .required_capabilities()
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn complete_background_layer_support_satisfies_granular_requirements() {
+        let node = NodeId::new(1).unwrap();
+        let profile = RenderCapabilities::new(
+            ProtocolVersion::CURRENT,
+            [CapabilityEntry {
+                capability: RenderCapability::BackgroundLayers,
+                support: CapabilitySupport::Native,
+            }],
+        )
+        .unwrap();
+        let packet = packet(vec![Operation::SetBackgroundLayers {
+            node,
+            layers: vec![explicit_no_repeat(basic_linear_layer())],
+        }]);
+
+        assert_eq!(
+            profile.support(RenderCapability::LinearGradients),
+            CapabilitySupport::Native
+        );
+        assert_eq!(
+            profile.support(RenderCapability::BackgroundGeometry),
+            CapabilitySupport::Native
+        );
+        assert_eq!(profile.first_unsupported(&packet), None);
+
+        let emulated = RenderCapabilities::new(
+            ProtocolVersion::CURRENT,
+            [CapabilityEntry {
+                capability: RenderCapability::BackgroundLayers,
+                support: CapabilitySupport::Emulated,
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            emulated.support(RenderCapability::ConicGradients),
+            CapabilitySupport::Emulated
+        );
+
+        let granular_override = RenderCapabilities::new(
+            ProtocolVersion::CURRENT,
+            [
+                CapabilityEntry {
+                    capability: RenderCapability::BackgroundLayers,
+                    support: CapabilitySupport::Emulated,
+                },
+                CapabilityEntry {
+                    capability: RenderCapability::LinearGradients,
+                    support: CapabilitySupport::Native,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            granular_override.support(RenderCapability::LinearGradients),
+            CapabilitySupport::Native
         );
     }
 

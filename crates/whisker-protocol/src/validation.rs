@@ -1,6 +1,6 @@
 //! Transactional reference validation for semantic frame packets.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
@@ -88,10 +88,12 @@ pub enum ValidationError {
         /// Reused scene epoch.
         epoch: u32,
     },
-    /// Node identifier was created more than once in one epoch.
-    DuplicateNode {
-        /// Duplicate identifier.
-        node: NodeId,
+    /// A created node identifier did not strictly advance within its epoch.
+    NodeIdDidNotAdvance {
+        /// Highest identifier accepted in this epoch.
+        previous: NodeId,
+        /// Non-advancing identifier received next.
+        received: NodeId,
     },
     /// An operation referenced a node that does not exist at that point.
     UnknownNode {
@@ -147,6 +149,11 @@ pub enum ValidationError {
         /// Stable invalid-input category.
         error: TextContentError,
     },
+    /// A property or command payload contained the reserved error variant.
+    InvalidDataValue {
+        /// Target node of the rejected operation.
+        node: NodeId,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -168,7 +175,7 @@ pub struct SceneProjection {
     scene_epoch: Option<u32>,
     revision: u64,
     nodes: HashMap<NodeId, NodeProjection>,
-    allocated_nodes: HashSet<NodeId>,
+    last_allocated_node: Option<NodeId>,
 }
 
 impl SceneProjection {
@@ -179,7 +186,7 @@ impl SceneProjection {
             scene_epoch: None,
             revision: 0,
             nodes: HashMap::new(),
-            allocated_nodes: HashSet::new(),
+            last_allocated_node: None,
         }
     }
 
@@ -208,6 +215,11 @@ impl SceneProjection {
         self.nodes.get(&node)
     }
 
+    #[cfg(test)]
+    fn allocation_tracking_entries(&self) -> usize {
+        usize::from(self.last_allocated_node.is_some())
+    }
+
     /// Validates and atomically applies a packet.
     ///
     /// Revision or epoch drift on a delta returns [`ApplyResult::NeedSnapshot`]
@@ -225,19 +237,24 @@ impl SceneProjection {
             });
         }
 
-        let mut next = if packet.header.mode == FrameMode::Snapshot {
-            Self::new(self.surface)
+        if packet.header.mode == FrameMode::Snapshot {
+            let mut next = Self::new(self.surface);
+            next.scene_epoch = Some(packet.header.scene_epoch);
+            for operation in &packet.operations {
+                next.apply_operation(operation)?;
+            }
+            next.revision = packet.header.target_revision;
+            *self = next;
         } else {
-            self.clone()
-        };
-        next.scene_epoch = Some(packet.header.scene_epoch);
-
-        for operation in &packet.operations {
-            next.apply_operation(operation)?;
+            let mut transaction = ProjectionTransaction::new(self);
+            for operation in &packet.operations {
+                if let Err(error) = transaction.apply_operation(operation) {
+                    transaction.rollback();
+                    return Err(error);
+                }
+            }
+            transaction.commit(packet.header.scene_epoch, packet.header.target_revision);
         }
-
-        next.revision = packet.header.target_revision;
-        *self = next;
         Ok(ApplyResult::Accepted {
             revision: self.revision,
         })
@@ -286,9 +303,15 @@ impl SceneProjection {
     fn apply_operation(&mut self, operation: &Operation) -> Result<(), ValidationError> {
         match operation {
             Operation::CreateNode { node, element_type } => {
-                if !self.allocated_nodes.insert(*node) {
-                    return Err(ValidationError::DuplicateNode { node: *node });
+                if let Some(previous) = self.last_allocated_node
+                    && *node <= previous
+                {
+                    return Err(ValidationError::NodeIdDidNotAdvance {
+                        previous,
+                        received: *node,
+                    });
                 }
+                self.last_allocated_node = Some(*node);
                 self.nodes.insert(
                     *node,
                     NodeProjection {
@@ -298,7 +321,7 @@ impl SceneProjection {
                     },
                 );
             }
-            Operation::DeleteNode { node } => self.delete_subtree(*node)?,
+            Operation::DeleteNode { node } => self.delete_subtree(*node),
             Operation::InsertChild {
                 parent,
                 child,
@@ -358,14 +381,18 @@ impl SceneProjection {
                     .validate()
                     .map_err(|error| ValidationError::InvalidText { error })?;
             }
-            Operation::InvokeCommand { node, .. } => {
+            Operation::InvokeCommand {
+                node, arguments, ..
+            } => {
                 self.require_node(*node)?;
+                if !arguments.is_data() {
+                    return Err(ValidationError::InvalidDataValue { node: *node });
+                }
             }
             Operation::SetClip { node, .. }
             | Operation::SetVisibility { node, .. }
             | Operation::SetZOrder { node, .. }
             | Operation::SetAccessibility { node, .. }
-            | Operation::SetProperty { node, .. }
             | Operation::ClearProperty { node, .. }
             | Operation::SetEventMask { node, .. }
             | Operation::SetHitTest { node, .. }
@@ -373,6 +400,12 @@ impl SceneProjection {
             | Operation::SetPointerCapture { node, .. }
             | Operation::ReleasePointerCapture { node, .. } => {
                 self.require_node(*node)?;
+            }
+            Operation::SetProperty { node, value, .. } => {
+                self.require_node(*node)?;
+                if !value.is_data() {
+                    return Err(ValidationError::InvalidDataValue { node: *node });
+                }
             }
         }
         Ok(())
@@ -492,8 +525,16 @@ impl SceneProjection {
         false
     }
 
-    fn delete_subtree(&mut self, node: NodeId) -> Result<(), ValidationError> {
-        let state = self.require_node(node)?.clone();
+    fn delete_subtree(&mut self, node: NodeId) {
+        let state = self
+            .nodes
+            .get(&node)
+            .expect("frame validation guarantees the deleted node exists")
+            .clone();
+        self.delete_known_subtree(node, state);
+    }
+
+    fn delete_known_subtree(&mut self, node: NodeId, state: NodeProjection) {
         if let Some(parent) = state.parent {
             let siblings = &mut self
                 .nodes
@@ -502,7 +543,6 @@ impl SceneProjection {
                 .children;
             siblings.retain(|candidate| *candidate != node);
         }
-
         let mut pending = vec![node];
         while let Some(current) = pending.pop() {
             let state = self
@@ -511,7 +551,100 @@ impl SceneProjection {
                 .expect("subtree children exist while parent exists");
             pending.extend(state.children);
         }
+    }
+}
+
+struct ProjectionTransaction<'a> {
+    projection: &'a mut SceneProjection,
+    original_nodes: HashMap<NodeId, Option<NodeProjection>>,
+    initial_last_allocated_node: Option<NodeId>,
+}
+
+impl<'a> ProjectionTransaction<'a> {
+    fn new(projection: &'a mut SceneProjection) -> Self {
+        let initial_last_allocated_node = projection.last_allocated_node;
+        Self {
+            projection,
+            original_nodes: HashMap::new(),
+            initial_last_allocated_node,
+        }
+    }
+
+    fn apply_operation(&mut self, operation: &Operation) -> Result<(), ValidationError> {
+        match operation {
+            Operation::CreateNode { node, .. } => {
+                self.remember(*node);
+                self.projection.apply_operation(operation)?;
+            }
+            Operation::DeleteNode { node } => {
+                self.remember_subtree(*node)?;
+                let state = self
+                    .projection
+                    .nodes
+                    .get(node)
+                    .expect("remembered subtree root remains present")
+                    .clone();
+                self.projection.delete_known_subtree(*node, state);
+            }
+            Operation::InsertChild { parent, child, .. }
+            | Operation::RemoveChild { parent, child } => {
+                self.remember(*parent);
+                self.remember(*child);
+                self.projection.apply_operation(operation)?;
+            }
+            Operation::MoveChild { parent, .. } => {
+                self.remember(*parent);
+                self.projection.apply_operation(operation)?;
+            }
+            _ => self.projection.apply_operation(operation)?,
+        }
         Ok(())
+    }
+
+    fn remember(&mut self, node: NodeId) {
+        self.original_nodes
+            .entry(node)
+            .or_insert_with(|| self.projection.nodes.get(&node).cloned());
+    }
+
+    fn remember_subtree(&mut self, node: NodeId) -> Result<(), ValidationError> {
+        let state = self.projection.require_node(node)?;
+        let parent = state.parent;
+        let mut pending = vec![node];
+        if let Some(parent) = parent {
+            self.remember(parent);
+        }
+        while let Some(current) = pending.pop() {
+            let children = self
+                .projection
+                .nodes
+                .get(&current)
+                .expect("retained child exists while its parent exists")
+                .children
+                .clone();
+            self.remember(current);
+            pending.extend(children);
+        }
+        Ok(())
+    }
+
+    fn rollback(self) {
+        for (node, original) in self.original_nodes {
+            match original {
+                Some(state) => {
+                    self.projection.nodes.insert(node, state);
+                }
+                None => {
+                    self.projection.nodes.remove(&node);
+                }
+            }
+        }
+        self.projection.last_allocated_node = self.initial_last_allocated_node;
+    }
+
+    fn commit(self, scene_epoch: u32, revision: u64) {
+        self.projection.scene_epoch = Some(scene_epoch);
+        self.projection.revision = revision;
     }
 }
 
@@ -707,6 +840,24 @@ mod tests {
     }
 
     #[test]
+    fn non_structural_delta_does_not_rebuild_retained_structure() {
+        let (mut scene, root, _) = initial_tree();
+        let before = scene.node(root).expect("root") as *const NodeProjection;
+
+        apply_next(
+            &mut scene,
+            vec![Operation::SetOpacity {
+                node: root,
+                opacity: 0.5,
+            }],
+        )
+        .expect("valid non-structural delta");
+
+        let after = scene.node(root).expect("root") as *const NodeProjection;
+        assert_eq!(before, after);
+    }
+
+    #[test]
     fn malformed_operation_rolls_back_the_complete_packet() {
         let (mut scene, root, child) = initial_tree();
         let new_child = node(3);
@@ -744,6 +895,68 @@ mod tests {
         assert_eq!(scene.node_count(), 2);
         assert_eq!(scene.node(root).expect("root").children(), &[child]);
         assert_eq!(scene.node(new_child), None);
+
+        apply_next(
+            &mut scene,
+            vec![Operation::CreateNode {
+                node: new_child,
+                element_type: element_type(),
+            }],
+        )
+        .expect("a rejected transaction must not retire newly allocated IDs");
+        assert!(scene.node(new_child).is_some());
+    }
+
+    #[test]
+    fn property_and_command_payloads_reject_error_values_recursively() {
+        let property = PropertyId::new(1).expect("test property");
+        let command = CommandId::new(1).expect("test command");
+        fn check_invalid(property: PropertyId, command: CommandId, value: WhiskerValue) {
+            let (mut scene, root, _) = initial_tree();
+            let property_error = apply_next(
+                &mut scene,
+                vec![Operation::SetProperty {
+                    node: root,
+                    property,
+                    value: value.clone(),
+                }],
+            );
+            assert_eq!(
+                property_error,
+                Err(ValidationError::InvalidDataValue { node: root })
+            );
+            assert_eq!(scene.revision(), 1);
+
+            let command_error = apply_next(
+                &mut scene,
+                vec![Operation::InvokeCommand {
+                    node: root,
+                    command,
+                    arguments: value,
+                }],
+            );
+            assert_eq!(
+                command_error,
+                Err(ValidationError::InvalidDataValue { node: root })
+            );
+            assert_eq!(scene.revision(), 1);
+        }
+
+        check_invalid(
+            property,
+            command,
+            WhiskerValue::Error("top-level failure".to_owned()),
+        );
+        check_invalid(
+            property,
+            command,
+            WhiskerValue::Array(vec![WhiskerValue::Error("nested failure".to_owned())]),
+        );
+        check_invalid(
+            property,
+            command,
+            WhiskerValue::map([("nested", WhiskerValue::Error("nested failure".to_owned()))]),
+        );
     }
 
     #[test]
@@ -801,9 +1014,117 @@ mod tests {
                 }],
             ))
             .expect_err("retired ID must remain unavailable");
-        assert_eq!(error, ValidationError::DuplicateNode { node: child });
+        assert_eq!(
+            error,
+            ValidationError::NodeIdDidNotAdvance {
+                previous: child,
+                received: child,
+            }
+        );
         assert_eq!(scene.revision(), 2);
         assert!(scene.node(child).is_none());
+    }
+
+    #[test]
+    fn replacement_snapshot_rejects_duplicate_node_creation_without_mutating_the_scene() {
+        let (mut scene, _, _) = initial_tree();
+        let duplicate = node(3);
+        let error = scene.apply(&packet(
+            FrameMode::Snapshot,
+            2,
+            0,
+            2,
+            vec![
+                Operation::CreateNode {
+                    node: duplicate,
+                    element_type: element_type(),
+                },
+                Operation::CreateNode {
+                    node: duplicate,
+                    element_type: element_type(),
+                },
+            ],
+        ));
+
+        assert_eq!(
+            error,
+            Err(ValidationError::NodeIdDidNotAdvance {
+                previous: duplicate,
+                received: duplicate,
+            })
+        );
+    }
+
+    #[test]
+    fn replacement_snapshot_can_create_and_delete_an_unattached_node() {
+        let (mut scene, _, _) = initial_tree();
+        let temporary = node(99);
+        let result = scene.apply(&packet(
+            FrameMode::Snapshot,
+            2,
+            0,
+            2,
+            vec![
+                Operation::CreateNode {
+                    node: temporary,
+                    element_type: element_type(),
+                },
+                Operation::DeleteNode { node: temporary },
+            ],
+        ));
+
+        assert_eq!(result, Ok(ApplyResult::Accepted { revision: 2 }));
+    }
+
+    #[test]
+    fn retired_node_tracking_is_constant_space() {
+        let (mut scene, _, _) = initial_tree();
+        let mut operations = Vec::new();
+        for raw in 3..259 {
+            let retired = node(raw);
+            operations.push(Operation::CreateNode {
+                node: retired,
+                element_type: element_type(),
+            });
+            operations.push(Operation::DeleteNode { node: retired });
+        }
+        apply_next(&mut scene, operations).expect("monotonic allocation sequence");
+
+        assert_eq!(scene.node_count(), 2);
+        assert_eq!(scene.allocation_tracking_entries(), 1);
+    }
+
+    #[test]
+    fn node_allocations_must_strictly_increase_within_an_epoch() {
+        let mut scene = SceneProjection::new(surface());
+        let error = scene
+            .apply(&packet(
+                FrameMode::Snapshot,
+                1,
+                0,
+                1,
+                vec![
+                    Operation::CreateNode {
+                        node: node(2),
+                        element_type: element_type(),
+                    },
+                    Operation::CreateNode {
+                        node: node(1),
+                        element_type: element_type(),
+                    },
+                ],
+            ))
+            .expect_err("out-of-order node IDs must be rejected");
+
+        assert_eq!(
+            error,
+            ValidationError::NodeIdDidNotAdvance {
+                previous: node(2),
+                received: node(1),
+            }
+        );
+        assert_eq!(scene.revision(), 0);
+        assert_eq!(scene.node_count(), 0);
     }
 
     #[test]

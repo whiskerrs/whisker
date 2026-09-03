@@ -416,7 +416,6 @@ fn calc_evaluates_scalar_branches_and_rejects_invalid_dimensions() {
         CalcExpression::Sub(Box::new(scalar(3.0)), Box::new(scalar(1.0))),
         CalcExpression::Mul(Box::new(scalar(2.0)), Box::new(scalar(3.0))),
         CalcExpression::Div(Box::new(scalar(6.0)), Box::new(scalar(2.0))),
-        CalcExpression::Div(Box::new(length()), Box::new(length())),
     ] {
         evaluate_calc(
             &expression,
@@ -431,6 +430,7 @@ fn calc_evaluates_scalar_branches_and_rejects_invalid_dimensions() {
         CalcExpression::Add(Box::new(scalar(1.0)), Box::new(length())),
         CalcExpression::Sub(Box::new(length()), Box::new(scalar(1.0))),
         CalcExpression::Mul(Box::new(length()), Box::new(length())),
+        CalcExpression::Div(Box::new(length()), Box::new(length())),
         CalcExpression::Div(Box::new(scalar(1.0)), Box::new(length())),
         CalcExpression::Div(Box::new(length()), Box::new(scalar(0.0))),
         CalcExpression::Div(
@@ -586,7 +586,7 @@ fn direction_resolves_and_inherits_into_layout_and_text_context() {
 }
 
 #[test]
-fn text_indent_resolves_length_and_percentage_without_inheriting() {
+fn text_indent_resolves_length_percentage_and_calc_without_inheriting() {
     let environment = StyleEnvironment::default();
     let length = resolve_text_style(
         &declaration(
@@ -618,6 +618,58 @@ fn text_indent_resolves_length_and_percentage_without_inheriting() {
         percentage.computed().text_indent(),
         ComputedTextIndent::Percentage(number(-15.0))
     );
+    let calculated = resolve_text_style(
+        &declaration(
+            StyleProperty::TextIndent,
+            StyleValue::LengthPercentage(LengthPercentageValue::Calc(Box::new(
+                CalcExpression::Add(
+                    Box::new(CalcExpression::Value(Box::new(
+                        LengthPercentageValue::Length(px(4.0)),
+                    ))),
+                    Box::new(CalcExpression::Value(Box::new(
+                        LengthPercentageValue::Percentage(number(10.0)),
+                    ))),
+                ),
+            ))),
+        ),
+        Some(length.inherited_for_children()),
+        environment,
+    )
+    .unwrap();
+    assert_eq!(
+        calculated.computed().text_indent(),
+        ComputedTextIndent::LengthPercentage {
+            logical_pixels: number(4.0),
+            percentage: number(10.0),
+        }
+    );
+
+    for (value, expected) in [
+        (
+            LengthPercentageValue::Calc(Box::new(CalcExpression::Value(Box::new(
+                LengthPercentageValue::Length(px(6.0)),
+            )))),
+            ComputedTextIndent::LogicalPixels(number(6.0)),
+        ),
+        (
+            LengthPercentageValue::Calc(Box::new(CalcExpression::Value(Box::new(
+                LengthPercentageValue::Percentage(number(12.0)),
+            )))),
+            ComputedTextIndent::Percentage(number(12.0)),
+        ),
+    ] {
+        let resolved = resolve_text_style(
+            &declaration(
+                StyleProperty::TextIndent,
+                StyleValue::LengthPercentage(value),
+            ),
+            None,
+            environment,
+        )
+        .unwrap();
+        assert_eq!(resolved.computed().text_indent(), expected);
+    }
+
     let child = resolve_text_style(
         &SpecifiedStyle::new(),
         Some(length.inherited_for_children()),
@@ -635,7 +687,6 @@ fn text_indent_resolves_length_and_percentage_without_inheriting() {
             unit: LengthUnit::Em,
         }),
         LengthPercentageValue::Percentage(number(f32::NAN)),
-        LengthPercentageValue::Calc(Box::new(CalcExpression::Number(number(1.0)))),
     ] {
         assert_eq!(
             resolve_text_style(
@@ -650,6 +701,20 @@ fn text_indent_resolves_length_and_percentage_without_inheriting() {
             StyleResolutionError::InvalidPropertyValue(StyleProperty::TextIndent)
         );
     }
+    assert_eq!(
+        resolve_text_style(
+            &declaration(
+                StyleProperty::TextIndent,
+                StyleValue::LengthPercentage(LengthPercentageValue::Calc(Box::new(
+                    CalcExpression::Number(number(1.0)),
+                ))),
+            ),
+            None,
+            environment,
+        )
+        .unwrap_err(),
+        StyleResolutionError::InvalidCalculation(StyleProperty::TextIndent)
+    );
 }
 
 #[test]
@@ -795,7 +860,7 @@ fn text_shadow_resolves_inherits_clears_and_rejects_negative_blur() {
     );
     assert_eq!(
         resolve_text_style(&invalid_color, None, environment).unwrap_err(),
-        StyleResolutionError::InvalidPropertyValue(StyleProperty::Color)
+        StyleResolutionError::InvalidPropertyValue(StyleProperty::TextShadow)
     );
 }
 
@@ -847,7 +912,7 @@ fn text_decoration_resolves_current_color_and_inherits() {
     );
     assert_eq!(
         resolve_text_style(&invalid_color, None, environment).unwrap_err(),
-        StyleResolutionError::InvalidPropertyValue(StyleProperty::Color)
+        StyleResolutionError::InvalidPropertyValue(StyleProperty::TextDecoration)
     );
 }
 
@@ -1317,10 +1382,21 @@ fn missing_composite_variables_invalidate_custom_and_registered_declarations() {
             color: component_variable(&missing),
         })
     };
+    let box_shadow = || {
+        StyleValue::BoxShadows(vec![crate::BoxShadowValue {
+            offset_x: LengthValue::Zero.into(),
+            offset_y: LengthValue::Zero.into(),
+            blur_radius: LengthValue::Zero.into(),
+            spread_radius: LengthValue::Zero.into(),
+            color: component_variable(&missing),
+            inset: false,
+        }])
+    };
     let resolved = resolve_style(
         &SpecifiedStyle::new()
             .push_custom(nested.clone(), shadow())
-            .push(StyleProperty::TextShadow, shadow()),
+            .push(StyleProperty::TextShadow, shadow())
+            .push(StyleProperty::BoxShadow, box_shadow()),
         None,
         StyleEnvironment::default(),
     )
@@ -1333,6 +1409,7 @@ fn missing_composite_variables_invalidate_custom_and_registered_declarations() {
             .is_none()
     );
     assert!(resolved.inherited_for_children().text_shadow().is_none());
+    assert!(resolved.computed().paint().box_shadows.is_empty());
 }
 
 #[test]
@@ -1346,6 +1423,49 @@ fn direct_invalid_values_remain_resolution_errors() {
     assert_eq!(
         error,
         StyleResolutionError::InvalidPropertyValue(StyleProperty::Color)
+    );
+}
+
+#[test]
+fn none_and_hidden_border_styles_zero_the_corresponding_layout_widths() {
+    let border_width =
+        |value| StyleValue::LengthPercentage(LengthPercentageValue::Length(px(value)));
+    let resolved = resolve_style(
+        &SpecifiedStyle::new()
+            .push(StyleProperty::BorderTopWidth, border_width(1.0))
+            .push(StyleProperty::BorderRightWidth, border_width(2.0))
+            .push(StyleProperty::BorderBottomWidth, border_width(3.0))
+            .push(StyleProperty::BorderLeftWidth, border_width(4.0))
+            .push(
+                StyleProperty::BorderTopStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Solid),
+            )
+            .push(
+                StyleProperty::BorderRightStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Hidden),
+            )
+            .push(
+                StyleProperty::BorderBottomStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Dashed),
+            ),
+        None,
+        StyleEnvironment::default(),
+    )
+    .unwrap();
+
+    let border = &resolved.computed().layout().border;
+    assert_eq!(border.top.length(), 1.0);
+    assert_eq!(border.right, ComputedLengthPercentage::ZERO);
+    assert_eq!(border.bottom.length(), 3.0);
+    assert_eq!(border.left, ComputedLengthPercentage::ZERO);
+    assert_eq!(
+        resolved.computed().paint().border_styles,
+        crate::Edges {
+            top: BorderStyleValue::Solid,
+            right: BorderStyleValue::Hidden,
+            bottom: BorderStyleValue::Dashed,
+            left: BorderStyleValue::None,
+        }
     );
 }
 
@@ -1508,6 +1628,103 @@ fn typed_calc_variable_resolution_covers_arithmetic_and_operand_types() {
         resolved.computed().layout().size.width,
         crate::ComputedSizeValue::Auto
     );
+}
+
+#[test]
+fn invalid_calc_after_custom_property_substitution_drops_only_that_declaration() {
+    let scalar = CustomPropertyName::new("--scalar").unwrap();
+    let invalid_width = LengthPercentageValue::Calc(Box::new(CalcExpression::Add(
+        Box::new(CalcExpression::Value(Box::new(
+            LengthPercentageValue::Length(px(10.0)),
+        ))),
+        Box::new(CalcExpression::Variable(CustomPropertyReference::new(
+            scalar.clone(),
+        ))),
+    )));
+    let resolved = resolve_style(
+        &SpecifiedStyle::new()
+            .push_custom(scalar, StyleValue::Number(number(2.0)))
+            .push(
+                StyleProperty::Width,
+                StyleValue::Size(crate::SizeValue::LengthPercentage(invalid_width)),
+            )
+            .push(
+                StyleProperty::Height,
+                StyleValue::Size(crate::SizeValue::LengthPercentage(
+                    LengthPercentageValue::Length(px(24.0)),
+                )),
+            ),
+        None,
+        StyleEnvironment::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolved.computed().layout().size.width,
+        crate::ComputedSizeValue::Auto
+    );
+    assert_eq!(
+        resolved.computed().layout().size.height,
+        crate::ComputedSizeValue::Value(crate::ComputedLengthPercentage::new(24.0, 0.0))
+    );
+}
+
+#[test]
+fn custom_properties_materialize_inside_box_shadow_and_clip_path() {
+    let length = CustomPropertyName::new("--length").unwrap();
+    let color = CustomPropertyName::new("--color").unwrap();
+    let clip_coordinate = || {
+        LengthPercentageValue::Calc(Box::new(CalcExpression::Variable(
+            CustomPropertyReference::new(length.clone()),
+        )))
+    };
+    let resolved = resolve_style(
+        &SpecifiedStyle::new()
+            .push_custom(length.clone(), StyleValue::Length(px(6.0)))
+            .push_custom(
+                color.clone(),
+                StyleValue::Color(ColorValue::Named("red".into())),
+            )
+            .push(
+                StyleProperty::BoxShadow,
+                StyleValue::BoxShadows(vec![crate::BoxShadowValue {
+                    offset_x: component_variable(&length),
+                    offset_y: component_variable(&length),
+                    blur_radius: component_variable(&length),
+                    spread_radius: component_variable(&length),
+                    color: component_variable(&color),
+                    inset: false,
+                }]),
+            )
+            .push(
+                StyleProperty::ClipPath,
+                StyleValue::ClipPath(crate::ClipPathValue::Shape {
+                    reference_box: crate::ClipBoxValue::Border,
+                    shape: crate::ClipShapeValue::Circle {
+                        radius: clip_coordinate(),
+                        center_x: clip_coordinate(),
+                        center_y: clip_coordinate(),
+                    },
+                }),
+            ),
+        None,
+        StyleEnvironment::default(),
+    )
+    .unwrap();
+
+    let shadow = &resolved.computed().paint().box_shadows[0];
+    assert_eq!(shadow.offset_x.get(), 6.0);
+    assert_eq!(shadow.offset_y.get(), 6.0);
+    assert_eq!(shadow.blur_radius.get(), 6.0);
+    assert_eq!(shadow.spread_radius.get(), 6.0);
+    assert_eq!(shadow.color, ColorValue::Named("red".into()));
+    assert!(matches!(
+        resolved.computed().paint().clip_path.as_ref().map(|clip| &clip.shape),
+        Some(crate::ComputedClipShape::Circle { radius, center })
+            if *radius == crate::ComputedLengthPercentage::new(6.0, 0.0)
+                && center.x == crate::ComputedLengthPercentage::new(6.0, 0.0)
+                && center.y == crate::ComputedLengthPercentage::new(6.0, 0.0)
+    ));
 }
 
 #[test]

@@ -6,7 +6,11 @@
 
 #![warn(missing_docs)]
 
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use taffy::{
     AlignContent, AlignItems, AvailableSpace as TaffyAvailableSpace, BoxSizing,
@@ -286,12 +290,16 @@ impl LayoutTree {
         };
         let backend_node = retained.backend;
         let parent = retained.parent;
+        let display_changed = retained.style.display != style.display;
         self.backend
             .set_style(backend_node, converted)
             .expect("retained backend node");
         self.nodes.get_mut(&node).expect("checked above").style = style;
         if let Some(parent) = parent {
             self.sync_backend_children(parent);
+        }
+        if display_changed {
+            self.sync_backend_children(node);
         }
         Ok(impact)
     }
@@ -507,7 +515,7 @@ impl LayoutTree {
                 .expect("retained surface and application roots");
             self.surface_child = Some(root);
         }
-        let mut invalid_measurement = None;
+        let mut invalid_measurements = BTreeSet::new();
         self.backend
             .compute_layout_with_measure(
                 self.surface_root,
@@ -530,7 +538,7 @@ impl LayoutTree {
                         },
                     );
                     if !measured.is_valid() {
-                        invalid_measurement.get_or_insert(node);
+                        invalid_measurements.insert(node);
                         Size::ZERO
                     } else {
                         Size {
@@ -541,10 +549,17 @@ impl LayoutTree {
                 },
             )
             .expect("retained backend root");
-        if let Some(node) = invalid_measurement {
-            self.backend
-                .mark_dirty(backend_root)
-                .expect("retained backend root");
+        if let Some(node) = invalid_measurements.first().copied() {
+            for invalid in invalid_measurements {
+                let backend = self
+                    .nodes
+                    .get(&invalid)
+                    .expect("measurement context belongs to a retained node")
+                    .backend;
+                self.backend
+                    .mark_dirty(backend)
+                    .expect("retained backend node");
+            }
             return Err(LayoutError::InvalidMeasurement(node));
         }
         let mut snapshot = LayoutSnapshot::default();
@@ -565,12 +580,24 @@ impl LayoutTree {
     fn sync_backend_children(&mut self, parent: NodeId) {
         let retained = self.nodes.get(&parent).expect("retained parent");
         let backend_parent = retained.backend;
-        let mut children = retained.children.clone();
-        children.sort_by_key(|child| self.nodes.get(child).expect("retained child").style.order);
-        let backend_children = children
-            .iter()
-            .map(|child| self.nodes.get(child).expect("retained child").backend)
-            .collect::<Vec<_>>();
+        let backend_children = if matches!(
+            retained.style.display,
+            DisplayValue::Flex | DisplayValue::Grid
+        ) {
+            let mut children = retained.children.clone();
+            children
+                .sort_by_key(|child| self.nodes.get(child).expect("retained child").style.order);
+            children
+                .iter()
+                .map(|child| self.nodes.get(child).expect("retained child").backend)
+                .collect::<Vec<_>>()
+        } else {
+            retained
+                .children
+                .iter()
+                .map(|child| self.nodes.get(child).expect("retained child").backend)
+                .collect::<Vec<_>>()
+        };
         self.backend
             .set_children(backend_parent, &backend_children)
             .expect("retained backend nodes");
@@ -1582,6 +1609,87 @@ mod tests {
     }
 
     #[test]
+    fn block_children_ignore_order_and_keep_source_order() {
+        let root = id(1);
+        let first = id(2);
+        let second = id(3);
+        let mut tree = LayoutTree::new();
+        tree.create_node(
+            root,
+            ComputedLayoutStyle {
+                display: DisplayValue::Block,
+                ..sized(100.0, 40.0)
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            first,
+            ComputedLayoutStyle {
+                order: 1,
+                ..sized(10.0, 10.0)
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            second,
+            ComputedLayoutStyle {
+                order: -1,
+                ..sized(10.0, 10.0)
+            },
+        )
+        .unwrap();
+        tree.set_children(root, &[first, second]).unwrap();
+
+        let snapshot = tree
+            .compute(root, LayoutSize::new(100.0, 40.0), &mut zero_measure)
+            .unwrap();
+
+        assert_eq!(snapshot.get(first).unwrap().border_box.y, 0.0);
+        assert_eq!(snapshot.get(second).unwrap().border_box.y, 10.0);
+    }
+
+    #[test]
+    fn changing_a_container_to_block_restores_source_order() {
+        let root = id(1);
+        let first = id(2);
+        let second = id(3);
+        let mut tree = LayoutTree::new();
+        tree.create_node(root, sized(100.0, 40.0)).unwrap();
+        tree.create_node(
+            first,
+            ComputedLayoutStyle {
+                order: 1,
+                ..sized(10.0, 10.0)
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            second,
+            ComputedLayoutStyle {
+                order: -1,
+                ..sized(10.0, 10.0)
+            },
+        )
+        .unwrap();
+        tree.set_children(root, &[first, second]).unwrap();
+
+        tree.update_style(
+            root,
+            ComputedLayoutStyle {
+                display: DisplayValue::Block,
+                ..sized(100.0, 40.0)
+            },
+        )
+        .unwrap();
+        let snapshot = tree
+            .compute(root, LayoutSize::new(100.0, 40.0), &mut zero_measure)
+            .unwrap();
+
+        assert_eq!(snapshot.get(first).unwrap().border_box.y, 0.0);
+        assert_eq!(snapshot.get(second).unwrap().border_box.y, 10.0);
+    }
+
+    #[test]
     fn measurement_cache_invalidation_and_validation_are_explicit() {
         use std::cell::Cell;
 
@@ -1627,6 +1735,43 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot.get(root).unwrap().border_box.width, 100.0);
         assert_eq!(snapshot.get(root).unwrap().border_box.height, 0.0);
+    }
+
+    #[test]
+    fn invalid_nested_measurement_is_retried_on_the_measured_leaf() {
+        use std::cell::Cell;
+
+        let root = id(1);
+        let child = id(2);
+        let mut tree = LayoutTree::default();
+        tree.create_node(root, ComputedLayoutStyle::default())
+            .unwrap();
+        tree.create_node(child, ComputedLayoutStyle::default())
+            .unwrap();
+        tree.set_measurable(child, true).unwrap();
+        tree.set_children(root, &[child]).unwrap();
+
+        let invalid_calls = Cell::new(0);
+        assert_eq!(
+            tree.compute(root, LayoutSize::new(100.0, 100.0), &mut |node, _| {
+                assert_eq!(node, child);
+                invalid_calls.set(invalid_calls.get() + 1);
+                LayoutSize::new(f32::NAN, 1.0)
+            }),
+            Err(LayoutError::InvalidMeasurement(child))
+        );
+        assert!(invalid_calls.get() > 0);
+
+        let retry_calls = Cell::new(0);
+        let snapshot = tree
+            .compute(root, LayoutSize::new(100.0, 100.0), &mut |node, _| {
+                assert_eq!(node, child);
+                retry_calls.set(retry_calls.get() + 1);
+                LayoutSize::new(12.0, 8.0)
+            })
+            .unwrap();
+        assert!(retry_calls.get() > 0);
+        assert_eq!(snapshot.get(child).unwrap().border_box.height, 8.0);
     }
 
     #[test]

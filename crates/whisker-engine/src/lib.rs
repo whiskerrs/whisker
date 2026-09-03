@@ -21,6 +21,7 @@ mod color;
 mod layout;
 mod measurement;
 mod paint;
+mod radial_gradient;
 mod recording;
 mod scene;
 mod surface;

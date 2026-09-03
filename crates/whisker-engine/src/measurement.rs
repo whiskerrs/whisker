@@ -246,6 +246,7 @@ struct PassState {
 pub(crate) struct MeasurementCoordinator {
     specs: BTreeMap<NodeId, SpecState>,
     cache: HashMap<CacheKey, CacheEntry>,
+    consumer_keys: HashMap<NodeId, Vec<CacheKey>>,
     outstanding: BTreeMap<MeasurementKey, OutstandingRequest>,
     outstanding_by_cache: HashMap<CacheKey, MeasurementKey>,
     pending: BTreeMap<MeasurementRequestId, PendingRequest>,
@@ -259,6 +260,7 @@ impl Default for MeasurementCoordinator {
         Self {
             specs: BTreeMap::new(),
             cache: HashMap::new(),
+            consumer_keys: HashMap::new(),
             outstanding: BTreeMap::new(),
             outstanding_by_cache: HashMap::new(),
             pending: BTreeMap::new(),
@@ -279,6 +281,7 @@ impl MeasurementCoordinator {
             return Vec::new();
         }
         self.cache.clear();
+        self.consumer_keys.clear();
         self.outstanding.clear();
         self.outstanding_by_cache.clear();
         self.pending.clear();
@@ -547,23 +550,41 @@ impl MeasurementCoordinator {
     }
 
     fn remove_consumer(&mut self, node: NodeId) {
-        for entry in self.cache.values_mut() {
-            entry.consumers.remove(&node);
-        }
-        let mut empty = Vec::new();
-        for (key, request) in &mut self.outstanding {
-            request.consumers.remove(&node);
-            if request.consumers.is_empty() {
-                empty.push(*key);
+        let Some(cache_keys) = self.consumer_keys.remove(&node) else {
+            return;
+        };
+        for cache_key in cache_keys {
+            let remove_cached = self.cache.get_mut(&cache_key).is_some_and(|entry| {
+                entry.consumers.remove(&node);
+                entry.consumers.is_empty()
+            });
+            if remove_cached {
+                let entry = self
+                    .cache
+                    .remove(&cache_key)
+                    .expect("checked cache entry remains present");
+                if let CachedState::Pending { request_id, .. } = entry.state {
+                    self.pending.remove(&request_id);
+                }
+                continue;
+            }
+
+            let Some(key) = self.outstanding_by_cache.get(&cache_key).copied() else {
+                continue;
+            };
+            let remove_outstanding = self.outstanding.get_mut(&key).is_some_and(|request| {
+                request.consumers.remove(&node);
+                request.consumers.is_empty()
+            });
+            if remove_outstanding {
+                self.outstanding.remove(&key);
+                self.outstanding_by_cache.remove(&cache_key);
             }
         }
-        for key in empty {
-            let request = self
-                .outstanding
-                .remove(&key)
-                .expect("collected key remains outstanding");
-            self.outstanding_by_cache.remove(&request.cache_key);
-        }
+    }
+
+    fn remember_consumer(&mut self, node: NodeId, cache_key: CacheKey) {
+        self.consumer_keys.entry(node).or_default().push(cache_key);
     }
 
     fn cache_key(state: &SpecState, constraints: MeasureConstraints, epoch: u64) -> CacheKey {
@@ -627,8 +648,11 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
         let cache_key = Self::cache_key(&state, constraints, epoch);
 
         if let Some(entry) = self.cache.get_mut(&cache_key) {
-            entry.consumers.insert(node);
+            let added = entry.consumers.insert(node);
             let cached = entry.state.clone();
+            if added {
+                self.remember_consumer(node, cache_key);
+            }
             return match cached {
                 CachedState::Ready(metrics) => {
                     self.specs
@@ -663,8 +687,11 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
                 .outstanding
                 .get_mut(&key)
                 .expect("cache index points to an outstanding request");
-            request.consumers.insert(node);
+            let added = request.consumers.insert(node);
             self.pass.requests.insert(key, request.request.clone());
+            if added {
+                self.remember_consumer(node, cache_key);
+            }
             return self.use_fallback(state.spec.pending_policy, state.last_ready.as_ref(), None);
         }
 
@@ -688,10 +715,11 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
             key,
             OutstandingRequest {
                 request: request.clone(),
-                cache_key,
+                cache_key: cache_key.clone(),
                 consumers: BTreeSet::from([node]),
             },
         );
+        self.remember_consumer(node, cache_key);
         self.pass.requests.insert(key, request);
         self.use_fallback(state.spec.pending_policy, state.last_ready.as_ref(), None)
     }
@@ -1219,6 +1247,9 @@ mod tests {
         let (mut no_consumers, _, _) = pending_coordinator();
         no_consumers.set_spec(node(1), element(), None).unwrap();
         assert_eq!(no_consumers.pending_count(), 0);
+        assert!(no_consumers.cache.is_empty());
+        assert!(no_consumers.pending.is_empty());
+        assert!(no_consumers.consumer_keys.is_empty());
 
         let mut outstanding = MeasurementCoordinator::default();
         outstanding.set_environment(1);
@@ -1240,6 +1271,7 @@ mod tests {
         outstanding.set_spec(node(2), element(), None).unwrap();
         assert!(outstanding.outstanding.is_empty());
         assert!(outstanding.outstanding_by_cache.is_empty());
+        assert!(outstanding.consumer_keys.is_empty());
 
         let mut invalid_pending = MeasurementCoordinator::default();
         invalid_pending.set_environment(1);
@@ -1264,6 +1296,98 @@ mod tests {
                 ))),
             }]),
             Err(MeasurementError::InvalidMetrics { key })
+        );
+    }
+
+    #[test]
+    fn unused_ready_cache_entries_are_reclaimed_without_breaking_shared_entries() {
+        let mut coordinator = MeasurementCoordinator::default();
+        coordinator.set_environment(1);
+        for value in 1..=2 {
+            coordinator
+                .set_spec(
+                    node(value),
+                    element(),
+                    Some(spec(MeasurementKind::Text, PendingMeasurePolicy::Block)),
+                )
+                .unwrap();
+        }
+
+        coordinator.begin_pass();
+        coordinator.measure(node(1), constraints(10.0));
+        coordinator.measure(node(2), constraints(10.0));
+        let request = coordinator.finish_pass().unwrap().requests.remove(0);
+        coordinator
+            .apply_batch(&[MeasurementResponse::Ready {
+                key: request.key,
+                environment_epoch: 1,
+                metrics: metrics(5.0, 4.0),
+            }])
+            .unwrap();
+        assert_eq!(coordinator.cache.len(), 1);
+
+        coordinator
+            .set_spec(
+                node(3),
+                element(),
+                Some(spec(MeasurementKind::Text, PendingMeasurePolicy::Block)),
+            )
+            .unwrap();
+        coordinator.begin_pass();
+        assert_eq!(
+            coordinator.measure(node(3), constraints(10.0)),
+            LayoutSize::new(5.0, 4.0)
+        );
+        assert!(coordinator.finish_pass().unwrap().requests.is_empty());
+
+        coordinator.remove_node(node(1));
+        assert_eq!(coordinator.cache.len(), 1);
+        assert!(!coordinator.consumer_keys.contains_key(&node(1)));
+
+        coordinator.remove_node(node(2));
+        assert_eq!(coordinator.cache.len(), 1);
+        coordinator.remove_node(node(3));
+        assert!(coordinator.cache.is_empty());
+        assert!(coordinator.consumer_keys.is_empty());
+    }
+
+    #[test]
+    fn removing_last_pending_consumer_makes_deferred_completion_stale() {
+        let mut coordinator = MeasurementCoordinator::default();
+        coordinator.set_environment(1);
+        coordinator
+            .set_spec(
+                node(1),
+                element(),
+                Some(spec(MeasurementKind::Text, PendingMeasurePolicy::Block)),
+            )
+            .unwrap();
+        coordinator.begin_pass();
+        coordinator.measure(node(1), constraints(10.0));
+        let key = coordinator.finish_pass().unwrap().requests[0].key;
+        let request_id = MeasurementRequestId::new(30).expect("request");
+        coordinator
+            .apply_batch(&[MeasurementResponse::Pending {
+                key,
+                environment_epoch: 1,
+                request_id,
+                provisional: None,
+            }])
+            .unwrap();
+
+        coordinator.remove_node(node(1));
+        assert!(coordinator.pending.is_empty());
+        assert!(coordinator.cache.is_empty());
+        assert_eq!(
+            coordinator
+                .apply_ready(&MeasurementReady {
+                    key,
+                    request_id,
+                    environment_epoch: 1,
+                    metrics: metrics(5.0, 4.0),
+                })
+                .unwrap(),
+            DeferredMeasurementApply::IgnoredStale
         );
     }
 }

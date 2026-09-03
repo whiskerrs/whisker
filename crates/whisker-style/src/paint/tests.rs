@@ -167,6 +167,18 @@ fn box_shadow_resolves_every_component_and_rejects_invalid_values() {
         }
         assert_eq!(resolve(StyleValue::BoxShadows(vec![invalid])), expected);
     }
+
+    let mut invalid_color = shadow;
+    invalid_color.color = ComponentValue::Value(ColorValue::Rgba {
+        red: 0,
+        green: 0,
+        blue: 0,
+        alpha: number(f32::NAN),
+    });
+    assert_eq!(
+        resolve(StyleValue::BoxShadows(vec![invalid_color])),
+        expected
+    );
 }
 
 #[test]
@@ -1309,6 +1321,10 @@ fn logical_borders_resolve_to_physical_edges_and_corners() {
 fn logical_and_physical_border_declarations_share_final_write_order() {
     let resolved = crate::resolve_style(
         &SpecifiedStyle::new()
+            .push(
+                StyleProperty::BorderLeftStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Solid),
+            )
             .push(StyleProperty::BorderInlineStartWidth, px(2.0))
             .push(StyleProperty::BorderLeftWidth, px(4.0))
             .push(
@@ -1331,6 +1347,10 @@ fn logical_and_physical_border_declarations_share_final_write_order() {
 
     let resolved = crate::resolve_style(
         &SpecifiedStyle::new()
+            .push(
+                StyleProperty::BorderLeftStyle,
+                StyleValue::BorderStyle(BorderStyleValue::Solid),
+            )
             .push(StyleProperty::BorderLeftWidth, px(4.0))
             .push(StyleProperty::BorderInlineStartWidth, px(6.0))
             .push(
@@ -1454,6 +1474,29 @@ fn background_shorthand_resolves_layer_lists_and_empty_initials() {
     .unwrap();
     assert!(empty.computed().paint().background_images.is_empty());
     assert_eq!(empty.computed().paint().background_layers.len(), 1);
+
+    assert_eq!(
+        crate::resolve_style(
+            &SpecifiedStyle::new().push(
+                StyleProperty::Background,
+                StyleValue::Background(BackgroundValue {
+                    layers: Vec::new(),
+                    color: ColorValue::Rgba {
+                        red: 0,
+                        green: 0,
+                        blue: 0,
+                        alpha: number(f32::NAN),
+                    }
+                    .into(),
+                }),
+            ),
+            None,
+            StyleEnvironment::default(),
+        ),
+        Err(StyleResolutionError::InvalidPropertyValue(
+            StyleProperty::Background
+        ))
+    );
 
     let mut invalid_position = layer(
         "invalid-position",

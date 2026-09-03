@@ -80,7 +80,9 @@ impl MotionEasing {
             Self::Steps { count, position } => {
                 let count = count as f32;
                 match position {
-                    MotionStepPosition::JumpStart => (progress * count).ceil() / count,
+                    MotionStepPosition::JumpStart => {
+                        ((progress * count).floor() + 1.0).min(count) / count
+                    }
                     MotionStepPosition::JumpEnd => (progress * count).floor() / count,
                     MotionStepPosition::JumpNone => {
                         ((progress * count).floor() / (count - 1.0)).clamp(0.0, 1.0)
@@ -925,8 +927,32 @@ mod tests {
                 count: 4,
                 position: MotionStepPosition::JumpStart,
             }
+            .sample(0.0),
+            0.25
+        );
+        assert_eq!(
+            MotionEasing::Steps {
+                count: 4,
+                position: MotionStepPosition::JumpStart,
+            }
             .sample(0.49),
             0.5
+        );
+        assert_eq!(
+            MotionEasing::Steps {
+                count: 4,
+                position: MotionStepPosition::JumpStart,
+            }
+            .sample(0.5),
+            0.75
+        );
+        assert_eq!(
+            MotionEasing::Steps {
+                count: 4,
+                position: MotionStepPosition::JumpStart,
+            }
+            .sample(1.0),
+            1.0
         );
         assert_eq!(
             MotionEasing::Steps {
