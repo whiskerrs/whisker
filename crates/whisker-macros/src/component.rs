@@ -840,12 +840,13 @@ fn option_inner_type(ty: &Type) -> Option<&Type> {
 /// matches bare-ident path types (`T`, not `Option<T>` or
 /// `Vec<T>`).
 fn is_generic_type_param(ty: &Type, generic_type_params: &[Ident]) -> bool {
-    if let Type::Path(tp) = ty {
-        if tp.qself.is_none() && tp.path.segments.len() == 1 {
-            let seg = &tp.path.segments[0];
-            if seg.arguments.is_empty() {
-                return generic_type_params.contains(&seg.ident);
-            }
+    if let Type::Path(tp) = ty
+        && tp.qself.is_none()
+        && tp.path.segments.len() == 1
+    {
+        let seg = &tp.path.segments[0];
+        if seg.arguments.is_empty() {
+            return generic_type_params.contains(&seg.ident);
         }
     }
     false
