@@ -146,7 +146,7 @@ fn background_image(
     }
 }
 
-fn escape_css_url(url: &str) -> String {
+pub(super) fn escape_css_url(url: &str) -> String {
     url.replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\a ")

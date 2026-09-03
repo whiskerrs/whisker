@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use whisker_protocol::{
     FontOpticalSizing, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
     MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, TextContent,
@@ -11,14 +13,11 @@ pub(crate) fn apply(element: &web_sys::Element, content: &TextContent) -> Result
     apply_metrics_style(element, &content.payload)?;
     set_style(element, "color", &css_color(&content.paint.foreground))?;
     let decoration = &content.paint.decoration;
-    let line = if decoration.lines.underline {
-        "underline"
-    } else if decoration.lines.line_through {
-        "line-through"
-    } else {
-        "none"
-    };
-    set_style(element, "text-decoration-line", line)?;
+    set_style(
+        element,
+        "text-decoration-line",
+        &decoration_lines(decoration.lines),
+    )?;
     set_style(
         element,
         "text-decoration-style",
@@ -37,22 +36,62 @@ pub(crate) fn apply(element: &web_sys::Element, content: &TextContent) -> Result
     )?;
     set_style(
         element,
+        "text-decoration-thickness",
+        &match decoration.thickness {
+            whisker_protocol::TextDecorationThickness::Auto => "auto".to_owned(),
+            whisker_protocol::TextDecorationThickness::FromFont => "from-font".to_owned(),
+            whisker_protocol::TextDecorationThickness::Length(value) => px(value),
+        },
+    )?;
+    set_style(
+        element,
         "text-shadow",
-        &content.paint.shadows.first().map_or_else(
-            || "none".to_string(),
-            |shadow| {
-                format!(
-                    "{} {} {} {}",
-                    px(shadow.offset_x),
-                    px(shadow.offset_y),
-                    px(shadow.blur_radius),
-                    css_color(&shadow.color),
-                )
-            },
-        ),
+        &text_shadows(&content.paint.shadows),
     )?;
     element.set_text_content(Some(&content.payload.text));
     Ok(())
+}
+
+fn decoration_lines(lines: whisker_protocol::TextDecorationLines) -> String {
+    let mut value = String::new();
+    for (enabled, keyword) in [
+        (lines.underline, "underline"),
+        (lines.overline, "overline"),
+        (lines.line_through, "line-through"),
+    ] {
+        if enabled {
+            if !value.is_empty() {
+                value.push(' ');
+            }
+            value.push_str(keyword);
+        }
+    }
+    if value.is_empty() {
+        value.push_str("none");
+    }
+    value
+}
+
+fn text_shadows(shadows: &[whisker_protocol::TextShadow]) -> String {
+    if shadows.is_empty() {
+        return "none".to_owned();
+    }
+    let mut value = String::new();
+    for shadow in shadows {
+        if !value.is_empty() {
+            value.push_str(", ");
+        }
+        write!(
+            value,
+            "{} {} {} {}",
+            px(shadow.offset_x),
+            px(shadow.offset_y),
+            px(shadow.blur_radius),
+            css_color(&shadow.color),
+        )
+        .expect("writing to String cannot fail");
+    }
+    value
 }
 
 pub(crate) fn apply_metrics_style(
@@ -195,4 +234,57 @@ fn settings_css<T>(values: &[T], map: impl Fn(&T) -> ([u8; 4], String)) -> Strin
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use wasm_bindgen_test::wasm_bindgen_test;
+    use whisker_protocol::{PaintColor, TextDecorationLines, TextShadow};
+
+    use super::*;
+
+    #[wasm_bindgen_test]
+    fn combines_decoration_lines_in_css_order() {
+        assert_eq!(
+            decoration_lines(TextDecorationLines {
+                underline: true,
+                overline: true,
+                line_through: true,
+            }),
+            "underline overline line-through"
+        );
+        assert_eq!(decoration_lines(TextDecorationLines::default()), "none");
+    }
+
+    #[wasm_bindgen_test]
+    fn serializes_every_text_shadow_in_paint_order() {
+        let shadows = [
+            TextShadow {
+                offset_x: 1.0,
+                offset_y: 2.0,
+                blur_radius: 3.0,
+                color: PaintColor::Srgba {
+                    red: 255,
+                    green: 0,
+                    blue: 0,
+                    alpha: 1.0,
+                },
+            },
+            TextShadow {
+                offset_x: -1.0,
+                offset_y: 0.0,
+                blur_radius: 4.0,
+                color: PaintColor::Srgba {
+                    red: 0,
+                    green: 0,
+                    blue: 255,
+                    alpha: 0.5,
+                },
+            },
+        ];
+        assert_eq!(
+            text_shadows(&shadows),
+            "1px 2px 3px rgba(255, 0, 0, 1), -1px 0px 4px rgba(0, 0, 255, 0.5)"
+        );
+    }
 }

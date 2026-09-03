@@ -157,6 +157,13 @@ impl WebElementFactory {
     }
 }
 
+pub(crate) fn isolates_element_failures(name: &str) -> bool {
+    !matches!(
+        name,
+        "whisker.ui/View" | "whisker.ui/Text" | "whisker.ui/ScrollView"
+    )
+}
+
 impl fmt::Debug for WebElementFactory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter

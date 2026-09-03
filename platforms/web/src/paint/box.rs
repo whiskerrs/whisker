@@ -3,17 +3,17 @@ use whisker_protocol::{BorderLineStyle, BoxPaint, PaintCornerRadius, PaintLength
 use super::color::css_color;
 use crate::{WebError, set_style};
 
-pub(crate) fn apply(element: &web_sys::Element, paint: &BoxPaint) -> Result<(), WebError> {
+pub(crate) fn apply(
+    element: &web_sys::Element,
+    paint: &BoxPaint,
+    border_widths: [f32; 4],
+) -> Result<(), WebError> {
     set_style(
         element,
         "background-color",
         &css_color(&paint.background_color),
     )?;
-    let widths = &paint.border_widths;
-    set_style(element, "border-top-width", &length(widths.top))?;
-    set_style(element, "border-right-width", &length(widths.right))?;
-    set_style(element, "border-bottom-width", &length(widths.bottom))?;
-    set_style(element, "border-left-width", &length(widths.left))?;
+    apply_border_widths(element, border_widths)?;
     let colors = &paint.border_colors;
     set_style(element, "border-top-color", &css_color(&colors.top))?;
     set_style(element, "border-right-color", &css_color(&colors.right))?;
@@ -46,6 +46,16 @@ pub(crate) fn apply(element: &web_sys::Element, paint: &BoxPaint) -> Result<(), 
         &corner_radius(radii.bottom_left),
     )?;
     Ok(())
+}
+
+pub(crate) fn apply_border_widths(
+    element: &web_sys::Element,
+    widths: [f32; 4],
+) -> Result<(), WebError> {
+    set_style(element, "border-top-width", &format!("{}px", widths[0]))?;
+    set_style(element, "border-right-width", &format!("{}px", widths[1]))?;
+    set_style(element, "border-bottom-width", &format!("{}px", widths[2]))?;
+    set_style(element, "border-left-width", &format!("{}px", widths[3]))
 }
 
 fn length(value: PaintLengthPercentage) -> String {
