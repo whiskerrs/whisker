@@ -578,6 +578,26 @@ alone and one external-review recommendation that does not match CSS syntax.
   installed. Ownerless embedders must call `WhiskerView.destroy()` for final
   teardown because `onDetachedFromWindow()` cannot distinguish reparenting
   from destruction.
+- Keep Android's already-posted module-event flush alive across temporary
+  detach. Cancelling the runnable while retaining its `flushScheduled` flag
+  permanently wedges future delivery; the paused Rust runtime can safely
+  accept and retain the completion without scheduling a frame.
+- Reset Rust's mirrored Host scroll offsets when a recovery snapshot is
+  required. All four Hosts rebuild native scroll presentation at offset zero,
+  and scroll offsets are intentionally absent from snapshot operations; the
+  Rust mirror must therefore cross the same rare O(node-count) recovery
+  boundary so authoritative hit testing stays aligned.
+- Reject out-of-range insert and move indices in Android and iOS before native
+  mutation instead of clamping them to a different tree. The validators track
+  only one child-count integer per retained parent; no extra frame copy or
+  per-operation child-vector allocation is introduced.
+- Accept the ABI's canonical empty-frame representation on iOS: zero
+  operations with a null operation pointer. Android already accepted this
+  representation and the Rust encoder intentionally emits it.
+- Reuse `InputDispatch.target` for Desktop cursor, native text focus, wheel
+  routing, and snap settling. This removes the second Host hit test from normal
+  pointer movement and prevents the weaker Host geometry walk from disagreeing
+  with Rust over clip paths or rounded overflow.
 - Do not add Host-side pause queues for module or resource completions. The
   runtime already accepts them while paused into retained state, suppresses
   wakeups, and defers reactive effects. Adding another queue would duplicate
