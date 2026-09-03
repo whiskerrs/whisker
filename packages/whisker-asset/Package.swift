@@ -24,7 +24,7 @@ let package = Package(
         .library(name: "WhiskerAsset", targets: ["WhiskerAsset"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.12"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.13"),
     ],
     targets: [
         .target(
