@@ -16,6 +16,16 @@ pub(crate) struct DomMeasurementProvider {
     module_measurements: HashMap<ElementTypeId, WebMeasurementHandler>,
 }
 
+enum PendingMeasurement {
+    Ready(MeasurementResponse),
+    Text {
+        probe: web_sys::Element,
+        key: whisker_protocol::MeasurementKey,
+        environment_epoch: u64,
+        baseline: f32,
+    },
+}
+
 impl DomMeasurementProvider {
     pub(crate) fn new(document: web_sys::Document) -> Self {
         Self {
@@ -69,9 +79,10 @@ impl MeasurementProvider for DomMeasurementProvider {
             .document
             .body()
             .ok_or_else(|| WebError("document body is unavailable".into()))?;
+        let mut pending = Vec::with_capacity(requests.len());
         for request in requests {
             if let Some(measure) = self.module_measurements.get(&request.element_type) {
-                responses.push(match measure(&request.into()) {
+                pending.push(PendingMeasurement::Ready(match measure(&request.into()) {
                     Some(size) => MeasurementResponse::Ready {
                         key: request.key,
                         environment_epoch: request.environment_epoch,
@@ -82,7 +93,7 @@ impl MeasurementProvider for DomMeasurementProvider {
                         environment_epoch: request.environment_epoch,
                         reason: UnsupportedMeasurementReason::Feature,
                     },
-                });
+                }));
                 continue;
             }
             let MeasurementPayload::Text(text) = &request.payload else {
@@ -94,11 +105,13 @@ impl MeasurementProvider for DomMeasurementProvider {
                 } else {
                     UnsupportedMeasurementReason::Element
                 };
-                responses.push(MeasurementResponse::Unsupported {
-                    key: request.key,
-                    environment_epoch: request.environment_epoch,
-                    reason,
-                });
+                pending.push(PendingMeasurement::Ready(
+                    MeasurementResponse::Unsupported {
+                        key: request.key,
+                        environment_epoch: request.environment_epoch,
+                        reason,
+                    },
+                ));
                 continue;
             };
             let probe = self
@@ -128,22 +141,54 @@ impl MeasurementProvider for DomMeasurementProvider {
                 set_style(&probe, "height", &px(height))?;
             }
             probe.set_text_content(Some(&text.text));
-            body.append_child(&probe)
-                .map_err(|error| js_error("attach text measurement probe", error))?;
-            let rect = probe.get_bounding_client_rect();
-            probe.remove();
-            let baseline = text.style.font_size * 0.8;
-            responses.push(MeasurementResponse::Ready {
+            pending.push(PendingMeasurement::Text {
+                probe,
                 key: request.key,
                 environment_epoch: request.environment_epoch,
-                metrics: MeasurementMetrics {
-                    size: MeasuredSize::new(rect.width() as f32, rect.height() as f32),
-                    first_baseline: Some(baseline),
-                    last_baseline: Some(baseline),
-                    overflow: None,
-                    prepared_content: PreparedContentId::new(request.key.get()),
-                },
+                baseline: text.style.font_size * 0.8,
             });
+        }
+        for measurement in &pending {
+            if let PendingMeasurement::Text { probe, .. } = measurement
+                && let Err(error) = body.append_child(probe)
+            {
+                for attached in &pending {
+                    if let PendingMeasurement::Text { probe, .. } = attached {
+                        probe.remove();
+                    }
+                }
+                return Err(js_error("attach text measurement probe", error));
+            }
+        }
+        responses.reserve(pending.len());
+        for measurement in &pending {
+            match measurement {
+                PendingMeasurement::Ready(response) => responses.push(response.clone()),
+                PendingMeasurement::Text {
+                    probe,
+                    key,
+                    environment_epoch,
+                    baseline,
+                } => {
+                    let rect = probe.get_bounding_client_rect();
+                    responses.push(MeasurementResponse::Ready {
+                        key: *key,
+                        environment_epoch: *environment_epoch,
+                        metrics: MeasurementMetrics {
+                            size: MeasuredSize::new(rect.width() as f32, rect.height() as f32),
+                            first_baseline: Some(*baseline),
+                            last_baseline: Some(*baseline),
+                            overflow: None,
+                            prepared_content: PreparedContentId::new(key.get()),
+                        },
+                    });
+                }
+            }
+        }
+        for measurement in pending {
+            if let PendingMeasurement::Text { probe, .. } = measurement {
+                probe.remove();
+            }
         }
         Ok(())
     }
