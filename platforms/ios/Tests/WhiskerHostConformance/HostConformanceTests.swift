@@ -558,6 +558,24 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(scrollView.layer.mask?.frame.minY, scrollView.bounds.minY)
     }
 
+    func testOneAxisOverflowClipTracksAncestorScrollOffset() throws {
+        let root = UIView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let scrollView = UIScrollView(frame: root.bounds)
+        scrollView.contentSize = CGSize(width: 100, height: 400)
+        root.addSubview(scrollView)
+
+        let node = WhiskerNodeView(element: WhiskerBuiltInElements.viewName)
+        scrollView.addSubview(node)
+        node.setLayoutFrame(CGRect(x: 0, y: 150, width: 80, height: 40))
+        node.setOverflowClip(horizontal: true, vertical: false)
+        let mask = try XCTUnwrap(node.sceneChildrenHost().layer.mask)
+        let initialY = mask.frame.minY
+
+        scrollView.contentOffset = CGPoint(x: 0, y: 60)
+
+        XCTAssertEqual(mask.frame.minY, initialY + 60, accuracy: 0.001)
+    }
+
     func testUIKitTouchTypesMapToProtocolPointerKinds() {
         XCTAssertEqual(hostPointerKind(for: .direct), .touch)
         XCTAssertEqual(hostPointerKind(for: .pencil), .pen)
