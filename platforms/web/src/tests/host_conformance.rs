@@ -67,6 +67,51 @@ fn browser_pointer_metadata_maps_to_protocol_values() {
 }
 
 #[wasm_bindgen_test]
+fn definite_text_constraint_caps_instead_of_forcing_intrinsic_width() {
+    let document = web_sys::window().unwrap().document().unwrap();
+    let mut provider = DomMeasurementProvider::new(document);
+    let request = MeasurementRequest {
+        key: MeasurementKey::new(1).unwrap(),
+        node: NodeId::new(1).unwrap(),
+        element_type: ElementRegistry::standard()
+            .registration_for_builtin(whisker::ElementTag::Text)
+            .unwrap()
+            .element_type,
+        environment_epoch: 1,
+        constraints: MeasureConstraints {
+            known_dimensions: [None, None],
+            available_space: [AvailableSpace::Definite(200.0), AvailableSpace::MaxContent],
+        },
+        payload: MeasurementPayload::Text(TextMeasurePayload {
+            text: "Hi".into(),
+            style: TextMeasureStyle {
+                font_size: 16.0,
+                line_height: MeasureLineHeight::LogicalPixels(20.0),
+                ..TextMeasureStyle::default()
+            },
+            locale: None,
+            direction: MeasureTextDirection::Auto,
+            alignment: whisker_protocol::MeasureTextAlignment::Start,
+            indent: Default::default(),
+            wrap: MeasureTextWrap::Wrap,
+            word_break: MeasureTextWordBreak::Normal,
+            max_lines: None,
+            overflow: MeasureTextOverflow::Clip,
+        }),
+    };
+    let mut responses = Vec::new();
+    provider
+        .measure_batch(SurfaceId::new(1).unwrap(), &[request], &mut responses)
+        .unwrap();
+    let MeasurementResponse::Ready { metrics, .. } = &responses[0] else {
+        panic!("text measurement is synchronous")
+    };
+
+    assert!(metrics.size.width > 0.0);
+    assert!(metrics.size.width < 100.0);
+}
+
+#[wasm_bindgen_test]
 fn accessibility_protocol_maps_to_dom_semantics() {
     let mut driver = Driver::new();
     let view_type = ElementRegistry::standard()
