@@ -1216,7 +1216,7 @@ private class Driver(
     }
 
     fun verifyPhysicalZOrder(): Boolean {
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         repeat(3) { index ->
             val node = (index + 1).toLong()
             check(stage(tag = MobileAbi.OP_CREATE, node = node, member = 1))
@@ -1231,7 +1231,7 @@ private class Driver(
         check(stage(tag = MobileAbi.OP_Z_ORDER, node = 1, integer = 10))
         check(stage(tag = MobileAbi.OP_Z_ORDER, node = 2, integer = -5))
         check(stage(tag = MobileAbi.OP_Z_ORDER, node = 3, integer = 10))
-        check(view.commitFrameFromNative())
+        check(view.commitFrameForTesting())
 
         val orderedNodes = (0 until view.childCount).map { view.getChildAt(it) as HostNode }
         return orderedNodes.map { it.geometry.x } == listOf(2f, 1f, 3f) &&
@@ -1245,16 +1245,16 @@ private class Driver(
             Triple(MobileAbi.OP_COMMAND, 999, WhiskerValue.Null),
         )
         return cases.all { (tag, member, value) ->
-            check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+            check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
             check(stage(tag = MobileAbi.OP_CREATE, member = 1))
             check(stage(tag = tag, member = member, value = value))
-            !view.commitFrameFromNative()
+            !view.commitFrameForTesting()
         }
     }
 
     fun verifyLayoutRounding(): Boolean {
         val density = context.resources.displayMetrics.density
-        check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+        check(view.beginFrameForTesting(0, 1, 0, 1) == 0)
         check(stage(tag = MobileAbi.OP_CREATE, member = 1))
         check(
             stage(
@@ -1271,7 +1271,7 @@ private class Driver(
                 ),
             ),
         )
-        check(view.commitFrameFromNative())
+        check(view.commitFrameForTesting())
         val node = view.getChildAt(0) as HostNode
         val content = checkNotNull(node.mountedElement).view
         return node.layoutParams.width == 11 && node.layoutParams.height == 13 &&
