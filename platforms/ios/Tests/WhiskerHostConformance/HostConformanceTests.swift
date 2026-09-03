@@ -154,7 +154,7 @@ final class HostConformanceTests: XCTestCase {
         XCTAssertEqual(root.reorderCount, 0)
     }
 
-    func testPointerCaptureOperationsReachTheUIKitSurface() {
+    func testRuntimeOwnedPointerCaptureOperationsAreAcceptedByUIKit() {
         let view = WhiskerView(frame: .zero)
         let registration = WhiskerElementRegistration(
             elementType: 1,

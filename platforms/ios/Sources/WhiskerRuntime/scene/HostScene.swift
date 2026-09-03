@@ -16,7 +16,6 @@ final class HostScene {
     private var revision: UInt64 = 0
     private var applyingFrame = false
     private var deferredEvents: [() -> Void] = []
-    private var pointerCaptures: [UInt64: UInt64] = [:]
 
     init(
         root: UIView,
@@ -97,7 +96,6 @@ final class HostScene {
         nodeOrder.removeAll()
         parents.removeAll()
         zOrders.removeAll()
-        pointerCaptures.removeAll()
     }
 
     private func validate(_ operations: [WhiskerMobileOperation], snapshot: Bool) -> Bool {
@@ -419,14 +417,9 @@ final class HostScene {
             nodes[id]?.setHitTestBehavior(operation.integer)
         case UInt32(WHISKER_OP_CURSOR):
             nodes[id]?.setCursorKeyword(operation.integer)
-        case UInt32(WHISKER_OP_CAPTURE):
-            // UIKit keeps delivering a UITouch sequence to its recognizer
-            // after it begins; retaining ownership mirrors explicit capture.
-            pointerCaptures[operation.wide] = id
-        case UInt32(WHISKER_OP_RELEASE_CAPTURE):
-            if pointerCaptures[operation.wide] == id {
-                pointerCaptures.removeValue(forKey: operation.wide)
-            }
+        // Capture targeting is owned by SurfaceRuntime. UIKit already keeps a
+        // UITouch stream attached to its recognizer, so no Host mirror is needed.
+        case UInt32(WHISKER_OP_CAPTURE), UInt32(WHISKER_OP_RELEASE_CAPTURE): break
         case UInt32(WHISKER_OP_OPACITY):
             nodes[id]?.alpha = CGFloat(operation.scalar)
         case UInt32(WHISKER_OP_VISIBILITY):
@@ -514,7 +507,6 @@ final class HostScene {
             parents.removeValue(forKey: $0)
         }
         let removed = Set(descendants).union([id])
-        pointerCaptures = pointerCaptures.filter { !removed.contains($0.value) }
         nodeOrder.removeAll { removed.contains($0) }
         removed.forEach { zOrders.removeValue(forKey: $0) }
         parents.removeValue(forKey: id)
