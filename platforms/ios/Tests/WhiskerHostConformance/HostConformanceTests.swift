@@ -20,6 +20,15 @@ private final class EventLifecycleTestModule: Module {
     }
 }
 
+private final class ZOrderCountingView: UIView {
+    var reorderCount = 0
+
+    override func bringSubviewToFront(_ view: UIView) {
+        reorderCount += 1
+        super.bringSubviewToFront(view)
+    }
+}
+
 @MainActor
 final class HostConformanceTests: XCTestCase {
     override class func setUp() {
@@ -82,6 +91,67 @@ final class HostConformanceTests: XCTestCase {
                 }
             }
         }
+    }
+
+    func testPaintOnlyFrameDoesNotReprojectRootZOrder() {
+        let root = ZOrderCountingView()
+        let scene = HostScene(
+            root: root,
+            resources: HostResourceStore(),
+            logicalBounds: { CGRect(x: 0, y: 0, width: 100, height: 100) },
+            emitElementEvent: { _, _, _ in }
+        )
+        let registration = WhiskerElementRegistration(
+            elementType: 1,
+            name: WhiskerBuiltInElements.viewName,
+            childPolicy: .elements,
+            measurement: .none
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
+
+        func present(
+            _ operations: inout [WhiskerMobileOperation],
+            mode: UInt8,
+            baseRevision: UInt64,
+            targetRevision: UInt64
+        ) {
+            operations.withUnsafeMutableBufferPointer { buffer in
+                var frame = WhiskerMobileFrame()
+                frame.abi_major = UInt16(WHISKER_MOBILE_ABI_MAJOR)
+                frame.protocol_major = 1
+                frame.mode = mode
+                frame.scene_epoch = 1
+                frame.base_revision = baseRevision
+                frame.target_revision = targetRevision
+                frame.operations = UnsafePointer(buffer.baseAddress!)
+                frame.operation_count = buffer.count
+                var response = WhiskerMobileApplyResponse()
+                XCTAssertTrue(scene.applyFrame(frame, response: &response))
+                XCTAssertEqual(response.status, UInt8(WHISKER_APPLY_ACCEPTED))
+            }
+        }
+
+        var snapshot = [
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 1, member: 1),
+            operation(tag: UInt32(WHISKER_OP_CREATE), node: 2, member: 1),
+        ]
+        present(
+            &snapshot,
+            mode: UInt8(WHISKER_FRAME_SNAPSHOT),
+            baseRevision: 0,
+            targetRevision: 1
+        )
+        root.reorderCount = 0
+
+        var delta = [operation(tag: UInt32(WHISKER_OP_OPACITY), node: 1, scalar: 0.5)]
+        present(
+            &delta,
+            mode: UInt8(WHISKER_FRAME_DELTA),
+            baseRevision: 1,
+            targetRevision: 2
+        )
+
+        XCTAssertEqual(root.reorderCount, 0)
     }
 
     func testPointerCaptureOperationsReachTheUIKitSurface() {
