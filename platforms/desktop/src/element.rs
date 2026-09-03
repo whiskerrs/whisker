@@ -155,6 +155,10 @@ impl DesktopElementFactory {
             }
         }
     }
+
+    fn accepts_text_style(&self) -> bool {
+        matches!(&self.kind, DesktopElementFactoryKind::Native(_))
+    }
 }
 
 impl fmt::Debug for DesktopElementFactory {
@@ -864,6 +868,13 @@ impl DesktopElementRegistry {
         Ok(self.binding(element_type)?.factory.create(events))
     }
 
+    pub(crate) fn validate_element_type(
+        &self,
+        element_type: ElementTypeId,
+    ) -> Result<(), DesktopElementError> {
+        self.binding(element_type).map(|_| ())
+    }
+
     pub(crate) fn is_builtin_presentation(&self, element_type: ElementTypeId) -> bool {
         self.binding(element_type).is_ok_and(|binding| {
             matches!(
@@ -916,7 +927,8 @@ impl DesktopElementRegistry {
         &self,
         element_type: ElementTypeId,
     ) -> Result<bool, DesktopElementError> {
-        Ok(self.binding(element_type)?.registration.text_style)
+        let binding = self.binding(element_type)?;
+        Ok(binding.registration.text_style && binding.factory.accepts_text_style())
     }
 
     pub(crate) fn validate_property(

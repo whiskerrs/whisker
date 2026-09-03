@@ -796,8 +796,7 @@ impl DesktopScene {
         for operation in &packet.operations {
             match operation {
                 Operation::CreateNode { node, element_type } => {
-                    self.elements
-                        .create(*element_type, DesktopEventEmitter::default())?;
+                    self.elements.validate_element_type(*element_type)?;
                     types.insert(*node, *element_type);
                 }
                 Operation::InsertChild { parent, .. } => {
@@ -821,19 +820,20 @@ impl DesktopScene {
                         return Err(DesktopPresentError::Unsupported("text-decoration"));
                     }
                     if let Some(element_type) = types.get(node).copied() {
-                        self.elements
-                            .create(element_type, DesktopEventEmitter::default())?
-                            .set_text(*node, content.clone())?;
+                        if !self
+                            .elements
+                            .child_policy(element_type)?
+                            .accepts_plain_text()
+                        {
+                            return Err(DesktopElementError::UnexpectedText { node: *node }.into());
+                        }
                     }
                 }
-                Operation::SetTextStyle { node, style } => {
+                Operation::SetTextStyle { node, .. } => {
                     if let Some(element_type) = types.get(node).copied() {
                         if !self.elements.receives_text_style(element_type)? {
                             return Err(DesktopPresentError::Unsupported("text-style"));
                         }
-                        self.elements
-                            .create(element_type, DesktopEventEmitter::default())?
-                            .set_text_style(*node, style)?;
                     }
                 }
                 Operation::SetProperty {
