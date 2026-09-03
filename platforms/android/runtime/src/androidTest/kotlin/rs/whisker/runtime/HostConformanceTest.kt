@@ -140,7 +140,14 @@ class HostConformanceTest {
             .runOnMainSync {
                 val context = ApplicationProvider.getApplicationContext<android.content.Context>()
                 val root = WhiskerContainerView(context)
-                val scene = HostScene(root, context, { _, _, _ -> }, HostRasterResourceStore())
+                val scene = HostScene(
+                    root,
+                    context,
+                    { _, _, _ -> },
+                    { _, _, _ -> },
+                    { _ -> },
+                    HostRasterResourceStore(),
+                )
                 assertTrue(
                     WhiskerElementRegistry.bind(
                         listOf(
