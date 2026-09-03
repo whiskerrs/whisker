@@ -73,7 +73,9 @@ const WHISKER_SDK_VERSION: &str = "0.1.20";
 /// `gradle-plugin-v*` release tag. The Settings plugin and the
 /// Project plugin ship as separate Maven artifacts but share this
 /// version.
-const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.4.1";
+// 0.5.0 ships the package-scoped module-report contract and the build-process
+// fixes required by the standalone new-architecture Android Host.
+const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.5.0";
 const WHISKER_MAVEN_URL: &str = "https://whiskerrs.github.io/whisker/maven";
 
 fn sync_android(
