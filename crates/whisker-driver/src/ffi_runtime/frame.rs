@@ -129,7 +129,7 @@ impl FrameSink for MobileFrameSink {
 // C frame stores pointers into these allocations for the callback duration.
 #[allow(clippy::vec_box)]
 pub(super) struct MobileFrameOwned {
-    value: MobileFrame,
+    pub(super) value: MobileFrame,
     _arena: RawValueArena,
     _layouts: Vec<Box<MobileLayoutGeometry>>,
     _paints: Vec<Box<MobileBoxPaint>>,
@@ -780,7 +780,7 @@ impl MobileFrameOwned {
             frame_id: packet.header.frame_id,
             base_revision: packet.header.base_revision,
             target_revision: packet.header.target_revision,
-            operations: operations.as_ptr(),
+            operations: nonempty_ptr(&operations),
             operation_count: operations.len(),
         };
         Ok(Self {

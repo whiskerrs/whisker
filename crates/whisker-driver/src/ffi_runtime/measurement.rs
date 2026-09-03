@@ -28,9 +28,9 @@ impl MeasurementProvider for MobileMeasurementHost {
         let mut batch = MobileMeasureBatch::new(requests);
         if !(self.callback)(
             self.data,
-            batch.requests.as_ptr(),
+            nonempty_ptr(&batch.requests),
             batch.requests.len(),
-            batch.responses.as_mut_ptr(),
+            nonempty_mut_ptr(&mut batch.responses),
         ) {
             return Err(MobileMeasureError("mobile Host rejected measurement batch"));
         }
@@ -318,6 +318,14 @@ pub(super) fn nonempty_ptr<T>(values: &[T]) -> *const T {
     }
 }
 
+fn nonempty_mut_ptr<T>(values: &mut [T]) -> *mut T {
+    if values.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        values.as_mut_ptr()
+    }
+}
+
 fn available_kind(value: AvailableSpace) -> u8 {
     match value {
         AvailableSpace::Definite(_) => 0,
@@ -387,6 +395,32 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.0, "mobile Host reordered measurement responses");
+    }
+
+    extern "C" fn observe_empty_batch(
+        data: *mut c_void,
+        requests: *const MobileMeasureRequest,
+        count: usize,
+        responses: *mut MobileMeasureResponse,
+    ) -> bool {
+        // SAFETY: the test passes a live `bool` as callback data.
+        unsafe { *data.cast::<bool>() = requests.is_null() && responses.is_null() && count == 0 };
+        true
+    }
+
+    #[test]
+    fn empty_measurement_batch_uses_null_pointers() {
+        let mut observed = false;
+        let mut host = MobileMeasurementHost {
+            callback: observe_empty_batch,
+            data: std::ptr::from_mut(&mut observed).cast(),
+        };
+        let mut responses = Vec::new();
+
+        host.measure_batch(SurfaceId::new(1).unwrap(), &[], &mut responses)
+            .unwrap();
+
+        assert!(observed);
         assert!(responses.is_empty());
     }
 }
