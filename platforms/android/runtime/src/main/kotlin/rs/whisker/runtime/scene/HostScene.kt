@@ -170,10 +170,14 @@ internal class HostScene(
                 elementTypes[operation.node] = operation.member
             }
             OP_DELETE -> {
-                if (!existing.remove(operation.node)) return false
-                elementTypes.remove(operation.node)
+                if (operation.node !in existing) return false
+                val removed = existing.filterTo(mutableSetOf()) {
+                    it == operation.node || isStagedDescendant(it, operation.node, stagedParents)
+                }
+                existing.removeAll(removed)
+                elementTypes.keys.removeAll(removed)
                 stagedParents.entries.removeAll {
-                    it.key == operation.node || it.value == operation.node
+                    it.key in removed || it.value in removed
                 }
             }
             OP_INSERT -> {
@@ -182,13 +186,21 @@ internal class HostScene(
                 if (
                     operation.parent !in existing || operation.child !in existing ||
                     stagedParents.containsKey(operation.child) ||
+                    isStagedDescendant(operation.parent, operation.child, stagedParents) ||
                     policy != WhiskerChildPolicy.Elements
                 ) return false
                 stagedParents[operation.child] = operation.parent
             }
             OP_REMOVE -> if (stagedParents.remove(operation.child) != operation.parent) return false
             OP_MOVE -> if (stagedParents[operation.child] != operation.parent) return false
-            OP_LAYOUT -> if (operation.node !in existing || operation.numbers?.size ?: 0 < 8) return false
+            OP_LAYOUT -> {
+                val values = operation.numbers
+                if (
+                    operation.node !in existing || values == null || values.size < 8 ||
+                    !validLayoutValues(values) ||
+                    values[2] < 0f || values[3] < 0f || values[6] < 0f || values[7] < 0f
+                ) return false
+            }
             OP_PAINT -> if (
                 operation.node !in existing || operation.numbers?.size ?: 0 < 53 ||
                 operation.names?.size ?: 0 < 5
@@ -241,6 +253,28 @@ internal class HostScene(
             else -> return false
         }
         return true
+    }
+
+    private fun validLayoutValues(values: FloatArray): Boolean {
+        var index = 0
+        while (index < 8) {
+            if (!values[index].isFinite()) return false
+            index += 1
+        }
+        return true
+    }
+
+    private fun isStagedDescendant(
+        candidate: Long,
+        ancestor: Long,
+        stagedParents: Map<Long, Long>,
+    ): Boolean {
+        var current: Long? = candidate
+        while (current != null) {
+            if (current == ancestor) return true
+            current = stagedParents[current]
+        }
+        return false
     }
 
     private fun applyOperation(operation: HostSceneOperation) {
