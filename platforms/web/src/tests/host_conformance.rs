@@ -24,18 +24,19 @@ use whisker_host_conformance::{
     SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
-    Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, AvailableSpace,
-    BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
-    BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat,
-    LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily, MeasureFontStyle,
-    MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak,
-    MeasureTextWrap, MeasurementKey, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
-    MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
-    PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
-    PathCommand, PointerKind, ProtocolVersion, RadialGradientExtent, RadialGradientShape,
-    ResourceCommand, ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest,
-    ResourceSource, SurfaceId, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint,
-    TextShadow, Transform, Visibility, WhiskerValue,
+    Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, ApplyResult,
+    AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
+    BorderLineStyle, BoxClip, BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket,
+    GradientStop, ImageRepeat, LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily,
+    MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
+    MeasureTextWordBreak, MeasureTextWrap, MeasurementKey, MeasurementMetrics, MeasurementPayload,
+    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
+    PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
+    PaintLengthPercentage, PaintPosition, PathCommand, PointerKind, ProtocolVersion,
+    RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent,
+    ResourceId, ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent,
+    TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform, Visibility,
+    WhiskerValue,
 };
 use whisker_style::StyleEnvironment;
 
@@ -64,6 +65,47 @@ fn browser_pointer_metadata_maps_to_protocol_values() {
     assert_ne!(stable_pointer_id(-1), 0);
     assert_ne!(stable_pointer_id(0), stable_pointer_id(-1));
     assert_eq!(stable_pointer_id(-1), stable_pointer_id(-1));
+}
+
+#[wasm_bindgen_test]
+fn border_widths_use_resolved_pixels_and_hidden_takes_no_space() {
+    let mut driver = Driver::new();
+    let mut frame = packet(
+        1,
+        [0.0, 0.0, 40.0, 20.0],
+        &ColorFixture::Named {
+            value: "transparent".to_owned(),
+        },
+        None,
+    );
+    let paint = frame
+        .operations
+        .iter_mut()
+        .find_map(|operation| match operation {
+            Operation::SetBoxPaint { paint, .. } => Some(paint),
+            _ => None,
+        })
+        .unwrap();
+    paint.border_widths.top = PaintLengthPercentage {
+        length: 7.0,
+        fraction: 0.25,
+    };
+    paint.border_widths.right = PaintLengthPercentage {
+        length: 1.0,
+        fraction: 0.1,
+    };
+    paint.border_styles.top = BorderLineStyle::Hidden;
+    paint.border_styles.right = BorderLineStyle::Solid;
+
+    assert_eq!(
+        driver.sink.present(&frame).unwrap(),
+        ApplyResult::Accepted { revision: 1 }
+    );
+    let node = driver.root.first_element_child().unwrap();
+    let style = node.dyn_ref::<web_sys::HtmlElement>().unwrap().style();
+    assert_style(&style, "border-top-width", "0px");
+    assert_style(&style, "border-right-width", "5px");
+    driver.root.remove();
 }
 
 #[wasm_bindgen_test]

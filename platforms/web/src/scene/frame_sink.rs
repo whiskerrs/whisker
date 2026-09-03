@@ -392,6 +392,7 @@ impl DomFrameSink {
             }
             Operation::SetLayout { node, geometry } => {
                 self.layouts.insert(*node, *geometry);
+                self.sync_border_widths(*node)?;
                 self.sync_layout(*node)?;
                 self.sync_content_box(*node)?;
                 self.sync_child_layouts(*node)?;
@@ -399,7 +400,8 @@ impl DomFrameSink {
             }
             Operation::SetBoxPaint { node, paint } => {
                 let element = self.node(*node)?;
-                paint::box_paint::apply(&element, paint)?;
+                let border_widths = self.resolve_border_widths(*node, paint);
+                paint::box_paint::apply(&element, paint, border_widths)?;
                 self.box_paints.insert(*node, paint.clone());
                 self.sync_content_box(*node)?;
                 self.sync_child_layouts(*node)?;
@@ -648,6 +650,10 @@ impl DomFrameSink {
         let Some(paint) = self.box_paints.get(&node) else {
             return [0.0; 4];
         };
+        self.resolve_border_widths(node, paint)
+    }
+
+    fn resolve_border_widths(&self, node: NodeId, paint: &whisker_protocol::BoxPaint) -> [f32; 4] {
         let border_box = self
             .layouts
             .get(&node)
@@ -657,28 +663,44 @@ impl DomFrameSink {
         let resolve = |value: whisker_protocol::PaintLengthPercentage, axis: f32| {
             value.length + value.fraction * axis
         };
+        let uses_width = |style| {
+            !matches!(
+                style,
+                whisker_protocol::BorderLineStyle::None | whisker_protocol::BorderLineStyle::Hidden
+            )
+        };
         [
-            if paint.border_styles.top == whisker_protocol::BorderLineStyle::None {
-                0.0
-            } else {
+            if uses_width(paint.border_styles.top) {
                 resolve(paint.border_widths.top, border_box.height)
-            },
-            if paint.border_styles.right == whisker_protocol::BorderLineStyle::None {
-                0.0
             } else {
+                0.0
+            },
+            if uses_width(paint.border_styles.right) {
                 resolve(paint.border_widths.right, border_box.width)
-            },
-            if paint.border_styles.bottom == whisker_protocol::BorderLineStyle::None {
-                0.0
             } else {
+                0.0
+            },
+            if uses_width(paint.border_styles.bottom) {
                 resolve(paint.border_widths.bottom, border_box.height)
-            },
-            if paint.border_styles.left == whisker_protocol::BorderLineStyle::None {
-                0.0
             } else {
+                0.0
+            },
+            if uses_width(paint.border_styles.left) {
                 resolve(paint.border_widths.left, border_box.width)
+            } else {
+                0.0
             },
         ]
+    }
+
+    fn sync_border_widths(&self, node: NodeId) -> Result<(), WebError> {
+        let Some(paint) = self.box_paints.get(&node) else {
+            return Ok(());
+        };
+        paint::box_paint::apply_border_widths(
+            &self.node(node)?,
+            self.resolve_border_widths(node, paint),
+        )
     }
 
     fn sync_content_box(&self, node: NodeId) -> Result<(), WebError> {
