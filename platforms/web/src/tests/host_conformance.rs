@@ -448,6 +448,83 @@ fn padded_parent_preserves_child_border_box_coordinates() {
 }
 
 #[wasm_bindgen_test]
+fn move_child_uses_the_index_in_the_resulting_child_order() {
+    let mut driver = Driver::new();
+    let registry = ElementRegistry::standard();
+    let view = registry
+        .registration_for_builtin(whisker::ElementTag::View)
+        .unwrap()
+        .element_type;
+    let node = |value| NodeId::new(value).unwrap();
+    let parent = node(1);
+    let children = [node(2), node(3), node(4), node(5)];
+    let mut operations = vec![Operation::CreateNode {
+        node: parent,
+        element_type: view,
+    }];
+    for (index, child) in children.into_iter().enumerate() {
+        operations.push(Operation::CreateNode {
+            node: child,
+            element_type: view,
+        });
+        operations.push(Operation::InsertChild {
+            parent,
+            child,
+            index: index as u32,
+        });
+    }
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations,
+        })
+        .unwrap();
+
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 2,
+                base_revision: 1,
+                target_revision: 2,
+                viewport_epoch: 1,
+                mode: FrameMode::Delta,
+            },
+            operations: vec![Operation::MoveChild {
+                parent,
+                child: node(2),
+                index: 2,
+            }],
+        })
+        .unwrap();
+
+    let dom_children = driver.node(1).children();
+    let order = (0..dom_children.length())
+        .map(|index| {
+            dom_children
+                .item(index)
+                .unwrap()
+                .get_attribute("data-whisker-node")
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(order, ["3", "4", "2", "5"]);
+}
+
+#[wasm_bindgen_test]
 fn missing_background_resource_rejects_before_dom_mutation() {
     let mut driver = Driver::new();
     driver

@@ -368,14 +368,25 @@ impl DomFrameSink {
                 parent,
                 child,
                 index,
+            } => {
+                let parent_element = self.node(*parent)?;
+                let child_element = self.node(*child)?;
+                let reference = parent_element.children().item(*index);
+                parent_element
+                    .insert_before(&child_element, reference.as_ref().map(AsRef::as_ref))
+                    .map_err(|error| js_error("insert Whisker DOM child", error))?;
+                sync_scroll_snap_child(&parent_element, &child_element)?;
+                self.parents.insert(*child, *parent);
+                self.sync_layout(*child)?;
             }
-            | Operation::MoveChild {
+            Operation::MoveChild {
                 parent,
                 child,
                 index,
             } => {
                 let parent_element = self.node(*parent)?;
                 let child_element = self.node(*child)?;
+                child_element.remove();
                 let reference = parent_element.children().item(*index);
                 parent_element
                     .insert_before(&child_element, reference.as_ref().map(AsRef::as_ref))
