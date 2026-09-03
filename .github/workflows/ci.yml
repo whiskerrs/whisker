@@ -123,15 +123,16 @@ jobs:
           RUSTFLAGS: ""
 
   msrv:
-    name: MSRV (rust 1.85)
+    name: MSRV (rust 1.88)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # The version here must match `rust-version` in the root
       # Cargo.toml's `[workspace.package]`. If you bump one, bump both.
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets
+      # `+version` takes precedence over the repository's stable toolchain file.
+      - run: cargo +1.88.0 check --workspace --all-targets
 
   deny:
     name: cargo deny (advisories / bans / sources)
