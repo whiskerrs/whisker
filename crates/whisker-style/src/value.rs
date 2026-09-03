@@ -1095,8 +1095,8 @@ pub struct CustomPropertyName(String);
 impl CustomPropertyName {
     /// Validates and owns a custom-property name.
     ///
-    /// The common CSS identifier form is accepted, including non-ASCII
-    /// characters. Whitespace, control characters, and a bare `--` are
+    /// The CSS dashed-identifier form is accepted, including every non-ASCII
+    /// identifier code point. ASCII syntax characters and a bare `--` are
     /// rejected so invalid names cannot enter computed style.
     pub fn new(name: impl Into<String>) -> Option<Self> {
         let name = name.into();
@@ -1120,7 +1120,7 @@ fn is_custom_property_ident_character(character: char) -> bool {
     character == '_'
         || character == '-'
         || character.is_ascii_alphanumeric()
-        || (!character.is_ascii() && !character.is_whitespace() && !character.is_control())
+        || !character.is_ascii()
 }
 
 /// A whole-value `var()` reference retained until computed-style resolution.
@@ -1227,7 +1227,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_property_names_require_a_nonempty_whitespace_free_suffix() {
+    fn custom_property_names_follow_css_dashed_identifier_code_points() {
         assert_eq!(
             CustomPropertyName::new("--accent").unwrap().as_str(),
             "--accent"
@@ -1242,9 +1242,9 @@ mod tests {
         assert!(CustomPropertyName::new("accent").is_none());
         assert!(CustomPropertyName::new("--").is_none());
         assert!(CustomPropertyName::new("--bad name").is_none());
-        assert!(CustomPropertyName::new("--bad\u{00a0}name").is_none());
-        assert!(CustomPropertyName::new("--bad\u{2028}name").is_none());
-        assert!(CustomPropertyName::new("--bad\u{0085}name").is_none());
+        assert!(CustomPropertyName::new("--non-breaking\u{00a0}space").is_some());
+        assert!(CustomPropertyName::new("--line\u{2028}separator").is_some());
+        assert!(CustomPropertyName::new("--next-line\u{0085}").is_some());
         assert!(CustomPropertyName::new("--1bad").is_some());
         assert!(CustomPropertyName::new("--bad:value").is_none());
         assert!(CustomPropertyName::new("--🎨").is_some());
