@@ -200,7 +200,7 @@ internal class HostScene(
                 operation.node !in existing || operation.numbers?.size ?: 0 < 53 ||
                 operation.names?.size ?: 0 < 5
             ) return false
-            OP_CLIP, OP_Z_ORDER, OP_CLEAR_PROPERTY, OP_EVENT_MASK ->
+            OP_CLIP, OP_Z_ORDER, OP_EVENT_MASK ->
                 if (operation.node !in existing) return false
             OP_HIT_TEST -> if (operation.node !in existing || operation.integer !in 0..3) return false
             OP_CURSOR -> if (operation.node !in existing || operation.integer !in 0..34) return false
@@ -242,7 +242,28 @@ internal class HostScene(
                 if (operation.tag == OP_TEXT && registration.childPolicy != WhiskerChildPolicy.PlainText) return false
                 if (operation.tag == OP_TEXT_STYLE && !registration.textStyle) return false
             }
-            OP_PROPERTY, OP_COMMAND, OP_ACCESSIBILITY ->
+            OP_PROPERTY -> if (
+                operation.node !in existing || operation.value == null ||
+                !WhiskerElementRegistry.hasProperty(
+                    elementTypes[operation.node] ?: return false,
+                    operation.member,
+                )
+            ) return false
+            OP_CLEAR_PROPERTY -> if (
+                operation.node !in existing ||
+                !WhiskerElementRegistry.hasProperty(
+                    elementTypes[operation.node] ?: return false,
+                    operation.member,
+                )
+            ) return false
+            OP_COMMAND -> if (
+                operation.node !in existing || operation.value == null ||
+                !WhiskerElementRegistry.hasCommand(
+                    elementTypes[operation.node] ?: return false,
+                    operation.member,
+                )
+            ) return false
+            OP_ACCESSIBILITY ->
                 if (operation.node !in existing || operation.value == null) return false
             OP_BACKGROUND_LAYERS -> if (!validBackgroundLayers(operation, existing, rasterResources)) return false
             else -> return false

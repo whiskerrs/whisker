@@ -383,6 +383,16 @@ public object WhiskerElementRegistry {
     @JvmStatic
     public fun registration(elementType: Int): WhiskerElementRegistration? =
         boundByType[elementType]?.registration
+
+    /** Constant-time validation for the retained scene's compact property operations. */
+    @JvmStatic
+    public fun hasProperty(elementType: Int, property: Int): Boolean =
+        boundByType[elementType]?.properties?.containsKey(property) == true
+
+    /** Constant-time validation for the retained scene's compact command operations. */
+    @JvmStatic
+    public fun hasCommand(elementType: Int, command: Int): Boolean =
+        boundByType[elementType]?.commands?.containsKey(command) == true
 }
 
 /** Single bootstrap boundary for independently compiled Host modules. */
