@@ -614,6 +614,8 @@ unsafe extern "C" {
         height: f32,
         scale: f32,
     ) -> bool;
+    pub fn whisker_view_pause(handle: *mut c_void) -> bool;
+    pub fn whisker_view_resume(handle: *mut c_void) -> bool;
     pub fn whisker_view_destroy(handle: *mut c_void);
     pub fn whisker_view_dispatch_event(
         handle: *mut c_void,

@@ -251,6 +251,22 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #[cfg(any(target_os = "android", target_os = "ios"))]
         #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn whisker_view_pause(
+            handle: *mut ::std::ffi::c_void,
+        ) -> bool {
+            unsafe { ::whisker::__driver_runtime::pause(handle) }
+        }
+
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn whisker_view_resume(
+            handle: *mut ::std::ffi::c_void,
+        ) -> bool {
+            unsafe { ::whisker::__driver_runtime::resume(handle) }
+        }
+
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn whisker_view_destroy(
             handle: *mut ::std::ffi::c_void,
         ) {

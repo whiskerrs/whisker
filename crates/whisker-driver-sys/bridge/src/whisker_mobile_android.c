@@ -1074,6 +1074,8 @@ JNIEXPORT jlong JNICALL Java_rs_whisker_runtime_WhiskerView_nativeCreate(JNIEnv*
     if(!view->runtime){(*env)->DeleteGlobalRef(env,view->surface);free(view);return 0;}return(jlong)(uintptr_t)view;
 }
 JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeTick(JNIEnv* env,jobject self,jlong handle,jdouble timestamp,jfloat width,jfloat height,jfloat scale){(void)env;(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;return view&&view->runtime&&whisker_view_tick(view->runtime,timestamp,width,height,scale)?JNI_TRUE:JNI_FALSE;}
+JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativePause(JNIEnv* env,jobject self,jlong handle){(void)env;(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;return view&&view->runtime&&whisker_view_pause(view->runtime)?JNI_TRUE:JNI_FALSE;}
+JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeResume(JNIEnv* env,jobject self,jlong handle){(void)env;(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;return view&&view->runtime&&whisker_view_resume(view->runtime)?JNI_TRUE:JNI_FALSE;}
 JNIEXPORT void JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDestroy(JNIEnv* env,jobject self,jlong handle){(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;if(!view)return;if(view->runtime)whisker_view_destroy(view->runtime);if(view->surface)(*env)->DeleteGlobalRef(env,view->surface);free(view);}
 
 JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchEvent(JNIEnv* env,jobject self,jlong handle,jlong node,jstring name,jobject detail,jdouble timestamp){
