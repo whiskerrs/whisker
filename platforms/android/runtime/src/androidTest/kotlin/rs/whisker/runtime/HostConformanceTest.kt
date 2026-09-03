@@ -149,6 +149,33 @@ class HostConformanceTest {
     }
 
     @Test
+    fun hiddenContainerDoesNotDispatchToNativeContent() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val node = HostNode(context, WhiskerBuiltInElements.VIEW, null)
+                node.addView(
+                    View(context).apply { isClickable = true },
+                    ViewGroup.LayoutParams(100, 100),
+                )
+                node.measure(
+                    View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY),
+                )
+                node.layout(0, 0, 100, 100)
+                node.setWhiskerVisibility(false)
+
+                val down = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 50f, 50f, 0)
+                try {
+                    assertEquals(false, node.dispatchTouchEvent(down))
+                } finally {
+                    down.recycle()
+                }
+            }
+    }
+
+    @Test
     fun everySharedPaintScenarioUsesTheProductionAndroidView() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
