@@ -15,6 +15,8 @@ final class WhiskerNodeView: UIView {
     private lazy var paintView = HostNodePaintView(painter: boxPainter)
     private let overflowMask = CAShapeLayer()
     private var overflowMaskScrollOrigin = CGPoint.zero
+    private var overflowMaskCompositionBounds = CGRect.zero
+    private var ancestorScrollObservations: [NSKeyValueObservation] = []
     private let clipPathMask = CAShapeLayer()
     private var clipPath: HostClipPath?
     private var boxShadows: [HostBoxShadow] = []
@@ -104,6 +106,13 @@ final class WhiskerNodeView: UIView {
 
     override func didMoveToSuperview() {
         super.didMoveToSuperview()
+        updateAncestorScrollObservations()
+        updateOverflowMask()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        updateAncestorScrollObservations()
         updateOverflowMask()
     }
 
@@ -162,6 +171,7 @@ final class WhiskerNodeView: UIView {
         clipsOverflowHorizontally = horizontal
         clipsOverflowVertically = vertical
         clipsToBounds = false
+        updateAncestorScrollObservations()
         updateOverflowMask()
     }
 
@@ -423,6 +433,7 @@ final class WhiskerNodeView: UIView {
         overflowMask.fillColor = UIColor.white.cgColor
         host.layer.mask = overflowMask
         overflowMaskScrollOrigin = (host as? UIScrollView)?.bounds.origin ?? .zero
+        overflowMaskCompositionBounds = compositionBounds
     }
 
     /// `UIScrollView` scrolls by changing `bounds.origin`. A layer mask uses
@@ -434,6 +445,36 @@ final class WhiskerNodeView: UIView {
         guard scrollView.layer.mask === overflowMask else { return }
         overflowMask.frame.origin.x += next.x - overflowMaskScrollOrigin.x
         overflowMask.frame.origin.y += next.y - overflowMaskScrollOrigin.y
+    }
+
+    private func updateAncestorScrollObservations() {
+        ancestorScrollObservations.removeAll()
+        guard clipsOverflowHorizontally != clipsOverflowVertically else { return }
+        var ancestor = superview
+        while let current = ancestor {
+            if let scrollView = current as? UIScrollView {
+                ancestorScrollObservations.append(scrollView.observe(
+                    \.contentOffset,
+                    options: [.new]
+                ) { [weak self] _, _ in
+                    self?.updateOverflowMaskForAncestorScroll()
+                })
+            }
+            ancestor = current.superview
+        }
+    }
+
+    private func updateOverflowMaskForAncestorScroll() {
+        let next = hostCompositionBounds()
+        var frame = overflowMask.frame
+        if !clipsOverflowHorizontally {
+            frame.origin.x += next.minX - overflowMaskCompositionBounds.minX
+        }
+        if !clipsOverflowVertically {
+            frame.origin.y += next.minY - overflowMaskCompositionBounds.minY
+        }
+        overflowMask.frame = frame
+        overflowMaskCompositionBounds = next
     }
 
     /// Returns the stationary view that owns the element's clipping viewport.
