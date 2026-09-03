@@ -24,18 +24,19 @@ use whisker_host_conformance::{
     SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
-    Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, AvailableSpace,
-    BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
-    BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket, GradientStop, ImageRepeat,
-    LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily, MeasureFontStyle,
-    MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow, MeasureTextWordBreak,
-    MeasureTextWrap, MeasurementKey, MeasurementMetrics, MeasurementPayload, MeasurementRequest,
-    MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor, PaintCoordinate,
-    PaintCornerRadius, PaintCorners, PaintEdges, PaintImage, PaintLengthPercentage, PaintPosition,
-    PathCommand, PointerKind, ProtocolVersion, RadialGradientExtent, RadialGradientShape,
-    ResourceCommand, ResourceDimensions, ResourceEvent, ResourceId, ResourceKind, ResourceRequest,
-    ResourceSource, SurfaceId, TextContent, TextMeasurePayload, TextMeasureStyle, TextPaint,
-    TextShadow, Transform, Visibility, WhiskerValue,
+    Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, ApplyResult,
+    AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
+    BorderLineStyle, BoxClip, BoxPaint, ClipShape, FillRule, FrameHeader, FrameMode, FramePacket,
+    GradientStop, ImageRepeat, LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily,
+    MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
+    MeasureTextWordBreak, MeasureTextWrap, MeasurementKey, MeasurementMetrics, MeasurementPayload,
+    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
+    PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
+    PaintLengthPercentage, PaintPosition, PathCommand, PointerKind, ProtocolVersion,
+    RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent,
+    ResourceId, ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent,
+    TextMeasurePayload, TextMeasureStyle, TextPaint, TextShadow, Transform, Visibility,
+    WhiskerValue,
 };
 use whisker_style::StyleEnvironment;
 
@@ -64,6 +65,52 @@ fn browser_pointer_metadata_maps_to_protocol_values() {
     assert_ne!(stable_pointer_id(-1), 0);
     assert_ne!(stable_pointer_id(0), stable_pointer_id(-1));
     assert_eq!(stable_pointer_id(-1), stable_pointer_id(-1));
+}
+
+#[wasm_bindgen_test]
+fn dom_failure_discards_partial_transaction_and_recovers_from_snapshot() {
+    let mut driver = Driver::new();
+    let mut failed = packet(
+        1,
+        [0.0, 0.0, 40.0, 40.0],
+        &ColorFixture::Srgba {
+            red: 255,
+            green: 0,
+            blue: 0,
+            alpha: 1.0,
+        },
+        None,
+    );
+    failed.operations.push(Operation::SetPointerCapture {
+        node: NodeId::new(1).unwrap(),
+        pointer: whisker_protocol::PointerId::new(u64::MAX - 2_000_000_000).unwrap(),
+    });
+
+    assert_eq!(
+        driver.sink.present(&failed).unwrap(),
+        ApplyResult::NeedSnapshot {
+            receiver_revision: 0,
+        }
+    );
+    assert_eq!(driver.root.children().length(), 0);
+
+    let recovery = packet(
+        1,
+        [0.0, 0.0, 40.0, 40.0],
+        &ColorFixture::Srgba {
+            red: 255,
+            green: 0,
+            blue: 0,
+            alpha: 1.0,
+        },
+        None,
+    );
+    assert_eq!(
+        driver.sink.present(&recovery).unwrap(),
+        ApplyResult::Accepted { revision: 1 }
+    );
+    assert_eq!(driver.root.children().length(), 1);
+    driver.root.remove();
 }
 
 #[wasm_bindgen_test]

@@ -138,7 +138,7 @@ impl DomFrameSink {
         self.resources.register_url(resource, url)
     }
 
-    fn apply(&mut self, packet: &FramePacket) -> Result<(), WebError> {
+    fn validate_frame(&self, packet: &FramePacket) -> Result<(), WebError> {
         if let Some(feature) = packet
             .operations
             .iter()
@@ -193,25 +193,33 @@ impl DomFrameSink {
                 resource.get()
             )));
         }
+        Ok(())
+    }
+
+    fn apply(&mut self, packet: &FramePacket) -> Result<(), WebError> {
         if packet.header.mode == FrameMode::Snapshot {
-            self.release_all_pointer_captures();
-            self.root.set_inner_html("");
-            self.nodes.clear();
-            self.node_types.clear();
-            self.parents.clear();
-            self.layouts.clear();
-            self.box_paints.clear();
-            self.text_nodes.clear();
-            self.native_nodes.clear();
-            self.event_masks.clear();
-            self.scroll_listeners.clear();
-            self.pointer_captures.clear();
-            self.pending_events.borrow_mut().clear();
+            self.reset_presentation();
         }
         for operation in &packet.operations {
             self.apply_operation(operation)?;
         }
         Ok(())
+    }
+
+    fn reset_presentation(&mut self) {
+        self.release_all_pointer_captures();
+        self.root.set_inner_html("");
+        self.nodes.clear();
+        self.node_types.clear();
+        self.parents.clear();
+        self.layouts.clear();
+        self.box_paints.clear();
+        self.text_nodes.clear();
+        self.native_nodes.clear();
+        self.event_masks.clear();
+        self.scroll_listeners.clear();
+        self.pointer_captures.clear();
+        self.pending_events.borrow_mut().clear();
     }
 
     fn apply_operation(&mut self, operation: &Operation) -> Result<(), WebError> {
@@ -837,12 +845,30 @@ impl FrameSink for DomFrameSink {
                 capability.as_str()
             )));
         }
+        self.validate_frame(packet)?;
         let mut next = self.projection.clone();
         let result = next
             .apply(packet)
             .map_err(|error| WebError(error.to_string()))?;
         if matches!(result, ApplyResult::Accepted { .. }) {
-            self.apply(packet)?;
+            if let Err(error) = self.apply(packet) {
+                // A DOM exception can happen after earlier operations in this
+                // transaction have already mutated the live tree. There is no
+                // portable rollback for DOM or custom-element callbacks, so
+                // drop the partial presentation and ask the sender for a full
+                // snapshot. This path is cold: successful frames pay only the
+                // existing result branch.
+                web_sys::console::error_1(
+                    &format!(
+                        "DOM Host discarded a partially applied frame and requested a snapshot: {error}"
+                    )
+                    .into(),
+                );
+                self.reset_presentation();
+                return Ok(ApplyResult::NeedSnapshot {
+                    receiver_revision: self.projection.revision(),
+                });
+            }
             self.projection = next;
         }
         Ok(result)
