@@ -7,6 +7,8 @@ final class HostScene {
     private let resources: HostResourceStore
     private let logicalBounds: () -> CGRect
     private let emitElementEvent: (UInt64, String, WhiskerValue) -> Void
+    private let updateScrollOffset: (UInt64, CGPoint) -> Void
+    private let removeScrollOffset: (UInt64) -> Void
     private var nodes: [UInt64: WhiskerNodeView] = [:]
     private var nodeOrder: [UInt64] = []
     private var parents: [UInt64: UInt64] = [:]
@@ -14,20 +16,25 @@ final class HostScene {
     private var zOrders: [UInt64: Int32] = [:]
     private var sceneEpoch: UInt32 = 0
     private var revision: UInt64 = 0
-    private var applyingFrame = false
-    private var deferredEvents: [() -> Void] = []
+    private let eventGate = HostEventGate { event in
+        DispatchQueue.main.async(execute: event)
+    }
     private var pointerCaptures: [UInt64: UInt64] = [:]
 
     init(
         root: UIView,
         resources: HostResourceStore,
         logicalBounds: @escaping () -> CGRect,
-        emitElementEvent: @escaping (UInt64, String, WhiskerValue) -> Void
+        emitElementEvent: @escaping (UInt64, String, WhiskerValue) -> Void,
+        updateScrollOffset: @escaping (UInt64, CGPoint) -> Void,
+        removeScrollOffset: @escaping (UInt64) -> Void
     ) {
         self.root = root
         self.resources = resources
         self.logicalBounds = logicalBounds
         self.emitElementEvent = emitElementEvent
+        self.updateScrollOffset = updateScrollOffset
+        self.removeScrollOffset = removeScrollOffset
     }
 
     func applyFrame(
@@ -59,12 +66,9 @@ final class HostScene {
             response.revision = revision
             return true
         }
-        applyingFrame = true
+        eventGate.beginFrame()
         defer {
-            applyingFrame = false
-            let events = deferredEvents
-            deferredEvents.removeAll()
-            events.forEach { $0() }
+            eventGate.endFrame()
         }
         if frame.mode == UInt8(WHISKER_FRAME_SNAPSHOT) { clear() }
         for operation in values where !apply(operation) {
@@ -82,10 +86,11 @@ final class HostScene {
     }
 
     func dispatchOrDefer(_ event: @escaping () -> Void) {
-        if applyingFrame { deferredEvents.append(event) } else { event() }
+        eventGate.dispatch(event)
     }
 
     func clear() {
+        nodes.keys.forEach(removeScrollOffset)
         nodes.values.forEach(releasePresentation)
         nodes.values.forEach { $0.removeFromSuperview() }
         nodes.removeAll()
@@ -112,14 +117,28 @@ final class HostScene {
                 existing.insert(operation.node)
                 elementTypes[operation.node] = Int(operation.member)
             case UInt32(WHISKER_OP_DELETE):
-                guard existing.remove(operation.node) != nil else { return false }
-                elementTypes.removeValue(forKey: operation.node)
+                guard existing.contains(operation.node) else { return false }
+                let removed = existing.filter {
+                    $0 == operation.node || isStagedDescendant(
+                        $0,
+                        of: operation.node,
+                        parents: stagedParents
+                    )
+                }
+                existing.subtract(removed)
+                removed.forEach { elementTypes.removeValue(forKey: $0) }
+                let removedSet = Set(removed)
                 stagedParents = stagedParents.filter {
-                    $0.key != operation.node && $0.value != operation.node
+                    !removedSet.contains($0.key) && !removedSet.contains($0.value)
                 }
             case UInt32(WHISKER_OP_INSERT):
                 guard existing.contains(operation.parent), existing.contains(operation.child),
                       stagedParents[operation.child] == nil,
+                      !isStagedDescendant(
+                          operation.parent,
+                          of: operation.child,
+                          parents: stagedParents
+                      ),
                       elementTypes[operation.parent]
                         .flatMap({ WhiskerElementRegistry.registration($0) })?
                         .childPolicy.acceptsElements == true
@@ -130,10 +149,37 @@ final class HostScene {
                 stagedParents.removeValue(forKey: operation.child)
             case UInt32(WHISKER_OP_MOVE):
                 guard stagedParents[operation.child] == operation.parent else { return false }
-            case UInt32(WHISKER_OP_LAYOUT), UInt32(WHISKER_OP_PAINT),
-                 UInt32(WHISKER_OP_PROPERTY), UInt32(WHISKER_OP_COMMAND),
-                 UInt32(WHISKER_OP_ACCESSIBILITY):
+            case UInt32(WHISKER_OP_LAYOUT):
+                guard existing.contains(operation.node),
+                      let geometry = operation.payload?
+                        .assumingMemoryBound(to: WhiskerMobileLayoutGeometry.self).pointee,
+                      validLayoutGeometry(geometry) else { return false }
+            case UInt32(WHISKER_OP_PAINT):
                 guard existing.contains(operation.node), operation.payload != nil else { return false }
+            case UInt32(WHISKER_OP_PROPERTY):
+                guard existing.contains(operation.node),
+                      let registration = elementTypes[operation.node]
+                        .flatMap({ WhiskerElementRegistry.registration($0) }),
+                      let property = registration.property(Int(operation.member)),
+                      let payload = operation.payload?
+                        .assumingMemoryBound(to: WhiskerValueRaw.self).pointee,
+                      property.value.accepts(WhiskerValue.from(raw: payload))
+                else { return false }
+            case UInt32(WHISKER_OP_COMMAND):
+                guard existing.contains(operation.node),
+                      let registration = elementTypes[operation.node]
+                        .flatMap({ WhiskerElementRegistry.registration($0) }),
+                      let command = registration.command(Int(operation.member)),
+                      let payload = operation.payload?
+                        .assumingMemoryBound(to: WhiskerValueRaw.self).pointee,
+                      command.arguments.accepts(WhiskerValue.from(raw: payload))
+                else { return false }
+            case UInt32(WHISKER_OP_ACCESSIBILITY):
+                guard existing.contains(operation.node),
+                      let payload = operation.payload?
+                        .assumingMemoryBound(to: WhiskerValueRaw.self).pointee,
+                      case .map = WhiskerValue.from(raw: payload)
+                else { return false }
             case UInt32(WHISKER_OP_TEXT), UInt32(WHISKER_OP_TEXT_STYLE):
                 guard existing.contains(operation.node),
                       let registration = elementTypes[operation.node]
@@ -244,14 +290,42 @@ final class HostScene {
             case UInt32(WHISKER_OP_VISIBILITY):
                 guard existing.contains(operation.node),
                       operation.integer == 0 || operation.integer == 1 else { return false }
+            case UInt32(WHISKER_OP_CLEAR_PROPERTY):
+                guard existing.contains(operation.node),
+                      let registration = elementTypes[operation.node]
+                        .flatMap({ WhiskerElementRegistry.registration($0) }),
+                      registration.property(Int(operation.member)) != nil
+                else { return false }
             case UInt32(WHISKER_OP_CLIP), UInt32(WHISKER_OP_Z_ORDER),
-                 UInt32(WHISKER_OP_CLEAR_PROPERTY), UInt32(WHISKER_OP_EVENT_MASK):
+                 UInt32(WHISKER_OP_EVENT_MASK):
                 guard existing.contains(operation.node) else { return false }
             default:
                 return false
             }
         }
         return true
+    }
+
+    private func isStagedDescendant(
+        _ candidate: UInt64,
+        of ancestor: UInt64,
+        parents: [UInt64: UInt64]
+    ) -> Bool {
+        var current: UInt64? = candidate
+        while let node = current {
+            if node == ancestor { return true }
+            current = parents[node]
+        }
+        return false
+    }
+
+    private func validLayoutGeometry(_ geometry: WhiskerMobileLayoutGeometry) -> Bool {
+        validLayoutRect(geometry.border) && validLayoutRect(geometry.content)
+    }
+
+    private func validLayoutRect(_ rect: WhiskerMobileRect) -> Bool {
+        rect.x.isFinite && rect.y.isFinite && rect.width.isFinite && rect.height.isFinite
+            && rect.width >= 0 && rect.height >= 0
     }
 
     private func apply(_ operation: WhiskerMobileOperation) -> Bool {
@@ -280,6 +354,9 @@ final class HostScene {
             }
             let node = WhiskerNodeView(element: registration.name)
             node.mountedElement = mounted
+            (mounted.view as? WhiskerScrollContainerView)?.installWhiskerPresentationSink {
+                [weak self] offset in self?.updateScrollOffset(id, offset)
+            }
             mounted.view.frame = node.bounds
             mounted.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             node.addSubview(mounted.view)
@@ -503,6 +580,7 @@ final class HostScene {
         guard let node = nodes.removeValue(forKey: id) else { return }
         let descendants = nodes.keys.filter { isDescendant($0, of: id) }
         descendants.forEach {
+            removeScrollOffset($0)
             if let removed = nodes.removeValue(forKey: $0) {
                 releasePresentation(removed)
             }
@@ -513,6 +591,7 @@ final class HostScene {
         nodeOrder.removeAll { removed.contains($0) }
         removed.forEach { zOrders.removeValue(forKey: $0) }
         parents.removeValue(forKey: id)
+        removeScrollOffset(id)
         releasePresentation(node)
         node.removeFromSuperview()
     }
