@@ -19,13 +19,24 @@ internal fun normalizePointerInput(event: MotionEvent, density: Float): List<Hos
     if (!density.isFinite() || density <= 0f) return emptyList()
     val eventKind = when (event.actionMasked) {
         MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> POINTER_DOWN
-        MotionEvent.ACTION_MOVE, MotionEvent.ACTION_HOVER_MOVE -> POINTER_MOVE
+        MotionEvent.ACTION_MOVE,
+        MotionEvent.ACTION_HOVER_ENTER,
+        MotionEvent.ACTION_HOVER_MOVE,
+        MotionEvent.ACTION_HOVER_EXIT,
+        MotionEvent.ACTION_SCROLL,
+        -> POINTER_MOVE
         MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> POINTER_UP
         MotionEvent.ACTION_CANCEL -> POINTER_CANCEL
         else -> return emptyList()
     }
     val indices = when (event.actionMasked) {
-        MotionEvent.ACTION_MOVE, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_CANCEL ->
+        MotionEvent.ACTION_MOVE,
+        MotionEvent.ACTION_HOVER_ENTER,
+        MotionEvent.ACTION_HOVER_MOVE,
+        MotionEvent.ACTION_HOVER_EXIT,
+        MotionEvent.ACTION_SCROLL,
+        MotionEvent.ACTION_CANCEL,
+        ->
             0 until event.pointerCount
         else -> event.actionIndex..event.actionIndex
     }
