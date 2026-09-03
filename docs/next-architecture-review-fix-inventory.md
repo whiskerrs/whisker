@@ -583,7 +583,11 @@ alone and one external-review recommendation that does not match CSS syntax.
   wakeups, and defers reactive effects. Adding another queue would duplicate
   payloads and introduce a new overflow policy; RFC 0002 is clarified to state
   the implemented contract.
-- Host implementation changes from shared contract fixes belong in the four
-  Host rollups. The Runtime/ABI rollup retains only platform-neutral runtime,
-  protocol, driver, generated-binding, and common-fixture changes so the seven
-  pull requests do not overwrite each other's Host files.
+- The Runtime/ABI rollup owns the shared contract and the corresponding thin
+  adapters in all four Hosts, including generated mobile ABI mirrors and the
+  common fixture. The four Host rollups are stacked directly on that branch
+  and contain only the remaining platform-specific changes. This keeps the
+  Runtime/ABI pull request independently buildable while preventing its shared
+  adapter edits from appearing as duplicate review work in every Host pull
+  request. Once Runtime/ABI is merged, the four Host pull requests can be
+  retargeted to `next-architecture` without changing their effective diffs.
