@@ -241,6 +241,41 @@ class HostConformanceTest {
     }
 
     @Test
+    fun transformedNativeChildReceivesInputAtItsPresentedCoordinates() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val parent = WhiskerContainerView(context)
+                val node = HostNode(context, WhiskerBuiltInElements.VIEW, null)
+                val content = View(context).apply { isClickable = true }
+                node.addView(content, ViewGroup.LayoutParams(100, 100))
+                parent.addView(node, ViewGroup.LayoutParams(100, 100))
+                parent.measure(
+                    View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
+                )
+                parent.layout(0, 0, 400, 200)
+                node.setLocalTransform(
+                    floatArrayOf(
+                        1f, 0f, 0f, 0f,
+                        0f, 1f, 0f, 0f,
+                        0f, 0f, 1f, 0f,
+                        200f, 0f, 0f, 1f,
+                    ),
+                    density = 1f,
+                )
+
+                val down = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 250f, 50f, 0)
+                try {
+                    assertTrue(parent.dispatchTouchEvent(down))
+                } finally {
+                    down.recycle()
+                }
+            }
+    }
+
+    @Test
     fun rejectsInvalidOpacityValues() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
