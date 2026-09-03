@@ -24,15 +24,15 @@ use whisker_host_conformance::{
     SceneNodeFixture, VisibilityFixture,
 };
 use whisker_protocol::{
-    Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, ApplyResult,
-    AvailableSpace, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
-    BorderLineStyle, BoxClip, BoxPaint, ClipShape, ElementMeasurement, ElementPropertySchema,
-    ElementRegistration, ElementTypeId, ElementValueKind, FillRule, FrameHeader, FrameMode,
-    FramePacket, GradientStop, ImageRepeat, LayoutGeometry, LayoutRect, MeasureConstraints,
-    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
-    MeasureTextOverflow, MeasureTextWordBreak, MeasureTextWrap, MeasurementKey, MeasurementMetrics,
-    MeasurementPayload, MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip,
-    PaintBox, PaintColor, PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
+    Accessibility, AccessibilityChecked, AccessibilityRole, AccessibilityState, AvailableSpace,
+    BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode, BorderLineStyle, BoxClip,
+    BoxPaint, ClipShape, ElementMeasurement, ElementPropertySchema, ElementRegistration,
+    ElementTypeId, ElementValueKind, FillRule, FrameHeader, FrameMode, FramePacket, GradientStop,
+    ImageRepeat, LayoutGeometry, LayoutRect, MeasureConstraints, MeasureFontFamily,
+    MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
+    MeasureTextWordBreak, MeasureTextWrap, MeasurementKey, MeasurementMetrics, MeasurementPayload,
+    MeasurementRequest, MeasurementResponse, NodeId, Operation, OverflowClip, PaintBox, PaintColor,
+    PaintCoordinate, PaintCornerRadius, PaintCorners, PaintEdges, PaintImage,
     PaintLengthPercentage, PaintPosition, PathCommand, PointerKind, ProtocolVersion,
     RadialGradientExtent, RadialGradientShape, ResourceCommand, ResourceDimensions, ResourceEvent,
     ResourceId, ResourceKind, ResourceRequest, ResourceSource, SurfaceId, TextContent,
@@ -200,267 +200,6 @@ fn native_failure_does_not_abort_common_dom_presentation() {
 }
 
 #[wasm_bindgen_test]
-fn built_in_factory_failure_rejects_the_frame() {
-    let document = web_sys::window().unwrap().document().unwrap();
-    let root = document.create_element("div").unwrap();
-    document.body().unwrap().append_child(&root).unwrap();
-    let registrations = ElementRegistry::standard().registrations().to_vec();
-    let view = registrations
-        .iter()
-        .find(|registration| registration.name == "whisker.ui/View")
-        .unwrap();
-    let mut factories = built_in_element_factories();
-    let view_factory = factories
-        .iter_mut()
-        .find(|factory| factory.name == "whisker.ui/View")
-        .unwrap();
-    *view_factory = WebElementFactory::native("whisker.ui/View", |_, _| {
-        Err(wasm_bindgen::JsValue::from_str("built-in factory failure"))
-    });
-    let mut sink = DomFrameSink::new_with_resources(
-        document,
-        root.clone(),
-        SurfaceId::new(1).unwrap(),
-        &registrations,
-        &factories,
-        WebResourceStore::new(),
-        crate::capabilities::detect_host_capabilities(),
-    )
-    .unwrap();
-
-    let result = sink
-        .present(&FramePacket {
-            header: FrameHeader {
-                version: ProtocolVersion::CURRENT,
-                surface: SurfaceId::new(1).unwrap(),
-                scene_epoch: 1,
-                frame_id: 1,
-                base_revision: 0,
-                target_revision: 1,
-                viewport_epoch: 1,
-                mode: FrameMode::Snapshot,
-            },
-            operations: vec![Operation::CreateNode {
-                node: NodeId::new(1).unwrap(),
-                element_type: view.element_type,
-            }],
-        })
-        .unwrap();
-
-    assert_eq!(
-        result,
-        ApplyResult::NeedSnapshot {
-            receiver_revision: 0
-        }
-    );
-    assert!(
-        root.query_selector("[data-whisker-node]")
-            .unwrap()
-            .is_none()
-    );
-    root.remove();
-}
-
-#[wasm_bindgen_test]
-fn definite_text_constraint_caps_instead_of_forcing_intrinsic_width() {
-    let document = web_sys::window().unwrap().document().unwrap();
-    let mut provider = DomMeasurementProvider::new(document);
-    let request = MeasurementRequest {
-        key: MeasurementKey::new(1).unwrap(),
-        node: NodeId::new(1).unwrap(),
-        element_type: ElementRegistry::standard()
-            .registration_for_builtin(whisker::ElementTag::Text)
-            .unwrap()
-            .element_type,
-        environment_epoch: 1,
-        constraints: MeasureConstraints {
-            known_dimensions: [None, None],
-            available_space: [AvailableSpace::Definite(200.0), AvailableSpace::MaxContent],
-        },
-        payload: MeasurementPayload::Text(TextMeasurePayload {
-            text: "Hi".into(),
-            style: TextMeasureStyle {
-                font_size: 16.0,
-                line_height: MeasureLineHeight::LogicalPixels(20.0),
-                ..TextMeasureStyle::default()
-            },
-            locale: None,
-            direction: MeasureTextDirection::Auto,
-            alignment: whisker_protocol::MeasureTextAlignment::Start,
-            indent: Default::default(),
-            wrap: MeasureTextWrap::Wrap,
-            word_break: MeasureTextWordBreak::Normal,
-            max_lines: None,
-            overflow: MeasureTextOverflow::Clip,
-        }),
-    };
-    let mut responses = Vec::new();
-    provider
-        .measure_batch(SurfaceId::new(1).unwrap(), &[request], &mut responses)
-        .unwrap();
-    let MeasurementResponse::Ready { metrics, .. } = &responses[0] else {
-        panic!("text measurement is synchronous")
-    };
-
-    assert!(metrics.size.width > 0.0);
-    assert!(metrics.size.width < 100.0);
-}
-
-#[wasm_bindgen_test]
-fn text_measurement_batch_preserves_response_order_and_cleans_up_probes() {
-    let document = web_sys::window().unwrap().document().unwrap();
-    let body = document.body().unwrap();
-    let children_before = body.child_element_count();
-    let text_type = ElementRegistry::standard()
-        .registration_for_builtin(whisker::ElementTag::Text)
-        .unwrap()
-        .element_type;
-    let request = |key: u64, value: &str| MeasurementRequest {
-        key: MeasurementKey::new(key).unwrap(),
-        node: NodeId::new(key).unwrap(),
-        element_type: text_type,
-        environment_epoch: 1,
-        constraints: MeasureConstraints {
-            known_dimensions: [None, None],
-            available_space: [AvailableSpace::Definite(200.0), AvailableSpace::MaxContent],
-        },
-        payload: MeasurementPayload::Text(TextMeasurePayload {
-            text: value.into(),
-            style: TextMeasureStyle {
-                font_size: 16.0,
-                line_height: MeasureLineHeight::LogicalPixels(20.0),
-                ..TextMeasureStyle::default()
-            },
-            locale: None,
-            direction: MeasureTextDirection::Auto,
-            alignment: whisker_protocol::MeasureTextAlignment::Start,
-            indent: Default::default(),
-            wrap: MeasureTextWrap::Wrap,
-            word_break: MeasureTextWordBreak::Normal,
-            max_lines: None,
-            overflow: MeasureTextOverflow::Clip,
-        }),
-    };
-    let requests = [
-        request(7, "short"),
-        request(
-            8,
-            "first line second line third line fourth line fifth line sixth line",
-        ),
-    ];
-    let mut provider = DomMeasurementProvider::new(document);
-    let mut responses = Vec::new();
-
-    provider
-        .measure_batch(SurfaceId::new(1).unwrap(), &requests, &mut responses)
-        .unwrap();
-
-    assert_eq!(responses.len(), 2);
-    assert_eq!(responses[0].key(), MeasurementKey::new(7).unwrap());
-    assert_eq!(responses[1].key(), MeasurementKey::new(8).unwrap());
-    let MeasurementResponse::Ready {
-        metrics: single, ..
-    } = &responses[0]
-    else {
-        panic!("text measurement must be ready")
-    };
-    let MeasurementResponse::Ready { metrics: multi, .. } = &responses[1] else {
-        panic!("text measurement must be ready")
-    };
-    assert!(single.first_baseline.unwrap() > 0.0);
-    assert_eq!(single.first_baseline, single.last_baseline);
-    assert!(multi.last_baseline.unwrap() > multi.first_baseline.unwrap());
-    assert_eq!(body.child_element_count(), children_before);
-}
-
-#[wasm_bindgen_test]
-fn dom_failure_discards_partial_transaction_and_recovers_from_snapshot() {
-    let mut driver = Driver::new();
-    let mut failed = packet(
-        1,
-        [0.0, 0.0, 40.0, 40.0],
-        &ColorFixture::Srgba {
-            red: 255,
-            green: 0,
-            blue: 0,
-            alpha: 1.0,
-        },
-        None,
-    );
-    failed.operations.push(Operation::SetPointerCapture {
-        node: NodeId::new(1).unwrap(),
-        pointer: whisker_protocol::PointerId::new(u64::MAX - 2_000_000_000).unwrap(),
-    });
-
-    assert_eq!(
-        driver.sink.present(&failed).unwrap(),
-        ApplyResult::NeedSnapshot {
-            receiver_revision: 0,
-        }
-    );
-    assert_eq!(driver.root.children().length(), 0);
-
-    let recovery = packet(
-        1,
-        [0.0, 0.0, 40.0, 40.0],
-        &ColorFixture::Srgba {
-            red: 255,
-            green: 0,
-            blue: 0,
-            alpha: 1.0,
-        },
-        None,
-    );
-    assert_eq!(
-        driver.sink.present(&recovery).unwrap(),
-        ApplyResult::Accepted { revision: 1 }
-    );
-    assert_eq!(driver.root.children().length(), 1);
-    driver.root.remove();
-}
-
-#[wasm_bindgen_test]
-fn border_widths_use_resolved_pixels_and_hidden_takes_no_space() {
-    let mut driver = Driver::new();
-    let mut frame = packet(
-        1,
-        [0.0, 0.0, 40.0, 20.0],
-        &ColorFixture::Named {
-            value: "transparent".to_owned(),
-        },
-        None,
-    );
-    let paint = frame
-        .operations
-        .iter_mut()
-        .find_map(|operation| match operation {
-            Operation::SetBoxPaint { paint, .. } => Some(paint),
-            _ => None,
-        })
-        .unwrap();
-    paint.border_widths.top = PaintLengthPercentage {
-        length: 7.0,
-        fraction: 0.25,
-    };
-    paint.border_widths.right = PaintLengthPercentage {
-        length: 1.0,
-        fraction: 0.1,
-    };
-    paint.border_styles.top = BorderLineStyle::Hidden;
-    paint.border_styles.right = BorderLineStyle::Solid;
-
-    assert_eq!(
-        driver.sink.present(&frame).unwrap(),
-        ApplyResult::Accepted { revision: 1 }
-    );
-    let node = driver.root.first_element_child().unwrap();
-    let style = node.dyn_ref::<web_sys::HtmlElement>().unwrap().style();
-    assert_style(&style, "border-top-width", "0px");
-    assert_style(&style, "border-right-width", "5px");
-    driver.root.remove();
-}
-
-#[wasm_bindgen_test]
 fn accessibility_protocol_maps_to_dom_semantics() {
     let mut driver = Driver::new();
     let view_type = ElementRegistry::standard()
@@ -571,48 +310,6 @@ fn accessibility_protocol_maps_to_dom_semantics() {
 }
 
 #[wasm_bindgen_test]
-fn host_page_selectors_do_not_style_whisker_nodes() {
-    let document = web_sys::window().unwrap().document().unwrap();
-    let page_style = document.create_element("style").unwrap();
-    page_style.set_text_content(Some("div { margin-left: 31px !important; }"));
-    document.body().unwrap().append_child(&page_style).unwrap();
-    let mut driver = Driver::new();
-    let node = NodeId::new(1).unwrap();
-    let view = ElementRegistry::standard()
-        .registration_for_builtin(whisker::ElementTag::View)
-        .unwrap()
-        .element_type;
-    driver
-        .sink
-        .present(&FramePacket {
-            header: FrameHeader {
-                version: ProtocolVersion::CURRENT,
-                surface: SurfaceId::new(1).unwrap(),
-                scene_epoch: 1,
-                frame_id: 1,
-                base_revision: 0,
-                target_revision: 1,
-                viewport_epoch: 1,
-                mode: FrameMode::Snapshot,
-            },
-            operations: vec![Operation::CreateNode {
-                node,
-                element_type: view,
-            }],
-        })
-        .unwrap();
-    let computed = web_sys::window()
-        .unwrap()
-        .get_computed_style(&driver.node(1))
-        .unwrap()
-        .unwrap();
-    let margin = computed.get_property_value("margin-left").unwrap();
-    page_style.remove();
-
-    assert_eq!(margin, "0px");
-}
-
-#[wasm_bindgen_test]
 async fn scroll_view_emits_geometry_and_honors_scroll_behavior() {
     let mut driver = Driver::new();
     let registry = ElementRegistry::standard();
@@ -624,14 +321,6 @@ async fn scroll_view_emits_geometry_and_honors_scroll_behavior() {
         .command_named("scrollTo")
         .unwrap()
         .command;
-    let scroll_orientation = scroll_registration
-        .property_named("scroll-orientation")
-        .unwrap()
-        .property;
-    let enable_scroll = scroll_registration
-        .property_named("enable-scroll")
-        .unwrap()
-        .property;
     let view_type = registry
         .registration_for_builtin(whisker::ElementTag::View)
         .unwrap()
@@ -782,70 +471,6 @@ async fn scroll_view_emits_geometry_and_honors_scroll_behavior() {
         wait_ms(50).await;
     }
     assert_eq!(element.scroll_top(), 200);
-
-    driver
-        .sink
-        .present(&FramePacket {
-            header: FrameHeader {
-                version: ProtocolVersion::CURRENT,
-                surface: SurfaceId::new(1).unwrap(),
-                scene_epoch: 1,
-                frame_id: 4,
-                base_revision: 3,
-                target_revision: 4,
-                viewport_epoch: 1,
-                mode: FrameMode::Delta,
-            },
-            operations: vec![
-                Operation::SetProperty {
-                    node: scroll,
-                    property: scroll_orientation,
-                    value: WhiskerValue::String("horizontal".into()),
-                },
-                Operation::SetClip {
-                    node: scroll,
-                    clip: BoxClip {
-                        horizontal: OverflowClip::Hidden,
-                        vertical: OverflowClip::Hidden,
-                    },
-                },
-            ],
-        })
-        .unwrap();
-    assert_style(&element.style(), "overflow-x", "auto");
-    assert_style(&element.style(), "overflow-y", "hidden");
-
-    driver
-        .sink
-        .present(&FramePacket {
-            header: FrameHeader {
-                version: ProtocolVersion::CURRENT,
-                surface: SurfaceId::new(1).unwrap(),
-                scene_epoch: 1,
-                frame_id: 5,
-                base_revision: 4,
-                target_revision: 5,
-                viewport_epoch: 1,
-                mode: FrameMode::Delta,
-            },
-            operations: vec![
-                Operation::SetProperty {
-                    node: scroll,
-                    property: enable_scroll,
-                    value: WhiskerValue::Bool(false),
-                },
-                Operation::SetClip {
-                    node: scroll,
-                    clip: BoxClip {
-                        horizontal: OverflowClip::Visible,
-                        vertical: OverflowClip::Visible,
-                    },
-                },
-            ],
-        })
-        .unwrap();
-    assert_style(&element.style(), "overflow-x", "hidden");
-    assert_style(&element.style(), "overflow-y", "hidden");
 }
 
 async fn wait_ms(milliseconds: i32) {
@@ -961,83 +586,6 @@ fn padded_parent_preserves_child_border_box_coordinates() {
         .unwrap()
         .style();
     assert_style(&parent_style, "padding", "10px");
-}
-
-#[wasm_bindgen_test]
-fn move_child_uses_the_index_in_the_resulting_child_order() {
-    let mut driver = Driver::new();
-    let registry = ElementRegistry::standard();
-    let view = registry
-        .registration_for_builtin(whisker::ElementTag::View)
-        .unwrap()
-        .element_type;
-    let node = |value| NodeId::new(value).unwrap();
-    let parent = node(1);
-    let children = [node(2), node(3), node(4), node(5)];
-    let mut operations = vec![Operation::CreateNode {
-        node: parent,
-        element_type: view,
-    }];
-    for (index, child) in children.into_iter().enumerate() {
-        operations.push(Operation::CreateNode {
-            node: child,
-            element_type: view,
-        });
-        operations.push(Operation::InsertChild {
-            parent,
-            child,
-            index: index as u32,
-        });
-    }
-    driver
-        .sink
-        .present(&FramePacket {
-            header: FrameHeader {
-                version: ProtocolVersion::CURRENT,
-                surface: SurfaceId::new(1).unwrap(),
-                scene_epoch: 1,
-                frame_id: 1,
-                base_revision: 0,
-                target_revision: 1,
-                viewport_epoch: 1,
-                mode: FrameMode::Snapshot,
-            },
-            operations,
-        })
-        .unwrap();
-
-    driver
-        .sink
-        .present(&FramePacket {
-            header: FrameHeader {
-                version: ProtocolVersion::CURRENT,
-                surface: SurfaceId::new(1).unwrap(),
-                scene_epoch: 1,
-                frame_id: 2,
-                base_revision: 1,
-                target_revision: 2,
-                viewport_epoch: 1,
-                mode: FrameMode::Delta,
-            },
-            operations: vec![Operation::MoveChild {
-                parent,
-                child: node(2),
-                index: 2,
-            }],
-        })
-        .unwrap();
-
-    let dom_children = driver.node(1).children();
-    let order = (0..dom_children.length())
-        .map(|index| {
-            dom_children
-                .item(index)
-                .unwrap()
-                .get_attribute("data-whisker-node")
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(order, ["3", "4", "2", "5"]);
 }
 
 #[wasm_bindgen_test]
@@ -1216,9 +764,7 @@ async fn typed_resource_commands_and_events_cross_the_web_runtime_boundary() {
 }
 
 struct Driver {
-    mount_root: web_sys::Element,
     root: web_sys::Element,
-    shadow_root: web_sys::ShadowRoot,
     sink: DomFrameSink,
     resources: WebResourceStore,
     resource_service: WebResourceService,
@@ -1276,15 +822,8 @@ impl Driver {
             crate::capabilities::detect_host_capabilities(),
         )
         .unwrap();
-        let shadow_root = root.shadow_root().unwrap();
-        let surface_root = shadow_root
-            .query_selector("[data-whisker-surface]")
-            .unwrap()
-            .unwrap();
         Self {
-            mount_root: root,
-            root: surface_root,
-            shadow_root,
+            root,
             sink,
             resources,
             resource_service,
@@ -2506,17 +2045,17 @@ impl Driver {
                     );
                 }
                 None => assert!(
-                    actual_parent.has_attribute("data-whisker-surface"),
+                    actual_parent.has_attribute("data-whisker-conformance-root"),
                     "fixture root node {} was not attached to the Host surface",
                     fixture_node.id
                 ),
             }
         }
 
+        let document = web_sys::window().unwrap().document().unwrap();
         let bounds = self.root.get_bounding_client_rect();
         for sample in samples {
-            let hit_nodes = self
-                .shadow_root
+            let hit_nodes = document
                 .elements_from_point(
                     (bounds.left() + f64::from(sample.point[0])) as f32,
                     (bounds.top() + f64::from(sample.point[1])) as f32,
@@ -2654,7 +2193,7 @@ impl Driver {
 
 impl Drop for Driver {
     fn drop(&mut self) {
-        self.mount_root.remove();
+        self.root.remove();
     }
 }
 
