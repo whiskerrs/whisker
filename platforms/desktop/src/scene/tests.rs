@@ -2,7 +2,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 use crate::element::{
-    DesktopElementFactory, DesktopNativeElement, DesktopNativeEvent, built_in_element_factories,
+    DesktopElementFactory, DesktopNativeElement, DesktopNativeEvent, DesktopViewDefinition,
+    DesktopViewImplementation, built_in_element_factories,
 };
 use whisker::standard_element_registrations;
 use whisker_protocol::{
@@ -1397,6 +1398,54 @@ fn prepared_text_references_follow_committed_scene_content() {
         ))
         .unwrap();
     assert!(!scene.references_prepared_content(second));
+}
+
+#[test]
+fn validation_does_not_instantiate_module_elements() {
+    let element_type = ElementTypeId::new(22).unwrap();
+    let node = id(1);
+    let constructions = Arc::new(AtomicUsize::new(0));
+    let observed_constructions = Arc::clone(&constructions);
+    let mut registrations = standard_element_registrations();
+    registrations.push(ElementRegistration {
+        element_type,
+        name: "whisker.test/PlainText".into(),
+        child_policy: whisker_protocol::ChildPolicy::PlainText,
+        measurement: ElementMeasurement::None,
+        text_style: false,
+        properties: vec![],
+        events: vec![],
+        commands: vec![],
+    });
+    let mut factories = built_in_element_factories();
+    factories.push(
+        DesktopViewDefinition::new("whisker.test/PlainText", move |_| {
+            observed_constructions.fetch_add(1, Ordering::Relaxed);
+        })
+        .plain_text()
+        .into_desktop_factory(),
+    );
+    let mut scene = DesktopScene::new(
+        SurfaceId::new(1).unwrap(),
+        DesktopElementRegistry::bind(&registrations, &factories).unwrap(),
+    );
+
+    scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode { node, element_type },
+                Operation::SetText {
+                    node,
+                    content: text(),
+                },
+            ],
+        ))
+        .unwrap();
+
+    assert_eq!(constructions.load(Ordering::Relaxed), 1);
 }
 
 #[test]
