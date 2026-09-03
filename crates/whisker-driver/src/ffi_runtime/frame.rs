@@ -129,7 +129,7 @@ impl FrameSink for MobileFrameSink {
 // C frame stores pointers into these allocations for the callback duration.
 #[allow(clippy::vec_box)]
 pub(super) struct MobileFrameOwned {
-    value: MobileFrame,
+    pub(super) value: MobileFrame,
     _arena: RawValueArena,
     _layouts: Vec<Box<MobileLayoutGeometry>>,
     _paints: Vec<Box<MobileBoxPaint>>,
@@ -151,7 +151,7 @@ pub(super) struct MobileFrameOwned {
     _font_variations: Vec<Box<[MobileFontVariation]>>,
     _transforms: Vec<Box<[f32; 16]>>,
     _values: Vec<Box<WhiskerValueRaw>>,
-    _strings: Vec<CString>,
+    _strings: Vec<Box<[u8]>>,
     pub(super) _operations: Vec<MobileOperation>,
 }
 
@@ -780,7 +780,7 @@ impl MobileFrameOwned {
             frame_id: packet.header.frame_id,
             base_revision: packet.header.base_revision,
             target_revision: packet.header.target_revision,
-            operations: operations.as_ptr(),
+            operations: nonempty_ptr(&operations),
             operation_count: operations.len(),
         };
         Ok(Self {
@@ -885,7 +885,7 @@ fn mobile_background_repeat(value: ImageRepeat) -> u32 {
 }
 fn mobile_gradient_stops(
     stops: &[whisker_engine::whisker_protocol::GradientStop],
-    strings: &mut Vec<CString>,
+    strings: &mut Vec<Box<[u8]>>,
 ) -> Result<Box<[MobileGradientStop]>, MobileFrameError> {
     if !(2..=4_096).contains(&stops.len()) {
         return Err(MobileFrameError);
@@ -904,7 +904,7 @@ fn mobile_gradient_stops(
 }
 pub(super) fn mobile_paint(
     value: &whisker_engine::whisker_protocol::BoxPaint,
-    strings: &mut Vec<CString>,
+    strings: &mut Vec<Box<[u8]>>,
 ) -> MobileBoxPaint {
     MobileBoxPaint {
         background: mobile_color(&value.background_color, strings),
@@ -945,7 +945,7 @@ pub(super) fn mobile_paint(
 #[allow(clippy::vec_box)]
 fn push_mobile_text(
     content: &TextContent,
-    strings: &mut Vec<CString>,
+    strings: &mut Vec<Box<[u8]>>,
     text_font_families: &mut Vec<Box<[WhiskerStringRef]>>,
     font_features: &mut Vec<Box<[MobileFontFeature]>>,
     font_variations: &mut Vec<Box<[MobileFontVariation]>>,
@@ -1057,7 +1057,7 @@ fn push_mobile_text(
     Ok(texts.last().expect("pushed mobile text").as_ref() as *const _ as *const c_void)
 }
 
-fn mobile_color(value: &PaintColor, strings: &mut Vec<CString>) -> MobileColor {
+fn mobile_color(value: &PaintColor, strings: &mut Vec<Box<[u8]>>) -> MobileColor {
     match value {
         PaintColor::Named(name) => MobileColor {
             kind: 0,
