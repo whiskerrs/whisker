@@ -34,12 +34,12 @@ impl MeasurementProvider for MobileMeasurementHost {
         ) {
             return Err(MobileMeasureError("mobile Host rejected measurement batch"));
         }
-        for raw in &batch.responses {
-            let Some(request) = requests.iter().find(|item| item.key.get() == raw.key) else {
+        for (request, raw) in requests.iter().zip(&batch.responses) {
+            if raw.key != request.key.get() {
                 return Err(MobileMeasureError(
-                    "mobile Host returned an unknown measurement key",
+                    "mobile Host reordered measurement responses",
                 ));
-            };
+            }
             if raw.environment_epoch != request.environment_epoch {
                 return Err(MobileMeasureError(
                     "mobile Host returned a stale measurement epoch",
@@ -317,6 +317,7 @@ pub(super) fn nonempty_ptr<T>(values: &[T]) -> *const T {
         values.as_ptr()
     }
 }
+
 fn available_kind(value: AvailableSpace) -> u8 {
     match value {
         AvailableSpace::Definite(_) => 0,
@@ -324,9 +325,68 @@ fn available_kind(value: AvailableSpace) -> u8 {
         AvailableSpace::MaxContent => 2,
     }
 }
+
 fn available_value(value: AvailableSpace) -> f32 {
     match value {
         AvailableSpace::Definite(value) => value,
         _ => 0.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whisker_engine::whisker_protocol::{
+        ElementTypeId, MeasureConstraints, MeasurementKey, ReplacedContentMeasurePayload,
+    };
+
+    extern "C" fn reorder_responses(
+        _data: *mut c_void,
+        _requests: *const MobileMeasureRequest,
+        count: usize,
+        responses: *mut MobileMeasureResponse,
+    ) -> bool {
+        assert_eq!(count, 2);
+        // SAFETY: `measure_batch` provides exactly `count` writable response slots.
+        let responses = unsafe { std::slice::from_raw_parts_mut(responses, count) };
+        responses[0].key = 2;
+        responses[1].key = 1;
+        responses.iter_mut().for_each(|response| {
+            response.status = MEASURE_READY;
+            response.width = 10.0;
+            response.height = 10.0;
+        });
+        true
+    }
+
+    fn request(key: u64) -> MeasurementRequest {
+        MeasurementRequest {
+            key: MeasurementKey::new(key).unwrap(),
+            node: NodeId::new(key).unwrap(),
+            element_type: ElementTypeId::new(1).unwrap(),
+            environment_epoch: 1,
+            constraints: MeasureConstraints {
+                known_dimensions: [None, None],
+                available_space: [AvailableSpace::MaxContent, AvailableSpace::MaxContent],
+            },
+            payload: MeasurementPayload::ReplacedContent(ReplacedContentMeasurePayload::default()),
+        }
+    }
+
+    #[test]
+    fn host_responses_must_preserve_request_positions() {
+        let mut host = MobileMeasurementHost {
+            callback: reorder_responses,
+            data: std::ptr::null_mut(),
+        };
+        let requests = [request(1), request(2)];
+        let mut responses = Vec::new();
+
+        let error = host
+            .measure_batch(SurfaceId::new(1).unwrap(), &requests, &mut responses)
+            .unwrap_err();
+
+        assert_eq!(error.0, "mobile Host reordered measurement responses");
+        assert!(responses.is_empty());
     }
 }
