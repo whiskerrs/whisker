@@ -128,9 +128,12 @@ public class WhiskerMountedElement internal constructor(
     private val commands: Map<Int, WhiskerCommandComponent>,
     private val eventsByName: Map<String, WhiskerEventBinding>,
     eventSink: WhiskerElementEventSink,
+    private val isolatesFailures: Boolean = false,
+    initiallyFailed: Boolean = false,
 ) {
     private var eventMask: Long = 0
     private var eventSink: WhiskerElementEventSink = eventSink
+    private var failed: Boolean = initiallyFailed
 
     init {
         installEventSink()
@@ -145,43 +148,81 @@ public class WhiskerMountedElement internal constructor(
     }
 
     public fun setProperty(id: Int, value: WhiskerValue) {
-        properties[id]?.setter?.invoke(view, value)
+        runElementOperation("set property", id) { properties[id]?.setter?.invoke(view, value) }
     }
 
     /** Clear is a protocol operation and is intentionally not `WhiskerValue.Null`. */
     public fun clearProperty(id: Int) {
-        properties[id]?.clearer?.invoke(view)
+        runElementOperation("clear property", id) { properties[id]?.clearer?.invoke(view) }
     }
 
     public fun invokeCommand(id: Int, parameters: WhiskerValue) {
-        commands[id]?.handler?.invoke(view, parameters)
+        runElementOperation("invoke command", id) { commands[id]?.handler?.invoke(view, parameters) }
     }
 
     public fun setEventMask(mask: Long) { eventMask = mask }
 
     public fun setText(content: WhiskerTextContent): Boolean {
         val update = textUpdater ?: return false
-        update(view, content)
+        runElementOperation("set text") { update(view, content) }
         return true
     }
 
     public fun setTextStyle(style: WhiskerTextStyle): Boolean {
         val update = textStyleUpdater ?: return false
-        update(view, style)
+        runElementOperation("set text style") { update(view, style) }
         return true
     }
 
-    public fun childrenHost(): android.view.ViewGroup? = childrenHost?.invoke(view)
+    public fun childrenHost(): android.view.ViewGroup? {
+        if (failed) return null
+        if (!isolatesFailures) return childrenHost?.invoke(view)
+        return try {
+            childrenHost?.invoke(view)
+        } catch (error: Exception) {
+            fail("resolve children host", null, error)
+            null
+        }
+    }
 
     /** Resets protocol-owned state before a built-in presentation is reused. */
     public fun prepareForReuse(eventSink: WhiskerElementEventSink) {
         properties.values.forEach { it.clearer(view) }
+        view.visibility = View.VISIBLE
         eventMask = 0
         this.eventSink = eventSink
         installEventSink()
     }
 
     public fun dispose() { (view as? WhiskerEventSource)?.installWhiskerEventSink(null) }
+
+    private inline fun runElementOperation(
+        label: String,
+        member: Int? = null,
+        operation: () -> Unit,
+    ) {
+        if (failed) return
+        if (!isolatesFailures) {
+            operation()
+            return
+        }
+        try {
+            operation()
+        } catch (error: Exception) {
+            fail(label, member, error)
+        }
+    }
+
+    private fun fail(label: String, member: Int?, error: Exception) {
+        if (failed) return
+        failed = true
+        val operation = if (member == null) label else "$label $member"
+        Log.e(
+            "WhiskerElement",
+            "Disabled `${registration.name}` after it failed to $operation; common presentation remains active",
+            error,
+        )
+    }
 }
 
 /** Host-owned declaration. It contains names and behavior, never Rust IDs. */
@@ -362,7 +403,24 @@ public object WhiskerElementRegistry {
         eventSink: WhiskerElementEventSink,
     ): WhiskerMountedElement? {
         val element = boundByType[elementType] ?: return null
-        val view = element.factory.makeView(context)
+        val isolatesFailures = when (element.registration.name) {
+            "whisker.ui/View", "whisker.ui/Text", "whisker.ui/ScrollView" -> false
+            else -> true
+        }
+        val (view, factoryFailed) = if (isolatesFailures) {
+            try {
+                element.factory.makeView(context) to false
+            } catch (error: Exception) {
+                Log.e(
+                    LOG_TAG,
+                    "Disabled `${element.registration.name}` after its View factory failed; common presentation remains active",
+                    error,
+                )
+                View(context) to true
+            }
+        } else {
+            element.factory.makeView(context) to false
+        }
         return WhiskerMountedElement(
             element.registration,
             view,
@@ -373,6 +431,8 @@ public object WhiskerElementRegistry {
             element.commands,
             element.registration.events.associateBy { it.name },
             eventSink,
+            isolatesFailures,
+            factoryFailed,
         )
     }
 

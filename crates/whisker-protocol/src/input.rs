@@ -87,6 +87,31 @@ pub struct PointerInput {
     pub changed_button: i16,
 }
 
+/// Latest Host-owned presentation state that must be visible to input routing.
+///
+/// Hosts coalesce high-frequency changes locally and attach only the newest
+/// value immediately before an input event. Applying these updates does not
+/// invalidate layout or produce frame operations.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum HostPresentationUpdate {
+    /// Logical scroll offset currently presented by a native scroll container.
+    ScrollOffset {
+        /// Scroll container whose descendants are translated by the offset.
+        node: NodeId,
+        /// Latest logical-pixel offset.
+        offset: InputPoint,
+    },
+}
+
+impl HostPresentationUpdate {
+    /// Returns whether all numeric presentation data is finite.
+    pub fn is_valid(self) -> bool {
+        match self {
+            Self::ScrollOffset { offset, .. } => offset.is_valid(),
+        }
+    }
+}
+
 /// One input or provider event entering a retained surface.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputEvent {
@@ -193,5 +218,29 @@ mod tests {
         event.pointer = None;
         event.detail = WhiskerValue::Error("provider failed".into());
         assert_eq!(event.validate(), Err(InputEventError::InvalidDetail));
+    }
+
+    #[test]
+    fn host_presentation_updates_require_finite_offsets() {
+        let update = |offset| HostPresentationUpdate::ScrollOffset {
+            node: NodeId::new(1).unwrap(),
+            offset,
+        };
+
+        assert!(update(InputPoint { x: 1.0, y: 2.0 }).is_valid());
+        assert!(
+            !update(InputPoint {
+                x: f32::NAN,
+                y: 2.0
+            })
+            .is_valid()
+        );
+        assert!(
+            !update(InputPoint {
+                x: 1.0,
+                y: f32::INFINITY
+            })
+            .is_valid()
+        );
     }
 }

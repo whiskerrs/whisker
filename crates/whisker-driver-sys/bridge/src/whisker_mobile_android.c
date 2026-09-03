@@ -143,7 +143,8 @@ static bool bootstrap_host(void* data, const WhiskerMobileBootstrap* bootstrap) 
     jobject view = env != NULL ? local_view(env, data) : NULL;
     if (view == NULL) return false;
     (*env)->CallVoidMethod(env, view, g_begin_bootstrap);
-    for (size_t i = 0; i < bootstrap->registration_count && !clear_exception(env); ++i) {
+    bool failed = clear_exception(env);
+    for (size_t i = 0; i < bootstrap->registration_count && !failed; ++i) {
         const WhiskerMobileElementRegistration* item = &bootstrap->registrations[i];
         jstring name = new_string(env, item->name.ptr, item->name.len);
         jintArray pi = member_ints(env, item->properties, item->property_count, false, false);
@@ -160,9 +161,15 @@ static bool bootstrap_host(void* data, const WhiskerMobileBootstrap* bootstrap) 
             pi, pk, pn, ei, ek, en, ci, ck, cn);
         jobject refs[] = {name, pi, pk, pn, ei, ek, en, ci, ck, cn};
         for (size_t j = 0; j < sizeof(refs) / sizeof(refs[0]); ++j) if (refs[j]) (*env)->DeleteLocalRef(env, refs[j]);
+        // JNI exceptions are cleared so native resources can be released, but remain a sticky
+        // transaction failure. Never finish and publish a partially registered element table.
+        failed = clear_exception(env);
     }
-    bool accepted = !clear_exception(env) && (*env)->CallBooleanMethod(env, view, g_finish_bootstrap) == JNI_TRUE;
-    if (clear_exception(env)) accepted = false;
+    bool accepted = false;
+    if (!failed) {
+        accepted = (*env)->CallBooleanMethod(env, view, g_finish_bootstrap) == JNI_TRUE;
+        if (clear_exception(env)) accepted = false;
+    }
     (*env)->DeleteLocalRef(env, view);
     if (attached) (*g_vm)->DetachCurrentThread(g_vm);
     return accepted;
@@ -1067,6 +1074,8 @@ JNIEXPORT jlong JNICALL Java_rs_whisker_runtime_WhiskerView_nativeCreate(JNIEnv*
     if(!view->runtime){(*env)->DeleteGlobalRef(env,view->surface);free(view);return 0;}return(jlong)(uintptr_t)view;
 }
 JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeTick(JNIEnv* env,jobject self,jlong handle,jdouble timestamp,jfloat width,jfloat height,jfloat scale){(void)env;(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;return view&&view->runtime&&whisker_view_tick(view->runtime,timestamp,width,height,scale)?JNI_TRUE:JNI_FALSE;}
+JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativePause(JNIEnv* env,jobject self,jlong handle){(void)env;(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;return view&&view->runtime&&whisker_view_pause(view->runtime)?JNI_TRUE:JNI_FALSE;}
+JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeResume(JNIEnv* env,jobject self,jlong handle){(void)env;(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;return view&&view->runtime&&whisker_view_resume(view->runtime)?JNI_TRUE:JNI_FALSE;}
 JNIEXPORT void JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDestroy(JNIEnv* env,jobject self,jlong handle){(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;if(!view)return;if(view->runtime)whisker_view_destroy(view->runtime);if(view->surface)(*env)->DeleteGlobalRef(env,view->surface);free(view);}
 
 JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchEvent(JNIEnv* env,jobject self,jlong handle,jlong node,jstring name,jobject detail,jdouble timestamp){
@@ -1076,11 +1085,21 @@ JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchEve
     release_raw(&raw);free(bytes);return consumed?JNI_TRUE:JNI_FALSE;
 }
 
-JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchPointer(JNIEnv* env,jobject self,jlong handle,jdouble timestamp,jint event,jlong pointer_id,jint pointer_kind,jfloat x,jfloat y,jint buttons,jint changed_button){
-    (void)env;(void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;
+JNIEXPORT jboolean JNICALL Java_rs_whisker_runtime_WhiskerView_nativeDispatchPointer(JNIEnv* env,jobject self,jlong handle,jdouble timestamp,jint event,jlong pointer_id,jint pointer_kind,jfloat x,jfloat y,jint buttons,jint changed_button,jlongArray scroll_nodes,jfloatArray scroll_offsets){
+    (void)self;WhiskerAndroidView* view=(void*)(uintptr_t)handle;
     if(!view||!view->runtime||pointer_id<=0||buttons<0||changed_button<INT16_MIN||changed_button>INT16_MAX)return JNI_FALSE;
-    return whisker_view_dispatch_pointer(view->runtime,timestamp,(uint32_t)event,(uint64_t)pointer_id,
-        (uint32_t)pointer_kind,x,y,(uint32_t)buttons,(int16_t)changed_button)?JNI_TRUE:JNI_FALSE;
+    if(!scroll_nodes||!scroll_offsets)return JNI_FALSE;
+    jsize scroll_count=(*env)->GetArrayLength(env,scroll_nodes);
+    if(scroll_count<0||(*env)->GetArrayLength(env,scroll_offsets)!=scroll_count*2)return JNI_FALSE;
+    jlong* nodes=scroll_count?(*env)->GetLongArrayElements(env,scroll_nodes,NULL):NULL;
+    jfloat* offsets=scroll_count?(*env)->GetFloatArrayElements(env,scroll_offsets,NULL):NULL;
+    if(scroll_count&&(!nodes||!offsets)){if(nodes)(*env)->ReleaseLongArrayElements(env,scroll_nodes,nodes,JNI_ABORT);if(offsets)(*env)->ReleaseFloatArrayElements(env,scroll_offsets,offsets,JNI_ABORT);return JNI_FALSE;}
+    bool consumed=whisker_view_dispatch_pointer(view->runtime,timestamp,(uint32_t)event,(uint64_t)pointer_id,
+        (uint32_t)pointer_kind,x,y,(uint32_t)buttons,(int16_t)changed_button,
+        (const uint64_t*)nodes,(const float*)offsets,(size_t)scroll_count);
+    if(nodes)(*env)->ReleaseLongArrayElements(env,scroll_nodes,nodes,JNI_ABORT);
+    if(offsets)(*env)->ReleaseFloatArrayElements(env,scroll_offsets,offsets,JNI_ABORT);
+    return consumed?JNI_TRUE:JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL Java_rs_whisker_runtime_WhiskerView_nativeResolveModule(JNIEnv* env,jobject self,jlong callback_ptr,jlong data_ptr,jobject payload){

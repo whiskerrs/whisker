@@ -12,7 +12,7 @@ internal object MobileAbi {
     const val VALUE_MAP: Int = 7
     const val VALUE_ERROR: Int = 8
     const val MOBILE_ABI_MAJOR: Int = 2
-    const val MOBILE_ABI_MINOR: Int = 29
+    const val MOBILE_ABI_MINOR: Int = 30
     const val FRAME_PROTOCOL_MAJOR: Int = 1
     const val FRAME_PROTOCOL_MINOR: Int = 4
     const val CAPABILITY_ELLIPTICAL_BORDER_RADIUS: Long = 0x0001
