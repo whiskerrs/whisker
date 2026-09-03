@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-image-v0.12.0...whisker-image-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(image)* support web and desktop hosts
+- *(macros)* unify composition around public builders
+- align module APIs across hosts
+- *(host)* package mobile runtimes as platform SDKs
+- *(host)* unify retained module runtime across platforms
+
+### Fixed
+
+- *(android)* unblock SDK publication
+- *(image)* export element schema for Rust hosts
+- *(ci)* address lru security advisories
+
+### Other
+
+- refresh architecture and Rust API guidance
+- remove legacy Lynx runtime dependencies
+- *(ui)* align builtin public contracts
+- *(css)* require structured style values
+
 ## [0.11.1](https://github.com/whiskerrs/whisker/compare/whisker-image-v0.11.0...whisker-image-v0.11.1) - 2026-08-12
 
 ### Other

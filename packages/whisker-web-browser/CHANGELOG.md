@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-web-browser-v0.12.0...whisker-web-browser-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(web-browser)* support web and desktop hosts
+- *(host)* package mobile runtimes as platform SDKs
+- *(host)* unify retained module runtime across platforms
+
+### Fixed
+
+- *(android)* unblock SDK publication
+
+### Other
+
+- *(modules)* link every Rust host module
+- remove legacy Lynx runtime dependencies
+
 ## [0.11.1](https://github.com/whiskerrs/whisker/compare/whisker-web-browser-v0.11.0...whisker-web-browser-v0.11.1) - 2026-08-12
 
 ### Other

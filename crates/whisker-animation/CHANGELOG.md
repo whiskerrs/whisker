@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-animation-v0.12.0...whisker-animation-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(host)* unify retained module runtime across platforms
+
+### Other
+
+- refresh architecture and Rust API guidance
+- Isolate runtime state and module events per surface
+- remove legacy Lynx runtime dependencies
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-animation-v0.10.12...whisker-animation-v0.11.0) - 2026-08-11
 
 ### Other

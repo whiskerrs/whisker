@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-cng-v0.12.0...whisker-cng-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(modules)* declare platform support explicitly
+- *(web)* replace Trunk with Whisker dev server
+- connect native hosts to hot reload
+- *(host)* package mobile runtimes as platform SDKs
+- *(host)* unify retained module runtime across platforms
+
+### Fixed
+
+- *(router)* complete cross-platform navigation
+- *(router)* restore Android host navigation
+- *(ios)* keep Xcode builds on the active CLI
+- *(android)* complete Aurora Wallet host integration
+
+### Other
+
+- Merge pull request #656 from whiskerrs/codex/review-rollup-tooling-ci
+- make clippy checks reproducible
+- *(cng)* expect normalized Rust host crate names
+- Merge pull request #559 from whiskerrs/codex/router-platform-manifest
+- *(router)* adopt explicit platform manifest
+- refresh architecture and Rust API guidance
+- *(module)* unify host installation kernels
+- *(cng)* centralize project dependency resolution
+- remove legacy Lynx runtime dependencies
+- split large modules by responsibility
+- test mobile native consumer linking
+- *(desktop)* keep virtual scrolling interactive
+- *(host)* add cross-platform conformance harness
+- Add cross-platform Host bootstraps ([#419](https://github.com/whiskerrs/whisker/pull/419))
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-cng-v0.10.12...whisker-cng-v0.11.0) - 2026-08-11
 
 ### Other

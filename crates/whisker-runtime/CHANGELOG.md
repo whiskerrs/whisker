@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.12.0...whisker-runtime-v0.13.0) - 2026-09-03
+
+### Added
+
+- *(router)* define navigation semantics
+- *(macros)* unify composition around public builders
+- connect native hosts to hot reload
+- negotiate host rendering capabilities
+- *(list)* finalize virtualization grid and scrolling
+- *(list)* add Rust-owned virtualized list foundation
+- align module APIs across hosts
+- *(motion)* complete transform and lifecycle support
+- *(host)* unify retained module runtime across platforms
+- *(elements)* implement RFC0004 module registry
+
+### Fixed
+
+- *(runtime)* recover from host transaction failures
+- *(router)* complete cross-platform navigation
+- *(web)* keep virtual rows ahead of scrolling
+- *(ci)* restore module parity quality gates
+- *(desktop)* connect scrolling and pointer targets
+
+### Other
+
+- Merge pull request #656 from whiskerrs/codex/review-rollup-tooling-ci
+- *(ci)* satisfy current stable clippy
+- refresh architecture and Rust API guidance
+- Merge remote-tracking branch 'origin/next-architecture' into codex/mobile-element-schema-freeze
+- Isolate runtime state and module events per surface
+- remove legacy Lynx runtime dependencies
+- split large modules by responsibility
+- *(ui)* align builtin public contracts
+- *(css)* require structured style values
+- *(list)* recycle compatible presentation slots
+- *(list)* index large sources for scrolling
+- make component commands one-way
+- rebuild driver as mobile FFI adapter
+- Complete retained Rust rendering and Host-driven runtime loop ([#418](https://github.com/whiskerrs/whisker/pull/418))
+
 ## [0.11.1](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.11.0...whisker-runtime-v0.11.1) - 2026-08-12
 
 ### Other
