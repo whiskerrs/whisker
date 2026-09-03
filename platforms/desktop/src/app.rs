@@ -11,7 +11,10 @@ use crate::{
 };
 use whisker::runtime::RuntimeWakeHandle;
 use whisker::runtime::module::RustModuleDefinition;
-use whisker::{Element, ElementModuleDefinition, ElementRegistry, RuntimeInstance, SurfaceRuntime};
+use whisker::{
+    Element, ElementModuleDefinition, ElementRegistry, InputDispatch, RuntimeInstance,
+    SurfaceRuntime,
+};
 use whisker_protocol::{
     CursorKeyword, InputEvent, InputEventKind, LayoutRect, SurfaceId, WhiskerValue,
 };
@@ -426,18 +429,23 @@ impl DesktopApplication {
         let Some(runtime) = &self.runtime else {
             return;
         };
-        if let Err(error) = self
+        let should_request_frame = match self
             .host
             .as_ref()
             .expect("mounted Desktop runtime has a Host")
             .with_modules(|| runtime.dispatch_input(&event))
         {
-            eprintln!("dispatch {TARGET_NAME} input failed: {error}");
+            Ok(dispatch) => input_dispatch_needs_frame(dispatch),
+            Err(error) => {
+                eprintln!("dispatch {TARGET_NAME} input failed: {error}");
+                // A failed transaction may still have committed independent
+                // valid mutations. Rendering gives it a recovery boundary.
+                true
+            }
+        };
+        if should_request_frame {
+            self.request_frame();
         }
-        // A failed transaction may still have committed independent valid
-        // mutations. Rendering also gives a transient binding failure its
-        // one-shot recovery boundary.
-        self.request_frame();
     }
 
     fn sync_text_input(&self) {
@@ -762,6 +770,10 @@ fn printable_key_text(text: Option<&str>) -> Option<&str> {
     text.filter(|text| !text.is_empty() && text.chars().all(|character| !character.is_control()))
 }
 
+fn input_dispatch_needs_frame(dispatch: InputDispatch) -> bool {
+    dispatch.consumed || dispatch.queued
+}
+
 fn ime_cursor_area(rect: LayoutRect) -> (winit::dpi::LogicalPosition<f64>, LogicalSize<f64>) {
     (
         winit::dpi::LogicalPosition::new(rect.x as f64, rect.y as f64),
@@ -771,7 +783,10 @@ fn ime_cursor_area(rect: LayoutRect) -> (winit::dpi::LogicalPosition<f64>, Logic
 
 #[cfg(test)]
 mod tests {
-    use super::{DesktopAppConfig, ime_cursor_area, printable_key_text};
+    use super::{
+        DesktopAppConfig, ime_cursor_area, input_dispatch_needs_frame, printable_key_text,
+    };
+    use whisker::InputDispatch;
     use whisker_protocol::LayoutRect;
 
     #[test]
@@ -813,5 +828,18 @@ mod tests {
         assert_eq!(position.y, 20.0);
         assert_eq!(size.width, 120.0);
         assert_eq!(size.height, 44.0);
+    }
+
+    #[test]
+    fn unhandled_pointer_motion_does_not_request_a_gpu_frame() {
+        assert!(!input_dispatch_needs_frame(InputDispatch::default()));
+        assert!(input_dispatch_needs_frame(InputDispatch {
+            consumed: true,
+            ..InputDispatch::default()
+        }));
+        assert!(input_dispatch_needs_frame(InputDispatch {
+            queued: true,
+            ..InputDispatch::default()
+        }));
     }
 }
