@@ -9,7 +9,7 @@ use whisker_protocol::{
     Accessibility, ApplyResult, BackgroundAttachment, BackgroundLayer, BackgroundSize, BlendMode,
     BoxClip, BoxPaint, ClipShape, Cursor, ElementTypeId, FillRule, FrameMode, FramePacket,
     HitTestBehavior, ImageRepeat, LayoutGeometry, LayoutRect, NodeId, Operation, OverflowClip,
-    PaintBox, PaintColor, PaintCoordinate, PaintImage, PaintPosition, PathCommand, PointerId,
+    PaintBox, PaintColor, PaintCoordinate, PaintImage, PaintPosition, PathCommand,
     RadialGradientExtent, ResourceId, SceneProjection, SurfaceId, TextContent, Transform,
     ValidationError, Visibility, VisualEffects, WhiskerValue,
 };
@@ -338,7 +338,6 @@ pub(crate) struct DesktopScene {
     elements: DesktopElementRegistry,
     nodes: HashMap<NodeId, RenderNode>,
     smooth_scrolls: HashMap<NodeId, SmoothScroll>,
-    pointer_captures: HashMap<PointerId, NodeId>,
     presentation_pool: HashMap<ElementTypeId, Vec<DesktopElementContent>>,
     pending_events: Arc<Mutex<Vec<DesktopProviderEvent>>>,
     event_wake: RuntimeWakeHandle,

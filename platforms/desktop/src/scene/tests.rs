@@ -128,7 +128,7 @@ fn packet(mode: FrameMode, base: u64, target: u64, operations: Vec<Operation>) -
 }
 
 #[test]
-fn pointer_capture_is_retained_and_released_by_the_desktop_surface() {
+fn runtime_owned_pointer_capture_operations_are_accepted_by_the_desktop_surface() {
     let node = id(1);
     let pointer = whisker_protocol::PointerId::new(7).unwrap();
     let mut scene = scene(SurfaceId::new(1).unwrap());
@@ -147,7 +147,6 @@ fn pointer_capture_is_retained_and_released_by_the_desktop_surface() {
             ],
         ))
         .unwrap();
-    assert_eq!(scene.pointer_captures.get(&pointer), Some(&node));
 
     scene
         .present(&packet(
@@ -157,7 +156,6 @@ fn pointer_capture_is_retained_and_released_by_the_desktop_surface() {
             vec![Operation::ReleasePointerCapture { node, pointer }],
         ))
         .unwrap();
-    assert!(!scene.pointer_captures.contains_key(&pointer));
 }
 
 const CHECKED: PropertyId = PropertyId::new(1).unwrap();
