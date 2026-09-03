@@ -675,6 +675,13 @@
       "checkpoints": ["measurement", "semantic-projection"]
     },
     {
+      "id": "host.measure.text.min-content",
+      "feature": "text-measurement-min-content",
+      "fixture": "core/text-measure-min-content.json",
+      "required_hosts": ["desktop", "web", "android", "ios"],
+      "checkpoints": ["measurement"]
+    },
+    {
       "id": "core.pointer-style-lynx",
       "feature": "cursor-pointer-events",
       "fixture": "core/pointer-style-lynx.json",

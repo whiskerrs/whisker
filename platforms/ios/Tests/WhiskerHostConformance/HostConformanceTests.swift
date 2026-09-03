@@ -1144,7 +1144,12 @@ private final class Driver {
         request.kind = UInt32(WHISKER_MEASURE_TEXT)
         request.environment_epoch = 1
         request.available_width = Float(try number(command, "available_width"))
-        request.available_width_kind = 0
+        request.available_width_kind = switch command["available_width_kind"] as? String ?? "definite" {
+        case "definite": 0
+        case "min_content": 1
+        case "max_content": 2
+        default: throw Failure("unsupported available_width_kind")
+        }
         request.available_height_kind = 2
         request.font_style = fontStyle
         request.wrap = wrap
