@@ -177,6 +177,48 @@ fn accessibility_protocol_maps_to_dom_semantics() {
 }
 
 #[wasm_bindgen_test]
+fn host_page_selectors_do_not_style_whisker_nodes() {
+    let document = web_sys::window().unwrap().document().unwrap();
+    let page_style = document.create_element("style").unwrap();
+    page_style.set_text_content(Some("div { margin-left: 31px !important; }"));
+    document.body().unwrap().append_child(&page_style).unwrap();
+    let mut driver = Driver::new();
+    let node = NodeId::new(1).unwrap();
+    let view = ElementRegistry::standard()
+        .registration_for_builtin(whisker::ElementTag::View)
+        .unwrap()
+        .element_type;
+    driver
+        .sink
+        .present(&FramePacket {
+            header: FrameHeader {
+                version: ProtocolVersion::CURRENT,
+                surface: SurfaceId::new(1).unwrap(),
+                scene_epoch: 1,
+                frame_id: 1,
+                base_revision: 0,
+                target_revision: 1,
+                viewport_epoch: 1,
+                mode: FrameMode::Snapshot,
+            },
+            operations: vec![Operation::CreateNode {
+                node,
+                element_type: view,
+            }],
+        })
+        .unwrap();
+    let computed = web_sys::window()
+        .unwrap()
+        .get_computed_style(&driver.node(1))
+        .unwrap()
+        .unwrap();
+    let margin = computed.get_property_value("margin-left").unwrap();
+    page_style.remove();
+
+    assert_eq!(margin, "0px");
+}
+
+#[wasm_bindgen_test]
 async fn scroll_view_emits_geometry_and_honors_scroll_behavior() {
     let mut driver = Driver::new();
     let registry = ElementRegistry::standard();
@@ -623,7 +665,9 @@ async fn typed_resource_commands_and_events_cross_the_web_runtime_boundary() {
 }
 
 struct Driver {
+    mount_root: web_sys::Element,
     root: web_sys::Element,
+    shadow_root: web_sys::ShadowRoot,
     sink: DomFrameSink,
     resources: WebResourceStore,
     resource_service: WebResourceService,
@@ -681,8 +725,15 @@ impl Driver {
             crate::capabilities::detect_host_capabilities(),
         )
         .unwrap();
+        let shadow_root = root.shadow_root().unwrap();
+        let surface_root = shadow_root
+            .query_selector("[data-whisker-surface]")
+            .unwrap()
+            .unwrap();
         Self {
-            root,
+            mount_root: root,
+            root: surface_root,
+            shadow_root,
             sink,
             resources,
             resource_service,
@@ -1886,17 +1937,17 @@ impl Driver {
                     );
                 }
                 None => assert!(
-                    actual_parent.has_attribute("data-whisker-conformance-root"),
+                    actual_parent.has_attribute("data-whisker-surface"),
                     "fixture root node {} was not attached to the Host surface",
                     fixture_node.id
                 ),
             }
         }
 
-        let document = web_sys::window().unwrap().document().unwrap();
         let bounds = self.root.get_bounding_client_rect();
         for sample in samples {
-            let hit_nodes = document
+            let hit_nodes = self
+                .shadow_root
                 .elements_from_point(
                     (bounds.left() + f64::from(sample.point[0])) as f32,
                     (bounds.top() + f64::from(sample.point[1])) as f32,
@@ -2034,7 +2085,7 @@ impl Driver {
 
 impl Drop for Driver {
     fn drop(&mut self) {
-        self.root.remove();
+        self.mount_root.remove();
     }
 }
 

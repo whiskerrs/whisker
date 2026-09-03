@@ -97,13 +97,35 @@ const fn cursor_keyword_css(value: whisker_protocol::CursorKeyword) -> &'static 
 impl DomFrameSink {
     pub(crate) fn new_with_resources(
         document: web_sys::Document,
-        root: web_sys::Element,
+        mount: web_sys::Element,
         surface: SurfaceId,
         registrations: &[ElementRegistration],
         factories: &[WebElementFactory],
         resources: WebResourceStore,
         capabilities: whisker_protocol::RenderCapabilities,
     ) -> Result<Self, WebError> {
+        let shadow = if let Some(shadow) = mount.shadow_root() {
+            shadow.set_inner_html("");
+            shadow
+        } else {
+            mount
+                .attach_shadow(&web_sys::ShadowRootInit::new(web_sys::ShadowRootMode::Open))
+                .map_err(|error| js_error("attach Whisker shadow root", error))?
+        };
+        let root = document
+            .create_element("div")
+            .map_err(|error| js_error("create Whisker Web surface root", error))?;
+        root.set_attribute("data-whisker-surface", "")
+            .map_err(|error| js_error("mark Whisker Web surface root", error))?;
+        set_style(&root, "all", "initial")?;
+        set_style(&root, "display", "block")?;
+        set_style(&root, "position", "relative")?;
+        set_style(&root, "width", "100%")?;
+        set_style(&root, "height", "100%")?;
+        set_style(&root, "overflow", "hidden")?;
+        shadow
+            .append_child(&root)
+            .map_err(|error| js_error("attach Whisker Web surface root", error))?;
         Ok(Self {
             capabilities,
             document,
