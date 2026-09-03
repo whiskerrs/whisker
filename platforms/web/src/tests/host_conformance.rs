@@ -226,6 +226,47 @@ fn dom_failure_discards_partial_transaction_and_recovers_from_snapshot() {
 }
 
 #[wasm_bindgen_test]
+fn border_widths_use_resolved_pixels_and_hidden_takes_no_space() {
+    let mut driver = Driver::new();
+    let mut frame = packet(
+        1,
+        [0.0, 0.0, 40.0, 20.0],
+        &ColorFixture::Named {
+            value: "transparent".to_owned(),
+        },
+        None,
+    );
+    let paint = frame
+        .operations
+        .iter_mut()
+        .find_map(|operation| match operation {
+            Operation::SetBoxPaint { paint, .. } => Some(paint),
+            _ => None,
+        })
+        .unwrap();
+    paint.border_widths.top = PaintLengthPercentage {
+        length: 7.0,
+        fraction: 0.25,
+    };
+    paint.border_widths.right = PaintLengthPercentage {
+        length: 1.0,
+        fraction: 0.1,
+    };
+    paint.border_styles.top = BorderLineStyle::Hidden;
+    paint.border_styles.right = BorderLineStyle::Solid;
+
+    assert_eq!(
+        driver.sink.present(&frame).unwrap(),
+        ApplyResult::Accepted { revision: 1 }
+    );
+    let node = driver.root.first_element_child().unwrap();
+    let style = node.dyn_ref::<web_sys::HtmlElement>().unwrap().style();
+    assert_style(&style, "border-top-width", "0px");
+    assert_style(&style, "border-right-width", "5px");
+    driver.root.remove();
+}
+
+#[wasm_bindgen_test]
 fn accessibility_protocol_maps_to_dom_semantics() {
     let mut driver = Driver::new();
     let view_type = ElementRegistry::standard()
