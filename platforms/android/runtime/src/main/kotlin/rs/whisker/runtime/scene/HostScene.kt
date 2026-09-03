@@ -152,6 +152,9 @@ internal class HostScene(
     }
 
     fun clear() {
+        pointerCaptures.values.forEach { nodeId ->
+            nodes[nodeId]?.parent?.requestDisallowInterceptTouchEvent(false)
+        }
         nodes.values.toList().forEach(::releasePresentation)
         nodes.clear()
         parents.clear()
@@ -349,15 +352,16 @@ internal class HostScene(
             }
             OP_CURSOR -> (nodes[id] ?: return).setCursorKeyword(operation.integer)
             OP_CAPTURE -> {
-                pointerCaptures[operation.wide] = id
-                root.parent?.requestDisallowInterceptTouchEvent(true)
+                pointerCaptures.put(operation.wide, id)?.let { previousNode ->
+                    nodes[previousNode]?.parent?.requestDisallowInterceptTouchEvent(false)
+                }
+                reapplyNativePointerInterception()
             }
             OP_RELEASE_CAPTURE -> {
                 if (pointerCaptures[operation.wide] == id) {
                     pointerCaptures.remove(operation.wide)
-                    if (pointerCaptures.isEmpty()) {
-                        root.parent?.requestDisallowInterceptTouchEvent(false)
-                    }
+                    nodes[id]?.parent?.requestDisallowInterceptTouchEvent(false)
+                    reapplyNativePointerInterception()
                 }
             }
         }
@@ -475,11 +479,16 @@ internal class HostScene(
     }
 
     private fun deleteNode(id: Long) {
-        val node = nodes.remove(id) ?: return
+        val node = nodes[id] ?: return
         val descendants = nodes.keys.filter { candidate -> isDescendant(candidate, id) }
         val removedNodes = descendants.toSet() + id
-        pointerCaptures.entries.removeAll { it.value in removedNodes }
-        if (pointerCaptures.isEmpty()) root.parent?.requestDisallowInterceptTouchEvent(false)
+        pointerCaptures.entries.removeAll { (_, capturedNode) ->
+            if (capturedNode !in removedNodes) return@removeAll false
+            nodes[capturedNode]?.parent?.requestDisallowInterceptTouchEvent(false)
+            true
+        }
+        reapplyNativePointerInterception()
+        nodes.remove(id)
         descendants.forEach { child ->
             nodes.remove(child)?.let(::releasePresentation)
             parents.remove(child)
@@ -487,6 +496,17 @@ internal class HostScene(
         parents.remove(id)
         (node.parent as? ViewGroup)?.removeView(node)
         releasePresentation(node)
+    }
+
+    /** Propagates capture from its actual node through nested native scrollers to the window. */
+    private fun reapplyNativePointerInterception() {
+        if (pointerCaptures.isEmpty()) {
+            root.parent?.requestDisallowInterceptTouchEvent(false)
+            return
+        }
+        pointerCaptures.values.forEach { nodeId ->
+            (nodes[nodeId]?.parent ?: root.parent)?.requestDisallowInterceptTouchEvent(true)
+        }
     }
 
     private fun releasePresentation(node: HostNode) {
