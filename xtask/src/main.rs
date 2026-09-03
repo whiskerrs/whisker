@@ -12,6 +12,8 @@ mod rust_host_link_test;
 
 #[cfg(test)]
 mod host_sdk_surface;
+#[cfg(test)]
+mod module_contract;
 
 fn main() -> Result<()> {
     let mut arguments = std::env::args().skip(1);

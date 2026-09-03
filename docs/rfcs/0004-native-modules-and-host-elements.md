@@ -161,9 +161,10 @@ per target, but it is not decomposed into one renderer per element.
 
 ### Registration and identity
 
-An element has one versionless name, for example `whisker.ui/Text`
-or `whisker.google-maps/GoogleMap`. Build composition embeds a matching Host
-factory. During surface bootstrap, core:
+An element has one versionless name, for example the built-in
+`whisker.ui/Text` or the module element `whisker-google-maps:GoogleMap`.
+Build composition embeds a matching Host factory. During surface bootstrap,
+core:
 
 1. collects element schemas from selected modules;
 2. rejects duplicate names;
@@ -187,7 +188,7 @@ The author-facing definition states only the cross-platform contract:
 
 ```rust,ignore
 #[whisker::module_element(
-    name = "example.controls/Toggle",
+    name = "example-controls:Toggle",
     measurement = None,
 )]
 pub fn toggle(
@@ -539,7 +540,7 @@ language-idiomatic, but every Host definition uses stable strings:
 public func definition() -> ModuleDefinition {
   Name("WhiskerTextInput")
 
-  View("whisker.input/TextInput", TextInputView.self) {
+  View("whisker-input:TextInput", TextInputView.self) {
     Prop("value") { view, value in view.reconcileValue(value) }
     Events("change", "selectionChange")
     Command("focus") { view, _ in view.focus() }
@@ -590,7 +591,7 @@ qualified as `<cargo-crate>:<Name>` by mobile build composition. Ordinary Rust
 Desktop/Web Host crates declare that resulting qualified name directly because
 they use Cargo dependency resolution rather than mobile discovery codegen.
 Every `View` uses an explicit, versionless, package-qualified element name such
-as `whisker.video/Video`; element and service identities are separate.
+as `whisker-video:Video`; element and service identities are separate.
 
 All application data crossing this boundary is composed from `WhiskerValue`.
 Properties and events carry one value, service functions carry a positional

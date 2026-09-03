@@ -23,7 +23,7 @@ internal object ModuleDefinitionSamples {
     internal fun videoModuleDefinition(): ModuleDefinition = ModuleDefinition {
         Name("Video")
 
-        View("sample/Video", FakeVideoView::class.java) {
+        View("sample-module:Video", FakeVideoView::class.java) {
             Prop("src") { view: FakeVideoView, value ->
                 view.setSrc(value.asString() ?: "")
             }

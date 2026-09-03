@@ -10,7 +10,7 @@
 // @WhiskerModule
 // public final class VideoModule: Module {
 //     public override func definition() -> ModuleDefinition {
-//         Name("whisker-video:Video")
+//         Name("Video")
 //
 //         View("whisker-video:Video", WhiskerVideoView.self) {
 //             Prop("src") { (view: WhiskerVideoView, value: String) in
