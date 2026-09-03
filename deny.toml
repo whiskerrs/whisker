@@ -25,7 +25,7 @@ yanked = "deny"
 #     macOS text shaping and rasterization. Both advisories report
 #     unmaintained crates, not vulnerabilities. glyphon 0.10 moves to
 #     harfrust/skrifa through cosmic-text 0.15, but also requires wgpu 28
-#     (Rust 1.92), beyond the workspace's Rust 1.85 floor. Revisit when a
+#     (Rust 1.92), beyond the workspace's Rust 1.88 floor. Revisit when a
 #     compatible glyphon/wgpu release lets us remove both exceptions.
 #
 # Vulnerability accepted with rationale (no compatible fixed version):
@@ -40,10 +40,8 @@ yanked = "deny"
 #     zbus-xml 5.1 <- zbus-lockstep <- AccessKit's Linux AT-SPI backend.
 #     This path parses only the upstream AT-SPI crate's checked-in interface
 #     XML from cfg(test) lockstep checks; Whisker's runtime does not feed it
-#     external XML. quick-xml 0.41 is available only through zbus releases
-#     requiring Rust 1.87, above the workspace's Rust 1.85 floor. Revisit when
-#     zbus ships a fixed release that preserves Rust 1.85 support, or when the
-#     workspace MSRV is raised.
+#     external XML. The current AccessKit dependency graph still resolves
+#     zbus-lockstep to quick-xml 0.38; revisit when that graph upgrades.
 #   RUSTSEC-2026-0002 / RUSTSEC-2026-0253  lru 0.12.5 <- glyphon 0.9 and
 #     ratatui 0.29. Whisker's own image cache uses fixed lru >=0.18.2.
 #     The remaining transitive callers do not use the affected IterMut or
