@@ -34,6 +34,9 @@ import rs.whisker.runtime.input.normalizePointerInput
 import rs.whisker.runtime.bridge.MobileAbi
 import rs.whisker.runtime.measure.HostMeasureBatchAbi
 import rs.whisker.runtime.measure.resolveTextLayoutSemantics
+import rs.whisker.runtime.paint.HostBoxShadow
+import rs.whisker.runtime.paint.ResolvedBoxGeometry
+import rs.whisker.runtime.paint.drawOuterBoxShadows
 import rs.whisker.runtime.scene.HostAccessibility
 import rs.whisker.runtime.scene.HostNode
 
@@ -146,6 +149,35 @@ class HostConformanceTest {
                 val context = ApplicationProvider.getApplicationContext<android.content.Context>()
                 assertTrue(Driver(context, "pointer-capture").acceptsPointerCapture())
             }
+    }
+
+    @Test
+    fun outerBoxShadowDoesNotPaintInsideTransparentBorderBox() {
+        val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.translate(20f, 20f)
+        drawOuterBoxShadows(
+            canvas,
+            ResolvedBoxGeometry(
+                width = 20f,
+                height = 20f,
+                borderWidths = FloatArray(4),
+                cornerRadii = FloatArray(8),
+            ),
+            listOf(
+                HostBoxShadow(
+                    offsetX = 0f,
+                    offsetY = 0f,
+                    blurRadius = 0f,
+                    spreadRadius = 5f,
+                    color = android.graphics.Color.RED,
+                    inset = false,
+                ),
+            ),
+        )
+
+        assertEquals(0, android.graphics.Color.alpha(bitmap.getPixel(30, 30)))
+        assertEquals(android.graphics.Color.RED, bitmap.getPixel(17, 30))
     }
 
     @Test

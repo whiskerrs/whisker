@@ -5,6 +5,7 @@ import android.graphics.BlurMaskFilter
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Region
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -23,7 +24,14 @@ internal fun drawOuterBoxShadows(
     shadows: List<HostBoxShadow>,
 ) {
     val box = geometry ?: return
+    if (box.width <= 0f || box.height <= 0f) return
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    val save = canvas.save()
+    @Suppress("DEPRECATION")
+    canvas.clipPath(
+        roundedPath(RectF(0f, 0f, box.width, box.height), box.cornerRadii),
+        Region.Op.DIFFERENCE,
+    )
     shadows.asReversed().forEach { shadow ->
         if (shadow.inset) return@forEach
         val spread = shadow.spreadRadius
@@ -48,6 +56,7 @@ internal fun drawOuterBoxShadows(
         canvas.drawPath(roundedPath(rect, radii), paint)
     }
     paint.maskFilter = null
+    canvas.restoreToCount(save)
 }
 
 internal fun drawInsetBoxShadows(
