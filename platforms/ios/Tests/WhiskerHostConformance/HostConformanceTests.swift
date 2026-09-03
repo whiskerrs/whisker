@@ -87,7 +87,9 @@ final class HostConformanceTests: XCTestCase {
             root: root,
             resources: HostResourceStore(),
             logicalBounds: { CGRect(x: 0, y: 0, width: 100, height: 100) },
-            emitElementEvent: { _, _, _ in }
+            emitElementEvent: { _, _, _ in },
+            updateScrollOffset: { _, _ in },
+            removeScrollOffset: { _ in }
         )
         let registration = WhiskerElementRegistration(
             elementType: 1,
