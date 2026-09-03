@@ -1048,7 +1048,10 @@ mod tests {
 
         assert_eq!(
             error,
-            Err(ValidationError::DuplicateNode { node: duplicate })
+            Err(ValidationError::NodeIdDidNotAdvance {
+                previous: duplicate,
+                received: duplicate,
+            })
         );
     }
 

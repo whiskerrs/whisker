@@ -1118,13 +1118,15 @@ impl Scene {
 
     fn snapshot_operations(&self) -> Vec<Operation> {
         let mut operations = Vec::new();
-        for (node, state) in &self.nodes {
+        let mut nodes: Vec<_> = self.nodes.iter().collect();
+        nodes.sort_unstable_by_key(|(node, _)| node.get());
+        for (node, state) in nodes.iter().copied() {
             operations.push(Operation::CreateNode {
                 node: *node,
                 element_type: state.element_type,
             });
         }
-        for (parent, state) in &self.nodes {
+        for (parent, state) in nodes.iter().copied() {
             for (index, child) in state.children.iter().enumerate() {
                 operations.push(Operation::InsertChild {
                     parent: *parent,
@@ -1133,7 +1135,7 @@ impl Scene {
                 });
             }
         }
-        for (node, state) in &self.nodes {
+        for (node, state) in nodes {
             if let Some(geometry) = state.layout {
                 operations.push(Operation::SetLayout {
                     node: *node,
@@ -1841,6 +1843,27 @@ mod tests {
         let packet = scene.prepare_frame(1).unwrap().unwrap();
 
         assert_eq!(packet.header.version, protocol);
+    }
+
+    #[test]
+    fn snapshots_create_nodes_in_allocation_order() {
+        let mut scene = Scene::new(surface());
+        let expected: Vec<_> = (0..64)
+            .map(|_| scene.create_node(element_type(1)).expect("node"))
+            .collect();
+        scene.set_opacity(expected[0], 0.5).expect("opacity");
+
+        let snapshot = prepared(&mut scene);
+        let actual: Vec<_> = snapshot
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                Operation::CreateNode { node, .. } => Some(*node),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
