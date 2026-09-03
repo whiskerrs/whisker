@@ -39,7 +39,10 @@ thread_local! {
 }
 
 pub(crate) struct TaskState {
-    pool: LocalPool,
+    // Kept behind its own RefCell so polling the pool does not mutably
+    // borrow the whole TaskState. A running task may legitimately call
+    // `spawn_local`; that only needs the independent spawner.
+    pool: RefCell<LocalPool>,
     spawner: LocalSpawner,
 }
 
@@ -47,7 +50,10 @@ impl TaskState {
     pub(crate) fn new() -> Self {
         let pool = LocalPool::new();
         let spawner = pool.spawner();
-        Self { pool, spawner }
+        Self {
+            pool: RefCell::new(pool),
+            spawner,
+        }
     }
 }
 
@@ -196,7 +202,7 @@ where
 /// runtime already drives it every tick.
 pub fn run_until_stalled() {
     TASKS.with(|tasks| {
-        tasks.borrow_mut().pool.run_until_stalled();
+        tasks.borrow().pool.borrow_mut().run_until_stalled();
     });
 }
 
@@ -316,6 +322,25 @@ mod tests {
         }
         run_until_stalled();
         assert_eq!(counter.get(), 5);
+    }
+
+    #[test]
+    fn running_task_can_spawn_another_local_task() {
+        let _g = lock();
+        reset_all();
+        let phase = Rc::new(Cell::new(0));
+        let outer_phase = phase.clone();
+        spawn_local(async move {
+            outer_phase.set(1);
+            let inner_phase = outer_phase.clone();
+            spawn_local(async move {
+                inner_phase.set(2);
+            });
+        });
+
+        run_until_stalled();
+
+        assert_eq!(phase.get(), 2);
     }
 
     /// Future that returns Pending on its first poll (re-waking
