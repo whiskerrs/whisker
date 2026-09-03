@@ -21,6 +21,7 @@ import rs.whisker.runtime.WhiskerElementRegistry
 import rs.whisker.runtime.WhiskerMeasureRequest
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.resolveWhiskerTypeface
+import rs.whisker.runtime.internal.CenteredLineHeightSpan
 
 /** Intrinsic measurement implementation shared by all Android Host frames. */
 internal class HostMeasurementProvider(private val context: Context) {
@@ -131,16 +132,28 @@ internal class HostMeasurementProvider(private val context: Context) {
             indentLogicalPixels,
             indentPercentage,
         )
-        val layoutText: CharSequence = if (displayText.isEmpty() || semantics.indentPixels == 0f) {
+        val layoutText: CharSequence = if (
+            displayText.isEmpty() || (semantics.indentPixels == 0f && lineHeight <= 0f)
+        ) {
             displayText
         } else {
             SpannableString(displayText).apply {
-                setSpan(
-                    LeadingMarginSpan.Standard(semantics.indentPixels.toInt(), 0),
-                    0,
-                    length,
-                    Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
-                )
+                if (semantics.indentPixels != 0f) {
+                    setSpan(
+                        LeadingMarginSpan.Standard(semantics.indentPixels.toInt(), 0),
+                        0,
+                        length,
+                        Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
+                    )
+                }
+                if (lineHeight > 0f) {
+                    setSpan(
+                        CenteredLineHeightSpan(lineHeight * density),
+                        0,
+                        length,
+                        Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
+                    )
+                }
             }
         }
         val maxWidthPx = if (availableWidthKind == DEFINITE && wrap != 0) {
@@ -161,10 +174,6 @@ internal class HostMeasurementProvider(private val context: Context) {
             )
         if (overflow == TEXT_OVERFLOW_ELLIPSIS) {
             builder.setEllipsize(TextUtils.TruncateAt.END).setEllipsizedWidth(maxWidthPx)
-        }
-        if (lineHeight > 0f) {
-            val fontHeight = paint.fontMetrics.run { descent - ascent }
-            builder.setLineSpacing((lineHeight * density - fontHeight).coerceAtLeast(0f), 1f)
         }
         val layout = builder.build()
         val width = when {

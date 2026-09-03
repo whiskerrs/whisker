@@ -44,10 +44,7 @@ public object WhiskerBuiltInElements {
                 } else {
                     0f
                 }
-                content.lineHeight?.let { lineHeight ->
-                    val fontHeight = view.paint.fontMetrics.run { descent - ascent }
-                    view.setLineSpacing((lineHeight * density - fontHeight).coerceAtLeast(0f), 1f)
-                } ?: view.setLineSpacing(0f, 1f)
+                view.setLineSpacing(0f, 1f)
                 view.setWhiskerText(content)
                 view.textDirection = when (content.direction) {
                     WhiskerTextDirection.AUTO -> View.TEXT_DIRECTION_FIRST_STRONG

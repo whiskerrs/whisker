@@ -13,6 +13,7 @@ import android.os.Build
 import android.text.style.LeadingMarginSpan
 import android.widget.TextView
 import kotlin.math.max
+import rs.whisker.runtime.internal.CenteredLineHeightSpan
 
 /** Native text element implementing Whisker's single-line decorations. */
 public class WhiskerTextView(context: Context) : TextView(context) {
@@ -107,6 +108,14 @@ public class WhiskerTextView(context: Context) : TextView(context) {
                 length,
                 Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
             )
+            whiskerLineHeight?.let { lineHeight ->
+                setSpan(
+                    CenteredLineHeightSpan(lineHeight * density),
+                    0,
+                    length,
+                    Spanned.SPAN_INCLUSIVE_EXCLUSIVE,
+                )
+            }
         }
     }
 
