@@ -88,8 +88,7 @@ internal class HostScene(
     private var stagedTargetRevision = 0L
     private var stagedSnapshot = false
     private val stagedOperations = ArrayList<HostSceneOperation>()
-    private var applyingFrame = false
-    private val deferredEvents = ArrayList<() -> Unit>()
+    private val eventGate = HostEventGate { event -> root.post(event) }
     private val pointerCaptures = HashMap<Long, Long>()
 
     /** 0 stages a transaction, 1 asks Rust for a snapshot, 2 rejects. */
@@ -119,7 +118,7 @@ internal class HostScene(
             return false
         }
         return try {
-            applyingFrame = true
+            eventGate.beginFrame()
             if (stagedSnapshot) clear()
             stagedOperations.forEach(::applyOperation)
             attachRoots()
@@ -133,15 +132,12 @@ internal class HostScene(
             Log.e("WhiskerView", "Frame commit failed", error)
             false
         } finally {
-            applyingFrame = false
-            val events = deferredEvents.toList()
-            deferredEvents.clear()
-            events.forEach { it() }
+            eventGate.endFrame()
         }
     }
 
     fun dispatchOrDefer(event: () -> Unit) {
-        if (applyingFrame) deferredEvents += event else event()
+        eventGate.dispatch(event)
     }
 
     fun clear() {

@@ -27,6 +27,21 @@ final class HostConformanceTests: XCTestCase {
         WhiskerModuleKernel.install(BuiltInElementModule())
     }
 
+    func testElementEventsWaitUntilAfterFramePresentationReturns() {
+        var scheduled: (() -> Void)?
+        let gate = HostEventGate { scheduled = $0 }
+        var events: [String] = []
+
+        gate.beginFrame()
+        gate.dispatch { events.append("first") }
+        gate.dispatch { events.append("second") }
+        gate.endFrame()
+
+        XCTAssertTrue(events.isEmpty)
+        scheduled?()
+        XCTAssertEqual(events, ["first", "second"])
+    }
+
     func testPointerCaptureOperationsReachTheUIKitSurface() {
         let view = WhiskerView(frame: .zero)
         let registration = WhiskerElementRegistration(

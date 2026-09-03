@@ -14,8 +14,9 @@ final class HostScene {
     private var zOrders: [UInt64: Int32] = [:]
     private var sceneEpoch: UInt32 = 0
     private var revision: UInt64 = 0
-    private var applyingFrame = false
-    private var deferredEvents: [() -> Void] = []
+    private let eventGate = HostEventGate { event in
+        DispatchQueue.main.async(execute: event)
+    }
     private var pointerCaptures: [UInt64: UInt64] = [:]
 
     init(
@@ -59,12 +60,9 @@ final class HostScene {
             response.revision = revision
             return true
         }
-        applyingFrame = true
+        eventGate.beginFrame()
         defer {
-            applyingFrame = false
-            let events = deferredEvents
-            deferredEvents.removeAll()
-            events.forEach { $0() }
+            eventGate.endFrame()
         }
         if frame.mode == UInt8(WHISKER_FRAME_SNAPSHOT) { clear() }
         for operation in values where !apply(operation) {
@@ -82,7 +80,7 @@ final class HostScene {
     }
 
     func dispatchOrDefer(_ event: @escaping () -> Void) {
-        if applyingFrame { deferredEvents.append(event) } else { event() }
+        eventGate.dispatch(event)
     }
 
     func clear() {
