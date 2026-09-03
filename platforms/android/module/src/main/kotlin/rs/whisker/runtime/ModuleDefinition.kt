@@ -10,14 +10,16 @@
 // @WhiskerModule
 // class VideoModule : Module() {
 //     override fun definition() = ModuleDefinition {
-//         Name("whisker-video:Video")
+//         Name("Video")
 //
 //         View("whisker-video:Video", WhiskerVideoComponent::class.java) {
-//             Prop("src") { view: WhiskerVideoComponent, value: String -> view.setSrc(value) }
+//             Prop("src") { view: WhiskerVideoComponent, value ->
+//                 view.setSrc(value.asString() ?: "")
+//             }
 //             Command("play")  { view: WhiskerVideoComponent, _: WhiskerValue -> view.play()  }
 //             Command("pause") { view: WhiskerVideoComponent, _: WhiskerValue -> view.pause() }
 //             Command("seek")  { view: WhiskerVideoComponent, value: WhiskerValue ->
-//                 (value as? WhiskerValue.Float64)?.let { view.seek(it.value) }
+//                 value.asDouble()?.let(view::seek)
 //             }
 //             Events("onCompleted")
 //         }
@@ -64,8 +66,8 @@ public data class WhiskerNameComponent(public val value: String) :
     WhiskerDefinitionComponent
 
 /**
- * `View(Foo::class.java) { ... }` — registers a native View class
- * + its inner DSL block (Prop / Command / Events). The class is
+ * `View("package/Element", Foo::class.java) { ... }` — registers a native View class
+ * + its explicit Rust element identity and inner DSL block (Prop / Command / Events). The class is
  * type-erased to `Class<*>` so the parent struct isn't generic;
  * the concrete class is typically a [WhiskerUI] subclass.
  */
@@ -206,20 +208,6 @@ public class WhiskerModuleDefinitionBuilder {
     /** `Name("Foo")` — the module's local tag name. */
     public fun Name(value: String): WhiskerDefinitionComponent =
         WhiskerNameComponent(value).also { components.add(it) }
-
-    /**
-     * `View(MyView::class.java) { ... }` — registers a native View
-     * class + its inner DSL block (Prop / Command / Events).
-     */
-    public fun View(
-        viewClass: Class<*>,
-        block: WhiskerViewDefinitionBuilder.() -> Unit,
-    ): WhiskerDefinitionComponent {
-        val b = WhiskerViewDefinitionBuilder()
-        b.block()
-        return WhiskerViewComponent(viewClass = viewClass, components = b.components.toList())
-            .also { components.add(it) }
-    }
 
     /** String-declared element identity, resolved to Rust IDs at bootstrap. */
     public fun View(
