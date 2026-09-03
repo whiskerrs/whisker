@@ -53,47 +53,6 @@ pub(crate) struct WebProviderEvent {
     pub(crate) detail: WhiskerValue,
 }
 
-const fn cursor_keyword_css(value: whisker_protocol::CursorKeyword) -> &'static str {
-    use whisker_protocol::CursorKeyword;
-    match value {
-        CursorKeyword::Auto => "auto",
-        CursorKeyword::Default => "default",
-        CursorKeyword::None => "none",
-        CursorKeyword::ContextMenu => "context-menu",
-        CursorKeyword::Help => "help",
-        CursorKeyword::Pointer => "pointer",
-        CursorKeyword::Progress => "progress",
-        CursorKeyword::Wait => "wait",
-        CursorKeyword::Cell => "cell",
-        CursorKeyword::Crosshair => "crosshair",
-        CursorKeyword::Text => "text",
-        CursorKeyword::VerticalText => "vertical-text",
-        CursorKeyword::Alias => "alias",
-        CursorKeyword::Copy => "copy",
-        CursorKeyword::Move => "move",
-        CursorKeyword::NoDrop => "no-drop",
-        CursorKeyword::NotAllowed => "not-allowed",
-        CursorKeyword::Grab => "grab",
-        CursorKeyword::Grabbing => "grabbing",
-        CursorKeyword::ColResize => "col-resize",
-        CursorKeyword::RowResize => "row-resize",
-        CursorKeyword::NResize => "n-resize",
-        CursorKeyword::EResize => "e-resize",
-        CursorKeyword::SResize => "s-resize",
-        CursorKeyword::WResize => "w-resize",
-        CursorKeyword::NeResize => "ne-resize",
-        CursorKeyword::NwResize => "nw-resize",
-        CursorKeyword::SeResize => "se-resize",
-        CursorKeyword::SwResize => "sw-resize",
-        CursorKeyword::EwResize => "ew-resize",
-        CursorKeyword::NsResize => "ns-resize",
-        CursorKeyword::NeswResize => "nesw-resize",
-        CursorKeyword::NwseResize => "nwse-resize",
-        CursorKeyword::ZoomIn => "zoom-in",
-        CursorKeyword::ZoomOut => "zoom-out",
-    }
-}
-
 impl DomFrameSink {
     pub(crate) fn new_with_resources(
         document: web_sys::Document,
@@ -153,21 +112,6 @@ impl DomFrameSink {
                 {
                     Some("visual-effects payload")
                 }
-                Operation::SetCursor { cursor, .. } if !cursor.resources.is_empty() => {
-                    Some("resource-backed cursor")
-                }
-                Operation::SetText { content, .. }
-                    if content.paint.decoration.lines.overline
-                        || (content.paint.decoration.lines.underline
-                            && content.paint.decoration.lines.line_through)
-                        || !matches!(
-                            content.paint.decoration.thickness,
-                            whisker_protocol::TextDecorationThickness::Auto
-                        )
-                        || content.paint.shadows.len() > 1 =>
-                {
-                    Some("text-effects")
-                }
                 _ => None,
             })
         {
@@ -190,6 +134,21 @@ impl DomFrameSink {
         }) {
             return Err(WebError(format!(
                 "DOM Host background resource {} is not registered",
+                resource.get()
+            )));
+        }
+        if let Some(resource) = packet.operations.iter().find_map(|operation| {
+            let Operation::SetCursor { cursor, .. } = operation else {
+                return None;
+            };
+            cursor
+                .resources
+                .iter()
+                .find(|candidate| !self.resources.contains(candidate.resource))
+                .map(|candidate| candidate.resource)
+        }) {
+            return Err(WebError(format!(
+                "DOM Host cursor resource {} is not registered",
                 resource.get()
             )));
         }
@@ -497,11 +456,9 @@ impl DomFrameSink {
                 )?;
             }
             Operation::SetCursor { node, cursor } => {
-                set_style(
-                    &self.node(*node)?,
-                    "cursor",
-                    cursor_keyword_css(cursor.fallback),
-                )?;
+                paint::cursor::apply(&self.node(*node)?, cursor, |resource| {
+                    self.resources.url(resource)
+                })?;
             }
             Operation::SetProperty {
                 node,
