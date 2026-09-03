@@ -21,8 +21,8 @@ use crate::view::{BindType, DynRenderer, Element, with_installed_renderer};
 use whisker_engine::whisker_layout::LayoutSize;
 use whisker_engine::whisker_protocol::{
     Accessibility, BoxPaint, ElementRegistration, ElementSchema, ElementValueKind, HitTestBehavior,
-    InputEvent, InputEventError, LayoutGeometry, MeasurementReady, NodeId, PaintColor,
-    ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
+    HostPresentationUpdate, InputEvent, InputEventError, LayoutGeometry, MeasurementReady, NodeId,
+    PaintColor, ResourceCommand, ResourceEvent, ResourceId, ResourceMessageError, SurfaceId,
 };
 #[cfg(test)]
 use whisker_engine::whisker_style::ComputedTransformFunction;
@@ -171,6 +171,8 @@ pub enum RuntimeInputError {
     },
     /// Host timing or pointer geometry was invalid.
     InvalidInput(InputEventError),
+    /// Coalesced Host presentation state contained invalid numeric data.
+    InvalidPresentation,
     /// The Host named a node that is no longer live.
     UnknownTarget {
         /// Stale or invalid target.
@@ -480,6 +482,15 @@ impl SurfaceRuntime {
 
     /// Hit-tests and routes one Host-normalized event through Rust listeners.
     pub fn dispatch_input(&self, event: &InputEvent) -> Result<InputDispatch, RuntimeInputError> {
+        self.dispatch_input_with_presentation(event, &[])
+    }
+
+    /// Applies coalesced Host presentation state, then hit-tests and routes one event.
+    pub fn dispatch_input_with_presentation(
+        &self,
+        event: &InputEvent,
+        presentation: &[HostPresentationUpdate],
+    ) -> Result<InputDispatch, RuntimeInputError> {
         let (target, firings, body) = {
             let mut state = self.state.borrow_mut();
             state
@@ -492,6 +503,29 @@ impl SurfaceRuntime {
                 });
             }
             event.validate().map_err(RuntimeInputError::InvalidInput)?;
+            for update in presentation {
+                if !update.is_valid() {
+                    return Err(RuntimeInputError::InvalidPresentation);
+                }
+            }
+            for update in presentation {
+                match *update {
+                    HostPresentationUpdate::ScrollOffset { node, offset } => {
+                        // The Host can observe a scroll callback immediately
+                        // before a committed frame removes that native node.
+                        // Keep newer updates in the same coalesced batch and
+                        // route the input against the current retained scene.
+                        if state.surface.node(node).is_none() {
+                            continue;
+                        }
+                        state
+                            .surface
+                            .update_host_scroll_offset(node, [offset.x, offset.y])
+                            .map_err(RuntimeBindingError::from)
+                            .map_err(RuntimeInputError::Binding)?;
+                    }
+                }
+            }
             let root = state.root.ok_or(RuntimeInputError::MissingRoot)?;
             let captured = event
                 .pointer
@@ -1801,6 +1835,63 @@ const EVENT_NAMED: u64 = 1 << 2;
 
 #[cfg(test)]
 mod motion_tests;
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use crate::element::ElementTag;
+    use crate::view::create_element;
+    use whisker_protocol::{InputEventKind, InputPoint, SurfaceId, WhiskerValue};
+
+    #[test]
+    fn stale_scroll_updates_do_not_discard_current_updates_or_input() {
+        crate::reactive::__reset_for_tests();
+        let surface = SurfaceRuntime::new(
+            SurfaceId::new(91).unwrap(),
+            StyleEnvironment::new(320.0, 480.0, 1.0, 14.0),
+        );
+        let mut runtime =
+            crate::RuntimeInstance::new(surface.clone(), crate::RuntimeWakeHandle::new(|| {}));
+        runtime.mount(|| create_element(ElementTag::View)).unwrap();
+        let root = surface.root().unwrap();
+        let stale = NodeId::new(u64::MAX).unwrap();
+
+        let dispatch = runtime
+            .dispatch_input_with_presentation(
+                &InputEvent {
+                    surface: surface.surface(),
+                    timestamp_ms: 1.0,
+                    kind: InputEventKind::Click,
+                    pointer: None,
+                    target: Some(root),
+                    detail: WhiskerValue::Null,
+                },
+                &[
+                    HostPresentationUpdate::ScrollOffset {
+                        node: stale,
+                        offset: InputPoint { x: 1.0, y: 2.0 },
+                    },
+                    HostPresentationUpdate::ScrollOffset {
+                        node: root,
+                        offset: InputPoint { x: 3.0, y: 4.0 },
+                    },
+                ],
+            )
+            .unwrap();
+
+        assert!(!dispatch.queued);
+        assert_eq!(
+            surface
+                .state
+                .borrow()
+                .surface
+                .node(root)
+                .unwrap()
+                .host_scroll_offset(),
+            [3.0, 4.0]
+        );
+    }
+}
 
 mod event;
 mod renderer;

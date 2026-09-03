@@ -273,6 +273,20 @@ impl SurfaceEngine {
             .map_err(SurfaceError::Scene)
     }
 
+    /// Synchronizes one native scroll container's transient logical offset.
+    ///
+    /// This state participates only in Rust hit testing. It does not dirty
+    /// layout or echo a frame operation back to the Host.
+    pub fn update_host_scroll_offset(
+        &mut self,
+        node: NodeId,
+        offset: [f32; 2],
+    ) -> Result<(), SurfaceError> {
+        self.scene
+            .update_host_scroll_offset(node, offset)
+            .map_err(SurfaceError::Scene)
+    }
+
     /// Returns the node currently retaining one pointer capture.
     pub fn pointer_capture_target(&self, pointer: PointerId) -> Option<NodeId> {
         self.scene.pointer_capture_target(pointer)
@@ -1569,6 +1583,17 @@ mod tests {
         assert_eq!(surface.hit_test(root, point), Ok(Some(root)));
         assert_eq!(
             surface.hit_test(missing, point),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        assert_eq!(surface.update_host_scroll_offset(root, [1.0, 2.0]), Ok(()));
+        assert_eq!(
+            surface.update_host_scroll_offset(root, [f32::NAN, 0.0]),
+            Err(SurfaceError::Scene(SceneError::NonFiniteNumber))
+        );
+        assert_eq!(
+            surface.update_host_scroll_offset(missing, [0.0, 0.0]),
             Err(SurfaceError::Scene(SceneError::UnknownNode {
                 node: missing
             }))

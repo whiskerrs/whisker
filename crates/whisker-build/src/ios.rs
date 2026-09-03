@@ -60,6 +60,8 @@ const FRAMEWORK_NAME: &str = "WhiskerDriver";
 const BRIDGE_EXPORTS: &[&str] = &[
     "_whisker_view_create",
     "_whisker_view_tick",
+    "_whisker_view_pause",
+    "_whisker_view_resume",
     "_whisker_view_destroy",
     "_whisker_view_dispatch_event",
     "_whisker_view_dispatch_pointer",

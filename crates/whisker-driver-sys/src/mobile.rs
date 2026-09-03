@@ -8,7 +8,7 @@ use std::ffi::c_void;
 use crate::{WhiskerBytesRef, WhiskerStringRef, WhiskerValueRaw};
 
 pub const MOBILE_ABI_MAJOR: u16 = 2;
-pub const MOBILE_ABI_MINOR: u16 = 29;
+pub const MOBILE_ABI_MINOR: u16 = 30;
 pub const FRAME_PROTOCOL_MAJOR: u16 = 1;
 pub const FRAME_PROTOCOL_MINOR: u16 = 4;
 
@@ -614,6 +614,8 @@ unsafe extern "C" {
         height: f32,
         scale: f32,
     ) -> bool;
+    pub fn whisker_view_pause(handle: *mut c_void) -> bool;
+    pub fn whisker_view_resume(handle: *mut c_void) -> bool;
     pub fn whisker_view_destroy(handle: *mut c_void);
     pub fn whisker_view_dispatch_event(
         handle: *mut c_void,
@@ -633,6 +635,9 @@ unsafe extern "C" {
         y: f32,
         buttons: u32,
         changed_button: i16,
+        scroll_nodes: *const u64,
+        scroll_offsets: *const f32,
+        scroll_count: usize,
     ) -> bool;
     pub fn whisker_view_dispatch_module_event(
         handle: *mut c_void,

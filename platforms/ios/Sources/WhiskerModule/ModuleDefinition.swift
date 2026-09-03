@@ -114,8 +114,8 @@ public struct WhiskerViewComponent: WhiskerDefinitionComponent {
 /// `view` is the native element instance the value was set on; `value`
 /// is the raw `WhiskerValue` — no auto-deserialization, the author
 /// destructures it, e.g. `value.asString`.
-public typealias WhiskerPropSetter = (_ view: AnyObject, _ value: WhiskerValue) -> Void
-public typealias WhiskerPropClearer = (_ view: AnyObject) -> Void
+public typealias WhiskerPropSetter = (_ view: AnyObject, _ value: WhiskerValue) throws -> Void
+public typealias WhiskerPropClearer = (_ view: AnyObject) throws -> Void
 
 /// Prop component — a single named setter on the view class.
 public struct WhiskerPropComponent: WhiskerViewDefinitionComponent {
@@ -169,7 +169,7 @@ public struct WhiskerAsyncFunctionComponent: WhiskerDefinitionComponent {
 }
 
 /// One-way command applied to a mounted Host View.
-public typealias WhiskerCommandHandler = (_ view: AnyObject, _ parameters: WhiskerValue) -> Void
+public typealias WhiskerCommandHandler = (_ view: AnyObject, _ parameters: WhiskerValue) throws -> Void
 
 public struct WhiskerCommandComponent: WhiskerViewDefinitionComponent {
     public let name: String
@@ -181,7 +181,7 @@ public struct WhiskerCommandComponent: WhiskerViewDefinitionComponent {
 }
 
 /// Resolved inherited text-style consumer for a native View.
-public typealias WhiskerTextStyleHandler = (_ view: AnyObject, _ style: WhiskerTextStyle) -> Void
+public typealias WhiskerTextStyleHandler = (_ view: AnyObject, _ style: WhiskerTextStyle) throws -> Void
 
 public struct WhiskerTextStyleComponent: WhiskerViewDefinitionComponent {
     public let handler: WhiskerTextStyleHandler
@@ -506,12 +506,12 @@ public func OnStopObserving(
 /// silently no-ops on a view-type mismatch (debug-build log).
 public func Prop<V: AnyObject>(
     _ name: String,
-    clear: @escaping (V) -> Void = { _ in },
-    _ setter: @escaping (V, WhiskerValue) -> Void
+    clear: @escaping (V) throws -> Void = { _ in },
+    _ setter: @escaping (V, WhiskerValue) throws -> Void
 ) -> WhiskerViewDefinitionComponent {
     WhiskerPropComponent(
         name: name,
-        clearer: { uiAny in if let ui = uiAny as? V { clear(ui) } }
+        clearer: { uiAny in if let ui = uiAny as? V { try clear(ui) } }
     ) { uiAny, value in
         guard let ui = uiAny as? V else {
             #if DEBUG
@@ -519,16 +519,16 @@ public func Prop<V: AnyObject>(
             #endif
             return
         }
-        setter(ui, value)
+        try setter(ui, value)
     }
 }
 
 /// Receives the resolved inherited text style for a native View.
 public func TextStyle<V: AnyObject>(
-    _ handler: @escaping (V, WhiskerTextStyle) -> Void
+    _ handler: @escaping (V, WhiskerTextStyle) throws -> Void
 ) -> WhiskerViewDefinitionComponent {
     WhiskerTextStyleComponent { view, style in
-        if let typed = view as? V { handler(typed, style) }
+        if let typed = view as? V { try handler(typed, style) }
     }
 }
 
@@ -548,11 +548,11 @@ public func Measurement(
 /// One-way command on a mounted View.
 public func Command<V: AnyObject>(
     _ name: String,
-    _ handler: @escaping (V, WhiskerValue) -> Void
+    _ handler: @escaping (V, WhiskerValue) throws -> Void
 ) -> WhiskerViewDefinitionComponent {
     WhiskerCommandComponent(name: name) { viewAny, parameters in
         guard let view = viewAny as? V else { return }
-        handler(view, parameters)
+        try handler(view, parameters)
     }
 }
 

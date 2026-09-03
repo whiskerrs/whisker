@@ -16,6 +16,17 @@ public enum WhiskerChildPolicy: Hashable {
 /// Top-level shape of a value carried by `WhiskerValue`.
 public enum WhiskerValueKind: Hashable {
     case null, bool, int, float, string, bytes, array, map
+
+    public func accepts(_ value: WhiskerValue) -> Bool {
+        guard value.isData else { return false }
+        switch (self, value) {
+        case (.null, .null), (.bool, .bool), (.int, .int), (.float, .float),
+             (.string, .string), (.bytes, .bytes), (.array, .array), (.map, .map):
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 /// Runtime-assigned property identity received during surface bootstrap.
@@ -70,6 +81,8 @@ public struct WhiskerElementRegistration {
     public let properties: [WhiskerPropertyBinding]
     public let events: [WhiskerEventBinding]
     public let commands: [WhiskerCommandBinding]
+    private let propertiesByID: [Int: WhiskerPropertyBinding]
+    private let commandsByID: [Int: WhiskerCommandBinding]
 
     public init(
         elementType: Int,
@@ -97,5 +110,11 @@ public struct WhiskerElementRegistration {
         self.properties = properties
         self.events = events
         self.commands = commands
+        self.propertiesByID = Dictionary(uniqueKeysWithValues: properties.map { ($0.id, $0) })
+        self.commandsByID = Dictionary(uniqueKeysWithValues: commands.map { ($0.id, $0) })
     }
+
+    public func property(_ id: Int) -> WhiskerPropertyBinding? { propertiesByID[id] }
+
+    public func command(_ id: Int) -> WhiskerCommandBinding? { commandsByID[id] }
 }
