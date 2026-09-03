@@ -550,3 +550,40 @@ Rust 1.88 decision.
 Before closing any original pull request, each rollup must preserve the chosen
 commits, pass the relevant Host conformance suite, and include a PR-number to
 commit mapping in its description.
+
+## Re-audit decisions after composing all seven rollups
+
+The seven branches were also merged locally in their intended order. This
+found interactions that were invisible while each original patch was tested
+alone and one external-review recommendation that does not match CSS syntax.
+
+- Reject #584's Unicode-whitespace restriction. CSS identifier code points
+  include every non-ASCII code point, including characters that Rust classifies
+  as Unicode whitespace or controls. The Core rollup keeps the existing
+  non-ASCII behavior and adds explicit coverage for it.
+- Keep built-in element failures fail-fast and isolate only package/custom
+  elements. The Web rollup now preserves that distinction after declared
+  factories are bound; the Android rollup preserves the same boundary while
+  moving bindings from process-global state to each surface.
+- Remove the Web Host's outer full-scene projection clone. Protocol validation
+  is already transactional; after a DOM apply failure the live DOM is cleared,
+  so the matching projection is reset to revision zero and requests a full
+  snapshot. Successful delta frames now retain only the protocol validator's
+  changed-node undo state.
+- Ignore a stale scroll-offset update for a node already absent from the Rust
+  scene, while still validating every numeric payload and applying current
+  updates in the same batch. This avoids discarding a valid pointer sample for
+  a normal Host/scene race and adds no per-scroll FFI call.
+- Treat Android detach as temporary even when no `ViewTreeLifecycleOwner` is
+  installed. Ownerless embedders must call `WhiskerView.destroy()` for final
+  teardown because `onDetachedFromWindow()` cannot distinguish reparenting
+  from destruction.
+- Do not add Host-side pause queues for module or resource completions. The
+  runtime already accepts them while paused into retained state, suppresses
+  wakeups, and defers reactive effects. Adding another queue would duplicate
+  payloads and introduce a new overflow policy; RFC 0002 is clarified to state
+  the implemented contract.
+- Host implementation changes from shared contract fixes belong in the four
+  Host rollups. The Runtime/ABI rollup retains only platform-neutral runtime,
+  protocol, driver, generated-binding, and common-fixture changes so the seven
+  pull requests do not overwrite each other's Host files.
