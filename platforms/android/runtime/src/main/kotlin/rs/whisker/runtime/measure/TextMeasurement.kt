@@ -17,13 +17,16 @@ import java.text.Bidi
 import java.util.Locale
 import kotlin.math.ceil
 import rs.whisker.runtime.WhiskerAvailableSpace
-import rs.whisker.runtime.WhiskerElementRegistry
+import rs.whisker.runtime.WhiskerElementBindings
 import rs.whisker.runtime.WhiskerMeasureRequest
 import rs.whisker.runtime.WhiskerValue
 import rs.whisker.runtime.resolveWhiskerTypeface
 
 /** Intrinsic measurement implementation shared by all Android Host frames. */
-internal class HostMeasurementProvider(private val context: Context) {
+internal class HostMeasurementProvider(
+    private val context: Context,
+    private val elements: WhiskerElementBindings,
+) {
     @Suppress("LongParameterList")
     fun measure(
         elementType: Int, kind: Int,
@@ -55,7 +58,7 @@ internal class HostMeasurementProvider(private val context: Context) {
                 if (knownMask and HEIGHT != 0) knownHeight else intrinsicHeight,
             )
         }
-        val custom = WhiskerElementRegistry.measure(
+        val custom = elements.measure(
             elementType,
             WhiskerMeasureRequest(
                 if (availableWidthKind == DEFINITE) availableWidth else null,

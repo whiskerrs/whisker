@@ -48,10 +48,11 @@ class WhiskerView(context: Context) :
     private var frameScheduled = false
     private var windowVisible = true
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val measurements = HostMeasurementProvider(context)
-    private val bootstrap = HostElementBootstrap()
+    private val elements = WhiskerElementRegistry.newBindings()
+    private val measurements = HostMeasurementProvider(context, elements)
+    private val bootstrap = HostElementBootstrap(elements)
     private val rasterResources = HostRasterResourceStore()
-    private val scene = HostScene(this, context, ::dispatchElementEvent, rasterResources)
+    private val scene = HostScene(this, context, ::dispatchElementEvent, rasterResources, elements)
     private val resourceService = HostResourceService(
         rasterResources,
         ::handleResourceEvent,

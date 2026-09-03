@@ -230,19 +230,59 @@ private data class WhiskerDeclaredElement(
     val commands: Map<String, WhiskerCommandComponent>,
 )
 
-private data class WhiskerBoundElement(
+internal data class WhiskerBoundElement(
     val registration: WhiskerElementRegistration,
     val factory: WhiskerElementFactory,
     val properties: Map<Int, WhiskerPropComponent>,
     val commands: Map<Int, WhiskerCommandComponent>,
 )
 
-/** Process-wide Host declaration registry and per-surface negotiated table. */
+/** One surface's immutable-after-bootstrap mapping from Rust IDs to Host declarations. */
+public class WhiskerElementBindings private constructor() {
+    @Volatile private var boundByType: Map<Int, WhiskerBoundElement> = emptyMap()
+
+    internal fun publish(bindings: Map<Int, WhiskerBoundElement>) {
+        boundByType = bindings
+    }
+
+    public fun mount(
+        elementType: Int,
+        context: Context,
+        eventSink: WhiskerElementEventSink,
+    ): WhiskerMountedElement? {
+        val element = boundByType[elementType] ?: return null
+        val view = element.factory.makeView(context)
+        return WhiskerMountedElement(
+            element.registration,
+            view,
+            element.factory.textUpdater,
+            element.factory.textStyleUpdater,
+            element.factory.childrenHost,
+            element.properties,
+            element.commands,
+            element.registration.events.associateBy { it.name },
+            eventSink,
+        )
+    }
+
+    public fun measure(elementType: Int, request: WhiskerMeasureRequest): WhiskerMeasuredSize? =
+        boundByType[elementType]?.factory?.measurer?.invoke(request)
+
+    public fun registration(elementType: Int): WhiskerElementRegistration? =
+        boundByType[elementType]?.registration
+
+    internal companion object {
+        fun empty(): WhiskerElementBindings = WhiskerElementBindings()
+    }
+}
+
+/** Process-wide Host declarations used to negotiate independent surface-local binding tables. */
 public object WhiskerElementRegistry {
     private const val LOG_TAG = "WhiskerElementRegistry"
     private val declarations = ConcurrentHashMap<String, WhiskerDeclaredElement>()
-    @Volatile private var boundByType: Map<Int, WhiskerBoundElement> = emptyMap()
-    @Volatile private var boundByName: Map<String, WhiskerBoundElement> = emptyMap()
+
+    @JvmStatic
+    public fun newBindings(): WhiskerElementBindings = WhiskerElementBindings.empty()
 
     @JvmStatic
     public fun register(factory: WhiskerElementFactory) {
@@ -302,7 +342,10 @@ public object WhiskerElementRegistry {
 
     /** Match Host strings to Rust registrations and compile compact dispatch tables. */
     @JvmStatic
-    public fun bind(registrations: List<WhiskerElementRegistration>): Boolean {
+    public fun bind(
+        target: WhiskerElementBindings,
+        registrations: List<WhiskerElementRegistration>,
+    ): Boolean {
         fun reject(message: String): Boolean {
             Log.e(LOG_TAG, "Host element bootstrap rejected: $message")
             return false
@@ -350,39 +393,9 @@ public object WhiskerElementRegistry {
                 return reject("duplicate Rust element name `${registration.name}`")
             }
         }
-        boundByType = byType
-        boundByName = byName
+        target.publish(byType)
         return true
     }
-
-    @JvmStatic
-    public fun mount(
-        elementType: Int,
-        context: Context,
-        eventSink: WhiskerElementEventSink,
-    ): WhiskerMountedElement? {
-        val element = boundByType[elementType] ?: return null
-        val view = element.factory.makeView(context)
-        return WhiskerMountedElement(
-            element.registration,
-            view,
-            element.factory.textUpdater,
-            element.factory.textStyleUpdater,
-            element.factory.childrenHost,
-            element.properties,
-            element.commands,
-            element.registration.events.associateBy { it.name },
-            eventSink,
-        )
-    }
-
-    @JvmStatic
-    public fun measure(elementType: Int, request: WhiskerMeasureRequest): WhiskerMeasuredSize? =
-        boundByType[elementType]?.factory?.measurer?.invoke(request)
-
-    @JvmStatic
-    public fun registration(elementType: Int): WhiskerElementRegistration? =
-        boundByType[elementType]?.registration
 }
 
 /** Single bootstrap boundary for independently compiled Host modules. */
