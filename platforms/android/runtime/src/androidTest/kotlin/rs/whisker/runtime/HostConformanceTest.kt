@@ -225,6 +225,25 @@ class HostConformanceTest {
     }
 
     @Test
+    fun genericMouseActionsKeepRustHoverStateSynchronized() {
+        listOf(
+            MotionEvent.ACTION_HOVER_ENTER,
+            MotionEvent.ACTION_HOVER_EXIT,
+            MotionEvent.ACTION_SCROLL,
+        ).forEach { action ->
+            val event = MotionEvent.obtain(0L, 0L, action, 10f, 20f, 0)
+            try {
+                val normalized = normalizePointerInput(event, density = 2f).single()
+                assertEquals(1, normalized.event)
+                assertEquals(5f, normalized.x, 0.001f)
+                assertEquals(10f, normalized.y, 0.001f)
+            } finally {
+                event.recycle()
+            }
+        }
+    }
+
+    @Test
     fun projectsAThreeDimensionalTransformOntoTheNodePlane() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
