@@ -8,6 +8,7 @@ pub(super) fn motion_path_state(
 ) -> Option<(f32, f32, f32)> {
     let mut segments = Vec::new();
     let mut total_length = 0.0_f32;
+    let mut zero_length_position = None;
     match path {
         OffsetPathValue::None => return None,
         OffsetPathValue::Path(commands) => {
@@ -19,6 +20,7 @@ pub(super) fn motion_path_state(
                         let point = finite_motion_point(point)?;
                         current = Some(point);
                         subpath_start = Some(point);
+                        zero_length_position.get_or_insert(point);
                         continue;
                     }
                     MotionPathCommandValue::LineTo(point) => {
@@ -90,6 +92,10 @@ pub(super) fn motion_path_state(
                 resolve_motion_length(*center_x, border_width),
                 resolve_motion_length(*center_y, border_height),
             );
+            if ![radius, center.0, center.1].into_iter().all(f32::is_finite) || radius < 0.0 {
+                return None;
+            }
+            zero_length_position = Some((center.0 + radius, center.1));
             append_ellipse(
                 &mut segments,
                 center,
@@ -112,17 +118,34 @@ pub(super) fn motion_path_state(
                 resolve_motion_length(*center_x, border_width),
                 resolve_motion_length(*center_y, border_height),
             );
+            if ![radii.0, radii.1, center.0, center.1]
+                .into_iter()
+                .all(f32::is_finite)
+                || radii.0 < 0.0
+                || radii.1 < 0.0
+            {
+                return None;
+            }
+            zero_length_position = Some((center.0 + radii.0, center.1));
             append_ellipse(&mut segments, center, radii, 0.0, std::f32::consts::TAU);
         }
         OffsetPathValue::Inset(value) => {
-            append_inset_path(&mut segments, value, border_width, border_height)?;
+            zero_length_position = Some(append_inset_path(
+                &mut segments,
+                value,
+                border_width,
+                border_height,
+            )?);
         }
     }
     for segment in &segments {
         total_length += segment.length;
     }
-    if segments.is_empty() || !total_length.is_finite() {
+    if !total_length.is_finite() {
         return None;
+    }
+    if segments.is_empty() {
+        return zero_length_position.map(|point| (point.0, point.1, 0.0));
     }
     let target = progress.clamp(0.0, 1.0) * total_length;
     let mut traversed = 0.0;
@@ -281,7 +304,7 @@ fn append_inset_path(
     value: &whisker_style::ComputedInsetPathValue,
     border_width: f32,
     border_height: f32,
-) -> Option<()> {
+) -> Option<MotionPoint> {
     let mut top = resolve_motion_length(value.offsets.top, border_height);
     let mut right = resolve_motion_length(value.offsets.right, border_width);
     let mut bottom = resolve_motion_length(value.offsets.bottom, border_height);
@@ -309,7 +332,7 @@ fn append_inset_path(
     let width = (border_width - left - right).max(0.0);
     let height = (border_height - top - bottom).max(0.0);
     if width <= 0.0 || height <= 0.0 {
-        return None;
+        return Some((left, top));
     }
     let right_edge = left + width;
     let bottom_edge = top + height;
@@ -427,7 +450,7 @@ fn append_inset_path(
         current = start;
     }
     push_motion_line(segments, current, start);
-    Some(())
+    Some(start)
 }
 
 fn push_motion_segment(

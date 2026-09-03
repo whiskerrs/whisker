@@ -581,10 +581,6 @@ fn lowers_polyline_motion_progress_auto_rotation_and_post_translation() {
             },
         ]),
         OffsetPathValue::Path(vec![MotionPathCommandValue::Close]),
-        OffsetPathValue::Path(vec![
-            MotionPathCommandValue::MoveTo(point(1.0, 1.0)),
-            MotionPathCommandValue::LineTo(point(1.0, 1.0)),
-        ]),
     ] {
         assert_eq!(
             lower_transform(
@@ -598,6 +594,18 @@ fn lowers_polyline_motion_progress_auto_rotation_and_post_translation() {
             None
         );
     }
+
+    let zero_length = ComputedTransformStyle {
+        offset_path: OffsetPathValue::Path(vec![
+            MotionPathCommandValue::MoveTo(point(4.0, 6.0)),
+            MotionPathCommandValue::LineTo(point(4.0, 6.0)),
+        ]),
+        ..ComputedTransformStyle::default()
+    };
+    let transform = lower_transform(&zero_length, 1.0, 1.0)
+        .expect("a valid zero-length path still has a deterministic position");
+    assert_eq!(transform.0[12], 4.0);
+    assert_eq!(transform.0[13], 6.0);
 
     let quadratic = OffsetPathValue::Path(vec![
         MotionPathCommandValue::MoveTo(point(0.0, 20.0)),
@@ -897,7 +905,7 @@ fn lowers_polyline_motion_progress_auto_rotation_and_post_translation() {
             40.0,
             20.0,
         ),
-        None
+        Some((0.0, 0.0, 0.0))
     );
     let collapsed = OffsetPathValue::Inset(Box::new(whisker_style::ComputedInsetPathValue {
         offsets: whisker_style::Edges {
@@ -908,7 +916,10 @@ fn lowers_polyline_motion_progress_auto_rotation_and_post_translation() {
         },
         radii: None,
     }));
-    assert_eq!(motion_path_state(&collapsed, 0.0, 100.0, 60.0), None);
+    assert_eq!(
+        motion_path_state(&collapsed, 0.0, 100.0, 60.0),
+        Some((50.0, 0.0, 0.0))
+    );
 
     let invalid_offset = OffsetPathValue::Inset(Box::new(whisker_style::ComputedInsetPathValue {
         offsets: whisker_style::Edges {
@@ -933,7 +944,7 @@ fn lowers_polyline_motion_progress_auto_rotation_and_post_translation() {
         }));
     assert_eq!(
         motion_path_state(&vertically_collapsed, 0.0, 100.0, 60.0),
-        None
+        Some((0.0, 30.0, 0.0))
     );
 
     let corner = |horizontal, vertical| whisker_style::ComputedCornerRadius {
