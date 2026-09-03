@@ -146,7 +146,13 @@ fn text_measurement_batch_preserves_response_order_and_cleans_up_probes() {
             overflow: MeasureTextOverflow::Clip,
         }),
     };
-    let requests = [request(7, "short"), request(8, "a longer string")];
+    let requests = [
+        request(7, "short"),
+        request(
+            8,
+            "first line second line third line fourth line fifth line sixth line",
+        ),
+    ];
     let mut provider = DomMeasurementProvider::new(document);
     let mut responses = Vec::new();
 
@@ -157,6 +163,18 @@ fn text_measurement_batch_preserves_response_order_and_cleans_up_probes() {
     assert_eq!(responses.len(), 2);
     assert_eq!(responses[0].key(), MeasurementKey::new(7).unwrap());
     assert_eq!(responses[1].key(), MeasurementKey::new(8).unwrap());
+    let MeasurementResponse::Ready {
+        metrics: single, ..
+    } = &responses[0]
+    else {
+        panic!("text measurement must be ready")
+    };
+    let MeasurementResponse::Ready { metrics: multi, .. } = &responses[1] else {
+        panic!("text measurement must be ready")
+    };
+    assert!(single.first_baseline.unwrap() > 0.0);
+    assert_eq!(single.first_baseline, single.last_baseline);
+    assert!(multi.last_baseline.unwrap() > multi.first_baseline.unwrap());
     assert_eq!(body.child_element_count(), children_before);
 }
 

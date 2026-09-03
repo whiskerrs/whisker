@@ -20,9 +20,10 @@ enum PendingMeasurement {
     Ready(MeasurementResponse),
     Text {
         probe: web_sys::Element,
+        first_baseline: web_sys::Element,
+        last_baseline: web_sys::Element,
         key: whisker_protocol::MeasurementKey,
         environment_epoch: u64,
-        baseline: f32,
     },
 }
 
@@ -141,11 +142,20 @@ impl MeasurementProvider for DomMeasurementProvider {
                 set_style(&probe, "height", &px(height))?;
             }
             probe.set_text_content(Some(&text.text));
+            let first_baseline = baseline_marker(&self.document)?;
+            let last_baseline = baseline_marker(&self.document)?;
+            probe
+                .insert_before(&first_baseline, probe.first_child().as_ref())
+                .map_err(|error| js_error("attach first baseline marker", error))?;
+            probe
+                .append_child(&last_baseline)
+                .map_err(|error| js_error("attach last baseline marker", error))?;
             pending.push(PendingMeasurement::Text {
                 probe,
+                first_baseline,
+                last_baseline,
                 key: request.key,
                 environment_epoch: request.environment_epoch,
-                baseline: text.style.font_size * 0.8,
             });
         }
         for measurement in &pending {
@@ -166,18 +176,23 @@ impl MeasurementProvider for DomMeasurementProvider {
                 PendingMeasurement::Ready(response) => responses.push(response.clone()),
                 PendingMeasurement::Text {
                     probe,
+                    first_baseline,
+                    last_baseline,
                     key,
                     environment_epoch,
-                    baseline,
                 } => {
                     let rect = probe.get_bounding_client_rect();
+                    let first_baseline =
+                        (first_baseline.get_bounding_client_rect().top() - rect.top()) as f32;
+                    let last_baseline =
+                        (last_baseline.get_bounding_client_rect().top() - rect.top()) as f32;
                     responses.push(MeasurementResponse::Ready {
                         key: *key,
                         environment_epoch: *environment_epoch,
                         metrics: MeasurementMetrics {
                             size: MeasuredSize::new(rect.width() as f32, rect.height() as f32),
-                            first_baseline: Some(*baseline),
-                            last_baseline: Some(*baseline),
+                            first_baseline: Some(first_baseline),
+                            last_baseline: Some(last_baseline),
                             overflow: None,
                             prepared_content: PreparedContentId::new(key.get()),
                         },
@@ -192,4 +207,18 @@ impl MeasurementProvider for DomMeasurementProvider {
         }
         Ok(())
     }
+}
+
+fn baseline_marker(document: &web_sys::Document) -> Result<web_sys::Element, WebError> {
+    let marker = document
+        .create_element("span")
+        .map_err(|error| js_error("create text baseline marker", error))?;
+    set_style(&marker, "display", "inline-block")?;
+    set_style(&marker, "width", "0")?;
+    set_style(&marker, "height", "0")?;
+    set_style(&marker, "padding", "0")?;
+    set_style(&marker, "margin", "0")?;
+    set_style(&marker, "border", "0")?;
+    set_style(&marker, "vertical-align", "baseline")?;
+    Ok(marker)
 }
