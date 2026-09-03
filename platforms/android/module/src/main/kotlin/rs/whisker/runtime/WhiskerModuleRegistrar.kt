@@ -176,6 +176,7 @@ public class WhiskerMountedElement internal constructor(
     /** Resets protocol-owned state before a built-in presentation is reused. */
     public fun prepareForReuse(eventSink: WhiskerElementEventSink) {
         properties.values.forEach { it.clearer(view) }
+        view.visibility = View.VISIBLE
         eventMask = 0
         this.eventSink = eventSink
         installEventSink()

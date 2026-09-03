@@ -27,6 +27,22 @@ final class HostConformanceTests: XCTestCase {
         WhiskerModuleKernel.install(BuiltInElementModule())
     }
 
+    func testPooledElementRestoresDefaultVisibilityBeforeReuse() throws {
+        let registration = WhiskerElementRegistration(
+            elementType: 1,
+            name: WhiskerBuiltInElements.viewName,
+            childPolicy: .elements,
+            measurement: .none
+        )
+        XCTAssertTrue(WhiskerElementRegistry.bind([registration]))
+        let mounted = try XCTUnwrap(WhiskerElementRegistry.mount(1) { _, _ in })
+        mounted.view.isHidden = true
+
+        mounted.prepareForReuse { _, _ in }
+
+        XCTAssertFalse(mounted.view.isHidden)
+    }
+
     func testPointerCaptureOperationsReachTheUIKitSurface() {
         let view = WhiskerView(frame: .zero)
         let registration = WhiskerElementRegistration(

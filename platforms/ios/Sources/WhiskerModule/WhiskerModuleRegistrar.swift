@@ -305,6 +305,7 @@ public final class WhiskerMountedElement {
     /** Resets protocol-owned state before a built-in presentation is reused. */
     public func prepareForReuse(eventSink: @escaping WhiskerElementEventSink) {
         properties.values.forEach { $0.clearer(view) }
+        view.isHidden = false
         eventMask = 0
         self.eventSink = eventSink
         installEventSink()

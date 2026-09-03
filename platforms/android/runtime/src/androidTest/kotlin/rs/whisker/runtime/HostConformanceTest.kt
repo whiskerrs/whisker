@@ -61,6 +61,30 @@ class HostConformanceTest {
     }
 
     @Test
+    fun pooledElementRestoresDefaultVisibilityBeforeReuse() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val registration = WhiskerElementRegistration(
+                    elementType = 1,
+                    name = WhiskerBuiltInElements.VIEW,
+                    childPolicy = WhiskerChildPolicy.Elements,
+                    measurement = WhiskerMeasurement.None,
+                )
+                assertTrue(WhiskerElementRegistry.bind(listOf(registration)))
+                val mounted = requireNotNull(
+                    WhiskerElementRegistry.mount(1, context) { _, _ -> },
+                )
+                mounted.view.visibility = View.INVISIBLE
+
+                mounted.prepareForReuse { _, _ -> }
+
+                assertEquals(View.VISIBLE, mounted.view.visibility)
+            }
+    }
+
+    @Test
     fun commonAccessibilityMapsToAndroidNodeSemantics() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
