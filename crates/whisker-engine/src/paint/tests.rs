@@ -843,6 +843,20 @@ fn lowers_polyline_motion_progress_auto_rotation_and_post_translation() {
     assert!((y - 25.811_388).abs() < 0.001, "{y}");
     assert!((angle - 180.0).abs() < 0.001, "{angle}");
 
+    assert_eq!(
+        motion_path_state(
+            &OffsetPathValue::Circle {
+                radius: ComputedLengthPercentage::new(-1.0, 0.0),
+                center_x: ComputedLengthPercentage::ZERO,
+                center_y: ComputedLengthPercentage::ZERO,
+            },
+            0.0,
+            1.0,
+            1.0,
+        ),
+        None
+    );
+
     let ellipse = OffsetPathValue::Ellipse {
         radius_x: ComputedLengthPercentage::new(0.0, 0.25),
         radius_y: ComputedLengthPercentage::new(0.0, 0.25),
@@ -853,6 +867,30 @@ fn lowers_polyline_motion_progress_auto_rotation_and_post_translation() {
     assert!((x - 20.0).abs() < 0.001, "{x}");
     assert!((y - 15.0).abs() < 0.001, "{y}");
     assert!((angle - 180.0).abs() < 0.001, "{angle}");
+
+    assert_eq!(
+        motion_path_state(
+            &OffsetPathValue::Ellipse {
+                radius_x: ComputedLengthPercentage::new(-1.0, 0.0),
+                radius_y: ComputedLengthPercentage::new(1.0, 0.0),
+                center_x: ComputedLengthPercentage::ZERO,
+                center_y: ComputedLengthPercentage::ZERO,
+            },
+            0.0,
+            1.0,
+            1.0,
+        ),
+        None
+    );
+
+    let overflowing_length = OffsetPathValue::Path(vec![
+        MotionPathCommandValue::MoveTo(point(0.0, 0.0)),
+        MotionPathCommandValue::LineTo(point(1.0e38, 0.0)),
+        MotionPathCommandValue::LineTo(point(0.0, 0.0)),
+        MotionPathCommandValue::LineTo(point(1.0e38, 0.0)),
+        MotionPathCommandValue::LineTo(point(0.0, 0.0)),
+    ]);
+    assert_eq!(motion_path_state(&overflowing_length, 0.0, 1.0, 1.0), None);
 
     let zero = ComputedLengthPercentage::ZERO;
     let ten = ComputedLengthPercentage::new(10.0, 0.0);
