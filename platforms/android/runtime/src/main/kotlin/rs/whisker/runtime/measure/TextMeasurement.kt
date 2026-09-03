@@ -165,12 +165,14 @@ internal class HostMeasurementProvider(
             availableWidthKind == MIN_CONTENT && wrap != 0 -> 1
             else -> ceil(paint.measureText(text) + semantics.indentPixels).toInt().coerceAtLeast(1)
         }
-        val builder = StaticLayout.Builder.obtain(
+        val builder = configureFallbackLineSpacing(StaticLayout.Builder.obtain(
             layoutText, 0, layoutText.length, paint, maxWidthPx,
-        )
+        ))
             .setAlignment(semantics.alignment)
             .setTextDirection(semantics.directionHeuristic)
-            .setIncludePad(false)
+            // Before API 28 there is no fallback-line-spacing switch, so
+            // retain font padding to keep fallback glyphs inside the measured box.
+            .setIncludePad(Build.VERSION.SDK_INT < Build.VERSION_CODES.P)
             .setMaxLines(if (maxLines == 0) Int.MAX_VALUE else maxLines)
             .setBreakStrategy(
                 if (wordBreak == WORD_BREAK_BREAK_ALL) Layout.BREAK_STRATEGY_SIMPLE
@@ -203,6 +205,15 @@ internal class HostMeasurementProvider(
 
     private fun ready(width: Float, height: Float): FloatArray =
         floatArrayOf(READY, 0f, width, height, 0f, 0f, 0f)
+}
+
+internal fun configureFallbackLineSpacing(
+    builder: StaticLayout.Builder,
+): StaticLayout.Builder {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        builder.setUseLineSpacingFromFallbacks(true)
+    }
+    return builder
 }
 
 internal fun measuredTextWidth(

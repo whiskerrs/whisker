@@ -71,7 +71,10 @@ public object WhiskerBuiltInElements {
             },
         ) { context ->
             WhiskerTextView(context).apply {
-                includeFontPadding = false
+                // API 28+ can size lines from fallback fonts directly. Older
+                // Android releases need font padding as the conservative
+                // fallback, otherwise CJK glyph descenders can be clipped.
+                includeFontPadding = Build.VERSION.SDK_INT < Build.VERSION_CODES.P
                 gravity = Gravity.TOP or Gravity.START
             }
         }

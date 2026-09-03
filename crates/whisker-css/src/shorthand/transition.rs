@@ -87,7 +87,10 @@ impl Css {
     /// Sets the `transition` shorthand for multiple comma-separated
     /// transitions.
     pub fn transitions(self, ts: impl IntoIterator<Item = Transition>) -> Self {
-        let ts = ts.into_iter().collect::<Vec<_>>();
+        let mut ts = ts.into_iter().collect::<Vec<_>>();
+        if ts.is_empty() {
+            ts.push(Transition::new(TransitionPropertyKind::None));
+        }
         let mut s = String::new();
         for (i, t) in ts.iter().enumerate() {
             if i > 0 {
@@ -162,5 +165,19 @@ mod tests {
             resolved.computed().motion().transitions[1].duration.get(),
             500.0
         );
+    }
+
+    #[test]
+    fn empty_transitions_disable_transitions() {
+        let style = Css::new().transitions([]);
+        let resolved = whisker_style::resolve_style(
+            &style.to_specified_style(),
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .expect("an empty transition collection means transition: none");
+
+        assert_eq!(style.to_string(), "transition: none;");
+        assert!(resolved.computed().motion().transitions.is_empty());
     }
 }
