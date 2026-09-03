@@ -237,6 +237,14 @@ impl DesktopRuntime {
         self.surface.cursor_at(logical_position)
     }
 
+    /// Resolves the cursor for the target selected by Rust-authoritative hit testing.
+    pub fn cursor_for_target(
+        &self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> Option<whisker_protocol::CursorKeyword> {
+        self.surface.cursor_for_target(target)
+    }
+
     pub(crate) fn accessibility_snapshot(&self) -> DesktopAccessibilitySnapshot {
         self.surface.accessibility_snapshot()
     }
@@ -246,15 +254,34 @@ impl DesktopRuntime {
         self.surface.scroll_at(logical_position, delta)
     }
 
+    /// Applies scrolling from a target selected by Rust-authoritative hit testing.
+    pub fn scroll_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+        delta: [f32; 2],
+    ) -> bool {
+        self.surface.scroll_target(target, delta)
+    }
+
     /// Settles the nearest snapping ScrollView after wheel/trackpad input ends.
     pub fn settle_scroll_at(&mut self, logical_position: [f32; 2]) -> bool {
         self.surface.settle_scroll_at(logical_position)
+    }
+
+    /// Settles scrolling from a target selected by Rust-authoritative hit testing.
+    pub fn settle_scroll_target(&mut self, target: Option<whisker_protocol::NodeId>) -> bool {
+        self.surface.settle_scroll_target(target)
     }
 
     /// Focuses the editable native element under a pointer, blurring any
     /// previous editor. Clicking outside an editor clears text focus.
     pub fn focus_text_input_at(&mut self, logical_position: [f32; 2]) -> bool {
         self.surface.focus_text_input_at(logical_position)
+    }
+
+    /// Focuses the nearest editor at a target selected by Rust hit testing.
+    pub fn focus_text_input_target(&mut self, target: Option<whisker_protocol::NodeId>) -> bool {
+        self.surface.focus_text_input_target(target)
     }
 
     /// Routes one normalized OS edit to the focused native element.

@@ -110,7 +110,14 @@ impl DesktopScene {
     }
 
     pub(crate) fn cursor_at(&self, point: [f32; 2]) -> Option<whisker_protocol::CursorKeyword> {
-        let node = self.hit_test(point)?;
+        self.cursor_for_target(self.hit_test(point))
+    }
+
+    pub(crate) fn cursor_for_target(
+        &self,
+        target: Option<NodeId>,
+    ) -> Option<whisker_protocol::CursorKeyword> {
+        let node = target?;
         Some(
             self.nodes
                 .get(&node)
@@ -141,7 +148,10 @@ impl DesktopScene {
     }
 
     pub(crate) fn focus_text_input_at(&mut self, point: [f32; 2]) -> bool {
-        let mut target = self.hit_test(point);
+        self.focus_text_input_target(self.hit_test(point))
+    }
+
+    pub(crate) fn focus_text_input_target(&mut self, mut target: Option<NodeId>) -> bool {
         while let Some(node) = target {
             let state = self
                 .nodes
@@ -330,7 +340,11 @@ impl DesktopScene {
     }
 
     pub(crate) fn scroll_at(&mut self, point: [f32; 2], delta: [f32; 2]) -> bool {
-        let Some(node) = self.scroll_node_at(point) else {
+        self.scroll_target(self.hit_test(point), delta)
+    }
+
+    pub(crate) fn scroll_target(&mut self, target: Option<NodeId>, delta: [f32; 2]) -> bool {
+        let Some(node) = self.scroll_node_from(target) else {
             return false;
         };
         if !self.nodes[&node].content.scroll_enabled() {
@@ -485,7 +499,11 @@ impl DesktopScene {
     }
 
     pub(crate) fn settle_scroll_at(&mut self, point: [f32; 2]) -> bool {
-        let Some(node) = self.scroll_node_at(point) else {
+        self.settle_scroll_target(self.hit_test(point))
+    }
+
+    pub(crate) fn settle_scroll_target(&mut self, target: Option<NodeId>) -> bool {
+        let Some(node) = self.scroll_node_from(target) else {
             return false;
         };
         self.smooth_scrolls.remove(&node);
@@ -562,8 +580,7 @@ impl DesktopScene {
         true
     }
 
-    fn scroll_node_at(&self, point: [f32; 2]) -> Option<NodeId> {
-        let mut current = self.hit_test(point);
+    fn scroll_node_from(&self, mut current: Option<NodeId>) -> Option<NodeId> {
         while let Some(node) = current {
             let state = self.nodes.get(&node)?;
             if state.content.is_scroll_container() {

@@ -16,7 +16,7 @@ use whisker::{
     SurfaceRuntime,
 };
 use whisker_protocol::{
-    CursorKeyword, InputEvent, InputEventKind, LayoutRect, SurfaceId, WhiskerValue,
+    CursorKeyword, InputEvent, InputEventKind, LayoutRect, NodeId, SurfaceId, WhiskerValue,
 };
 use whisker_style::StyleEnvironment;
 use winit::application::ApplicationHandler;
@@ -248,7 +248,8 @@ struct DesktopApplication {
     started_at: Instant,
     retrying_failed_frame: bool,
     pointer: DesktopPointerAdapter,
-    pending_scroll_settle: Option<(Instant, [f32; 2])>,
+    pointer_target: Option<NodeId>,
+    pending_scroll_settle: Option<(Instant, NodeId)>,
     modifiers: Modifiers,
     clipboard: Option<arboard::Clipboard>,
 }
@@ -279,6 +280,7 @@ impl DesktopApplication {
             started_at: Instant::now(),
             retrying_failed_frame: false,
             pointer: DesktopPointerAdapter::new(SurfaceId::new(1).unwrap()),
+            pointer_target: None,
             pending_scroll_settle: None,
             modifiers: Modifiers::default(),
             clipboard: arboard::Clipboard::new().ok(),
@@ -422,29 +424,30 @@ impl DesktopApplication {
         self.request_frame();
     }
 
-    fn dispatch_input(&mut self, event: InputEvent) {
+    fn dispatch_input(&mut self, event: InputEvent) -> InputDispatch {
         let Some(runtime) = &self.runtime else {
-            return;
+            return InputDispatch::default();
         };
         let host = self
             .host
             .as_mut()
             .expect("mounted Desktop runtime has a Host");
         let presentation = host.take_presentation_updates();
-        let should_request_frame = match host
+        let dispatch = match host
             .with_modules(|| runtime.dispatch_input_with_presentation(&event, &presentation))
         {
-            Ok(dispatch) => input_dispatch_needs_frame(dispatch),
+            Ok(dispatch) => dispatch,
             Err(error) => {
                 eprintln!("dispatch {TARGET_NAME} input failed: {error}");
                 // A failed transaction may still have committed independent
                 // valid mutations. Rendering gives it a recovery boundary.
-                true
+                InputDispatch::default()
             }
         };
-        if should_request_frame {
+        if input_dispatch_needs_frame(dispatch) {
             self.request_frame();
         }
+        dispatch
     }
 
     fn sync_text_input(&self) {
@@ -672,10 +675,11 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
                         self.started_at.elapsed().as_secs_f64() * 1000.0,
                         [logical.x, logical.y],
                     );
-                    self.dispatch_input(input);
+                    let dispatch = self.dispatch_input(input);
+                    self.pointer_target = dispatch.target;
                     if let (Some(window), Some(host)) = (&self.window, &self.host) {
                         let cursor = host
-                            .cursor_at([logical.x, logical.y])
+                            .cursor_for_target(dispatch.target)
                             .unwrap_or(CursorKeyword::Default);
                         window.set_cursor_visible(cursor != CursorKeyword::None);
                         if cursor != CursorKeyword::None {
@@ -685,36 +689,37 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                if let Some(input) = self.pointer.mouse_button(
-                    self.started_at.elapsed().as_secs_f64() * 1000.0,
-                    mouse_button(button),
-                    state == ElementState::Pressed,
-                ) {
-                    self.dispatch_input(input);
-                }
+                let dispatch = self
+                    .pointer
+                    .mouse_button(
+                        self.started_at.elapsed().as_secs_f64() * 1000.0,
+                        mouse_button(button),
+                        state == ElementState::Pressed,
+                    )
+                    .map_or_else(InputDispatch::default, |input| self.dispatch_input(input));
+                self.pointer_target = dispatch.target.or(self.pointer_target);
                 if button == MouseButton::Left
                     && state == ElementState::Pressed
-                    && let (Some(position), Some(host)) =
-                        (self.pointer.mouse_position(), self.host.as_mut())
-                    && host.focus_text_input_at([position.x, position.y])
+                    && let Some(host) = self.host.as_mut()
+                    && host.focus_text_input_target(dispatch.target)
                 {
                     self.request_frame();
                     self.sync_text_input();
                 }
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {
-                if let (Some(window), Some(position), Some(host)) =
-                    (&self.window, self.pointer.mouse_position(), &mut self.host)
+                if let (Some(window), Some(target), Some(host)) =
+                    (&self.window, self.pointer_target, &mut self.host)
                 {
-                    let point = [position.x, position.y];
-                    let changed = host.scroll_at(point, scroll_delta(delta, window.scale_factor()));
+                    let changed = host
+                        .scroll_target(Some(target), scroll_delta(delta, window.scale_factor()));
                     let settled = if phase == TouchPhase::Ended {
                         self.pending_scroll_settle = None;
-                        host.settle_scroll_at(point)
+                        host.settle_scroll_target(Some(target))
                     } else {
                         if changed {
                             self.pending_scroll_settle =
-                                Some((Instant::now() + Duration::from_millis(100), point));
+                                Some((Instant::now() + Duration::from_millis(100), target));
                         }
                         false
                     };
@@ -737,6 +742,7 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
                 }
             }
             WindowEvent::CursorLeft { .. } => {
+                self.pointer_target = None;
                 if let Some(window) = &self.window {
                     window.set_cursor_visible(true);
                     window.set_cursor(CursorIcon::Default);
@@ -752,7 +758,7 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
             self.pending_scroll_settle.map(|(deadline, _)| deadline),
             now,
         ));
-        let Some((deadline, point)) = self.pending_scroll_settle else {
+        let Some((deadline, target)) = self.pending_scroll_settle else {
             return;
         };
         if now < deadline {
@@ -762,7 +768,7 @@ impl ApplicationHandler<HostEvent> for DesktopApplication {
         if self
             .host
             .as_mut()
-            .is_some_and(|host| host.settle_scroll_at(point))
+            .is_some_and(|host| host.settle_scroll_target(Some(target)))
         {
             self.request_frame();
         }

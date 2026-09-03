@@ -89,16 +89,45 @@ impl DesktopSurface {
         self.scene.cursor_at(logical_position)
     }
 
+    pub(crate) fn cursor_for_target(
+        &self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> Option<whisker_protocol::CursorKeyword> {
+        self.scene.cursor_for_target(target)
+    }
+
     pub(crate) fn scroll_at(&mut self, logical_position: [f32; 2], delta: [f32; 2]) -> bool {
         self.scene.scroll_at(logical_position, delta)
+    }
+
+    pub(crate) fn scroll_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+        delta: [f32; 2],
+    ) -> bool {
+        self.scene.scroll_target(target, delta)
     }
 
     pub(crate) fn settle_scroll_at(&mut self, logical_position: [f32; 2]) -> bool {
         self.scene.settle_scroll_at(logical_position)
     }
 
+    pub(crate) fn settle_scroll_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> bool {
+        self.scene.settle_scroll_target(target)
+    }
+
     pub(crate) fn focus_text_input_at(&mut self, logical_position: [f32; 2]) -> bool {
         self.scene.focus_text_input_at(logical_position)
+    }
+
+    pub(crate) fn focus_text_input_target(
+        &mut self,
+        target: Option<whisker_protocol::NodeId>,
+    ) -> bool {
+        self.scene.focus_text_input_target(target)
     }
 
     pub(crate) fn dispatch_text_input(&mut self, event: &crate::DesktopTextInputEvent) -> bool {
