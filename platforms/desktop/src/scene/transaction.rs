@@ -1238,7 +1238,7 @@ impl DesktopScene {
     }
 
     fn recycle_presentation(&mut self, mut node: RenderNode) {
-        if !self.elements.is_builtin_presentation(node.element_type) {
+        if !node.content.is_reusable_presentation() {
             return;
         }
         node.content.reset_for_presentation_reuse();
