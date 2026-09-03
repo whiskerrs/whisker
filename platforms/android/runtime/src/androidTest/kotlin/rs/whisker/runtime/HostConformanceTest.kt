@@ -149,6 +149,16 @@ class HostConformanceTest {
     }
 
     @Test
+    fun rejectsUnknownElementPropertyAndCommandIds() {
+        androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .runOnMainSync {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                assertTrue(Driver(context, "unknown-members").rejectsUnknownMembers())
+            }
+    }
+
+    @Test
     fun everySharedPaintScenarioUsesTheProductionAndroidView() {
         androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation()
@@ -1004,6 +1014,20 @@ private class Driver(
         return view.commitFrameFromNative()
     }
 
+    fun rejectsUnknownMembers(): Boolean {
+        val cases = listOf(
+            Triple(MobileAbi.OP_PROPERTY, 999, WhiskerValue.Int(1)),
+            Triple(MobileAbi.OP_CLEAR_PROPERTY, 999, null),
+            Triple(MobileAbi.OP_COMMAND, 999, WhiskerValue.Null),
+        )
+        return cases.all { (tag, member, value) ->
+            check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
+            check(stage(tag = MobileAbi.OP_CREATE, member = 1))
+            check(stage(tag = tag, member = member, value = value))
+            !view.commitFrameFromNative()
+        }
+    }
+
     fun rejectOpacity(opacity: Float): Boolean {
         check(view.beginFrameFromNative(0, 1, 0, 1) == 0)
         check(stage(tag = 1, member = 1))
@@ -1511,6 +1535,7 @@ private class Driver(
         numbers: FloatArray? = null,
         text: String? = null,
         names: Array<String>? = null,
+        value: WhiskerValue? = null,
     ): Boolean = view.stageOperationFromNative(
         tag,
         flags,
@@ -1525,7 +1550,7 @@ private class Driver(
         numbers,
         text,
         names,
-        null,
+        value,
     )
 
     private fun paint(command: JSONObject): Pair<FloatArray, Array<String>> {
