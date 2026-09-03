@@ -286,12 +286,16 @@ impl LayoutTree {
         };
         let backend_node = retained.backend;
         let parent = retained.parent;
+        let display_changed = retained.style.display != style.display;
         self.backend
             .set_style(backend_node, converted)
             .expect("retained backend node");
         self.nodes.get_mut(&node).expect("checked above").style = style;
         if let Some(parent) = parent {
             self.sync_backend_children(parent);
+        }
+        if display_changed {
+            self.sync_backend_children(node);
         }
         Ok(impact)
     }
@@ -565,12 +569,24 @@ impl LayoutTree {
     fn sync_backend_children(&mut self, parent: NodeId) {
         let retained = self.nodes.get(&parent).expect("retained parent");
         let backend_parent = retained.backend;
-        let mut children = retained.children.clone();
-        children.sort_by_key(|child| self.nodes.get(child).expect("retained child").style.order);
-        let backend_children = children
-            .iter()
-            .map(|child| self.nodes.get(child).expect("retained child").backend)
-            .collect::<Vec<_>>();
+        let backend_children = if matches!(
+            retained.style.display,
+            DisplayValue::Flex | DisplayValue::Grid
+        ) {
+            let mut children = retained.children.clone();
+            children
+                .sort_by_key(|child| self.nodes.get(child).expect("retained child").style.order);
+            children
+                .iter()
+                .map(|child| self.nodes.get(child).expect("retained child").backend)
+                .collect::<Vec<_>>()
+        } else {
+            retained
+                .children
+                .iter()
+                .map(|child| self.nodes.get(child).expect("retained child").backend)
+                .collect::<Vec<_>>()
+        };
         self.backend
             .set_children(backend_parent, &backend_children)
             .expect("retained backend nodes");
@@ -1579,6 +1595,87 @@ mod tests {
 
         let cloned = tree.clone();
         assert_eq!(cloned.len(), tree.len());
+    }
+
+    #[test]
+    fn block_children_ignore_order_and_keep_source_order() {
+        let root = id(1);
+        let first = id(2);
+        let second = id(3);
+        let mut tree = LayoutTree::new();
+        tree.create_node(
+            root,
+            ComputedLayoutStyle {
+                display: DisplayValue::Block,
+                ..sized(100.0, 40.0)
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            first,
+            ComputedLayoutStyle {
+                order: 1,
+                ..sized(10.0, 10.0)
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            second,
+            ComputedLayoutStyle {
+                order: -1,
+                ..sized(10.0, 10.0)
+            },
+        )
+        .unwrap();
+        tree.set_children(root, &[first, second]).unwrap();
+
+        let snapshot = tree
+            .compute(root, LayoutSize::new(100.0, 40.0), &mut zero_measure)
+            .unwrap();
+
+        assert_eq!(snapshot.get(first).unwrap().border_box.y, 0.0);
+        assert_eq!(snapshot.get(second).unwrap().border_box.y, 10.0);
+    }
+
+    #[test]
+    fn changing_a_container_to_block_restores_source_order() {
+        let root = id(1);
+        let first = id(2);
+        let second = id(3);
+        let mut tree = LayoutTree::new();
+        tree.create_node(root, sized(100.0, 40.0)).unwrap();
+        tree.create_node(
+            first,
+            ComputedLayoutStyle {
+                order: 1,
+                ..sized(10.0, 10.0)
+            },
+        )
+        .unwrap();
+        tree.create_node(
+            second,
+            ComputedLayoutStyle {
+                order: -1,
+                ..sized(10.0, 10.0)
+            },
+        )
+        .unwrap();
+        tree.set_children(root, &[first, second]).unwrap();
+
+        tree.update_style(
+            root,
+            ComputedLayoutStyle {
+                display: DisplayValue::Block,
+                ..sized(100.0, 40.0)
+            },
+        )
+        .unwrap();
+        let snapshot = tree
+            .compute(root, LayoutSize::new(100.0, 40.0), &mut zero_measure)
+            .unwrap();
+
+        assert_eq!(snapshot.get(first).unwrap().border_box.y, 0.0);
+        assert_eq!(snapshot.get(second).unwrap().border_box.y, 10.0);
     }
 
     #[test]
