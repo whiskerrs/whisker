@@ -724,6 +724,75 @@ fn smooth_scroll_command_advances_on_host_frames() {
 }
 
 #[test]
+fn snapshot_discards_scroll_animation_from_the_previous_scene_epoch() {
+    let scroll = id(1);
+    let content = id(2);
+    let mut scene = scene(SurfaceId::new(1).unwrap());
+    scene
+        .present(&packet(
+            FrameMode::Snapshot,
+            0,
+            1,
+            vec![
+                Operation::CreateNode {
+                    node: scroll,
+                    element_type: element_type(whisker::SCROLL_VIEW_ELEMENT_NAME),
+                },
+                Operation::CreateNode {
+                    node: content,
+                    element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+                },
+                Operation::InsertChild {
+                    parent: scroll,
+                    child: content,
+                    index: 0,
+                },
+                Operation::SetLayout {
+                    node: scroll,
+                    geometry: geometry(0.0, 0.0, 100.0, 100.0),
+                },
+                Operation::SetLayout {
+                    node: content,
+                    geometry: geometry(0.0, 0.0, 100.0, 500.0),
+                },
+            ],
+        ))
+        .unwrap();
+    scene
+        .present(&packet(
+            FrameMode::Delta,
+            1,
+            2,
+            vec![Operation::InvokeCommand {
+                node: scroll,
+                command: whisker::SCROLL_TO_COMMAND,
+                arguments: WhiskerValue::map([
+                    ("offset", WhiskerValue::Float(240.0)),
+                    ("smooth", WhiskerValue::Bool(true)),
+                ]),
+            }],
+        ))
+        .unwrap();
+    assert!(scene.has_active_scroll_animations());
+
+    let mut replacement = packet(
+        FrameMode::Snapshot,
+        0,
+        1,
+        vec![Operation::CreateNode {
+            node: scroll,
+            element_type: element_type(whisker::VIEW_ELEMENT_NAME),
+        }],
+    );
+    replacement.header.scene_epoch = 2;
+    scene.present(&replacement).unwrap();
+
+    assert!(!scene.has_active_scroll_animations());
+    assert!(!scene.advance_scroll_animations(16.0));
+    assert_eq!(scene.nodes[&scroll].scroll_offset, [0.0, 0.0]);
+}
+
+#[test]
 fn snap_stop_always_limits_one_wheel_sequence_to_the_adjacent_child() {
     let scroll = id(1);
     let first = id(2);
